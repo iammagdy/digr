@@ -1,4 +1,4 @@
-import { Client, Databases, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Permission, Role, ID } from "node-appwrite";
 import { z } from "zod";
 
 const submitTopupSchema = z.object({
@@ -19,7 +19,7 @@ export default async ({ req, res, log, error }: any) => {
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
     .setKey(process.env.APPWRITE_API_KEY!);
 
-  const db = new Databases(client);
+  const tables = new TablesDB(client);
 
   try {
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
@@ -28,12 +28,12 @@ export default async ({ req, res, log, error }: any) => {
     const topupId = ID.unique();
     log(`Submitting topup ${topupId} for caller ${callerId}`);
 
-    // Create document forcing userId = caller and status = pending
-    const doc = await db.createDocument(
-      "digr",
-      "topups",
-      topupId,
-      {
+    // Create row forcing userId = caller and status = pending
+    const row = await tables.createRow({
+      databaseId: "digr",
+      tableId: "topups",
+      rowId: topupId,
+      data: {
         userId: callerId,
         amountEgp: validated.amountEgp,
         reference: validated.reference,
@@ -41,15 +41,15 @@ export default async ({ req, res, log, error }: any) => {
         status: "pending",
         createdAt: new Date().toISOString(),
       },
-      [
+      permissions: [
         Permission.read(Role.user(callerId)),
         Permission.read(Role.label("admin")),
-      ]
-    );
+      ],
+    });
 
     return res.json({
       success: true,
-      topupId: doc.$id,
+      topupId: row.$id,
       message: "تم استلام طلب الشحن بنجاح وهو قيد المراجعة",
     });
   } catch (err: any) {

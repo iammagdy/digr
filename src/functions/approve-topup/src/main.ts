@@ -1,4 +1,4 @@
-import { Client, Databases, Users } from "node-appwrite";
+import { Client, TablesDB, Users } from "node-appwrite";
 import { applyTopup } from "../../shared/ledger";
 import { z } from "zod";
 
@@ -20,7 +20,7 @@ export default async ({ req, res, log, error }: any) => {
     .setKey(process.env.APPWRITE_API_KEY!);
 
   const users = new Users(client);
-  const db = new Databases(client);
+  const tables = new TablesDB(client);
 
   try {
     // 1. Verify admin label strictly via Users API (single source of truth)
@@ -34,8 +34,8 @@ export default async ({ req, res, log, error }: any) => {
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
     const { topupId, action, confirmedAmountEgp } = approveSchema.parse(rawBody);
 
-    // 2. Fetch topup document
-    const topup: any = await db.getDocument("digr", "topups", topupId);
+    // 2. Fetch topup row
+    const topup: any = await tables.getRow({ databaseId: "digr", tableId: "topups", rowId: topupId });
     if (topup.status !== "pending") {
       return res.json({ success: false, error: "تمت مراجعة هذا الطلب مسبقاً" }, 400);
     }
@@ -44,31 +44,41 @@ export default async ({ req, res, log, error }: any) => {
 
     if (action === "approve") {
       // 3. Read credit price from settings_public
-      const settingsPub: any = await db.getDocument("digr", "settings_public", "pricing");
+      const settingsPub: any = await tables.getRow({ databaseId: "digr", tableId: "settings_public", rowId: "pricing" });
       const creditValueEgp = settingsPub.creditValueEgp || 0.1;
       const effectiveAmount = confirmedAmountEgp || topup.amountEgp;
       const credits = Math.floor(effectiveAmount / creditValueEgp);
 
       // 4. Create deterministic ledger entry: top_<topupId>
-      await applyTopup(db, topup.userId, topupId, credits, `شحن عبر انستاباي (مرجع: ${topup.reference})`);
+      await applyTopup(tables, topup.userId, topupId, credits, `شحن عبر انستاباي (مرجع: ${topup.reference})`);
 
-      // 5. Update topup doc
-      await db.updateDocument("digr", "topups", topupId, {
-        status: "approved",
-        confirmedAmountEgp: effectiveAmount,
-        credits,
-        reviewedBy: callerId,
-        reviewedAt: now,
+      // 5. Update topup row
+      await tables.updateRow({
+        databaseId: "digr",
+        tableId: "topups",
+        rowId: topupId,
+        data: {
+          status: "approved",
+          confirmedAmountEgp: effectiveAmount,
+          credits,
+          reviewedBy: callerId,
+          reviewedAt: now,
+        },
       });
 
       log(`Approved topup ${topupId}: granted ${credits} credits to ${topup.userId}`);
       return res.json({ success: true, status: "approved", credits });
     } else {
       // Reject
-      await db.updateDocument("digr", "topups", topupId, {
-        status: "rejected",
-        reviewedBy: callerId,
-        reviewedAt: now,
+      await tables.updateRow({
+        databaseId: "digr",
+        tableId: "topups",
+        rowId: topupId,
+        data: {
+          status: "rejected",
+          reviewedBy: callerId,
+          reviewedAt: now,
+        },
       });
 
       log(`Rejected topup ${topupId} by admin ${callerId}`);

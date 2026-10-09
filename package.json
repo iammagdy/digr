@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:functions": "tsx scripts/build-functions.ts",
     "start": "next start",
     "lint": "next lint"
   },

@@ -1,0 +1,42 @@
+{
+  "projectId": "6ac947090008606ef482",
+  "projectName": "Digr",
+  "functions": [
+    {
+      "$id": "on-user-create",
+      "name": "on-user-create",
+      "runtime": "node-21.0",
+      "entrypoint": "dist/index.js",
+      "path": "src/functions/on-user-create",
+      "events": [
+        "users.*.create"
+      ],
+      "execute": [],
+      "timeout": 15
+    },
+    {
+      "$id": "submit-topup",
+      "name": "submit-topup",
+      "runtime": "node-21.0",
+      "entrypoint": "dist/index.js",
+      "path": "src/functions/submit-topup",
+      "events": [],
+      "execute": [
+        "users"
+      ],
+      "timeout": 15
+    },
+    {
+      "$id": "approve-topup",
+      "name": "approve-topup",
+      "runtime": "node-21.0",
+      "entrypoint": "dist/index.js",
+      "path": "src/functions/approve-topup",
+      "events": [],
+      "execute": [
+        "users"
+      ],
+      "timeout": 15
+    }
+  ]
+}

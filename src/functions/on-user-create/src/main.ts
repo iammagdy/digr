@@ -1,4 +1,4 @@
-import { Client, Databases, Permission, Role } from "node-appwrite";
+import { Client, TablesDB, Permission, Role } from "node-appwrite";
 
 export default async ({ req, res, log, error }: any) => {
   const client = new Client()
@@ -6,7 +6,7 @@ export default async ({ req, res, log, error }: any) => {
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
     .setKey(process.env.APPWRITE_API_KEY!);
 
-  const db = new Databases(client);
+  const tables = new TablesDB(client);
 
   try {
     // Appwrite user-create event payload
@@ -22,18 +22,18 @@ export default async ({ req, res, log, error }: any) => {
     log(`Creating profile for user: ${userId}`);
 
     // Create profile document with role = "user"
-    await db.createDocument(
-      "digr",
-      "profiles",
-      userId, // Use userId as docId for 1-to-1 mapping
-      {
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "profiles",
+      rowId: userId, // Use userId as rowId for 1-to-1 mapping
+      data: {
         userId,
         displayName,
         role: "user",
         createdAt: new Date().toISOString(),
       },
-      [Permission.read(Role.user(userId))]
-    );
+      permissions: [Permission.read(Role.user(userId))],
+    });
 
     return res.json({ success: true, userId });
   } catch (err: any) {
