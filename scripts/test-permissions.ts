@@ -1,4 +1,4 @@
-import { Client as ServerClient, Users, Databases as ServerDatabases, Storage as ServerStorage, Permission, Role, ID } from "node-appwrite";
+import { Client as ServerClient, Users, TablesDB as ServerTablesDB, Storage as ServerStorage, Permission, Role, ID } from "node-appwrite";
 import { Client as ClientSDK, Account, Databases as ClientDatabases, Storage as ClientStorage } from "appwrite";
 import * as dotenv from "dotenv";
 
@@ -15,14 +15,14 @@ if (!apiKey) {
 
 const DATABASE_ID = "digr";
 
-// Admin client
+// Admin server client
 const serverClient = new ServerClient()
   .setEndpoint(endpoint)
   .setProject(projectId)
   .setKey(apiKey);
 
 const serverUsers = new Users(serverClient);
-const serverDb = new ServerDatabases(serverClient);
+const serverTables = new ServerTablesDB(serverClient);
 const serverStorage = new ServerStorage(serverClient);
 
 interface TestResult {
@@ -61,59 +61,86 @@ async function runTests() {
   const userA = await serverUsers.create(ID.unique(), emailA, undefined, password, "User A");
   const userB = await serverUsers.create(ID.unique(), emailB, undefined, password, "User B");
 
-  // Create client sessions
-  console.log("2. Establishing user sessions...");
-  const clientA = new ClientSDK().setEndpoint(endpoint).setProject(projectId);
-  const accountA = new Account(clientA);
-  await accountA.createEmailPasswordSession(emailA, password);
+  // Create authenticated user clients using JWT (standard for Node.js client-side testing)
+  console.log("2. Establishing user sessions via JWT...");
+  const jwtA = await serverUsers.createJWT(userA.$id);
+  const clientA = new ClientSDK().setEndpoint(endpoint).setProject(projectId).setJWT(jwtA.jwt);
   const dbA = new ClientDatabases(clientA);
   const storageA = new ClientStorage(clientA);
 
-  const clientB = new ClientSDK().setEndpoint(endpoint).setProject(projectId);
-  const accountB = new Account(clientB);
-  await accountB.createEmailPasswordSession(emailB, password);
+  const jwtB = await serverUsers.createJWT(userB.$id);
+  const clientB = new ClientSDK().setEndpoint(endpoint).setProject(projectId).setJWT(jwtB.jwt);
   const dbB = new ClientDatabases(clientB);
   const storageB = new ClientStorage(clientB);
 
-  console.log("3. Seeding User A test documents (with Document Security)...");
+  console.log("3. Seeding User A test documents (with Document/Row Security + Admin label read)...");
   const jobId = ID.unique();
   const eventId = ID.unique();
   const ledgerId = `res_${jobId}`;
   const topupId = ID.unique();
 
-  // Create User A docs with userA read permission
-  await serverDb.createDocument(DATABASE_ID, "jobs", jobId, {
-    userId: userA.$id,
-    templateSlug: "tiktok-profile",
-    params: JSON.stringify({ username: "tiktok" }),
-    status: "queued",
-    estCredits: 1,
-    reservedCredits: 1,
-    createdAt: new Date().toISOString()
-  }, [Permission.read(Role.user(userA.$id))]);
+  // Create User A docs with userA read + admin label read permissions
+  const rowPermissions = [
+    Permission.read(Role.user(userA.$id)),
+    Permission.read(Role.label("admin")),
+  ];
 
-  await serverDb.createDocument(DATABASE_ID, "job_events", eventId, {
-    jobId: jobId,
-    textAr: "استلمنا طلبك",
-    kind: "info",
-    createdAt: new Date().toISOString()
-  }, [Permission.read(Role.user(userA.$id))]);
+  await serverTables.createRow({
+    databaseId: DATABASE_ID,
+    tableId: "jobs",
+    rowId: jobId,
+    data: {
+      userId: userA.$id,
+      templateSlug: "tiktok-profile",
+      params: JSON.stringify({ username: "tiktok" }),
+      status: "queued",
+      estCredits: 1,
+      reservedCredits: 1,
+      createdAt: new Date().toISOString(),
+    },
+    permissions: rowPermissions,
+  });
 
-  await serverDb.createDocument(DATABASE_ID, "credit_ledger", ledgerId, {
-    userId: userA.$id,
-    delta: -1,
-    type: "reserve",
-    jobId: jobId,
-    createdAt: new Date().toISOString()
-  }, [Permission.read(Role.user(userA.$id))]);
+  await serverTables.createRow({
+    databaseId: DATABASE_ID,
+    tableId: "job_events",
+    rowId: eventId,
+    data: {
+      jobId: jobId,
+      textAr: "استلمنا طلبك",
+      kind: "info",
+      createdAt: new Date().toISOString(),
+    },
+    permissions: rowPermissions,
+  });
 
-  await serverDb.createDocument(DATABASE_ID, "topups", topupId, {
-    userId: userA.$id,
-    amountEgp: 100,
-    reference: "REF123",
-    status: "pending",
-    createdAt: new Date().toISOString()
-  }, [Permission.read(Role.user(userA.$id))]);
+  await serverTables.createRow({
+    databaseId: DATABASE_ID,
+    tableId: "credit_ledger",
+    rowId: ledgerId,
+    data: {
+      userId: userA.$id,
+      delta: -1,
+      type: "reserve",
+      jobId: jobId,
+      createdAt: new Date().toISOString(),
+    },
+    permissions: rowPermissions,
+  });
+
+  await serverTables.createRow({
+    databaseId: DATABASE_ID,
+    tableId: "topups",
+    rowId: topupId,
+    data: {
+      userId: userA.$id,
+      amountEgp: 100,
+      reference: "REF123",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    },
+    permissions: rowPermissions,
+  });
 
   console.log("4. Executing isolation & security test suite...\n");
 
@@ -126,19 +153,19 @@ async function runTests() {
   // Client Write Lock: User A cannot directly write to restricted collections
   await record("User A writes to Ledger", "User A", "credit_ledger", "401 / 403", () => dbA.createDocument(DATABASE_ID, "credit_ledger", ID.unique(), {
     userId: userA.$id, delta: 100, type: "adjust", createdAt: new Date().toISOString()
-  }), false);
+  } as any), false);
 
   await record("User A writes to Topups directly", "User A", "topups", "401 / 403", () => dbA.createDocument(DATABASE_ID, "topups", ID.unique(), {
     userId: userA.$id, amountEgp: 50, reference: "HACK", status: "approved", createdAt: new Date().toISOString()
-  }), false);
+  } as any), false);
 
   await record("User A writes to Jobs directly", "User A", "jobs", "401 / 403", () => dbA.createDocument(DATABASE_ID, "jobs", ID.unique(), {
     userId: userA.$id, templateSlug: "hack", params: "{}", status: "done", estCredits: 0, reservedCredits: 0, createdAt: new Date().toISOString()
-  }), false);
+  } as any), false);
 
   await record("User A writes to Profiles directly", "User A", "profiles", "401 / 403", () => dbA.createDocument(DATABASE_ID, "profiles", ID.unique(), {
     userId: userA.$id, displayName: "Hacker", role: "admin", createdAt: new Date().toISOString()
-  }), false);
+  } as any), false);
 
   // Server-only Collections: Client cannot read server-only collections
   await record("User A reads Server Settings", "User A", "settings", "401 / 403", () => dbA.getDocument(DATABASE_ID, "settings", "pricing"), false);
@@ -157,10 +184,10 @@ async function runTests() {
   await record("User A reads Own Topup", "User A", `topups/${topupId}`, "200 OK", () => dbA.getDocument(DATABASE_ID, "topups", topupId), true);
 
   console.log("5. Cleaning up test fixtures...");
-  await serverDb.deleteDocument(DATABASE_ID, "jobs", jobId).catch(() => {});
-  await serverDb.deleteDocument(DATABASE_ID, "job_events", eventId).catch(() => {});
-  await serverDb.deleteDocument(DATABASE_ID, "credit_ledger", ledgerId).catch(() => {});
-  await serverDb.deleteDocument(DATABASE_ID, "topups", topupId).catch(() => {});
+  await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "jobs", rowId: jobId }).catch(() => {});
+  await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "job_events", rowId: eventId }).catch(() => {});
+  await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "credit_ledger", rowId: ledgerId }).catch(() => {});
+  await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "topups", rowId: topupId }).catch(() => {});
   await serverUsers.delete(userA.$id).catch(() => {});
   await serverUsers.delete(userB.$id).catch(() => {});
 

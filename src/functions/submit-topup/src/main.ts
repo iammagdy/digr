@@ -41,7 +41,10 @@ export default async ({ req, res, log, error }: any) => {
         status: "pending",
         createdAt: new Date().toISOString(),
       },
-      [Permission.read(Role.user(callerId))]
+      [
+        Permission.read(Role.user(callerId)),
+        Permission.read(Role.label("admin")),
+      ]
     );
 
     return res.json({

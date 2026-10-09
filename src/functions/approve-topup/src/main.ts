@@ -1,10 +1,11 @@
-import { Client, Databases } from "node-appwrite";
+import { Client, Databases, Users } from "node-appwrite";
 import { applyTopup } from "../../shared/ledger";
 import { z } from "zod";
 
 const approveSchema = z.object({
   topupId: z.string().min(1),
   action: z.enum(["approve", "reject"]),
+  confirmedAmountEgp: z.number().positive().optional(),
 });
 
 export default async ({ req, res, log, error }: any) => {
@@ -18,17 +19,20 @@ export default async ({ req, res, log, error }: any) => {
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
     .setKey(process.env.APPWRITE_API_KEY!);
 
+  const users = new Users(client);
   const db = new Databases(client);
 
   try {
-    // 1. Verify admin role
-    const profile = await db.getDocument("digr", "profiles", callerId);
-    if ((profile as any).role !== "admin") {
+    // 1. Verify admin label strictly via Users API (single source of truth)
+    const caller = await users.get(callerId);
+    const isAdmin = caller.labels?.includes("admin");
+
+    if (!isAdmin) {
       return res.json({ success: false, error: "هذا الإجراء مخصص للمسؤولين فقط" }, 403);
     }
 
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
-    const { topupId, action } = approveSchema.parse(rawBody);
+    const { topupId, action, confirmedAmountEgp } = approveSchema.parse(rawBody);
 
     // 2. Fetch topup document
     const topup: any = await db.getDocument("digr", "topups", topupId);
@@ -42,7 +46,8 @@ export default async ({ req, res, log, error }: any) => {
       // 3. Read credit price from settings_public
       const settingsPub: any = await db.getDocument("digr", "settings_public", "pricing");
       const creditValueEgp = settingsPub.creditValueEgp || 0.1;
-      const credits = Math.floor(topup.amountEgp / creditValueEgp);
+      const effectiveAmount = confirmedAmountEgp || topup.amountEgp;
+      const credits = Math.floor(effectiveAmount / creditValueEgp);
 
       // 4. Create deterministic ledger entry: top_<topupId>
       await applyTopup(db, topup.userId, topupId, credits, `شحن عبر انستاباي (مرجع: ${topup.reference})`);
@@ -50,6 +55,7 @@ export default async ({ req, res, log, error }: any) => {
       // 5. Update topup doc
       await db.updateDocument("digr", "topups", topupId, {
         status: "approved",
+        confirmedAmountEgp: effectiveAmount,
         credits,
         reviewedBy: callerId,
         reviewedAt: now,

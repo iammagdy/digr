@@ -1,7 +1,6 @@
-import { Client, Databases, Storage, Permission, Role, AppwriteException } from "node-appwrite";
+import { Client, TablesDB, Storage, Permission, Role } from "node-appwrite";
 import * as dotenv from "dotenv";
 
-// Load .env.local without logging its contents
 dotenv.config({ path: ".env.local" });
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
@@ -10,7 +9,6 @@ const apiKey = process.env.APPWRITE_API_KEY;
 
 if (!apiKey) {
   console.error("❌ ERROR: APPWRITE_API_KEY is not defined in .env.local");
-  console.error("Please add APPWRITE_API_KEY=<your-secret-key> to .env.local to run setup.");
   process.exit(1);
 }
 
@@ -19,18 +17,18 @@ const client = new Client()
   .setProject(projectId)
   .setKey(apiKey);
 
-const db = new Databases(client);
+const tables = new TablesDB(client);
 const storage = new Storage(client);
 
 const DATABASE_ID = "digr";
 
 async function ensureDatabase() {
   try {
-    await db.get(DATABASE_ID);
+    await tables.get(DATABASE_ID);
     console.log(`✓ Database '${DATABASE_ID}' already exists.`);
   } catch (err: any) {
     if (err.code === 404) {
-      await db.create(DATABASE_ID, "Digr");
+      await tables.create({ databaseId: DATABASE_ID, name: "Digr" });
       console.log(`✓ Database '${DATABASE_ID}' created.`);
     } else {
       throw err;
@@ -38,117 +36,47 @@ async function ensureDatabase() {
   }
 }
 
-async function ensureCollection(
-  id: string,
+async function ensureTable(
+  tableId: string,
   name: string,
   permissions: string[],
-  documentSecurity: boolean
+  rowSecurity: boolean,
+  columns: any[],
+  indexes: any[]
 ) {
   try {
-    const col = await db.getCollection(DATABASE_ID, id);
-    console.log(`✓ Collection '${id}' exists.`);
-    return col;
+    const existing = await tables.getTable({ databaseId: DATABASE_ID, tableId });
+    console.log(`✓ Table '${tableId}' already exists.`);
+    return existing;
   } catch (err: any) {
     if (err.code === 404) {
-      const col = await db.createCollection(DATABASE_ID, id, name, permissions, documentSecurity);
-      console.log(`✓ Collection '${id}' created (docSecurity: ${documentSecurity}).`);
-      return col;
+      const created = await tables.createTable({
+        databaseId: DATABASE_ID,
+        tableId,
+        name,
+        permissions,
+        rowSecurity,
+        columns,
+        indexes,
+      });
+      console.log(`✓ Table '${tableId}' created (rowSecurity: ${rowSecurity}).`);
+      return created;
     }
     throw err;
   }
 }
 
-async function waitAttributeReady(collectionId: string, key: string) {
-  for (let i = 0; i < 30; i++) {
-    try {
-      const attr: any = await db.getAttribute(DATABASE_ID, collectionId, key);
-      if (attr.status === "available") return;
-    } catch {}
-    await new Promise((r) => setTimeout(r, 500));
-  }
-}
-
-async function ensureStringAttr(colId: string, key: string, size: number, req: boolean, def?: string) {
-  try {
-    await db.getAttribute(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createStringAttribute(DATABASE_ID, colId, key, size, req, def);
-      await waitAttributeReady(colId, key);
-    }
-  }
-}
-
-async function ensureIntegerAttr(colId: string, key: string, req: boolean, min?: number, max?: number, def?: number) {
-  try {
-    await db.getAttribute(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createIntegerAttribute(DATABASE_ID, colId, key, req, min, max, def);
-      await waitAttributeReady(colId, key);
-    }
-  }
-}
-
-async function ensureFloatAttr(colId: string, key: string, req: boolean, min?: number, max?: number, def?: number) {
-  try {
-    await db.getAttribute(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createFloatAttribute(DATABASE_ID, colId, key, req, min, max, def);
-      await waitAttributeReady(colId, key);
-    }
-  }
-}
-
-async function ensureBooleanAttr(colId: string, key: string, req: boolean, def?: boolean) {
-  try {
-    await db.getAttribute(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createBooleanAttribute(DATABASE_ID, colId, key, req, def);
-      await waitAttributeReady(colId, key);
-    }
-  }
-}
-
-async function ensureDatetimeAttr(colId: string, key: string, req: boolean, def?: string) {
-  try {
-    await db.getAttribute(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createDatetimeAttribute(DATABASE_ID, colId, key, req, def);
-      await waitAttributeReady(colId, key);
-    }
-  }
-}
-
-async function ensureEnumAttr(colId: string, key: string, elements: string[], req: boolean, def?: string) {
-  try {
-    await db.getAttribute(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createEnumAttribute(DATABASE_ID, colId, key, elements, req, def);
-      await waitAttributeReady(colId, key);
-    }
-  }
-}
-
-async function ensureIndex(colId: string, key: string, type: any, attributes: string[]) {
-  try {
-    await db.getIndex(DATABASE_ID, colId, key);
-  } catch (err: any) {
-    if (err.code === 404) {
-      await db.createIndex(DATABASE_ID, colId, key, type, attributes);
-      console.log(`  + Index '${key}' created on ${colId}`);
-    }
-  }
-}
-
-async function ensureBucket(id: string, name: string, permissions: string[], fileSecurity: boolean, exts: string[], maxSize: number) {
+async function ensureBucket(
+  id: string,
+  name: string,
+  permissions: string[],
+  fileSecurity: boolean,
+  exts: string[],
+  maxSize: number
+) {
   try {
     await storage.getBucket(id);
-    console.log(`✓ Bucket '${id}' exists.`);
+    console.log(`✓ Bucket '${id}' already exists.`);
   } catch (err: any) {
     if (err.code === 404) {
       await storage.createBucket(
@@ -167,206 +95,312 @@ async function ensureBucket(id: string, name: string, permissions: string[], fil
   }
 }
 
+async function ensureRow(tableId: string, rowId: string, data: any) {
+  try {
+    await tables.getRow({ databaseId: DATABASE_ID, tableId, rowId });
+  } catch (err: any) {
+    if (err.code === 404) {
+      await tables.createRow({
+        databaseId: DATABASE_ID,
+        tableId,
+        rowId,
+        data,
+      });
+      console.log(`  + Seeded row '${rowId}' in '${tableId}'`);
+    } else {
+      throw err;
+    }
+  }
+}
+
 async function setup() {
-  console.log("🚀 Setting up Digr database & storage in Appwrite Cloud...");
+  console.log("🚀 Setting up Digr database & storage via TablesDB in Appwrite Cloud...\n");
   await ensureDatabase();
 
-  // Tier 1: Public collections
-  console.log("\n[1/3] Setting up Public collections...");
-  await ensureCollection("templates", "Templates", [Permission.read(Role.users())], false);
-  await ensureStringAttr("templates", "slug", 64, true);
-  await ensureStringAttr("templates", "nameAr", 128, true);
-  await ensureStringAttr("templates", "nameEn", 128, true);
-  await ensureStringAttr("templates", "descriptionAr", 512, false);
-  await ensureStringAttr("templates", "paramsSchema", 4096, true);
-  await ensureIntegerAttr("templates", "priceCreditsPerUnit", true);
-  await ensureIntegerAttr("templates", "maxRows", true);
-  await ensureBooleanAttr("templates", "enabled", true);
-  await ensureIndex("templates", "slug_idx", "unique", ["slug"]);
+  // Tier 1: Public Tables (Read: Users, rowSecurity: false)
+  console.log("\n[1/3] Setting up Public Tables...");
 
-  await ensureCollection("settings_public", "Settings Public", [Permission.read(Role.users())], false);
-  await ensureStringAttr("settings_public", "key", 64, true);
-  await ensureFloatAttr("settings_public", "creditValueEgp", true);
-  await ensureDatetimeAttr("settings_public", "updatedAt", true);
-  await ensureIndex("settings_public", "key_idx", "unique", ["key"]);
+  await ensureTable(
+    "templates",
+    "Templates",
+    [Permission.read(Role.users())],
+    false,
+    [
+      { key: "slug", type: "varchar", size: 64, required: true },
+      { key: "nameAr", type: "varchar", size: 128, required: true },
+      { key: "nameEn", type: "varchar", size: 128, required: true },
+      { key: "descriptionAr", type: "varchar", size: 512, required: false },
+      { key: "paramsSchema", type: "text", required: true },
+      { key: "priceCreditsPerUnit", type: "integer", required: true },
+      { key: "maxRows", type: "integer", required: true },
+      { key: "enabled", type: "boolean", required: true },
+    ],
+    [
+      { key: "slug_idx", type: "unique", attributes: ["slug"] },
+    ]
+  );
 
-  // Tier 2: Private user-owned collections (Doc Security ON, empty collection perms)
-  console.log("\n[2/3] Setting up Private User-Owned collections (Doc Security ON)...");
-  await ensureCollection("profiles", "Profiles", [], true);
-  await ensureStringAttr("profiles", "userId", 36, true);
-  await ensureStringAttr("profiles", "displayName", 128, true);
-  await ensureEnumAttr("profiles", "role", ["user", "admin"], true, "user");
-  await ensureDatetimeAttr("profiles", "createdAt", true);
-  await ensureIndex("profiles", "userId_idx", "unique", ["userId"]);
+  await ensureTable(
+    "settings_public",
+    "Settings Public",
+    [Permission.read(Role.users())],
+    false,
+    [
+      { key: "key", type: "varchar", size: 64, required: true },
+      { key: "creditValueEgp", type: "double", required: true },
+      { key: "updatedAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "key_idx", type: "unique", attributes: ["key"] },
+    ]
+  );
 
-  await ensureCollection("credit_ledger", "Credit Ledger", [], true);
-  await ensureStringAttr("credit_ledger", "userId", 36, true);
-  await ensureIntegerAttr("credit_ledger", "delta", true);
-  await ensureEnumAttr("credit_ledger", "type", ["topup", "reserve", "release", "charge", "promo", "adjust"], true);
-  await ensureStringAttr("credit_ledger", "jobId", 36, false);
-  await ensureStringAttr("credit_ledger", "topupId", 36, false);
-  await ensureStringAttr("credit_ledger", "note", 512, false);
-  await ensureDatetimeAttr("credit_ledger", "createdAt", true);
-  await ensureIndex("credit_ledger", "userId_idx", "key", ["userId"]);
-  await ensureIndex("credit_ledger", "user_type_idx", "key", ["userId", "type"]);
-  await ensureIndex("credit_ledger", "jobId_idx", "key", ["jobId"]);
+  // Tier 2: Private User-Owned Tables (Permissions: empty, rowSecurity: true)
+  console.log("\n[2/3] Setting up Private User-Owned Tables (rowSecurity: true)...");
 
-  await ensureCollection("topups", "Topups", [], true);
-  await ensureStringAttr("topups", "userId", 36, true);
-  await ensureFloatAttr("topups", "amountEgp", true);
-  await ensureIntegerAttr("topups", "credits", false);
-  await ensureStringAttr("topups", "reference", 128, true);
-  await ensureStringAttr("topups", "receiptFileId", 36, false);
-  await ensureEnumAttr("topups", "status", ["pending", "approved", "rejected"], true, "pending");
-  await ensureStringAttr("topups", "reviewedBy", 36, false);
-  await ensureDatetimeAttr("topups", "reviewedAt", false);
-  await ensureDatetimeAttr("topups", "createdAt", true);
-  await ensureIndex("topups", "userId_idx", "key", ["userId"]);
-  await ensureIndex("topups", "status_idx", "key", ["status"]);
+  await ensureTable(
+    "profiles",
+    "Profiles",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "displayName", type: "varchar", size: 128, required: true },
+      { key: "role", type: "enum", elements: ["user", "admin"], required: false, default: "user" },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "userId_idx", type: "unique", attributes: ["userId"] },
+    ]
+  );
 
-  await ensureCollection("jobs", "Jobs", [], true);
-  await ensureStringAttr("jobs", "userId", 36, true);
-  await ensureStringAttr("jobs", "templateSlug", 64, true);
-  await ensureStringAttr("jobs", "params", 4096, true);
-  await ensureEnumAttr("jobs", "status", ["queued", "running", "done", "failed", "cancelled"], true, "queued");
-  await ensureIntegerAttr("jobs", "estCredits", true);
-  await ensureIntegerAttr("jobs", "reservedCredits", true);
-  await ensureIntegerAttr("jobs", "chargedCredits", false);
-  await ensureIntegerAttr("jobs", "rowsCollected", false);
-  await ensureStringAttr("jobs", "resultFileId", 36, false);
-  await ensureStringAttr("jobs", "errorAr", 512, false);
-  await ensureDatetimeAttr("jobs", "createdAt", true);
-  await ensureDatetimeAttr("jobs", "finishedAt", false);
-  await ensureIndex("jobs", "userId_idx", "key", ["userId"]);
-  await ensureIndex("jobs", "status_idx", "key", ["status"]);
-  await ensureIndex("jobs", "user_status_idx", "key", ["userId", "status"]);
+  await ensureTable(
+    "credit_ledger",
+    "Credit Ledger",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "delta", type: "integer", required: true },
+      { key: "type", type: "enum", elements: ["topup", "reserve", "release", "charge", "promo", "adjust"], required: true },
+      { key: "jobId", type: "varchar", size: 36, required: false },
+      { key: "topupId", type: "varchar", size: 36, required: false },
+      { key: "note", type: "varchar", size: 512, required: false },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "userId_idx", type: "key", attributes: ["userId"] },
+      { key: "user_type_idx", type: "key", attributes: ["userId", "type"] },
+      { key: "jobId_idx", type: "key", attributes: ["jobId"] },
+    ]
+  );
 
-  await ensureCollection("job_events", "Job Events", [], true);
-  await ensureStringAttr("job_events", "jobId", 36, true);
-  await ensureStringAttr("job_events", "textAr", 512, true);
-  await ensureIntegerAttr("job_events", "count", false);
-  await ensureEnumAttr("job_events", "kind", ["info", "progress", "warning", "error"], true);
-  await ensureDatetimeAttr("job_events", "createdAt", true);
-  await ensureIndex("job_events", "jobId_idx", "key", ["jobId"]);
-  await ensureIndex("job_events", "job_created_idx", "key", ["jobId", "createdAt"]);
+  await ensureTable(
+    "topups",
+    "Topups",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "amountEgp", type: "double", required: true },
+      { key: "confirmedAmountEgp", type: "double", required: false },
+      { key: "credits", type: "integer", required: false },
+      { key: "reference", type: "varchar", size: 128, required: true },
+      { key: "receiptFileId", type: "varchar", size: 36, required: false },
+      { key: "status", type: "enum", elements: ["pending", "approved", "rejected"], required: false, default: "pending" },
+      { key: "reviewedBy", type: "varchar", size: 36, required: false },
+      { key: "reviewedAt", type: "datetime", required: false },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "userId_idx", type: "key", attributes: ["userId"] },
+      { key: "status_idx", type: "key", attributes: ["status"] },
+    ]
+  );
 
-  // Tier 3: Server-only collections (Doc Security OFF, empty collection perms)
-  console.log("\n[3/3] Setting up Server-Only collections...");
-  await ensureCollection("templates_private", "Templates Private", [], false);
-  await ensureStringAttr("templates_private", "slug", 64, true);
-  await ensureStringAttr("templates_private", "tregEndpointId", 128, true);
-  await ensureEnumAttr("templates_private", "tregMethod", ["GET", "POST"], true);
-  await ensureStringAttr("templates_private", "pricingUnit", 64, true);
-  await ensureFloatAttr("templates_private", "estimatedCostUsd", true);
-  await ensureFloatAttr("templates_private", "maxCostUsd", true);
-  await ensureIndex("templates_private", "slug_idx", "unique", ["slug"]);
+  await ensureTable(
+    "jobs",
+    "Jobs",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "templateSlug", type: "varchar", size: 64, required: true },
+      { key: "params", type: "text", required: true },
+      { key: "status", type: "enum", elements: ["queued", "running", "done", "failed", "cancelled"], required: false, default: "queued" },
+      { key: "estCredits", type: "integer", required: true },
+      { key: "reservedCredits", type: "integer", required: true },
+      { key: "chargedCredits", type: "integer", required: false },
+      { key: "rowsCollected", type: "integer", required: false },
+      { key: "resultFileId", type: "varchar", size: 36, required: false },
+      { key: "errorAr", type: "varchar", size: 512, required: false },
+      { key: "createdAt", type: "datetime", required: true },
+      { key: "finishedAt", type: "datetime", required: false },
+    ],
+    [
+      { key: "userId_idx", type: "key", attributes: ["userId"] },
+      { key: "status_idx", type: "key", attributes: ["status"] },
+      { key: "user_status_idx", type: "key", attributes: ["userId", "status"] },
+    ]
+  );
 
-  await ensureCollection("settings", "Settings Private", [], false);
-  await ensureStringAttr("settings", "key", 64, true);
-  await ensureFloatAttr("settings", "usdToEgp", true);
-  await ensureFloatAttr("settings", "markup", true);
-  await ensureFloatAttr("settings", "minMarginThreshold", true);
-  await ensureDatetimeAttr("settings", "updatedAt", true);
-  await ensureIndex("settings", "key_idx", "unique", ["key"]);
+  await ensureTable(
+    "job_events",
+    "Job Events",
+    [],
+    true,
+    [
+      { key: "jobId", type: "varchar", size: 36, required: true },
+      { key: "textAr", type: "varchar", size: 512, required: true },
+      { key: "count", type: "integer", required: false },
+      { key: "kind", type: "enum", elements: ["info", "progress", "warning", "error"], required: true },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "jobId_idx", type: "key", attributes: ["jobId"] },
+      { key: "job_created_idx", type: "key", attributes: ["jobId", "createdAt"] },
+    ]
+  );
 
-  await ensureCollection("job_calls", "Job Calls", [], false);
-  await ensureStringAttr("job_calls", "jobId", 36, true);
-  await ensureStringAttr("job_calls", "tregCallId", 128, true);
-  await ensureStringAttr("job_calls", "endpointId", 128, true);
-  await ensureStringAttr("job_calls", "idemKey", 128, true);
-  await ensureIntegerAttr("job_calls", "httpStatus", true);
-  await ensureIntegerAttr("job_calls", "costMicro", true);
-  await ensureBooleanAttr("job_calls", "cacheHit", true);
-  await ensureStringAttr("job_calls", "fetchedAt", 64, false);
-  await ensureDatetimeAttr("job_calls", "createdAt", true);
-  await ensureIndex("job_calls", "jobId_idx", "key", ["jobId"]);
+  // Tier 3: Server-Only Tables (Permissions: empty, rowSecurity: false)
+  console.log("\n[3/3] Setting up Server-Only Tables...");
 
-  await ensureCollection("jobs_internal", "Jobs Internal", [], false);
-  await ensureStringAttr("jobs_internal", "jobId", 36, true);
-  await ensureIntegerAttr("jobs_internal", "actualCostMicro", true);
-  await ensureIntegerAttr("jobs_internal", "revenueCredits", true);
-  await ensureFloatAttr("jobs_internal", "marginEgp", true);
-  await ensureIndex("jobs_internal", "jobId_idx", "unique", ["jobId"]);
+  await ensureTable(
+    "templates_private",
+    "Templates Private",
+    [],
+    false,
+    [
+      { key: "slug", type: "varchar", size: 64, required: true },
+      { key: "tregEndpointId", type: "varchar", size: 128, required: true },
+      { key: "tregMethod", type: "enum", elements: ["GET", "POST"], required: true },
+      { key: "pricingUnit", type: "varchar", size: 64, required: true },
+      { key: "estimatedCostUsd", type: "double", required: true },
+      { key: "maxCostUsd", type: "double", required: true },
+    ],
+    [
+      { key: "slug_idx", type: "unique", attributes: ["slug"] },
+    ]
+  );
+
+  await ensureTable(
+    "settings",
+    "Settings Private",
+    [],
+    false,
+    [
+      { key: "key", type: "varchar", size: 64, required: true },
+      { key: "usdToEgp", type: "double", required: true },
+      { key: "markup", type: "double", required: true },
+      { key: "minMarginThreshold", type: "double", required: true },
+      { key: "updatedAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "key_idx", type: "unique", attributes: ["key"] },
+    ]
+  );
+
+  await ensureTable(
+    "job_calls",
+    "Job Calls",
+    [],
+    false,
+    [
+      { key: "jobId", type: "varchar", size: 36, required: true },
+      { key: "tregCallId", type: "varchar", size: 128, required: true },
+      { key: "endpointId", type: "varchar", size: 128, required: true },
+      { key: "idemKey", type: "varchar", size: 128, required: true },
+      { key: "httpStatus", type: "integer", required: true },
+      { key: "costMicro", type: "integer", required: true },
+      { key: "cacheHit", type: "boolean", required: true },
+      { key: "fetchedAt", type: "varchar", size: 64, required: false },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "jobId_idx", type: "key", attributes: ["jobId"] },
+    ]
+  );
+
+  await ensureTable(
+    "jobs_internal",
+    "Jobs Internal",
+    [],
+    false,
+    [
+      { key: "jobId", type: "varchar", size: 36, required: true },
+      { key: "actualCostMicro", type: "integer", required: true },
+      { key: "revenueCredits", type: "integer", required: true },
+      { key: "marginEgp", type: "double", required: true },
+    ],
+    [
+      { key: "jobId_idx", type: "unique", attributes: ["jobId"] },
+    ]
+  );
 
   // Storage Buckets
   console.log("\n📦 Setting up Storage Buckets...");
   await ensureBucket("results", "Results", [], true, ["xlsx", "csv"], 52428800);
-  await ensureBucket("receipts", "Receipts", [Permission.create(Role.users())], true, ["png", "jpg", "jpeg", "pdf"], 5242880);
+  await ensureBucket(
+    "receipts",
+    "Receipts",
+    [Permission.create(Role.users())],
+    true,
+    ["png", "jpg", "jpeg", "pdf"],
+    5242880
+  );
   await ensureBucket("partials", "Partials", [], false, ["jsonl"], 104857600);
 
-  // Seed default data
+  // Seeds
   console.log("\n🌱 Seeding initial configurations & Template 0...");
   const now = new Date().toISOString();
 
-  // Settings
-  try {
-    await db.getDocument(DATABASE_ID, "settings_public", "pricing");
-  } catch {
-    await db.createDocument(DATABASE_ID, "settings_public", "pricing", {
-      key: "pricing",
-      creditValueEgp: 0.1,
-      updatedAt: now,
-    });
-    console.log("  + Seeded settings_public (pricing)");
-  }
+  await ensureRow("settings_public", "pricing", {
+    key: "pricing",
+    creditValueEgp: 0.1,
+    updatedAt: now,
+  });
 
-  try {
-    await db.getDocument(DATABASE_ID, "settings", "pricing");
-  } catch {
-    await db.createDocument(DATABASE_ID, "settings", "pricing", {
-      key: "pricing",
-      usdToEgp: 50.0,
-      markup: 1.3,
-      minMarginThreshold: 0.2,
-      updatedAt: now,
-    });
-    console.log("  + Seeded settings (pricing)");
-  }
+  await ensureRow("settings", "pricing", {
+    key: "pricing",
+    usdToEgp: 50.0,
+    markup: 1.3,
+    minMarginThreshold: 0.2,
+    updatedAt: now,
+  });
 
-  // Template 0: TikTok profile
-  try {
-    await db.getDocument(DATABASE_ID, "templates", "tiktok-profile");
-  } catch {
-    await db.createDocument(DATABASE_ID, "templates", "tiktok-profile", {
-      slug: "tiktok-profile",
-      nameAr: "ملف تيك توك الشخصي",
-      nameEn: "TikTok Public Profile",
-      descriptionAr: "استرجاع بيانات الملف الشخصي لحساب تيك توك عام باستخدام اسم المستخدم",
-      paramsSchema: JSON.stringify({
-        type: "object",
-        properties: {
-          username: {
-            type: "string",
-            minLength: 1,
-            maxLength: 64,
-            pattern: "^[a-zA-Z0-9._]+$",
-            description: "اسم المستخدم بدون @"
-          }
+  await ensureRow("templates", "tiktok-profile", {
+    slug: "tiktok-profile",
+    nameAr: "ملف تيك توك الشخصي",
+    nameEn: "TikTok Public Profile",
+    descriptionAr: "استرجاع بيانات الملف الشخصي لحساب تيك توك عام باستخدام اسم المستخدم",
+    paramsSchema: JSON.stringify({
+      type: "object",
+      properties: {
+        username: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^[a-zA-Z0-9._]+$",
+          description: "اسم المستخدم بدون @",
         },
-        required: ["username"]
-      }),
-      priceCreditsPerUnit: 1,
-      maxRows: 1,
-      enabled: true
-    });
-    console.log("  + Seeded template: tiktok-profile");
-  }
+      },
+      required: ["username"],
+    }),
+    priceCreditsPerUnit: 1,
+    maxRows: 1,
+    enabled: true,
+  });
 
-  try {
-    await db.getDocument(DATABASE_ID, "templates_private", "tiktok-profile");
-  } catch {
-    await db.createDocument(DATABASE_ID, "templates_private", "tiktok-profile", {
-      slug: "tiktok-profile",
-      tregEndpointId: "tikhub.tiktok.user.profile",
-      tregMethod: "GET",
-      pricingUnit: "call",
-      estimatedCostUsd: 0.001,
-      maxCostUsd: 0.01
-    });
-    console.log("  + Seeded templates_private: tiktok-profile");
-  }
+  await ensureRow("templates_private", "tiktok-profile", {
+    slug: "tiktok-profile",
+    tregEndpointId: "tikhub.tiktok.user.profile",
+    tregMethod: "GET",
+    pricingUnit: "call",
+    estimatedCostUsd: 0.001,
+    maxCostUsd: 0.01,
+  });
 
-  console.log("\n✅ Database setup complete!");
+  console.log("\n✅ Database & Storage setup completed successfully!");
 }
 
 setup().catch((err) => {

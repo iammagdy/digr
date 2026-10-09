@@ -55,7 +55,7 @@ export async function reserveCredits(
       note: note || "حجز رصيد للطلب",
       createdAt: new Date().toISOString(),
     },
-    [Permission.read(Role.user(userId))]
+    [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))]
   );
 }
 
@@ -82,7 +82,7 @@ export async function releaseCredits(
       note: note || "إلغاء حجز الرصيد",
       createdAt: new Date().toISOString(),
     },
-    [Permission.read(Role.user(userId))]
+    [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))]
   );
 }
 
@@ -109,7 +109,7 @@ export async function chargeCredits(
       note: note || "خصم تكلفة الطلب الفعلية",
       createdAt: new Date().toISOString(),
     },
-    [Permission.read(Role.user(userId))]
+    [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))]
   );
 }
 
@@ -136,6 +136,6 @@ export async function applyTopup(
       note: note || "شحن رصيد معتمد",
       createdAt: new Date().toISOString(),
     },
-    [Permission.read(Role.user(userId))]
+    [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))]
   );
 }

@@ -11,6 +11,7 @@ interface AdminTopup {
   $id: string;
   userId: string;
   amountEgp: number;
+  confirmedAmountEgp?: number;
   credits?: number;
   reference: string;
   receiptFileId?: string;
@@ -47,13 +48,13 @@ export default function AdminTopupsPage() {
     loadTopups();
   }, [loadTopups]);
 
-  async function handleAction(topupId: string, action: "approve" | "reject") {
+  async function handleAction(topupId: string, action: "approve" | "reject", confirmedAmountEgp?: number) {
     setActionLoading(topupId);
     setMessage("");
     try {
       const execution = await functions.createExecution(
         "approve-topup",
-        JSON.stringify({ topupId, action }),
+        JSON.stringify({ topupId, action, confirmedAmountEgp }),
         false
       );
 
