@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Digr palette — warm, muted, premium */
+  --color-sand-50: #faf8f5;
+  --color-sand-100: #f3f0eb;
+  --color-sand-200: #e8e3db;
+  --color-sand-300: #d5cec3;
+  --color-sand-400: #b8ae9f;
+  --color-sand-500: #9a8e7d;
+  --color-sand-600: #7d7265;
+  --color-sand-700: #655b50;
+  --color-sand-800: #4a4239;
+  --color-sand-900: #2e2924;
+
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-success: #16a34a;
+  --color-danger: #dc2626;
+  --color-warning: #d97706;
+}
+
+/* IBM Plex Sans Arabic from Google Fonts */
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
+
+/* Base styles */
+body {
+  @apply bg-sand-50 font-sans text-sand-800 antialiased;
+  font-feature-settings: "ss01", "ss02";
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-sand-300;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+/* Focus ring */
+*:focus-visible {
+  @apply ring-2 ring-accent ring-offset-2 ring-offset-sand-50 outline-none;
+}
