@@ -88,11 +88,14 @@ export default function ResultsCanvas({
         </div>
 
         <button
+          type="button"
           onClick={onCloseMobile}
-          className="p-1.5 text-sand-500 hover:text-ink-900 lg:hidden rounded-lg hover:bg-sand-200"
+          className="min-h-11 min-w-11 inline-flex items-center justify-center text-sand-500 hover:text-ink-900 lg:hidden rounded-lg hover:bg-sand-200 focus-visible:outline-2 focus-visible:outline-primary"
           aria-label="إغلاق مساحة النتائج"
         >
-          ✕
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+            <path strokeLinecap="round" d="m6 6 12 12M18 6 6 18" />
+          </svg>
         </button>
       </div>
 
@@ -106,8 +109,10 @@ export default function ResultsCanvas({
         ].map((t) => (
           <button
             key={t.key}
+            type="button"
             onClick={() => setTab(t.key as any)}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+            aria-pressed={tab === t.key}
+            className={`min-h-11 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-primary ${
               tab === t.key
                 ? "border-primary text-ink-900"
                 : "border-transparent text-sand-500 hover:text-ink-900"
@@ -211,7 +216,7 @@ export default function ResultsCanvas({
                 placeholder="بحث داخل السجلات المستخرجة..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs bg-sand-50 border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary"
+                className="min-h-11 w-full px-3 py-1.5 text-xs bg-sand-50 border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary focus-visible:outline-2 focus-visible:outline-primary"
               />
             </div>
 
@@ -257,7 +262,7 @@ export default function ResultsCanvas({
                   <button
                     onClick={() => onDownload("pdf")}
                     disabled={downloadingKey === "pdf"}
-                    className="px-4 py-2 bg-primary hover:bg-primary-hover text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
+                    className="min-h-11 px-4 py-2 bg-primary hover:bg-primary-hover text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors motion-reduce:transition-none cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   >
                     {downloadingKey === "pdf" ? "جاري التجهيز..." : "فتح وتحميل تقرير PDF"}
                   </button>
@@ -282,7 +287,7 @@ export default function ResultsCanvas({
               value={notesText}
               onChange={(e) => setNotesText(e.target.value)}
               placeholder="اكتب ملخصًا للنتيجة أو توثيقًا ترغب بحفظه كنسخة جديدة…"
-              className="w-full p-3 text-xs bg-white border border-sand-300 rounded-xl focus:outline-hidden focus:border-primary leading-relaxed"
+              className="min-h-44 w-full p-3 text-xs bg-white border border-sand-300 rounded-xl focus:outline-hidden focus:border-primary focus-visible:outline-2 focus-visible:outline-primary leading-relaxed"
             />
             <div className="text-3xs text-sand-500 text-left">
               هذه الملاحظات مؤقتة على الشاشة ولا تُحفظ أو تُدمج تلقائياً في الملفات.
@@ -301,7 +306,7 @@ export default function ResultsCanvas({
               <button
                 onClick={() => onDownload("xlsx")}
                 disabled={downloadingKey === "xlsx" || !jobId}
-                className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors disabled:opacity-50 cursor-pointer"
+                className="min-h-11 px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors motion-reduce:transition-none disabled:opacity-50 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
               >
                 {downloadingKey === "xlsx" ? "جاري التنزيل..." : "تحميل XLSX"}
               </button>
@@ -315,7 +320,7 @@ export default function ResultsCanvas({
               <button
                 onClick={() => onDownload("pdf")}
                 disabled={downloadingKey === "pdf" || !jobId}
-                className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors disabled:opacity-50 cursor-pointer"
+                className="min-h-11 px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors motion-reduce:transition-none disabled:opacity-50 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
               >
                 {downloadingKey === "pdf" ? "جاري التنزيل..." : "تحميل PDF"}
               </button>
@@ -329,7 +334,7 @@ export default function ResultsCanvas({
               <button
                 onClick={() => onDownload("csv")}
                 disabled={downloadingKey === "csv" || !jobId}
-                className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors disabled:opacity-50 cursor-pointer"
+                className="min-h-11 px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors motion-reduce:transition-none disabled:opacity-50 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
               >
                 {downloadingKey === "csv" ? "جاري التنزيل..." : "تحميل CSV"}
               </button>
@@ -358,7 +363,7 @@ export default function ResultsCanvas({
               <button
                 type="button"
                 onClick={onExplainMethodology}
-                className="w-full py-2 px-3 text-xs font-medium text-ink-800 bg-sand-100 hover:bg-sand-200 border border-sand-300 rounded-xl transition-colors cursor-pointer text-center inline-flex items-center justify-center gap-1.5"
+                className="min-h-11 w-full py-2 px-3 text-xs font-medium text-ink-800 bg-sand-100 hover:bg-sand-200 border border-sand-300 rounded-xl transition-colors motion-reduce:transition-none cursor-pointer text-center inline-flex items-center justify-center gap-1.5 focus-visible:outline-2 focus-visible:outline-primary"
               >
                 <svg className="w-3.5 h-3.5 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -369,7 +374,7 @@ export default function ResultsCanvas({
               <button
                 type="button"
                 onClick={onRequestDocxMethodology}
-                className="w-full py-2 px-3 text-xs font-semibold text-amber-points hover:text-amber-points-hover bg-amber-points-bg hover:bg-amber-points-bg/80 border border-amber-points/30 rounded-xl transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
+                className="min-h-11 w-full py-2 px-3 text-xs font-semibold text-amber-points hover:text-amber-points-hover bg-amber-points-bg hover:bg-amber-points-bg/80 border border-amber-points/30 rounded-xl transition-colors motion-reduce:transition-none cursor-pointer text-center flex items-center justify-center gap-1.5 focus-visible:outline-2 focus-visible:outline-primary"
               >
                 <svg className="w-3.5 h-3.5 text-amber-points" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

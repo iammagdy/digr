@@ -62,17 +62,17 @@ export default function NotificationsBell() {
       </button>
 
       {open && (
-        <section aria-label="قائمة الإشعارات" className="absolute left-0 top-full z-50 mt-2 w-[min(88vw,24rem)] overflow-hidden rounded-xl border border-sand-300 bg-white text-right shadow-xl">
+        <section aria-label="قائمة الإشعارات" className="absolute left-1/2 top-full z-50 mt-2 w-[min(88vw,24rem)] -translate-x-1/2 overflow-hidden rounded-xl border border-sand-300 bg-white text-right shadow-xl">
           <header className="flex items-center justify-between border-b border-sand-200 px-4 py-3">
             <h2 className="text-sm font-bold text-ink-900">الإشعارات</h2>
-            <button type="button" onClick={() => void load()} className="min-h-9 rounded-lg px-2 text-xs text-primary hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary">تحديث</button>
+            <button type="button" onClick={() => void load()} className="min-h-11 min-w-11 rounded-lg px-2 text-xs text-primary hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none">تحديث</button>
           </header>
           {error && <p role="alert" className="px-4 py-3 text-xs text-danger">{error}</p>}
           <div className="max-h-[60dvh] overflow-y-auto">
             {loading && items.length === 0 ? <p role="status" className="px-4 py-6 text-center text-xs text-sand-500">جاري التحميل…</p>
               : items.length === 0 ? <p className="px-4 py-6 text-center text-xs text-sand-500">لا توجد إشعارات جديدة.</p>
                 : items.map((item) => (
-                  <button key={item.id} type="button" onClick={() => void markRead(item)} className={`block w-full border-b border-sand-100 px-4 py-3 text-right transition-colors hover:bg-sand-50 focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none ${item.status === "unread" ? "bg-primary/5" : "bg-white"}`}>
+                  <button key={item.id} type="button" onClick={() => void markRead(item)} className={`block min-h-11 w-full border-b border-sand-100 px-4 py-3 text-right transition-colors hover:bg-sand-50 focus-visible:outline-2 focus-visible:outline-primary motion-reduce:transition-none ${item.status === "unread" ? "bg-primary/5" : "bg-white"}`}>
                     <span className="flex items-start justify-between gap-3">
                       <span className="text-xs font-bold text-ink-900">{item.titleAr}</span>
                       {item.status === "unread" && <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary" aria-label="غير مقروء" />}
