@@ -46,6 +46,22 @@ export interface ChatHandlerResponse {
   };
 }
 
+export function buildClarificationPresentation(
+  output: Extract<LlmTurnOutput, { type: "ask_clarification" }>
+) {
+  const clarificationQuestions = output.questions?.map((item) => item.question) ?? output.questionsAr ?? [];
+  const clarificationItems = clarificationQuestions.map((question, index) => {
+    const options = output.questions?.[index]?.options ?? output.optionsAr?.[index];
+    return options?.length ? { question, options } : { question };
+  });
+
+  return {
+    contentAr: "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:",
+    clarificationQuestions,
+    clarificationItems,
+  };
+}
+
 export class ChatHandler {
   private tables: TablesDB;
   private llm: LlmClient;
@@ -199,9 +215,10 @@ export class ChatHandler {
 
     // 8. Process Output Actions
     if (output.type === "ask_clarification") {
-      clarificationQuestionsList = output.questionsAr || output.questions?.map((q) => q.question) || [];
-      clarificationItemsList = output.questions || clarificationQuestionsList.map((q) => ({ question: q }));
-      finalContentAr = `${output.reasonAr}\n\n` + clarificationQuestionsList.map((q, idx) => `${idx + 1}. ${q}`).join("\n");
+      const clarification = buildClarificationPresentation(output);
+      clarificationQuestionsList = clarification.clarificationQuestions;
+      clarificationItemsList = clarification.clarificationItems;
+      finalContentAr = clarification.contentAr;
     } else if (output.type === "answer_question") {
       finalContentAr = output.answerAr;
     } else if (output.type === "write_note") {

@@ -48,7 +48,7 @@ export default function ResultsCanvas({
   );
 
   return (
-    <div className="h-full flex flex-col bg-white border-r border-sand-300">
+    <div className="h-full min-h-0 flex flex-col bg-white border-t border-sand-300 lg:border-t-0 lg:border-r">
       {/* Canvas Top Bar */}
       <div className="p-4 border-b border-sand-200 flex items-center justify-between bg-sand-50">
         <div className="flex items-center gap-2">
@@ -62,7 +62,7 @@ export default function ResultsCanvas({
 
         <button
           onClick={onCloseMobile}
-          className="p-1.5 text-sand-500 hover:text-ink-900 md:hidden rounded-lg hover:bg-sand-200"
+          className="p-1.5 text-sand-500 hover:text-ink-900 lg:hidden rounded-lg hover:bg-sand-200"
           aria-label="إغلاق مساحة النتائج"
         >
           ✕
