@@ -88,18 +88,34 @@ export async function POST(req: NextRequest) {
       items = [];
     }
 
-    // Trigger execution
-    executeMultiStepJob(tables, storage, {
-      jobId,
-      targetVolumeMax: quoteDoc.targetVolumeMax || 1,
-      unitPricePoints: quoteDoc.unitPricePoints || 1,
-      reservedCredits: quoteDoc.quotedPoints || 1,
-      userId: verifiedUserId,
-      templateSlug: jobDoc.templateSlug,
-      params: typeof jobDoc.params === "string" ? JSON.parse(jobDoc.params) : jobDoc.params,
-    }).catch((workerErr) => {
-      console.error(`Worker error for job ${jobId}:`, workerErr);
-    });
+    // Trigger execution: in production via deployed job-worker Function, or fallback to in-process worker
+    let triggeredFunction = false;
+    try {
+      const { Functions } = await import("node-appwrite");
+      const fn = new Functions(serverClient);
+      await fn.createExecution({
+        functionId: "job-worker",
+        body: JSON.stringify({ jobId }),
+        async: true,
+      });
+      triggeredFunction = true;
+    } catch (fnErr) {
+      // Functions service unavailable or local testing: fallback to in-process multiStepWorker
+    }
+
+    if (!triggeredFunction) {
+      executeMultiStepJob(tables, storage, {
+        jobId,
+        targetVolumeMax: quoteDoc.targetVolumeMax || 1,
+        unitPricePoints: quoteDoc.unitPricePoints || 1,
+        reservedCredits: quoteDoc.quotedPoints || 1,
+        userId: verifiedUserId,
+        templateSlug: jobDoc.templateSlug,
+        params: typeof jobDoc.params === "string" ? JSON.parse(jobDoc.params) : jobDoc.params,
+      }).catch((workerErr) => {
+        console.error(`Worker error for job ${jobId}:`, workerErr);
+      });
+    }
 
     return NextResponse.json({
       success: true,
