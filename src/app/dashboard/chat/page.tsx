@@ -7,6 +7,8 @@ import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
+import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
+import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 
 import OnboardingModal from "./components/OnboardingModal";
 import ChatSidebar, { ConversationItem } from "./components/ChatSidebar";
@@ -42,6 +44,12 @@ interface ActiveJobState {
   reservedCredits?: number;
   errorAr?: string;
   events: JobEvent[];
+  review?: ResultReview | null;
+  reviewSeverity?: ReviewSeverity;
+  artifactVersion?: { id: string; versionNum: number; rowCount: number } | null;
+  fileIds?: { xlsx: string; pdf: string; csv: string };
+  versionHistory?: Array<{ id: string; versionNum: number; parentVersionId?: string | null; rowCount: number; isOriginal: boolean }>;
+  artifactHistoryAvailable?: boolean;
 }
 
 export default function ChatWorkspacePage() {
@@ -64,7 +72,9 @@ export default function ChatWorkspacePage() {
   const [activeJob, setActiveJob] = useState<ActiveJobState | null>(null);
   const [extractedRecords, setExtractedRecords] = useState<ExtractedRecord[]>([]);
   const [extractedProfile, setExtractedProfile] = useState<any>(null);
+  const loadedResultJobs = useRef(new Set<string>());
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
+  const [artifactEditing, setArtifactEditing] = useState(false);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
@@ -239,17 +249,30 @@ export default function ChatWorkspacePage() {
           };
         });
 
-        if (jobDoc.status === "done" && extractedRecords.length === 0) {
+        if ((jobDoc.status === "done" || jobDoc.status === "cancelled") && !loadedResultJobs.current.has(jobDoc.$id)) {
+          loadedResultJobs.current.add(jobDoc.$id);
           loadBalance();
           setCanvasOpen(true);
           try {
-            const dataRes = await fetch(`/api/jobs/${jobDoc.$id}/data`);
-            const dataJson = await dataRes.json();
+            const [dataRes, versionsRes] = await Promise.all([
+              fetch(`/api/jobs/${jobDoc.$id}/data`),
+              fetch(`/api/jobs/${jobDoc.$id}/artifacts`),
+            ]);
+            const [dataJson, versionsJson] = await Promise.all([dataRes.json(), versionsRes.json()]);
             if (dataJson.success) {
               if (dataJson.profile) setExtractedProfile(dataJson.profile);
               if (dataJson.rows && Array.isArray(dataJson.rows)) {
                 setExtractedRecords(dataJson.rows);
               }
+              setActiveJob((previous) => previous ? {
+                ...previous,
+                review: dataJson.review || null,
+                reviewSeverity: dataJson.runFacts?.severity,
+                artifactVersion: dataJson.artifactVersion || null,
+                fileIds: dataJson.fileIds,
+                versionHistory: versionsJson.success ? versionsJson.versions : [],
+                artifactHistoryAvailable: versionsJson.success && versionsJson.historyAvailable,
+              } : null);
             }
           } catch (fetchErr) {
             console.warn("Failed to fetch real job data:", fetchErr);
@@ -445,6 +468,7 @@ export default function ChatWorkspacePage() {
     setActiveJob(null);
     setExtractedRecords([]);
     setExtractedProfile(null);
+    loadedResultJobs.current.clear();
   }
 
   // Save Direct Plan Edits
@@ -584,7 +608,7 @@ export default function ChatWorkspacePage() {
     setDownloadingKey(ext);
 
     try {
-      const fileId = `${ext}_${activeJob.jobId}`;
+      const fileId = activeJob.fileIds?.[ext] || `${ext}_${activeJob.jobId}`;
       const downloadUrl = storage.getFileDownload("results", fileId).toString();
       const link = document.createElement("a");
       link.href = downloadUrl;
@@ -596,6 +620,73 @@ export default function ChatWorkspacePage() {
       alert(`تعذر تحميل الملف: ${err.message}`);
     } finally {
       setDownloadingKey(null);
+    }
+  }
+
+  async function submitArtifactAction(action: { operation: ArtifactEditOperation } | { undoToVersionId: string }) {
+    if (!activeJob?.jobId || artifactEditing || !user) return;
+    setArtifactEditing(true);
+    try {
+      let jwtToken: string | undefined;
+      try { jwtToken = (await account.createJWT()).jwt; } catch {}
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
+      const response = await fetch(`/api/jobs/${activeJob.jobId}/artifacts`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ...action, expectedVersionId: activeJob.artifactVersion?.id || null }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || "تعذر حفظ نسخة التعديل");
+      setActiveJob((previous) => previous ? {
+        ...previous,
+        artifactVersion: result.version,
+        fileIds: result.version.fileIds,
+        versionHistory: [...(previous.versionHistory || []), {
+          id: result.version.id,
+          versionNum: result.version.versionNum,
+          parentVersionId: result.version.parentVersionId || null,
+          rowCount: result.version.rowCount,
+          isOriginal: false,
+        }],
+      } : null);
+
+      const dataResponse = await fetch(`/api/jobs/${activeJob.jobId}/data`);
+      const data = await dataResponse.json();
+      if (data.success) {
+        setExtractedRecords(Array.isArray(data.rows) ? data.rows : []);
+        setExtractedProfile(data.profile || null);
+        setActiveJob((previous) => previous ? {
+          ...previous,
+          review: data.review || previous.review,
+          reviewSeverity: data.runFacts?.severity || previous.reviewSeverity,
+          artifactVersion: data.artifactVersion || previous.artifactVersion,
+          fileIds: data.fileIds || previous.fileIds,
+        } : null);
+      }
+
+      const historyResponse = await fetch(`/api/jobs/${activeJob.jobId}/artifacts`);
+      const history = await historyResponse.json();
+      if (history.success) setActiveJob((previous) => previous ? {
+        ...previous,
+        versionHistory: history.versions || [],
+        artifactHistoryAvailable: history.historyAvailable,
+      } : null);
+      setMessages((previous) => [...previous, {
+        id: `artifact_v${result.version.versionNum}_${Date.now()}`,
+        role: "assistant",
+        content: `اتحفظ التعديل كنسخة رقم ${result.version.versionNum} من النتيجة، بدون خصم نقاط. تقدر ترجع لأي نسخة أقدم.`,
+        createdAt: new Date().toISOString(),
+      }]);
+    } catch (error: any) {
+      setMessages((previous) => [...previous, {
+        id: `artifact_error_${Date.now()}`,
+        role: "assistant",
+        content: error.message || "تعذر حفظ التعديل. النتيجة الأصلية لم تتغير.",
+        createdAt: new Date().toISOString(),
+      }]);
+    } finally {
+      setArtifactEditing(false);
     }
   }
 
@@ -678,6 +769,55 @@ export default function ChatWorkspacePage() {
     };
     reader.readAsText(file);
     e.target.value = "";
+  }
+
+  function handleKeepResult() {
+    setMessages((previous) => [...previous, {
+      id: `review_keep_${Date.now()}`,
+      role: "assistant",
+      content: "تمام، هنحتفظ بالنتيجة الحالية كما هي. تقدر تحمّل الملفات أو تعدّلها لاحقًا.",
+      createdAt: new Date().toISOString(),
+    }]);
+  }
+
+  function handleEditAndFetch() {
+    handleSendMessage("عايز أراجع الخطة السابقة وأعدّلها. اعرض خطة وعرض سعر جديد فقط، ولا تبدأ أي استخراج قبل ما أوافق بنفسي.");
+  }
+
+  function handleReportMismatch(category: string, details?: string) {
+    const detail = details?.trim();
+    const report = `ملاحظة على النتيجة: ${category}${detail ? ` — ${detail}` : ""}`;
+    handleSendMessage(`${report}. اعرض الخيارات المناسبة فقط، ولا تبدأ جمع بيانات أو تخصم نقاطًا دون موافقتي.`);
+  }
+
+  function handleReviewSuggestion(suggestion: ReviewSuggestion) {
+    const params = suggestion.params as Record<string, any>;
+    if (suggestion.type === "dedupe") {
+      void submitArtifactAction({ operation: { action: "dedupe", keys: params.keys } });
+      return;
+    }
+    if (suggestion.type === "change_columns") {
+      void submitArtifactAction({ operation: { action: "select_columns", columns: params.columns } });
+      return;
+    }
+    if (suggestion.type === "anonymize" && params.enabled) {
+      void submitArtifactAction({ operation: { action: "anonymize", fields: ["username", "displayName", "bio", "bioLink", "profileUrl"] } });
+      return;
+    }
+    if (suggestion.type === "export_variant") {
+      void submitArtifactAction({ operation: { action: "convert_formats", formats: params.formats } });
+      return;
+    }
+    let request = "";
+    if (suggestion.type === "refine_window") request = `اقترح خطة جديدة للفترة من ${params.from} إلى ${params.to}`;
+    else if (suggestion.type === "include_replies") request = "أعد إعداد الخطة مع طلب جمع الردود";
+    else if (suggestion.type === "narrow_query") request = `ضيّق البحث حول: ${params.query}`;
+    else if (suggestion.type === "language_filter") request = `صفِّ النتائج حسب اللغة: ${params.language}`;
+    else if (suggestion.type === "new_collection") request = `اعرض خطة جديدة حتى ${params.maxRows} سجل لاستكمال: ${params.query}`;
+    else if (suggestion.type === "write_methodology") request = "أعد صياغة ملخص المنهجية في نسخة النتيجة الحالية";
+    if (!request) return;
+    const needsNewQuote = ["refine_window", "include_replies", "narrow_query", "language_filter", "new_collection"].includes(suggestion.type);
+    handleSendMessage(`${request}. ${needsNewQuote ? "اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ." : "لا تعِد جمع البيانات."}`);
   }
 
   return (
@@ -1042,6 +1182,18 @@ export default function ChatWorkspacePage() {
               }
               onRequestDocxMethodology={handleGenerateMethodology}
               onCloseMobile={() => setCanvasOpen(false)}
+              review={activeJob?.review}
+              reviewSeverity={activeJob?.reviewSeverity}
+              onKeepResult={handleKeepResult}
+              onEditAndFetch={handleEditAndFetch}
+              onReportMismatch={handleReportMismatch}
+              onReviewSuggestion={handleReviewSuggestion}
+              currentVersion={activeJob?.artifactVersion ? { id: activeJob.artifactVersion.id, versionNum: activeJob.artifactVersion.versionNum } : null}
+              versionHistory={activeJob?.versionHistory || []}
+              artifactHistoryAvailable={activeJob?.artifactHistoryAvailable}
+              artifactEditing={artifactEditing}
+              onArtifactEdit={(operation) => void submitArtifactAction({ operation })}
+              onUndoVersion={(targetVersionId) => void submitArtifactAction({ undoToVersionId: targetVersionId })}
             />
           </div>
         </>

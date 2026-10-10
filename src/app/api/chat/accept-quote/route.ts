@@ -110,6 +110,7 @@ export async function POST(req: NextRequest) {
         unitPricePoints: quoteDoc.unitPricePoints || 1,
         reservedCredits: quoteDoc.quotedPoints || 1,
         userId: verifiedUserId,
+        conversationId: jobDoc.conversationId,
         templateSlug: jobDoc.templateSlug,
         params: typeof jobDoc.params === "string" ? JSON.parse(jobDoc.params) : jobDoc.params,
       }).catch((workerErr) => {

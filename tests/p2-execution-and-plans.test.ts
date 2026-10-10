@@ -4,6 +4,7 @@ import {
   applyPlanOperations,
   validatePlanAgainstSchemas,
   createAndSaveManagedQuote,
+  parseStoredPlan,
   PlanState,
   EditPlanOperation,
 } from "../src/functions/shared/planManager";
@@ -868,5 +869,40 @@ describe("P2: Execution, Multi-Step Worker, and Editable Plans Test Suite", () =
     const validation = validatePlanAgainstSchemas(proposedItems, capabilities);
     expect(validation.valid).toBe(false);
     expect(validation.errors[0]).toContain("غير مفعلة");
+  });
+
+  it("Scenario 15: Acceptance stores a normalized request spec on the approved quote", async () => {
+    const plan: PlanState = {
+      summaryAr: "جمع منشورات لفترة محددة",
+      items: [{ capabilitySlug: "x-keyword-search", params: { query: "data" }, targetVolumeMin: 5, targetVolumeMax: 40 }],
+      outputFormats: ["csv"],
+      executionOptions: { windowing: "per_week", windowFrom: "2026-01-01", windowTo: "2026-02-01", includeReplies: true },
+    };
+    const quote = await createAndSaveManagedQuote(tables as any, {
+      conversationId: "conv_result_spec",
+      userId,
+      plan,
+      userBalance: 200,
+      capabilities: [multiPageCapability],
+    });
+
+    const accepted = await acceptQuote(tables as any, {
+      userId,
+      quoteId: quote.quoteId,
+      expectedPlanHash: quote.planHash,
+    });
+    expect(accepted.success).toBe(true);
+
+    const savedQuote: any = await tables.getRow({ databaseId: "digr", tableId: "plans_quotes", rowId: quote.quoteId });
+    const stored = parseStoredPlan(savedQuote.itemsJson);
+    const requestSpec = stored.requestSpec as any;
+    expect(savedQuote.status).toBe("accepted");
+    expect(requestSpec.version).toBe(1);
+    expect(requestSpec.sources[0].capabilitySlug).toBe("x-keyword-search");
+    expect(requestSpec.sources[0].params.query).toBe("data");
+    expect(requestSpec.windows).toEqual({ mode: "per_week", from: "2026-01-01", to: "2026-02-01" });
+    expect(requestSpec.includeReplies).toBe(true);
+    expect(requestSpec.volumeRange).toEqual({ min: 5, max: 40 });
+    expect(requestSpec.formats).toEqual(["csv"]);
   });
 });

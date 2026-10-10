@@ -7,6 +7,16 @@ import {
   generateCsvReport,
 } from "./fileGenerators";
 import { executeTregCall } from "./tregClient";
+import { parseStoredPlan } from "./planManager";
+import {
+  buildFallbackReview,
+  buildNormalizedRequestSpec,
+  computeRunFacts,
+  parseNormalizedRequestSpec,
+  type NormalizedRequestSpec,
+} from "./resultReview";
+import { LlmClient } from "./llmClient";
+import { recordInitialArtifactVersion } from "./artifactVersions";
 
 export interface WorkerStepInput {
   jobId: string;
@@ -14,11 +24,13 @@ export interface WorkerStepInput {
   unitPricePoints: number;
   reservedCredits: number;
   userId: string;
+  conversationId?: string;
   templateSlug: string;
   params: Record<string, any>;
   pricingUnit?: "call" | "item" | "page";
   fetchPageFn?: (cursor: string | null, page: number) => Promise<PageFetchResult>;
   isTestMode?: boolean;
+  requestSpec?: NormalizedRequestSpec;
 }
 
 export interface PageFetchResult {
@@ -471,6 +483,34 @@ export async function executeMultiStepJob(
   }
 
   const deliveredUnits = Math.min(collectedRows.length, targetVolumeMax);
+  const deliveredRows = collectedRows.slice(0, deliveredUnits);
+
+  let requestSpec = parseNormalizedRequestSpec(input.requestSpec) || undefined;
+  if (!requestSpec) {
+    try {
+      const quoteRows = await tables.listRows({
+        databaseId: "digr",
+        tableId: "plans_quotes",
+        queries: [Query.equal("jobId", jobId), Query.limit(1)],
+      });
+      if (quoteRows.rows.length) {
+        const storedPlan = parseStoredPlan(quoteRows.rows[0].itemsJson);
+        requestSpec = parseNormalizedRequestSpec(storedPlan.requestSpec) || buildNormalizedRequestSpec(storedPlan);
+      }
+    } catch {
+      console.warn("[result-review:REQUEST_SPEC_UNAVAILABLE]");
+    }
+  }
+  requestSpec ||= buildNormalizedRequestSpec({
+    items: [{ capabilitySlug: templateSlug, params, targetVolumeMin: 1, targetVolumeMax }],
+    outputFormats: ["xlsx", "pdf", "csv"],
+  });
+  const runFacts = computeRunFacts(requestSpec, deliveredRows);
+  let review = buildFallbackReview(runFacts, requestSpec);
+  if (process.env.RESULT_REVIEW_MODEL_ENABLED === "true") {
+    try { review = (await new LlmClient().reviewResult(runFacts)) || review; }
+    catch { console.warn("[result-review:MODEL_FALLBACK]"); }
+  }
 
   // 3. Exact Settlement Formula: charge = ceil(deliveredUnits * unitPricePoints)
   const settlement = calculateFinalSettlement(deliveredUnits, unitPricePoints, reservedCredits);
@@ -486,7 +526,6 @@ export async function executeMultiStepJob(
     chargedCredits,
     isCancelled ? "تسوية طلب ملغى جزئياً" : "تسوية واكتمال استخراج البيانات"
   );
-
   // 5. Generate and Store Output Files (Excel, PDF, CSV, JSON)
   const dateStr = new Date().toISOString().slice(0, 10);
   const finalPayload: any = {
@@ -504,7 +543,12 @@ export async function executeMultiStepJob(
         ? `تم استخراج بيانات الحساب العام @${profileData.uniqueId} بنجاح بتاريخ ${dateStr} من المصدر الرسمي. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`
         : `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
     },
-    rows: collectedRows,
+    rows: deliveredRows,
+    ...(process.env.RESULT_REVIEW_STORAGE_ENABLED === "false" ? {} : {
+      requestSpec,
+      runFacts,
+      review,
+    }),
   };
 
   if (profileData) {
@@ -570,8 +614,18 @@ export async function executeMultiStepJob(
           [] // server-only: no client permissions
         ),
       ]);
+      if (input.conversationId) {
+        await recordInitialArtifactVersion(tables, {
+          userId,
+          conversationId: input.conversationId,
+          jobId,
+          rowCount: deliveredUnits,
+          fileIds: { xlsx: xlsxFileId, pdf: pdfFileId, csv: csvFileId },
+          snapshotFileId: jsonFileId,
+        });
+      }
     } catch (storageErr: any) {
-      console.warn("Storage upload warning:", storageErr.message);
+      console.warn("[result-review:STORAGE_UNAVAILABLE]");
     }
   }
 
@@ -627,7 +681,7 @@ export async function executeMultiStepJob(
   });
 
   await emitProgress(
-    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${chargedCredits} نقطة، وتم استرداد ${refundCredits} نقطة لمحافظتك.`,
+    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${chargedCredits} نقطة، واستُرد ${refundCredits} نقطة من الحجز.`,
     deliveredUnits,
     "info"
   );

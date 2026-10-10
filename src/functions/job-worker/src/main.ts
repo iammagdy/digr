@@ -1,4 +1,4 @@
-import { Client, TablesDB, Storage, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Storage, Permission, Role, ID, Query } from "node-appwrite";
 import { z } from "zod";
 import {
   completeJobWithRelFirst,
@@ -10,6 +10,10 @@ import {
   generatePdfReport,
   generateCsvReport,
 } from "../../shared/fileGenerators";
+import { parseStoredPlan } from "../../shared/planManager";
+import { buildFallbackReview, buildNormalizedRequestSpec, computeRunFacts, parseNormalizedRequestSpec, type NormalizedRequestSpec } from "../../shared/resultReview";
+import { LlmClient } from "../../shared/llmClient";
+import { recordInitialArtifactVersion } from "../../shared/artifactVersions";
 
 const workerPayloadSchema = z.object({
   jobId: z.string().min(1),
@@ -214,6 +218,38 @@ export default async ({ req, res, log, error }: any) => {
     }
 
     const cleanData = tregResult.data?.data || tregResult.data;
+    let requestSpec: NormalizedRequestSpec | undefined;
+    try {
+      const quoteRows = await tables.listRows({
+        databaseId: "digr",
+        tableId: "plans_quotes",
+        queries: [Query.equal("jobId", jobId), Query.limit(1)],
+      });
+      if (quoteRows.rows.length) {
+        const storedPlan = parseStoredPlan(quoteRows.rows[0].itemsJson);
+        requestSpec = parseNormalizedRequestSpec(storedPlan.requestSpec) || buildNormalizedRequestSpec(storedPlan);
+      }
+    } catch {
+      log("[result-review:REQUEST_SPEC_UNAVAILABLE]");
+    }
+    requestSpec ||= buildNormalizedRequestSpec({
+      items: [{ capabilitySlug: job.templateSlug, params: {}, targetVolumeMin: 1, targetVolumeMax: 1 }],
+      outputFormats: ["xlsx", "pdf", "csv"],
+    });
+    const reviewRows = profileData ? [{
+      username: profileData.uniqueId,
+      displayName: profileData.nickname,
+      followers: profileData.followerCount,
+      likes: profileData.heartCount,
+      videosCount: profileData.videoCount,
+      collectedDate: new Date().toISOString().slice(0, 10),
+    }] : [];
+    const runFacts = computeRunFacts(requestSpec, reviewRows);
+    let review = buildFallbackReview(runFacts, requestSpec);
+    if (process.env.RESULT_REVIEW_MODEL_ENABLED === "true") {
+      try { review = (await new LlmClient().reviewResult(runFacts)) || review; }
+      catch { log("[result-review:MODEL_FALLBACK]"); }
+    }
     const resultPayload = {
       metadata: {
         platform: "Digr Data Platform",
@@ -227,6 +263,7 @@ export default async ({ req, res, log, error }: any) => {
       },
       ...(profileData ? { profile: profileData } : {}),
       data: cleanData,
+      ...(process.env.RESULT_REVIEW_STORAGE_ENABLED === "false" ? {} : { requestSpec, runFacts, review }),
     };
 
     // Generate Excel, PDF, and CSV reports
@@ -261,6 +298,26 @@ export default async ({ req, res, log, error }: any) => {
       storage.createFile("results", pdfFileId, pdfFile, permissions),
       storage.createFile("results", csvFileId, csvFile, permissions),
     ]);
+
+    if (process.env.RESULT_REVIEW_STORAGE_ENABLED !== "false") {
+      try {
+        const jsonFileId = `json_${jobId}`;
+        try { await storage.deleteFile("job_data", jsonFileId); } catch {}
+        const jsonFile = new File([JSON.stringify(resultPayload)], `digr_${job.templateSlug}_${jobId}.json`, { type: "application/json" });
+        await storage.createFile("job_data", jsonFileId, jsonFile, []);
+      } catch {
+        log("[result-review:STORAGE_UNAVAILABLE]");
+      }
+    }
+
+    await recordInitialArtifactVersion(tables, {
+      userId: job.userId,
+      conversationId: job.conversationId || "",
+      jobId,
+      rowCount: 1,
+      fileIds: { xlsx: xlsxFileId, pdf: pdfFileId, csv: csvFileId },
+      snapshotFileId: process.env.RESULT_REVIEW_STORAGE_ENABLED === "false" ? undefined : `json_${jobId}`,
+    });
 
     log(`[job-worker] Uploaded xlsx (${xlsxFileId}), pdf (${pdfFileId}), and csv (${csvFileId}) to bucket results`);
     const resultFileId = xlsxFileId;
@@ -306,7 +363,6 @@ export default async ({ req, res, log, error }: any) => {
       log(`[job-worker] Warning: rel_${jobId} already existed (job was already released/cancelled). Aborting.`);
       return res.json({ success: false, error: "Job was already released or timed out" }, 200);
     }
-
     // 9. Update Job row to status: done
     const nowDone = new Date().toISOString();
     await tables.updateRow({

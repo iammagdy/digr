@@ -115,11 +115,59 @@ export interface PlanState {
   methodologyNotes?: string;
 }
 
+export interface ParsedStoredPlan extends PlanState {
+  requestSpec?: unknown;
+  legacy: boolean;
+}
+
+const DEFAULT_OUTPUT_FORMATS: Array<"xlsx" | "pdf" | "csv"> = ["xlsx", "pdf", "csv"];
+
+/** Read both legacy arrays and the versioned plan envelope stored in itemsJson. */
+export function parseStoredPlan(raw: unknown): ParsedStoredPlan {
+  let value = raw;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { value = null; }
+  }
+  if (Array.isArray(value)) {
+    return { summaryAr: "", items: value as PlanItem[], outputFormats: [...DEFAULT_OUTPUT_FORMATS], legacy: true };
+  }
+  if (!value || typeof value !== "object" || !Array.isArray((value as any).items)) {
+    return { summaryAr: "", items: [], outputFormats: [...DEFAULT_OUTPUT_FORMATS], legacy: true };
+  }
+  const plan = value as any;
+  const allowedFormats = Array.isArray(plan.outputFormats)
+    ? plan.outputFormats.filter((format: unknown): format is "xlsx" | "pdf" | "csv" => format === "xlsx" || format === "pdf" || format === "csv")
+    : [];
+  return {
+    summaryAr: typeof plan.summaryAr === "string" ? plan.summaryAr : "",
+    items: plan.items as PlanItem[],
+    outputFormats: allowedFormats.length ? Array.from(new Set(allowedFormats)) : [...DEFAULT_OUTPUT_FORMATS],
+    executionOptions: plan.executionOptions && typeof plan.executionOptions === "object" ? plan.executionOptions : undefined,
+    outputSpec: plan.outputSpec && typeof plan.outputSpec === "object" ? plan.outputSpec : undefined,
+    methodologyNotes: typeof plan.methodologyNotes === "string" ? plan.methodologyNotes : undefined,
+    requestSpec: plan.requestSpec,
+    legacy: false,
+  };
+}
+
+export function serializeStoredPlan(plan: PlanState, requestSpec?: unknown): Record<string, unknown> {
+  return {
+    version: 1,
+    summaryAr: plan.summaryAr,
+    items: plan.items,
+    outputFormats: plan.outputFormats,
+    executionOptions: plan.executionOptions || {},
+    outputSpec: plan.outputSpec || null,
+    methodologyNotes: plan.methodologyNotes || "",
+    ...(requestSpec === undefined ? {} : { requestSpec }),
+  };
+}
+
 /**
  * Computes a deterministic SHA-256 hash of a plan's items and configuration.
  * Used to cryptographically bind quotes to their exact plan parameters.
  */
-export function computePlanHash(items: PlanItem[], formats: string[] = ["xlsx", "pdf", "csv"]): string {
+export function computePlanHash(items: PlanItem[], formats: string[] = ["xlsx", "pdf", "csv"], config?: Partial<PlanState>): string {
   // Sort items deterministically
   const sorted = items.map((it) => {
     const sortedParams: Record<string, any> = {};
@@ -132,13 +180,22 @@ export function computePlanHash(items: PlanItem[], formats: string[] = ["xlsx", 
       slug: it.capabilitySlug,
       params: sortedParams,
       targetVolumeMax: it.targetVolumeMax,
+      ...(config ? { targetVolumeMin: it.targetVolumeMin } : {}),
     };
   });
 
-  const canonical = JSON.stringify({
+  const canonicalPlan: Record<string, unknown> = {
     items: sorted,
     formats: [...formats].sort(),
-  });
+  };
+  if (config) {
+    canonicalPlan.configuration = {
+      executionOptions: config.executionOptions || {},
+      outputSpec: config.outputSpec || null,
+      methodologyNotes: config.methodologyNotes || "",
+    };
+  }
+  const canonical = JSON.stringify(canonicalPlan);
 
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }
@@ -318,7 +375,7 @@ export async function createAndSaveManagedQuote(
   // Recalculate affordability for the composite quote
   const quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, pricingSettings);
 
-  const planHash = computePlanHash(plan.items, plan.outputFormats);
+  const planHash = computePlanHash(plan.items, plan.outputFormats, plan);
   const quoteId = ID.unique();
   const expiresAt = generateQuoteExpiry(30); // 30 minutes expiry
   const nowIso = new Date().toISOString();
@@ -358,7 +415,7 @@ export async function createAndSaveManagedQuote(
       userId,
       status: "proposed",
       summaryAr: plan.summaryAr,
-      itemsJson: JSON.stringify(plan.items),
+      itemsJson: JSON.stringify(serializeStoredPlan(plan)),
       targetVolumeMax: totalVolumeMax,
       unitPricePoints: quoteCalc.unitPricePoints,
       quotedPoints: quoteCalc.quotedPoints,
