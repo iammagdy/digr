@@ -6,6 +6,7 @@ import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { PersonaType } from "@/functions/shared/personaConfigs";
+import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 
 import OnboardingModal from "./components/OnboardingModal";
 import ChatSidebar, { ConversationItem } from "./components/ChatSidebar";
@@ -23,7 +24,8 @@ interface MessageItem {
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   planQuote?: PlanQuoteData;
   clarificationQuestions?: string[];
-  clarificationItems?: Array<{ question: string; options?: string[] }>;
+  clarificationItems?: unknown;
+  completedClarificationAnswers?: DiscoveryAnswer[];
   suggestedAlternative?: any;
   refusalReason?: string;
   jobId?: string;
@@ -329,6 +331,88 @@ export default function ChatWorkspacePage() {
   function handleFormSubmit(e: FormEvent) {
     e.preventDefault();
     handleSendMessage(inputText);
+  }
+
+  async function handleSubmitClarification(assistantMessageId: string, answers: DiscoveryAnswer[]) {
+    if (loading || !user || !answers.length) return;
+    const summary = answers
+      .map((answer) => {
+        const value = answer.skipped
+          ? (answer.resolvedDefault && answer.value
+              ? (Array.isArray(answer.value) ? answer.value.join("، ") : answer.value)
+              : "سيُطلب منك الاختيار")
+          : Array.isArray(answer.value)
+            ? answer.value.join("، ")
+            : answer.value || "";
+        return `${answer.question}: ${value}`;
+      })
+      .join(" · ");
+
+    setMessages((previous) => [...previous, {
+      id: `usr_${Date.now()}`,
+      role: "user",
+      content: summary,
+      createdAt: new Date().toISOString(),
+    }]);
+    setLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      let jwtToken: string | undefined;
+      try {
+        const jwtRes = await account.createJWT();
+        jwtToken = jwtRes.jwt;
+      } catch {}
+
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers,
+        signal: controller.signal,
+        body: JSON.stringify({
+          conversationId: conversationId || undefined,
+          jwt: jwtToken,
+          clarificationAnswers: { type: "clarification_answers", answers },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "تعذر إرسال إجابات الاستكشاف");
+
+      setMessages((previous) => [
+        ...previous.map((message) => message.id === assistantMessageId
+          ? { ...message, completedClarificationAnswers: answers }
+          : message),
+        {
+          id: data.messageId || `asst_${Date.now()}`,
+          role: "assistant",
+          content: data.contentAr,
+          outputType: data.outputType,
+          planQuote: data.planQuote,
+          clarificationQuestions: data.clarificationQuestions,
+          clarificationItems: data.clarificationItems,
+          suggestedAlternative: data.suggestedAlternative,
+          refusalReason: data.refusalReason,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      if (data.conversationId) setConversationId(data.conversationId);
+      loadConversations();
+    } catch (err: any) {
+      const errorContent = err.name === "AbortError"
+        ? "استغرق الإرسال وقتاً أطول من المتوقع. يمكنك المحاولة مرة أخرى."
+        : err.message || "تعذر إرسال إجابات الاستكشاف. يرجى المحاولة مرة أخرى.";
+      setMessages((previous) => [...previous, {
+        id: `err_${Date.now()}`,
+        role: "assistant",
+        content: errorContent,
+        createdAt: new Date().toISOString(),
+      }]);
+    } finally {
+      clearTimeout(timeoutId);
+      setLoading(false);
+    }
   }
 
   function handleStartNewChat() {
@@ -724,7 +808,9 @@ export default function ChatWorkspacePage() {
                   <ClarificationReply
                     intro={msg.content}
                     questions={msg.clarificationItems || msg.clarificationQuestions || []}
-                    onSelectOption={handleSendMessage}
+                    completedAnswers={msg.completedClarificationAnswers}
+                    disabled={loading}
+                    onComplete={(answers) => handleSubmitClarification(msg.id, answers)}
                   />
                 ) : (
                   <div className="whitespace-pre-wrap">{msg.content}</div>
