@@ -1,23 +1,15 @@
 "use client";
 
-export interface DiscoveryQuestion {
-  question: string;
-  options?: string[];
-}
+import { normalizeDiscoveryQuestions } from "./discoveryQuestions";
 
 interface DiscoveryCardProps {
-  questions: DiscoveryQuestion[] | string[];
+  questions: unknown;
   reason?: string;
   onSelectOption: (optionText: string) => void;
 }
 
 export default function DiscoveryCard({ questions, reason, onSelectOption }: DiscoveryCardProps) {
-  const normalizedQuestions: DiscoveryQuestion[] = questions.map((q) => {
-    if (typeof q === "string") {
-      return { question: q, options: [] };
-    }
-    return q;
-  });
+  const normalizedQuestions = normalizeDiscoveryQuestions(questions);
 
   return (
     <div className="mt-3 p-4 bg-sand-50 border border-sand-300 rounded-2xl shadow-2xs">

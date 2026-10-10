@@ -1,10 +1,10 @@
 "use client";
 
-import DiscoveryCard, { type DiscoveryQuestion } from "./DiscoveryCard";
+import DiscoveryCard from "./DiscoveryCard";
 
 interface ClarificationReplyProps {
   intro: string;
-  questions: DiscoveryQuestion[] | string[];
+  questions: unknown;
   onSelectOption: (optionText: string) => void;
 }
 

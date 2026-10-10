@@ -172,7 +172,7 @@ export default function ChatWorkspacePage() {
   // 4. Scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading, activeJob]);
+  }, [messages, loading, activeJob, viewportHeight]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
