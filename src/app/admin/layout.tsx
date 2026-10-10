@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
-import { databases } from "@/lib/appwrite";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
@@ -12,24 +11,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
-    async function checkAdmin() {
-      if (!user) {
-        setIsAdmin(false);
-        return;
-      }
-      try {
-        const profile: any = await databases.getDocument("digr", "profiles", user.$id);
-        setIsAdmin(profile?.role === "admin");
-      } catch {
-        setIsAdmin(false);
-      }
-    }
-
     if (!loading) {
       if (!user) {
         router.push("/login");
       } else {
-        checkAdmin();
+        const hasAdminLabel = Array.isArray(user.labels) && user.labels.includes("admin");
+        setIsAdmin(hasAdminLabel);
       }
     }
   }, [user, loading, router]);
