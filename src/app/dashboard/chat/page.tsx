@@ -338,7 +338,9 @@ export default function ChatWorkspacePage() {
     const summary = answers
       .map((answer) => {
         const value = answer.skipped
-          ? "استخدم الافتراضي"
+          ? (answer.resolvedDefault && answer.value
+              ? (Array.isArray(answer.value) ? answer.value.join("، ") : answer.value)
+              : "سيُطلب منك الاختيار")
           : Array.isArray(answer.value)
             ? answer.value.join("، ")
             : answer.value || "";

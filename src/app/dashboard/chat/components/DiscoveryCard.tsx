@@ -12,7 +12,10 @@ interface DiscoveryCardProps {
 
 function answerLabel(answer: DiscoveryAnswer | undefined): string {
   if (!answer) return "بانتظار الإجابة";
-  if (answer.skipped) return "استخدم الافتراضي";
+  if (answer.skipped) {
+    if (answer.value) return Array.isArray(answer.value) ? answer.value.join("، ") : answer.value;
+    return "سيُطلب منك الاختيار";
+  }
   return Array.isArray(answer.value) ? answer.value.join("، ") : answer.value || "";
 }
 
@@ -44,13 +47,18 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
   function setAnswer(questionId: string, value: string | string[], skipped = false) {
     const question = normalizedQuestions.find((item) => item.id === questionId);
     if (!question) return;
+    // When skipping, resolve the server-validated default on the client so the
+    // assistant receives a real value instead of placeholder text. Questions
+    // without a validated default are sent as skipped with no value; the server
+    // then instructs the assistant to ask the user explicitly.
+    const resolvedDefault = skipped ? question.defaultOption : undefined;
     setAnswers((previous) => ({
       ...previous,
       [questionId]: {
         questionId,
         question: question.text,
-        ...(skipped ? {} : { value }),
-        ...(skipped ? { skipped: true } : {}),
+        ...(skipped ? { skipped: true } : { value }),
+        ...(resolvedDefault ? { value: resolvedDefault, resolvedDefault: true } : {}),
       },
     }));
   }
