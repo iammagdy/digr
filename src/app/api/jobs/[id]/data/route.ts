@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Storage, Client as UserClient, Account } from "node-appwrite";
+import { Client as ServerClient, TablesDB, Storage, Client as UserClient, Account, Query } from "node-appwrite";
+import { buildFallbackReview, buildNormalizedRequestSpec, computeRunFacts, parseNormalizedRequestSpec, parseResultReview } from "@/functions/shared/resultReview";
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
@@ -60,15 +61,43 @@ export async function GET(
 
     // 3. Read JSON result from server-only job_data bucket (with fallback to results for old jobs)
     try {
+      let latestArtifactVersion: any = null;
+      try {
+        const versions = await tables.listRows({ databaseId: "digr", tableId: "artifact_versions", queries: [Query.equal("jobId", jobId), Query.orderAsc("versionNum"), Query.limit(100)] });
+        latestArtifactVersion = (versions.rows as any[]).sort((a, b) => Number(a.versionNum) - Number(b.versionNum));
+      } catch {
+        console.warn("[artifact-versions:SCHEMA_UNAVAILABLE]");
+      }
+      const versionRows = Array.isArray(latestArtifactVersion) ? latestArtifactVersion : [];
+      latestArtifactVersion = versionRows.length ? versionRows[versionRows.length - 1] : null;
+      let snapshotId: string | null = null;
+      try { snapshotId = JSON.parse(latestArtifactVersion?.operationJson || "{}").snapshotFileId || null; } catch {}
       let jsonBuf: ArrayBuffer;
       try {
-        jsonBuf = await storage.getFileDownload("job_data", `json_${jobId}`);
+        jsonBuf = snapshotId
+          ? await storage.getFileDownload("job_data", snapshotId)
+          : await storage.getFileDownload("job_data", `json_${jobId}`);
       } catch {
-        jsonBuf = await storage.getFileDownload("results", `json_${jobId}`);
+        try { jsonBuf = await storage.getFileDownload("job_data", `json_${jobId}`); }
+        catch { jsonBuf = await storage.getFileDownload("results", `json_${jobId}`); }
       }
 
       const jsonText = Buffer.from(jsonBuf).toString("utf-8");
       const parsedData = JSON.parse(jsonText);
+      const rawRows = Array.isArray(parsedData.rows) ? parsedData.rows : (parsedData.profile ? [parsedData.profile] : []);
+      const parsedSpec = parseNormalizedRequestSpec(parsedData.requestSpec);
+      const params = (() => {
+        try { return typeof jobDoc.params === "string" ? JSON.parse(jobDoc.params) : (jobDoc.params || {}); }
+        catch { return {}; }
+      })();
+      const requestSpec = parsedSpec || buildNormalizedRequestSpec({
+        items: [{ capabilitySlug: jobDoc.templateSlug || "unknown", params, targetVolumeMin: 1, targetVolumeMax: Math.max(1, Number(jobDoc.rowsCollected) || 1) }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+      });
+      const runFacts = computeRunFacts(requestSpec, rawRows);
+      const review = parsedData.metadata?.resultEdited
+        ? buildFallbackReview(runFacts, requestSpec)
+        : parseResultReview(parsedData.review) || buildFallbackReview(runFacts, requestSpec);
 
       // Cleaned customer-facing profile (strictly no provider structure or provider internal IDs)
       const cleanProfile = parsedData.profile ? {
@@ -86,20 +115,31 @@ export async function GET(
       } : null;
 
       // Cleaned rows (customer-facing attributes only)
-      const cleanRows = Array.isArray(parsedData.rows) ? parsedData.rows.map((r: any, idx: number) => ({
-        id: `rec_${idx + 1}`,
-        username: r.username,
-        displayName: r.displayName,
-        bio: r.bio,
-        verified: r.verified,
-        followers: r.followers,
-        following: r.following,
-        likes: r.likes,
-        videosCount: r.videosCount,
-        bioLink: r.bioLink,
-        profileUrl: r.profileUrl,
-        collectedDate: r.collectedDate,
-      })) : [];
+      const cleanRows = Array.isArray(parsedData.rows) ? parsedData.rows.map((r: any, idx: number) => {
+        if (parsedData.metadata?.resultEdited && r && typeof r === "object" && !Array.isArray(r)) {
+          const safeEntries = Object.entries(r).filter(([key, value]) => {
+            const safeKey = key.length <= 80 && /^[\p{L}\p{N}_. -]+$/u.test(key) && !["__proto__", "constructor", "prototype"].includes(key);
+            const safeName = !/(provider|token|secret|endpoint|api[_-]?key|raw[_-]?response|internal)/i.test(key);
+            const safeValue = value === null || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value)) || (typeof value === "string" && value.length <= 2000);
+            return safeKey && safeName && safeValue;
+          });
+          return { ...Object.fromEntries(safeEntries), id: `rec_${idx + 1}` };
+        }
+        return {
+          id: `rec_${idx + 1}`,
+          username: r.username,
+          displayName: r.displayName,
+          bio: r.bio,
+          verified: r.verified,
+          followers: r.followers,
+          following: r.following,
+          likes: r.likes,
+          videosCount: r.videosCount,
+          bioLink: r.bioLink,
+          profileUrl: r.profileUrl,
+          collectedDate: r.collectedDate,
+        };
+      }) : [];
 
       return NextResponse.json({
         success: true,
@@ -117,9 +157,40 @@ export async function GET(
         rows: cleanRows,
         chargedCredits: jobDoc.chargedCredits,
         finishedAt: jobDoc.finishedAt,
+        review,
+        artifactVersion: latestArtifactVersion ? {
+          id: latestArtifactVersion.$id,
+          versionNum: Number(latestArtifactVersion.versionNum),
+          rowCount: Number(latestArtifactVersion.rowCount) || cleanRows.length,
+        } : null,
+        fileIds: latestArtifactVersion ? {
+          xlsx: latestArtifactVersion.fileIdXlsx || `xlsx_${jobId}`,
+          pdf: latestArtifactVersion.fileIdPdf || `pdf_${jobId}`,
+          csv: latestArtifactVersion.fileIdCsv || `csv_${jobId}`,
+        } : { xlsx: `xlsx_${jobId}`, pdf: `pdf_${jobId}`, csv: `csv_${jobId}` },
+        runFacts: {
+          requested: runFacts.requested,
+          delivered: runFacts.delivered,
+          severity: runFacts.severity,
+          findings: runFacts.findings,
+          rowsPerSource: runFacts.rowsPerSource,
+          rowsPerWindow: runFacts.rowsPerWindow,
+          dayByDayCoverage: runFacts.dayByDayCoverage,
+          duplicateCount: runFacts.duplicateCount,
+          replyShare: runFacts.replyShare,
+          conversationsWithMultipleItems: runFacts.conversationsWithMultipleItems,
+          languageShares: runFacts.languageShares,
+          emptyWindows: runFacts.emptyWindows,
+          failedWindows: runFacts.failedWindows,
+        },
       });
     } catch {
       // If JSON file doesn't exist yet (e.g. still running, failed, or older job)
+      const registeredRows = Math.max(0, Number(jobDoc.rowsCollected) || 0);
+      const unavailableReview = parseResultReview({
+        comparisonAr: `تم تسجيل ${registeredRows.toLocaleString("ar-EG")} سجل، لكن تفاصيل النتيجة غير متاحة الآن؛ لذلك لا أقدر أقارنها بمحتوى طلبك.`,
+        suggestions: [],
+      });
       return NextResponse.json({
         success: true,
         jobId,
@@ -128,6 +199,9 @@ export async function GET(
         errorAr: jobDoc.errorAr || null,
         profile: null,
         rows: [],
+        review: unavailableReview,
+        runFacts: { severity: "warning", delivered: registeredRows, requested: null, findings: [] },
+        dataAvailable: false,
       });
     }
   } catch (err: any) {

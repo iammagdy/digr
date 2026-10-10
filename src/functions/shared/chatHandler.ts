@@ -16,6 +16,7 @@ import {
   createAndSaveManagedQuote,
   applyPlanOperations,
   validatePlanAgainstSchemas,
+  parseStoredPlan,
   PlanState,
 } from "./planManager";
 import { getBalance } from "./ledger";
@@ -315,14 +316,10 @@ export class ChatHandler {
         finalContentAr = "لا توجد خطة معلقة حالياً لتعديلها. يرجى وصف بيانات الاستخراج المطلوبة لنعد لك خطة جديدة.";
       } else {
         try {
-          const currentItems = typeof activeQuote.itemsJson === "string"
-            ? JSON.parse(activeQuote.itemsJson)
-            : activeQuote.itemsJson;
-
+          const storedPlan = parseStoredPlan(activeQuote.itemsJson);
           const currentPlan: PlanState = {
-            summaryAr: activeQuote.summaryAr,
-            items: currentItems,
-            outputFormats: ["xlsx", "pdf", "csv"],
+            ...storedPlan,
+            summaryAr: activeQuote.summaryAr || storedPlan.summaryAr,
           };
 
           const updatedPlan = applyPlanOperations(currentPlan, output.operations);

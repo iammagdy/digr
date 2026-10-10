@@ -21,11 +21,11 @@ export default function ActivityTimeline({ status, events, rowsCollected }: Acti
 
   // Default Arabic steps if live events are sparse
   const defaultSteps = [
-    { text: "فهمت الطلب وحددت مصدر البيانات المعتمد", done: true },
-    { text: "تم تجهيز الخطة وحجز النقاط من رصيدك بنجاح", done: true },
-    { text: "جاري الاتصال وسحب البيانات من المصدر الرسمي", done: status !== "queued" },
-    { text: "فحص اكتمال الحقول ودقة الإحصائيات وإزالة التكرار", done: status === "done" || rowsCollected > 0 },
-    { text: "تجهيز وتوليد ملفات Excel و PDF و CSV الموثقة", done: status === "done" },
+    { text: "تم تحديد الخدمة المطلوبة", done: true },
+    { text: "تم قبول عرض السعر وحجز الرصيد", done: true },
+    { text: "جاري الاتصال بمصدر البيانات وجمع السجلات", done: status !== "queued" },
+    { text: "حساب السجلات ومراجعة مؤشرات التغطية البرمجية", done: status === "done" || status === "cancelled" || rowsCollected > 0 },
+    { text: "تم تجهيز ملفات Excel و PDF و CSV", done: status === "done" || status === "cancelled" },
   ];
 
   const isRunning = status === "queued" || status === "running";
@@ -55,6 +55,8 @@ export default function ActivityTimeline({ status, events, rowsCollected }: Acti
               ? "تم بنجاح"
               : status === "failed"
               ? "فشل الاستخراج"
+              : status === "cancelled"
+              ? "تم الإلغاء"
               : isRunning
               ? "جاري المعالجة..."
               : "في الانتظار"}
@@ -115,7 +117,7 @@ export default function ActivityTimeline({ status, events, rowsCollected }: Acti
 
           {status === "done" && (
             <div className="pt-2 border-t border-sand-200 text-3xs text-sand-500 text-left">
-              ما تم فعله: استخراج معتمد • تم حفظ النسخة في مساحة النتائج • جاهز للتحميل
+              تم جمع {rowsCollected.toLocaleString("ar-EG")} سجل وحفظ الملفات. راجع ملاحظات التغطية في لوحة النتائج.
             </div>
           )}
         </div>

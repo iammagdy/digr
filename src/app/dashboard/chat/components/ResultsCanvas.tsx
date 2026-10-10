@@ -1,18 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
+import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 
 export interface ExtractedRecord {
   id: string;
-  username: string;
-  displayName: string;
-  followers: number;
-  following: number;
-  likes: number;
-  videosCount: number;
-  verified: boolean;
-  bio: string;
-  extractedAt: string;
+  [key: string]: unknown;
 }
 
 interface ResultsCanvasProps {
@@ -24,6 +18,18 @@ interface ResultsCanvasProps {
   onExplainMethodology: () => void;
   onRequestDocxMethodology: () => void;
   onCloseMobile: () => void;
+  review?: ResultReview | null;
+  reviewSeverity?: ReviewSeverity;
+  onKeepResult: () => void;
+  onEditAndFetch: () => void;
+  onReportMismatch: (category: string, details?: string) => void;
+  onReviewSuggestion: (suggestion: ReviewSuggestion) => void;
+  currentVersion?: { id: string; versionNum: number } | null;
+  versionHistory?: Array<{ id: string; versionNum: number; parentVersionId?: string | null }>;
+  artifactHistoryAvailable?: boolean;
+  artifactEditing: boolean;
+  onArtifactEdit: (operation: ArtifactEditOperation) => void;
+  onUndoVersion: (targetVersionId: string) => void;
 }
 
 export default function ResultsCanvas({
@@ -35,17 +41,38 @@ export default function ResultsCanvas({
   onExplainMethodology,
   onRequestDocxMethodology,
   onCloseMobile,
+  review,
+  reviewSeverity,
+  onKeepResult,
+  onEditAndFetch,
+  onReportMismatch,
+  onReviewSuggestion,
+  currentVersion,
+  versionHistory = [],
+  artifactHistoryAvailable,
+  artifactEditing,
+  onArtifactEdit,
+  onUndoVersion,
 }: ResultsCanvasProps) {
   const [tab, setTab] = useState<"table" | "pdf" | "notes" | "files">("table");
   const [searchTerm, setSearchTerm] = useState("");
-  const [notesText, setNotesText] = useState(
-    "ملاحظات الباحث:\n- تم استخراج البيانات العامة وتوثيق مصدر الحساب.\n- العينة معتمدة للتحليل والدراسة المقارنة."
-  );
+  const [notesText, setNotesText] = useState("");
+  const [complaintOpen, setComplaintOpen] = useState(false);
+  const [complaintDetails, setComplaintDetails] = useState("");
+  const [renameFrom, setRenameFrom] = useState("");
+  const [renameTo, setRenameTo] = useState("");
+  const [columnOrderText, setColumnOrderText] = useState("");
 
-  const filteredRecords = records.filter((r) =>
-    (r.username || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (r.displayName || "").toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredRecords = records.filter((record) =>
+    Object.values(record).some((value) => String(value ?? "").toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()))
   );
+  const tableColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id"))));
+  const labels: Record<string, string> = {
+    username: "اسم المستخدم", displayName: "الاسم التعريفي", followers: "المتابعون",
+    following: "المتابعَون", likes: "الإعجابات", videosCount: "المقاطع", verified: "موثّق",
+    bio: "النبذة", bioLink: "رابط النبذة", profileUrl: "رابط الملف", collectedDate: "تاريخ الجمع",
+    count: "العدد", averageFollowers: "متوسط المتابعين",
+  };
 
   return (
     <div className="h-full min-h-0 flex flex-col bg-white border-t border-sand-300 lg:border-t-0 lg:border-r">
@@ -91,11 +118,93 @@ export default function ResultsCanvas({
         ))}
       </div>
 
+      {jobId && review && (
+        <section className="mx-4 mt-4 rounded-xl border border-sand-300 bg-white p-4 space-y-3" aria-label="مراجعة النتيجة" dir="rtl">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-sm font-bold text-ink-900">مراجعة النتيجة</h2>
+            <span className={`rounded-full px-2.5 py-1 text-2xs font-semibold ${reviewSeverity === "critical" ? "bg-red-50 text-red-700" : reviewSeverity === "warning" ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-800"}`}>
+              {reviewSeverity === "critical" ? "تحتاج مراجعة" : reviewSeverity === "warning" ? "ملاحظات على التغطية" : "ضمن النطاق المرصود"}
+            </span>
+          </div>
+          <p className="text-xs leading-6 text-sand-700">{review.comparisonAr}</p>
+          {review.suggestions.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {review.suggestions.slice(0, 3).map((suggestion, index) => (
+                <button key={`${suggestion.type}-${index}`} type="button" onClick={() => onReviewSuggestion(suggestion)} className="min-h-11 rounded-lg border border-sand-300 bg-sand-50 px-3 py-2 text-xs font-medium text-ink-800 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary">
+                  {suggestion.labelAr}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <button type="button" onClick={onKeepResult} className="min-h-11 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-primary">كمّل بالنتيجة دي</button>
+            <button type="button" onClick={onEditAndFetch} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs font-semibold text-ink-800 hover:bg-sand-50 focus-visible:outline-2 focus-visible:outline-primary">عدّل واسحب تاني</button>
+          </div>
+          <button type="button" onClick={() => setComplaintOpen((open) => !open)} className="min-h-11 w-full rounded-lg border border-sand-300 bg-sand-50 px-3 py-2 text-xs font-semibold text-ink-800 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary">مش ده المطلوب؟</button>
+          {complaintOpen && (
+            <div className="space-y-2 rounded-lg bg-sand-50 p-3" role="group" aria-label="ما المشكلة؟">
+              <div className="text-xs font-semibold text-ink-900">ما المشكلة؟</div>
+              <div className="flex flex-wrap gap-2">
+                {["نوع البيانات", "الفترة", "العدد", "الجودة"].map((category) => (
+                  <button key={category} type="button" onClick={() => onReportMismatch(category)} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary">{category}</button>
+                ))}
+              </div>
+              <label className="block text-xs font-medium text-sand-700" htmlFor="result-complaint-details">أخرى</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input id="result-complaint-details" value={complaintDetails} maxLength={200} onChange={(event) => setComplaintDetails(event.target.value)} className="min-h-11 min-w-0 flex-1 rounded-lg border border-sand-300 bg-white px-3 text-xs text-ink-900 focus-visible:outline-2 focus-visible:outline-primary" placeholder="اكتب ملاحظة قصيرة" />
+                <button type="button" disabled={!complaintDetails.trim()} onClick={() => onReportMismatch("أخرى", complaintDetails.trim())} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs font-semibold text-ink-800 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary">إرسال الملاحظة</button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {/* Tab 1: Data Table */}
         {tab === "table" && (
           <div className="space-y-4">
+            {jobId && (
+              <section className="rounded-xl border border-sand-200 bg-sand-50 p-3 space-y-2" aria-label="تعديلات مجانية على النتيجة" dir="rtl">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="font-bold text-ink-900">تعديلات على نسخة النتيجة</span>
+                  <span className="text-sand-600">{currentVersion ? `نسخة ${currentVersion.versionNum}` : "النسخة الأصلية"} · بدون خصم نقاط</span>
+                </div>
+                {artifactHistoryAvailable === false && <p className="text-2xs text-amber-800" role="status">سجل النسخ غير متاح حالياً؛ يمكنك تحميل الملفات الأصلية.</p>}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onArtifactEdit({ action: "dedupe", keys: ["id", "username", "profileUrl"] })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">حذف التكرار</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onArtifactEdit({ action: "sort", field: "followers", direction: "desc" })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">ترتيب حسب المتابعين</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onArtifactEdit({ action: "select_columns", columns: ["username", "displayName", "followers", "likes"] })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">الأعمدة الأساسية</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onArtifactEdit({ action: "anonymize", fields: ["username", "displayName", "bio", "bioLink", "profileUrl"] })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">إخفاء المعرّفات</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onArtifactEdit({ action: "group_aggregate", groupBy: "verified", metrics: [{ operation: "count", as: "count" }, { field: "followers", operation: "average", as: "averageFollowers" }] })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">تجميع حسب حالة التوثيق</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false || !searchTerm.trim()} onClick={() => onArtifactEdit({ action: "filter", field: "username", operator: "contains", value: searchTerm.trim() })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">حفظ البحث كفلتر</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false || !notesText.trim()} onClick={() => onArtifactEdit({ action: "rewrite_summary", summaryAr: notesText.slice(0, 1000) })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">حفظ الملخص كنسخة</button>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onArtifactEdit({ action: "convert_formats", formats: ["xlsx", "pdf", "csv"] })} className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">إعادة توليد الصيغ</button>
+                  {(() => {
+                    const current = versionHistory.find((version) => version.id === currentVersion?.id);
+                    const parentId = current?.parentVersionId || null;
+                    return parentId ? <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false} onClick={() => onUndoVersion(parentId)} className="min-h-11 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 disabled:opacity-50">تراجع لنسخة سابقة</button> : null;
+                  })()}
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                  <label className="text-2xs text-sand-600">اسم العمود الحالي
+                    <input value={renameFrom} onChange={(event) => setRenameFrom(event.target.value)} maxLength={80} className="mt-1 min-h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-xs text-ink-900 focus-visible:outline-2 focus-visible:outline-primary" />
+                  </label>
+                  <label className="text-2xs text-sand-600">الاسم الجديد
+                    <input value={renameTo} onChange={(event) => setRenameTo(event.target.value)} maxLength={80} className="mt-1 min-h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-xs text-ink-900 focus-visible:outline-2 focus-visible:outline-primary" />
+                  </label>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false || !renameFrom.trim() || !renameTo.trim()} onClick={() => onArtifactEdit({ action: "rename_columns", renames: { [renameFrom.trim()]: renameTo.trim() } })} className="min-h-11 self-end rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">إعادة تسمية العمود</button>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <label className="flex-1 text-2xs text-sand-600">اختيار وترتيب الأعمدة — افصل الأسماء بفواصل
+                    <input value={columnOrderText} onChange={(event) => setColumnOrderText(event.target.value)} maxLength={1000} placeholder="username, followers, likes" className="mt-1 min-h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-xs text-ink-900 focus-visible:outline-2 focus-visible:outline-primary" />
+                  </label>
+                  <button type="button" disabled={artifactEditing || artifactHistoryAvailable === false || !columnOrderText.trim()} onClick={() => onArtifactEdit({ action: "select_columns", columns: columnOrderText.split(",").map((column) => column.trim()).filter(Boolean).slice(0, 80) })} className="min-h-11 self-end rounded-lg border border-sand-300 bg-white px-3 py-2 text-xs text-ink-800 disabled:opacity-50">تطبيق الأعمدة والترتيب</button>
+                </div>
+                {artifactEditing && <p className="text-2xs text-sand-600" role="status">جاري إنشاء نسخة جديدة…</p>}
+                {versionHistory.length > 0 && <div className="text-2xs text-sand-600">عدد النسخ: {versionHistory.length} من 30</div>}
+              </section>
+            )}
             <div className="flex items-center justify-between gap-2">
               <input
                 type="text"
@@ -108,41 +217,23 @@ export default function ResultsCanvas({
 
             {records.length === 0 ? (
               <div className="p-8 text-center text-xs text-sand-500 bg-sand-50/50 rounded-xl border border-dashed border-sand-300">
-                لا توجد سجلات مستخرجة بعد. ابدأ الاستخراج لعرض جدول البيانات هنا.
+                {jobId ? "تفاصيل السجلات غير متاحة في لوحة العرض حالياً. راجع تنبيه النتيجة أو حمّل الملفات الأصلية." : "ابدأ الاستخراج لعرض جدول البيانات هنا."}
               </div>
             ) : (
               <div className="border border-sand-200 rounded-xl overflow-hidden shadow-2xs">
                 <div className="overflow-x-auto">
                   <table className="w-full text-right text-xs">
                     <thead className="bg-sand-100 text-sand-700 font-semibold border-b border-sand-200">
-                      <tr>
-                        <th className="p-3">اسم المستخدم</th>
-                        <th className="p-3">الاسم التعريفي</th>
-                        <th className="p-3">المتابعون</th>
-                        <th className="p-3">المتابعَون</th>
-                        <th className="p-3">الإعجابات</th>
-                        <th className="p-3">المقاطع</th>
-                      </tr>
+                      <tr>{tableColumns.map((column) => <th key={column} className="p-3">{labels[column] || column}</th>)}</tr>
                     </thead>
                     <tbody className="divide-y divide-sand-200">
                       {filteredRecords.map((r, idx) => (
                         <tr key={idx} className="hover:bg-sand-50/60 transition-colors">
-                          <td className="p-3 font-semibold text-ink-900" dir="ltr">
-                            @{r.username}
-                          </td>
-                          <td className="p-3 text-sand-700">{r.displayName || "—"}</td>
-                          <td className="p-3 font-bold tabular-nums text-ink-900">
-                            {r.followers?.toLocaleString("en-US") || "0"}
-                          </td>
-                          <td className="p-3 tabular-nums text-sand-600">
-                            {r.following?.toLocaleString("en-US") || "0"}
-                          </td>
-                          <td className="p-3 tabular-nums text-sand-600">
-                            {r.likes?.toLocaleString("en-US") || "0"}
-                          </td>
-                          <td className="p-3 tabular-nums text-sand-600">
-                            {r.videosCount?.toLocaleString("en-US") || "0"}
-                          </td>
+                          {tableColumns.map((column) => {
+                            const value = r[column];
+                            const formatted = typeof value === "number" ? value.toLocaleString("en-US") : typeof value === "boolean" ? (value ? "نعم" : "لا") : value == null || value === "" ? "—" : String(value);
+                            return <td key={column} className={`p-3 ${typeof value === "number" ? "tabular-nums" : ""} text-sand-700`} dir={column === "username" ? "ltr" : undefined}>{formatted}</td>;
+                          })}
                         </tr>
                       ))}
                     </tbody>
@@ -159,9 +250,9 @@ export default function ResultsCanvas({
             {jobId ? (
               <div className="w-full space-y-4">
                 <div className="p-4 bg-white border border-sand-300 rounded-xl shadow-xs">
-                  <div className="text-sm font-bold text-ink-900 mb-1">تقرير استخراج الحساب المعتمد (PDF)</div>
+                  <div className="text-sm font-bold text-ink-900 mb-1">تقرير نتائج جمع البيانات (PDF)</div>
                   <div className="text-xs text-sand-500 mb-4">
-                    جاهز للمعاينة والمراجعة والطباعة الأكاديمية والتنفيذية.
+                    متاح للمعاينة والمراجعة والطباعة؛ ويعكس محتوى الملفات المولدة لهذا الطلب.
                   </div>
                   <button
                     onClick={() => onDownload("pdf")}
@@ -174,7 +265,7 @@ export default function ResultsCanvas({
               </div>
             ) : (
               <div className="text-xs text-sand-500">
-                يبدأ توليد تقرير PDF الموثق بمجرد اعتماد الخطة وبدء الاستخراج.
+                يبدأ توليد تقرير PDF بعد اكتمال طلب جمع البيانات.
               </div>
             )}
           </div>
@@ -190,10 +281,11 @@ export default function ResultsCanvas({
               rows={8}
               value={notesText}
               onChange={(e) => setNotesText(e.target.value)}
+              placeholder="اكتب ملخصًا للنتيجة أو توثيقًا ترغب بحفظه كنسخة جديدة…"
               className="w-full p-3 text-xs bg-white border border-sand-300 rounded-xl focus:outline-hidden focus:border-primary leading-relaxed"
             />
             <div className="text-3xs text-sand-500 text-left">
-              تُحفظ الملاحظات تلقائياً مع محادثتك وتُدمج في توثيق النتائج.
+              هذه الملاحظات مؤقتة على الشاشة ولا تُحفظ أو تُدمج تلقائياً في الملفات.
             </div>
           </div>
         )}
@@ -256,10 +348,9 @@ export default function ResultsCanvas({
                 <span>ملخص حقائق الاستخراج (Methodology Facts):</span>
               </div>
               <div className="space-y-1 text-sand-600 text-2xs">
-                <div>• المصدر: الحساب الرسمي على المنصة (@{profile?.username || "tiktok"})</div>
-                <div>• التاريخ المطلق: {new Date().toISOString().split("T")[0]}</div>
-                <div>• التغطية المحققة: 100% من الحقول المتاحة علناً</div>
-                <div>• إزالة التكرار: معتمد آلياً</div>
+                <div>• المصدر: بيانات الحساب العامة (@{profile?.username || "tiktok"})</div>
+                <div>• تاريخ الجمع: {profile?.collectedDate || records[0]?.extractedAt || "غير متاح"}</div>
+                <div>• عدد السجلات المعروضة: {records.length.toLocaleString("ar-EG")}</div>
               </div>
             </div>
 
