@@ -5,7 +5,7 @@ import Link from "next/link";
 import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
-import { PersonaType } from "@/functions/shared/personaConfigs";
+import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 
 import OnboardingModal from "./components/OnboardingModal";
@@ -44,29 +44,6 @@ interface ActiveJobState {
   events: JobEvent[];
 }
 
-const EXAMPLE_PROMPTS = [
-  {
-    title: "بروفايل حساب تيك توك",
-    prompt: "أريد بيانات الملف العام لحساب على تيك توك وإحصائياته العامة",
-    desc: "الخدمة المعتمدة المتاحة حالياً",
-  },
-  {
-    title: "منشورات منصة X (قريباً)",
-    prompt: "اجمع 100 تدوينة عن أبحاث الطاقة المتجددة من منصة X",
-    desc: "معاينة البدائل المعتمدة وتسجيل الطلب",
-  },
-  {
-    title: "مقاطع فيديو يوتيوب (قريباً)",
-    prompt: "استخرج بيانات مقاطع الفيديو الأكثر تفاعلاً لقناة تعليمية",
-    desc: "معاينة البدائل المعتمدة وتسجيل الطلب",
-  },
-  {
-    title: "استشارة واستفسار عن الخدمات",
-    prompt: "ما هي البيانات المتاحة التي يمكنني استخراجها لبحثي الأكاديمي؟",
-    desc: "استشارة استكشافية مع المساعد",
-  },
-];
-
 export default function ChatWorkspacePage() {
   const { user } = useUser();
   const [messages, setMessages] = useState<MessageItem[]>([]);
@@ -75,6 +52,7 @@ export default function ChatWorkspacePage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [userBalance, setUserBalance] = useState<number | null>(null);
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
+  const [enabledCapabilitySlugs, setEnabledCapabilitySlugs] = useState<string[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -105,7 +83,7 @@ export default function ChatWorkspacePage() {
         ]);
         if (res.documents.length > 0) {
           const prof: any = res.documents[0];
-          if (prof.persona) setUserPersona(prof.persona as PersonaType);
+          if (prof.persona) setUserPersona(getPersonaConfig(prof.persona).key);
           if (prof.onboardingCompleted === false) {
             setShowOnboarding(true);
           }
@@ -170,6 +148,53 @@ export default function ChatWorkspacePage() {
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEnabledCapabilities() {
+      if (!user) {
+        setEnabledCapabilitySlugs([]);
+        return;
+      }
+      try {
+        let jwtToken: string | undefined;
+        try {
+          jwtToken = (await account.createJWT()).jwt;
+        } catch {}
+        const headers: Record<string, string> = {};
+        if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
+        const response = await fetch("/api/chat/metadata", { headers });
+        const data = await response.json();
+        if (!cancelled && response.ok && data.success && Array.isArray(data.enabledCapabilitySlugs)) {
+          setEnabledCapabilitySlugs(data.enabledCapabilitySlugs.filter((slug: unknown): slug is string => typeof slug === "string"));
+        } else if (!cancelled) {
+          setEnabledCapabilitySlugs([]);
+        }
+      } catch {
+        if (!cancelled) setEnabledCapabilitySlugs([]);
+      }
+    }
+    loadEnabledCapabilities();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  async function handleChangePersona(persona: PersonaType) {
+    if (!user) throw new Error("يرجى تسجيل الدخول لتغيير التخصيص");
+    let jwtToken: string | undefined;
+    try {
+      jwtToken = (await account.createJWT()).jwt;
+    } catch {}
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
+    const response = await fetch("/api/onboarding", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ persona }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || "تعذر حفظ الشخصية");
+    setUserPersona(getPersonaConfig(data.profile?.persona ?? persona).key);
+  }
 
   // 4. Scroll to bottom
   useEffect(() => {
@@ -681,7 +706,7 @@ export default function ChatWorkspacePage() {
         onNewChat={handleStartNewChat}
         userBalance={userBalance}
         userPersona={userPersona}
-        onOpenOnboarding={() => setShowOnboarding(true)}
+        onChangePersona={handleChangePersona}
         isOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
       />
@@ -763,25 +788,30 @@ export default function ChatWorkspacePage() {
                 </p>
               </div>
 
-              {/* 4 Prompt Chips */}
+              {/* Persona examples are enabled only from the server's capability list. */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-right pt-4">
-                {EXAMPLE_PROMPTS.map((ex, idx) => (
+                {getPersonaWelcomeExamples(userPersona, enabledCapabilitySlugs).map((example) => example.available && example.prompt ? (
                   <button
-                    key={idx}
+                    key={example.key}
                     type="button"
                     onClick={() => {
-                      setInputText(ex.prompt);
+                      setInputText(example.prompt!);
                       inputRef.current?.focus();
                     }}
-                    className="p-3.5 bg-white hover:bg-sand-100/80 border border-sand-300 hover:border-sand-400 rounded-xl text-xs transition-all shadow-2xs group cursor-pointer text-right"
+                    className="min-h-11 p-3.5 bg-white hover:bg-sand-100/80 border border-sand-300 hover:border-sand-400 rounded-xl text-xs transition-colors shadow-2xs group cursor-pointer text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
                   >
-                    <div className="font-bold text-ink-900 group-hover:text-primary mb-1">
-                      {ex.title}
-                    </div>
-                    <div className="text-3xs text-sand-500 line-clamp-1">
-                      {ex.prompt}
-                    </div>
+                    <div className="font-bold text-ink-900 group-hover:text-primary mb-1">{example.title}</div>
+                    <div className="text-3xs text-sand-500 line-clamp-2">{example.prompt}</div>
                   </button>
+                ) : (
+                  <div
+                    key={example.key}
+                    aria-label={`${example.title}، غير متاح حالياً`}
+                    className="min-h-11 p-3.5 bg-sand-50 border border-sand-200 rounded-xl text-xs text-right"
+                  >
+                    <div className="font-semibold text-sand-700 mb-1">{example.title}</div>
+                    <div className="text-3xs text-sand-500">قريباً</div>
+                  </div>
                 ))}
               </div>
             </div>

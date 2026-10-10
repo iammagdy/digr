@@ -213,6 +213,9 @@ export class ChatHandler {
         : undefined,
       todayDate: new Date().toISOString().split("T")[0],
       userBalancePoints: userBalance,
+      conversationState: {
+        isFirstUserTurn: messagesContext.filter((message) => message.role === "user").length <= 1,
+      },
       conversationId,
       userId,
       totalConversationTokens: totalConvTokens,
