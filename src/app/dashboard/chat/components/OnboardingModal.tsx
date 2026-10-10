@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { PersonaType, PERSONA_CONFIGS } from "@/functions/shared/personaConfigs";
+import { PersonaType } from "@/functions/shared/personaConfigs";
 
 interface OnboardingModalProps {
   isOpen: boolean;
@@ -172,6 +172,7 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
                 {selectedPersona === "other" && (
                   <input
                     type="text"
+                    maxLength={256}
                     placeholder="وضح طبيعة دورك أو مجالك..."
                     value={otherPersonaText}
                     onChange={(e) => setOtherPersonaText(e.target.value)}
@@ -227,6 +228,7 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
                 </label>
                 <input
                   type="text"
+                  maxLength={256}
                   placeholder="مثال: علم الاجتماع الرقمي، الصحة العامة، التجارة الإلكترونية، الرياضة..."
                   value={topic}
                   onChange={(e) => setTopic(e.target.value)}
