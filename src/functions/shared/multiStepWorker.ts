@@ -17,6 +17,7 @@ import {
 } from "./resultReview";
 import { LlmClient } from "./llmClient";
 import { recordInitialArtifactVersion } from "./artifactVersions";
+import { applyGoodwillOutcome } from "./goodwillRefund";
 
 export interface WorkerStepInput {
   jobId: string;
@@ -51,6 +52,7 @@ export interface WorkerExecutionResult {
   reservedCredits: number;
   chargedCredits: number;
   refundCredits: number;
+  goodwillRefund?: { points: number; reasonAr?: string } | null;
   resultFiles?: {
     xlsxFileId: string;
     pdfFileId: string;
@@ -518,7 +520,7 @@ export async function executeMultiStepJob(
   const refundCredits = settlement.refundPoints;
 
   // 4. Release-First Completion Sequence in Ledger
-  await completeJobWithRelFirst(
+  const settlementResult = await completeJobWithRelFirst(
     tables,
     userId,
     jobId,
@@ -526,6 +528,13 @@ export async function executeMultiStepJob(
     chargedCredits,
     isCancelled ? "تسوية طلب ملغى جزئياً" : "تسوية واكتمال استخراج البيانات"
   );
+  const goodwillOutcome = settlementResult.charged
+    ? await applyGoodwillOutcome(tables, { userId, jobId, conversationId: input.conversationId, chargedPoints: chargedCredits, facts: runFacts }).catch(() => {
+        console.warn("[goodwill:OPTIONAL_SIDE_EFFECT_FAILED]");
+        return { status: "unavailable" as const, points: 0, reasonAr: undefined };
+      })
+    : { status: "no_refund" as const, points: 0 };
+
   // 5. Generate and Store Output Files (Excel, PDF, CSV, JSON)
   const dateStr = new Date().toISOString().slice(0, 10);
   const finalPayload: any = {
@@ -681,7 +690,7 @@ export async function executeMultiStepJob(
   });
 
   await emitProgress(
-    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${chargedCredits} نقطة، واستُرد ${refundCredits} نقطة من الحجز.`,
+    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${chargedCredits} نقطة، واستُرد ${refundCredits} نقطة من الحجز${goodwillOutcome.points ? `، وأُضيف رد حسن نية قدره ${goodwillOutcome.points} نقطة` : ""}.`,
     deliveredUnits,
     "info"
   );
@@ -694,6 +703,7 @@ export async function executeMultiStepJob(
     reservedCredits,
     chargedCredits,
     refundCredits,
+    goodwillRefund: goodwillOutcome.points ? { points: goodwillOutcome.points, reasonAr: goodwillOutcome.reasonAr } : null,
     resultFiles: {
       xlsxFileId,
       pdfFileId,
