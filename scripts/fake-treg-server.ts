@@ -76,7 +76,7 @@ export function startFakeTregServer(port: number = 4040): Promise<FakeTregServer
       }
 
       // Scenario 5: Normal TikTok Profile Response (200 OK)
-      const usernameParam = url.searchParams.get("username") || "mock_user";
+      const usernameParam = url.searchParams.get("uniqueId") || url.searchParams.get("username") || "mock_user";
 
       res.setHeader("X-Treg-Call-Id", `call_mock_ok_${Date.now()}`);
       res.setHeader("X-Treg-Cost-Micro", "1200"); // 1200 microUSD = $0.0012

@@ -8,7 +8,6 @@ import { executeTregCall } from "../../shared/tregClient";
 
 const workerPayloadSchema = z.object({
   jobId: z.string().min(1),
-  testScenario: z.string().optional(),
 });
 
 export default async ({ req, res, log, error }: any) => {
@@ -28,9 +27,15 @@ export default async ({ req, res, log, error }: any) => {
   try {
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
     const validated = workerPayloadSchema.parse(rawBody);
-    const { jobId, testScenario } = validated;
+    const { jobId } = validated;
 
     log(`[job-worker] Starting worker for job ${jobId}`);
+
+    // Verify TREG_LIVE is enabled
+    if (process.env.TREG_LIVE !== "true") {
+      log(`[job-worker] TREG_LIVE is not enabled on this worker.`);
+      return res.json({ success: false, error: "TREG_LIVE is not enabled" }, 403);
+    }
 
     // 1. Fetch Job from database
     let job: any;
@@ -97,9 +102,7 @@ export default async ({ req, res, log, error }: any) => {
 
     // 4. Execute upstream TREG call
     const params = typeof job.params === "string" ? JSON.parse(job.params || "{}") : job.params;
-    const maxCostMicro = Math.round((tmplPriv.maxCostUsd || 0.01) * 1_000_000);
-
-    log(`[job-worker] Calling TREG endpoint ${tmplPriv.tregEndpointId} with cap ${maxCostMicro} microUSD`);
+    log(`[job-worker] Calling TREG endpoint ${tmplPriv.tregEndpointId} with cap 0.05 USD`);
 
     const tregResult = await executeTregCall({
       endpointId: tmplPriv.tregEndpointId,
@@ -107,8 +110,7 @@ export default async ({ req, res, log, error }: any) => {
       params,
       userId: job.userId,
       jobId,
-      maxCostMicro,
-      testScenario,
+      routeMaxCostUsd: "0.05",
     });
 
     // 5. Record call in job_calls (server-only)
@@ -184,6 +186,29 @@ export default async ({ req, res, log, error }: any) => {
 
     // Prepare white-label result file
     const dateStr = new Date().toISOString().slice(0, 10);
+
+    let profileData: any = undefined;
+    if (job.templateSlug === "tiktok-profile") {
+      const userInfo = tregResult.data?.data?.userInfo;
+      const u = userInfo?.user || tregResult.data?.data?.user || {};
+      const s = userInfo?.stats || tregResult.data?.data?.stats || {};
+      const s2 = userInfo?.statsV2 || {};
+      profileData = {
+        uniqueId: u.uniqueId || "",
+        nickname: u.nickname || "",
+        signature: u.signature || "",
+        verified: Boolean(u.verified),
+        secUid: u.secUid || "",
+        followerCount: Number(s2.followerCount || s.followerCount || 0),
+        followingCount: Number(s2.followingCount || s.followingCount || 0),
+        heartCount: Number(s2.heartCount || s.heartCount || 0),
+        videoCount: Number(s2.videoCount || s.videoCount || 0),
+        avatarUrl: u.avatarLarger || u.avatarMedium || u.avatarThumb || "",
+        bioLink: u.bioLink?.link || "",
+      };
+    }
+
+    const cleanData = tregResult.data?.data || tregResult.data;
     const resultPayload = {
       metadata: {
         platform: "Digr Data Platform",
@@ -192,9 +217,11 @@ export default async ({ req, res, log, error }: any) => {
         template: job.templateSlug,
         jobId,
         collectedAt: new Date().toISOString(),
-        methodology: `تم جمع البيانات من مصدر عام متاح للجمهور بتاريخ ${dateStr}. إجمالي السجلات: 1. ملاحظة منهجية: هذه البيانات عامة ومتاحة علنًا، ولا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.`,
+        rowsCount: 1,
+        methodology: `تم استخراج البيانات من مصدر عام متاح للجمهور بتاريخ ${dateStr}. إجمالي السجلات: 1. ملاحظة منهجية: هذه البيانات عامة ومتاحة علنًا، ولا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.`,
       },
-      data: tregResult.data,
+      ...(profileData ? { profile: profileData } : {}),
+      data: cleanData,
     };
 
     const fileContentBuffer = Buffer.from(JSON.stringify(resultPayload, null, 2), "utf-8");

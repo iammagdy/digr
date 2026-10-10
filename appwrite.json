@@ -81,9 +81,7 @@
       "commands": "npm install",
       "path": "src/functions/job-worker",
       "events": [],
-      "execute": [
-        "users"
-      ],
+      "execute": [],
       "scopes": [
         "rows.read",
         "rows.write",

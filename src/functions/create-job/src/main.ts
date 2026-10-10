@@ -9,7 +9,6 @@ import {
 const createJobSchema = z.object({
   templateSlug: z.string().min(1, "معرّف القالب مطلوب"),
   params: z.record(z.any()).default({}),
-  testScenario: z.string().optional(),
 });
 
 export default async ({ req, res, log, error }: any) => {
@@ -172,7 +171,6 @@ export default async ({ req, res, log, error }: any) => {
         "job-worker",
         JSON.stringify({
           jobId,
-          testScenario: validated.testScenario,
         }),
         true // async
       );
