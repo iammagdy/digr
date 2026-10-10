@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST } from "../src/app/api/chat/route";
 import {
@@ -8,8 +8,11 @@ import {
   RateLimitConfig,
 } from "../src/functions/shared/rateLimits";
 import { LlmClient } from "../src/functions/shared/llmClient";
+import { Account } from "node-appwrite";
 
 describe("P1.5 Security & Rate Limits Suite", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   // ================= 1. Authentication & Identity Spoofing Tests =================
 
   it("should reject /api/chat request when no session or JWT is provided (401)", async () => {
@@ -36,7 +39,11 @@ describe("P1.5 Security & Rate Limits Suite", () => {
       body: JSON.stringify({ message: "مرحبا" }),
     });
 
+    const accountGet = vi
+      .spyOn(Account.prototype, "get")
+      .mockRejectedValue(new Error("invalid JWT"));
     const res = await POST(req);
+    expect(accountGet).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.success).toBe(false);
@@ -58,10 +65,13 @@ describe("P1.5 Security & Rate Limits Suite", () => {
         message: "استخرج بيانات",
       }),
     });
+    const accountGet = vi
+      .spyOn(Account.prototype, "get")
+      .mockResolvedValue({ $id: "user_a" } as any);
 
     const res = await POST(req);
-    // Fails authentication or spoofing
-    expect([401, 403]).toContain(res.status);
+    expect(accountGet).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.success).toBe(false);
   });
