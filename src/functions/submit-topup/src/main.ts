@@ -1,4 +1,4 @@
-import { Client, TablesDB, Storage, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Storage, Query, Permission, Role, ID } from "node-appwrite";
 import { z } from "zod";
 
 const submitTopupSchema = z.object({
@@ -31,27 +31,123 @@ export default async ({ req, res, log, error }: any) => {
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
     const validated = submitTopupSchema.parse(rawBody);
 
-    const topupId = ID.unique();
-    log(`Submitting topup ${topupId} for caller ${callerId}`);
+    // 2. Cap on pending top-ups per user (max 3)
+    const pendingTopups = await tables.listRows({
+      databaseId: "digr",
+      tableId: "topups",
+      queries: [
+        Query.equal("userId", callerId),
+        Query.equal("status", "pending"),
+        Query.limit(5),
+      ],
+    });
 
-    // If receipt file was uploaded, enforce owner + admin read permissions
-    if (validated.receiptFileId) {
-      try {
-        await storage.updateFile({
-          bucketId: "receipts",
-          fileId: validated.receiptFileId,
-          permissions: [
-            Permission.read(Role.user(callerId)),
-            Permission.read(Role.label("admin")),
-          ],
-        });
-        log(`✓ Updated receipt ${validated.receiptFileId} permissions to owner + admin`);
-      } catch (fileErr: any) {
-        log(`Warning: Could not update receipt file permissions: ${fileErr.message}`);
-      }
+    const pendingCount =
+      typeof pendingTopups.total === "number"
+        ? pendingTopups.total
+        : pendingTopups.rows?.length || 0;
+
+    if (pendingCount >= 3) {
+      return res.json(
+        {
+          success: false,
+          error: "لديك 3 طلبات شحن معلقة بالفعل. يرجى انتظار معالجتها قبل تقديم طلب جديد.",
+        },
+        400
+      );
     }
 
-    // Create row forcing userId = caller and status = pending
+    // 3. Unique reference check
+    const existingRef = await tables.listRows({
+      databaseId: "digr",
+      tableId: "topups",
+      queries: [
+        Query.equal("reference", validated.reference),
+        Query.limit(1),
+      ],
+    });
+
+    const refCount =
+      typeof existingRef.total === "number"
+        ? existingRef.total
+        : existingRef.rows?.length || 0;
+
+    if (refCount > 0) {
+      return res.json(
+        {
+          success: false,
+          error: "رقم العملية مستخدم مسبقاً في طلب آخر.",
+        },
+        400
+      );
+    }
+
+    // 4. Receipt verification (never trust client-supplied receiptFileId)
+    if (validated.receiptFileId) {
+      // 4a. Fetch file with server/dynamic key
+      let file: any;
+      try {
+        file = await storage.getFile("receipts", validated.receiptFileId);
+      } catch (fileErr: any) {
+        return res.json({ success: false, error: "ملف الإيصال غير موجود." }, 400);
+      }
+
+      // 4b. Verify file was uploaded by the caller (permissions contain user:<callerId>)
+      const filePerms: string[] = file.$permissions || file.permissions || [];
+      const isOwner = filePerms.some((p: string) => p.includes(`user:${callerId}`));
+
+      if (!isOwner) {
+        log(`Security Alert: Caller ${callerId} attempted to submit unowned receipt ${validated.receiptFileId}`);
+        return res.json(
+          {
+            success: false,
+            error: "ملف الإيصال المحدد غير مملوك للمستخدم الحالي.",
+          },
+          403
+        );
+      }
+
+      // 4c. Verify no other top-up already references this receipt
+      const existingReceipt = await tables.listRows({
+        databaseId: "digr",
+        tableId: "topups",
+        queries: [
+          Query.equal("receiptFileId", validated.receiptFileId),
+          Query.limit(1),
+        ],
+      });
+
+      const receiptCount =
+        typeof existingReceipt.total === "number"
+          ? existingReceipt.total
+          : existingReceipt.rows?.length || 0;
+
+      if (receiptCount > 0) {
+        return res.json(
+          {
+            success: false,
+            error: "تم استخدام هذا الإيصال مسبقاً في طلب شحن آخر.",
+          },
+          400
+        );
+      }
+
+      // 4d. ONLY after all validations pass, set final permissions: owner read + admin-label read
+      await storage.updateFile({
+        bucketId: "receipts",
+        fileId: validated.receiptFileId,
+        permissions: [
+          Permission.read(Role.user(callerId)),
+          Permission.read(Role.label("admin")),
+        ],
+      });
+      log(`✓ Updated receipt ${validated.receiptFileId} permissions to owner (${callerId}) + admin`);
+    }
+
+    // 5. Create topup row forcing userId = caller and status = pending
+    const topupId = ID.unique();
+    log(`Creating topup ${topupId} for caller ${callerId}`);
+
     const row = await tables.createRow({
       databaseId: "digr",
       tableId: "topups",
@@ -78,6 +174,9 @@ export default async ({ req, res, log, error }: any) => {
   } catch (err: any) {
     if (err instanceof z.ZodError) {
       return res.json({ success: false, error: err.errors[0]?.message || "بيانات غير صالحة" }, 400);
+    }
+    if (err.code === 409) {
+      return res.json({ success: false, error: "رقم العملية أو الإيصال مستخدم مسبقاً." }, 400);
     }
     error(`Submit topup failed: ${err.message}`);
     return res.json({ success: false, error: "حدث خطأ أثناء إرسال طلب الشحن" }, 500);

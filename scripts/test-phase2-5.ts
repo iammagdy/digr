@@ -78,6 +78,7 @@ async function runPhase25Tests() {
   let userBId = "";
   let adminId = "";
   let topupId = "";
+  const extraTopupIds: string[] = [];
   let receiptFileId = "";
   const callSeedId = `call_${timestamp}`;
   const intSeedId = `int_${timestamp}`;
@@ -172,6 +173,32 @@ async function runPhase25Tests() {
       console.log(`  ✓ Client permission widening correctly blocked (${code} ${err.type || "unauthorized"})`);
     }
 
+    // Test: User B attempts to submit User A's receiptFileId (must be rejected with 403, permissions unchanged)
+    console.log("  • Testing User B attempting to submit User A's receiptFileId...");
+    const functionsB = new ClientFunctions(clientB);
+    const stolenSubmitExec = await functionsB.createExecution(
+      "submit-topup",
+      JSON.stringify({
+        amountEgp: 100,
+        reference: `STOLEN-${timestamp}`,
+        receiptFileId: receiptFileId,
+      }),
+      false
+    );
+    console.log(`    ✓ Stolen receipt execution status=${stolenSubmitExec.status}, HTTP=${stolenSubmitExec.responseStatusCode}`);
+    if (stolenSubmitExec.responseStatusCode !== 403) {
+      throw new Error(`Expected HTTP 403 when User B submits User A's receipt, got ${stolenSubmitExec.responseStatusCode}: ${stolenSubmitExec.responseBody}`);
+    }
+    // Verify User A's receipt file permissions remain unchanged (owner only, NOT widened to admin or User B)
+    const fileAfterAttempt = await serverStorage.getFile("receipts", receiptFileId);
+    const permsAfter = fileAfterAttempt.$permissions || fileAfterAttempt.permissions || [];
+    console.log(`    ✓ User A receipt permissions intact (owner-only):`, permsAfter);
+    const hasAdmin = permsAfter.some((p: string) => p.includes("label:admin"));
+    const hasUserB = permsAfter.some((p: string) => p.includes(userBId));
+    if (hasAdmin || hasUserB) {
+      throw new Error("Security leak: User A's receipt permissions were altered by User B's failed submission!");
+    }
+
     // =========================================================================
     // SECTION 3: Deployed submit-topup & approve-topup E2E Execution
     // =========================================================================
@@ -236,6 +263,88 @@ async function runPhase25Tests() {
     // (c) Admin-label user can download
     const dlAdmin = await fetchDownload(storageAdmin, "receipts", receiptFileId, jwtAdmin);
     console.log(`    ✓ (c) Admin user download: SUCCESS (${dlAdmin.length} bytes)`);
+
+    // 3b. Duplicate receipt submission by same user (must be rejected with 400)
+    console.log("  • Testing duplicate receiptFileId submission by same user...");
+    const dupReceiptExec = await functionsA.createExecution(
+      "submit-topup",
+      JSON.stringify({
+        amountEgp: 150,
+        reference: `DIFF-REF-${timestamp}`,
+        receiptFileId: receiptFileId,
+      }),
+      false
+    );
+    console.log(`    ✓ Duplicate receipt submission HTTP=${dupReceiptExec.responseStatusCode}`);
+    if (dupReceiptExec.responseStatusCode !== 400) {
+      throw new Error(`Expected HTTP 400 for duplicate receipt, got ${dupReceiptExec.responseStatusCode}: ${dupReceiptExec.responseBody}`);
+    }
+
+    // 3c. Duplicate reference submission (must be rejected with 400)
+    console.log("  • Testing duplicate reference submission...");
+    const dupRefExec = await functionsA.createExecution(
+      "submit-topup",
+      JSON.stringify({
+        amountEgp: 150,
+        reference: "INSTA-E2E-LIVE",
+      }),
+      false
+    );
+    console.log(`    ✓ Duplicate reference submission HTTP=${dupRefExec.responseStatusCode}`);
+    if (dupRefExec.responseStatusCode !== 400) {
+      throw new Error(`Expected HTTP 400 for duplicate reference, got ${dupRefExec.responseStatusCode}: ${dupRefExec.responseBody}`);
+    }
+
+    // 3d. Pending top-ups cap (max 3 per user)
+    console.log("  • Testing pending top-ups cap (max 3 per user)...");
+    // Currently User A has 1 pending top-up (topupId).
+    // Submit 2nd pending top-up:
+    const topup2Exec = await functionsA.createExecution(
+      "submit-topup",
+      JSON.stringify({
+        amountEgp: 100,
+        reference: `REF-PENDING-2-${timestamp}`,
+      }),
+      false
+    );
+    if (topup2Exec.responseStatusCode !== 200) {
+      throw new Error(`2nd topup failed: ${topup2Exec.responseBody}`);
+    }
+    const topup2Id = JSON.parse(topup2Exec.responseBody).topupId;
+    extraTopupIds.push(topup2Id);
+    console.log(`    ✓ 2nd pending topup created: ${topup2Id}`);
+
+    // Submit 3rd pending top-up:
+    const topup3Exec = await functionsA.createExecution(
+      "submit-topup",
+      JSON.stringify({
+        amountEgp: 100,
+        reference: `REF-PENDING-3-${timestamp}`,
+      }),
+      false
+    );
+    if (topup3Exec.responseStatusCode !== 200) {
+      throw new Error(`3rd topup failed: ${topup3Exec.responseBody}`);
+    }
+    const topup3Id = JSON.parse(topup3Exec.responseBody).topupId;
+    extraTopupIds.push(topup3Id);
+    console.log(`    ✓ 3rd pending topup created: ${topup3Id}`);
+
+    // Attempt 4th pending top-up (must be rejected):
+    const topup4Exec = await functionsA.createExecution(
+      "submit-topup",
+      JSON.stringify({
+        amountEgp: 100,
+        reference: `REF-PENDING-4-${timestamp}`,
+      }),
+      false
+    );
+    console.log(`    ✓ 4th pending topup submission HTTP=${topup4Exec.responseStatusCode}`);
+    if (topup4Exec.responseStatusCode !== 400) {
+      throw new Error(`Expected HTTP 400 when exceeding 3 pending topups, got ${topup4Exec.responseStatusCode}: ${topup4Exec.responseBody}`);
+    }
+    const errBody = JSON.parse(topup4Exec.responseBody);
+    console.log(`    ✓ Rejection message confirmed: "${errBody.error}"`);
 
     // Admin Approval via Deployed approve-topup Function
     console.log("\n  • Admin calling live approve-topup with confirmedAmountEgp = 250...");
@@ -380,6 +489,9 @@ async function runPhase25Tests() {
     if (topupId) {
       await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "credit_ledger", rowId: `top_${topupId}` }).catch(() => {});
       await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "topups", rowId: topupId }).catch(() => {});
+    }
+    for (const id of extraTopupIds) {
+      await serverTables.deleteRow({ databaseId: DATABASE_ID, tableId: "topups", rowId: id }).catch(() => {});
     }
     if (receiptFileId) await serverStorage.deleteFile("receipts", receiptFileId).catch(() => {});
     if (userAId) {

@@ -47,6 +47,27 @@ async function ensureTable(
   try {
     const existing = await tables.getTable({ databaseId: DATABASE_ID, tableId });
     console.log(`✓ Table '${tableId}' already exists.`);
+
+    // Ensure all requested indexes exist
+    try {
+      const existingIndexes = await tables.listIndexes({ databaseId: DATABASE_ID, tableId });
+      const indexKeys = new Set(existingIndexes.indexes.map((idx: any) => idx.key));
+      for (const idx of indexes) {
+        if (!indexKeys.has(idx.key)) {
+          await tables.createIndex({
+            databaseId: DATABASE_ID,
+            tableId,
+            key: idx.key,
+            type: idx.type,
+            columns: idx.attributes,
+          });
+          console.log(`  + Created missing index '${idx.key}' on table '${tableId}'.`);
+        }
+      }
+    } catch (idxErr: any) {
+      console.warn(`  ! Note on checking indexes for ${tableId}:`, idxErr.message);
+    }
+
     return existing;
   } catch (err: any) {
     if (err.code === 404) {
@@ -215,6 +236,8 @@ async function setup() {
     [
       { key: "userId_idx", type: "key", attributes: ["userId"] },
       { key: "status_idx", type: "key", attributes: ["status"] },
+      { key: "reference_idx", type: "unique", attributes: ["reference"] },
+      { key: "receiptFileId_idx", type: "unique", attributes: ["receiptFileId"] },
     ]
   );
 

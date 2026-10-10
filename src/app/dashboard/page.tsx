@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { client } from "@/lib/appwrite";
+import { useState, useCallback, useEffect } from "react";
+import { client, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
-import { AppwriteException } from "appwrite";
+import { AppwriteException, Query } from "appwrite";
 
 export default function DashboardPage() {
   const { user } = useUser();
@@ -11,6 +11,42 @@ export default function DashboardPage() {
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [pingMessage, setPingMessage] = useState("");
+  const [balance, setBalance] = useState<number | null>(null);
+  const [balanceLoading, setBalanceLoading] = useState(true);
+
+  const fetchBalance = useCallback(async () => {
+    if (!user) return;
+    setBalanceLoading(true);
+    try {
+      let total = 0;
+      let offset = 0;
+      const limit = 100;
+      while (true) {
+        const res = await databases.listDocuments("digr", "credit_ledger", [
+          Query.equal("userId", user.$id),
+          Query.limit(limit),
+          Query.offset(offset),
+        ]);
+        for (const doc of res.documents) {
+          total += (doc.delta as number) || 0;
+        }
+        if (res.documents.length < limit) {
+          break;
+        }
+        offset += limit;
+      }
+      setBalance(total);
+    } catch (err) {
+      console.error("Failed to fetch balance:", err);
+      setBalance(0);
+    } finally {
+      setBalanceLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    fetchBalance();
+  }, [fetchBalance]);
 
   const sendPing = useCallback(async () => {
     if (pingStatus === "loading") return;
@@ -40,12 +76,14 @@ export default function DashboardPage() {
         <p className="mt-1 text-sm text-sand-500">لوحة التحكم</p>
       </div>
 
-      {/* Stats cards — balance will be wired in Phase 2 */}
+      {/* Stats cards */}
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="rounded-xl border border-sand-200 bg-white p-5">
           <p className="text-xs font-medium text-sand-500">رصيدك</p>
-          <p className="mt-1 text-2xl font-bold text-sand-900">—</p>
-          <p className="mt-1 text-xs text-sand-400">يتوفر في المرحلة القادمة</p>
+          <p className="mt-1 text-2xl font-bold text-sand-900">
+            {balanceLoading ? "..." : `${balance ?? 0} رصيد`}
+          </p>
+          <p className="mt-1 text-xs text-sand-400">الرصيد الفعلي المتاح</p>
         </div>
         <div className="rounded-xl border border-sand-200 bg-white p-5">
           <p className="text-xs font-medium text-sand-500">طلبات نشطة</p>

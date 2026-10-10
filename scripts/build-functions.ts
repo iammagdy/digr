@@ -21,7 +21,7 @@ async function bundleFunctions() {
       outfile: path.join(outdir, "index.js"),
       bundle: true,
       platform: "node",
-      target: "node18",
+      target: "node22",
       format: "cjs",
     });
 

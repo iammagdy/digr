@@ -5,7 +5,7 @@
     {
       "$id": "on-user-create",
       "name": "on-user-create",
-      "runtime": "node-18.0",
+      "runtime": "node-22",
       "entrypoint": "dist/index.js",
       "commands": "npm install",
       "path": "src/functions/on-user-create",
@@ -21,7 +21,7 @@
     {
       "$id": "submit-topup",
       "name": "submit-topup",
-      "runtime": "node-18.0",
+      "runtime": "node-22",
       "entrypoint": "dist/index.js",
       "commands": "npm install",
       "path": "src/functions/submit-topup",
@@ -30,7 +30,9 @@
         "users"
       ],
       "scopes": [
+        "rows.read",
         "rows.write",
+        "files.read",
         "files.write"
       ],
       "timeout": 15
@@ -38,7 +40,7 @@
     {
       "$id": "approve-topup",
       "name": "approve-topup",
-      "runtime": "node-18.0",
+      "runtime": "node-22",
       "entrypoint": "dist/index.js",
       "commands": "npm install",
       "path": "src/functions/approve-topup",

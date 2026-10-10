@@ -8,6 +8,7 @@ const hasConfirm = process.argv.includes("--confirm");
 if (!hasConfirm) {
   console.error("🛑 SAFETY GUARD ACTIVATED:");
   console.error("This script will only delete accounts ending strictly in '@digr.test' and their associated data.");
+  console.error("Real accounts (including magdy.saber@outlook.com) and their data are strictly protected.");
   console.error("To proceed, you must explicitly pass the --confirm flag:");
   console.error("  npx tsx scripts/cleanup-all.ts --confirm\n");
   process.exit(1);
@@ -26,11 +27,20 @@ async function cleanSafe() {
   console.log("🛡️ Starting SAFE cleanup for test accounts ending strictly in '@digr.test'...\n");
 
   const userList = await u.list();
+  const realUserIds = new Set<string>();
+
+  for (const user of userList.users) {
+    if (!user.email.toLowerCase().endsWith("@digr.test")) {
+      realUserIds.add(user.$id);
+      console.log(`  🔒 Protected Real User: ${user.$id} (${user.email})`);
+    }
+  }
+
   const testUsers = userList.users.filter((user) =>
     user.email.toLowerCase().endsWith("@digr.test")
   );
 
-  console.log(`Scanned ${userList.total} total users. Found ${testUsers.length} test accounts (@digr.test).`);
+  console.log(`\nFound ${testUsers.length} test accounts (@digr.test) to clean.`);
 
   for (const testUser of testUsers) {
     const userId = testUser.$id;
@@ -44,7 +54,6 @@ async function cleanSafe() {
         queries: [Query.equal("userId", userId)],
       });
       for (const job of jobs.rows) {
-        // Delete child events
         const events = await t.listRows({
           databaseId: "digr",
           tableId: "job_events",
@@ -53,7 +62,6 @@ async function cleanSafe() {
         for (const ev of events.rows) {
           await t.deleteRow({ databaseId: "digr", tableId: "job_events", rowId: ev.$id });
         }
-        // Delete result file if any
         if ((job as any).resultFileId) {
           await s.deleteFile("results", (job as any).resultFileId).catch(() => {});
         }
@@ -75,7 +83,6 @@ async function cleanSafe() {
         if ((top as any).receiptFileId) {
           await s.deleteFile("receipts", (top as any).receiptFileId).catch(() => {});
         }
-        // Delete ledger entry top_<id> if exists
         await t.deleteRow({ databaseId: "digr", tableId: "credit_ledger", rowId: `top_${top.$id}` }).catch(() => {});
         await t.deleteRow({ databaseId: "digr", tableId: "topups", rowId: top.$id });
         console.log(`  ✓ Removed test topup ${top.$id}`);
@@ -106,7 +113,21 @@ async function cleanSafe() {
     console.log(`  ✓ Test user ${userId} (${testUser.email}) safely removed.`);
   }
 
-  console.log("\n✅ Safe cleanup completed. No non-test users or unrelated data were touched.");
+  // 6. Check for orphaned profiles that do NOT belong to any real user
+  try {
+    const allProfiles = await t.listRows({ databaseId: "digr", tableId: "profiles" });
+    for (const prof of allProfiles.rows) {
+      if (!realUserIds.has(prof.$id)) {
+        // Orphaned profile from deleted test user
+        await t.deleteRow({ databaseId: "digr", tableId: "profiles", rowId: prof.$id });
+        console.log(`  ✓ Removed orphaned test profile: ${prof.$id}`);
+      }
+    }
+  } catch (e: any) {
+    console.warn(`  ! Note on profiles check: ${e.message}`);
+  }
+
+  console.log("\n✅ Safe cleanup completed. No real users or real user data were touched.");
 }
 
 cleanSafe().catch(console.error);

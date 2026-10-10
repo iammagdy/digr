@@ -68,8 +68,8 @@ export default function DashboardLayout({
           <div className="flex items-center gap-4">
             <span className="text-sm text-sand-500">{user.name}</span>
             <button
-              onClick={() => {
-                logout();
+              onClick={async () => {
+                await logout();
                 router.push("/");
               }}
               className="text-sm text-sand-400 transition-colors hover:text-danger"
