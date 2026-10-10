@@ -87,6 +87,19 @@ async function ensureTable(
   }
 }
 
+async function ensureOptionalIntegerColumn(tableId: string, key: string, defaultValue: number, min: number, max: number) {
+  const existing = await tables.listColumns({ databaseId: DATABASE_ID, tableId });
+  if (existing.columns.some((column: any) => column.key === key)) return;
+  try {
+    await tables.createIntegerColumn({ databaseId: DATABASE_ID, tableId, key, required: false, min, max, xdefault: defaultValue });
+    console.log(`  + Created optional policy column '${key}' on '${tableId}'.`);
+  } catch (error: any) {
+    if (error.code !== 409) throw error;
+    const refreshed = await tables.listColumns({ databaseId: DATABASE_ID, tableId });
+    if (!refreshed.columns.some((column: any) => column.key === key)) throw error;
+  }
+}
+
 async function ensureBucket(
   id: string,
   name: string,
@@ -452,12 +465,19 @@ async function setup() {
       { key: "usdToEgp", type: "double", required: true },
       { key: "markup", type: "double", required: true },
       { key: "minMarginThreshold", type: "double", required: true },
+      { key: "autoRefundMaxPoints", type: "integer", required: false, default: 100 },
+      { key: "autoRefundMonthlyCountCap", type: "integer", required: false, default: 3 },
+      { key: "autoRefundMonthlyPointsCap", type: "integer", required: false, default: 300 },
       { key: "updatedAt", type: "datetime", required: true },
     ],
     [
       { key: "key_idx", type: "unique", attributes: ["key"] },
     ]
   );
+
+  await ensureOptionalIntegerColumn("settings", "autoRefundMaxPoints", 100, 0, 1000);
+  await ensureOptionalIntegerColumn("settings", "autoRefundMonthlyCountCap", 3, 0, 10);
+  await ensureOptionalIntegerColumn("settings", "autoRefundMonthlyPointsCap", 300, 0, 3000);
 
   await ensureTable(
     "job_calls",
@@ -477,6 +497,35 @@ async function setup() {
     ],
     [
       { key: "jobId_idx", type: "key", attributes: ["jobId"] },
+    ]
+  );
+
+  await ensureTable(
+    "notifications",
+    "Notifications and Goodwill Reviews",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "jobId", type: "varchar", size: 36, required: false },
+      { key: "conversationId", type: "varchar", size: 36, required: false },
+      { key: "kind", type: "enum", elements: ["auto_refund", "review_queue", "customer_notice", "refund_slot"], required: true },
+      { key: "status", type: "enum", elements: ["unread", "read", "pending", "reserved", "applied", "resolved"], required: true, default: "unread" },
+      { key: "titleAr", type: "varchar", size: 256, required: false },
+      { key: "bodyAr", type: "text", required: false },
+      { key: "delta", type: "integer", required: false },
+      { key: "reasonCode", type: "varchar", size: 128, required: false },
+      { key: "customerCategory", type: "enum", elements: ["data_type", "period", "count", "quality", "other"], required: false },
+      { key: "customerDetails", type: "varchar", size: 512, required: false },
+      { key: "monthKey", type: "varchar", size: 7, required: false },
+      { key: "slotNumber", type: "integer", required: false },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "user_status_idx", type: "key", attributes: ["userId", "status"] },
+      { key: "kind_status_idx", type: "key", attributes: ["kind", "status"] },
+      { key: "job_kind_idx", type: "key", attributes: ["jobId", "kind"] },
+      { key: "month_slot_idx", type: "key", attributes: ["userId", "kind", "monthKey"] },
     ]
   );
 
@@ -572,8 +621,21 @@ async function setup() {
     usdToEgp: 50.0,
     markup: 1.3,
     minMarginThreshold: 0.2,
+    autoRefundMaxPoints: 100,
+    autoRefundMonthlyCountCap: 3,
+    autoRefundMonthlyPointsCap: 300,
     updatedAt: now,
   });
+
+  const settingsRow: any = await tables.getRow({ databaseId: DATABASE_ID, tableId: "settings", rowId: "pricing" });
+  const goodwillDefaults = { autoRefundMaxPoints: 100, autoRefundMonthlyCountCap: 3, autoRefundMonthlyPointsCap: 300 };
+  const missingGoodwillSettings: Record<string, number> = {};
+  for (const [key, defaultValue] of Object.entries(goodwillDefaults)) {
+    if (typeof settingsRow[key] !== "number" || !Number.isFinite(settingsRow[key])) missingGoodwillSettings[key] = defaultValue;
+  }
+  if (Object.keys(missingGoodwillSettings).length) {
+    await tables.updateRow({ databaseId: DATABASE_ID, tableId: "settings", rowId: "pricing", data: { ...missingGoodwillSettings, updatedAt: now } });
+  }
 
   await ensureRow("templates", "tiktok-profile", {
     slug: "tiktok-profile",

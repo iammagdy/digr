@@ -14,6 +14,7 @@ import { parseStoredPlan } from "../../shared/planManager";
 import { buildFallbackReview, buildNormalizedRequestSpec, computeRunFacts, parseNormalizedRequestSpec, type NormalizedRequestSpec } from "../../shared/resultReview";
 import { LlmClient } from "../../shared/llmClient";
 import { recordInitialArtifactVersion } from "../../shared/artifactVersions";
+import { applyGoodwillOutcome } from "../../shared/goodwillRefund";
 
 const workerPayloadSchema = z.object({
   jobId: z.string().min(1),
@@ -363,6 +364,13 @@ export default async ({ req, res, log, error }: any) => {
       log(`[job-worker] Warning: rel_${jobId} already existed (job was already released/cancelled). Aborting.`);
       return res.json({ success: false, error: "Job was already released or timed out" }, 200);
     }
+    const goodwillOutcome = completion.charged
+        ? await applyGoodwillOutcome(tables, { userId: job.userId, jobId, conversationId: job.conversationId, chargedPoints: completion.finalCharged, facts: runFacts }).catch(() => {
+          log("[goodwill:OPTIONAL_SIDE_EFFECT_FAILED]");
+          return { status: "unavailable" as const, points: 0, reasonAr: undefined };
+        })
+      : { status: "no_refund" as const, points: 0 };
+
     // 9. Update Job row to status: done
     const nowDone = new Date().toISOString();
     await tables.updateRow({
@@ -385,7 +393,7 @@ export default async ({ req, res, log, error }: any) => {
       rowId: ID.unique(),
       data: {
         jobId,
-        textAr: "تم اكتمال جمع البيانات بنجاح وإنشاء ملف النتائج",
+        textAr: `تم اكتمال جمع البيانات بنجاح وإنشاء ملف النتائج${goodwillOutcome.points ? `، وأُضيف رد حسن نية قدره ${goodwillOutcome.points} نقطة` : ""}`,
         count: 1,
         kind: "info",
         createdAt: nowDone,
@@ -404,6 +412,7 @@ export default async ({ req, res, log, error }: any) => {
         jobId,
         status: "done",
         chargedCredits,
+        goodwillRefund: goodwillOutcome.points ? { points: goodwillOutcome.points, reasonAr: goodwillOutcome.reasonAr } : null,
         rowsCollected: 1,
         resultFileId,
       },

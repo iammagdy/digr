@@ -59,6 +59,18 @@ export async function GET(
       return NextResponse.json({ success: false, error: "غير مصرح بعرض هذا الطلب." }, { status: 403 });
     }
 
+    let goodwillRefund: { points: number; reasonAr: string } | null = null;
+    try {
+      const refundRow: any = await tables.getRow({ databaseId: "digr", tableId: "credit_ledger", rowId: `gwl_${jobId}` });
+      if (refundRow.userId === verifiedUserId && refundRow.jobId === jobId && refundRow.type === "adjust" && Number(refundRow.delta) > 0) {
+        const note = typeof refundRow.note === "string" ? refundRow.note : "";
+        goodwillRefund = {
+          points: Math.floor(Number(refundRow.delta)),
+          reasonAr: note.replace(/^رد حسن نية:\s*/, "").slice(0, 480) || "مؤشر نتيجة جوهري",
+        };
+      }
+    } catch { /* no goodwill adjustment is a normal state */ }
+
     // 3. Read JSON result from server-only job_data bucket (with fallback to results for old jobs)
     try {
       let latestArtifactVersion: any = null;
@@ -157,6 +169,7 @@ export async function GET(
         rows: cleanRows,
         chargedCredits: jobDoc.chargedCredits,
         finishedAt: jobDoc.finishedAt,
+        goodwillRefund,
         review,
         artifactVersion: latestArtifactVersion ? {
           id: latestArtifactVersion.$id,
@@ -200,6 +213,7 @@ export async function GET(
         profile: null,
         rows: [],
         review: unavailableReview,
+        goodwillRefund,
         runFacts: { severity: "warning", delivered: registeredRows, requested: null, findings: [] },
         dataAvailable: false,
       });
