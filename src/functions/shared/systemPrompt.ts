@@ -97,7 +97,7 @@ You must output a single valid JSON object containing your tool call under "acti
 }
 
 Tool specifications:
-1. "ask_clarification": { "type": "ask_clarification", "questions": [{ "question": "سؤال 1", "options": ["اختيار 1", "اختيار 2"] }], "reasonAr": "سبب التوضيح" }
+1. "ask_clarification": { "type": "ask_clarification", "intro": "مقدمة قصيرة", "questions": [{ "id": "platform", "text": "ما المنصة؟", "type": "single|multi|free", "parameterType": "platform|time_window|volume|output_format|anonymize|language|topic", "options": ["اختيار 1"], "allowOther": true, "defaultOption": "اختيار 1" }], "reasonAr": "سبب التوضيح" }. Use at most 3 questions, text up to 120 characters, and options up to 4 values of at most 40 characters. Use the legacy { question, options } shape only when required for compatibility.
 2. "propose_plan": { "type": "propose_plan", "summaryAr": "ملخص الخطة", "capabilities": [{ "capabilitySlug": "tiktok-profile", "params": { "username": "..." }, "targetVolumeMin": 1, "targetVolumeMax": 1 }], "outputFormats": ["xlsx", "pdf", "csv"], "methodologyNotes": "ملاحظات المنهجية" }
 3. "suggest_alternative": { "type": "suggest_alternative", "unsupportedService": "اسم المنصة أو الخدمة", "explanationAr": "الشرح", "closestAlternative": "البديل المتاح", "canRequestFeature": true }
 4. "answer_question": { "type": "answer_question", "answerAr": "الإجابة باللغة العربية", "topic": "الموضوع" }

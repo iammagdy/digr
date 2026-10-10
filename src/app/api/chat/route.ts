@@ -5,6 +5,10 @@ import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
 } from "../../../functions/shared/rateLimits";
+import {
+  formatStructuredClarificationAnswers,
+  validateStructuredClarificationAnswers,
+} from "../../../functions/shared/clarification";
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
@@ -21,12 +25,24 @@ const chatHandler = new ChatHandler(tables);
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { message, conversationId } = body;
+    const { conversationId } = body;
+    const structuredAnswers = body.clarificationAnswers === undefined
+      ? null
+      : validateStructuredClarificationAnswers(body.clarificationAnswers);
+    if (body.clarificationAnswers !== undefined && !structuredAnswers) {
+      return NextResponse.json(
+        { success: false, error: "إجابات الاستكشاف غير مكتملة أو غير صالحة" },
+        { status: 400 },
+      );
+    }
+    const message = structuredAnswers
+      ? formatStructuredClarificationAnswers(structuredAnswers)
+      : body.message;
 
     // Validate message content
-    if (!message || typeof message !== "string" || message.trim().length === 0) {
+    if (!message || typeof message !== "string" || message.trim().length === 0 || message.length > 4000) {
       return NextResponse.json(
-        { success: false, error: "نص الرسالة مطلوب" },
+        { success: false, error: "نص الرسالة مطلوب ويجب ألا يتجاوز 4000 حرف" },
         { status: 400 }
       );
     }
