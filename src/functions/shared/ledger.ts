@@ -92,14 +92,20 @@ export async function releaseCredits(
 
 /**
  * Creates a deterministic charge entry: ID = chg_<jobId>
+ * Capped at reservedCredits if provided.
  */
 export async function chargeCredits(
   tables: TablesDB,
   userId: string,
   jobId: string,
   amount: number,
+  reservedCredits?: number,
   note?: string
 ) {
+  let finalAmount = Math.abs(amount);
+  if (reservedCredits !== undefined && reservedCredits !== null) {
+    finalAmount = Math.min(finalAmount, Math.abs(reservedCredits));
+  }
   const rowId = `chg_${jobId}`;
   return await tables.createRow({
     databaseId: DATABASE_ID,
@@ -107,7 +113,7 @@ export async function chargeCredits(
     rowId,
     data: {
       userId,
-      delta: -Math.abs(amount),
+      delta: -finalAmount,
       type: "charge",
       jobId,
       note: note || "خصم تكلفة الطلب الفعلية",
@@ -115,6 +121,63 @@ export async function chargeCredits(
     },
     permissions: [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))],
   });
+}
+
+/**
+ * Executes the rel-first completion sequence:
+ * 1. Create rel_<jobId> (+reserve)
+ *    If rel_ fails with 409 Conflict, abort without charging (already settled/refunded).
+ * 2. If rel_ succeeded, create chg_<jobId> (-chargedCredits, capped at reservedCredits).
+ */
+export async function completeJobWithRelFirst(
+  tables: TablesDB,
+  userId: string,
+  jobId: string,
+  reservedCredits: number,
+  chargedCredits: number,
+  note?: string
+): Promise<{ released: boolean; charged: boolean; finalCharged: number }> {
+  const finalCharged = Math.min(Math.abs(reservedCredits), Math.max(0, Math.abs(chargedCredits)));
+
+  // 1. Release first
+  try {
+    await releaseCredits(tables, userId, jobId, reservedCredits, note || "إلغاء حجز الرصيد عند اكتمال الطلب");
+  } catch (err: any) {
+    if (err.code === 409 || err.status === 409) {
+      return { released: false, charged: false, finalCharged: 0 };
+    }
+    throw err;
+  }
+
+  // 2. Charge delivered credits (only if release succeeded)
+  await chargeCredits(tables, userId, jobId, finalCharged, reservedCredits, note || "خصم تكلفة الطلب الفعلية");
+  return { released: true, charged: true, finalCharged };
+}
+
+/**
+ * Attempts to reserve credits for a job.
+ * If user balance becomes negative, immediately compensates by creating rel_<jobId>
+ * and throws an Error.
+ */
+export async function reserveWithBalanceCheck(
+  tables: TablesDB,
+  userId: string,
+  jobId: string,
+  amount: number
+): Promise<{ success: boolean; newBalance: number }> {
+  // 1. Reserve first
+  await reserveCredits(tables, userId, jobId, amount);
+
+  // 2. Recompute balance across all pages
+  const currentBalance = await calculateBalance(tables, userId);
+
+  // 3. If negative, compensate immediately and fail
+  if (currentBalance < 0) {
+    await releaseCredits(tables, userId, jobId, amount, "إلغاء الحجز لعدم كفاية الرصيد");
+    throw new Error(`Insufficient credits: balance would be ${currentBalance}`);
+  }
+
+  return { success: true, newBalance: currentBalance };
 }
 
 /**

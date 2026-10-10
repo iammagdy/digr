@@ -2,7 +2,13 @@ import { build } from "esbuild";
 import * as path from "path";
 import * as fs from "fs";
 
-const functions = ["on-user-create", "submit-topup", "approve-topup"];
+const functions = [
+  "on-user-create",
+  "submit-topup",
+  "approve-topup",
+  "create-job",
+  "job-worker",
+];
 
 async function bundleFunctions() {
   console.log("📦 Bundling Appwrite Functions with esbuild...\n");

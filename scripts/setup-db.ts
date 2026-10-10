@@ -96,8 +96,18 @@ async function ensureBucket(
   maxSize: number
 ) {
   try {
-    await storage.getBucket(id);
+    const existing = await storage.getBucket(id);
     console.log(`✓ Bucket '${id}' already exists.`);
+    await storage.updateBucket({
+      bucketId: id,
+      name,
+      permissions,
+      fileSecurity,
+      enabled: true,
+      maximumFileSize: maxSize,
+      allowedFileExtensions: exts,
+    });
+    return existing;
   } catch (err: any) {
     if (err.code === 404) {
       await storage.createBucket(
@@ -362,7 +372,7 @@ async function setup() {
 
   // Storage Buckets
   console.log("\n📦 Setting up Storage Buckets...");
-  await ensureBucket("results", "Results", [], true, ["xlsx", "csv"], 52428800);
+  await ensureBucket("results", "Results", [], true, ["xlsx", "csv", "json"], 52428800);
   await ensureBucket(
     "receipts",
     "Receipts",

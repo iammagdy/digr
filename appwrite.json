@@ -54,6 +54,43 @@
         "rows.write"
       ],
       "timeout": 15
+    },
+    {
+      "$id": "create-job",
+      "name": "create-job",
+      "runtime": "node-22",
+      "entrypoint": "dist/index.js",
+      "commands": "npm install",
+      "path": "src/functions/create-job",
+      "events": [],
+      "execute": [
+        "users"
+      ],
+      "scopes": [
+        "rows.read",
+        "rows.write",
+        "executions.write"
+      ],
+      "timeout": 15
+    },
+    {
+      "$id": "job-worker",
+      "name": "job-worker",
+      "runtime": "node-22",
+      "entrypoint": "dist/index.js",
+      "commands": "npm install",
+      "path": "src/functions/job-worker",
+      "events": [],
+      "execute": [
+        "users"
+      ],
+      "scopes": [
+        "rows.read",
+        "rows.write",
+        "files.read",
+        "files.write"
+      ],
+      "timeout": 60
     }
   ]
 }
