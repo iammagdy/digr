@@ -82,3 +82,15 @@
    npm test
    npm run build
    ```
+---
+
+## Project Atlas — حوكمة المشروع (Project Governance)
+
+**Project Atlas** هو المركز الرسمي لتوثيق المشروع وحوكمته ومعرفته المعمارية
+ومصطلحاته ونظام تأهيل وكلاء البرمجة (AI agents).
+
+- ابدأ من: `Project Atlas/skills/agent-bootstrap.md`
+- ثم اقرأ الملفات بالترتيب الموضح في `Project Atlas/README.md`
+- القواعد الإلزامية (الفروع، الأموال، الأمان، حدود الذكاء الاصطناعي): `Project Atlas/GOVERNANCE.md`
+
+أي وكيل برمجة يعمل على هذا المستودع يجب أن يلتزم ببروتوكول التأهيل قبل كتابة أي كود.
