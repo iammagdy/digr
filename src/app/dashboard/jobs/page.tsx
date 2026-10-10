@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { client, databases } from "@/lib/appwrite";
+import { client, databases, account } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 
@@ -39,6 +39,8 @@ export default function JobsPage() {
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [events, setEvents] = useState<Record<string, JobEvent[]>>({});
   const [loadingEvents, setLoadingEvents] = useState<string | null>(null);
+  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const fetchJobs = useCallback(async () => {
     if (!user) return;
@@ -101,8 +103,45 @@ export default function JobsPage() {
     }
   };
 
-  const getDownloadUrl = (fileId: string) => {
-    return storage.getFileDownload("results", fileId).toString();
+  const handleDownload = async (job: Job) => {
+    if (!job.resultFileId) return;
+    setDownloadingJobId(job.$id);
+    setDownloadError(null);
+
+    try {
+      // 1. Obtain user session JWT for secure authenticated file download
+      const jwtRes = await account.createJWT();
+
+      // 2. Fetch file directly through client SDK endpoint with user's JWT
+      const downloadUrl = storage.getFileDownload("results", job.resultFileId);
+      const res = await fetch(downloadUrl, {
+        headers: {
+          "X-Appwrite-Project": process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!,
+          "X-Appwrite-JWT": jwtRes.jwt,
+        },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Download failed with status ${res.status}`);
+      }
+
+      // 3. Convert to Blob and trigger browser download with proper filename
+      const blob = await res.blob();
+      const filename = `digr_${job.templateSlug || "results"}_${job.$id}.json`;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      console.error("Download error:", err);
+      setDownloadError("تعذر تحميل ملف النتائج. يرجى المحاولة مرة أخرى أو مراجعة الاتصال.");
+    } finally {
+      setDownloadingJobId(null);
+    }
   };
 
   const parseParams = (paramStr: string) => {
@@ -134,6 +173,19 @@ export default function JobsPage() {
           + طلب بيانات جديد
         </Link>
       </div>
+
+      {downloadError && (
+        <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-danger">
+          <span>{downloadError}</span>
+          <button
+            type="button"
+            onClick={() => setDownloadError(null)}
+            className="text-xs font-semibold underline hover:no-underline"
+          >
+            إغلاق
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex min-h-[250px] items-center justify-center">
@@ -248,13 +300,26 @@ export default function JobsPage() {
                           {/* Actions */}
                           <div className="flex items-center gap-2">
                             {job.status === "done" && job.resultFileId && (
-                              <a
-                                href={getDownloadUrl(job.resultFileId)}
-                                download
-                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-700"
+                              <button
+                                type="button"
+                                onClick={() => handleDownload(job)}
+                                disabled={downloadingJobId === job.$id}
+                                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
                               >
-                                تحميل النتائج
-                              </a>
+                                {downloadingJobId === job.$id ? (
+                                  <>
+                                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                    <span>جاري التحميل...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                    </svg>
+                                    <span>تحميل النتائج</span>
+                                  </>
+                                )}
+                              </button>
                             )}
 
                             <button
