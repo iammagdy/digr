@@ -1,5 +1,6 @@
 import { TablesDB, ID, Query, Permission, Role } from "node-appwrite";
-import { computePlanHash, PlanItem } from "./planManager";
+import { computePlanHash, parseStoredPlan, serializeStoredPlan, PlanItem } from "./planManager";
+import { buildNormalizedRequestSpec } from "./resultReview";
 import { isQuoteExpired } from "./quotes";
 import { calculateBalance, reserveCredits, releaseCredits } from "./ledger";
 
@@ -99,14 +100,11 @@ export async function acceptQuote(
   }
 
   // 5. Plan Hash Binding Check (Ensures plan was not tampered with after quoting)
-  let items: PlanItem[] = [];
-  try {
-    items = typeof quoteDoc.itemsJson === "string" ? JSON.parse(quoteDoc.itemsJson) : quoteDoc.itemsJson;
-  } catch {
-    items = [];
-  }
-
-  const computedHash = computePlanHash(items);
+  const storedPlan = parseStoredPlan(quoteDoc.itemsJson);
+  const items: PlanItem[] = storedPlan.items;
+  const computedHash = storedPlan.legacy
+    ? computePlanHash(items)
+    : computePlanHash(items, storedPlan.outputFormats, storedPlan);
   if (expectedPlanHash && expectedPlanHash !== computedHash) {
     return {
       success: false,
@@ -175,6 +173,7 @@ export async function acceptQuote(
   }
 
   // 10. Update Quote Document to 'accepted'
+  const requestSpec = buildNormalizedRequestSpec(storedPlan);
   await tables.updateRow({
     databaseId: "digr",
     tableId: "plans_quotes",
@@ -182,6 +181,7 @@ export async function acceptQuote(
     data: {
       status: "accepted",
       jobId,
+      itemsJson: JSON.stringify(serializeStoredPlan(storedPlan, requestSpec)),
     },
   });
 

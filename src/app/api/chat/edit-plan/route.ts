@@ -6,6 +6,7 @@ import {
   applyPlanOperations,
   validatePlanAgainstSchemas,
   createAndSaveManagedQuote,
+  parseStoredPlan,
   PlanState,
 } from "@/functions/shared/planManager";
 import { getEnabledCapabilities } from "@/functions/shared/capabilityRegistry";
@@ -98,11 +99,10 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Construct current plan state and apply operations
-    const currentItems = JSON.parse(quoteDoc.itemsJson || "[]");
+    const storedPlan = parseStoredPlan(quoteDoc.itemsJson || "[]");
     const currentPlan: PlanState = {
-      summaryAr: quoteDoc.summaryAr || "خطة استخراج بيانات",
-      items: currentItems,
-      outputFormats: ["xlsx", "pdf", "csv"],
+      ...storedPlan,
+      summaryAr: quoteDoc.summaryAr || storedPlan.summaryAr || "خطة استخراج بيانات",
     };
 
     const updatedPlan = applyPlanOperations(currentPlan, parsedOps.data);
