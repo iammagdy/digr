@@ -5,7 +5,8 @@ Last updated: **2026-10-11**.
 
 ## Current stage
 
-Foundation is implemented on `main`. Seven feature PRs (#3–#9) are open
+Foundation plus PRs #1 (chat discovery UI) and #2 (hermetic auth tests)
+are merged into `main` (2026-10-10). Seven feature PRs (#3–#9) are open
 and stacked; nothing from the stack has merged yet.
 
 ## PR dependencies (stack order)
@@ -21,8 +22,6 @@ and stacked; nothing from the stack has merged yet.
 
 ## Open technical risks
 
-- PR #2 was reported as merged but GitHub shows it closed without merge
-  — confirm whether its changes are in `main` by another path.
 - Dependency audit: 6 findings (2 critical, 2 high) reported 2026-10-11,
   not yet independently verified or resolved.
 - Test-count claim (153 passing / 20 files) does not match the 11 test

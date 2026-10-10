@@ -4,6 +4,10 @@ Product goals and feature intentions. Each feature is labeled
 IMPLEMENTED (in the product today) or PROPOSED (planned, not built).
 Never confuse the two.
 
+Implementation labels below follow the owner's foundation report and
+`docs/HANDOFF.md`; per-feature independent verification is tracked in
+`Project Atlas/CURRENT_STATE.md`.
+
 ## User personas (PROPOSED — to be validated)
 
 Students, researchers, professors, statisticians, analysts, marketers,

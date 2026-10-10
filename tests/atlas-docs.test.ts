@@ -2,12 +2,13 @@
  * Project Atlas documentation validation.
  *
  * Documentation-only guard: ensures every Atlas document exists and
- * carries its required top-level heading, and that the agent bootstrap
+ * carries its required top-level heading, that internal document/code
+ * references resolve to real files, and that the agent bootstrap
  * protocol lists all 10 onboarding steps. No application code is
  * imported; no network or production access occurs.
  */
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +29,34 @@ const REQUIRED_DOCS: Array<[string, string]> = [
   ["AGENTS.md", "# AGENTS.md"],
 ];
 
+// Files whose backtick-quoted path references are checked for resolvability.
+const SCANNED_DOCS = [...REQUIRED_DOCS.map(([rel]) => rel), "README.md"];
+
+const DOC_EXTENSIONS = [".md", ".ts", ".tsx", ".json", ".mjs", ".css"];
+const CODE_PREFIXES = ["src/", "scripts/", "tests/", "public/"];
+
+function isCheckablePath(candidate: string): boolean {
+  const c = candidate.trim();
+  if (!c.includes("/")) return false;
+  if (/^(https?:)?\/\//.test(c) || c.includes("://")) return false;
+  // Exclude shell commands and env assignments, not paths.
+  if (/[&|;$><*?'"`]/.test(c)) return false;
+  if (DOC_EXTENSIONS.some((ext) => c.endsWith(ext))) return true;
+  if (CODE_PREFIXES.some((p) => c.startsWith(p))) return true;
+  return false;
+}
+
+function extractBacktickPaths(body: string): string[] {
+  const out: string[] = [];
+  for (const m of body.matchAll(/`([^`\n]+)`/g)) {
+    const candidate = m[1].trim().replace(/[.,;:]+$/, "");
+    if (isCheckablePath(candidate) && !out.includes(candidate)) {
+      out.push(candidate);
+    }
+  }
+  return out;
+}
+
 describe("Project Atlas documentation", () => {
   it("all required documents exist", () => {
     for (const [rel] of REQUIRED_DOCS) {
@@ -44,13 +73,26 @@ describe("Project Atlas documentation", () => {
     }
   });
 
+  it("internal document and code references resolve", () => {
+    const broken: string[] = [];
+    for (const rel of SCANNED_DOCS) {
+      const body = readFileSync(join(ROOT, rel), "utf-8");
+      for (const ref of extractBacktickPaths(body)) {
+        const target = join(ROOT, ref);
+        if (!existsSync(target)) {
+          broken.push(`${rel} -> ${ref}`);
+        }
+      }
+    }
+    expect(broken, `broken references: ${broken.join("; ")}`).toEqual([]);
+  });
+
   it("agent bootstrap defines the 10 onboarding steps", () => {
     const body = readFileSync(
       join(ROOT, "Project Atlas/skills/agent-bootstrap.md"),
       "utf-8"
     );
-    const steps = body.match(/^10\. /m);
-    expect(steps, "bootstrap must list step 10").not.toBeNull();
+    expect(body.match(/^10\. /m), "bootstrap must list step 10").not.toBeNull();
   });
 
   it("root AGENTS.md directs agents to Project Atlas", () => {
