@@ -26,6 +26,38 @@ export interface SanitizedCapabilityForLlm {
   maxRows: number;
 }
 
+const INTERNAL_TEXT = /\b(?:openai|chatgpt|gpt[-\s]?[3456][\w.-]*|treg|tikhub|serpapi|usd|dollars?|costs?|prices?|markup|api.?keys?|secrets?|passwords?|access.?tokens?)\b/gi;
+const INTERNAL_KEY = /(?:cost|price|markup|provider|endpoint|token|secret|api.?key)/i;
+
+function sanitizeCapabilityText(value: unknown, maxLength = 512): string {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(INTERNAL_TEXT, "")
+    .replace(/\b(?:sk|rk|pk)[-_][A-Za-z0-9_-]{12,}\b/gi, "")
+    .replace(/\$\s?\d+(?:\.\d+)?/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function sanitizeCapabilitySchema(value: unknown, depth = 0): unknown {
+  if (depth > 8) return undefined;
+  if (Array.isArray(value)) return value.slice(0, 40).map((item) => sanitizeCapabilitySchema(item, depth + 1)).filter((item) => item !== undefined);
+  if (value && typeof value === "object") {
+    const clean: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 100)) {
+      if (INTERNAL_KEY.test(key) || key === "__proto__" || key === "constructor" || key === "prototype") continue;
+      const sanitized = sanitizeCapabilitySchema(item, depth + 1);
+      if (sanitized !== undefined) clean[key] = sanitized;
+    }
+    return clean;
+  }
+  if (typeof value === "string") return sanitizeCapabilityText(value, 256);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  return undefined;
+}
+
 /**
  * Fetch all enabled capabilities from the server-only capability_registry table
  */
@@ -50,12 +82,12 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
       parsedSchema = {};
     }
     return {
-      slug: c.slug,
-      category: c.category,
-      nameAr: c.nameAr,
-      descriptionAr: c.descriptionAr,
-      paramsSchema: parsedSchema,
-      maxRows: c.maxRows,
+      slug: sanitizeCapabilityText(c.slug, 96),
+      category: sanitizeCapabilityText(c.category, 32),
+      nameAr: sanitizeCapabilityText(c.nameAr, 128),
+      descriptionAr: sanitizeCapabilityText(c.descriptionAr, 512),
+      paramsSchema: sanitizeCapabilitySchema(parsedSchema) || {},
+      maxRows: Number.isSafeInteger(c.maxRows) && c.maxRows > 0 ? Math.min(c.maxRows, 100_000) : 0,
     };
   });
 }
