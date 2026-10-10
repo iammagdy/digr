@@ -9,7 +9,7 @@ import { PersonaType } from "@/functions/shared/personaConfigs";
 
 import OnboardingModal from "./components/OnboardingModal";
 import ChatSidebar, { ConversationItem } from "./components/ChatSidebar";
-import DiscoveryCard from "./components/DiscoveryCard";
+import ClarificationReply from "./components/ClarificationReply";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
@@ -23,6 +23,7 @@ interface MessageItem {
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   planQuote?: PlanQuoteData;
   clarificationQuestions?: string[];
+  clarificationItems?: Array<{ question: string; options?: string[] }>;
   suggestedAlternative?: any;
   refusalReason?: string;
   jobId?: string;
@@ -44,7 +45,7 @@ interface ActiveJobState {
 const EXAMPLE_PROMPTS = [
   {
     title: "بروفايل حساب تيك توك",
-    prompt: "أريد بيانات ملف حساب @research_channel على تيك توك وإحصائياته العامة",
+    prompt: "أريد بيانات الملف العام لحساب على تيك توك وإحصائياته العامة",
     desc: "الخدمة المعتمدة المتاحة حالياً",
   },
   {
@@ -85,6 +86,7 @@ export default function ChatWorkspacePage() {
   const [extractedProfile, setExtractedProfile] = useState<any>(null);
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [plusMenuOpen, setPlusMenuOpen] = useState(false);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -171,6 +173,16 @@ export default function ChatWorkspacePage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, activeJob]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+
+    const syncViewportHeight = () => setViewportHeight(Math.round(viewport.height));
+    syncViewportHeight();
+    viewport.addEventListener("resize", syncViewportHeight);
+    return () => viewport.removeEventListener("resize", syncViewportHeight);
+  }, []);
 
   // 5. Poll active job status
   useEffect(() => {
@@ -284,6 +296,7 @@ export default function ChatWorkspacePage() {
         outputType: data.outputType,
         planQuote: data.planQuote,
         clarificationQuestions: data.clarificationQuestions,
+        clarificationItems: data.clarificationItems,
         suggestedAlternative: data.suggestedAlternative,
         refusalReason: data.refusalReason,
         createdAt: new Date().toISOString(),
@@ -561,7 +574,10 @@ export default function ChatWorkspacePage() {
   }
 
   return (
-    <div className="flex h-screen w-full bg-sand-50 text-ink-900 overflow-hidden font-sans">
+    <div
+      className="flex h-dvh min-h-0 w-full bg-sand-50 text-ink-900 overflow-hidden font-sans"
+      style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
+    >
       {/* 1. Onboarding Modal */}
       <OnboardingModal
         isOpen={showOnboarding}
@@ -589,10 +605,10 @@ export default function ChatWorkspacePage() {
       />
 
       {/* 3. Main Chat Column */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden border-l border-sand-300">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden border-l border-sand-300">
         {/* Top Header - Compact Single Line (Never Wraps) */}
-        <header className="h-14 shrink-0 px-3 sm:px-6 bg-white border-b border-sand-200 flex items-center justify-between shadow-2xs">
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <header className="h-14 shrink-0 min-w-0 px-2 sm:px-6 bg-white border-b border-sand-200 flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink">
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
@@ -603,7 +619,7 @@ export default function ChatWorkspacePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-xs sm:text-base font-bold text-ink-900 truncate">
                 مساعد Digr البحثي
               </h1>
@@ -613,7 +629,7 @@ export default function ChatWorkspacePage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
             {/* Balance Badge */}
             <Link
               href="/dashboard/topup"
@@ -647,7 +663,7 @@ export default function ChatWorkspacePage() {
         </header>
 
         {/* Messages Stream */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 space-y-4">
           {/* Empty First Screen State */}
           {messages.length === 0 && (
             <div className="max-w-xl mx-auto pt-8 sm:pt-16 text-center space-y-6">
@@ -704,7 +720,15 @@ export default function ChatWorkspacePage() {
                     : "bg-white border border-sand-300/80 text-ink-900 shadow-2xs rounded-tl-xs"
                 }`}
               >
-                <div className="whitespace-pre-wrap">{msg.content}</div>
+                {msg.outputType === "ask_clarification" ? (
+                  <ClarificationReply
+                    intro={msg.content}
+                    questions={msg.clarificationItems || msg.clarificationQuestions || []}
+                    onSelectOption={handleSendMessage}
+                  />
+                ) : (
+                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                )}
 
                 {/* Error with Retry Button */}
                 {msg.errorRetryPrompt && (
@@ -720,14 +744,6 @@ export default function ChatWorkspacePage() {
                       <span>إعادة المحاولة الآن</span>
                     </button>
                   </div>
-                )}
-
-                {/* Discovery Questions Card with Tappable Options */}
-                {msg.outputType === "ask_clarification" && msg.clarificationQuestions && (
-                  <DiscoveryCard
-                    questions={msg.clarificationQuestions}
-                    onSelectOption={(opt) => handleSendMessage(opt)}
-                  />
                 )}
 
                 {/* Interactive Plan Quote Card */}
@@ -803,7 +819,7 @@ export default function ChatWorkspacePage() {
         </div>
 
         {/* Pinned Composer */}
-        <div className="p-3 sm:p-4 bg-white border-t border-sand-200 safe-bottom">
+        <div className="shrink-0 p-3 sm:p-4 bg-white border-t border-sand-200 safe-bottom">
           <form
             onSubmit={handleFormSubmit}
             className="relative max-w-3xl mx-auto flex items-end gap-2 bg-sand-50 border border-sand-300 focus-within:border-primary rounded-2xl p-2 transition-all shadow-2xs"
@@ -865,7 +881,7 @@ export default function ChatWorkspacePage() {
             {/* Textarea Input */}
             <textarea
               ref={inputRef}
-              rows={1}
+              rows={2}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => {
@@ -874,8 +890,8 @@ export default function ChatWorkspacePage() {
                   handleSendMessage(inputText);
                 }
               }}
-              placeholder="اكتب طلبك هنا (مثال: بروفايل حساب @example على تيك توك)..."
-              className="flex-1 bg-transparent p-2 text-xs sm:text-sm text-ink-900 placeholder:text-sand-400 focus:outline-hidden resize-none max-h-32"
+              placeholder="مثال: أريد بيانات الملف العام لحساب على تيك توك"
+              className="min-w-0 flex-1 bg-transparent p-2 text-xs leading-5 sm:text-sm text-ink-900 placeholder:text-sand-400 focus:outline-hidden resize-none max-h-20"
             />
 
             {/* Send Button */}
@@ -900,7 +916,7 @@ export default function ChatWorkspacePage() {
             onClick={() => setCanvasOpen(false)}
             className="fixed inset-0 z-40 bg-ink-900/40 lg:hidden backdrop-blur-xs"
           />
-          <div className="fixed lg:static inset-y-0 left-0 z-40 w-full sm:w-[480px] lg:w-[460px] bg-white shadow-2xl lg:shadow-none animate-in slide-in-from-left duration-200 flex flex-col">
+          <div className="fixed inset-x-0 bottom-0 z-50 h-[85dvh] max-h-[85vh] w-full rounded-t-2xl bg-white shadow-2xl animate-in slide-in-from-bottom duration-200 flex flex-col overflow-hidden lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:shadow-none lg:animate-none">
             <ResultsCanvas
               records={extractedRecords}
               profile={extractedProfile}

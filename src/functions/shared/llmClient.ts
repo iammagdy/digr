@@ -4,17 +4,17 @@ import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 // ================= Schema Definitions =================
 
 export const ClarificationQuestionItemSchema = z.object({
-  question: z.string().min(1),
-  options: z.array(z.string().min(1)).optional(),
-});
+  question: z.string().trim().min(1),
+  options: z.array(z.string().trim().min(1).max(40)).max(4).optional(),
+}).strict();
 
 export const AskClarificationSchema = z.object({
   type: z.literal("ask_clarification"),
   questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
-  questionsAr: z.array(z.string().min(1)).min(1).max(3).optional(),
-  optionsAr: z.array(z.array(z.string().min(1))).optional(),
+  questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
+  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
   reasonAr: z.string().min(1),
-});
+}).strict();
 
 export const PlanCapabilityItemSchema = z.object({
   capabilitySlug: z.string().min(1),
@@ -516,12 +516,12 @@ export class LlmClient {
               type: "ask_clarification",
               questions: [
                 {
-                  question: "ما هو اسم المستخدم أو المعرف (@username) للحساب المطلوب استخراج بياناته على تيك توك؟",
-                  options: ["@tiktok", "@iam_megz", "@khaby.lame"],
+                  question: "ما هو معرّف الحساب المطلوب استخراج بياناته على تيك توك؟",
+                  options: ["سأكتب المعرّف بنفسي", "أحتاج مساعدة في العثور عليه"],
                 },
               ],
               questionsAr: [
-                "ما هو اسم المستخدم أو المعرف (@username) للحساب المطلوب استخراج بياناته على تيك توك؟",
+                "ما هو معرّف الحساب المطلوب استخراج بياناته على تيك توك؟",
               ],
               reasonAr: "يرجى تحديد معرف الحساب المطلوب استخراج بياناته.",
             },
@@ -605,6 +605,16 @@ export class LlmClient {
         return {
           output: {
             type: "ask_clarification",
+            questions: [
+              {
+                question: "ما هي الكلمات الدلالية أو الحسابات المستهدفة على منصة X؟",
+                options: ["كلمات مفتاحية", "حساب محدد"],
+              },
+              {
+                question: "ما هو الحد الأقصى لعدد التغريدات المطلوب جمعها؟",
+                options: ["حتى 100 تغريدة", "حتى 500 تغريدة", "أحدد العدد لاحقاً"],
+              },
+            ],
             questionsAr: [
               "ما هي الكلمات الدلالية أو الحسابات المستهدفة على منصة X؟",
               "ما هو الحد الأقصى لعدد التغريدات المطلوب جمعها؟",
@@ -698,7 +708,7 @@ export class LlmClient {
           },
           {
             question: "هل تبحث عن معرف حساب محدد أم كلمات دلالية وموضوع عام؟",
-            options: ["معرف حساب محدد (@username)", "كلمات مفتاحية عامة"],
+            options: ["حساب محدد", "كلمات مفتاحية عامة"],
           },
           {
             question: "ما هو حجم العينة المستهدف تقريباً؟",
@@ -773,7 +783,24 @@ export class LlmClient {
                         "refuse",
                       ],
                     },
-                    questionsAr: { type: "array", items: { type: "string" } },
+                    questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
+                    questions: {
+                      type: "array",
+                      maxItems: 3,
+                      items: {
+                        type: "object",
+                        properties: {
+                          question: { type: "string" },
+                          options: {
+                            type: "array",
+                            maxItems: 4,
+                            items: { type: "string", maxLength: 40 },
+                          },
+                        },
+                        required: ["question"],
+                        additionalProperties: false,
+                      },
+                    },
                     reasonAr: { type: "string" },
                     summaryAr: { type: "string" },
                     answerAr: { type: "string" },

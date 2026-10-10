@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   LlmClient,
   scrubWhiteLabelText,
+  AskClarificationSchema,
   LlmTurnOutputSchema,
 } from "../src/functions/shared/llmClient";
 
@@ -120,5 +121,37 @@ describe("P1: LLM Trust Boundary & Prompt Injection Suite", () => {
       summaryAr: "ناقص",
     };
     expect(() => LlmTurnOutputSchema.parse(invalidPlan)).toThrow();
+  });
+
+  it("should allow optional clarification options and enforce their server-side limits", () => {
+    const validWithOptions = {
+      type: "ask_clarification",
+      reasonAr: "نحتاج توضيحاً قصيراً",
+      questions: [{ question: "ما المنصة؟", options: ["تيك توك", "يوتيوب", "منصة X", "الويب"] }],
+    };
+    const validWithoutOptions = {
+      type: "ask_clarification",
+      reasonAr: "نحتاج توضيحاً قصيراً",
+      questions: [{ question: "ما المنصة؟" }],
+    };
+
+    expect(() => AskClarificationSchema.parse(validWithOptions)).not.toThrow();
+    expect(() => AskClarificationSchema.parse(validWithoutOptions)).not.toThrow();
+    expect(() => AskClarificationSchema.parse({
+      ...validWithOptions,
+      questions: [{ question: "ما المنصة؟", options: ["1", "2", "3", "4", "5"] }],
+    })).toThrow();
+    expect(() => AskClarificationSchema.parse({
+      ...validWithOptions,
+      questions: [{ question: "ما المنصة؟", options: ["ط".repeat(41)] }],
+    })).toThrow();
+    expect(() => AskClarificationSchema.parse({
+      ...validWithOptions,
+      questions: [{ question: "ما المنصة؟", options: ["اختيار", ""] }],
+    })).toThrow();
+    expect(() => AskClarificationSchema.parse({
+      ...validWithOptions,
+      questions: [{ question: "ما المنصة؟", unsafe: "unexpected" }],
+    })).toThrow();
   });
 });

@@ -100,7 +100,7 @@ describe("P1: 20 Realistic Arabic Requests Suite", () => {
     },
     {
       id: 16,
-      prompt: "ما هي تفاصيل حساب @khaby.lame على تيك توك؟",
+      prompt: "ما هي تفاصيل حساب @public_account على تيك توك؟",
       expectedType: "propose_plan",
       expectedKeywordInResult: "تيك توك",
     },
