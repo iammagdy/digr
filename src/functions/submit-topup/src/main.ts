@@ -1,4 +1,4 @@
-import { Client, TablesDB, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Storage, Permission, Role, ID } from "node-appwrite";
 import { z } from "zod";
 
 const submitTopupSchema = z.object({
@@ -9,17 +9,23 @@ const submitTopupSchema = z.object({
 
 export default async ({ req, res, log, error }: any) => {
   // 1. Identify caller strictly from header
-  const callerId = req.headers["x-appwrite-user-id"];
+  const callerId = req.headers?.["x-appwrite-user-id"];
   if (!callerId) {
     return res.json({ success: false, error: "غير مصرح — يرجى تسجيل الدخول أولاً" }, 401);
   }
 
+  const apiKey =
+    req.headers?.["x-appwrite-key"] ||
+    process.env.APPWRITE_FUNCTION_API_KEY ||
+    process.env.APPWRITE_API_KEY;
+
   const client = new Client()
     .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
-    .setKey(process.env.APPWRITE_API_KEY!);
+    .setKey(apiKey);
 
   const tables = new TablesDB(client);
+  const storage = new Storage(client);
 
   try {
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
@@ -27,6 +33,23 @@ export default async ({ req, res, log, error }: any) => {
 
     const topupId = ID.unique();
     log(`Submitting topup ${topupId} for caller ${callerId}`);
+
+    // If receipt file was uploaded, enforce owner + admin read permissions
+    if (validated.receiptFileId) {
+      try {
+        await storage.updateFile({
+          bucketId: "receipts",
+          fileId: validated.receiptFileId,
+          permissions: [
+            Permission.read(Role.user(callerId)),
+            Permission.read(Role.label("admin")),
+          ],
+        });
+        log(`✓ Updated receipt ${validated.receiptFileId} permissions to owner + admin`);
+      } catch (fileErr: any) {
+        log(`Warning: Could not update receipt file permissions: ${fileErr.message}`);
+      }
+    }
 
     // Create row forcing userId = caller and status = pending
     const row = await tables.createRow({

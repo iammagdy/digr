@@ -21,9 +21,8 @@ async function bundleFunctions() {
       outfile: path.join(outdir, "index.js"),
       bundle: true,
       platform: "node",
-      target: "node20",
+      target: "node18",
       format: "cjs",
-      external: ["node-appwrite"],
     });
 
     // Write a minimal package.json in function dir for Appwrite runtime

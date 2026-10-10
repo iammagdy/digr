@@ -9,15 +9,20 @@ const approveSchema = z.object({
 });
 
 export default async ({ req, res, log, error }: any) => {
-  const callerId = req.headers["x-appwrite-user-id"];
+  const callerId = req.headers?.["x-appwrite-user-id"];
   if (!callerId) {
     return res.json({ success: false, error: "غير مصرح" }, 401);
   }
 
+  const apiKey =
+    req.headers?.["x-appwrite-key"] ||
+    process.env.APPWRITE_FUNCTION_API_KEY ||
+    process.env.APPWRITE_API_KEY;
+
   const client = new Client()
     .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
-    .setKey(process.env.APPWRITE_API_KEY!);
+    .setKey(apiKey);
 
   const users = new Users(client);
   const tables = new TablesDB(client);

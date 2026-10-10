@@ -1,10 +1,15 @@
 import { Client, TablesDB, Permission, Role } from "node-appwrite";
 
 export default async ({ req, res, log, error }: any) => {
+  const apiKey =
+    req.headers?.["x-appwrite-key"] ||
+    process.env.APPWRITE_FUNCTION_API_KEY ||
+    process.env.APPWRITE_API_KEY;
+
   const client = new Client()
     .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
     .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
-    .setKey(process.env.APPWRITE_API_KEY!);
+    .setKey(apiKey);
 
   const tables = new TablesDB(client);
 
