@@ -3,6 +3,7 @@ import { computePlanHash, parseStoredPlan, serializeStoredPlan, PlanItem } from 
 import { buildNormalizedRequestSpec } from "./resultReview";
 import { isQuoteExpired } from "./quotes";
 import { calculateBalance, reserveCredits, releaseCredits } from "./ledger";
+import { hasDependentSteps } from "./dependentPlans";
 
 export interface AcceptQuoteOptions {
   userId: string;
@@ -102,6 +103,13 @@ export async function acceptQuote(
   // 5. Plan Hash Binding Check (Ensures plan was not tampered with after quoting)
   const storedPlan = parseStoredPlan(quoteDoc.itemsJson);
   const items: PlanItem[] = storedPlan.items;
+  if (hasDependentSteps(items) && !(options.testScenario === "dependent-plan-fake" && process.env.NODE_ENV !== "production")) {
+    return {
+      success: false,
+      statusCode: 503,
+      errorAr: "تنفيذ الخطط متعددة المراحل غير متاح حالياً؛ لم يتم حجز أي نقاط.",
+    };
+  }
   const computedHash = storedPlan.legacy
     ? computePlanHash(items)
     : computePlanHash(items, storedPlan.outputFormats, storedPlan);

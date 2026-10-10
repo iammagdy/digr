@@ -13,6 +13,12 @@ import {
   DEFAULT_PRICING_SETTINGS,
   PricingSettings,
 } from "./quotes";
+import {
+  calculateDependentPlanQuote,
+  hasDependentSteps,
+  validateDependentPlanSteps,
+  type StepCostRange,
+} from "./dependentPlans";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -78,10 +84,16 @@ export const EditPlanOperationSchema = z.discriminatedUnion("action", [
 export type EditPlanOperation = z.infer<typeof EditPlanOperationSchema>;
 
 export interface PlanItem {
+  stepId?: string;
   capabilitySlug: string;
   params: Record<string, any>;
   targetVolumeMin: number;
   targetVolumeMax: number;
+  dependsOn?: string[];
+  inputFrom?: { stepId: string; field: string; paramKey: string };
+  fanOutCap?: number;
+  volumeMode?: "bounded" | "open_ended";
+  windowed?: boolean;
 }
 
 export interface ExecutionOptions {
@@ -168,6 +180,7 @@ export function serializeStoredPlan(plan: PlanState, requestSpec?: unknown): Rec
  * Used to cryptographically bind quotes to their exact plan parameters.
  */
 export function computePlanHash(items: PlanItem[], formats: string[] = ["xlsx", "pdf", "csv"], config?: Partial<PlanState>): string {
+  const dependent = hasDependentSteps(items);
   // Sort items deterministically
   const sorted = items.map((it) => {
     const sortedParams: Record<string, any> = {};
@@ -181,6 +194,14 @@ export function computePlanHash(items: PlanItem[], formats: string[] = ["xlsx", 
       params: sortedParams,
       targetVolumeMax: it.targetVolumeMax,
       ...(config ? { targetVolumeMin: it.targetVolumeMin } : {}),
+      ...(dependent ? {
+        stepId: it.stepId,
+        dependsOn: [...(it.dependsOn || [])].sort(),
+        inputFrom: it.inputFrom || null,
+        fanOutCap: it.fanOutCap || null,
+        volumeMode: it.volumeMode || "bounded",
+        windowed: it.windowed === true,
+      } : {}),
     };
   });
 
@@ -281,6 +302,8 @@ export function validatePlanAgainstSchemas(
   capabilities: Capability[]
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
+  const dependencyValidation = validateDependentPlanSteps(planItems);
+  if (!dependencyValidation.valid) errors.push(...dependencyValidation.errors);
 
   for (const it of planItems) {
     const matchedCap = capabilities.find((c) => c.slug === it.capabilitySlug);
@@ -335,6 +358,8 @@ export interface ManagedQuoteResult {
     affordableQuotedPoints: number;
     rawCostPoints?: number;
   };
+  isDependent?: boolean;
+  stepCostRanges?: StepCostRange[];
   userBalance: number;
   expiresAt: string;
   createdAt: string;
@@ -357,23 +382,33 @@ export async function createAndSaveManagedQuote(
     pricingSettings = DEFAULT_PRICING_SETTINGS,
   } = input;
 
-  // 1. Calculate pricing for all plan items
-  let totalQuotedPoints = 0;
+  // 1. Calculate pricing for all plan items; dependent plans reserve each step's worst case.
   let totalVolumeMax = 0;
-  let effectiveUnitPrice = 0;
   let primaryUnitCost = 0.001;
+  const dependentQuote = hasDependentSteps(plan.items)
+    ? calculateDependentPlanQuote(plan.items, capabilities.map((capability) => ({ slug: capability.slug, unitCostUsd: capability.unitCostUsd, nameAr: capability.nameAr })), userBalance, pricingSettings)
+    : undefined;
+  let quoteCalc: ReturnType<typeof calculateQuote>;
 
-  for (const it of plan.items) {
-    const cap = capabilities.find((c) => c.slug === it.capabilitySlug) || capabilities[0];
-    primaryUnitCost = cap.unitCostUsd;
-    const itemQuote = calculateQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, pricingSettings);
-    totalQuotedPoints += itemQuote.quotedPoints;
-    totalVolumeMax += it.targetVolumeMax;
-    effectiveUnitPrice = itemQuote.unitPricePoints;
+  if (dependentQuote) {
+    totalVolumeMax = dependentQuote.targetVolumeMax;
+    quoteCalc = {
+      unitPricePoints: dependentQuote.unitPricePoints,
+      rawPoints: dependentQuote.stepCostRanges.reduce((sum, step) => sum + step.maxUnits * step.unitPricePoints, 0),
+      quotedPoints: dependentQuote.quotedPoints,
+      targetVolumeMax: dependentQuote.targetVolumeMax,
+      safetyBufferPercent: pricingSettings.safetyBuffer * 100,
+      isAffordable: dependentQuote.isAffordable,
+      userBalance,
+    };
+  } else {
+    for (const it of plan.items) {
+      const cap = capabilities.find((c) => c.slug === it.capabilitySlug) || capabilities[0];
+      primaryUnitCost = cap.unitCostUsd;
+      totalVolumeMax += it.targetVolumeMax;
+    }
+    quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, pricingSettings);
   }
-
-  // Recalculate affordability for the composite quote
-  const quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, pricingSettings);
 
   const planHash = computePlanHash(plan.items, plan.outputFormats, plan);
   const quoteId = ID.unique();
@@ -437,6 +472,8 @@ export async function createAndSaveManagedQuote(
     quotedPoints: quoteCalc.quotedPoints,
     isAffordable: quoteCalc.isAffordable,
     downscaledOffer: quoteCalc.downscaledOffer,
+    isDependent: Boolean(dependentQuote),
+    ...(dependentQuote ? { stepCostRanges: dependentQuote.stepCostRanges } : {}),
     userBalance,
     expiresAt,
     createdAt: nowIso,

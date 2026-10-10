@@ -245,10 +245,16 @@ export class ChatHandler {
       finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
     } else if (output.type === "propose_plan") {
       const planItems = output.capabilities.map((c) => ({
+        stepId: c.stepId,
         capabilitySlug: c.capabilitySlug,
         params: c.params,
-        targetVolumeMin: 1,
+        targetVolumeMin: c.targetVolumeMin,
         targetVolumeMax: c.targetVolumeMax,
+        dependsOn: c.dependsOn,
+        inputFrom: c.inputFrom,
+        fanOutCap: c.fanOutCap,
+        volumeMode: c.volumeMode,
+        windowed: c.windowed,
       }));
 
       const planValidation = validatePlanAgainstSchemas(planItems, capabilities);
@@ -262,6 +268,8 @@ export class ChatHandler {
             summaryAr: output.summaryAr,
             items: planItems,
             outputFormats: (output.outputFormats as any) || ["xlsx", "pdf", "csv"],
+            executionOptions: output.executionOptions,
+            outputSpec: output.outputSpec,
             methodologyNotes: output.methodologyNotes,
           },
           userBalance: userBalance ?? 0,
@@ -280,11 +288,20 @@ export class ChatHandler {
           userBalance,
           downscaledOffer: managedQuote.downscaledOffer,
           outputFormats: managedQuote.outputFormats,
+          isDependent: managedQuote.isDependent,
+          stepCostRanges: managedQuote.stepCostRanges,
           expiresAt: managedQuote.expiresAt,
           methodologyNotes: output.methodologyNotes,
         };
 
         finalContentAr = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${output.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+        if (managedQuote.isDependent && managedQuote.stepCostRanges) {
+          finalContentAr += "\n• الخطة متعددة المراحل؛ حُسب الحجز على الحد الأعلى لكل مرحلة:";
+          for (const range of managedQuote.stepCostRanges) {
+            const label = capabilities.find((capability) => capability.slug === range.capabilitySlug)?.nameAr || range.capabilitySlug;
+            finalContentAr += `\n  • ${label}: من ${range.minPoints} إلى ${range.maxPoints} نقطة، حتى ${range.maxUnits} وحدة`;
+          }
+        }
         if (!managedQuote.isAffordable) {
           finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
           if (managedQuote.downscaledOffer) {
@@ -347,10 +364,19 @@ export class ChatHandler {
               userBalance,
               downscaledOffer: managedQuote.downscaledOffer,
               outputFormats: managedQuote.outputFormats,
+              isDependent: managedQuote.isDependent,
+              stepCostRanges: managedQuote.stepCostRanges,
               expiresAt: managedQuote.expiresAt,
             };
 
             finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المحدثة: ${managedQuote.quotedPoints} نقطة`;
+            if (managedQuote.isDependent && managedQuote.stepCostRanges) {
+              finalContentAr += "\n• الخطة متعددة المراحل؛ حُسب الحجز على الحد الأعلى لكل مرحلة:";
+              for (const range of managedQuote.stepCostRanges) {
+                const label = capabilities.find((capability) => capability.slug === range.capabilitySlug)?.nameAr || range.capabilitySlug;
+                finalContentAr += `\n  • ${label}: من ${range.minPoints} إلى ${range.maxPoints} نقطة، حتى ${range.maxUnits} وحدة`;
+              }
+            }
             if (!managedQuote.isAffordable) {
               finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
               if (managedQuote.downscaledOffer) {
