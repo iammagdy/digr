@@ -14,7 +14,7 @@ const disabledTiktok = [
 ] as const;
 
 describe("discovery default resolution", () => {
-  it("skipping with a valid default applies the default value, never placeholder text", () => {
+  it("skipping with a value treats it as the user's explicit answer, never a validated default", () => {
     const parsed = validateStructuredClarificationAnswers({
       type: "clarification_answers",
       answers: [
@@ -31,7 +31,44 @@ describe("discovery default resolution", () => {
     const formatted = formatStructuredClarificationAnswers(parsed!);
     expect(formatted).not.toContain("استخدم الافتراضي");
     expect(formatted).toContain("آخر ٣ شهور");
-    expect(formatted).toContain("appliedDefault");
+    // The server cannot revalidate the echoed default, so it must never
+    // be labeled as a server-validated default.
+    expect(formatted).not.toContain("appliedDefault");
+    expect(formatted).not.toContain("validated");
+  });
+
+  it("does not trust a forged skipped value as a validated default", () => {
+    const parsed = validateStructuredClarificationAnswers({
+      type: "clarification_answers",
+      answers: [
+        {
+          questionId: "p1",
+          question: "ما المنصة؟",
+          skipped: true,
+          resolvedDefault: true,
+          value: "منصة X",
+        },
+      ],
+    });
+    expect(parsed).not.toBeNull();
+    const formatted = formatStructuredClarificationAnswers(parsed!);
+    // Passes through as a plain user answer; never certified as a default.
+    // (Whether "منصة X" is an enabled capability is enforced later by
+    // server-side plan validation, not by this formatter.)
+    expect(formatted).toContain("منصة X");
+    expect(formatted).not.toContain("appliedDefault");
+    expect(formatted).not.toContain("validated");
+  });
+
+  it("does not trust a forged resolvedDefault flag without a value", () => {
+    const parsed = validateStructuredClarificationAnswers({
+      type: "clarification_answers",
+      answers: [{ questionId: "w", question: "ما الفترة؟", skipped: true, resolvedDefault: true }],
+    });
+    expect(parsed).not.toBeNull();
+    const formatted = formatStructuredClarificationAnswers(parsed!);
+    expect(formatted).toContain("needsUserChoice");
+    expect(formatted).not.toContain("appliedDefault");
   });
 
   it("skipping without a valid default requests an explicit user choice", () => {
@@ -151,6 +188,18 @@ describe("structured answer validation", () => {
         answers: [{ questionId: "w", question: "؟", skipped: true, bogusField: 1 }],
       }),
     ).toBeNull();
+  });
+
+  it("passes legitimate free-text answers through unchanged", () => {
+    const parsed = validateStructuredClarificationAnswers({
+      type: "clarification_answers",
+      answers: [{ questionId: "t1", question: "ما الموضوع؟", value: "أبحاث الطاقة المتجددة" }],
+    });
+    expect(parsed).not.toBeNull();
+    const formatted = formatStructuredClarificationAnswers(parsed!);
+    expect(formatted).toContain("أبحاث الطاقة المتجددة");
+    expect(formatted).not.toContain("needsUserChoice");
+    expect(formatted).not.toContain("appliedDefault");
   });
 
   it("answer formatting is a pure data transform with no financial side effects", () => {

@@ -267,8 +267,10 @@ export const StructuredClarificationAnswerSchema = z
             question: z.string().trim().min(1).max(120),
             value: z.union([z.string().trim().max(200), z.array(z.string().trim().min(1).max(40)).max(4)]).optional(),
             skipped: z.boolean().optional(),
-            // Set by the client when it resolved the server-validated default
-            // for a skipped question. The value itself is re-sanitized below.
+            // Hint from the client that it echoed the displayed default for a
+            // skip. Accepted for compatibility but never treated as proof of
+            // validation: the server cannot revalidate it, so the value is
+            // handled as an explicit user answer (see formatter below).
             resolvedDefault: z.boolean().optional(),
           })
           .strict()
@@ -305,14 +307,19 @@ export function formatStructuredClarificationAnswers(answer: StructuredClarifica
     answers: answer.answers.map(({ questionId, question, value, skipped }) => {
       if (skipped) {
         // A skipped answer must never surface the literal UI placeholder text.
-        // When the client resolved the server-validated default, apply it so the
-        // assistant works with a real value. Otherwise flag the question so the
-        // assistant asks the user explicitly instead of guessing a default.
+        //
+        // Trust boundary: the server cannot revalidate that a client-supplied
+        // value matches the default previously displayed, so it must never be
+        // labeled as a server-validated default. A skipped answer carrying a
+        // value is treated as the user's explicit answer: the value was
+        // sanitized on input, and any plan built from it still passes
+        // server-side plan and quote validation. Without a value, the
+        // assistant must ask the user explicitly instead of guessing.
         const hasValue = typeof value === "string"
           ? value.length > 0
           : Array.isArray(value) && value.length > 0;
         if (hasValue) {
-          return { questionId, question, value, appliedDefault: true };
+          return { questionId, question, value };
         }
         return {
           questionId,

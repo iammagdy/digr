@@ -47,10 +47,11 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
   function setAnswer(questionId: string, value: string | string[], skipped = false) {
     const question = normalizedQuestions.find((item) => item.id === questionId);
     if (!question) return;
-    // When skipping, resolve the server-validated default on the client so the
-    // assistant receives a real value instead of placeholder text. Questions
-    // without a validated default are sent as skipped with no value; the server
-    // then instructs the assistant to ask the user explicitly.
+    // When skipping, the client echoes the displayed default (previously
+    // computed server-side) so the assistant receives a real value instead of
+    // placeholder text. The server treats this as the user's explicit answer —
+    // it cannot revalidate the default — and any plan built from it still goes
+    // through server-side plan and quote validation.
     const resolvedDefault = skipped ? question.defaultOption : undefined;
     setAnswers((previous) => ({
       ...previous,

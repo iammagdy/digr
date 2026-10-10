@@ -119,9 +119,10 @@ describe("strict discovery clarification", () => {
     expect(formatted).toContain('"type":"clarification_answers"');
     // The literal UI placeholder must never reach the assistant as a value.
     expect(formatted).not.toContain("استخدم الافتراضي");
-    // A skip with a resolved default applies the real default value.
+    // A skip carrying a value is treated as the user's explicit answer —
+    // never labeled as a server-validated default.
     expect(formatted).toContain("آخر ٣ شهور");
-    expect(formatted).toContain("appliedDefault");
+    expect(formatted).not.toContain("appliedDefault");
     // A skip without a default must request an explicit user choice.
     expect(formatted).toContain("needsUserChoice");
     expect(validateStructuredClarificationAnswers({
