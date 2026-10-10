@@ -58,6 +58,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               <Link href="/admin/topups" className="text-sand-700 hover:text-sand-900 font-medium">
                 طلبات الشحن
               </Link>
+              <Link href="/admin/goodwill" className="text-sand-700 hover:text-sand-900 font-medium">
+                ردود ومراجعات النتائج
+              </Link>
               <Link href="/dashboard" className="text-sand-400 hover:text-sand-600">
                 لوحة المستخدم
               </Link>

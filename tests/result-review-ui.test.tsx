@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 describe("result review UI contracts", () => {
   const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
   const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+  const bell = readFileSync("src/app/dashboard/chat/components/NotificationsBell.tsx", "utf8");
+  const complaint = readFileSync("src/app/api/jobs/[id]/complaint/route.ts", "utf8");
+  const adminApi = readFileSync("src/app/api/admin/goodwill/route.ts", "utf8");
+  const schema = readFileSync("scripts/setup-db.ts", "utf8");
 
   it("shows the review comparison, user-controlled actions, and categorized complaint choices", () => {
     expect(canvas).toContain("مراجعة النتيجة");
@@ -37,5 +41,18 @@ describe("result review UI contracts", () => {
     const handler = page.slice(start, end);
     expect(handler).toContain("اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ");
     expect(handler).not.toMatch(/handleAcceptQuote|accept-quote|startJob/i);
+  });
+
+  it("keeps complaints outcome-neutral and limits notices/admin data to verified owners", () => {
+    expect(complaint).toContain("job.userId !== userId");
+    expect(complaint).toContain("saveCustomerComplaint");
+    expect(complaint).not.toMatch(/applyGoodwillOutcome|createGoodwillAdjustment|chargeCredits/);
+    expect(bell).toContain("unreadCount");
+    expect(bell).toContain('method: "PATCH"');
+    expect(bell).toContain("aria-expanded={open}");
+    expect(adminApi).toContain('user.labels.includes("admin")');
+    expect(adminApi).not.toMatch(/export async function (POST|PATCH|DELETE)/);
+    expect(schema).toContain('"notifications"');
+    expect(schema).toContain('"autoRefundMonthlyPointsCap"');
   });
 });

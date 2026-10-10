@@ -208,3 +208,66 @@ export async function applyTopup(
     permissions: [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))],
   });
 }
+
+/**
+ * Adds one deterministic goodwill adjustment after the job has settled.
+ * This never edits or deletes ledger rows and is capped by the job's charged points.
+ */
+export async function createGoodwillAdjustment(
+  tables: TablesDB,
+  userId: string,
+  jobId: string,
+  requestedPoints: number,
+  chargedPoints: number,
+  reasonAr: string
+): Promise<{ row: any; created: boolean; points: number }> {
+  const rowId = `gwl_${jobId}`;
+  if (rowId.length > 36) throw new Error("GOODWILL_ROW_ID_TOO_LONG");
+  const [reserveRow, releaseRow, chargeRow]: any[] = await Promise.all([
+    tables.getRow({ databaseId: DATABASE_ID, tableId: CREDIT_LEDGER_TABLE, rowId: `res_${jobId}` }),
+    tables.getRow({ databaseId: DATABASE_ID, tableId: CREDIT_LEDGER_TABLE, rowId: `rel_${jobId}` }),
+    tables.getRow({ databaseId: DATABASE_ID, tableId: CREDIT_LEDGER_TABLE, rowId: `chg_${jobId}` }),
+  ]);
+  const reservedAmount = Math.abs(Number(reserveRow.delta));
+  const releasedAmount = Number(releaseRow.delta);
+  const chargeDelta = Number(chargeRow.delta);
+  const chargedAmount = Math.abs(chargeDelta);
+  const ownedForJob = (row: any, type: string) => row.userId === userId && row.jobId === jobId && row.type === type;
+  if (!ownedForJob(reserveRow, "reserve") || !ownedForJob(releaseRow, "release") || !ownedForJob(chargeRow, "charge") ||
+      !Number.isSafeInteger(reservedAmount) || reservedAmount < 1 || Number(reserveRow.delta) >= 0 ||
+      !Number.isSafeInteger(releasedAmount) || releasedAmount !== reservedAmount ||
+      !Number.isSafeInteger(chargedAmount) || chargeDelta >= 0 || chargedAmount > reservedAmount) {
+    throw new Error("GOODWILL_JOB_NOT_SETTLED");
+  }
+  const authorizedCharge = Math.min(chargedAmount, Math.max(0, Math.floor(Number(chargedPoints) || 0)));
+  const points = Math.min(
+    Math.max(0, Math.floor(Number(requestedPoints) || 0)),
+    authorizedCharge
+  );
+  if (!Number.isSafeInteger(points) || points < 1) throw new Error("GOODWILL_POINTS_INVALID");
+  const note = `رد حسن نية: ${String(reasonAr || "مؤشر نتيجة جوهري").replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 480)}`;
+  try {
+    const row = await tables.createRow({
+      databaseId: DATABASE_ID,
+      tableId: CREDIT_LEDGER_TABLE,
+      rowId,
+      data: {
+        userId,
+        delta: points,
+        type: "adjust",
+        jobId,
+        note,
+        createdAt: new Date().toISOString(),
+      },
+      permissions: [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))],
+    });
+    return { row, created: true, points };
+  } catch (error: any) {
+    if (error?.code !== 409 && error?.status !== 409) throw error;
+    const row: any = await tables.getRow({ databaseId: DATABASE_ID, tableId: CREDIT_LEDGER_TABLE, rowId });
+    if (row.userId !== userId || row.jobId !== jobId || row.type !== "adjust" || Number(row.delta) < 1 || Number(row.delta) > chargedAmount) {
+      throw new Error("GOODWILL_LEDGER_CONFLICT");
+    }
+    return { row, created: false, points: Math.floor(Number(row.delta)) };
+  }
+}

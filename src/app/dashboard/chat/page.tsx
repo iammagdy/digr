@@ -16,6 +16,7 @@ import ClarificationReply from "./components/ClarificationReply";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
+import NotificationsBell from "./components/NotificationsBell";
 
 const storage = new Storage(client);
 
@@ -260,6 +261,7 @@ export default function ChatWorkspacePage() {
             ]);
             const [dataJson, versionsJson] = await Promise.all([dataRes.json(), versionsRes.json()]);
             if (dataJson.success) {
+              appendGoodwillRefundNotice(jobDoc.$id, dataJson.goodwillRefund);
               if (dataJson.profile) setExtractedProfile(dataJson.profile);
               if (dataJson.rows && Array.isArray(dataJson.rows)) {
                 setExtractedRecords(dataJson.rows);
@@ -780,14 +782,42 @@ export default function ChatWorkspacePage() {
     }]);
   }
 
+  function appendGoodwillRefundNotice(jobId: string, refund: { points: number; reasonAr?: string } | null | undefined) {
+    if (!refund || !Number.isFinite(refund.points) || refund.points < 1) return;
+    const id = `goodwill-refund-${jobId}`;
+    setMessages((current) => current.some((message) => message.id === id) ? current : [...current, {
+      id,
+      role: "assistant",
+      content: `تم رد ${refund.points.toLocaleString("ar-EG")} نقطة إلى رصيدك كـرد حسن نية بعد تسوية الطلب. السبب: ${refund.reasonAr || "مؤشر نتيجة جوهري"}`,
+      createdAt: new Date().toISOString(),
+    }]);
+  }
+
   function handleEditAndFetch() {
     handleSendMessage("عايز أراجع الخطة السابقة وأعدّلها. اعرض خطة وعرض سعر جديد فقط، ولا تبدأ أي استخراج قبل ما أوافق بنفسي.");
   }
 
-  function handleReportMismatch(category: string, details?: string) {
-    const detail = details?.trim();
-    const report = `ملاحظة على النتيجة: ${category}${detail ? ` — ${detail}` : ""}`;
-    handleSendMessage(`${report}. اعرض الخيارات المناسبة فقط، ولا تبدأ جمع بيانات أو تخصم نقاطًا دون موافقتي.`);
+  async function handleReportMismatch(category: string, details?: string) {
+    if (!activeJob) return;
+    const categoryMap: Record<string, "data_type" | "period" | "count" | "quality" | "other"> = {
+      "نوع البيانات": "data_type", "الفترة": "period", "العدد": "count", "الجودة": "quality", "أخرى": "other",
+    };
+    try {
+      const response = await fetch(`/api/jobs/${activeJob.jobId}/complaint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: categoryMap[category] || "other", details: details || "" }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error || "تعذر إرسال الملاحظة");
+      const now = new Date().toISOString();
+      setMessages((current) => [...current,
+        { id: `review-user-${Date.now()}`, role: "user", content: `مش ده المطلوب؟ المشكلة في ${category}${details ? ` — ${details}` : ""}`, createdAt: now },
+        { id: `review-ack-${Date.now()}`, role: "assistant", content: "استلمنا ملاحظتك وسُجلت في قائمة المراجعة. إرسالها لا يغيّر الرصيد أو يبدأ جمع بيانات جديدًا.", createdAt: now },
+      ]);
+    } catch (error: any) {
+      setMessages((current) => [...current, { id: `review-error-${Date.now()}`, role: "assistant", content: error.message || "تعذر حفظ الملاحظة الآن. جرّب تاني.", createdAt: new Date().toISOString() }]);
+    }
   }
 
   function handleReviewSuggestion(suggestion: ReviewSuggestion) {
@@ -877,6 +907,7 @@ export default function ChatWorkspacePage() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            <NotificationsBell />
             {/* Balance Badge */}
             <Link
               href="/dashboard/topup"
