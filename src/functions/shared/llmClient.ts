@@ -1,20 +1,10 @@
 import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
+import { AskClarificationSchema, sanitizeModelClarificationOutput } from "./clarification";
+
+export { AskClarificationSchema } from "./clarification";
 
 // ================= Schema Definitions =================
-
-export const ClarificationQuestionItemSchema = z.object({
-  question: z.string().trim().min(1),
-  options: z.array(z.string().trim().min(1).max(40)).max(4).optional(),
-}).strict();
-
-export const AskClarificationSchema = z.object({
-  type: z.literal("ask_clarification"),
-  questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
-  questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
-  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
-  reasonAr: z.string().min(1),
-}).strict();
 
 export const PlanCapabilityItemSchema = z.object({
   capabilitySlug: z.string().min(1),
@@ -784,18 +774,28 @@ export class LlmClient {
                       ],
                     },
                     questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
+                    intro: { type: "string", maxLength: 200 },
                     questions: {
                       type: "array",
                       maxItems: 3,
                       items: {
                         type: "object",
                         properties: {
+                          id: { type: "string", maxLength: 40 },
+                          text: { type: "string", maxLength: 120 },
                           question: { type: "string" },
+                          type: { type: "string", enum: ["single", "multi", "free"] },
+                          parameterType: {
+                            type: "string",
+                            enum: ["platform", "time_window", "volume", "output_format", "anonymize", "language", "topic"],
+                          },
                           options: {
                             type: "array",
                             maxItems: 4,
                             items: { type: "string", maxLength: 40 },
                           },
+                          allowOther: { type: "boolean" },
+                          defaultOption: { type: "string", maxLength: 40 },
                         },
                         required: ["question"],
                         additionalProperties: false,
@@ -882,7 +882,8 @@ export class LlmClient {
       parsedResult.questionsAr = parsedResult.questions.map((q: any) => typeof q === "string" ? q : q.question);
     }
 
-    const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);
+    const validatedCandidate = sanitizeModelClarificationOutput(parsedResult);
+    const validatedOutput = LlmTurnOutputSchema.parse(validatedCandidate);
 
     const inTokens = data.usage?.input_tokens || 800;
     const outTokens = data.usage?.output_tokens || 150;

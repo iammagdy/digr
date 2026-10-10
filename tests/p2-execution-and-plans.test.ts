@@ -171,7 +171,7 @@ describe("P2: Execution, Multi-Step Worker, and Editable Plans Test Suite", () =
 
   const multiPageCapability: Capability = {
     slug: "x-keyword-search",
-    category: "twitter",
+    category: "x",
     nameAr: "البحث في تغريدات منصة X",
     nameEn: "X Keyword Search",
     descriptionAr: "استخراج التغريدات العامة",
@@ -815,7 +815,7 @@ describe("P2: Execution, Multi-Step Worker, and Editable Plans Test Suite", () =
   it("Scenario 14: Server strictly rejects a plan containing a disabled capability even if LLM proposes it", async () => {
     const disabledCap: Capability = {
       slug: "x-keyword-search",
-      category: "twitter",
+      category: "x",
       nameAr: "البحث في تغريدات منصة X",
       nameEn: "X Keyword Search",
       descriptionAr: "خدمة قيد التحقق",
