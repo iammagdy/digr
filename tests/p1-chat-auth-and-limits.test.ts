@@ -8,7 +8,7 @@ import {
   RateLimitConfig,
 } from "../src/functions/shared/rateLimits";
 import { LlmClient } from "../src/functions/shared/llmClient";
-import { Account } from "node-appwrite";
+import { Account, TablesDB } from "node-appwrite";
 
 describe("P1.5 Security & Rate Limits Suite", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -74,6 +74,24 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.success).toBe(false);
+  });
+
+  it("fails closed with a friendly response when llm_usage is unavailable", async () => {
+    vi.spyOn(Account.prototype, "get").mockResolvedValue({ $id: "user_a" } as any);
+    vi.spyOn(TablesDB.prototype, "listRows").mockRejectedValue(new Error("private missing-table details"));
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const req = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer valid_test_jwt" },
+      body: JSON.stringify({ message: "مرحبا" }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+    expect(res.status).toBe(503);
+    expect(body.error).toContain("متوقف مؤقتاً");
+    expect(JSON.stringify(body)).not.toContain("private missing-table details");
+    expect(warning).toHaveBeenCalledWith("[llm:SPEND_CAP_STORAGE_UNAVAILABLE]");
   });
 
   // ================= 2. Rate Limits: Per-Minute & Per-Day =================
@@ -146,7 +164,7 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     expect(result.allowed).toBe(false);
     expect(result.statusCode).toBe(503);
     expect(result.type).toBe("global_spend_cap");
-    expect(result.reasonAr).toContain("الحد الأقصى لميزانية المساعد الذكي اليومية");
+    expect(result.reasonAr).toContain("الحد اليومي لاستخدام المساعد");
   });
 
   it("should enforce conversation context token cap (15,000 tokens)", () => {

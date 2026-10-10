@@ -1,84 +1,88 @@
-# Digr (دِقْر) - منصة استخراج وتحليل البيانات للبحث الأكاديمي والاستقصائي
+# Digr (دِقْر)
 
-منصة متخصصة في مساعدة الباحثين، المحللين، وصناع القرار في استخراج وتحليل بيانات المنصات الرقمية وتقديمها في قوالب موثقة ومطابقة للأصول المنهجية (PDF, Excel, CSV, JSON).
+منصة تساعد الباحثين والمحللين وصنّاع القرار على طلب بيانات عامة، مراجعة خطة الجمع والاقتباس بالنقاط، ثم استلام ملفات موثقة ومراجعتها.
 
----
+## البنية الحالية
 
-## بنية النظام (Architecture Overview)
+- **تطبيق الويب**: Next.js 15 وReact 19 وTailwind CSS v4، مع مخرجات `standalone`.
+- **مسار المحادثة**: `/api/chat` للتحقق من جلسة Appwrite وحدود الاستخدام، ثم تشغيل المساعد أو وضعه التجريبي.
+- **الدوال الخلفية**: `create-job`, `job-worker`, `submit-topup`, `approve-topup`, `on-user-create`.
+- **الخدمات الخلفية**: Appwrite Cloud على `https://fra.cloud.appwrite.io/v1`.
+- **قاعدة البيانات**: `digr`.
+- **حالة النشر**: النشر الحي السابق متحقق منه للقراءة فقط. التغييرات في الفروع وطلبات السحب غير منشورة حتى يدمجها المالك ويعتمد النشر.
 
-يتكون نظام Digr من جزأين رئيسيين:
+## مخطط Appwrite المسجل في سكربت الإعداد
 
-1. **تطبيق الويب (Next.js 15 Web Application)**:
-   - واجهة المستخدم التفاعلية (مساعد المحادثة الذكي، لوحة النتائج، إدارة الخطط، وسجل الطلبات).
-   - مسار الخادم `/api/chat` لمعالجة المحادثات، التحقق من جلسات Appwrite، واستدعاء نموذج اللغة أو النموذج التجريبي.
-   - يستضاف على خوادم **Appwrite Sites** (أو أي بيئة تشغيل تدعم Next.js Node.js Runtime).
+الجداول في قاعدة `digr`:
 
-2. **دوال الواجهة الخلفية (Appwrite Functions)**:
-   - `create-job`: التحقق من الرصيد وحجز النقاط عند تأكيد الخطة.
-   - `job-worker`: تنفيذ مهام السحب متعددة الخطوات، الاتصال بمزود البيانات (TREG)، وحفظ الملفات في سلة التخزين (Storage).
-   - `approve-topup`: مراجعة طلبات شحن الرصيد من لوحة الإدارة وإضافة النقاط لدفتر الأستاذ.
-   - `on-user-create`: إنشاء ملف المستخدم الافتراضي فور التسجيل.
-   - `job-watchdog`: مراقبة المهام المعلقة واسترداد النقاط في حال تجاوز المهلة الزمنية.
+`templates`, `settings_public`, `profiles`, `credit_ledger`, `topups`, `jobs`, `job_events`, `conversations`, `messages`, `plans_quotes`, `artifact_versions`, `notes`, `capability_requests`, `templates_private`, `settings`, `job_calls`, `notifications`, `jobs_internal`, `capability_registry`, `llm_usage`.
 
----
+حاويات التخزين:
 
-## متغيرات البيئة (Environment Variables)
+| الحاوية | المحتوى المسموح |
+|---|---|
+| `results` | `xlsx`, `pdf`, `csv` فقط |
+| `receipts` | `png`, `jpg`, `jpeg`, `pdf` |
+| `partials` | `jsonl` |
 
-> **ملاحظة أمنية صارمة:** لا تقم أبدًا بتضمين قيم حقيقية أو سرية في هذا الملف أو في مستودع Git. يتم ضبط القيم في لوحة التحكم السحابية لكل خدمة بشكل منفصل.
+لا تشغّل `scripts/setup-db.ts` على مشروع حي من جلسة التطوير. التغييرات المخططية تُراجع وتُعتمد من المالك أولاً. سكربت الإعداد تكراري لكنه قد يهيئ أكثر من جدول واحد.
 
-### 1. تطبيق Next.js (Appwrite Sites / Server Hosting)
+## متغيرات البيئة
 
-تُضبط هذه المتغيرات في لوحة إعدادات استضافة الموقع (Environment Variables):
+لا تحفظ أسراراً حقيقية في Git أو ملفات التوثيق. القيم الخاصة بالمتصفح فقط هي التي تبدأ بـ `NEXT_PUBLIC_`؛ كل المفاتيح والأسرار تبقى خادمية.
 
-| اسم المتغير | الوصف | الإلزامية |
-| :--- | :--- | :--- |
-| `NEXT_PUBLIC_APPWRITE_ENDPOINT` | عنوان واجهة برمجة التطبيقات لـ Appwrite (الواجهة الأمامية) | إلزامي |
-| `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | معرف مشروع Appwrite في الواجهة الأمامية | إلزامي |
-| `APP_URL` | الرابط الأساسي للمنصة (مثل: `https://digr.thewise.cloud`) | إلزامي |
-| `LLM_PROVIDER` | مزود نموذج المحادثة (`fake` للتطوير والاختبار، `openai` للنموذج الحقيقي) | إلزامي |
-| `LLM_ENABLED` | تفعيل أو إيقاف المساعد الذكي (`true` / `false`) | إلزامي |
-| `OPENAI_API_KEY` | مفتاح واجهة برمجة التطبيقات لـ OpenAI (يقرأ على الخادم فقط) | اختياري (مطلوب فقط عند `LLM_PROVIDER=openai`) |
-| `OPENAI_MODEL` | اسم النموذج المعتمد (مثل: `gpt-6-luna` أو `gpt-4o-mini`) | اختياري |
-| `LLM_DAILY_SPEND_CAP_USD` | الحد اليومي الأقصى لتكلفة النموذج الحقيقي بالدولار | اختياري (افتراضي 5.00 USD) |
+### تطبيق Next.js / Appwrite Sites
 
-> **قاعدة أمان:** المتغيرات السرية (`OPENAI_API_KEY`) لا تبدأ بـ `NEXT_PUBLIC_` ويتم فحص حزم العميل تلقائيًا أثناء عملية البناء (`npm run build`) لمنع أي تسريب إلى المتصفح.
+| المتغير | الوصف |
+|---|---|
+| `NEXT_PUBLIC_APPWRITE_ENDPOINT` | عنوان Appwrite؛ القيمة المعتمدة `https://fra.cloud.appwrite.io/v1` |
+| `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | معرّف المشروع المستخدم في الواجهة |
+| `APP_URL` | الرابط الأساسي للتطبيق |
+| `APPWRITE_API_KEY` | مفتاح خادمي محدود الصلاحيات، لا تستخدم بادئة `NEXT_PUBLIC_` |
+| `LLM_PROVIDER` | `fake` للاختبار أو `openai` للتشغيل الحي؛ الافتراضي الآمن `fake` |
+| `LLM_ENABLED` | مفتاح إيقاف المساعد؛ عيّنه `false` لتعطيل استدعاءات النموذج |
+| `OPENAI_API_KEY` | سرّ خادمي مطلوب فقط عند اختيار `openai` |
+| `OPENAI_MODEL` | معرّف النموذج؛ الافتراضي `gpt-6-luna` |
+| `LLM_MAX_OUTPUT_TOKENS` | سقف المخرجات؛ الافتراضي `1500` والحد الأعلى في الكود `8000` |
+| `LLM_CONVERSATION_MAX_TOKENS` | سقف سياق المحادثة التراكمي؛ الافتراضي `15000` والحد الأعلى `100000` |
+| `LLM_DAILY_SPEND_CAP_USD` | سقف الاستخدام اليومي العام؛ الافتراضي `1.00` |
+| `LLM_USER_DAILY_SPEND_CAP_USD` | سقف الاستخدام اليومي لكل مستخدم؛ الافتراضي `0.10` |
+| `LLM_INPUT_COST_PER_MILLION_USD` | معدل داخلي لحساب استخدام الإدخال؛ الافتراضي `0.10` |
+| `LLM_OUTPUT_COST_PER_MILLION_USD` | معدل داخلي لحساب استخدام الإخراج؛ الافتراضي `0.50` |
+| `RESULT_REVIEW_MODEL_ENABLED` | مراجعة النتائج بالنموذج؛ معطل ما لم يُفعّل صراحةً |
+| `RESULT_REVIEW_STORAGE_ENABLED` | تخزين حقائق ومراجعات النتيجة؛ اجعله `false` للتعطيل |
+| `GOODWILL_ENABLED` | تفعيل قواعد حسن النية؛ لا تفعله قبل تجهيز جدول `notifications` |
 
-### 2. دوال الخلفية (Appwrite Functions)
+### Appwrite Functions
 
-تُضبط هذه المتغيرات في إعدادات كل دالة في لوحة تحكم Appwrite Console:
+تُضبط متغيرات Appwrite الحالية في كل دالة حسب الحاجة. مراجعة النتائج تنفذ داخل `job-worker`؛ لذلك عند تفعيلها اضبط له متغيرات النموذج والسقوف نفسها مع `RESULT_REVIEW_MODEL_ENABLED`. خزّن المفتاح في إعدادات الخادم فقط. راجع [دليل التشغيل الحي](docs/GO_LIVE.md) قبل أي تفعيل.
 
-| اسم المتغير | الوصف | الدوال المعنية | الإلزامية |
-| :--- | :--- | :--- | :--- |
-| `APPWRITE_ENDPOINT` | رابط Appwrite API الداخلي | جميع الدوال | إلزامي |
-| `APPWRITE_PROJECT_ID` | معرف مشروع Appwrite | جميع الدوال | إلزامي |
-| `APPWRITE_API_KEY` | مفتاح API بصلاحيات إدارية محدودة للعمليات السحابية | جميع الدوال | إلزامي |
-| `TREG_TOKEN` | الرمز السري لمزود البيانات TREG | `job-worker` فقط | إلزامي للتشغيل الحي |
-| `TREG_BASE_URL` | عنوان واجهة برمجة TREG (افتراضي: `https://api.treg.to/v1`) | `job-worker` فقط | اختياري |
+## التشغيل المحلي والاختبارات
 
----
+المتطلبات: Node.js 22 وnpm.
 
-## التشغيل المحلي (Local Development)
+```bash
+npm install
+```
 
-1. تثبيت الحزم:
-   ```bash
-   npm install
-   ```
+ضع متغيرات Appwrite العامة فقط في `.env.local` للاختبارات المحلية؛ لا تستخدم مفتاح تشغيل حي. النمط الافتراضي للتطوير هو `fake`، وتستخدم الاختبارات مزودات وهمية وخوادم محلية ثابتة.
 
-2. إنشاء ملف `.env.local` محلي وضبط المتغيرات (الملف محمي في `.gitignore` ولا يرفع أبدًا):
-   ```env
-   NEXT_PUBLIC_APPWRITE_ENDPOINT=https://cloud.appwrite.io/v1
-   NEXT_PUBLIC_APPWRITE_PROJECT_ID=your_project_id
-   LLM_PROVIDER=fake
-   LLM_ENABLED=true
-   ```
+```env
+NEXT_PUBLIC_APPWRITE_ENDPOINT=https://fra.cloud.appwrite.io/v1
+NEXT_PUBLIC_APPWRITE_PROJECT_ID=your_project_id
+LLM_PROVIDER=fake
+LLM_ENABLED=true
+LLM_LIVE=false
+```
 
-3. تشغيل خادم التطوير:
-   ```bash
-   npm run dev
-   ```
+أوامر التطوير والتحقق:
 
-4. فحص الأمان واختبارات الوحدة:
-   ```bash
-   npm test
-   npm run build
-   ```
+```bash
+npm run dev
+LLM_LIVE=false npm test
+npx tsc --noEmit
+LLM_LIVE=false npm run build
+npm run build:functions
+```
+
+`npm run build` يشغّل فحصاً يمنع تسرب أسرار الخادم إلى حزم العميل. لا تشغّل `scripts/eval-real-model.ts` أثناء الاختبارات؛ هو أداة تقييم اختيارية، ولا يتصل بنموذج حي إلا عند تمرير `--provider openai` صراحةً وبوجود موافقة تشغيلية مناسبة. راجع [docs/GO_LIVE.md](docs/GO_LIVE.md) لخطوات التفعيل والتراجع.

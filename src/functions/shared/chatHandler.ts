@@ -426,20 +426,24 @@ export class ChatHandler {
     });
 
     // 10. Record Token Usage & Stats in llm_usage (Server-only)
-    await this.tables.createRow({
-      databaseId: "digr",
-      tableId: "llm_usage",
-      rowId: ID.unique(),
-      data: {
-        conversationId,
-        userId,
-        model: llmResult.model,
-        inputTokens: llmResult.inputTokens,
-        outputTokens: llmResult.outputTokens,
-        costUsd: Number(llmResult.costUsd.toFixed(6)),
-        createdAt: new Date().toISOString(),
-      },
-    });
+    try {
+      await this.tables.createRow({
+        databaseId: "digr",
+        tableId: "llm_usage",
+        rowId: ID.unique(),
+        data: {
+          conversationId,
+          userId,
+          model: llmResult.model,
+          inputTokens: llmResult.inputTokens,
+          outputTokens: llmResult.outputTokens,
+          costUsd: Number(llmResult.costUsd.toFixed(6)),
+          createdAt: new Date().toISOString(),
+        },
+      });
+    } catch {
+      console.warn("[llm:USAGE_STORAGE_UNAVAILABLE]");
+    }
 
     // 11. Update Conversation Stats
     const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;

@@ -1,75 +1,56 @@
-# Digr Platform Handoff Document
+# Digr Platform Handoff
 
-This document summarizes the current architecture, deployed state, pending items, and non-negotiable operational invariants for the Digr project.
+This document records the repository architecture, the last read-only public deployment check, and operational items that remain with the owner. It is not authorization to change production.
 
----
+## 1. Architecture
 
-## 1. Architecture Overview
+- **Web app:** Next.js 15, React 19, Tailwind CSS v4; Appwrite Sites SSR with `output: "standalone"`.
+- **Appwrite endpoint:** `https://fra.cloud.appwrite.io/v1`.
+- **Project database:** `digr`.
+- **Appwrite Functions source folders:** `create-job`, `job-worker`, `on-user-create`, `submit-topup`, and `approve-topup`; common server logic is in `src/functions/shared`.
+- **Current API routes:** `/api/chat`, `/api/chat/metadata`, `/api/chat/accept-quote`, `/api/chat/edit-plan`, `/api/jobs/[id]/data`, `/api/jobs/[id]/artifacts`, `/api/jobs/[id]/methodology`, `/api/jobs/[id]/complaint`, `/api/notifications`, `/api/admin/goodwill`, and `/api/onboarding`.
 
-- **Frontend & App Server**: Next.js 15 (React 19, Tailwind CSS v4) with Server-Side Rendering (SSR) deployed via Appwrite Sites (`output: "standalone"`).
-  - Routes: `/` (Landing/Home), `/login`, `/register`, `/dashboard/chat` (AI Discovery & Editable Plan), `/dashboard/order` (Direct Order), `/dashboard/jobs` (Results Canvas & Downloads), `/dashboard/topup` (Balance Top-up), `/admin/topups` (Ledger Approval).
-  - API Routes: `/api/chat`, `/api/chat/accept-quote`, `/api/chat/edit-plan`, `/api/jobs/[id]/data`, `/api/jobs/[id]/methodology`, `/api/onboarding`.
-- **Backend Services**: Appwrite Cloud (`cloud.appwrite.io/v1`).
-  - **Database (`digr`)**: Collections include `profiles`, `templates`, `templates_private`, `settings`, `topups`, `credit_ledger`, `jobs`, `job_events`, `job_calls`, `capability_registry`.
-  - **Storage Buckets**: `receipts` (user payment receipts), `results` (export files: CSV, JSON, PDF).
-  - **Serverless Functions**: 5 Appwrite Cloud Functions running Node.js 22 runtime:
-    1. `job-worker`: Background multi-step job processor with live event streaming and artifact generation.
-    2. `create-job`: Server-side quote verification, ledger reserve, and job enqueueing.
-    3. `on-user-create`: Automated profile creation triggered by Appwrite Auth user creation.
-    4. `submit-topup`: Safe deposit receipt submission.
-    5. `approve-topup`: Admin top-up approval and ledger credit calculation.
+## 2. Appwrite schema recorded in `scripts/setup-db.ts`
 
----
+The idempotent setup script defines these tables in database `digr`:
 
-## 2. What Is Deployed
+`templates`, `settings_public`, `profiles`, `credit_ledger`, `topups`, `jobs`, `job_events`, `conversations`, `messages`, `plans_quotes`, `artifact_versions`, `notes`, `capability_requests`, `templates_private`, `settings`, `job_calls`, `notifications`, `jobs_internal`, `capability_registry`, and `llm_usage`.
 
-| Component | Status | Details |
-| :--- | :---: | :--- |
-| **Appwrite Functions** | Deployed & Active | All 5 functions deployed to Appwrite Cloud with required execution scopes. |
-| **Appwrite Database** | Configured | All collections, schemas, indexes, and document permission rules applied. |
-| **Appwrite Storage** | Configured | Buckets `receipts` and `results` configured with size and MIME restrictions. |
-| **GitHub Repository** | Synced | Private repo `iammagdy/digr` on branch `main`. |
-| **Appwrite Sites** | Configured for SSR | Standalone output enabled in `next.config.mjs`, adapter set to SSR. |
+It defines these storage buckets:
 
----
+| Bucket | Allowed file extensions |
+|---|---|
+| `results` | `xlsx`, `pdf`, `csv` only |
+| `receipts` | `png`, `jpg`, `jpeg`, `pdf` |
+| `partials` | `jsonl` |
 
-## 3. What Is Pending
+The results bucket does not permit JSON. Schema definitions in this repository are not proof that the corresponding production schema has been applied. Review the full script before an authorized operator runs it; never run it against the live project as part of local development.
 
-1. **Appwrite Sites Live Verification**: Confirm Appwrite Sites successfully serves the live domain with SSR enabled once the latest commit build completes.
-2. **End-to-End Live Test**: Run a single live extraction test on the deployed stack with a test account (awaiting explicit user approval for real TREG/OpenAI spend).
-3. **Additional Capability Providers**: Activate X and YouTube capabilities after real-cost benchmarking (currently only verified `tiktok-profile` is active in the capability registry; others are marked "coming soon").
+## 3. Deployment status and pending owner actions
 
----
+- **Public read-only check:** on 2026-10-10, `https://digr.thewise.cloud` returned HTTP 200 from Appwrite Sites. This verified public site reachability only; it did not test authentication, Functions, database permissions, or create any production data.
+- **This feature stack is not deployed:** branches and pull requests remain pending owner review and merge. Do not push to `main` or merge PRs on the owner's behalf.
+- **Section D schema step:** `notifications` is defined in the setup script for goodwill notices/review-queue storage. The owner or an authorized operator must review the complete script and apply the required schema through the approved operational procedure, then verify user-read/server-write permissions before setting `GOODWILL_ENABLED=true`. This task did not run a setup script on production.
+- **OpenAI go-live:** `LLM_PROVIDER=fake` remains the safe development default. The owner must review and merge the stack, configure server-side variables and the `llm_usage` table, and explicitly authorize any live model smoke test. See [GO_LIVE.md](GO_LIVE.md). No live model request was made during development.
+- **Data providers:** dependent-plan execution remains fake-fixture-only. No real provider capability was enabled and no live provider request was made.
+- **Stacked PR merge order:** #3 (A) → #4 (B) → #5 (C) → #6 (D) → #7 (E) → #8 (F) → #9 (G). Each section after A targets the preceding section branch.
 
-## 4. Non-Negotiable Rules & Invariants
+## 4. Non-negotiable invariants
 
-### A. Money & Ledger Invariants
-1. **Deterministic Document IDs**: All financial transactions use deterministic IDs to prevent double-charging or race conditions:
-   - Reserve: `res_<jobId>`
-   - Release: `rel_<jobId>`
-   - Charge: `chg_<jobId>`
-2. **Release-First Finish Sequence**: When settling a completed job, the ledger strictly follows:
-   - Reserve: `-R`
-   - Release: `+R`
-   - Charge: `-C` (where `C <= R`)
-3. **Hard Cap on Charges**: `chargedCredits` must NEVER exceed `reservedCredits`.
-4. **TOCTOU Protection**: In `create-job`, the reservation entry is written FIRST, then the user balance is verified across paginated ledger records. If the balance becomes negative, a compensating release is immediately recorded and the job is rejected.
+### Money and ledger
 
-### B. Permission Tiers & Security
-1. **Server-Only Collections**: `job_calls`, `templates_private`, and `settings` have NO read permissions for the `users` role. They are accessible only by server Functions using Appwrite Server API keys.
-2. **Client Write Boundary**: In `topups`, the client can only write `amountEgp`, `reference`, and `receiptFileId`. The `status` field is forced to `pending` upon creation. `credits` are calculated server-side at approval time by `approve-topup`.
-3. **Profile Creation**: Profiles are created solely by the `on-user-create` function triggered by `users.*.create`. Role is always set to `user`.
+- Ledger operations are append-only, use deterministic IDs, release before charge, and never charge more than the reserved amount.
+- Balances are computed server-side from complete pagination. Delivery-based proportional settlement must not be duplicated by goodwill refunds.
+- Only the section D code path is authorized for goodwill adjustments; other sections must not alter ledger behavior.
 
-### C. White-Labeling & Brand Integrity
-1. **Zero Upstream Leakage**: No upstream provider names (e.g. TREG), internal cost basis, or profit margins are ever exposed to the client or written into client-accessible collections.
-2. **Arabic-First UX**: Consistent RTL layout with verified font rendering, clean Arabic typography, and factual methodology notes free of marketing buzzwords.
+### Permissions and security
 
-### D. LLM Trust Boundary & Editable Plan
-1. **Strict Plan Edits**: The LLM can never directly write to the database or trigger spend. It can only propose plan edits through the typed `edit_plan` tool schema.
-2. **Server-Side Validation**: All plan modifications are validated by server-side schemas against the capability registry before updating quotes.
-3. **Quote Expiration & Hash Binding**: Every edit produces a new quote (30-minute expiry) bound to a SHA-256 hash of the plan. Jobs can only start on the latest valid quote. Nothing is reserved or spent prior to the customer explicitly clicking "Start".
+- Do not weaken collection permissions, expose server-only records, or place a secret in client-visible configuration, source, or logs.
+- Model output is untrusted and cannot write to the database, start collection, or spend points. Any newly chargeable work requires a new quote and explicit user approval.
+- Production account access, if used, is read-only. Do not visit `/admin/*`, create a job/plan, change settings, or modify onboarding data.
 
-### E. Operational Guardrails
-1. **No Unapproved Live Spend**: Never make real TREG or OpenAI API calls without explicit, direct user authorization. Use fake fixtures and local mock servers for all automated testing.
-2. **Zero Secrets in Code**: Never commit, log, or leak API keys, tokens, or private environment variables into the repo or client bundles.
-3. **No Machine or DNS Alterations**: Never modify host OS, network, firewall, DNS, or browser settings.
+### White-label and local testing
+
+- Customer-facing copy remains Arabic and RTL, with no provider names, internal costs, or unsupported completeness claims.
+- Use fake fixtures and network mocks for tests. Do not contact live TREG or OpenAI during development.
+- Do not change DNS, hosting, GitHub settings, Appwrite Console settings, collections, or permissions as part of this task.

@@ -4,6 +4,8 @@ import { ChatHandler } from "../../../functions/shared/chatHandler";
 import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
+  checkUserDailySpendCap,
+  type RateLimitCheckResult,
 } from "../../../functions/shared/rateLimits";
 import {
   formatStructuredClarificationAnswers,
@@ -103,12 +105,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Global Platform Daily Spend Cap Guard
-    const spendCheck = await checkGlobalDailySpendCap(tables);
+    // 2. Global and per-user daily spend caps. If the server-only usage table is
+    // unavailable, fail closed instead of making an unmetered model call.
+    let spendCheck: RateLimitCheckResult;
+    let userSpendCheck: RateLimitCheckResult;
+    try {
+      [spendCheck, userSpendCheck] = await Promise.all([
+        checkGlobalDailySpendCap(tables),
+        checkUserDailySpendCap(tables, verifiedUserId),
+      ]);
+    } catch {
+      console.warn("[llm:SPEND_CAP_STORAGE_UNAVAILABLE]");
+      return NextResponse.json(
+        { success: false, error: "المساعد متوقف مؤقتاً للحماية. يرجى المحاولة لاحقاً." },
+        { status: 503 },
+      );
+    }
     if (!spendCheck.allowed) {
       return NextResponse.json(
         { success: false, error: spendCheck.reasonAr },
         { status: spendCheck.statusCode || 503 }
+      );
+    }
+
+    if (!userSpendCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: userSpendCheck.reasonAr },
+        { status: userSpendCheck.statusCode || 429 },
       );
     }
 
@@ -132,13 +155,12 @@ export async function POST(req: NextRequest) {
       success: true,
       ...result,
     });
-  } catch (err: any) {
-    console.error("Chat API error:", err);
+  } catch {
+    console.error("[chat:request_failed]");
     return NextResponse.json(
       {
         success: false,
         error: "حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.",
-        detail: err.message,
       },
       { status: 500 }
     );

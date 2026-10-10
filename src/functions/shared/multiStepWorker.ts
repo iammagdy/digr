@@ -18,6 +18,7 @@ import {
 import { LlmClient } from "./llmClient";
 import { recordInitialArtifactVersion } from "./artifactVersions";
 import { applyGoodwillOutcome } from "./goodwillRefund";
+import { checkGlobalDailySpendCap, checkUserDailySpendCap } from "./rateLimits";
 
 export interface WorkerStepInput {
   jobId: string;
@@ -510,7 +511,36 @@ export async function executeMultiStepJob(
   const runFacts = computeRunFacts(requestSpec, deliveredRows);
   let review = buildFallbackReview(runFacts, requestSpec);
   if (process.env.RESULT_REVIEW_MODEL_ENABLED === "true") {
-    try { review = (await new LlmClient().reviewResult(runFacts)) || review; }
+    try {
+      if (!input.conversationId) {
+        console.warn("[result-review:USAGE_CONTEXT_UNAVAILABLE]");
+      } else {
+        const [globalLimit, userLimit] = await Promise.all([
+          checkGlobalDailySpendCap(tables),
+          checkUserDailySpendCap(tables, input.userId),
+        ]);
+        if (!globalLimit.allowed || !userLimit.allowed) {
+          console.warn("[result-review:SPEND_CAP]");
+        } else {
+          review = (await new LlmClient().reviewResult(runFacts, async (usage) => {
+            await tables.createRow({
+              databaseId: "digr",
+              tableId: "llm_usage",
+              rowId: ID.unique(),
+              data: {
+                conversationId: input.conversationId!,
+                userId: input.userId,
+                model: usage.model,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                costUsd: Number(usage.costUsd.toFixed(6)),
+                createdAt: new Date().toISOString(),
+              },
+            });
+          })) || review;
+        }
+      }
+    }
     catch { console.warn("[result-review:MODEL_FALLBACK]"); }
   }
 

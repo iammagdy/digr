@@ -15,6 +15,7 @@ import { buildFallbackReview, buildNormalizedRequestSpec, computeRunFacts, parse
 import { LlmClient } from "../../shared/llmClient";
 import { recordInitialArtifactVersion } from "../../shared/artifactVersions";
 import { applyGoodwillOutcome } from "../../shared/goodwillRefund";
+import { checkGlobalDailySpendCap, checkUserDailySpendCap } from "../../shared/rateLimits";
 
 const workerPayloadSchema = z.object({
   jobId: z.string().min(1),
@@ -220,6 +221,7 @@ export default async ({ req, res, log, error }: any) => {
 
     const cleanData = tregResult.data?.data || tregResult.data;
     let requestSpec: NormalizedRequestSpec | undefined;
+    let reviewConversationId: string | undefined;
     try {
       const quoteRows = await tables.listRows({
         databaseId: "digr",
@@ -227,6 +229,7 @@ export default async ({ req, res, log, error }: any) => {
         queries: [Query.equal("jobId", jobId), Query.limit(1)],
       });
       if (quoteRows.rows.length) {
+        reviewConversationId = String(quoteRows.rows[0].conversationId || "") || undefined;
         const storedPlan = parseStoredPlan(quoteRows.rows[0].itemsJson);
         requestSpec = parseNormalizedRequestSpec(storedPlan.requestSpec) || buildNormalizedRequestSpec(storedPlan);
       }
@@ -248,7 +251,36 @@ export default async ({ req, res, log, error }: any) => {
     const runFacts = computeRunFacts(requestSpec, reviewRows);
     let review = buildFallbackReview(runFacts, requestSpec);
     if (process.env.RESULT_REVIEW_MODEL_ENABLED === "true") {
-      try { review = (await new LlmClient().reviewResult(runFacts)) || review; }
+      try {
+        if (!reviewConversationId) {
+          log("[result-review:USAGE_CONTEXT_UNAVAILABLE]");
+        } else {
+          const [globalLimit, userLimit] = await Promise.all([
+            checkGlobalDailySpendCap(tables),
+            checkUserDailySpendCap(tables, job.userId),
+          ]);
+          if (!globalLimit.allowed || !userLimit.allowed) {
+            log("[result-review:SPEND_CAP]");
+          } else {
+            review = (await new LlmClient().reviewResult(runFacts, async (usage) => {
+              await tables.createRow({
+                databaseId: "digr",
+                tableId: "llm_usage",
+                rowId: ID.unique(),
+                data: {
+                  conversationId: reviewConversationId!,
+                  userId: job.userId,
+                  model: usage.model,
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
+                  costUsd: Number(usage.costUsd.toFixed(6)),
+                  createdAt: new Date().toISOString(),
+                },
+              });
+            })) || review;
+          }
+        }
+      }
       catch { log("[result-review:MODEL_FALLBACK]"); }
     }
     const resultPayload = {
