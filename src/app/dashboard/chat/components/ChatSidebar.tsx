@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { PersonaType, PERSONA_CONFIGS } from "@/functions/shared/personaConfigs";
+import { getPersonaConfig, PersonaType, PERSONA_CONFIGS } from "@/functions/shared/personaConfigs";
 
 export interface ConversationItem {
   $id: string;
@@ -18,7 +18,7 @@ interface ChatSidebarProps {
   onDeleteConversation?: (id: string) => void;
   userBalance: number | null;
   userPersona?: PersonaType;
-  onOpenOnboarding?: () => void;
+  onChangePersona: (persona: PersonaType) => Promise<void>;
   isOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -30,17 +30,31 @@ export default function ChatSidebar({
   onNewChat,
   userBalance,
   userPersona,
-  onOpenOnboarding,
+  onChangePersona,
   isOpen,
   onCloseMobile,
 }: ChatSidebarProps) {
   const [search, setSearch] = useState("");
+  const [personaSaving, setPersonaSaving] = useState(false);
+  const [personaError, setPersonaError] = useState<string | null>(null);
 
   const filteredConversations = conversations.filter((c) =>
     (c.title || "محادثة جديدة").toLowerCase().includes(search.toLowerCase())
   );
 
-  const personaConfig = userPersona ? PERSONA_CONFIGS[userPersona] : PERSONA_CONFIGS.student;
+  const personaConfig = getPersonaConfig(userPersona);
+
+  async function handlePersonaChange(value: string) {
+    setPersonaSaving(true);
+    setPersonaError(null);
+    try {
+      await onChangePersona(value as PersonaType);
+    } catch (error: any) {
+      setPersonaError(error.message || "تعذر حفظ الشخصية");
+    } finally {
+      setPersonaSaving(false);
+    }
+  }
 
   return (
     <>
@@ -145,28 +159,34 @@ export default function ChatSidebar({
         </div>
 
         {/* Footer: User Persona & Balance Badge */}
-        <div className="p-4 border-t border-sand-300 bg-sand-100 flex items-center justify-between">
-          <div>
-            <div className="text-xs text-sand-600 mb-0.5">الرصيد المتاح:</div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-base font-bold text-amber-points tabular-nums">
-                {userBalance !== null ? userBalance : "..."}
-              </span>
-              <span className="text-xs font-semibold text-amber-points">نقطة</span>
+        <div className="p-4 border-t border-sand-300 bg-sand-100 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-xs text-sand-600 mb-0.5">الرصيد المتاح:</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-base font-bold text-amber-points tabular-nums">
+                  {userBalance !== null ? userBalance : "..."}
+                </span>
+                <span className="text-xs font-semibold text-amber-points">نقطة</span>
+              </div>
             </div>
+            <span className="text-xs font-medium text-ink-800">{personaConfig.titleAr.split(" ")[0]}</span>
           </div>
-
-            <button
-              onClick={onOpenOnboarding}
-              className="text-2xs px-2.5 py-1 bg-white hover:bg-sand-50 border border-sand-300 text-ink-800 rounded-full font-medium transition-colors cursor-pointer inline-flex items-center gap-1.5"
-              title="تعديل نمط المساعد"
-            >
-              <span>{personaConfig.titleAr.split(" ")[0]}</span>
-              <svg className="w-3 h-3 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            </button>
+          <label htmlFor="persona-setting" className="block text-xs font-semibold text-sand-700">طريقة المساعد</label>
+          <select
+            id="persona-setting"
+            aria-label="تغيير الشخصية"
+            value={userPersona ?? "other"}
+            disabled={personaSaving}
+            onChange={(event) => handlePersonaChange(event.target.value)}
+            className="min-h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-sm text-ink-900 outline-none focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
+          >
+            {Object.values(PERSONA_CONFIGS).map((persona) => (
+              <option key={persona.key} value={persona.key}>{persona.titleAr}</option>
+            ))}
+          </select>
+          {personaSaving && <div className="text-xs text-sand-600" aria-live="polite">جاري حفظ التخصيص...</div>}
+          {personaError && <div className="text-xs text-danger" role="alert">{personaError}</div>}
         </div>
       </aside>
     </>
