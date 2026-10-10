@@ -36,6 +36,8 @@ export async function calculateBalance(tables: TablesDB, userId: string): Promis
   return total;
 }
 
+export const getBalance = calculateBalance;
+
 /**
  * Creates a deterministic reserve entry: ID = res_<jobId>
  */

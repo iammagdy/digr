@@ -1,49 +1,112 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Digr palette — warm, muted, premium */
-  --color-sand-50: #faf8f5;
-  --color-sand-100: #f3f0eb;
-  --color-sand-200: #e8e3db;
-  --color-sand-300: #d5cec3;
-  --color-sand-400: #b8ae9f;
-  --color-sand-500: #9a8e7d;
-  --color-sand-600: #7d7265;
-  --color-sand-700: #655b50;
-  --color-sand-800: #4a4239;
-  --color-sand-900: #2e2924;
+  /* Digr refined palette — calm, crisp, editorial, trustworthy */
+  --color-sand-50: #faf9f6;
+  --color-sand-100: #f4f3ee;
+  --color-sand-200: #e8e6df;
+  --color-sand-300: #d6d3c9;
+  --color-sand-400: #b8b3a7;
+  --color-sand-500: #938d80;
+  --color-sand-600: #6f695e;
+  --color-sand-700: #555047;
+  --color-sand-800: #38342e;
+  --color-sand-900: #1a1815;
 
+  /* Ink shades for high-contrast, effortless Arabic reading */
+  --color-ink-900: #0f172a;
+  --color-ink-800: #1e293b;
+  --color-ink-700: #334155;
+  --color-ink-600: #475569;
+  --color-ink-500: #64748b;
+  --color-ink-400: #94a3b8;
+  --color-ink-300: #cbd5e1;
+  --color-ink-200: #e2e8f0;
+  --color-ink-100: #f1f5f9;
+
+  /* Primary interactive actions (deep, confident slate-black) */
+  --color-primary: #0f172a;
+  --color-primary-hover: #1e293b;
+
+  /* Focus and interactive accent (clean sapphire) */
   --color-accent: #2563eb;
   --color-accent-hover: #1d4ed8;
-  --color-success: #16a34a;
-  --color-danger: #dc2626;
+  --color-accent-light: #eff6ff;
+
+  /* Points & Value accent (warm bronze amber) */
+  --color-amber-points: #d97706;
+  --color-amber-points-hover: #b45309;
+  --color-amber-points-bg: #fffbeb;
+
+  /* Status semantic colors */
+  --color-success: #059669;
+  --color-success-bg: #ecfdf5;
   --color-warning: #d97706;
+  --color-warning-bg: #fffbeb;
+  --color-danger: #dc2626;
+  --color-danger-bg: #fef2f2;
 }
 
 /* IBM Plex Sans Arabic from Google Fonts */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
 
 /* Base styles */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
-  @apply bg-sand-50 font-sans text-sand-800 antialiased;
-  font-feature-settings: "ss01", "ss02";
+  background-color: var(--color-sand-50);
+  color: var(--color-ink-800);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "ss02", "cv01";
 }
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-thumb {
-  @apply rounded-full bg-sand-300;
+  background-color: #cbd5e1;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-track {
-  @apply bg-transparent;
+  background-color: transparent;
 }
 
-/* Focus ring */
+/* Accessible focus ring */
 *:focus-visible {
-  @apply ring-2 ring-accent ring-offset-2 ring-offset-sand-50 outline-none;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Mobile & Touch Target Utilities */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

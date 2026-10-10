@@ -295,6 +295,132 @@ async function setup() {
     ]
   );
 
+  await ensureTable(
+    "conversations",
+    "Conversations",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "title", type: "varchar", size: 256, required: true },
+      { key: "status", type: "enum", elements: ["active", "archived"], required: false, default: "active" },
+      { key: "totalTokens", type: "integer", required: false, default: 0 },
+      { key: "costUsd", type: "double", required: false, default: 0.0 },
+      { key: "createdAt", type: "datetime", required: true },
+      { key: "updatedAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "userId_idx", type: "key", attributes: ["userId"] },
+      { key: "status_idx", type: "key", attributes: ["status"] },
+    ]
+  );
+
+  await ensureTable(
+    "messages",
+    "Messages",
+    [],
+    true,
+    [
+      { key: "conversationId", type: "varchar", size: 36, required: true },
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "role", type: "enum", elements: ["user", "assistant", "system"], required: true },
+      { key: "content", type: "text", required: true },
+      { key: "status", type: "enum", elements: ["thinking", "ready", "failed"], required: false, default: "ready" },
+      { key: "planQuoteId", type: "varchar", size: 36, required: false },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "conversation_idx", type: "key", attributes: ["conversationId"] },
+      { key: "user_idx", type: "key", attributes: ["userId"] },
+    ]
+  );
+
+  await ensureTable(
+    "plans_quotes",
+    "Plans Quotes",
+    [],
+    true,
+    [
+      { key: "conversationId", type: "varchar", size: 36, required: true },
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "jobId", type: "varchar", size: 36, required: false },
+      { key: "status", type: "enum", elements: ["proposed", "accepted", "rejected", "expired"], required: true },
+      { key: "summaryAr", type: "varchar", size: 512, required: true },
+      { key: "itemsJson", type: "text", required: true },
+      { key: "targetVolumeMax", type: "integer", required: true },
+      { key: "unitPricePoints", type: "double", required: true },
+      { key: "quotedPoints", type: "integer", required: true },
+      { key: "reservedPoints", type: "integer", required: false },
+      { key: "chargedPoints", type: "integer", required: false },
+      { key: "settingsVersion", type: "varchar", size: 64, required: true },
+      { key: "expiresAt", type: "datetime", required: true },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "conversation_idx", type: "key", attributes: ["conversationId"] },
+      { key: "user_idx", type: "key", attributes: ["userId"] },
+      { key: "status_idx", type: "key", attributes: ["status"] },
+    ]
+  );
+
+  await ensureTable(
+    "artifact_versions",
+    "Artifact Versions",
+    [],
+    true,
+    [
+      { key: "conversationId", type: "varchar", size: 36, required: true },
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "jobId", type: "varchar", size: 36, required: true },
+      { key: "versionNum", type: "integer", required: true },
+      { key: "parentVersionId", type: "varchar", size: 36, required: false },
+      { key: "operationJson", type: "text", required: true },
+      { key: "rowCount", type: "integer", required: true },
+      { key: "fileIdXlsx", type: "varchar", size: 36, required: false },
+      { key: "fileIdPdf", type: "varchar", size: 36, required: false },
+      { key: "fileIdCsv", type: "varchar", size: 36, required: false },
+      { key: "isOriginal", type: "boolean", required: true },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "conversation_idx", type: "key", attributes: ["conversationId"] },
+      { key: "job_idx", type: "key", attributes: ["jobId"] },
+    ]
+  );
+
+  await ensureTable(
+    "notes",
+    "Notes",
+    [],
+    true,
+    [
+      { key: "conversationId", type: "varchar", size: 36, required: true },
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "contentMarkdown", type: "text", required: true },
+      { key: "updatedAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "conversation_idx", type: "unique", attributes: ["conversationId"] },
+      { key: "user_idx", type: "key", attributes: ["userId"] },
+    ]
+  );
+
+  await ensureTable(
+    "capability_requests",
+    "Capability Requests",
+    [],
+    true,
+    [
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "queryAr", type: "varchar", size: 512, required: true },
+      { key: "platform", type: "varchar", size: 64, required: true },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "user_idx", type: "key", attributes: ["userId"] },
+    ]
+  );
+
   // Tier 3: Server-Only Tables (Permissions: empty, rowSecurity: false)
   console.log("\n[3/3] Setting up Server-Only Tables...");
 
@@ -364,15 +490,63 @@ async function setup() {
       { key: "actualCostMicro", type: "integer", required: true },
       { key: "revenueCredits", type: "integer", required: true },
       { key: "marginEgp", type: "double", required: true },
+      { key: "dataSource", type: "varchar", size: 16, required: false, default: "live" },
     ],
     [
       { key: "jobId_idx", type: "unique", attributes: ["jobId"] },
     ]
   );
 
+  await ensureTable(
+    "capability_registry",
+    "Capability Registry",
+    [],
+    false,
+    [
+      { key: "slug", type: "varchar", size: 64, required: true },
+      { key: "category", type: "enum", elements: ["x", "youtube", "tiktok", "web"], required: true },
+      { key: "nameAr", type: "varchar", size: 128, required: true },
+      { key: "nameEn", type: "varchar", size: 128, required: true },
+      { key: "descriptionAr", type: "varchar", size: 512, required: true },
+      { key: "paramsSchema", type: "text", required: true },
+      { key: "tregEndpointId", type: "varchar", size: 128, required: true },
+      { key: "tregMethod", type: "enum", elements: ["GET", "POST"], required: true },
+      { key: "pricingUnit", type: "enum", elements: ["call", "item", "page"], required: true },
+      { key: "unitCostUsd", type: "double", required: true },
+      { key: "maxRows", type: "integer", required: true },
+      { key: "paginationType", type: "enum", elements: ["cursor", "offset", "none"], required: true },
+      { key: "enabled", type: "boolean", required: true },
+    ],
+    [
+      { key: "slug_idx", type: "unique", attributes: ["slug"] },
+      { key: "category_idx", type: "key", attributes: ["category"] },
+    ]
+  );
+
+  await ensureTable(
+    "llm_usage",
+    "LLM Usage",
+    [],
+    false,
+    [
+      { key: "conversationId", type: "varchar", size: 36, required: true },
+      { key: "userId", type: "varchar", size: 36, required: true },
+      { key: "model", type: "varchar", size: 64, required: true },
+      { key: "inputTokens", type: "integer", required: true },
+      { key: "outputTokens", type: "integer", required: true },
+      { key: "costUsd", type: "double", required: true },
+      { key: "turnCount", type: "integer", required: false, default: 1 },
+      { key: "createdAt", type: "datetime", required: true },
+    ],
+    [
+      { key: "conversation_idx", type: "key", attributes: ["conversationId"] },
+      { key: "user_idx", type: "key", attributes: ["userId"] },
+    ]
+  );
+
   // Storage Buckets
   console.log("\n📦 Setting up Storage Buckets...");
-  await ensureBucket("results", "Results", [], true, ["xlsx", "csv", "json"], 52428800);
+  await ensureBucket("results", "Results", [], true, ["xlsx", "pdf", "csv"], 52428800);
   await ensureBucket(
     "receipts",
     "Receipts",
@@ -432,6 +606,242 @@ async function setup() {
     estimatedCostUsd: 0.001,
     maxCostUsd: 0.01,
   });
+
+  console.log("\n🌱 Seeding Capability Registry (12 capabilities)...");
+  const capabilitiesSeed = [
+    {
+      slug: "tiktok-profile",
+      category: "tiktok",
+      nameAr: "استخراج ملف تيك توك الشخصي",
+      nameEn: "TikTok User Profile",
+      descriptionAr: "استخراج الإحصائيات الشاملة والنبذة التعريفية وحالة التوثيق لحساب تيك توك عام",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { username: { type: "string", description: "اسم المستخدم بدون @" } },
+        required: ["username"]
+      }),
+      tregEndpointId: "tikhub.tiktok.user.profile",
+      tregMethod: "GET",
+      pricingUnit: "call",
+      unitCostUsd: 0.0012,
+      maxRows: 1,
+      paginationType: "none",
+      enabled: true
+    },
+    {
+      slug: "tiktok-user-videos",
+      category: "tiktok",
+      nameAr: "مقاطع فيديو مستخدم تيك توك",
+      nameEn: "TikTok User Recent Videos",
+      descriptionAr: "استخراج أحدث مقاطع الفيديو المنشورة في حساب تيك توك عام مع إحصائيات المشاهدة والتفاعل",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { username: { type: "string" }, count: { type: "integer", maximum: 200 } },
+        required: ["username"]
+      }),
+      tregEndpointId: "tikhub.tiktok.user.posts",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.0003,
+      maxRows: 200,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "tiktok-keyword-videos",
+      category: "tiktok",
+      nameAr: "البحث في مقاطع تيك توك بكلمة مفتاحية",
+      nameEn: "TikTok Keyword Video Search",
+      descriptionAr: "البحث عن مقاطع تيك توك العامة المرتبطة بكلمة مفتاحية أو وسم",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { keyword: { type: "string" }, count: { type: "integer", maximum: 300 } },
+        required: ["keyword"]
+      }),
+      tregEndpointId: "tikhub.tiktok.search.video",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.00035,
+      maxRows: 300,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "x-user-tweets",
+      category: "x",
+      nameAr: "تغريدات حساب محدد على X",
+      nameEn: "X User Recent Tweets",
+      descriptionAr: "استخراج أحدث المنشورات والتغريدات العامة لحساب على منصة X",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { username: { type: "string" }, count: { type: "integer", maximum: 500 } },
+        required: ["username"]
+      }),
+      tregEndpointId: "twitter.user.tweets",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.00007,
+      maxRows: 500,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "x-keyword-search",
+      category: "x",
+      nameAr: "البحث في تغريدات X بكلمة مفتاحية",
+      nameEn: "X Keyword Tweet Search",
+      descriptionAr: "البحث في التغريدات العامة على منصة X بكلمة مفتاحية أو هاشتاج مع التفاعل والتواريخ",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { query: { type: "string" }, count: { type: "integer", maximum: 500 } },
+        required: ["query"]
+      }),
+      tregEndpointId: "twitter.search.tweets",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.00007,
+      maxRows: 500,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "x-user-profile",
+      category: "x",
+      nameAr: "بيانات ملف شخصي على منصة X",
+      nameEn: "X User Profile",
+      descriptionAr: "استخراج بيانات الحساب الرسمي والمعرف والمتابعين والنبذة لحساب على X",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { username: { type: "string" } },
+        required: ["username"]
+      }),
+      tregEndpointId: "twitter.user.profile",
+      tregMethod: "GET",
+      pricingUnit: "call",
+      unitCostUsd: 0.001,
+      maxRows: 1,
+      paginationType: "none",
+      enabled: false
+    },
+    {
+      slug: "youtube-channel-info",
+      category: "youtube",
+      nameAr: "بيانات وإحصائيات قناة يوتيوب",
+      nameEn: "YouTube Channel Info",
+      descriptionAr: "استخراج إحصائيات قناة يوتيوب العامة والمشتركين وإجمالي المشاهدات",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { channelIdOrHandle: { type: "string" } },
+        required: ["channelIdOrHandle"]
+      }),
+      tregEndpointId: "youtube.channel.details",
+      tregMethod: "GET",
+      pricingUnit: "call",
+      unitCostUsd: 0.001,
+      maxRows: 1,
+      paginationType: "none",
+      enabled: false
+    },
+    {
+      slug: "youtube-channel-videos",
+      category: "youtube",
+      nameAr: "أحدث مقاطع قناة يوتيوب",
+      nameEn: "YouTube Channel Videos",
+      descriptionAr: "استخراج قائمة مقاطع الفيديو المنشورة في قناة يوتيوب مع عناوينها ومشاهداتها",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { channelIdOrHandle: { type: "string" }, count: { type: "integer", maximum: 200 } },
+        required: ["channelIdOrHandle"]
+      }),
+      tregEndpointId: "youtube.channel.videos",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.0002,
+      maxRows: 200,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "youtube-search",
+      category: "youtube",
+      nameAr: "البحث في يوتيوب بكلمة مفتاحية",
+      nameEn: "YouTube Search Videos",
+      descriptionAr: "البحث عن مقاطع فيديو على يوتيوب بالكلمات الدلالية",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { query: { type: "string" }, count: { type: "integer", maximum: 300 } },
+        required: ["query"]
+      }),
+      tregEndpointId: "youtube.search",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.0002,
+      maxRows: 300,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "youtube-video-comments",
+      category: "youtube",
+      nameAr: "تعليقات مقطع يوتيوب",
+      nameEn: "YouTube Video Comments",
+      descriptionAr: "استخراج تعليقات الجمهور على مقطع يوتيوب محدد",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { videoId: { type: "string" }, count: { type: "integer", maximum: 500 } },
+        required: ["videoId"]
+      }),
+      tregEndpointId: "youtube.video.comments",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.00015,
+      maxRows: 500,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "web-search",
+      category: "web",
+      nameAr: "البحث العام في الويب",
+      nameEn: "Web Search Engine",
+      descriptionAr: "البحث العام في مواقع الإنترنت واستخراج عناوين الصفحات وروابطها وملخصاتها",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { query: { type: "string" }, count: { type: "integer", maximum: 100 } },
+        required: ["query"]
+      }),
+      tregEndpointId: "serp.google.search",
+      tregMethod: "GET",
+      pricingUnit: "page",
+      unitCostUsd: 0.002,
+      maxRows: 100,
+      paginationType: "cursor",
+      enabled: false
+    },
+    {
+      slug: "web-extract-article",
+      category: "web",
+      nameAr: "استخراج المحتوى الكامل لصفحة ويب",
+      nameEn: "Web Article Extractor",
+      descriptionAr: "استخراج نص المقال والمؤلف وتاريخ النشر والصور من رابط ويب عام",
+      paramsSchema: JSON.stringify({
+        type: "object",
+        properties: { url: { type: "string" } },
+        required: ["url"]
+      }),
+      tregEndpointId: "web.article.extract",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.002,
+      maxRows: 10,
+      paginationType: "none",
+      enabled: false
+    },
+  ];
+
+  for (const cap of capabilitiesSeed) {
+    await ensureRow("capability_registry", cap.slug, cap);
+  }
 
   console.log("\n✅ Database & Storage setup completed successfully!");
 }

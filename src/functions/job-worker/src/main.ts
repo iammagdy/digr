@@ -5,6 +5,11 @@ import {
   releaseCredits,
 } from "../../shared/ledger";
 import { executeTregCall } from "../../shared/tregClient";
+import {
+  generateExcelReport,
+  generatePdfReport,
+  generateCsvReport,
+} from "../../shared/fileGenerators";
 
 const workerPayloadSchema = z.object({
   jobId: z.string().min(1),
@@ -224,22 +229,41 @@ export default async ({ req, res, log, error }: any) => {
       data: cleanData,
     };
 
-    const fileContentBuffer = Buffer.from(JSON.stringify(resultPayload, null, 2), "utf-8");
-    const filename = `digr_${job.templateSlug}_${jobId}.json`;
-    const resultFileId = ID.unique();
+    // Generate Excel, PDF, and CSV reports
+    const [xlsxBuffer, pdfBuffer, csvBuffer] = await Promise.all([
+      generateExcelReport(resultPayload),
+      generatePdfReport(resultPayload),
+      Promise.resolve(generateCsvReport(resultPayload)),
+    ]);
 
-    // Upload result file to bucket 'results' with File Security ON
-    const uploadFile = new File([fileContentBuffer], filename, { type: "application/json" });
-    await storage.createFile(
-      "results",
-      resultFileId,
-      uploadFile,
-      [
-        Permission.read(Role.user(job.userId)),
-        Permission.read(Role.label("admin")),
-      ]
-    );
-    log(`[job-worker] Uploaded result file ${resultFileId} (${filename}) to bucket results`);
+    const xlsxFileId = `xlsx_${jobId}`;
+    const pdfFileId = `pdf_${jobId}`;
+    const csvFileId = `csv_${jobId}`;
+
+    const permissions = [
+      Permission.read(Role.user(job.userId)),
+      Permission.read(Role.label("admin")),
+    ];
+
+    // Upload all 3 files to bucket 'results' with File Security ON
+    const xlsxFile = new File([xlsxBuffer], `digr_${job.templateSlug}_${jobId}.xlsx`, {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const pdfFile = new File([pdfBuffer], `digr_${job.templateSlug}_${jobId}.pdf`, {
+      type: "application/pdf",
+    });
+    const csvFile = new File([csvBuffer], `digr_${job.templateSlug}_${jobId}.csv`, {
+      type: "text/csv; charset=utf-8",
+    });
+
+    await Promise.all([
+      storage.createFile("results", xlsxFileId, xlsxFile, permissions),
+      storage.createFile("results", pdfFileId, pdfFile, permissions),
+      storage.createFile("results", csvFileId, csvFile, permissions),
+    ]);
+
+    log(`[job-worker] Uploaded xlsx (${xlsxFileId}), pdf (${pdfFileId}), and csv (${csvFileId}) to bucket results`);
+    const resultFileId = xlsxFileId;
 
     // Calculate Margin & Internal Reporting
     const actualCostMicro = tregResult.costMicro;

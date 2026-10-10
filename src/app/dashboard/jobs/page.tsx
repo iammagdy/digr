@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { client, databases, account } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
@@ -34,12 +35,15 @@ interface JobEvent {
 
 export default function JobsPage() {
   const { user } = useUser();
+  const router = useRouter();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "running" | "done" | "failed">("all");
   const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
   const [events, setEvents] = useState<Record<string, JobEvent[]>>({});
   const [loadingEvents, setLoadingEvents] = useState<string | null>(null);
-  const [downloadingJobId, setDownloadingJobId] = useState<string | null>(null);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const fetchJobs = useCallback(async () => {
@@ -58,16 +62,12 @@ export default function JobsPage() {
     }
   }, [user]);
 
-  // Initial fetch and auto-refresh when there are active jobs
   useEffect(() => {
     fetchJobs();
 
     const interval = setInterval(() => {
-      // If any job is currently queued or running, poll updates
       setJobs((currentJobs) => {
-        const hasActive = currentJobs.some(
-          (j) => j.status === "queued" || j.status === "running"
-        );
+        const hasActive = currentJobs.some((j) => j.status === "queued" || j.status === "running");
         if (hasActive) {
           fetchJobs();
         }
@@ -103,17 +103,16 @@ export default function JobsPage() {
     }
   };
 
-  const handleDownload = async (job: Job) => {
-    if (!job.resultFileId) return;
-    setDownloadingJobId(job.$id);
+  const handleDownload = async (job: Job, format: "xlsx" | "pdf" | "csv") => {
+    const key = `${job.$id}_${format}`;
+    setDownloadingKey(key);
     setDownloadError(null);
 
     try {
-      // 1. Obtain user session JWT for secure authenticated file download
       const jwtRes = await account.createJWT();
+      const fileId = `${format}_${job.$id}`;
+      const downloadUrl = storage.getFileDownload("results", fileId);
 
-      // 2. Fetch file directly through client SDK endpoint with user's JWT
-      const downloadUrl = storage.getFileDownload("results", job.resultFileId);
       const res = await fetch(downloadUrl, {
         headers: {
           "X-Appwrite-Project": process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!,
@@ -125,29 +124,36 @@ export default function JobsPage() {
         throw new Error(`Download failed with status ${res.status}`);
       }
 
-      // 3. Convert to Blob and trigger browser download with proper filename
       const blob = await res.blob();
-      const filename = `digr_${job.templateSlug || "results"}_${job.$id}.json`;
+      const filename = `digr_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${format}`;
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 250);
     } catch (err: any) {
       console.error("Download error:", err);
-      setDownloadError("تعذر تحميل ملف النتائج. يرجى المحاولة مرة أخرى أو مراجعة الاتصال.");
+      const formatNames: Record<string, string> = {
+        xlsx: "Excel (.xlsx)",
+        pdf: "PDF (.pdf)",
+        csv: "CSV (.csv)",
+      };
+      setDownloadError(`تعذر تحميل ملف ${formatNames[format] || format}. يرجى إعادة المحاولة.`);
     } finally {
-      setDownloadingJobId(null);
+      setDownloadingKey(null);
     }
   };
 
   const parseParams = (paramStr: string) => {
     try {
       const parsed = JSON.parse(paramStr || "{}");
-      if (parsed.username) return `@${parsed.username}`;
+      if (parsed.username) return `@${parsed.username.replace(/^@/, "")}`;
+      if (parsed.query) return `بحث: ${parsed.query}`;
       return Object.entries(parsed)
         .map(([k, v]) => `${k}: ${v}`)
         .join(", ");
@@ -156,238 +162,332 @@ export default function JobsPage() {
     }
   };
 
+  const handleReRunOrder = (job: Job) => {
+    let target = "";
+    try {
+      const p = JSON.parse(job.params || "{}");
+      target = p.username ? `@${p.username}` : p.query || "";
+    } catch {}
+    const prompt = target
+      ? `أريد استخراج بيانات الحساب ${target} وتحديث إحصائياته`
+      : "أريد استخراج بيانات جديدة مماثلة لطلبي السابق";
+    router.push(`/dashboard/chat?prompt=${encodeURIComponent(prompt)}`);
+  };
+
+  // Filter jobs by search and status
+  const filteredJobs = useMemo(() => {
+    return jobs.filter((j) => {
+      // Status filter
+      if (statusFilter === "running" && j.status !== "running" && j.status !== "queued") return false;
+      if (statusFilter === "done" && j.status !== "done") return false;
+      if (statusFilter === "failed" && j.status !== "failed" && j.status !== "cancelled") return false;
+
+      // Search filter
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const paramStr = (j.params || "").toLowerCase();
+        const idStr = j.$id.toLowerCase();
+        return paramStr.includes(q) || idStr.includes(q);
+      }
+      return true;
+    });
+  }, [jobs, statusFilter, searchQuery]);
+
   return (
-    <div className="space-y-8">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-8 space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-sand-900">طلباتي</h1>
-          <p className="mt-1 text-sm text-sand-500">
-            متابعة حالة الطلبات، استعراض سجل الأحداث وتحميل ملفات البيانات المستخرجة
+          <h1 className="text-2xl font-bold tracking-tight text-ink-900">سجل طلباتي</h1>
+          <p className="mt-1 text-xs sm:text-sm text-ink-500">
+            متابعة حالة الطلبات، استعراض مراحل المعالجة، وتحميل ملفات البيانات المستخرجة
           </p>
         </div>
+
         <Link
-          href="/dashboard/order"
-          className="inline-flex items-center justify-center rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover"
+          href="/dashboard/chat"
+          className="touch-target inline-flex items-center justify-center rounded-xl bg-ink-900 px-4 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-xs hover:bg-ink-800 transition-all text-center"
         >
-          + طلب بيانات جديد
+          + طلب استخراج جديد
         </Link>
       </div>
 
       {downloadError && (
-        <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-danger">
+        <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-danger">
           <span>{downloadError}</span>
           <button
             type="button"
             onClick={() => setDownloadError(null)}
-            className="text-xs font-semibold underline hover:no-underline"
+            className="text-xs font-semibold underline"
           >
             إغلاق
           </button>
         </div>
       )}
 
-      {loading ? (
-        <div className="flex min-h-[250px] items-center justify-center">
-          <span className="text-sand-500">جاري تحميل سجل الطلبات...</span>
+      {/* Filter and Search Bar */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-2xl border border-sand-200 bg-white shadow-2xs">
+        {/* Status Filters */}
+        <div className="flex items-center gap-1 bg-sand-100/70 p-1 rounded-xl text-xs font-medium">
+          <button
+            onClick={() => setStatusFilter("all")}
+            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
+              statusFilter === "all" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
+            }`}
+          >
+            الكل ({jobs.length})
+          </button>
+          <button
+            onClick={() => setStatusFilter("running")}
+            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
+              statusFilter === "running" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
+            }`}
+          >
+            قيد المعالجة
+          </button>
+          <button
+            onClick={() => setStatusFilter("done")}
+            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
+              statusFilter === "done" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
+            }`}
+          >
+            المكتملة
+          </button>
+          <button
+            onClick={() => setStatusFilter("failed")}
+            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
+              statusFilter === "failed" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
+            }`}
+          >
+            تعذر
+          </button>
         </div>
-      ) : jobs.length === 0 ? (
-        <div className="rounded-xl border border-sand-200 bg-white p-12 text-center">
-          <h3 className="text-base font-semibold text-sand-800">لا توجد طلبات سابقة</h3>
-          <p className="mt-1 text-sm text-sand-500">
-            لم تقم بإنشاء أي طلب بعد. يمكنك بدء جمع البيانات الآن.
+
+        {/* Search Input */}
+        <div className="w-full sm:w-64">
+          <input
+            type="text"
+            placeholder="بحث بحساب أو معرف..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-xl border border-sand-300 bg-sand-50/50 px-3.5 py-2 text-xs text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900"
+          />
+        </div>
+      </div>
+
+      {/* Jobs Cards Stream */}
+      {loading ? (
+        <div className="flex min-h-[300px] items-center justify-center">
+          <div className="flex items-center gap-2 text-xs text-ink-500 font-medium">
+            <span className="h-3.5 w-3.5 rounded-full border-2 border-ink-900 border-t-transparent animate-spin" />
+            <span>جاري تحميل سجل الطلبات...</span>
+          </div>
+        </div>
+      ) : filteredJobs.length === 0 ? (
+        <div className="rounded-2xl border border-sand-200 bg-white p-12 text-center space-y-3 shadow-2xs">
+          <div className="inline-flex p-3 rounded-2xl bg-sand-100 text-sand-600 mx-auto">
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h3 className="text-base font-bold text-ink-900">لا توجد طلبات مطابقة</h3>
+          <p className="text-xs text-ink-500 max-w-sm mx-auto">
+            لم نجد أي طلبات تطابق معايير البحث المحددة. يمكنك بدء طلب جديد عبر المساعد الذكي.
           </p>
-          <div className="mt-5">
+          <div className="pt-2">
             <Link
-              href="/dashboard/order"
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
+              href="/dashboard/chat"
+              className="touch-target inline-flex items-center justify-center rounded-xl bg-ink-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800 transition-all"
             >
-              إنشاء أول طلب
+              بدء استخراج جديد
             </Link>
           </div>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-sand-200 bg-white">
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-sm">
-              <thead className="border-b border-sand-200 bg-sand-50 text-xs font-semibold text-sand-600">
-                <tr>
-                  <th className="px-5 py-3.5">الطلب / القالب</th>
-                  <th className="px-5 py-3.5">المدخلات</th>
-                  <th className="px-5 py-3.5">الحالة</th>
-                  <th className="px-5 py-3.5">الرصيد</th>
-                  <th className="px-5 py-3.5">تاريخ الطلب</th>
-                  <th className="px-5 py-3.5">الإجراء</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-sand-100">
-                {jobs.map((job) => {
-                  const isExpanded = expandedJobId === job.$id;
-                  const jobEventsList = events[job.$id] || [];
+        <div className="space-y-4">
+          {filteredJobs.map((job) => {
+            const isExpanded = expandedJobId === job.$id;
+            const jobEventsList = events[job.$id] || [];
 
-                  return (
-                    <tr key={job.$id} className="group hover:bg-sand-50/50">
-                      <td colSpan={6} className="p-0">
-                        <div className="grid grid-cols-6 items-center px-5 py-4">
-                          {/* Template Name & ID */}
-                          <div>
-                            <span className="font-semibold text-sand-900">
-                              {job.templateSlug === "tiktok-profile"
-                                ? "ملف تيك توك"
-                                : job.templateSlug}
+            return (
+              <div
+                key={job.$id}
+                className="rounded-2xl border border-sand-200 bg-white p-5 shadow-2xs transition-all hover:border-sand-300 space-y-4"
+              >
+                {/* Order Card Top Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-sand-100">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sand-100 text-xs font-bold text-ink-800">
+                      {job.templateSlug === "tiktok-profile" ? "تيك توك" : "بيانات"}
+                    </span>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-ink-900 font-mono" dir="ltr">
+                          {parseParams(job.params)}
+                        </span>
+                        <span className="text-[11px] text-ink-400 font-mono" dir="ltr">
+                          #{job.$id.slice(0, 8)}
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-ink-400">
+                        {new Date(job.createdAt).toLocaleString("ar-EG", {
+                          dateStyle: "medium",
+                          timeStyle: "short",
+                        })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Status Badge & Charged Credits */}
+                  <div className="flex items-center gap-3">
+                    {job.status === "queued" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                        قيد الانتظار
+                      </span>
+                    )}
+                    {job.status === "running" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
+                        جاري المعالجة...
+                      </span>
+                    )}
+                    {job.status === "done" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+                        مكتمل ({job.rowsCollected || 1} سجل)
+                      </span>
+                    )}
+                    {job.status === "failed" && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-danger">
+                        تعذر الاكتمال
+                      </span>
+                    )}
+
+                    <span className="rounded-lg bg-sand-100 px-2.5 py-1 text-xs font-bold text-ink-800 font-mono">
+                      {job.status === "done"
+                        ? `${job.chargedCredits ?? job.reservedCredits} نقطة`
+                        : `حجز: ${job.reservedCredits} نقطة`}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Actions & Deliverables Row */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  {/* Download Action Buttons */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {job.status === "done" ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleDownload(job, "xlsx")}
+                          disabled={downloadingKey === `${job.$id}_xlsx`}
+                          className="touch-target inline-flex items-center gap-1.5 rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-900 transition-colors shadow-2xs disabled:opacity-50"
+                        >
+                          {downloadingKey === `${job.$id}_xlsx` ? (
+                            <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          ) : (
+                            <span>Excel (.xlsx)</span>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDownload(job, "pdf")}
+                          disabled={downloadingKey === `${job.$id}_pdf`}
+                          className="touch-target inline-flex items-center gap-1.5 rounded-xl bg-rose-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-rose-900 transition-colors shadow-2xs disabled:opacity-50"
+                        >
+                          {downloadingKey === `${job.$id}_pdf` ? (
+                            <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          ) : (
+                            <span>PDF (.pdf)</span>
+                          )}
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDownload(job, "csv")}
+                          disabled={downloadingKey === `${job.$id}_csv`}
+                          className="touch-target inline-flex items-center gap-1.5 rounded-xl bg-sky-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-sky-900 transition-colors shadow-2xs disabled:opacity-50"
+                        >
+                          {downloadingKey === `${job.$id}_csv` ? (
+                            <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
+                          ) : (
+                            <span>CSV (.csv)</span>
+                          )}
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-xs text-ink-400">
+                        {job.status === "failed" ? "تم استرداد الرصيد المحجوز بالكامل" : "الملفات ستتاح فور انتهاء الجمع"}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Secondary Actions: Timeline toggle & Re-run */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleReRunOrder(job)}
+                      className="touch-target rounded-xl border border-sand-300 bg-white px-3 py-2 text-xs font-medium text-ink-700 hover:bg-sand-50 transition-colors"
+                      title="فتح المساعد وإعادة إعداد هذا الطلب"
+                    >
+                      إعادة الطلب ⟳
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => loadJobEvents(job.$id)}
+                      className="touch-target rounded-xl border border-sand-200 px-3 py-2 text-xs font-medium text-ink-600 hover:bg-sand-50 transition-colors"
+                    >
+                      {isExpanded ? "إخفاء السجل" : "سجل المراحل"}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Collapsible Timeline */}
+                {isExpanded && (
+                  <div className="rounded-xl border border-sand-200 bg-sand-50/70 p-4 space-y-3 mt-3 animate-in fade-in duration-200">
+                    <span className="text-xs font-bold text-ink-800 block">مراحل معالجة الطلب:</span>
+
+                    {job.errorAr && (
+                      <div className="rounded-lg bg-red-50 p-2.5 text-xs text-danger">
+                        ملاحظة الخطأ: {job.errorAr}
+                      </div>
+                    )}
+
+                    {loadingEvents === job.$id ? (
+                      <div className="text-xs text-ink-400">جاري تحميل سجل الأحداث...</div>
+                    ) : jobEventsList.length === 0 ? (
+                      <div className="text-xs text-ink-400">لا توجد أحداث مسجلة لهذا الطلب.</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {jobEventsList.map((ev) => (
+                          <div key={ev.$id} className="flex items-center justify-between text-xs text-ink-700">
+                            <span className="flex items-center gap-2">
+                              <span
+                                className={`h-2 w-2 rounded-full ${
+                                  ev.kind === "error"
+                                    ? "bg-danger"
+                                    : ev.kind === "progress"
+                                    ? "bg-blue-600"
+                                    : "bg-emerald-600"
+                                }`}
+                              />
+                              <span>{ev.textAr}</span>
                             </span>
-                            <span className="block font-mono text-xs text-sand-400" dir="ltr">
-                              {job.$id.slice(0, 12)}...
+                            <span className="font-mono text-[11px] text-ink-400" dir="ltr">
+                              {new Date(ev.createdAt).toLocaleTimeString("ar-EG")}
                             </span>
                           </div>
-
-                          {/* Inputs */}
-                          <div className="font-mono text-xs text-sand-700" dir="ltr">
-                            {parseParams(job.params)}
-                          </div>
-
-                          {/* Status Badge */}
-                          <div>
-                            {job.status === "queued" && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                                <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                                قيد الانتظار
-                              </span>
-                            )}
-                            {job.status === "running" && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                                <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
-                                جاري المعالجة...
-                              </span>
-                            )}
-                            {job.status === "done" && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                                مكتمل ✓
-                              </span>
-                            )}
-                            {job.status === "failed" && (
-                              <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-danger">
-                                <span className="h-1.5 w-1.5 rounded-full bg-danger" />
-                                تعذر الاكتمال
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Credits */}
-                          <div className="text-xs">
-                            {job.status === "done" ? (
-                              <span className="font-bold text-sand-900">
-                                {job.chargedCredits ?? job.reservedCredits} رصيد
-                              </span>
-                            ) : (
-                              <span className="text-sand-500">
-                                حجز: {job.reservedCredits} رصيد
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Date */}
-                          <div className="text-xs text-sand-500" dir="ltr">
-                            {new Date(job.createdAt).toLocaleString("ar-EG", {
-                              month: "short",
-                              day: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </div>
-
-                          {/* Actions */}
-                          <div className="flex items-center gap-2">
-                            {job.status === "done" && job.resultFileId && (
-                              <button
-                                type="button"
-                                onClick={() => handleDownload(job)}
-                                disabled={downloadingJobId === job.$id}
-                                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
-                              >
-                                {downloadingJobId === job.$id ? (
-                                  <>
-                                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                                    <span>جاري التحميل...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                                    </svg>
-                                    <span>تحميل النتائج</span>
-                                  </>
-                                )}
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => loadJobEvents(job.$id)}
-                              className="rounded border border-sand-200 px-2.5 py-1.5 text-xs text-sand-600 transition-colors hover:bg-sand-100"
-                            >
-                              {isExpanded ? "إخفاء السجل" : "سجل الأحداث"}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Expandable Events Timeline */}
-                        {isExpanded && (
-                          <div className="border-t border-sand-100 bg-sand-50/70 p-5">
-                            <h4 className="text-xs font-bold text-sand-700">
-                              سجل مراحل معالجة الطلب:
-                            </h4>
-
-                            {job.errorAr && (
-                              <div className="mt-2 rounded bg-red-50 p-2.5 text-xs text-danger">
-                                سبب الفشل: {job.errorAr}
-                              </div>
-                            )}
-
-                            {loadingEvents === job.$id ? (
-                              <div className="mt-2 text-xs text-sand-400">
-                                جاري تحميل الأحداث...
-                              </div>
-                            ) : jobEventsList.length === 0 ? (
-                              <div className="mt-2 text-xs text-sand-400">
-                                لا توجد أحداث مسجلة لهذا الطلب.
-                              </div>
-                            ) : (
-                              <ul className="mt-3 space-y-2">
-                                {jobEventsList.map((ev) => (
-                                  <li
-                                    key={ev.$id}
-                                    className="flex items-center justify-between text-xs text-sand-600"
-                                  >
-                                    <span className="flex items-center gap-2">
-                                      <span
-                                        className={`h-2 w-2 rounded-full ${
-                                          ev.kind === "error"
-                                            ? "bg-danger"
-                                            : ev.kind === "progress"
-                                            ? "bg-blue-500"
-                                            : "bg-emerald-500"
-                                        }`}
-                                      />
-                                      {ev.textAr}
-                                    </span>
-                                    <span className="font-mono text-[11px] text-sand-400" dir="ltr">
-                                      {new Date(ev.createdAt).toLocaleTimeString("ar-EG")}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

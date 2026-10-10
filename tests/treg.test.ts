@@ -22,7 +22,7 @@ describe("Fake TREG Server & TREG Client Integration", () => {
       params: { username: "khaby.lame" },
       userId: "user_test_456",
       jobId: "job_test_789",
-      maxCostMicro: 10000,
+      routeMaxCostUsd: "0.05",
     });
 
     expect(res.ok).toBe(true);
@@ -44,7 +44,7 @@ describe("Fake TREG Server & TREG Client Integration", () => {
       params: { username: "expensive_user" },
       userId: "user_test_456",
       jobId: "job_test_789",
-      maxCostMicro: 500,
+      routeMaxCostUsd: "0.05",
       testScenario: "route_max_cost",
     });
 
@@ -63,7 +63,7 @@ describe("Fake TREG Server & TREG Client Integration", () => {
       params: { username: "normal_user" },
       userId: "user_test_456",
       jobId: "job_test_789",
-      maxCostMicro: 10000,
+      routeMaxCostUsd: "0.05",
       testScenario: "insufficient_balance",
     });
 
@@ -82,7 +82,7 @@ describe("Fake TREG Server & TREG Client Integration", () => {
       params: { username: "fast_user" },
       userId: "user_test_456",
       jobId: "job_test_789",
-      maxCostMicro: 10000,
+      routeMaxCostUsd: "0.05",
       testScenario: "rate_limit",
     });
 
@@ -99,7 +99,7 @@ describe("Fake TREG Server & TREG Client Integration", () => {
       params: { username: "error_user" },
       userId: "user_test_456",
       jobId: "job_test_789",
-      maxCostMicro: 10000,
+      routeMaxCostUsd: "0.05",
       testScenario: "upstream_error",
     });
 

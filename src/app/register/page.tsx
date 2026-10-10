@@ -16,7 +16,7 @@ export default function RegisterPage() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      router.push("/dashboard");
+      router.push("/dashboard/chat");
     }
   }, [user, authLoading, router]);
 
@@ -25,17 +25,16 @@ export default function RegisterPage() {
     setError("");
 
     if (password.length < 8) {
-      setError("كلمة المرور يجب أن تكون 8 أحرف على الأقل");
+      setError("كلمة المرور يجب ألا تقل عن 8 خانات");
       return;
     }
 
     setLoading(true);
     try {
       await register(email, password, name);
-      router.push("/dashboard");
+      router.push("/dashboard/chat");
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "حدث خطأ غير متوقع";
+      const message = err instanceof Error ? err.message : "حدث خطأ غير متوقع أثناء إنشاء الحساب";
       setError(message);
     } finally {
       setLoading(false);
@@ -43,46 +42,48 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-sm">
-        <h1 className="text-center text-2xl font-bold text-sand-900">
-          حساب جديد
-        </h1>
-        <p className="mt-2 text-center text-sm text-sand-500">
-          سجّل حساب جديد لبدء طلب البيانات
+    <main className="min-h-screen flex flex-col justify-center items-center px-4 sm:px-6 bg-sand-50 text-ink-800">
+      {/* Brand Header */}
+      <div className="w-full max-w-sm text-center mb-8">
+        <Link href="/" className="inline-flex items-center gap-2 text-2xl font-bold tracking-tight text-ink-900">
+          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900 text-sm font-semibold text-white">
+            دِ
+          </span>
+          <span>Digr</span>
+        </Link>
+        <h1 className="mt-4 text-xl font-bold text-ink-900">إنشاء حساب جديد</h1>
+        <p className="mt-1 text-xs text-ink-500">
+          انضم إلى مجتمع الباحثين والمحللين لاستخراج البيانات العامة
         </p>
+      </div>
 
-        <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-          {error && (
-            <div className="rounded-lg bg-red-50 px-4 py-3 text-sm text-danger">
-              {error}
-            </div>
-          )}
+      {/* Form Card */}
+      <div className="w-full max-w-sm rounded-3xl border border-sand-300 bg-white p-6 sm:p-8 shadow-xs text-right">
+        {error && (
+          <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-danger">
+            {error}
+          </div>
+        )}
 
+        <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label
-              htmlFor="name"
-              className="block text-sm font-medium text-sand-700"
-            >
-              الاسم
+            <label htmlFor="name" className="block text-xs font-semibold text-ink-700">
+              الاسم الكامل
             </label>
             <input
               id="name"
               type="text"
               required
               autoComplete="name"
-              className="mt-1 block w-full rounded-lg border border-sand-300 bg-white px-4 py-2.5 text-sand-900 placeholder:text-sand-400"
-              placeholder="اسمك الكامل"
+              className="mt-1 block w-full rounded-xl border border-sand-300 bg-sand-50/50 px-4 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900 transition-all"
+              placeholder="مثال: أحمد مصطفى"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
           </div>
 
           <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-sand-700"
-            >
+            <label htmlFor="email" className="block text-xs font-semibold text-ink-700">
               البريد الإلكتروني
             </label>
             <input
@@ -91,18 +92,15 @@ export default function RegisterPage() {
               required
               autoComplete="email"
               dir="ltr"
-              className="mt-1 block w-full rounded-lg border border-sand-300 bg-white px-4 py-2.5 text-sand-900 placeholder:text-sand-400"
-              placeholder="you@example.com"
+              className="mt-1 block w-full rounded-xl border border-sand-300 bg-sand-50/50 px-4 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900 transition-all font-mono"
+              placeholder="name@example.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
 
           <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-sand-700"
-            >
+            <label htmlFor="password" className="block text-xs font-semibold text-ink-700">
               كلمة المرور
             </label>
             <input
@@ -111,8 +109,8 @@ export default function RegisterPage() {
               required
               autoComplete="new-password"
               dir="ltr"
-              className="mt-1 block w-full rounded-lg border border-sand-300 bg-white px-4 py-2.5 text-sand-900 placeholder:text-sand-400"
-              placeholder="8 أحرف على الأقل"
+              className="mt-1 block w-full rounded-xl border border-sand-300 bg-sand-50/50 px-4 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900 transition-all font-mono"
+              placeholder="8 خانات على الأقل"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
@@ -121,18 +119,24 @@ export default function RegisterPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+            className="touch-target w-full rounded-xl bg-ink-900 px-4 py-3 text-sm font-semibold text-white hover:bg-ink-800 disabled:opacity-50 transition-all shadow-xs mt-2"
           >
-            {loading ? "جاري التسجيل..." : "تسجيل"}
+            {loading ? "جاري إنشاء الحساب..." : "إنشاء الحساب وبدء التجربة"}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-sand-500">
-          لديك حساب؟{" "}
-          <Link href="/login" className="font-medium text-accent">
-            سجّل دخولك
+        <div className="mt-6 pt-4 border-t border-sand-100 text-center text-xs text-ink-500">
+          لديك حساب مسجل بالفعل؟{" "}
+          <Link href="/login" className="font-semibold text-ink-900 underline hover:no-underline">
+            تسجيل الدخول
           </Link>
-        </p>
+        </div>
+      </div>
+
+      <div className="mt-8 text-center text-xs text-ink-400">
+        <Link href="/" className="hover:text-ink-700 transition-colors">
+          ← العودة للصفحة الرئيسية
+        </Link>
       </div>
     </main>
   );

@@ -1,5 +1,5 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-.env 
+# Environment variables
+.env*
 
 # dependencies
 /node_modules
@@ -39,3 +39,20 @@ next-env.d.ts
 
 # function builds
 src/functions/**/dist
+
+# test exports, media and generated outputs (scoped)
+/screenshots/
+/artifacts_test/
+/outputs/
+/tests/**/*.pdf
+/tests/**/*.png
+/tests/**/*.xlsx
+/tests/**/*.csv
+/scripts/**/*.pdf
+/scripts/**/*.png
+/scripts/**/*.xlsx
+/scripts/**/*.csv
+/*.pdf
+/*.png
+/*.xlsx
+/*.csv
