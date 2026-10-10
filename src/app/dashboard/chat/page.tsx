@@ -477,6 +477,8 @@ export default function ChatWorkspacePage() {
     } finally {
       setDownloadingKey(null);
     }
+  }
+
   // Request Academic Methodology (10 points flow)
   async function handleGenerateMethodology() {
     if (!activeJob?.jobId || !user) return;

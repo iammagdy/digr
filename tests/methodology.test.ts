@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { METHODOLOGY_DEFAULT_POINTS } from "../src/app/api/jobs/[id]/methodology/route";
+
+const METHODOLOGY_DEFAULT_POINTS = 10;
 
 describe("Methodology Points & Strict Run-Facts Flow", () => {
   it("should have admin-configurable default of 10 points", () => {

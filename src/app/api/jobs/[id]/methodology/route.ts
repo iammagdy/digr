@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Client as ServerClient, TablesDB, Storage, Client as UserClient, Account } from "node-appwrite";
-import { reservePoints, chargePoints, getBalance } from "../../../../../functions/shared/ledger";
+import { reserveCredits, completeJobWithRelFirst, getBalance } from "../../../../../functions/shared/ledger";
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
@@ -14,7 +14,7 @@ const serverClient = new ServerClient()
 const tables = new TablesDB(serverClient);
 const storage = new Storage(serverClient);
 
-export const METHODOLOGY_DEFAULT_POINTS = 10;
+const METHODOLOGY_DEFAULT_POINTS = 10;
 
 export async function POST(
   req: NextRequest,
@@ -75,24 +75,15 @@ export async function POST(
 
     // 4. Ledger Flow: Reserve then Charge deterministic points
     const methJobKey = `meth_${jobId}`;
-    const reserveRes = await reservePoints(tables, {
-      userId: verifiedUserId,
-      jobId: methJobKey,
-      points: METHODOLOGY_DEFAULT_POINTS,
-    });
-
-    if (!reserveRes.success) {
+    try {
+      await reserveCredits(tables, verifiedUserId, methJobKey, METHODOLOGY_DEFAULT_POINTS, "حجز نقاط صياغة المنهجية");
+      await completeJobWithRelFirst(tables, verifiedUserId, methJobKey, METHODOLOGY_DEFAULT_POINTS, METHODOLOGY_DEFAULT_POINTS, "خصم تكلفة صياغة المنهجية");
+    } catch (ledgerErr: any) {
       return NextResponse.json(
-        { success: false, error: reserveRes.error || "تعذر حجز النقاط لتوثيق المنهجية." },
+        { success: false, error: "تعذر حجز وتسوية نقاط المنهجية: " + ledgerErr.message },
         { status: 400 }
       );
     }
-
-    await chargePoints(tables, {
-      userId: verifiedUserId,
-      jobId: methJobKey,
-      points: METHODOLOGY_DEFAULT_POINTS,
-    });
 
     // 5. Read real run facts from server-only storage
     let profileData: any = null;
