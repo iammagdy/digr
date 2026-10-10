@@ -33,13 +33,10 @@ export default function ActivityTimeline({ status, events, rowsCollected }: Acti
   return (
     <div className="mt-3 bg-white border border-sand-300 rounded-2xl shadow-2xs overflow-hidden transition-all">
       {/* Header */}
-      <div
-        onClick={() => setCollapsed(!collapsed)}
-        className="p-3.5 bg-sand-50/80 flex items-center justify-between cursor-pointer border-b border-sand-200 select-none"
-      >
+      <div className="p-3.5 bg-sand-50/80 flex items-center justify-between border-b border-sand-200 select-none">
         <div className="flex items-center gap-2.5">
           {isRunning ? (
-            <span className="w-2.5 h-2.5 rounded-full bg-accent animate-ping" />
+            <span className="w-2.5 h-2.5 rounded-full bg-accent motion-safe:animate-ping motion-reduce:animate-none" />
           ) : status === "done" ? (
             <span className="w-2.5 h-2.5 rounded-full bg-success" />
           ) : (
@@ -65,7 +62,9 @@ export default function ActivityTimeline({ status, events, rowsCollected }: Acti
 
         <button
           type="button"
-          className="text-xs text-sand-500 hover:text-ink-900 font-medium"
+          onClick={() => setCollapsed(!collapsed)}
+          aria-expanded={!collapsed}
+          className="min-h-11 px-2 text-xs text-sand-500 hover:text-ink-900 font-medium focus-visible:outline-2 focus-visible:outline-primary"
         >
           {collapsed ? "عرض الخطوات ▼" : "طي السجل ▲"}
         </button>

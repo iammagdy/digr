@@ -59,6 +59,9 @@ export default function ChatWorkspacePage() {
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationTitle, setConversationTitle] = useState("");
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationLoadError, setConversationLoadError] = useState(false);
   const [userBalance, setUserBalance] = useState<number | null>(null);
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
   const [enabledCapabilitySlugs, setEnabledCapabilitySlugs] = useState<string[]>([]);
@@ -82,6 +85,7 @@ export default function ChatWorkspacePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const conversationLoadSequence = useRef(0);
 
   // 1. Check Profile & Onboarding status
   useEffect(() => {
@@ -209,7 +213,8 @@ export default function ChatWorkspacePage() {
 
   // 4. Scroll to bottom
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    messagesEndRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" });
   }, [messages, loading, activeJob, viewportHeight]);
 
   useEffect(() => {
@@ -291,7 +296,7 @@ export default function ChatWorkspacePage() {
   // Send message
   async function handleSendMessage(messageContent: string) {
     const textToSend = messageContent.trim();
-    if (!textToSend || loading || !user) return;
+    if (!textToSend || loading || conversationLoading || !user) return;
 
     const userMsg: MessageItem = {
       id: `usr_${Date.now()}`,
@@ -338,6 +343,7 @@ export default function ChatWorkspacePage() {
 
       if (data.conversationId) {
         setConversationId(data.conversationId);
+        setConversationTitle((title) => title || textToSend.slice(0, 50));
         loadConversations();
       }
 
@@ -445,7 +451,10 @@ export default function ChatWorkspacePage() {
           createdAt: new Date().toISOString(),
         },
       ]);
-      if (data.conversationId) setConversationId(data.conversationId);
+      if (data.conversationId) {
+        setConversationId(data.conversationId);
+        setConversationTitle((title) => title || summary.slice(0, 50));
+      }
       loadConversations();
     } catch (err: any) {
       const errorContent = err.name === "AbortError"
@@ -463,9 +472,62 @@ export default function ChatWorkspacePage() {
     }
   }
 
+  async function handleOpenConversation(id: string) {
+    const selected = conversationsList.find((item) => item.$id === id);
+    if (!user || !selected || loading || conversationLoading) return;
+    const sequence = ++conversationLoadSequence.current;
+    setConversationLoading(true);
+    setConversationLoadError(false);
+    setConversationId(id);
+    setConversationTitle(selected.title);
+    setMessages([]);
+    setInputText("");
+    setActiveJob(null);
+    setExtractedRecords([]);
+    setExtractedProfile(null);
+    setCanvasOpen(false);
+    loadedResultJobs.current.clear();
+
+    try {
+      const documents: any[] = [];
+      const pageSize = 100;
+      let offset = 0;
+      for (let page = 0; page < 50; page += 1) {
+        const response = await databases.listDocuments("digr", "messages", [
+          Query.equal("conversationId", id),
+          Query.equal("userId", user.$id),
+          Query.orderAsc("createdAt"),
+          Query.limit(pageSize),
+          Query.offset(offset),
+        ]);
+        if (sequence !== conversationLoadSequence.current) return;
+        documents.push(...response.documents);
+        if (response.documents.length < pageSize) break;
+        offset += pageSize;
+      }
+
+      setMessages(documents
+        .filter((document) => (document.role === "user" || document.role === "assistant") && document.status !== "thinking")
+        .map((document) => ({
+          id: document.$id,
+          role: document.role as "user" | "assistant",
+          content: String(document.content || "").slice(0, 20000),
+          createdAt: String(document.createdAt || document.$createdAt || new Date().toISOString()),
+        })));
+    } catch {
+      if (sequence === conversationLoadSequence.current) setConversationLoadError(true);
+    } finally {
+      if (sequence === conversationLoadSequence.current) setConversationLoading(false);
+    }
+  }
+
   function handleStartNewChat() {
+    conversationLoadSequence.current += 1;
     setMessages([]);
     setConversationId(null);
+    setConversationTitle("");
+    setConversationLoading(false);
+    setConversationLoadError(false);
     setInputText("");
     setActiveJob(null);
     setExtractedRecords([]);
@@ -867,13 +929,13 @@ export default function ChatWorkspacePage() {
 
       {/* 2. Left Sidebar (Collapsible) */}
       <ChatSidebar
-        conversations={conversationsList}
+        conversations={conversationId && conversationTitle && !conversationsList.some((item) => item.$id === conversationId)
+          ? [{ $id: conversationId, title: conversationTitle, updatedAt: new Date().toISOString() }, ...conversationsList]
+          : conversationsList}
         activeId={conversationId}
-        onSelectConversation={(id) => {
-          setConversationId(id);
-          // In production, would fetch messages for this conversation
-        }}
+        onSelectConversation={(id) => void handleOpenConversation(id)}
         onNewChat={handleStartNewChat}
+        isBusy={loading || conversationLoading}
         userBalance={userBalance}
         userPersona={userPersona}
         onChangePersona={handleChangePersona}
@@ -889,7 +951,7 @@ export default function ChatWorkspacePage() {
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="p-1.5 lg:hidden text-sand-600 hover:text-ink-900 rounded-lg hover:bg-sand-100"
+              className="min-h-11 min-w-11 inline-flex items-center justify-center lg:hidden text-sand-600 hover:text-ink-900 rounded-lg hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary"
               aria-label="فتح القائمة الجانبية"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -897,8 +959,9 @@ export default function ChatWorkspacePage() {
               </svg>
             </button>
             <div className="min-w-0">
-              <h1 className="text-xs sm:text-base font-bold text-ink-900 truncate">
-                مساعد Digr البحثي
+              <h1 aria-label="مساعد Digr البحثي" className="text-xs sm:text-base font-bold text-ink-900 truncate">
+                <span className="hidden sm:inline">مساعد Digr البحثي</span>
+                <span aria-hidden="true" className="sm:hidden">Digr</span>
               </h1>
               <p className="hidden md:block text-3xs sm:text-2xs text-sand-500">
                 استشارات وتصميم خطط جمع البيانات العامة المعتمدة
@@ -911,7 +974,7 @@ export default function ChatWorkspacePage() {
             {/* Balance Badge */}
             <Link
               href="/dashboard/topup"
-              className="flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 bg-amber-points-bg hover:bg-amber-points-bg/80 border border-amber-points/30 rounded-xl transition-colors text-2xs sm:text-xs"
+              className="min-h-11 flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 bg-amber-points-bg hover:bg-amber-points-bg/80 border border-amber-points/30 rounded-xl transition-colors text-2xs sm:text-xs focus-visible:outline-2 focus-visible:outline-primary"
               title="رصيد الحساب وشحن النقاط"
             >
               <span className="font-bold text-amber-points tabular-nums">
@@ -925,7 +988,9 @@ export default function ChatWorkspacePage() {
             <button
               type="button"
               onClick={() => setCanvasOpen(!canvasOpen)}
-              className={`px-2.5 py-1 sm:px-3 sm:py-1.5 text-2xs sm:text-xs font-semibold rounded-xl border transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+              aria-expanded={canvasOpen}
+              aria-controls="results-canvas"
+              className={`min-h-11 px-2.5 py-1 sm:px-3 sm:py-1.5 text-2xs sm:text-xs font-semibold rounded-xl border transition-colors cursor-pointer inline-flex items-center gap-1.5 focus-visible:outline-2 focus-visible:outline-primary ${
                 canvasOpen
                   ? "bg-sand-200 border-sand-400 text-ink-900"
                   : "bg-white border-sand-300 text-sand-700 hover:bg-sand-100"
@@ -942,8 +1007,24 @@ export default function ChatWorkspacePage() {
 
         {/* Messages Stream */}
         <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 space-y-4">
+          {conversationLoading && (
+            <div role="status" aria-label="جاري تحميل المحادثة" className="mx-auto w-full max-w-2xl space-y-3 py-4">
+              <span className="sr-only">جاري تحميل المحادثة</span>
+              {["w-3/5", "w-4/5", "w-2/5"].map((width, index) => (
+                <div key={index} className={`h-14 ${width} rounded-2xl bg-sand-200/70 motion-safe:animate-pulse motion-reduce:animate-none`} />
+              ))}
+            </div>
+          )}
+          {conversationLoadError && conversationId && !conversationLoading && (
+            <div role="alert" className="mx-auto max-w-xl rounded-xl border border-danger/30 bg-danger-bg p-4 text-sm text-ink-800">
+              <p>تعذر تحميل المحادثة. تحقق من الاتصال ثم حاول مرة أخرى.</p>
+              <button type="button" onClick={() => void handleOpenConversation(conversationId)} className="mt-3 min-h-11 rounded-lg border border-danger/30 bg-white px-4 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-danger">
+                إعادة المحاولة
+              </button>
+            </div>
+          )}
           {/* Empty First Screen State */}
-          {messages.length === 0 && (
+          {messages.length === 0 && !conversationLoading && !conversationLoadError && (
             <div className="max-w-xl mx-auto pt-8 sm:pt-16 text-center space-y-6">
               <div className="space-y-2">
                 <div className="inline-flex p-3 rounded-2xl bg-sand-200/80 text-primary">
@@ -1021,7 +1102,7 @@ export default function ChatWorkspacePage() {
                     <button
                       type="button"
                       onClick={() => handleSendMessage(msg.errorRetryPrompt!)}
-                      className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-900 border border-sand-300 rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 transition-colors"
+                      className="min-h-11 px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-900 border border-sand-300 rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-primary"
                     >
                       <svg className="w-3.5 h-3.5 text-sand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -1062,7 +1143,7 @@ export default function ChatWorkspacePage() {
                           [msg.suggestedAlternative.unsupportedService]: true,
                         }));
                       }}
-                      className="px-3 py-1.5 bg-white hover:bg-sand-100 border border-sand-300 rounded-lg text-xs font-semibold text-ink-800 transition-colors cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5"
+                      className="min-h-11 px-3 py-1.5 bg-white hover:bg-sand-100 border border-sand-300 rounded-lg text-xs font-semibold text-ink-800 transition-colors motion-reduce:transition-none cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5 focus-visible:outline-2 focus-visible:outline-primary"
                     >
                       {requestedFeatures[msg.suggestedAlternative.unsupportedService] ? (
                         <span className="text-success inline-flex items-center gap-1">
@@ -1095,7 +1176,7 @@ export default function ChatWorkspacePage() {
           {/* Thinking Indicator */}
           {loading && (
             <div className="flex items-center gap-2 p-3 text-xs text-sand-500 bg-white border border-sand-200 rounded-2xl w-fit shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
+              <span className="w-2 h-2 rounded-full bg-primary motion-safe:animate-ping motion-reduce:animate-none" />
               <span>جاري التفكير وتحليل متطلبات البحث...</span>
             </div>
           )}
@@ -1123,7 +1204,9 @@ export default function ChatWorkspacePage() {
               <button
                 type="button"
                 onClick={() => setPlusMenuOpen(!plusMenuOpen)}
-                className="w-9 h-9 flex items-center justify-center rounded-xl text-sand-600 hover:text-ink-900 hover:bg-sand-200/80 transition-colors cursor-pointer"
+                aria-expanded={plusMenuOpen}
+                aria-label={plusMenuOpen ? "إغلاق قائمة الإضافات" : "فتح قائمة الإضافات"}
+                className="min-h-11 min-w-11 flex items-center justify-center rounded-xl text-sand-600 hover:text-ink-900 hover:bg-sand-200/80 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
                 title="خيارات إضافية"
               >
                 <svg className="w-5 h-5 text-sand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -1132,14 +1215,14 @@ export default function ChatWorkspacePage() {
               </button>
 
               {plusMenuOpen && (
-                <div className="absolute bottom-11 right-0 w-52 bg-white border border-sand-300 rounded-xl shadow-lg p-1.5 space-y-1 z-20 animate-in fade-in zoom-in-95">
+                <div className="absolute bottom-11 right-0 w-52 bg-white border border-sand-300 rounded-xl shadow-lg p-1.5 space-y-1 z-20 animate-in fade-in zoom-in-95 motion-reduce:animate-none">
                   <button
                     type="button"
                     onClick={() => {
                       fileInputRef.current?.click();
                       setPlusMenuOpen(false);
                     }}
-                    className="w-full text-right px-3 py-2 text-xs text-ink-900 hover:bg-sand-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                    className="min-h-11 w-full text-right px-3 py-2 text-xs text-ink-900 hover:bg-sand-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
                   >
                     <svg className="w-4 h-4 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
@@ -1152,7 +1235,7 @@ export default function ChatWorkspacePage() {
                       handleSendMessage("أريد استخراج البيانات بصيغة ملفات Excel و PDF معاً");
                       setPlusMenuOpen(false);
                     }}
-                    className="w-full text-right px-3 py-2 text-xs text-ink-900 hover:bg-sand-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer"
+                    className="min-h-11 w-full text-right px-3 py-2 text-xs text-ink-900 hover:bg-sand-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
                   >
                     <svg className="w-4 h-4 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
@@ -1175,6 +1258,7 @@ export default function ChatWorkspacePage() {
                   handleSendMessage(inputText);
                 }
               }}
+              disabled={conversationLoading}
               placeholder="مثال: أريد بيانات الملف العام لحساب على تيك توك"
               className="min-w-0 flex-1 bg-transparent p-2 text-xs leading-5 sm:text-sm text-ink-900 placeholder:text-sand-400 focus:outline-hidden resize-none max-h-20"
             />
@@ -1182,8 +1266,8 @@ export default function ChatWorkspacePage() {
             {/* Send Button */}
             <button
               type="submit"
-              disabled={loading || !inputText.trim()}
-              className="w-9 h-9 flex items-center justify-center bg-primary hover:bg-primary-hover text-white rounded-xl shadow-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0"
+              disabled={loading || conversationLoading || !inputText.trim()}
+              className="min-h-11 min-w-11 flex items-center justify-center bg-primary hover:bg-primary-hover text-white rounded-xl shadow-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-primary"
               aria-label="إرسال"
             >
               <svg className="w-4 h-4 text-white rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
@@ -1199,9 +1283,10 @@ export default function ChatWorkspacePage() {
         <>
           <div
             onClick={() => setCanvasOpen(false)}
+            aria-hidden="true"
             className="fixed inset-0 z-40 bg-ink-900/40 lg:hidden backdrop-blur-xs"
           />
-          <div className="fixed inset-x-0 bottom-0 z-50 h-[85dvh] max-h-[85vh] w-full rounded-t-2xl bg-white shadow-2xl animate-in slide-in-from-bottom duration-200 flex flex-col overflow-hidden lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:shadow-none lg:animate-none">
+          <div id="results-canvas" role="region" aria-label="لوحة النتائج" className="fixed inset-x-0 bottom-0 z-50 h-[85dvh] max-h-[85vh] w-full rounded-t-2xl bg-white shadow-2xl animate-in slide-in-from-bottom duration-200 motion-reduce:animate-none flex flex-col overflow-hidden lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:shadow-none lg:animate-none">
             <ResultsCanvas
               records={extractedRecords}
               profile={extractedProfile}

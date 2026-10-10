@@ -84,7 +84,7 @@ export default function PlanQuoteCard({
   }
 
   return (
-    <div className="mt-3 p-5 bg-white border border-sand-300 rounded-2xl shadow-xs transition-all">
+    <div className="mt-3 p-5 bg-white border border-sand-300 rounded-2xl shadow-xs transition-all motion-reduce:transition-none">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 mb-3 pb-3 border-b border-sand-200">
         <div>
@@ -164,7 +164,7 @@ export default function PlanQuoteCard({
               type="text"
               value={editParamVal}
               onChange={(e) => setEditParamVal(e.target.value)}
-              className="w-full p-2 text-xs bg-white border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary"
+              className="min-h-11 w-full p-2 text-xs bg-white border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary focus-visible:outline-2 focus-visible:outline-primary"
               dir="ltr"
             />
           </div>
@@ -179,7 +179,7 @@ export default function PlanQuoteCard({
               max={1000}
               value={editLimit}
               onChange={(e) => setEditLimit(Number(e.target.value))}
-              className="w-full p-2 text-xs bg-white border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary"
+              className="min-h-11 w-full p-2 text-xs bg-white border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary focus-visible:outline-2 focus-visible:outline-primary"
             />
           </div>
 
@@ -191,7 +191,7 @@ export default function PlanQuoteCard({
               {["xlsx", "pdf", "csv"].map((fmt) => (
                 <label
                   key={fmt}
-                  className="flex items-center gap-1.5 text-xs text-ink-900 cursor-pointer"
+                  className="min-h-11 px-1 flex items-center gap-1.5 text-xs text-ink-900 cursor-pointer focus-within:outline-2 focus-within:outline-primary"
                 >
                   <input
                     type="checkbox"
@@ -209,7 +209,7 @@ export default function PlanQuoteCard({
             <button
               type="button"
               onClick={() => setIsEditing(false)}
-              className="px-3 py-1.5 text-xs text-sand-600 hover:text-ink-900 cursor-pointer"
+              className="min-h-11 px-3 py-1.5 text-xs text-sand-600 hover:text-ink-900 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
             >
               إلغاء
             </button>
@@ -217,7 +217,7 @@ export default function PlanQuoteCard({
               type="button"
               onClick={handleSave}
               disabled={savingEdit}
-              className="px-4 py-1.5 bg-primary text-white text-xs font-semibold rounded-lg hover:bg-primary-hover disabled:opacity-50 cursor-pointer"
+              className="min-h-11 px-4 py-1.5 bg-primary text-white text-xs font-semibold rounded-lg hover:bg-primary-hover disabled:opacity-50 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
             >
               {savingEdit ? "جاري التحديث..." : "تطبيق وتحديث العرض"}
             </button>
@@ -252,7 +252,7 @@ export default function PlanQuoteCard({
                 <button
                   type="button"
                   onClick={() => onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
-                  className="px-2.5 py-1 bg-amber-points text-white rounded-lg font-semibold hover:bg-amber-points-hover transition-colors cursor-pointer"
+                  className="min-h-11 px-2.5 py-1 bg-amber-points text-white rounded-lg font-semibold hover:bg-amber-points-hover transition-colors motion-reduce:transition-none cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
                 >
                   قبول العرض المخفض
                 </button>
@@ -269,7 +269,7 @@ export default function PlanQuoteCard({
           onClick={() => setIsEditing(!isEditing)}
           disabled={quote.isDependent}
           title={quote.isDependent ? "تعديل كل مرحلة غير متاح في هذه النسخة" : undefined}
-          className="min-h-11 text-xs text-sand-600 hover:text-ink-900 font-medium underline underline-offset-2 transition-colors cursor-pointer inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50"
+          className="min-h-11 px-1 text-xs text-sand-600 hover:text-ink-900 font-medium underline underline-offset-2 transition-colors motion-reduce:transition-none cursor-pointer inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-primary"
         >
           <svg className="w-3.5 h-3.5 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
             <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -281,11 +281,11 @@ export default function PlanQuoteCard({
           type="button"
           onClick={() => onStart(quote)}
           disabled={isStarting || !quote.isAffordable || quote.isDependent}
-          className="px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-sm font-bold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          className="min-h-11 px-6 py-2.5 bg-primary hover:bg-primary-hover text-white text-sm font-bold rounded-xl shadow-xs transition-colors motion-reduce:transition-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
         >
           {isStarting ? (
             <>
-              <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full motion-safe:animate-spin motion-reduce:animate-none" />
               <span>جاري الحجز والبدء...</span>
             </>
           ) : (

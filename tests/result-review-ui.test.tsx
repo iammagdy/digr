@@ -5,6 +5,9 @@ describe("result review UI contracts", () => {
   const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
   const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
   const bell = readFileSync("src/app/dashboard/chat/components/NotificationsBell.tsx", "utf8");
+  const sidebar = readFileSync("src/app/dashboard/chat/components/ChatSidebar.tsx", "utf8");
+  const quote = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
+  const activity = readFileSync("src/app/dashboard/chat/components/ActivityTimeline.tsx", "utf8");
   const complaint = readFileSync("src/app/api/jobs/[id]/complaint/route.ts", "utf8");
   const adminApi = readFileSync("src/app/api/admin/goodwill/route.ts", "utf8");
   const schema = readFileSync("scripts/setup-db.ts", "utf8");
@@ -54,5 +57,20 @@ describe("result review UI contracts", () => {
     expect(adminApi).not.toMatch(/export async function (POST|PATCH|DELETE)/);
     expect(schema).toContain('"notifications"');
     expect(schema).toContain('"autoRefundMonthlyPointsCap"');
+  });
+
+  it("keeps chat panels touch-accessible, focusable, and reduced-motion aware", () => {
+    expect(page).toContain("aria-controls=\"results-canvas\"");
+    expect(page).toContain("min-h-11 min-w-11");
+    expect(page).toContain("motion-reduce:animate-none");
+    expect(sidebar).toContain('aria-current={isActive ? "page" : undefined}');
+    expect(sidebar).toContain("لا توجد محادثات سابقة");
+    expect(sidebar).toContain("duration-200 ease-out motion-reduce:transition-none");
+    expect(bell).toContain("left-1/2");
+    expect(bell).toContain("min-h-11");
+    expect(quote).toContain("focus-visible:outline-2");
+    expect(quote).toContain("motion-safe:animate-spin motion-reduce:animate-none");
+    expect(activity).toContain("aria-expanded={!collapsed}");
+    expect(activity).toContain("min-h-11");
   });
 });
