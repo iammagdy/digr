@@ -109,12 +109,13 @@ describe("accessibility foundations", () => {
 
 describe("redesign wiring stays on existing routes", () => {
   it("landing question is preserved through auth and prefilled in chat without auto-sending", () => {
-    const auth = src("src/components/AuthLayout.tsx");
+    const hero = src("src/app/components/HeroLens.tsx");
     const chat = src("src/app/dashboard/chat/page.tsx");
-    expect(auth).toContain("peekPendingQuestion");
+    expect(hero).toContain("savePendingQuestion");
     expect(chat).toContain("takePendingQuestion");
     expect(chat).toContain("setInputText((current) => current || initialQuestion)");
     expect(chat).not.toMatch(/initialQuestion[\s\S]{0,240}handleSendMessage/);
+    expect(src("src/components/AuthLayout.tsx")).not.toContain("سؤالك محفوظ");
   });
 
   it("chat retains official branding and the existing theme control", () => {
