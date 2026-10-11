@@ -15,6 +15,7 @@ import {
   PricingSettings,
 } from "./quotes";
 import type { CatalogEndpointSummary } from "./catalogClient";
+import { checkPlanProviderCapacity, getConfiguredJobPointsCap } from "./providerSpend";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -412,6 +413,7 @@ export interface ManagedQuoteResult {
     affordableQuotedPoints: number;
     rawCostPoints?: number;
   };
+  capacityConstrained?: boolean;
   userBalance: number;
   expiresAt: string;
   createdAt: string;
@@ -461,6 +463,20 @@ export async function createAndSaveManagedQuote(
     totalQuotedPoints += itemQuote.quotedPoints;
     totalVolumeMax += it.targetVolumeMax;
     effectiveUnitPrice = itemQuote.unitPricePoints;
+  }
+
+  // 1b. Check provider capacity (10% safety margin)
+  let capacityConstrained = false;
+  const capacityCheck = await checkPlanProviderCapacity(totalVolumeMax, primaryUnitCost, tables);
+
+  if (capacityCheck.downscaled && capacityCheck.maxSafeVolume < totalVolumeMax) {
+    const maxAllowedUnits = Math.max(1, capacityCheck.maxSafeVolume);
+    capacityConstrained = true;
+    const scale = maxAllowedUnits / totalVolumeMax;
+    for (const it of plan.items) {
+      it.targetVolumeMax = Math.max(1, Math.floor(it.targetVolumeMax * scale));
+    }
+    totalVolumeMax = plan.items.reduce((s, it) => s + it.targetVolumeMax, 0);
   }
 
   // Recalculate affordability for the composite quote
@@ -528,6 +544,7 @@ export async function createAndSaveManagedQuote(
     quotedPoints: quoteCalc.quotedPoints,
     isAffordable: quoteCalc.isAffordable,
     downscaledOffer: quoteCalc.downscaledOffer,
+    capacityConstrained,
     userBalance,
     expiresAt,
     createdAt: nowIso,
