@@ -22,8 +22,33 @@ export interface TregCallResult {
   data: any;
   error?: string;
   errorDetails?: string;
+  detail?: string;
   isRouteMaxCost: boolean;
   isPlatformBalanceLow: boolean;
+}
+
+/**
+ * Sanitize an error detail string: strip tokens, secrets, long hex hashes, and trim to 300 chars.
+ */
+export function sanitizeTregDetail(rawMsg: string, knownSecret?: string): string {
+  if (!rawMsg) return "";
+
+  let sanitized = rawMsg
+    .replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [REDACTED]")
+    .replace(/treg_[a-zA-Z0-9_\-]+/gi, "[REDACTED]")
+    .replace(/sk-[a-zA-Z0-9_\-]+/gi, "[REDACTED]")
+    .replace(/[a-f0-9]{32,64}/gi, "[REDACTED]");
+
+  if (knownSecret && knownSecret.trim().length > 4) {
+    sanitized = sanitized.split(knownSecret.trim()).join("[REDACTED]");
+  }
+
+  const envToken = process.env.TREG_TOKEN || process.env.TREG_API_KEY;
+  if (envToken && envToken.trim().length > 4) {
+    sanitized = sanitized.split(envToken.trim()).join("[REDACTED]");
+  }
+
+  return sanitized.trim().slice(0, 300);
 }
 
 /**
@@ -31,7 +56,7 @@ export interface TregCallResult {
  * - URL: https://treg.to/call/<endpoint-id>
  * - Auth: X-Treg-Token
  * - Cost cap: X-Treg-Route-Max-Cost (USD, default 0.05)
- * - Metadata tag: X-Treg-Meta json with job_id, user_id, step_id
+ * - Metadata tag: X-Treg-Meta comma-separated key=value pairs (letters, digits, . _ - : only, <=128 chars)
  * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
@@ -55,6 +80,9 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
       cleanParams.uniqueId = cleanParams.username;
       delete cleanParams.username;
     }
+    if (cleanParams.uniqueId && typeof cleanParams.uniqueId === "string") {
+      cleanParams.uniqueId = cleanParams.uniqueId.replace(/^@/, "");
+    }
   }
 
   const costCapUsd = options.routeMaxCostUsd !== undefined
@@ -64,28 +92,50 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   const stepId = options.stepId || "step_1";
   const page = options.page || 1;
   const idemKey = options.idempotencyKey || `job_${options.jobId}_step_${stepId}_p${page}`;
-  const metaJson = JSON.stringify({
-    job_id: options.jobId,
-    user_id: options.userId,
-    step_id: stepId,
-  });
+
+  // Build X-Treg-Meta as comma-separated key=value pairs matching https://treg.to/integrate.md
+  // Values: letters, digits, and . _ - : only, <= 128 chars, no email
+  const sanitizeMeta = (val: string) =>
+    String(val || "unknown")
+      .replace(/@/g, "_at_")
+      .replace(/[^a-zA-Z0-9._\-:]/g, "_")
+      .slice(0, 128) || "unknown";
+
+  const metaParts: string[] = [];
+  if (options.userId) {
+    metaParts.push(`customer=${sanitizeMeta(options.userId)}`);
+  }
+  if (options.jobId) {
+    metaParts.push(`job=${sanitizeMeta(options.jobId)}`);
+  }
+  if (stepId) {
+    metaParts.push(`step=${sanitizeMeta(stepId)}`);
+  }
+  const metaHeader = metaParts.join(", ");
 
   let targetUrl = `${baseUrl}/call/${options.endpointId}`;
   const headers: Record<string, string> = {
     "X-Treg-Token": token,
     "X-Treg-Route-Max-Cost": costCapUsd,
-    "X-Treg-Meta": metaJson,
     "Idempotency-Key": idemKey,
   };
+
+  if (metaHeader) {
+    headers["X-Treg-Meta"] = metaHeader;
+  }
 
   // Only pass test scenario header when running against local fake server
   if (options.testScenario && targetUrl.includes("127.0.0.1")) {
     headers["X-Test-Scenario"] = options.testScenario;
   }
 
+  const method = (
+    options.method ||
+    (options.endpointId === "tikhub.tiktok.user.profile" ? "GET" : "POST")
+  ).toUpperCase() as "GET" | "POST";
+
   let requestBody: string | undefined = undefined;
 
-  const method = options.method || "POST";
   if (method === "GET") {
     const searchParams = new URLSearchParams();
     for (const [k, v] of Object.entries(cleanParams)) {
@@ -112,6 +162,7 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
       body: requestBody,
     });
   } catch (netErr: any) {
+    const errorMsg = sanitizeTregDetail(netErr.message || "Failed to reach data provider", token);
     return {
       ok: false,
       httpStatus: 503,
@@ -120,7 +171,8 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
       latencyMs: Date.now() - startTime,
       data: null,
       error: "network_failure",
-      errorDetails: netErr.message || "Failed to reach data provider",
+      errorDetails: errorMsg,
+      detail: errorMsg,
       isRouteMaxCost: false,
       isPlatformBalanceLow: false,
     };
@@ -131,15 +183,46 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
   let responseBody: any = null;
+  let rawText = "";
   try {
-    responseBody = await response.json();
+    rawText = await response.text();
+    try {
+      responseBody = JSON.parse(rawText);
+    } catch {
+      responseBody = null;
+    }
   } catch {
-    responseBody = null;
+    rawText = "";
   }
 
   const bodyError = responseBody?.error;
   const isRouteMaxCost = response.status === 402 && bodyError === "route_max_cost";
   const isPlatformBalanceLow = response.status === 402 && bodyError !== "route_max_cost";
+
+  let rawDetail = "";
+  if (!response.ok) {
+    if (responseBody && typeof responseBody === "object") {
+      if (typeof responseBody.detail === "string" && responseBody.detail.trim()) {
+        rawDetail = responseBody.detail;
+      } else if (responseBody.detail && typeof responseBody.detail === "object") {
+        rawDetail = JSON.stringify(responseBody.detail);
+      } else if (typeof responseBody.message === "string" && responseBody.message.trim()) {
+        rawDetail = responseBody.message;
+      } else if (typeof responseBody.error === "string" && responseBody.error.trim()) {
+        rawDetail = responseBody.error;
+      } else if (typeof responseBody.msg === "string" && responseBody.msg.trim()) {
+        rawDetail = responseBody.msg;
+      } else {
+        rawDetail = JSON.stringify(responseBody);
+      }
+    } else if (rawText && rawText.trim()) {
+      rawDetail = rawText.trim();
+    } else {
+      rawDetail = response.statusText || `http_${response.status}`;
+    }
+  }
+
+  const sanitizedDetail = !response.ok ? sanitizeTregDetail(rawDetail, token) : undefined;
 
   return {
     ok: response.ok,
@@ -149,7 +232,8 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     latencyMs,
     data: responseBody,
     error: bodyError || (response.ok ? undefined : `http_${response.status}`),
-    errorDetails: responseBody?.message || (response.ok ? undefined : response.statusText),
+    errorDetails: sanitizedDetail,
+    detail: sanitizedDetail,
     isRouteMaxCost,
     isPlatformBalanceLow,
   };

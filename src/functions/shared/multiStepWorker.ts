@@ -19,6 +19,7 @@ export interface GenericJobStep {
   stepId: string;
   capabilitySlug?: string;
   endpointId?: string;
+  method?: "GET" | "POST";
   params?: Record<string, any>;
   targetVolumeMin?: number;
   targetVolumeMax?: number;
@@ -518,7 +519,7 @@ export async function executeMultiStepJob(
     // Branch B: Generic Multi-Step Executor (TREG API calls via POST https://treg.to/call/{endpointId})
     let steps: GenericJobStep[] = [];
 
-    if (input.steps && input.steps.length > 0) {
+      if (input.steps && input.steps.length > 0) {
       steps = input.steps;
     } else {
       // Look up quote from plans_quotes if available
@@ -536,6 +537,7 @@ export async function executeMultiStepJob(
               stepId: it.stepId || `step_${idx + 1}`,
               capabilitySlug: it.capabilitySlug,
               endpointId: it.endpointId || it.capabilitySlug,
+              method: it.method || it.tregMethod,
               params: it.params || {},
               targetVolumeMin: it.targetVolumeMin,
               targetVolumeMax: it.targetVolumeMax || targetVolumeMax,
@@ -551,6 +553,7 @@ export async function executeMultiStepJob(
           stepId: it.stepId || `step_${idx + 1}`,
           capabilitySlug: it.capabilitySlug,
           endpointId: it.endpointId || it.capabilitySlug,
+          method: it.method || it.tregMethod,
           params: it.params || {},
           targetVolumeMax: it.targetVolumeMax || targetVolumeMax,
           paginationStrategy: it.paginationStrategy || "none",
@@ -564,6 +567,7 @@ export async function executeMultiStepJob(
             stepId: "step_1",
             capabilitySlug: templateSlug,
             endpointId: params.endpointId || (templateSlug === "tiktok-profile" ? "tikhub.tiktok.user.profile" : templateSlug),
+            method: params.method || (templateSlug === "tiktok-profile" ? "GET" : undefined),
             params,
             targetVolumeMax,
             paginationStrategy: (params.paginationStrategy || (templateSlug === "tiktok-profile" ? "none" : "page")) as any,
@@ -579,17 +583,32 @@ export async function executeMultiStepJob(
       if (collectedRows.length >= targetVolumeMax) break;
 
       let endpointId = step.endpointId;
+      let stepMethod = step.method;
       if (!endpointId || endpointId === step.capabilitySlug) {
         if (step.capabilitySlug === "tiktok-profile") {
           endpointId = "tikhub.tiktok.user.profile";
+          stepMethod = stepMethod || "GET";
         } else {
           try {
             const catMatches = await searchCatalog(step.capabilitySlug || "");
             if (catMatches.length > 0) {
               endpointId = catMatches[0].id || catMatches[0].slug;
+              stepMethod = stepMethod || catMatches[0].method;
             }
           } catch {}
           endpointId = endpointId || step.capabilitySlug || "unknown";
+        }
+      }
+
+      if (!stepMethod) {
+        if (
+          endpointId === "tikhub.tiktok.user.profile" ||
+          endpointId.startsWith("scrapecreators.") ||
+          endpointId.startsWith("tikhub.")
+        ) {
+          stepMethod = "GET";
+        } else {
+          stepMethod = "POST";
         }
       }
 
@@ -679,7 +698,7 @@ export async function executeMultiStepJob(
 
         const callResult = await executeTregCallWithRetry({
           endpointId,
-          method: "POST",
+          method: stepMethod,
           params: pageParams,
           userId,
           jobId,
@@ -722,6 +741,10 @@ export async function executeMultiStepJob(
               errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
             } else if (callResult.httpStatus === 404) {
               errorAr = "الهدف المطلوب غير موجود أو محمي.";
+            } else if (callResult.httpStatus === 422) {
+              errorAr = callResult.detail
+                ? `تعذر معالجة مدخلات الطلب لدى المزود (422): ${callResult.detail}`
+                : "تعذر معالجة مدخلات الطلب لدى المزود (422).";
             } else if (callResult.httpStatus === 429) {
               errorAr = "المصدر مشغول حالياً (429 Rate Limit) بعد استنفاد محاولات الإعادة.";
             }
