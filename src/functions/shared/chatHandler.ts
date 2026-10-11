@@ -22,15 +22,18 @@ import {
   createAndSaveManagedQuote,
   applyPlanOperations,
   validatePlanAgainstSchemas,
+  validatePlanAgainstLiveCatalog,
+  LiveCatalogIssue,
   PlanState,
 } from "./planManager";
 import { getBalance } from "./ledger";
 import {
+  discoveryQuestionPriority,
   normalizeClarificationQuestions,
   sanitizeClarificationText,
   type NormalizedClarificationQuestion,
 } from "./clarification";
-import { searchCatalog, CatalogEndpointSummary } from "./catalogClient";
+import { searchCatalog, getCachedCatalogEndpoints, CatalogEndpointSummary } from "./catalogClient";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -195,18 +198,133 @@ export function summarizeConversationHistory(
   ];
 }
 
+/**
+ * Map a live catalog endpoint to the internal Capability shape (same alias the
+ * model received). Used for validation and server-side pricing of turn results.
+ */
+export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capability {
+  return {
+    id: ep.slug,
+    slug: ep.slug,
+    platform: ep.platform as any,
+    category: ep.platform as any,
+    status: "verified",
+    unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
+    estimatedCostUsdPerUnit: ep.catalogPriceUsd,
+    pointsPerUnit: ep.pointsPerUnit,
+    maxItemsPerCall: ep.pagination.maxLimit || 100,
+    estimatedSuccessRate: ep.observedSuccessRate,
+    nameAr: ep.nameAr,
+    nameEn: ep.nameEn,
+    descriptionAr: ep.summaryAr,
+    paramsSchema: JSON.stringify(ep.paramsSchema || {}),
+    tregEndpointId: ep.id,
+    tregMethod: ep.method,
+    pricingUnit: (ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
+    unitCostUsd: ep.catalogPriceUsd,
+    maxRows: 5000,
+    paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
+    enabled: true,
+  };
+}
+
+/**
+ * Plain-terms fix prompt for the model when a proposed plan fails live-catalog
+ * validation. Uses Arabic display names only — never internal slugs or ids.
+ */
+export function buildPlanFixPrompt(
+  validation: { errors: string[] },
+  turnEndpoints: CatalogEndpointSummary[],
+): string {
+  const available = turnEndpoints.slice(0, 5).map((ep, i) => {
+    let required = "-";
+    try {
+      const schema: any =
+        typeof ep.paramsSchema === "string" ? JSON.parse(ep.paramsSchema) : ep.paramsSchema;
+      if (Array.isArray(schema?.required) && schema.required.length > 0) {
+        required = schema.required.join("، ");
+      }
+    } catch {
+      /* ignore */
+    }
+    return `${i + 1}. "${ep.nameAr}" — المدخلات المطلوبة: ${required}`;
+  });
+  return `[تعليمات داخلية — صحح الخطة]: المقترح الحالي غير صالح:\n- ${validation.errors.join(
+    "\n- ",
+  )}\nالخدمات المتاحة من البحث الحالي:\n${
+    available.join("\n") || "لا توجد خدمات متاحة."
+  }\nأعد استدعاء propose_plan باستخدام خدمة متاحة فقط مع كل مدخلاتها المطلوبة. لا تذكر أسماء داخلية أو معرفات للمستخدم.`;
+}
+
+const TOPIC_STOPWORDS = new Set(
+  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x".split(
+    " ",
+  ),
+);
+
+/** Extract up to 4 suggestion chips (topic keywords) from the user's message. */
+
+
+export { discoveryQuestionPriority };
+
+/** Convert Western digits to Arabic-Indic to match the UI's date options. */
+export function toArabicIndicDigits(text: string): string {
+  return text.replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+}
+
+export function extractTopicChips(userMessage: string, maxChips = 4): string[] {
+  if (!userMessage) return [];
+  const words = userMessage
+    .replace(/[؟?!.،,؛:()«»"']/g, " ")
+    .split(/\s+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && !TOPIC_STOPWORDS.has(w));
+  return [...new Set(words)].slice(0, maxChips);
+}
+
+/** Extract a date-range hint from the user's message, e.g. "آخر 3 شهور". */
+export function extractDateHint(userMessage: string): string | undefined {
+  if (!userMessage) return undefined;
+  const m = /(آخر|اخر|خلال)\s*(\d+)\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/.exec(userMessage);
+  return m ? m[0].trim() : undefined;
+}
+
 export function buildClarificationPresentation(
   output: Extract<LlmTurnOutput, { type: "ask_clarification" }>,
-  context: { capabilities?: Capability[]; userBalancePoints?: number; persona?: string } = {},
+  context: { capabilities?: Capability[]; userBalancePoints?: number; persona?: string; userMessage?: string } = {},
 ) {
   // PR #3 trust boundary (release port): questions are normalized against the
   // enabled capabilities only — platform questions with no enabled backing
   // capability are dropped rather than offered as phantom choices.
-  const clarificationItems = normalizeClarificationQuestions(output, {
+  const normalized = normalizeClarificationQuestions(output, {
     capabilities: context.capabilities ?? [],
     userBalancePoints: context.userBalancePoints,
     persona: context.persona,
   });
+  // Order: topic keywords -> number of posts -> comments per post -> date range.
+  const clarificationItems = normalized
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => discoveryQuestionPriority(a.item) - discoveryQuestionPriority(b.item) || a.index - b.index)
+    .map(({ item }) => item);
+
+  // Enrich: suggestion chips for an open topic question, date default from the
+  // user's own request.
+  const userMessage = context.userMessage || "";
+  const topicQ = clarificationItems.find((q) => discoveryQuestionPriority(q) === 1);
+  if (topicQ && topicQ.options.length === 0) {
+    const chips = extractTopicChips(userMessage);
+    if (chips.length > 0) topicQ.options = chips;
+  }
+  const dateQ = clarificationItems.find((q) => discoveryQuestionPriority(q) === 4);
+  if (dateQ) {
+    const hint = extractDateHint(userMessage);
+    if (hint) {
+      const normalizedHint = toArabicIndicDigits(hint);
+      if (!dateQ.options.includes(normalizedHint)) dateQ.options = [normalizedHint, ...dateQ.options].slice(0, 4);
+      dateQ.defaultOption = normalizedHint;
+    }
+  }
+
   const clarificationQuestions = clarificationItems.map((item) => item.text);
   const intro = sanitizeClarificationText(
     output.reasonAr || "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:",
@@ -329,29 +447,7 @@ export class ChatHandler {
     const platformHint = mentionedPlatforms[0] || undefined;
     const liveCatalogEndpoints = await searchCatalog(message, platformHint);
 
-    const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map((ep) => ({
-      id: ep.slug,
-      slug: ep.slug,
-      platform: ep.platform as any,
-      category: ep.platform as any,
-      status: "verified",
-      unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
-      estimatedCostUsdPerUnit: ep.catalogPriceUsd,
-      pointsPerUnit: ep.pointsPerUnit,
-      maxItemsPerCall: ep.pagination.maxLimit || 100,
-      estimatedSuccessRate: ep.observedSuccessRate,
-      nameAr: ep.nameAr,
-      nameEn: ep.nameEn,
-      descriptionAr: ep.summaryAr,
-      paramsSchema: JSON.stringify(ep.paramsSchema || {}),
-      tregEndpointId: ep.id,
-      tregMethod: ep.method,
-      pricingUnit: (ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
-      unitCostUsd: ep.catalogPriceUsd,
-      maxRows: 5000,
-      paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
-      enabled: true,
-    }));
+    const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
 
     const allCapabilities = [...dynamicCapabilities, ...capabilities];
     const allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
@@ -440,6 +536,10 @@ export class ChatHandler {
     const MAX_CATALOG_ITERATIONS = 4;
     let catalogIterations = 0;
     const loopMessages = [...turnMessages];
+    // Every catalog search of this turn (pre-search + loop iterations), keyed by
+    // the same alias the model received. This — plus the 24h cache — is what
+    // plan validation accepts, not the hardcoded registry.
+    const turnSearchResults: CatalogEndpointSummary[] = [...liveCatalogEndpoints];
     const repeatTurn = async () => {
       llmResult = await this.llm.executeTurn({
         messages: loopMessages,
@@ -463,6 +563,7 @@ export class ChatHandler {
     while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
       catalogIterations++;
       const searchRes = await searchCatalog(output.query, output.platform);
+      turnSearchResults.push(...searchRes);
       // Compact internal result (top 5, minimal fields, ~2.5k token cap).
       // Never persisted, never user-visible.
       loopMessages.push({ role: "system", content: buildCompactCatalogSummary(searchRes) } as const);
@@ -503,6 +604,32 @@ export class ChatHandler {
       finalContentAr = fallback.intro;
     };
 
+    // Turn catalog endpoints: live results of this turn + 24h cached catalog,
+    // deduped by alias. Plan validation and pricing use these first.
+    const turnEndpoints: CatalogEndpointSummary[] = (() => {
+      const seen = new Set<string>();
+      const out: CatalogEndpointSummary[] = [];
+      for (const ep of [...turnSearchResults, ...getCachedCatalogEndpoints()]) {
+        const key = ep.slug || ep.id;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(ep);
+      }
+      return out;
+    })();
+    const turnCapabilities = turnEndpoints.map(catalogEndpointToCapability);
+    const validationCaps: Capability[] = (() => {
+      const seen = new Set<string>();
+      const out: Capability[] = [];
+      for (const c of [...turnCapabilities, ...allCapabilities]) {
+        const key = c.slug || c.id;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        out.push(c);
+      }
+      return out;
+    })();
+
     // 8. Process Output Actions
     const stalledAnswerText =
       output.type === "answer_question" ? (((output as any).answerAr || "") as string).trim() : "";
@@ -515,6 +642,7 @@ export class ChatHandler {
         capabilities: allCapabilities,
         userBalancePoints: userBalance,
         persona: userProfile?.persona,
+        userMessage: message,
       });
       clarificationQuestionsList = clarification.clarificationQuestions;
       clarificationItemsList = clarification.clarificationItems;
@@ -524,38 +652,69 @@ export class ChatHandler {
     } else if (output.type === "write_note") {
       finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
     } else if (output.type === "propose_plan") {
-      const rawCaps = (output as any).capabilities || (output as any).steps || [];
-      const planItems = rawCaps.map((c: any) => ({
-        stepId: c.stepId,
-        capabilitySlug: c.capabilitySlug || c.endpointId,
-        endpointId: c.endpointId || c.capabilitySlug,
-        paginationStrategy: c.paginationStrategy,
-        params: c.params,
-        targetVolumeMin: c.targetVolumeMin || 1,
-        targetVolumeMax: c.targetVolumeMax,
-      }));
+      const mapPlanItems = (out: any) =>
+        ((out as any).capabilities || (out as any).steps || []).map((c: any) => ({
+          stepId: c.stepId,
+          capabilitySlug: c.capabilitySlug || c.endpointId,
+          endpointId: c.endpointId || c.capabilitySlug,
+          paginationStrategy: c.paginationStrategy,
+          params: c.params,
+          targetVolumeMin: c.targetVolumeMin || 1,
+          targetVolumeMax: c.targetVolumeMax,
+        }));
+
+      let planOutput: any = output;
+      let planItems = mapPlanItems(planOutput);
 
       // Deterministic check: platform mentioned by user must match platform in proposed plan
-      const platformCheck = validatePlanPlatformMatch(message, planItems, allCatalogCapabilities);
+      let platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
+      let planValidation = platformCheck.valid
+        ? validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities)
+        : { valid: false, errors: [] as string[], issues: [] as LiveCatalogIssue[] };
+
+      if (platformCheck.valid && !planValidation.valid) {
+        // Retry once inside the same turn: tell the model the specific problems
+        // in plain terms (Arabic names only, never slugs), with the available
+        // endpoints listed.
+        loopMessages.push(
+          { role: "system", content: buildPlanFixPrompt(planValidation, turnEndpoints) } as const,
+        );
+        await repeatTurn();
+        if (output.type === "propose_plan") {
+          planOutput = output;
+          planItems = mapPlanItems(planOutput);
+          platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
+          if (platformCheck.valid) {
+            planValidation = validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities);
+          }
+        } else {
+          planOutput = null;
+          planValidation = { valid: false, errors: ["no-plan"], issues: [] as LiveCatalogIssue[] };
+        }
+      }
+
       if (!platformCheck.valid) {
         const closest = getClosestVerifiedCapability(capabilities);
         finalContentAr = `${platformCheck.errorAr || UNVERIFIED_PLATFORM_MESSAGE_AR}\n\nأقرب خدمة معتمدة متاحة حالياً: ${closest.nameAr}.`;
+      } else if (!planValidation.valid || !planOutput) {
+        // Still invalid after the retry: short message + code-built discovery
+        // questions. Internal slugs never reach the user.
+        const planFallback = buildCodeDiscoveryFallback(allCapabilities);
+        clarificationQuestionsList = planFallback.items.map((item) => item.text);
+        clarificationItemsList = planFallback.items;
+        finalContentAr = `أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`;
       } else {
-        const planValidation = validatePlanAgainstSchemas(planItems, allCapabilities);
-        if (!planValidation.valid) {
-          finalContentAr = `يرجى تدقيق المدخلات: ${planValidation.errors.join(", ")}`;
-        } else {
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
             conversationId,
             userId,
             plan: {
-              summaryAr: output.summaryAr,
+              summaryAr: planOutput.summaryAr,
               items: planItems,
-              outputFormats: (output.outputFormats as any) || ["xlsx", "pdf", "csv"],
-              methodologyNotes: output.methodologyNotes,
+              outputFormats: (planOutput.outputFormats as any) || ["xlsx", "pdf", "csv"],
+              methodologyNotes: planOutput.methodologyNotes,
             },
             userBalance: userBalance ?? 0,
-            capabilities: allCapabilities,
+            capabilities: validationCaps,
           });
 
           planQuoteData = {
@@ -571,10 +730,10 @@ export class ChatHandler {
             downscaledOffer: managedQuote.downscaledOffer,
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
-            methodologyNotes: output.methodologyNotes,
+            methodologyNotes: planOutput.methodologyNotes,
           };
 
-          finalContentAr = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${output.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          finalContentAr = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
           if (!managedQuote.isAffordable) {
             finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
             if (managedQuote.downscaledOffer) {
@@ -582,7 +741,6 @@ export class ChatHandler {
             }
           }
         }
-      }
     } else if (output.type === "edit_plan") {
       let activeQuote: any = null;
       try {

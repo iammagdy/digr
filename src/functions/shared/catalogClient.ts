@@ -49,6 +49,26 @@ export function clearCatalogCache(): void {
 }
 
 /**
+ * All currently cached catalog endpoints (24h TTL). Used as a fallback source
+ * for plan validation alongside the current turn's live search results.
+ */
+export function getCachedCatalogEndpoints(): CatalogEndpointSummary[] {
+  const now = Date.now();
+  const seen = new Set<string>();
+  const out: CatalogEndpointSummary[] = [];
+  for (const entry of catalogCache.values()) {
+    if (now - entry.timestamp >= CACHE_TTL_MS) continue;
+    for (const ep of entry.results || []) {
+      const key = ep.slug || ep.id;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(ep);
+    }
+  }
+  return out;
+}
+
+/**
  * Known platform Arabic translations
  */
 const PLATFORM_ARABIC_NAMES: Record<string, string> = {

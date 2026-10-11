@@ -137,7 +137,7 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     expect(result.allowed).toBe(false);
     expect(result.statusCode).toBe(429);
     expect(result.type).toBe("daily_limit");
-    expect(result.reasonAr).toContain("الحد الأقصى اليومي");
+    expect(result.reasonAr).toContain("للحد اليومي من رسائل المساعد");
   });
 
   // ================= 3. Budget Limits: Global Spend Cap & Context Cap =================

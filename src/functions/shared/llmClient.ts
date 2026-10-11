@@ -797,6 +797,28 @@ export class LlmClient {
       if (!hasCatalogResults) return { output: searchCatalogOutput, ...fakeTokens };
       return { output: { type: "answer_question", answerAr: "   " }, ...fakeTokens };
     }
+    if (options.testScenario === "plan_ghost_then_stall") {
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: "خطة وهمية بخدمة غير موجودة",
+          capabilities: [
+            {
+              stepId: "ghost",
+              capabilitySlug: "facebook-ghost-endpoint",
+              endpointId: "facebook-ghost-endpoint",
+              params: { postUrl: "https://www.facebook.com/post/1" },
+              targetVolumeMin: 1,
+              targetVolumeMax: 10,
+              paginationStrategy: "cursor",
+            },
+          ],
+          outputFormats: ["xlsx"],
+          methodologyNotes: "اختبار وهمي.",
+        },
+        ...fakeTokens,
+      };
+    }
     if (options.testScenario === "direct_plan") {
       return {
         output: {
