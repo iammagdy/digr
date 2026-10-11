@@ -12,20 +12,22 @@ import {
   validateStructuredClarificationAnswers,
 } from "../../../functions/shared/clarification";
 
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-const apiKey = process.env.APPWRITE_API_KEY!;
-
-const serverClient = new ServerClient()
-  .setEndpoint(endpoint)
-  .setProject(projectId)
-  .setKey(apiKey);
-
-const tables = new TablesDB(serverClient);
-const chatHandler = new ChatHandler(tables);
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
+    const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+    const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+    const apiKey = process.env.APPWRITE_API_KEY || "";
+
+    const serverClient = new ServerClient()
+      .setEndpoint(endpoint)
+      .setProject(projectId)
+      .setKey(apiKey);
+
+    const tables = new TablesDB(serverClient);
+    const chatHandler = new ChatHandler(tables);
+
     const body = await req.json().catch(() => ({}));
     const { conversationId } = body;
     const structuredAnswers = body.clarificationAnswers === undefined

@@ -4,12 +4,19 @@ import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 // ================= Schema Definitions =================
 
 export const ClarificationQuestionItemSchema = z.object({
-  question: z.string().trim().min(1),
+  id: z.string().optional(),
+  question: z.string().trim().min(1).optional(),
+  text: z.string().trim().min(1).optional(),
+  type: z.enum(["single", "multi", "free"]).optional(),
+  parameterType: z.enum(["platform", "time_window", "volume", "output_format", "anonymize", "language", "topic"]).optional(),
   options: z.array(z.string().trim().min(1).max(40)).max(4).optional(),
+  allowOther: z.boolean().optional(),
+  defaultOption: z.string().optional(),
 }).strict();
 
 export const AskClarificationSchema = z.object({
   type: z.literal("ask_clarification"),
+  intro: z.string().optional(),
   questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
   questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
   optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
@@ -17,10 +24,22 @@ export const AskClarificationSchema = z.object({
 }).strict();
 
 export const PlanCapabilityItemSchema = z.object({
+  stepId: z.string().optional(),
   capabilitySlug: z.string().min(1),
   params: z.record(z.string(), z.any()),
   targetVolumeMin: z.number().int().min(1),
   targetVolumeMax: z.number().int().min(1),
+  volumeMode: z.enum(["bounded", "open_ended"]).optional(),
+  dependsOn: z.array(z.string()).optional(),
+  inputFrom: z
+    .object({
+      stepId: z.string(),
+      field: z.string(),
+      paramKey: z.string(),
+    })
+    .optional(),
+  fanOutCap: z.number().int().min(1).max(50).optional(),
+  windowed: z.boolean().optional(),
 });
 
 export const ExecutionOptionsSchema = z.object({
@@ -397,12 +416,94 @@ export const ACTION_RESULT_JSON_SCHEMA = {
   additionalProperties: false,
 };
 
+// ================= LLM Runtime Diagnostics & Status =================
+
+export interface LlmStatusSnapshot {
+  provider: LlmProviderType;
+  llm_enabled: boolean;
+  key_present: boolean;
+  model: string;
+  last_llm_usage_timestamp: string | null;
+  last_fallback_reason: string | null;
+}
+
+let lastFallbackReason: string | null = null;
+
+export function getLastLlmFallbackReason(): string | null {
+  return lastFallbackReason;
+}
+
+export function setLastLlmFallbackReason(reason: string | null): void {
+  lastFallbackReason = reason;
+}
+
+export function resolveRuntimeProvider(override?: LlmProviderType): LlmProviderType {
+  const raw = (override || process.env.LLM_PROVIDER || "fake").trim().toLowerCase();
+  if (raw === "anthropic" || raw === "openai" || raw === "fake") {
+    return raw;
+  }
+  return "fake";
+}
+
+export function resolveRuntimeModel(provider: LlmProviderType, override?: string): string {
+  if (override && override.trim()) return override.trim();
+  if (provider === "anthropic") {
+    return (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
+  }
+  if (provider === "openai") {
+    return (process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-luna").trim();
+  }
+  return (process.env.LLM_MODEL || "fake").trim();
+}
+
+export function isLlmEnabledRuntime(): boolean {
+  const raw = (process.env.LLM_ENABLED || "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}
+
+export function isProviderKeyPresent(provider: LlmProviderType): boolean {
+  if (provider === "anthropic") {
+    return Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim().length > 0);
+  }
+  if (provider === "openai") {
+    return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0);
+  }
+  return false;
+}
+
+export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): LlmStatusSnapshot {
+  const provider = resolveRuntimeProvider();
+  const llm_enabled = isLlmEnabledRuntime();
+  const key_present = isProviderKeyPresent(provider);
+  const model = resolveRuntimeModel(provider);
+
+  let derivedFallback = lastFallbackReason;
+  if (!derivedFallback) {
+    if (!llm_enabled) {
+      derivedFallback = "llm_disabled";
+    } else if (provider === "fake") {
+      derivedFallback = "provider_is_fake";
+    } else if (!key_present) {
+      derivedFallback = "missing_api_key";
+    }
+  }
+
+  return {
+    provider,
+    llm_enabled,
+    key_present,
+    model,
+    last_llm_usage_timestamp: lastUsageTimestamp,
+    last_fallback_reason: derivedFallback,
+  };
+}
+
 // ================= LLM Client Implementation =================
 
 export class LlmClient {
-  private provider: LlmProviderType;
-  private model: string;
-  private isLive: boolean;
+  private providerOverride?: LlmProviderType;
+  private modelOverride?: string;
+  private isLiveOverride?: boolean;
   private customPricing?: Partial<LlmModelPricing>;
 
   constructor(options?: {
@@ -411,36 +512,30 @@ export class LlmClient {
     isLive?: boolean;
     pricingSettings?: Partial<LlmModelPricing>;
   }) {
-    const providerEnv = (process.env.LLM_PROVIDER as LlmProviderType) || "fake";
-    this.provider = options?.provider || providerEnv;
-    this.isLive = options?.isLive !== undefined ? options.isLive : process.env.LLM_LIVE === "true";
+    this.providerOverride = options?.provider;
+    this.modelOverride = options?.model;
+    this.isLiveOverride = options?.isLive;
     this.customPricing = options?.pricingSettings;
-
-    if (options?.model) {
-      this.model = options.model;
-    } else if (this.provider === "anthropic") {
-      this.model = process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5";
-    } else if (this.provider === "openai") {
-      this.model = process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-luna";
-    } else {
-      this.model = process.env.LLM_MODEL || "fake";
-    }
   }
 
   getProvider(): LlmProviderType {
-    return this.provider;
+    return resolveRuntimeProvider(this.providerOverride);
   }
 
   getModel(): string {
-    return this.model;
+    return resolveRuntimeModel(this.getProvider(), this.modelOverride);
   }
 
   /**
    * Main interaction point with budget enforcement & schema validation
    */
   async executeTurn(options: LlmCallOptions): Promise<LlmCallResult> {
+    const provider = this.getProvider();
+    const model = this.getModel();
+
     // 1. Kill-switch check
-    if (process.env.LLM_ENABLED === "false") {
+    if (!isLlmEnabledRuntime()) {
+      setLastLlmFallbackReason("llm_disabled");
       return {
         output: {
           type: "refuse",
@@ -449,7 +544,7 @@ export class LlmClient {
         inputTokens: 0,
         outputTokens: 0,
         costUsd: 0,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -465,17 +560,28 @@ export class LlmClient {
         inputTokens: 0,
         outputTokens: 0,
         costUsd: 0,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
       };
     }
 
-    // 3. Fake vs Live execution
-    if (!this.isLive || options.testScenario || this.provider === "fake") {
+    // 3. Fake vs Live execution — read at runtime; real providers never silently fall back to fake
+    if (options.testScenario) {
+      setLastLlmFallbackReason("test_scenario");
       return this.executeFakeLlm(options);
     }
 
-    if (this.provider === "anthropic") {
+    if (this.isLiveOverride === false || (process.env.LLM_LIVE || "").trim().toLowerCase() === "false") {
+      setLastLlmFallbackReason("llm_live_disabled");
+      return this.executeFakeLlm(options);
+    }
+
+    if (provider === "fake") {
+      setLastLlmFallbackReason("provider_is_fake");
+      return this.executeFakeLlm(options);
+    }
+
+    if (provider === "anthropic") {
       return this.executeRealAnthropic(options);
     }
 
@@ -486,6 +592,7 @@ export class LlmClient {
    * Deterministic Fake LLM for unit tests, offline development, and zero-cost simulation
    */
   private executeFakeLlm(options: LlmCallOptions): LlmCallResult {
+    const fakeModel = this.modelOverride || "fake";
     const lastUserMsg = [...options.messages].reverse().find((m) => m.role === "user")?.content || "";
     const promptLower = lastUserMsg.toLowerCase();
 
@@ -506,7 +613,7 @@ export class LlmClient {
         inputTokens: 450,
         outputTokens: 50,
         costUsd: (450 * 0.10 + 50 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -529,7 +636,7 @@ export class LlmClient {
         inputTokens: 400,
         outputTokens: 40,
         costUsd: (400 * 0.10 + 40 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -559,33 +666,148 @@ export class LlmClient {
         inputTokens: 450,
         outputTokens: 70,
         costUsd: (450 * 0.10 + 70 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
 
-    // D. Unsupported Platforms & "Request this service" trigger
+    // D0. Facebook multi-topic & discovery handling when Facebook capabilities are verified or for Facebook research queries
+    const hasVerifiedFacebook =
+      Array.isArray(options.sanitizedCapabilities) &&
+      options.sanitizedCapabilities.length > 0 &&
+      options.sanitizedCapabilities.some(
+        (c: any) =>
+          (c.slug === "facebook-post-comments" || c.slug === "facebook-post-search" || c.id === "facebook-post-comments" || c.id === "facebook-post-search") &&
+          c.enabled !== false &&
+          c.status !== "pending_verification" &&
+          c.status !== "planned"
+      );
+
+    const isFacebookRequest = promptLower.includes("فيسبوك") || promptLower.includes("facebook");
+    const isQaimatManqulat = promptLower.includes("قائمة المنقولات");
+    const isLongMarriageTopicsRequest =
+      (promptLower.includes("الزواج") || promptLower.includes("خطوبة") || promptLower.includes("مهر") || promptLower.includes("شبكة")) &&
+      (promptLower.includes("يناير") || promptLower.includes("سبتمبر") || promptLower.includes("2026") || promptLower.includes("reels") || promptLower.includes("ريلز"));
+
+    const hasCatalogCapabilities =
+      Array.isArray(options.sanitizedCapabilities) && options.sanitizedCapabilities.length > 0;
+
+    if (isFacebookRequest && (hasVerifiedFacebook || isLongMarriageTopicsRequest || (isQaimatManqulat && hasCatalogCapabilities))) {
+      if (isLongMarriageTopicsRequest) {
+        return {
+          output: {
+            type: "propose_plan",
+            summaryAr:
+              "خطة متعددة الخطوات لجمع منشورات وتعليقات فيسبوك حول موضوعات الزواج في الفترة من 1 يناير إلى 30 سبتمبر 2026 (البحث في المنشورات العامة ثم سحب التعليقات بحد أقصى محدد لكل منشور، مع توضيح أن مقاطع الريلز والفيديو غير المتاحة في الكتالوج المعتمد تُستثنى بصدق)",
+            capabilities: [
+              {
+                stepId: "fb_posts_search",
+                capabilitySlug: "facebook-post-search",
+                params: {
+                  query: "قائمة المنقولات، تكاليف الزواج، المهر، الشبكة، النفقة",
+                  dateFrom: "2026-01-01",
+                  dateTo: "2026-09-30",
+                },
+                targetVolumeMin: 1,
+                targetVolumeMax: 5,
+                volumeMode: "bounded",
+              },
+              {
+                stepId: "fb_post_comments",
+                capabilitySlug: "facebook-post-comments",
+                params: {
+                  includeReplies: true,
+                },
+                targetVolumeMin: 5,
+                targetVolumeMax: 25,
+                dependsOn: ["fb_posts_search"],
+                inputFrom: {
+                  stepId: "fb_posts_search",
+                  field: "postUrl",
+                  paramKey: "postUrl",
+                },
+                fanOutCap: 25,
+                windowed: true,
+              },
+            ],
+            outputFormats: ["xlsx", "pdf", "csv"],
+            methodologyNotes:
+              "يتم تقسيم الموضوعات المتعددة خلال الفترة من 2026-01-01 إلى 2026-09-30 إلى خطوة بحث في المنشورات العامة على فيسبوك تليها خطوة جلب التعليقات والردود بحد أقصى صريح لكل منشور. السعر النهائي بالنقاط يُحسب من الخادم فقط.",
+          },
+          inputTokens: 650,
+          outputTokens: 140,
+          costUsd: (650 * 0.10 + 140 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+
+      return {
+        output: {
+          type: "ask_clarification",
+          intro: "لتجهيز خطة جمع تعليقات فيسبوك حول قائمة المنقولات في مصر بدقة، يرجى تحديد الخيارات الأساسية التالية:",
+          questions: [
+            {
+              id: "time_window",
+              text: "ما الفترة الزمنية المطلوبة للمنشورات والتعليقات على فيسبوك؟",
+              type: "single",
+              parameterType: "time_window",
+              options: ["آخر 30 يوماً", "آخر 3 أشهر", "من 1 يناير إلى 30 سبتمبر 2026", "فترة مخصصة"],
+              allowOther: true,
+              defaultOption: "آخر 30 يوماً",
+            },
+            {
+              id: "volume",
+              text: "ما الحد الأقصى لعدد المنشورات وعدد التعليقات لكل منشور؟",
+              type: "single",
+              parameterType: "volume",
+              options: ["حتى 10 منشورات و50 تعليقاً للمنشور", "حتى 25 منشوراً و100 تعليق للمنشور", "حتى 50 منشوراً و100 تعليق للمنشور"],
+              allowOther: true,
+              defaultOption: "حتى 10 منشورات و50 تعليقاً للمنشور",
+            },
+          ],
+          reasonAr: "تحديد الفترة الزمنية والحد الأقصى للمنشورات والتعليقات على فيسبوك قبل حساب عرض السعر من الخادم",
+        },
+        inputTokens: 520,
+        outputTokens: 95,
+        costUsd: (520 * 0.10 + 95 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    // D. Unsupported / Pending-Verification Platforms & "Request this service" trigger
     if (
       promptLower.includes("انستغرام") ||
+      promptLower.includes("إنستغرام") ||
       promptLower.includes("instagram") ||
       promptLower.includes("linkedin") ||
       promptLower.includes("لينكد إن") ||
       promptLower.includes("فيسبوك") ||
-      promptLower.includes("facebook")
+      promptLower.includes("facebook") ||
+      promptLower.includes("ريديت") ||
+      promptLower.includes("reddit")
     ) {
-      const platformName = promptLower.includes("instagram") || promptLower.includes("انستغرام") ? "Instagram" : "LinkedIn";
+      const platformName =
+        promptLower.includes("instagram") || promptLower.includes("انستغرام") || promptLower.includes("إنستغرام")
+          ? "Instagram"
+          : promptLower.includes("فيسبوك") || promptLower.includes("facebook")
+          ? "Facebook"
+          : promptLower.includes("ريديت") || promptLower.includes("reddit")
+          ? "Reddit"
+          : "LinkedIn";
       return {
         output: {
           type: "suggest_alternative",
           unsupportedService: platformName,
-          explanationAr: `خدمة استخراج البيانات من منصة ${platformName} غير متوفرة حالياً في كتالوج الخدمات المعتمد.`,
-          closestAlternative: "يمكنك استخدام خدمات تيك توك المعتمدة والمتاحة حالياً، أو تسجيل طلب لتفعيل هذه الخدمة قريباً.",
+          explanationAr: `هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (${platformName}).`,
+          closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
           canRequestFeature: true,
         },
         inputTokens: 500,
         outputTokens: 80,
         costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -602,7 +824,7 @@ export class LlmClient {
         inputTokens: 600,
         outputTokens: 60,
         costUsd: (600 * 0.10 + 60 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -611,7 +833,13 @@ export class LlmClient {
       if (!options.sanitizedCapabilities || options.sanitizedCapabilities.length === 0) {
         return true;
       }
-      return options.sanitizedCapabilities.some((c: any) => c.slug === slug);
+      return options.sanitizedCapabilities.some(
+        (c: any) =>
+          c.slug === slug &&
+          c.enabled !== false &&
+          c.status !== "pending_verification" &&
+          c.status !== "planned"
+      );
     };
 
     // F. TikTok requests handling
@@ -635,7 +863,7 @@ export class LlmClient {
           inputTokens: 500,
           outputTokens: 80,
           costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -664,7 +892,7 @@ export class LlmClient {
           inputTokens: 800,
           outputTokens: 140,
           costUsd: (800 * 0.10 + 140 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -728,7 +956,7 @@ export class LlmClient {
             inputTokens: 500,
             outputTokens: 60,
             costUsd: (500 * 0.10 + 60 * 0.50) / 1_000_000,
-            model: this.model,
+            model: fakeModel,
             promptVersion: PROMPT_VERSION,
           };
         }
@@ -776,7 +1004,7 @@ export class LlmClient {
           inputTokens: 800,
           outputTokens: 140,
           costUsd: (800 * 0.10 + 140 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -789,14 +1017,14 @@ export class LlmClient {
           output: {
             type: "suggest_alternative",
             unsupportedService: "منصة X (تويتر)",
-            explanationAr: "خدمة استخراج البيانات من منصة X قيد التحقق وستتاح قريباً في المنصة. الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
+            explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (منصة X). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
             closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
             canRequestFeature: true,
           },
           inputTokens: 500,
           outputTokens: 80,
           costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -824,7 +1052,7 @@ export class LlmClient {
           inputTokens: 600,
           outputTokens: 70,
           costUsd: (600 * 0.10 + 70 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -850,7 +1078,7 @@ export class LlmClient {
         inputTokens: 850,
         outputTokens: 150,
         costUsd: (850 * 0.10 + 150 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -862,14 +1090,14 @@ export class LlmClient {
           output: {
             type: "suggest_alternative",
             unsupportedService: "يوتيوب (YouTube)",
-            explanationAr: "خدمة استخراج البيانات من منصة يوتيوب غير مفعلة حالياً في الكتالوج المعتمد بانتظار استكمال اختبارات التحقق. الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
+            explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (يوتيوب). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
             closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
             canRequestFeature: true,
           },
           inputTokens: 500,
           outputTokens: 80,
           costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -892,7 +1120,7 @@ export class LlmClient {
         inputTokens: 850,
         outputTokens: 150,
         costUsd: (850 * 0.10 + 150 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -925,33 +1153,41 @@ export class LlmClient {
       inputTokens: 700,
       outputTokens: 90,
       costUsd: (700 * 0.10 + 90 * 0.50) / 1_000_000,
-      model: this.model,
+      model: fakeModel,
       promptVersion: PROMPT_VERSION,
     };
   }
 
   /**
    * Handle provider errors cleanly (timeout, 429, 5xx, auth errors):
-   * Return short Arabic error, 0 tokens, 0 cost, so no points are held or charged.
+   * Return short Arabic error ("المساعد غير متاح الآن، حاول لاحقًا"), 0 tokens, 0 cost, so no points are held.
    */
-  private handleProviderError(err: any, provider: string): LlmCallResult {
-    let reasonAr = "عذراً، حدث خطأ أثناء الاتصال بمزود خدمة الذكاء الاصطناعي. يرجى إعادة المحاولة.";
+  private handleProviderError(err: any, _provider: string): LlmCallResult {
+    const model = this.getModel();
+    let reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
+    let fallbackCode = "provider_unreachable";
 
     const status = err?.status || err?.statusCode || (typeof err?.message === "string" && err.message.match(/\((\d{3})\)/)?.[1]);
     const statusNum = Number(status);
 
-    if (
+    if (err?.message?.includes("not configured")) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
+      fallbackCode = "missing_api_key";
+    } else if (
       err?.name === "AbortError" ||
       err?.name === "TimeoutError" ||
       err?.message?.includes("timed out") ||
       err?.message?.includes("timeout") ||
       err?.message?.includes("aborted")
     ) {
-      reasonAr = "عذراً، استغرقت الاستجابة وقتاً أطول من المعتاد. يرجى إعادة المحاولة.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (استغرقت الاستجابة وقتاً أطول من المعتاد).";
+      fallbackCode = "timeout";
     } else if (statusNum === 429 || err?.message?.includes("429") || err?.message?.includes("rate_limit")) {
-      reasonAr = "عذراً، الخدمة مشغولة حالياً بتجاوز حد الطلبات المؤقت. يرجى المحاولة بعد قليل.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (تجاوز حد الطلبات المؤقت).";
+      fallbackCode = "rate_limit_429";
     } else if (statusNum === 529 || err?.message?.includes("529") || err?.message?.includes("overloaded")) {
-      reasonAr = "عذراً، خوادم الخدمة تواجه ضغطاً كبيراً حالياً. يرجى المحاولة بعد لحظات.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (خوادم الخدمة تواجه ضغطاً كبيراً).";
+      fallbackCode = "provider_overloaded_529";
     } else if (
       (statusNum >= 500 && statusNum < 600) ||
       err?.message?.includes("500") ||
@@ -959,7 +1195,8 @@ export class LlmClient {
       err?.message?.includes("503") ||
       err?.message?.includes("504")
     ) {
-      reasonAr = "عذراً، خدمة الذكاء الاصطناعي تواجه صعوبة مؤقتة. يرجى المحاولة لاحقاً.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (صعوبة مؤقتة في الخدمة).";
+      fallbackCode = "provider_5xx";
     } else if (
       statusNum === 401 ||
       statusNum === 403 ||
@@ -967,8 +1204,11 @@ export class LlmClient {
       err?.message?.includes("authentication") ||
       err?.message?.includes("credentials")
     ) {
-      reasonAr = "خدمة المساعد الذكي غير مهيأة بشكل صحيح حالياً. يرجى مراجعة الإعدادات أو التواصل مع الدعم.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
+      fallbackCode = "provider_auth_error";
     }
+
+    setLastLlmFallbackReason(fallbackCode);
 
     return {
       output: {
@@ -978,7 +1218,7 @@ export class LlmClient {
       inputTokens: 0,
       outputTokens: 0,
       costUsd: 0,
-      model: this.model,
+      model,
       promptVersion: PROMPT_VERSION,
     };
   }
@@ -987,7 +1227,8 @@ export class LlmClient {
    * Real Anthropic Messages API execution with structured tool use
    */
   private async executeRealAnthropic(options: LlmCallOptions): Promise<LlmCallResult> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const model = this.getModel();
+    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) {
       return this.handleProviderError(new Error("ANTHROPIC_API_KEY is not configured"), "anthropic");
     }
@@ -1015,7 +1256,7 @@ export class LlmClient {
         },
         signal: controller.signal,
         body: JSON.stringify({
-          model: this.model,
+          model,
           max_tokens: 1024,
           system: systemPrompt,
           messages: formattedMessages,
@@ -1080,9 +1321,9 @@ export class LlmClient {
       const scrubbedPayload = scrubField(rawPayload);
 
       if (scrubbedPayload.type === "ask_clarification" && !scrubbedPayload.questionsAr && scrubbedPayload.questions) {
-        scrubbedPayload.questionsAr = scrubbedPayload.questions.map((q: any) =>
-          typeof q === "string" ? q : q.question
-        );
+        scrubbedPayload.questionsAr = scrubbedPayload.questions
+          .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
+          .filter(Boolean);
       }
 
       const validatedOutput = LlmTurnOutputSchema.parse(scrubbedPayload);
@@ -1092,17 +1333,19 @@ export class LlmClient {
 
       const pricing = getLlmPricingSettings(
         "anthropic",
-        this.model,
+        model,
         options.pricingSettings || this.customPricing
       );
       const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+
+      setLastLlmFallbackReason(null);
 
       return {
         output: validatedOutput,
         inputTokens: inTokens,
         outputTokens: outTokens,
         costUsd,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
         rawText: JSON.stringify(scrubbedPayload),
       };
@@ -1116,7 +1359,8 @@ export class LlmClient {
    * Real OpenAI Responses API execution
    */
   private async executeRealOpenAi(options: LlmCallOptions): Promise<LlmCallResult> {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const model = this.getModel();
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
       return this.handleProviderError(new Error("OPENAI_API_KEY is not configured"), "openai");
     }
@@ -1141,7 +1385,7 @@ export class LlmClient {
         },
         signal: controller.signal,
         body: JSON.stringify({
-          model: this.model,
+          model,
           reasoning: { effort: "low" },
           input: [
             { role: "system", content: systemPrompt },
@@ -1188,9 +1432,9 @@ export class LlmClient {
 
       // Adapt to questionsAr if questions were returned or vice versa
       if (parsedResult.type === "ask_clarification" && !parsedResult.questionsAr && parsedResult.questions) {
-        parsedResult.questionsAr = parsedResult.questions.map((q: any) =>
-          typeof q === "string" ? q : q.question
-        );
+        parsedResult.questionsAr = parsedResult.questions
+          .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
+          .filter(Boolean);
       }
 
       const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);
@@ -1200,17 +1444,19 @@ export class LlmClient {
 
       const pricing = getLlmPricingSettings(
         "openai",
-        this.model,
+        model,
         options.pricingSettings || this.customPricing
       );
       const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+
+      setLastLlmFallbackReason(null);
 
       return {
         output: validatedOutput,
         inputTokens: inTokens,
         outputTokens: outTokens,
         costUsd,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
         rawText: scrubbed,
       };
@@ -1220,3 +1466,4 @@ export class LlmClient {
     }
   }
 }
+

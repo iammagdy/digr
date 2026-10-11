@@ -10,6 +10,13 @@ import {
   formatNumber,
   formatTime,
 } from "@/lib/honestDisplay";
+import {
+  deriveLiveActivitySnapshot,
+  formatCurrentPostProgress,
+  formatItemsCollectedProgress,
+  formatPointsSpentVsReserved,
+  sanitizeActivityText,
+} from "@/functions/shared/liveActivityFeed";
 
 export interface JobEvent {
   $id: string;
@@ -25,6 +32,8 @@ interface ActivityTimelineProps {
   rowsCollected: number;
   /** Number of events fetched in this read; shown so a limited history is never mistaken for complete. */
   eventLimit?: number;
+  spentPoints?: number;
+  reservedPoints?: number;
 }
 
 const STATUS_META: Record<JobStatus, { label: string; tone: StatusTone; pulse: boolean }> = {
@@ -42,7 +51,14 @@ const KIND_TONE: Record<JobEvent["kind"], StatusTone> = {
   error: "danger",
 };
 
-export default function ActivityTimeline({ status, events, rowsCollected, eventLimit }: ActivityTimelineProps) {
+export default function ActivityTimeline({
+  status,
+  events,
+  rowsCollected,
+  eventLimit,
+  spentPoints,
+  reservedPoints,
+}: ActivityTimelineProps) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = STATUS_META[status];
   const hasEvents = events && events.length > 0;
@@ -50,6 +66,17 @@ export default function ActivityTimeline({ status, events, rowsCollected, eventL
     eventLimit !== undefined && hasEvents && events.length >= eventLimit
       ? `يعرض أحدث ${formatNumber(eventLimit)} حدثًا مسجَّلًا.`
       : null;
+
+  const liveSnapshot = deriveLiveActivitySnapshot({
+    events: events || [],
+    rowsCollected,
+    chargedCredits: spentPoints,
+    reservedCredits: reservedPoints,
+    status,
+  });
+
+  const showPointsBar =
+    typeof liveSnapshot.reservedPoints === "number" && liveSnapshot.reservedPoints > 0;
 
   return (
     <section className="mt-3 overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-[var(--shadow-card)]" aria-label="سجل نشاط التنفيذ">
@@ -71,6 +98,55 @@ export default function ActivityTimeline({ status, events, rowsCollected, eventL
 
       {!collapsed && (
         <div className="p-4">
+          {/* Live Progress Summary Strip (Arabic & Points Only) */}
+          {(liveSnapshot.currentStepAr || showPointsBar || liveSnapshot.currentPostIndex !== undefined || rowsCollected > 0) && (
+            <div className="mb-4 grid grid-cols-1 gap-2 rounded-xl border border-sand-200 bg-sand-50/80 p-3 text-xs sm:grid-cols-2">
+              {liveSnapshot.currentStepAr && (
+                <div>
+                  <span className="text-sand-500">الخطوة الحالية: </span>
+                  <strong className="text-ink-900">{liveSnapshot.currentStepAr}</strong>
+                </div>
+              )}
+              {liveSnapshot.currentPostIndex !== undefined && liveSnapshot.totalPosts !== undefined && (
+                <div className="tnum">
+                  <strong className="text-ink-900">
+                    {formatCurrentPostProgress(
+                      liveSnapshot.currentPostIndex,
+                      liveSnapshot.totalPosts,
+                      liveSnapshot.currentPostTitleOrUrl || "منشور عام"
+                    )}
+                  </strong>
+                </div>
+              )}
+              {(liveSnapshot.lastBatchComments !== undefined || rowsCollected > 0) && (
+                <div className="tnum">
+                  <strong className="text-ink-900">
+                    {formatItemsCollectedProgress(
+                      liveSnapshot.lastBatchComments ?? rowsCollected,
+                      rowsCollected
+                    )}
+                  </strong>
+                </div>
+              )}
+              {showPointsBar && (
+                <div className="tnum">
+                  <strong className="text-amber-points">
+                    {formatPointsSpentVsReserved(
+                      liveSnapshot.spentPoints ?? 0,
+                      liveSnapshot.reservedPoints!
+                    )}
+                  </strong>
+                </div>
+              )}
+            </div>
+          )}
+
+          {liveSnapshot.capReached && (
+            <div className="mb-3 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3.5 py-2.5 text-xs font-semibold text-ink-900">
+              {liveSnapshot.capReached.messageAr}
+            </div>
+          )}
+
           {hasEvents ? (
             <>
               <ol className="relative space-y-0 border-s border-sand-200 ps-5">
@@ -80,7 +156,7 @@ export default function ActivityTimeline({ status, events, rowsCollected, eventL
                       <StatusDot tone={KIND_TONE[evt.kind]} />
                     </span>
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <p className="text-xs font-semibold leading-relaxed text-ink-900">{evt.textAr}</p>
+                      <p className="text-xs font-semibold leading-relaxed text-ink-900">{sanitizeActivityText(evt.textAr)}</p>
                       <time className="tnum shrink-0 text-xs text-sand-500" dateTime={evt.createdAt}>{formatTime(evt.createdAt)}</time>
                     </div>
                     {evt.count !== undefined && (
@@ -113,3 +189,4 @@ export default function ActivityTimeline({ status, events, rowsCollected, eventL
     </section>
   );
 }
+

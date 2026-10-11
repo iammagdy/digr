@@ -16,6 +16,10 @@ import {
   formatNumber,
   formatDate,
 } from "@/lib/honestDisplay";
+import {
+  formatPointsSpentVsReserved,
+  sanitizeActivityText,
+} from "@/functions/shared/liveActivityFeed";
 
 const storage = new Storage(client);
 
@@ -280,14 +284,16 @@ export default function JobsPage() {
                         )}
                       </Badge>
                       <span className="tnum rounded-xl bg-sand-100 px-2.5 py-1.5 text-xs font-bold text-ink-800">
-                        {job.status === "done" ? `${formatNumber(job.chargedCredits ?? job.reservedCredits)} نقطة` : `حجز: ${formatNumber(job.reservedCredits)} نقطة`}
+                        {job.status === "done"
+                          ? formatPointsSpentVsReserved(job.chargedCredits ?? job.reservedCredits, job.reservedCredits, { arabicNumerals: true })
+                          : `حجز: ${formatNumber(job.reservedCredits)} نقطة`}
                       </span>
                     </div>
                   </div>
 
                   {job.errorAr && (
                     <Alert tone="danger" title="ملاحظة الخطأ">
-                      <div className="mt-3">{job.errorAr}</div>
+                      <div className="mt-3">{sanitizeActivityText(job.errorAr)}</div>
                     </Alert>
                   )}
 
@@ -341,7 +347,7 @@ export default function JobsPage() {
                           <li key={ev.$id} className="flex items-start justify-between gap-3 text-xs">
                             <span className="flex items-start gap-2">
                               <span aria-hidden="true" className={`mt-1 h-2 w-2 shrink-0 rounded-full ${ev.kind === "error" ? "bg-danger" : ev.kind === "warning" ? "bg-warning" : ev.kind === "progress" ? "bg-info" : "bg-success"}`} />
-                              <span className="font-medium text-ink-800">{ev.textAr}</span>
+                              <span className="font-medium text-ink-800">{sanitizeActivityText(ev.textAr)}</span>
                             </span>
                             <time className="tnum shrink-0 text-sand-500" dateTime={ev.createdAt}>
                               {new Date(ev.createdAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
