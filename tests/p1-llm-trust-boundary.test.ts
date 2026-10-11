@@ -62,15 +62,22 @@ describe("P1: LLM Trust Boundary & Prompt Injection Suite", () => {
     }
   });
 
-  it("should enforce conversation token budget (15,000 tokens cap)", async () => {
+  it("should enforce conversation token budget (40,000 tokens cap)", async () => {
+    const under = await llm.executeTurn({
+      messages: [{ role: "user", content: "استخرج بيانات حساب تيك توك" }],
+      sanitizedCapabilities: [],
+      totalConversationTokens: 16000, // under the 40k limit: not refused
+    });
+    expect(under.output.type).not.toBe("refuse");
+
     const res = await llm.executeTurn({
       messages: [{ role: "user", content: "استخرج بيانات حساب تيك توك" }],
       sanitizedCapabilities: [],
-      totalConversationTokens: 16000, // over 15k limit
+      totalConversationTokens: 41000, // over 40k limit
     });
 
     expect(res.output.type).toBe("refuse");
-    expect((res.output as any).reasonAr).toContain("15,000 توكن");
+    expect((res.output as any).reasonAr).toContain("40,000 توكن");
   });
 
   it("should respect LLM_ENABLED kill switch", async () => {
