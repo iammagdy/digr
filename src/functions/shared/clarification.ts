@@ -11,6 +11,21 @@ export const ClarificationParameterTypeSchema = z.enum([
   "topic",
 ]);
 
+export const INTERNAL_DISCOVERY_KEYS = new Set([
+  "questionid",
+  "answers",
+  "clarification",
+  "type",
+  "question",
+  "value",
+  "skipped",
+  "resolveddefault",
+  "needsuserchoice",
+  "allowother",
+  "defaultoption",
+  "parametertype",
+]);
+
 export const ClarificationQuestionInputSchema = z
   .object({
     id: z.string().trim().min(1).max(40).regex(/^[a-zA-Z0-9_-]+$/).optional(),
@@ -158,7 +173,13 @@ function inferParameterType(text: string): ClarificationParameterType | undefine
 }
 
 function unique(values: string[]): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 4);
+  return [
+    ...new Set(
+      values
+        .map((value) => value.trim())
+        .filter((value) => Boolean(value) && !INTERNAL_DISCOVERY_KEYS.has(value.toLowerCase())),
+    ),
+  ].slice(0, 4);
 }
 
 function enabledPlatformOptions(context: ClarificationOptionContext): string[] {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
+import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
 
 // ================= Schema Definitions =================
 
@@ -28,25 +29,41 @@ export const AskClarificationSchema = z.object({
 export const AskQuestionsSchema = z.object({
   type: z.literal("ask_questions"),
   intro: z.string().optional(),
-  questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
-  questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
-  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
-  reasonAr: z.string().min(1),
-}).strict();
+  questions: z.preprocess((val) => {
+    if (val && typeof val === "object" && !Array.isArray(val)) return [val];
+    if (Array.isArray(val)) return val.slice(0, 3);
+    return [];
+  }, z.array(ClarificationQuestionItemSchema).max(3)).optional(),
+  questionsAr: z.preprocess((val) => {
+    if (typeof val === "string") return [val];
+    if (Array.isArray(val)) return val.filter((x): x is string => typeof x === "string").slice(0, 3);
+    return undefined;
+  }, z.array(z.string().trim().min(1)).max(3)).optional(),
+  optionsAr: z.preprocess((val) => {
+    if (Array.isArray(val)) {
+      return val.map((row) => (Array.isArray(row) ? row.filter((x): x is string => typeof x === "string").slice(0, 4) : []));
+    }
+    return undefined;
+  }, z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3)).optional(),
+  reasonAr: z.preprocess((val) => {
+    if (typeof val === "string" && val.trim().length > 0) return val;
+    return "تحديد تفاصيل الطلب بدقة";
+  }, z.string().min(1)),
+}).passthrough();
 
 export const SearchCatalogSchema = z.object({
   type: z.literal("search_catalog"),
   query: z.string().min(1),
   platform: z.string().optional(),
-});
+}).passthrough();
 
 export const PlanCapabilityItemSchema = z.object({
   stepId: z.string().optional(),
   capabilitySlug: z.string().min(1),
   endpointId: z.string().optional(),
-  params: z.record(z.string(), z.any()),
-  targetVolumeMin: z.number().int().min(1),
-  targetVolumeMax: z.number().int().min(1),
+  params: z.preprocess((val) => (val && typeof val === "object" ? val : {}), z.record(z.string(), z.any())),
+  targetVolumeMin: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : typeof val === "number" ? val : 1), z.number().int().min(1)),
+  targetVolumeMax: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : typeof val === "number" ? val : 1), z.number().int().min(1)),
   paginationStrategy: z.enum(["cursor", "offset", "page", "none"]).optional(),
   volumeMode: z.enum(["bounded", "open_ended"]).optional(),
   dependsOn: z.array(z.string()).optional(),
@@ -56,10 +73,11 @@ export const PlanCapabilityItemSchema = z.object({
       field: z.string(),
       paramKey: z.string(),
     })
+    .passthrough()
     .optional(),
   fanOutCap: z.number().int().min(1).max(50).optional(),
   windowed: z.boolean().optional(),
-});
+}).passthrough();
 
 export const ExecutionOptionsSchema = z.object({
   windowing: z.enum(["none", "per_day", "per_week", "per_month"]).default("none"),
@@ -70,37 +88,37 @@ export const ExecutionOptionsSchema = z.object({
   languageFilter: z.string().optional(),
   anonymize: z.boolean().default(false),
   qualityReport: z.boolean().default(true),
-});
+}).passthrough();
 
 export const OutputColumnSchema = z.object({
   field: z.string().min(1),
   headerAr: z.string().min(1),
-});
+}).passthrough();
 
 export const OutputSheetSchema = z.object({
   name: z.string().min(1),
   sourceDataset: z.string().optional(),
   columns: z.array(OutputColumnSchema).min(1),
-  sort: z.object({ field: z.string(), order: z.enum(["asc", "desc"]) }).optional(),
+  sort: z.object({ field: z.string(), order: z.enum(["asc", "desc"]) }).passthrough().optional(),
   filter: z.record(z.string(), z.any()).optional(),
-});
+}).passthrough();
 
 export const OutputSpecSchema = z.object({
   sheets: z.array(OutputSheetSchema).min(1).optional(),
-  formats: z.array(z.enum(["xlsx", "pdf", "csv"])).default(["xlsx", "pdf", "csv"]),
-});
+  formats: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.enum(["xlsx", "pdf", "csv"])).default(["xlsx", "pdf", "csv"])),
+}).passthrough();
 
 export const ProposePlanSchema = z.object({
   type: z.literal("propose_plan"),
-  summaryAr: z.string().min(1),
-  capabilities: z.array(PlanCapabilityItemSchema).min(1),
-  steps: z.array(PlanCapabilityItemSchema).optional(),
+  summaryAr: z.preprocess((val) => (typeof val === "string" && val.trim().length > 0 ? val : "خطة مقترحة لجمع البيانات"), z.string().min(1)),
+  capabilities: z.preprocess((val) => (val && typeof val === "object" && !Array.isArray(val) ? [val] : Array.isArray(val) ? val : []), z.array(PlanCapabilityItemSchema).min(1)),
+  steps: z.preprocess((val) => (val && typeof val === "object" && !Array.isArray(val) ? [val] : Array.isArray(val) ? val : undefined), z.array(PlanCapabilityItemSchema).optional()),
   executionOptions: ExecutionOptionsSchema.optional(),
   outputSpec: OutputSpecSchema.optional(),
-  outputFormats: z.array(z.enum(["xlsx", "pdf", "csv"])).default(["xlsx", "pdf", "csv"]),
+  outputFormats: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.enum(["xlsx", "pdf", "csv"])).default(["xlsx", "pdf", "csv"])),
   methodologyNotes: z.string().default("تجميع وتوثيق البيانات العامة وفق المعايير البحثية المعتمدة"),
   rationaleAr: z.string().optional(),
-});
+}).passthrough();
 
 export const SafeComputeColumnParamsSchema = z.object({
   targetColumnName: z.string().min(1),
@@ -112,8 +130,9 @@ export const SafeComputeColumnParamsSchema = z.object({
       dateFieldPart: z.enum(["year", "month", "day"]).optional(),
       numberDecimals: z.number().int().min(0).max(6).optional(),
     })
+    .passthrough()
     .optional(),
-});
+}).passthrough();
 
 export const EditArtifactSchema = z.object({
   type: z.literal("edit_artifact"),
@@ -129,25 +148,25 @@ export const EditArtifactSchema = z.object({
   ]),
   parameters: z.record(z.string(), z.any()),
   reasonAr: z.string().min(1),
-});
+}).passthrough();
 
 export const WriteNoteSchema = z.object({
   type: z.literal("write_note"),
   titleAr: z.string().min(1),
   contentAr: z.string().min(1),
-});
+}).passthrough();
 
 export const AnswerQuestionSchema = z.object({
   type: z.literal("answer_question"),
-  answerAr: z.string().min(1),
+  answerAr: z.preprocess((val) => (typeof val === "string" ? val : String(val || "")), z.string().min(1)),
   topic: z.string().optional(),
-});
+}).passthrough();
 
 export const RefuseSchema = z.object({
   type: z.literal("refuse"),
   reasonAr: z.string().min(1),
   alternativeAr: z.string().optional(),
-});
+}).passthrough();
 
 export const SuggestAlternativeSchema = z.object({
   type: z.literal("suggest_alternative"),
@@ -155,7 +174,7 @@ export const SuggestAlternativeSchema = z.object({
   explanationAr: z.string().min(1),
   closestAlternative: z.string().optional(),
   canRequestFeature: z.literal(true).default(true),
-});
+}).passthrough();
 
 export const EditPlanToolSchema = z.object({
   type: z.literal("edit_plan"),
@@ -166,16 +185,16 @@ export const EditPlanToolSchema = z.object({
         capabilitySlug: z.string().min(1),
         key: z.string().min(1),
         value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
-      }),
+      }).passthrough(),
       z.object({
         action: z.literal("set_limit"),
         capabilitySlug: z.string().min(1),
         targetVolumeMax: z.number().int().min(1).max(5000),
-      }),
+      }).passthrough(),
       z.object({
         action: z.literal("set_formats"),
         formats: z.array(z.enum(["xlsx", "pdf", "csv"])).min(1),
-      }),
+      }).passthrough(),
       z.object({
         action: z.literal("set_execution_option"),
         option: z.enum([
@@ -189,35 +208,35 @@ export const EditPlanToolSchema = z.object({
           "qualityReport",
         ]),
         value: z.union([z.string(), z.boolean(), z.number()]),
-      }),
+      }).passthrough(),
       z.object({
         action: z.literal("add_capability"),
         capabilitySlug: z.string().min(1),
         params: z.record(z.string(), z.any()),
         targetVolumeMax: z.number().int().min(1).max(5000),
-      }),
+      }).passthrough(),
       z.object({
         action: z.literal("remove_capability"),
         capabilitySlug: z.string().min(1),
-      }),
+      }).passthrough(),
     ])
   ).min(1),
   reasonAr: z.string().min(1),
-});
+}).passthrough();
 
 export const UpdateBriefSchema = z.object({
   type: z.literal("update_brief"),
-  platforms: z.array(z.string()).optional(),
-  topics: z.array(z.string()).optional(),
-  targetVolume: z.number().int().positive().optional(),
-  commentsPerPost: z.number().int().positive().optional(),
+  platforms: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.string()).optional()),
+  topics: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.string()).optional()),
+  targetVolume: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : val), z.number().int().positive().optional()),
+  commentsPerPost: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : val), z.number().int().positive().optional()),
   dateRange: z.string().optional(),
   language: z.string().optional(),
-  formats: z.array(z.string()).optional(),
+  formats: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.string()).optional()),
   notes: z.string().optional(),
   replyAr: z.string().optional(),
-  questions: z.array(ClarificationQuestionItemSchema).optional(),
-});
+  questions: z.preprocess((val) => (val && typeof val === "object" && !Array.isArray(val) ? [val] : val), z.array(ClarificationQuestionItemSchema).optional()),
+}).passthrough();
 
 export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
   AskClarificationSchema,
@@ -1917,6 +1936,13 @@ export class LlmClient {
     } else if (err?.name === "ZodError" || msg.includes("Invalid response format")) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
       fallbackCode = "schema_invalid";
+      if (!detail && err?.issues && Array.isArray(err.issues)) {
+        const paths = err.issues.map((iss: any) => (Array.isArray(iss.path) ? iss.path.join(".") : String(iss.path || ""))).filter(Boolean);
+        detail = paths.join(", ").slice(0, 200) || "schema_validation_failed";
+      }
+      if (!detail) {
+        detail = "schema_validation_failed";
+      }
     }
 
     const sanitizedDetail = detail ? sanitizeFallbackDetail(detail) : null;
@@ -1938,6 +1964,44 @@ export class LlmClient {
       promptVersion: PROMPT_VERSION,
     };
   }
+
+  private cleanClarificationQuestions(questions: any[]): any[] {
+  if (!Array.isArray(questions)) return [];
+  return questions
+    .map((q: any) => {
+      if (typeof q === "string") return { question: q.trim() };
+      if (q && typeof q === "object") {
+        const cleaned: any = {};
+        if (q.id) cleaned.id = String(q.id);
+        const qText = q.question || q.text;
+        if (qText) {
+          cleaned.question = String(qText).trim();
+          cleaned.text = String(qText).trim();
+        }
+        if (["single", "multi", "free"].includes(q.type)) cleaned.type = q.type;
+        if (
+          ["platform", "time_window", "volume", "output_format", "anonymize", "language", "topic"].includes(
+            q.parameterType,
+          )
+        ) {
+          cleaned.parameterType = q.parameterType;
+        }
+        if (Array.isArray(q.options)) {
+          const opts = q.options
+            .map((opt: any) => String(opt || "").trim().slice(0, 40))
+            .filter((opt: string) => opt.length > 0 && !INTERNAL_DISCOVERY_KEYS.has(opt.toLowerCase()))
+            .slice(0, 4);
+          if (opts.length > 0) cleaned.options = opts;
+        }
+        if (typeof q.allowOther === "boolean") cleaned.allowOther = q.allowOther;
+        if (typeof q.defaultOption === "string") cleaned.defaultOption = q.defaultOption;
+        return cleaned;
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .slice(0, 3);
+}
 
   /**
    * Real Anthropic Messages API execution with structured tool use
@@ -2093,6 +2157,9 @@ export class LlmClient {
       }
 
       if (scrubbedPayload.type === "ask_clarification") {
+        if (Array.isArray(scrubbedPayload.questions)) {
+          scrubbedPayload.questions = this.cleanClarificationQuestions(scrubbedPayload.questions);
+        }
         if (!scrubbedPayload.questionsAr && scrubbedPayload.questions) {
           scrubbedPayload.questionsAr = scrubbedPayload.questions
             .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
@@ -2116,7 +2183,32 @@ export class LlmClient {
         }
       }
 
-      const validatedOutput = LlmTurnOutputSchema.parse(scrubbedPayload);
+      let validatedOutput: LlmTurnOutput;
+      const parseResult = LlmTurnOutputSchema.safeParse(scrubbedPayload);
+      if (parseResult.success) {
+        validatedOutput = parseResult.data;
+      } else {
+        const issues = parseResult.error.issues;
+        const failingPaths = issues.map((iss) => (Array.isArray(iss.path) ? iss.path.join(".") : String(iss.path || ""))).filter(Boolean).join(", ").slice(0, 200);
+        console.warn(`[llm:schema_tolerant_recovery] failingPaths=${failingPaths}`);
+
+        const candidateText =
+          extractedText ||
+          scrubbedPayload.answerAr ||
+          scrubbedPayload.replyAr ||
+          scrubbedPayload.reasonAr ||
+          scrubbedPayload.summaryAr ||
+          (typeof scrubbedPayload === "string" ? scrubbedPayload : "");
+
+        if (typeof candidateText === "string" && candidateText.trim().length > 0) {
+          validatedOutput = {
+            type: "answer_question",
+            answerAr: scrubWhiteLabelText(candidateText.trim()),
+          };
+        } else {
+          throw parseResult.error;
+        }
+      }
 
       const inTokens = data.usage?.input_tokens || 800;
       const outTokens = data.usage?.output_tokens || 150;
@@ -2226,10 +2318,15 @@ export class LlmClient {
       if (parsedResult.type === "ask_questions") {
         parsedResult.type = "ask_clarification";
       }
-      if (parsedResult.type === "ask_clarification" && !parsedResult.questionsAr && parsedResult.questions) {
-        parsedResult.questionsAr = parsedResult.questions
-          .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
-          .filter(Boolean);
+      if (parsedResult.type === "ask_clarification") {
+        if (Array.isArray(parsedResult.questions)) {
+          parsedResult.questions = this.cleanClarificationQuestions(parsedResult.questions);
+        }
+        if (!parsedResult.questionsAr && parsedResult.questions) {
+          parsedResult.questionsAr = parsedResult.questions
+            .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
+            .filter(Boolean);
+        }
       }
       if (parsedResult.type === "ask_clarification" && !parsedResult.reasonAr) {
         parsedResult.reasonAr = parsedResult.intro || "تحديد تفاصيل الطلب بدقة";
@@ -2248,7 +2345,31 @@ export class LlmClient {
         }
       }
 
-      const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);
+      let validatedOutput: LlmTurnOutput;
+      const parseResult = LlmTurnOutputSchema.safeParse(parsedResult);
+      if (parseResult.success) {
+        validatedOutput = parseResult.data;
+      } else {
+        const issues = parseResult.error.issues;
+        const failingPaths = issues.map((iss) => (Array.isArray(iss.path) ? iss.path.join(".") : String(iss.path || ""))).filter(Boolean).join(", ").slice(0, 200);
+        console.warn(`[llm:schema_tolerant_recovery] failingPaths=${failingPaths}`);
+
+        const candidateText =
+          parsedResult.answerAr ||
+          parsedResult.replyAr ||
+          parsedResult.reasonAr ||
+          parsedResult.summaryAr ||
+          (typeof parsedResult === "string" ? parsedResult : "");
+
+        if (typeof candidateText === "string" && candidateText.trim().length > 0) {
+          validatedOutput = {
+            type: "answer_question",
+            answerAr: scrubWhiteLabelText(candidateText.trim()),
+          };
+        } else {
+          throw parseResult.error;
+        }
+      }
 
       const inTokens = data.usage?.input_tokens || 800;
       const outTokens = data.usage?.output_tokens || 150;

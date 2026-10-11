@@ -32,6 +32,7 @@ import {
   normalizeClarificationQuestions,
   sanitizeClarificationText,
   type NormalizedClarificationQuestion,
+  INTERNAL_DISCOVERY_KEYS,
 } from "./clarification";
 import { searchCatalog, getCachedCatalogEndpoints, CatalogEndpointSummary } from "./catalogClient";
 import {
@@ -42,6 +43,7 @@ import {
   formatBriefForSystemPrompt,
   getConversationBrief,
   saveConversationBrief,
+  isRepetitionComplaint,
   type ResearchBrief,
 } from "./briefManager";
 
@@ -131,17 +133,99 @@ export function buildCompactCatalogSummary(results: CatalogEndpointSummary[]): s
  * generic sentence. Constructed directly (not via model-output normalization)
  * so trusted code questions are never dropped.
  */
+export function filterQuestionsAlreadyInBrief(
+  questions: NormalizedClarificationQuestion[],
+  brief?: ResearchBrief,
+): NormalizedClarificationQuestion[] {
+  if (!brief) return questions;
+  return questions.filter((q) => {
+    const id = (q.id || "").toLowerCase();
+    const text = (q.text || q.question || "").toLowerCase();
+
+    // 1. Platform
+    if (id === "code_platform" || text.includes("ما المنصة المستهدفة") || text.includes("ما المنصة المطلوبة")) {
+      if (brief.platforms && brief.platforms.length > 0) return false;
+    }
+    // 2. Generic Topic / Keywords (only drop the generic topic question, never specific angles or questions)
+    if (id === "code_topic" || text.includes("ما الكلمات المفتاحية أو الموضوع المطلوب") || text.includes("ما الموضوع المطلوب")) {
+      if (brief.topics && brief.topics.length > 0) return false;
+    }
+    // 3. Volume (total count)
+    if (id === "code_volume" || text.includes("ما حجم البيانات المطلوب جمعها")) {
+      if (typeof brief.targetVolume === "number" && brief.targetVolume > 0) return false;
+    }
+    // 4. Comments per post / Source
+    if (id === "code_comments_per_post" || text.includes("ما الحد الأقصى للتعليقات لكل منشور") || text.includes("مصدر التعليقات")) {
+      if (brief.commentsPerPost !== undefined || (brief.notes && brief.notes.includes("المصدر"))) return false;
+    }
+    // 5. Date range
+    if (id === "code_date_range" || text.includes("ما الفترة الزمنية لجمع البيانات")) {
+      if (brief.dateRange) return false;
+    }
+    // 6. Language
+    if (id === "code_language_dialect" || text.includes("ما اللغة أو اللهجات المطلوبة")) {
+      if (brief.language) return false;
+    }
+
+    return true;
+  });
+}
+
+/**
+ * Remove duplicate or repetitive intro phrases (e.g. "عشان أجهز لك خطة دقيقة، محتاج أعرف:").
+ */
+export function deduplicateIntroText(text: string): string {
+  if (!text) return "";
+  let cleaned = text.trim();
+
+  // 1. Deduplicate consecutive identical lines
+  const lines = cleaned.split("\n").map((l) => l.trim()).filter(Boolean);
+  const dedupedLines: string[] = [];
+  for (const line of lines) {
+    if (dedupedLines.length > 0 && dedupedLines[dedupedLines.length - 1] === line) {
+      continue;
+    }
+    dedupedLines.push(line);
+  }
+  cleaned = dedupedLines.join("\n");
+
+  // 2. Deduplicate repeated intro phrases throughout the message
+  const introPatterns = [
+    /عشان أجهز لك خطة دقيقة،?\s*محتاج أعرف:?/g,
+    /قبل ما أجهز الخطة،?\s*جاوبني على الأسئلة دي:?/g,
+  ];
+
+  for (const pat of introPatterns) {
+    let count = 0;
+    cleaned = cleaned.replace(pat, (m) => {
+      count++;
+      return count === 1 ? m : "";
+    });
+  }
+
+  return cleaned.replace(/\n{3,}/g, "\n\n").replace(/[ \t]+/g, " ").trim();
+}
+
+/**
+ * Code-built discovery fallback: real questions with real options, never the
+ * generic sentence. Constructed directly (not via model-output normalization)
+ * so trusted code questions are never dropped. Questions for fields already
+ * known in the brief are filtered out.
+ */
 export function buildCodeDiscoveryFallback(
   allCapabilities: Capability[],
   userMessage: string = "",
   colonFallback: boolean = false,
+  brief?: ResearchBrief,
 ): { intro: string; items: NormalizedClarificationQuestion[] } {
   const intro = "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
   const chips = extractTopicChips(userMessage);
   const dateHint = extractDateHint(userMessage);
 
+  let rawItems: NormalizedClarificationQuestion[] = [];
+
   if (colonFallback) {
-    const items: NormalizedClarificationQuestion[] = [
+    rawItems = [
       {
         id: "code_topic_angle",
         text: "ما زوايا أو محاور الموضوع المستهدفة؟",
@@ -184,51 +268,52 @@ export function buildCodeDiscoveryFallback(
         allowOther: true,
       },
     ];
-    return { intro, items: items.slice(0, 3) };
+  } else {
+    const platformLabels = [
+      ...new Set(
+        (allCapabilities || [])
+          .filter((c) => c && c.enabled !== false)
+          .map((c) => {
+            try {
+              return getPlatformLabelAr(String((c as any).platform || (c as any).category || ""));
+            } catch {
+              return "";
+            }
+          })
+          .filter(Boolean),
+      ),
+    ].slice(0, 5);
+    const platforms =
+      platformLabels.length > 0 ? platformLabels : ["فيسبوك", "تيك توك", "إنستغرام", "منصة X", "يوتيوب"];
+    rawItems = [
+      {
+        id: "code_platform",
+        text: "ما المنصة المستهدفة لجمع البيانات؟",
+        question: "ما المنصة المستهدفة لجمع البيانات؟",
+        type: "single",
+        options: platforms,
+        allowOther: true,
+      },
+      {
+        id: "code_topic",
+        text: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
+        question: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
+        type: chips.length > 0 ? "single" : "free",
+        options: chips,
+        allowOther: true,
+      },
+      {
+        id: "code_volume",
+        text: "ما حجم البيانات المطلوب جمعها؟",
+        question: "ما حجم البيانات المطلوب جمعها؟",
+        type: "single",
+        options: ["حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
+        allowOther: true,
+      },
+    ];
   }
 
-  const platformLabels = [
-    ...new Set(
-      (allCapabilities || [])
-        .filter((c) => c && c.enabled !== false)
-        .map((c) => {
-          try {
-            return getPlatformLabelAr(String((c as any).platform || (c as any).category || ""));
-          } catch {
-            return "";
-          }
-        })
-        .filter(Boolean),
-    ),
-  ].slice(0, 5);
-  const platforms =
-    platformLabels.length > 0 ? platformLabels : ["فيسبوك", "تيك توك", "إنستغرام", "منصة X", "يوتيوب"];
-  const items: NormalizedClarificationQuestion[] = [
-    {
-      id: "code_platform",
-      text: "ما المنصة المستهدفة لجمع البيانات؟",
-      question: "ما المنصة المستهدفة لجمع البيانات؟",
-      type: "single",
-      options: platforms,
-      allowOther: true,
-    },
-    {
-      id: "code_topic",
-      text: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
-      question: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
-      type: chips.length > 0 ? "single" : "free",
-      options: chips,
-      allowOther: true,
-    },
-    {
-      id: "code_volume",
-      text: "ما حجم البيانات المطلوب جمعها؟",
-      question: "ما حجم البيانات المطلوب جمعها؟",
-      type: "single",
-      options: ["حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
-      allowOther: true,
-    },
-  ];
+  const items = (brief ? filterQuestionsAlreadyInBrief(rawItems, brief) : rawItems).slice(0, 3);
   return { intro, items };
 }
 
@@ -341,18 +426,46 @@ export function toArabicIndicDigits(text: string): string {
 
 export function extractTopicChips(userMessage: string, maxChips = 4): string[] {
   if (!userMessage) return [];
-  const words = userMessage
+  let text = userMessage.trim();
+
+  // If the message is a JSON payload (e.g. clarification_answers submission)
+  if (text.startsWith("{") || text.includes('"clarification_answers"')) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed.answers)) {
+        text = parsed.answers
+          .map((a: any) => (Array.isArray(a.value) ? a.value.join(" ") : String(a.value || "")))
+          .join(" ");
+      } else {
+        text = "";
+      }
+    } catch {
+      text = text.replace(/"[a-zA-Z0-9_-]+"\s*:/g, " ");
+    }
+  }
+
+  const words = text
+    .replace(/[{}[\]]/g, " ")
     .replace(/[؟?!.،,؛:()«»"'_]/g, " ")
     .split(/\s+/)
     .map((w) => w.trim())
-    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && !TOPIC_STOPWORDS.has(w.toLowerCase()));
+    .filter((w) => {
+      if (w.length <= 2) return false;
+      if (/^\d+$/.test(w)) return false;
+      const lower = w.toLowerCase();
+      if (TOPIC_STOPWORDS.has(lower)) return false;
+      if (INTERNAL_DISCOVERY_KEYS.has(lower)) return false;
+      if (/^[a-zA-Z0-9_-]+$/.test(w) && (INTERNAL_DISCOVERY_KEYS.has(lower) || /^[a-z]+[A-Z]/.test(w))) return false;
+      return true;
+    });
+
   return [...new Set(words)].slice(0, maxChips);
 }
 
 /** Extract a date-range hint from the user's message, e.g. "آخر 3 شهور". */
 export function extractDateHint(userMessage: string): string | undefined {
   if (!userMessage) return undefined;
-  const m = /(آخر|اخر|خلال)\s*(\d+)\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/.exec(userMessage);
+  const m = /(آخر|اخر|خلال)\s*(\d+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/.exec(userMessage);
   return m ? m[0].trim() : undefined;
 }
 
@@ -380,7 +493,11 @@ export function buildClarificationPresentation(
   const topicQ = clarificationItems.find((q) => discoveryQuestionPriority(q) === 1);
   if (topicQ && topicQ.options.length === 0) {
     const chips = extractTopicChips(userMessage);
-    if (chips.length > 0) topicQ.options = chips;
+    if (chips.length > 0) {
+      topicQ.options = chips;
+    } else {
+      topicQ.type = "free";
+    }
   }
   const dateQ = clarificationItems.find((q) => discoveryQuestionPriority(q) === 4);
   if (dateQ) {
@@ -509,7 +626,9 @@ export class ChatHandler {
     // 5. Research Brief & Two-Phase Routing
     const currentBrief = await getConversationBrief(this.tables, conversationId);
     const brief = extractBriefFromMessage(message, currentBrief);
+    await saveConversationBrief(this.tables, conversationId, userId, brief);
 
+    const userComplained = isRepetitionComplaint(message);
     const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(message);
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
@@ -521,7 +640,14 @@ export class ChatHandler {
       isPhase2 = false;
     } else if (isGreeting || isGeneralQuestion) {
       isPhase2 = false;
-    } else if (isComplete) {
+    } else if (userComplained) {
+      if (brief.platforms.length === 0) brief.platforms.push("facebook");
+      if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
+      if (!brief.targetVolume || brief.targetVolume <= 0) brief.targetVolume = 500;
+      if (!brief.dateRange) brief.dateRange = "آخر شهر";
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      isPhase2 = true;
+    } else if (isComplete || (brief.platforms.length > 0 && brief.topics.length > 0 && brief.targetVolume && brief.dateRange)) {
       isPhase2 = true;
     } else if (wantsPriceOrProceed && brief.platforms.length > 0 && brief.topics.length > 0) {
       if (!brief.targetVolume || brief.targetVolume <= 0) {
@@ -783,16 +909,26 @@ export class ChatHandler {
     // raw catalog list).
     const fallbackToDiscovery = (customIntro?: string, colonFallback: boolean = false) => {
       const fallback = buildCodeDiscoveryFallback(allCapabilities, message, colonFallback);
-      clarificationQuestionsList = fallback.items.map((item) => item.text);
-      clarificationItemsList = fallback.items;
-      finalContentAr = customIntro || fallback.intro;
-      output = {
-        type: "ask_clarification",
-        reasonAr: finalContentAr,
-        intro: finalContentAr,
-        questions: fallback.items,
-        questionsAr: clarificationQuestionsList,
-      } as any;
+      if (fallback.items.length > 0) {
+        clarificationQuestionsList = fallback.items.map((item) => item.text);
+        clarificationItemsList = fallback.items;
+        finalContentAr = deduplicateIntroText(customIntro || fallback.intro);
+        output = {
+          type: "ask_clarification",
+          reasonAr: finalContentAr,
+          intro: finalContentAr,
+          questions: fallback.items,
+          questionsAr: clarificationQuestionsList,
+        } as any;
+      } else {
+        clarificationQuestionsList = undefined;
+        clarificationItemsList = undefined;
+        finalContentAr = deduplicateIntroText(customIntro || "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.");
+        output = {
+          type: "answer_question",
+          answerAr: finalContentAr,
+        } as any;
+      }
     };
 
     // 7d. Check if reply ended with a colon without a tool call (cut-off reply guard)
@@ -886,21 +1022,41 @@ export class ChatHandler {
       await saveConversationBrief(this.tables, conversationId, userId, brief);
 
       if (output.questions && output.questions.length > 0) {
-        clarificationQuestionsList = output.questions.map((q: any) => q.question || q.text);
-        clarificationItemsList = normalizeClarificationQuestions(
+        const normalized = normalizeClarificationQuestions(
           { questions: output.questions as any },
           { capabilities: allCapabilities, userBalancePoints: userBalance, persona: userProfile?.persona },
         );
-        finalContentAr = output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
-        output = {
-          type: "ask_clarification",
-          reasonAr: finalContentAr,
-          intro: finalContentAr,
-          questions: clarificationItemsList,
-          questionsAr: clarificationQuestionsList,
-        } as any;
+        clarificationItemsList = filterQuestionsAlreadyInBrief(normalized, brief);
+        clarificationQuestionsList = clarificationItemsList.map((q) => q.text);
+        if (clarificationItemsList.length > 0) {
+          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: clarificationItemsList,
+            questionsAr: clarificationQuestionsList,
+          } as any;
+        } else if (!userComplained) {
+          clarificationItemsList = normalized;
+          clarificationQuestionsList = normalized.map((q) => q.text);
+          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: clarificationItemsList,
+            questionsAr: clarificationQuestionsList,
+          } as any;
+        } else {
+          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
+          output = {
+            type: "answer_question",
+            answerAr: finalContentAr,
+          } as any;
+        }
       } else {
-        finalContentAr = output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.";
+        finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
         output = {
           type: "answer_question",
           answerAr: finalContentAr,
@@ -914,11 +1070,31 @@ export class ChatHandler {
         persona: userProfile?.persona,
         userMessage: message,
       });
-      clarificationQuestionsList = clarification.clarificationQuestions;
-      clarificationItemsList = clarification.clarificationItems;
-      finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
-        ? llmResult.textBlockAr
-        : clarification.contentAr;
+      clarificationItemsList = filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+      clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+      if (clarificationItemsList.length > 0) {
+        finalContentAr = deduplicateIntroText(
+          (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
+            ? llmResult.textBlockAr
+            : clarification.contentAr,
+        );
+      } else if (!userComplained) {
+        clarificationItemsList = clarification.clarificationItems;
+        clarificationQuestionsList = clarification.clarificationQuestions;
+        finalContentAr = deduplicateIntroText(
+          (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
+            ? llmResult.textBlockAr
+            : clarification.contentAr,
+        );
+      } else {
+        clarificationItemsList = undefined;
+        clarificationQuestionsList = undefined;
+        finalContentAr = "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.";
+        output = {
+          type: "answer_question",
+          answerAr: finalContentAr,
+        } as any;
+      }
     } else if (output.type === "answer_question") {
       await saveConversationBrief(this.tables, conversationId, userId, brief);
       finalContentAr = output.answerAr;
@@ -973,11 +1149,27 @@ export class ChatHandler {
         console.warn("[chat:platform_check_invalid]", { message, planItems });
         finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
       } else if (!planValidation.valid || !planOutput) {
-        console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
-        const planFallback = buildCodeDiscoveryFallback(allCapabilities);
-        clarificationQuestionsList = planFallback.items.map((item) => item.text);
-        clarificationItemsList = planFallback.items;
-        finalContentAr = `أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`;
+        if (userComplained) {
+          const matchedPlatform = brief.platforms[0] || "facebook";
+          finalContentAr = `أقوم بمراجعة وتعديل خطة جمع البيانات لمنصة ${getPlatformLabelAr(matchedPlatform)} حسب طلبك (${brief.topics.join("، ")}).`;
+          output = {
+            type: "answer_question",
+            answerAr: finalContentAr,
+          } as any;
+        } else {
+          console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
+          const planFallback = buildCodeDiscoveryFallback(allCapabilities);
+          clarificationQuestionsList = planFallback.items.map((item) => item.text);
+          clarificationItemsList = planFallback.items;
+          finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: planFallback.items,
+            questionsAr: clarificationQuestionsList,
+          } as any;
+        }
       } else {
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
             conversationId,
@@ -1137,6 +1329,7 @@ export class ChatHandler {
     }
 
     // 9. Update Assistant Message to 'ready' (Progressive streaming event triggers via Appwrite Realtime)
+    finalContentAr = deduplicateIntroText(finalContentAr);
     await this.tables.updateRow({
       databaseId: "digr",
       tableId: "messages",

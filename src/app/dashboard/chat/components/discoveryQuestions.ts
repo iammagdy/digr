@@ -35,12 +35,31 @@ export function sanitizeDiscoveryText(value: unknown, maxLength: number): string
     .trim();
 }
 
+export const INTERNAL_DISCOVERY_KEYS = new Set([
+  "questionid",
+  "answers",
+  "clarification",
+  "type",
+  "question",
+  "value",
+  "skipped",
+  "resolveddefault",
+  "needsuserchoice",
+  "allowother",
+  "defaultoption",
+  "parametertype",
+]);
+
 function normalizeOptions(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
   const options = input
     .filter((option): option is string => typeof option === "string")
     .map((option) => sanitizeDiscoveryText(option, 40))
-    .filter(Boolean);
+    .filter((option) => {
+      if (!option) return false;
+      const lower = option.trim().toLowerCase();
+      return !INTERNAL_DISCOVERY_KEYS.has(lower);
+    });
   return [...new Set(options)].slice(0, 4);
 }
 

@@ -95,12 +95,113 @@ export function extractCommentsPerPost(text: string): number | undefined {
 }
 
 /**
+ * Detect if the user is complaining about having already answered ("منا قولتلك").
+ */
+export function isRepetitionComplaint(text: string): boolean {
+  if (!text) return false;
+  return /(منا قولتلك|قولتلك|قلتلك|سبق وقلت|أنا قولت|انا قولت|أخبرتك|ما أنا قولت|ما انا قولت|قولت لك|قلت لك|ما انا لسه قايل|ما قولتلك)/i.test(text);
+}
+
+export interface CardAnswerItem {
+  questionId: string;
+  question: string;
+  value?: string | string[];
+  skipped?: boolean;
+}
+
+/**
+ * Deterministically extract facts from submitted discovery card answers into the brief.
+ */
+export function extractBriefFromCardAnswers(
+  answers: CardAnswerItem[],
+  currentBrief: ResearchBrief = { platforms: [], topics: [] },
+): ResearchBrief {
+  const brief: ResearchBrief = {
+    platforms: [...currentBrief.platforms],
+    topics: [...currentBrief.topics],
+    targetVolume: currentBrief.targetVolume,
+    commentsPerPost: currentBrief.commentsPerPost,
+    dateRange: currentBrief.dateRange,
+    language: currentBrief.language,
+    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx", "csv", "pdf"],
+    notes: currentBrief.notes,
+  };
+
+  for (const ans of answers) {
+    if (!ans) continue;
+    const qText = (ans.question || "").toLowerCase();
+    const qId = (ans.questionId || "").toLowerCase();
+    const rawVal = Array.isArray(ans.value) ? ans.value.join(" ") : ans.value || "";
+    if (!rawVal.trim() && !ans.skipped) continue;
+
+    const valToUse = rawVal.trim();
+
+    // 1. Platform
+    if (qId.includes("platform") || qText.includes("منصة")) {
+      const plats = detectMentionedPlatforms(valToUse);
+      for (const p of plats) {
+        if (!brief.platforms.includes(p)) brief.platforms.push(p);
+      }
+    }
+    // 2. Topic / Keywords
+    else if (qId.includes("topic") || qText.includes("موضوع") || qText.includes("كلمات") || qText.includes("محاور")) {
+      if (valToUse && !brief.topics.includes(valToUse)) {
+        brief.topics.push(valToUse);
+      }
+    }
+    // 3. Volume
+    else if (qId.includes("volume") || qId.includes("count") || qText.includes("عدد") || qText.includes("حجم") || qText.includes("سجل")) {
+      const vol = extractTargetVolume(valToUse);
+      if (vol) brief.targetVolume = vol;
+    }
+    // 4. Comments per post / Source
+    else if (qId.includes("comments") || qText.includes("تعليق لكل منشور") || qText.includes("مصدر التعليقات") || qText.includes("مصدر")) {
+      const cpp = extractCommentsPerPost(valToUse) || extractTargetVolume(valToUse);
+      if (cpp) brief.commentsPerPost = cpp;
+      if (valToUse) {
+        brief.notes = (brief.notes ? brief.notes + " | " : "") + `المصدر: ${valToUse}`;
+      }
+    }
+    // 5. Date range
+    else if (qId.includes("date") || qId.includes("time") || qText.includes("فترة") || qText.includes("تاريخ") || qText.includes("زمن")) {
+      if (valToUse) brief.dateRange = valToUse;
+    }
+    // 6. Language
+    else if (qId.includes("lang") || qText.includes("لغة")) {
+      if (valToUse) brief.language = valToUse;
+    }
+    // 7. Output Format
+    else if (qId.includes("format") || qText.includes("صيغة") || qText.includes("تنسيق")) {
+      const lower = valToUse.toLowerCase();
+      const detectedFmts: string[] = [];
+      if (lower.includes("excel") || lower.includes("xlsx")) detectedFmts.push("xlsx");
+      if (lower.includes("csv")) detectedFmts.push("csv");
+      if (lower.includes("pdf")) detectedFmts.push("pdf");
+      if (detectedFmts.length > 0) brief.formats = detectedFmts;
+    } else if (valToUse) {
+      brief.notes = (brief.notes ? brief.notes + " | " : "") + `${ans.question}: ${valToUse}`;
+    }
+  }
+
+  return brief;
+}
+
+/**
  * Extract and merge research brief facts from the latest user message.
  */
 export function extractBriefFromMessage(
   userMessage: string,
   currentBrief: ResearchBrief = { platforms: [], topics: [] },
 ): ResearchBrief {
+  if (userMessage.includes("clarification_answers") || userMessage.trim().startsWith("{")) {
+    try {
+      const parsed = JSON.parse(userMessage);
+      if (parsed && Array.isArray(parsed.answers)) {
+        return extractBriefFromCardAnswers(parsed.answers, currentBrief);
+      }
+    } catch {}
+  }
+
   const brief: ResearchBrief = {
     platforms: [...currentBrief.platforms],
     topics: [...currentBrief.topics],
@@ -139,6 +240,17 @@ export function extractBriefFromMessage(
   }
 
   // 5. Topics
+  const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);
+  if (topicMatch) {
+    const rawMatch = topicMatch[1].trim();
+    const cleaned = rawMatch
+      .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة|آخر شهر|آخر أسبوع|آخر ٣ شهور)\b/gi, "")
+      .trim();
+    if (cleaned.length > 1 && !brief.topics.includes(cleaned)) {
+      brief.topics.push(cleaned);
+    }
+  }
+
   const chips = extractTopicChips(userMessage);
   for (const c of chips) {
     if (!brief.topics.includes(c)) {
