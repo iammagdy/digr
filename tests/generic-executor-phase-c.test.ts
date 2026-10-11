@@ -299,10 +299,10 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       expect(capturedHeaders[0].get("Idempotency-Key")).toBe(`job_${jobId}_step_step_x_p1`);
       expect(capturedHeaders[1].get("Idempotency-Key")).toBe(`job_${jobId}_step_step_x_p2`);
 
-      const meta0 = JSON.parse(capturedHeaders[0].get("X-Treg-Meta") || "{}");
-      expect(meta0.job_id).toBe(jobId);
-      expect(meta0.user_id).toBe(userId);
-      expect(meta0.step_id).toBe("step_x");
+      const meta0 = capturedHeaders[0].get("X-Treg-Meta") || "";
+      expect(meta0).toContain(`customer=${userId}`);
+      expect(meta0).toContain(`job=${jobId}`);
+      expect(meta0).toContain("step=step_x");
 
       // Verify storage files uploaded
       expect(storage.files.has(`results:xlsx_${jobId}`)).toBe(true);

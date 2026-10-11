@@ -10,6 +10,7 @@ export interface SmokeCallSummary {
   latency_ms: number;
   cost_usd: number;
   note?: string;
+  detail?: string;
   profile_name?: string;
 }
 
@@ -55,13 +56,13 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
   const results: SmokeCallSummary[] = [];
   let totalCostMicro = 0;
 
-  // 1. TikTok Public Profile Check
+  // 1. TikTok Public Profile Check (GET)
   if (totalCostMicro + 7000 <= HARD_TOTAL_COST_CAP_MICRO) {
     try {
       const tikRes = await executeTregCall({
         endpointId: "tikhub.tiktok.user.profile",
-        method: "POST",
-        params: { username: "iammagdy" },
+        method: "GET",
+        params: { uniqueId: "iammagdy" },
         userId,
         jobId: "smoke_tiktok",
         routeMaxCostUsd: "0.007",
@@ -85,6 +86,7 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
         cost_usd: costUsd,
         profile_name: profileName,
         note: tikRes.ok ? "نجح التحقق من الملف الشخصي" : (tikRes.errorDetails || "فشل الاتصال"),
+        detail: tikRes.detail || tikRes.errorDetails,
       });
     } catch (err: any) {
       results.push({
@@ -94,17 +96,18 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
         latency_ms: 0,
         cost_usd: 0,
         note: err.message,
+        detail: String(err.message || "").slice(0, 300),
       });
     }
   }
 
-  // 2. Facebook Search Check (limit 1)
+  // 2. Facebook Profile Posts Check (GET)
   if (totalCostMicro + 7000 <= HARD_TOTAL_COST_CAP_MICRO) {
     try {
       const fbRes = await executeTregCall({
-        endpointId: "facebook-search",
-        method: "POST",
-        params: { query: "news", limit: 1 },
+        endpointId: "scrapecreators.x.v1-facebook-profile-posts",
+        method: "GET",
+        params: { url: "https://www.facebook.com/nike" },
         userId,
         jobId: "smoke_facebook",
         routeMaxCostUsd: "0.007",
@@ -119,7 +122,8 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
         status: fbRes.httpStatus,
         latency_ms: fbRes.latencyMs,
         cost_usd: costUsd,
-        note: fbRes.ok ? "نجح البحث التجريبي" : (fbRes.errorDetails || "استجابة المصدر"),
+        note: fbRes.ok ? "نجح فحص منشورات فيسبوك" : (fbRes.errorDetails || "استجابة المصدر"),
+        detail: fbRes.detail || fbRes.errorDetails,
       });
     } catch (err: any) {
       results.push({
@@ -129,15 +133,16 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
         latency_ms: 0,
         cost_usd: 0,
         note: err.message,
+        detail: String(err.message || "").slice(0, 300),
       });
     }
   }
 
-  // 3. X Search Check (limit 1)
+  // 3. X Search Check (POST)
   if (totalCostMicro + 7000 <= HARD_TOTAL_COST_CAP_MICRO) {
     try {
       const xRes = await executeTregCall({
-        endpointId: "x-keyword-search",
+        endpointId: "anyapi.x.search.posts",
         method: "POST",
         params: { query: "tech", limit: 1 },
         userId,
@@ -154,7 +159,8 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
         status: xRes.httpStatus,
         latency_ms: xRes.latencyMs,
         cost_usd: costUsd,
-        note: xRes.ok ? "نجح البحث التجريبي" : (xRes.errorDetails || "استجابة المصدر"),
+        note: xRes.ok ? "نجح البحث التجريبي على منصة X" : (xRes.errorDetails || "استجابة المصدر"),
+        detail: xRes.detail || xRes.errorDetails,
       });
     } catch (err: any) {
       results.push({
@@ -164,6 +170,7 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
         latency_ms: 0,
         cost_usd: 0,
         note: err.message,
+        detail: String(err.message || "").slice(0, 300),
       });
     }
   }
