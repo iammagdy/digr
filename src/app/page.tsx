@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, Eyebrow, Stamp } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
+import {
+  buildReadyExampleTemplates,
+  EXAMPLE_TEMPLATES_HEADING_AR,
+  EXAMPLE_PRICE_DISCLAIMER_AR,
+} from "@/functions/shared/exampleTemplates";
+
+const READY_EXAMPLE_TEMPLATES = buildReadyExampleTemplates();
 
 /* ------------------------------------------------------------------ */
 /* Interactive dossier demo — clearly labeled as illustrative          */
@@ -267,6 +274,56 @@ export default function LandingPage() {
                 </li>
               ))}
             </ol>
+          </div>
+        </section>
+
+        {/* Ready-to-use Example Templates ("أمثلة جاهزة") */}
+        <section id="examples" className="border-b border-sand-200/70 bg-sand-50 py-16 sm:py-24">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <Eyebrow>{EXAMPLE_TEMPLATES_HEADING_AR}</Eyebrow>
+                <h2 className="font-display mt-3 max-w-2xl text-3xl text-ink-900 sm:text-4xl">
+                  قوالب بحث جاهزة للبدء والتعديل
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-ink-600">
+                  اختر أي مثال كنقطة انطلاق قابلة للتعديل داخل المساعد البحثي قبل اعتماد الخطة.
+                </p>
+              </div>
+              <Badge tone="warning">{EXAMPLE_PRICE_DISCLAIMER_AR}</Badge>
+            </div>
+
+            <div className="mt-8 grid gap-5 sm:grid-cols-2">
+              {READY_EXAMPLE_TEMPLATES.map((tpl) => (
+                <Card key={tpl.id} className="flex flex-col justify-between p-5 sm:p-6">
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Badge tone={tpl.status === "verified" ? "success" : "warning"}>
+                        {tpl.platformAr} · {tpl.status === "verified" ? "متاح الآن" : "قيد التجهيز"}
+                      </Badge>
+                      <span className="tnum rounded-xl bg-amber-points-bg px-3 py-1 text-xs font-bold text-amber-points">
+                        تقريبيًا {formatNumber(tpl.approximatePoints)} نقطة
+                      </span>
+                    </div>
+                    <h3 className="text-lg font-bold text-ink-900">{tpl.titleAr}</h3>
+                    <p className="text-sm leading-relaxed text-ink-600">{tpl.shortDescriptionAr}</p>
+                    <div className="rounded-xl border border-sand-200 bg-sand-50/80 p-3 text-xs leading-relaxed text-ink-700">
+                      <strong className="text-ink-900">ما الذي ستستلمه: </strong>
+                      {tpl.deliverablesAr}
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sand-100 pt-3">
+                    <span className="text-xs text-sand-500">{tpl.disclaimerAr}</span>
+                    <Link
+                      href={`/dashboard/chat?prompt=${encodeURIComponent(tpl.editablePromptAr)}`}
+                      className="inline-flex min-h-10 items-center rounded-xl bg-white border border-sand-300 px-3.5 py-1.5 text-xs font-bold text-ink-900 transition-colors hover:border-accent hover:text-accent"
+                    >
+                      استخدم وعدّل في المحادثة
+                    </Link>
+                  </div>
+                </Card>
+              ))}
+            </div>
           </div>
         </section>
 
