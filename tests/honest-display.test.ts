@@ -22,6 +22,17 @@ import {
   chronological,
   methodologyAlertText,
   methodologyMessageText,
+  formatNumber,
+  formatPoints,
+  formatCurrency,
+  formatDate,
+  formatTime,
+  JOB_STATUS_LABEL_MAP,
+  JOB_STATUS_TONE_MAP,
+  formatJobStatus,
+  formatJobStatusTone,
+  isInstapayAvailable,
+  groupLedgerEntries,
 } from "../src/lib/honestDisplay";
 
 describe("balance states", () => {
@@ -124,8 +135,8 @@ describe("methodology charge honesty (regression: hardcoded 10-point claim)", ()
 
   it("message includes charge and balance only when both are trustworthy", () => {
     const withValues = methodologyMessageText(10, 290, "نص المنهجية");
-    expect(withValues).toContain("خصم 10 نقاط");
-    expect(withValues).toContain("290");
+    expect(withValues).toContain(`خصم ${formatNumber(10)} نقاط`);
+    expect(withValues).toContain(formatNumber(290));
     expect(withValues).toContain("نص المنهجية");
 
     const missing = methodologyMessageText(undefined, undefined, "نص المنهجية");
@@ -134,3 +145,161 @@ describe("methodology charge honesty (regression: hardcoded 10-point claim)", ()
     expect(missing).toContain("نص المنهجية");
   });
 });
+
+describe("shared numeral system (Arabic-Indic digits)", () => {
+  it("formats integers consistently with Arabic-Indic numerals", () => {
+    expect(formatNumber(4993)).toBe("٤٬٩٩٣");
+    expect(formatNumber(0)).toBe("٠");
+    expect(formatNumber(1000)).toBe("١٬٠٠٠");
+  });
+
+  it("formats decimals consistently with Arabic-Indic numerals and proper fraction digits", () => {
+    expect(formatNumber(0.1, { minimumFractionDigits: 2 })).toBe("٠٫١٠");
+    expect(formatNumber(499.3, { minimumFractionDigits: 2, maximumFractionDigits: 2 })).toBe("٤٩٩٫٣٠");
+  });
+
+  it("formats points with proper Arabic plurals and numerals", () => {
+    expect(formatPoints(1)).toBe("١ نقطة");
+    expect(formatPoints(2)).toBe("٢ نقطة");
+    expect(formatPoints(5)).toBe("٥ نقاط");
+    expect(formatPoints(10)).toBe("١٠ نقاط");
+    expect(formatPoints(11)).toBe("١١ نقطة");
+    expect(formatPoints(0)).toBe("٠ نقطة");
+  });
+
+  it("formats currency with Arabic-Indic numerals and EGP symbol", () => {
+    expect(formatCurrency(499.3)).toBe("٤٩٩٫٣٠ ج.م");
+    expect(formatCurrency(0)).toBe("٠٫٠٠ ج.م");
+  });
+
+  it("formats dates and times using Arabic-Indic digits", () => {
+    const iso = "2026-10-11T12:30:00Z";
+    const dateFormatted = formatDate(iso);
+    expect(dateFormatted).toMatch(/[٠-٩]/);
+    const timeFormatted = formatTime(iso);
+    expect(timeFormatted).toMatch(/[٠-٩]/);
+  });
+});
+
+describe("job status label mapping (no English)", () => {
+  it("maps all supported job statuses to unambiguous Arabic terms", () => {
+    expect(JOB_STATUS_LABEL_MAP.queued).toBe("في الانتظار");
+    expect(JOB_STATUS_LABEL_MAP.running).toBe("قيد التنفيذ");
+    expect(JOB_STATUS_LABEL_MAP.done).toBe("مكتمل");
+    expect(JOB_STATUS_LABEL_MAP.failed).toBe("متعثر");
+    expect(JOB_STATUS_LABEL_MAP.cancelled).toBe("ملغي");
+  });
+
+  it("formatJobStatus helper formats known and fallback statuses cleanly", () => {
+    expect(formatJobStatus("queued")).toBe("في الانتظار");
+    expect(formatJobStatus("running")).toBe("قيد التنفيذ");
+    expect(formatJobStatus("done")).toBe("مكتمل");
+    expect(formatJobStatus("failed")).toBe("متعثر");
+    expect(formatJobStatus("cancelled")).toBe("ملغي");
+    expect(formatJobStatus("custom_status")).toBe("غير معروف");
+  });
+
+  it("maps status tones accurately to UI status tones", () => {
+    expect(JOB_STATUS_TONE_MAP.queued).toBe("warning");
+    expect(JOB_STATUS_TONE_MAP.running).toBe("info");
+    expect(JOB_STATUS_TONE_MAP.done).toBe("success");
+    expect(JOB_STATUS_TONE_MAP.failed).toBe("danger");
+    expect(JOB_STATUS_TONE_MAP.cancelled).toBe("neutral");
+    expect(formatJobStatusTone("queued")).toBe("warning");
+    expect(formatJobStatusTone("other")).toBe("neutral");
+  });
+});
+
+describe("instapay placeholder guardrail", () => {
+  it("returns false if handle or phone is missing or empty", () => {
+    expect(isInstapayAvailable(undefined, undefined)).toBe(false);
+    expect(isInstapayAvailable("", "")).toBe(false);
+    expect(isInstapayAvailable("real@instapay", "")).toBe(false);
+    expect(isInstapayAvailable("", "01012345678")).toBe(false);
+  });
+
+  it("returns false if handle or phone matches placeholder strings", () => {
+    expect(isInstapayAvailable("digr@instapay", "01000000000")).toBe(false);
+    expect(isInstapayAvailable("placeholder", "01012345678")).toBe(false);
+    expect(isInstapayAvailable("real@instapay", "010xxxxxxxx")).toBe(false);
+    expect(isInstapayAvailable("example@instapay", "1234567890")).toBe(false);
+  });
+
+  it("returns true only for non-placeholder, valid configured values", () => {
+    expect(isInstapayAvailable("merchant_account@instapay", "01098765432")).toBe(true);
+  });
+});
+
+describe("grouped ledger entries (one net row per job)", () => {
+  it("groups hold, release, and charge movements into a single net customer row", () => {
+    const rawEntries = [
+      {
+        $id: "e1",
+        description: "خصم نهائي: تحليل حساب @iam_megz (2 نقطة)",
+        delta: -2,
+        balanceAfter: 298,
+        referenceType: "job",
+        referenceId: "chg_job_123",
+        createdAt: "2026-10-10T12:05:00Z",
+      },
+      {
+        $id: "e2",
+        description: "تحرير الحجز: تحليل حساب @iam_megz",
+        delta: 5,
+        balanceAfter: 300,
+        referenceType: "job",
+        referenceId: "rel_job_123",
+        createdAt: "2026-10-10T12:04:00Z",
+      },
+      {
+        $id: "e3",
+        description: "حجز مؤقت: تحليل حساب @iam_megz",
+        delta: -5,
+        balanceAfter: 295,
+        referenceType: "job",
+        referenceId: "res_job_123",
+        createdAt: "2026-10-10T12:00:00Z",
+      },
+    ];
+
+    const grouped = groupLedgerEntries(rawEntries);
+    expect(grouped).toHaveLength(1);
+    const row = grouped[0];
+    expect(row.isJobGroup).toBe(true);
+    expect(row.delta).toBe(-2);
+    expect(row.title).toBe("خصم ٢ نقطة · تحليل @iam_megz");
+    expect(row.movements).toHaveLength(3);
+  });
+
+  it("preserves non-job entries as independent rows", () => {
+    const rawEntries = [
+      {
+        $id: "t1",
+        description: "شحن رصيد معتمد",
+        delta: 100,
+        balanceAfter: 400,
+        referenceType: "topup",
+        referenceId: "topup_abc",
+        createdAt: "2026-10-10T13:00:00Z",
+      },
+      {
+        $id: "e1",
+        description: "خصم نهائي: تحليل @test (1 نقطة)",
+        delta: -1,
+        balanceAfter: 300,
+        referenceType: "job",
+        referenceId: "chg_job_999",
+        createdAt: "2026-10-10T12:00:00Z",
+      },
+    ];
+
+    const grouped = groupLedgerEntries(rawEntries);
+    expect(grouped).toHaveLength(2);
+    expect(grouped[0].isJobGroup).toBe(false);
+    expect(grouped[0].delta).toBe(100);
+    expect(grouped[0].title).toBe("شحن رصيد معتمد");
+    expect(grouped[1].isJobGroup).toBe(true);
+    expect(grouped[1].delta).toBe(-1);
+  });
+});
+

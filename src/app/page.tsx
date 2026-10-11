@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Badge, Button, Card, Eyebrow, Stamp } from "@/components/ui";
+import { formatNumber } from "@/lib/honestDisplay";
 
 /* ------------------------------------------------------------------ */
 /* Interactive dossier demo — clearly labeled as illustrative          */
@@ -66,9 +67,9 @@ function DossierDemo() {
             </div>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
               <div><dt className="text-sand-500">المنصة</dt><dd className="font-semibold text-ink-900">تيك توك — ملف عام</dd></div>
-              <div><dt className="text-sand-500">السجلات</dt><dd className="tnum font-semibold text-ink-900">1,000 سجل</dd></div>
+              <div><dt className="text-sand-500">السجلات</dt><dd className="tnum font-semibold text-ink-900">١٬٠٠٠ سجل</dd></div>
               <div><dt className="text-sand-500">المخرجات</dt><dd className="font-semibold text-ink-900">Excel · PDF · CSV</dd></div>
-              <div><dt className="text-sand-500">التكلفة التقديرية</dt><dd className="tnum font-bold text-amber-points">85 نقطة</dd></div>
+              <div><dt className="text-sand-500">التكلفة التقديرية</dt><dd className="tnum font-bold text-amber-points">٨٥ نقطة</dd></div>
             </dl>
             {step === "plan" && (
               <Button size="sm" variant="accent" className="mt-3 w-full" onClick={() => setStep("extracting")}>
@@ -99,7 +100,7 @@ function DossierDemo() {
               </div>
             ) : (
               <div className="animate-rise space-y-2.5">
-                <p className="tnum text-sm font-bold text-ink-900">تم تسليم 1,000 سجل موثّق</p>
+                <p className="tnum text-sm font-bold text-ink-900">تم تسليم ١٬٠٠٠ سجل موثّق</p>
                 <div className="flex flex-wrap gap-2">
                   {["Excel", "PDF", "CSV"].map((f) => (
                     <span key={f} className="tnum inline-flex items-center gap-1.5 rounded-lg border border-sand-200 bg-sand-50 px-2.5 py-1.5 text-xs font-semibold text-ink-800">
@@ -143,7 +144,7 @@ const WORKFLOW_STEPS = [
 const USE_CASES = [
   {
     title: "للباحثين الأكاديميين",
-    desc: "مجموعات بيانات عامة موثّقة المنهجية تصلح للاستشهاد في الأبحاث والرسائل العلمية، مع دليل متغيرات واضح.",
+    desc: "مجموعات بيانات عامة موثّقة المنهجية، مع دليل متغيرات واضح.",
     tag: "منهجية موثّقة",
   },
   {
@@ -161,11 +162,11 @@ const USE_CASES = [
 const FAQS = [
   {
     q: "هل جمع البيانات العامة عبر Digr قانوني؟",
-    a: "نعم. تجمع المنصة حصريًا البيانات العامة المتاحة علنًا للجميع على الإنترنت — دون اختراق أو تجاوز لخصوصية المستخدمين — بما يتوافق مع المعايير الأخلاقية والأكاديمية للبحث العلمي.",
+    a: "نجمع بيانات عامة فقط ولا نجمع بيانات خاصة. مسؤولية الاستخدام تخضع لشروط كل منصة وللقوانين المطبقة في بلدك، ونوصي بمراجعة سياسة المصدر قبل نشر النتائج.",
   },
   {
     q: "كيف تُحسب تكلفة البحث بالنقاط؟",
-    a: "يحسب الخادم التكلفة مقدمًا بناءً على عدد السجلات ونوع المنصة. النقطة الواحدة = 0.10 جنيه مصري. يُحجز المبلغ مؤقتًا عند موافقتك، ولا يُخصم فعليًا إلا بعد تسليم السجلات — وأي فائض يُرد إلى رصيدك فورًا.",
+    a: "يحسب الخادم التكلفة مقدمًا بناءً على عدد السجلات ونوع المنصة. النقطة الواحدة = ٠٫١٠ جنيه مصري. يُحجز المبلغ مؤقتًا عند موافقتك، ولا يُخصم فعليًا إلا بعد تسليم السجلات — وأي فائض يُرد إلى رصيدك فورًا.",
   },
   {
     q: "ما الملفات التي أستلمها؟",
@@ -237,7 +238,7 @@ export default function LandingPage() {
                 {[
                   ["بيانات عامة فقط", "بلا اختراق"],
                   ["موافقة صريحة", "قبل أي جمع"],
-                  ["نقطة = 0.10 ج.م", "تسعير شفاف"],
+                  [`نقطة = ${formatNumber(0.1, { minimumFractionDigits: 2 })} ج.م`, "تسعير شفاف"],
                 ].map(([term, desc]) => (
                   <div key={term}>
                     <dt className="text-sm font-bold text-ink-900">{term}</dt>
@@ -260,7 +261,7 @@ export default function LandingPage() {
             <ol className="mt-10 grid gap-x-8 gap-y-6 sm:grid-cols-2 lg:grid-cols-4">
               {WORKFLOW_STEPS.map((s, i) => (
                 <li key={s.title} className="relative border-t-2 border-pine-800/90 pt-4">
-                  <span aria-hidden="true" className="tnum text-xs font-bold text-accent">{String(i + 1).padStart(2, "0")}</span>
+                  <span aria-hidden="true" className="tnum text-xs font-bold text-accent">٠{formatNumber(i + 1)}</span>
                   <h3 className="mt-1.5 text-base font-bold text-ink-900">{s.title}</h3>
                   <p className="mt-1.5 text-sm leading-relaxed text-ink-600">{s.desc}</p>
                 </li>
@@ -313,7 +314,7 @@ export default function LandingPage() {
                 </p>
                 <h2 className="font-display mt-3 text-3xl text-white sm:text-4xl">تعرف التكلفة قبل أن توافق — بالقرش</h2>
                 <p className="mt-4 leading-relaxed text-sand-300">
-                  نظام النقاط واضح: <strong className="tnum text-white">1 نقطة = 0.10 جنيه مصري</strong>.
+                  نظام النقاط واضح: <strong className="tnum text-white">{formatNumber(1)} نقطة = {formatNumber(0.1, { minimumFractionDigits: 2 })} جنيه مصري</strong>.
                   يُحجز المبلغ التقديري مؤقتًا عند موافقتك، ولا يُخصم النهائي إلا بعد تسليم السجلات —
                   وأي فرق يُرد إلى رصيدك تلقائيًا.
                 </p>
@@ -338,11 +339,11 @@ export default function LandingPage() {
                   <caption className="px-5 pt-5 pb-3 text-right text-xs font-semibold text-pine-200">مثال توضيحي لدورة مبلغ — ليست أسعارًا فعلية</caption>
                   <tbody className="divide-y divide-white/10">
                     {[
-                      ["عرض السعر التقديري", "85 نقطة", "قبل الموافقة"],
-                      ["المبلغ المحجوز", "85 نقطة", "عند الموافقة"],
-                      ["السجلات المسلَّمة فعلًا", "920 / 1,000", "بعد التنفيذ"],
-                      ["الخصم النهائي", "78 نقطة", "حسب المسلَّم"],
-                      ["المبلغ المُرد إلى رصيدك", "7 نقاط", "تلقائيًا"],
+                      ["عرض السعر التقديري", `${formatNumber(85)} نقطة`, "قبل الموافقة"],
+                      ["المبلغ المحجوز", `${formatNumber(85)} نقطة`, "عند الموافقة"],
+                      ["السجلات المسلَّمة فعلًا", `${formatNumber(920)} / ${formatNumber(1000)}`, "بعد التنفيذ"],
+                      ["الخصم النهائي", `${formatNumber(78)} نقطة`, "حسب المسلَّم"],
+                      ["المبلغ المُرد إلى رصيدك", `${formatNumber(7)} نقاط`, "تلقائيًا"],
                     ].map(([label, value, note]) => (
                       <tr key={label}>
                         <td className="px-5 py-3.5 text-sand-300">{label}<span className="block text-xs text-sand-500">{note}</span></td>

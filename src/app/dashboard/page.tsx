@@ -5,7 +5,7 @@ import Link from "next/link";
 import { databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Query } from "appwrite";
-import { Alert, Badge, Card, EmptyState, Eyebrow, Skeleton, Stat, type StatusTone } from "@/components/ui";
+import { Alert, Badge, Card, EmptyState, Eyebrow, Skeleton, Stat } from "@/components/ui";
 import {
   balanceLoading,
   balanceReady,
@@ -14,6 +14,11 @@ import {
   showDerivedAmounts,
   jobTotalFromResponse,
   jobCountText,
+  formatCurrency,
+  formatNumber,
+  formatDate,
+  formatJobStatus,
+  formatJobStatusTone,
   type BalanceView,
 } from "@/lib/honestDisplay";
 
@@ -34,30 +39,6 @@ function jobTitle(job: RecentJob): string {
     return p.username ? `@${p.username}` : p.query || "بيانات عامة";
   } catch {
     return "بيانات عامة";
-  }
-}
-
-const STATUS_TONE: Record<string, StatusTone> = {
-  completed: "success",
-  running: "info",
-  pending: "warning",
-  failed: "danger",
-  partial: "warning",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  completed: "مكتمل",
-  running: "قيد التنفيذ",
-  pending: "بانتظار البدء",
-  failed: "فشل",
-  partial: "مكتمل جزئيًا",
-};
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString("ar-EG", { day: "numeric", month: "long", year: "numeric" });
-  } catch {
-    return "";
   }
 }
 
@@ -126,7 +107,7 @@ export default function DashboardOverviewPage() {
         <div>
           <Eyebrow>مساحة العمل</Eyebrow>
           <h1 className="font-display mt-2 text-3xl text-ink-900">
-            أهلاً {user?.name?.split(" ")[0] ?? "بك"} 👋
+            أهلاً {user?.name?.split(" ")[0] ?? "بك"}
           </h1>
           <p className="mt-1.5 text-sm text-ink-600">تابع رصيدك وطلباتك الأخيرة — وابدأ بحثًا جديدًا متى شئت.</p>
         </div>
@@ -160,7 +141,7 @@ export default function DashboardOverviewPage() {
           )}
           <div className="mt-3 flex items-center justify-between border-t border-sand-100 pt-3 text-xs">
             <span className="tnum text-sand-500">
-              {showDerivedAmounts(balance) ? `≈ ${((balance.value ?? 0) * 0.1).toFixed(2)} ج.م` : "—"}
+              {showDerivedAmounts(balance) ? `≈ ${formatCurrency((balance.value ?? 0) * 0.1)}` : "—"}
             </span>
             <Link href="/dashboard/topup" className="font-bold text-amber-points hover:underline">شحن الرصيد ←</Link>
           </div>
@@ -184,7 +165,7 @@ export default function DashboardOverviewPage() {
         </Card>
         <Card className="p-5">
           <p className="text-xs font-semibold text-sand-500">سعر النقطة</p>
-          <p className="tnum mt-1.5 text-3xl font-bold text-ink-900">0.10 <span className="text-sm font-semibold text-sand-500">ج.م</span></p>
+          <p className="tnum mt-1.5 text-3xl font-bold text-ink-900">{formatNumber(0.1, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm font-semibold text-sand-500">ج.م</span></p>
           <div className="mt-3 flex items-center justify-between border-t border-sand-100 pt-3 text-xs">
             <span className="text-sand-500">الدفع عبر انستاباي</span>
             <Badge tone="success">نشط ومعتمد</Badge>
@@ -225,10 +206,10 @@ export default function DashboardOverviewPage() {
                   <p className="truncate text-sm font-bold text-ink-900">{jobTitle(job)}</p>
                   <p className="tnum mt-0.5 text-xs text-sand-500">
                     {formatDate(job.createdAt)}
-                    {typeof job.rowsCollected === "number" && ` · ${job.rowsCollected.toLocaleString("ar-EG")} سجل`}
+                    {typeof job.rowsCollected === "number" && ` · ${formatNumber(job.rowsCollected)} سجل`}
                   </p>
                 </div>
-                <Badge tone={STATUS_TONE[job.status] ?? "neutral"}>{STATUS_LABEL[job.status] ?? job.status}</Badge>
+                <Badge tone={formatJobStatusTone(job.status)}>{formatJobStatus(job.status)}</Badge>
               </Link>
             ))
           )}

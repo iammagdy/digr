@@ -7,7 +7,15 @@ import { client, databases, account } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { Alert, Badge, Button, Card, EmptyState, Eyebrow, Input, Skeleton, Spinner, Tabs, type StatusTone } from "@/components/ui";
-import { chronological, EVENT_HISTORY_LIMIT, eventHistoryScopeLabel } from "@/lib/honestDisplay";
+import {
+  chronological,
+  EVENT_HISTORY_LIMIT,
+  eventHistoryScopeLabel,
+  JOB_STATUS_LABEL_MAP,
+  JOB_STATUS_TONE_MAP,
+  formatNumber,
+  formatDate,
+} from "@/lib/honestDisplay";
 
 const storage = new Storage(client);
 
@@ -36,11 +44,11 @@ interface JobEvent {
 }
 
 const STATUS_META: Record<Job["status"], { label: string; tone: StatusTone }> = {
-  queued: { label: "في الانتظار", tone: "warning" },
-  running: { label: "جارٍ التنفيذ", tone: "info" },
-  done: { label: "مكتمل", tone: "success" },
-  failed: { label: "تعذّر", tone: "danger" },
-  cancelled: { label: "ملغى", tone: "neutral" },
+  queued: { label: JOB_STATUS_LABEL_MAP.queued, tone: JOB_STATUS_TONE_MAP.queued },
+  running: { label: JOB_STATUS_LABEL_MAP.running, tone: JOB_STATUS_TONE_MAP.running },
+  done: { label: JOB_STATUS_LABEL_MAP.done, tone: JOB_STATUS_TONE_MAP.done },
+  failed: { label: JOB_STATUS_LABEL_MAP.failed, tone: JOB_STATUS_TONE_MAP.failed },
+  cancelled: { label: JOB_STATUS_LABEL_MAP.cancelled, tone: JOB_STATUS_TONE_MAP.cancelled },
 };
 
 export default function JobsPage() {
@@ -258,7 +266,7 @@ export default function JobsPage() {
                       <div className="min-w-0">
                         <p className="truncate text-sm font-bold text-ink-900" dir="auto">{parseParams(job.params)}</p>
                         <p className="tnum mt-0.5 text-xs text-sand-500">
-                          {new Date(job.createdAt).toLocaleString("ar-EG", { dateStyle: "medium", timeStyle: "short" })}
+                          {formatDate(job.createdAt, { dateStyle: "medium", timeStyle: "short" })}
                           <span dir="ltr" className="ms-2">#{job.$id.slice(0, 8)}</span>
                         </p>
                       </div>
@@ -268,11 +276,11 @@ export default function JobsPage() {
                         {isActive && <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse motion-reduce:animate-none" />}
                         {meta.label}
                         {job.status === "done" && typeof job.rowsCollected === "number" && (
-                          <span className="tnum"> · {job.rowsCollected.toLocaleString("ar-EG")} سجل</span>
+                          <span className="tnum"> · {formatNumber(job.rowsCollected)} سجل</span>
                         )}
                       </Badge>
                       <span className="tnum rounded-xl bg-sand-100 px-2.5 py-1.5 text-xs font-bold text-ink-800">
-                        {job.status === "done" ? `${job.chargedCredits ?? job.reservedCredits} نقطة` : `حجز: ${job.reservedCredits} نقطة`}
+                        {job.status === "done" ? `${formatNumber(job.chargedCredits ?? job.reservedCredits)} نقطة` : `حجز: ${formatNumber(job.reservedCredits)} نقطة`}
                       </span>
                     </div>
                   </div>
