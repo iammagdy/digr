@@ -11,9 +11,11 @@ const STATIC_DIR = path.join(process.cwd(), ".next", "static");
 // Secret detection patterns
 const FORBIDDEN_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   { name: "OpenAI Secret Key", regex: /sk-[a-zA-Z0-9_-]{20,}/g },
+  { name: "Anthropic Secret Key", regex: /sk-ant-[a-zA-Z0-9_-]{20,}/g },
   { name: "TREG Secret Token", regex: /treg_[a-zA-Z0-9_-]{16,}/g },
   { name: "Appwrite Server API Key Header/Literal", regex: /X-Appwrite-Key["']?\s*:\s*["'][a-zA-Z0-9_-]{32,}["']/g },
   { name: "Generic Private Env Reference", regex: /process\.env\.OPENAI_API_KEY/g },
+  { name: "Server Anthropic Key Leaked", regex: /process\.env\.ANTHROPIC_API_KEY/g },
   { name: "Server-only Variable Leaked", regex: /process\.env\.APPWRITE_API_KEY/g },
   { name: "Server TREG Token Leaked", regex: /process\.env\.TREG_TOKEN/g },
 ];

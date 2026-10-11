@@ -18,20 +18,36 @@ import {
   LlmTurnOutputSchema,
   LlmTurnOutput,
   scrubWhiteLabelText,
+  ACTION_RESULT_JSON_SCHEMA,
 } from "../src/functions/shared/llmClient";
 import { buildSystemPrompt } from "../src/functions/shared/systemPrompt";
 import { PersonaType } from "../src/functions/shared/personaConfigs";
 
 dotenv.config({ path: ".env.local" });
 
+// CLI Options: --provider=openai | --provider=anthropic (default: openai)
+const args = process.argv.slice(2);
+let providerArg = "openai";
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === "--provider" && args[i + 1]) {
+    providerArg = args[i + 1].toLowerCase();
+  } else if (args[i].startsWith("--provider=")) {
+    providerArg = args[i].split("=")[1].toLowerCase();
+  }
+}
+const PROVIDER: "openai" | "anthropic" = providerArg === "anthropic" ? "anthropic" : "openai";
+
 // Strict safety limits
 const MAX_TOTAL_SPEND_USD = 0.10; // $0.10 USD max budget
 const MAX_TOTAL_TOKENS = 120000;
-const MODEL_NAME = process.env.LLM_MODEL || "gpt-6-luna";
+const MODEL_NAME =
+  PROVIDER === "anthropic"
+    ? process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5"
+    : process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-luna";
 
-// Pricing per million tokens (OpenAI gpt-4o-mini / gpt-6-luna tier)
-const INPUT_COST_PER_MILLION = 0.15; // $0.15 / 1M
-const OUTPUT_COST_PER_MILLION = 0.60; // $0.60 / 1M
+// Pricing per million tokens
+const INPUT_COST_PER_MILLION = PROVIDER === "anthropic" ? 0.80 : 0.15;
+const OUTPUT_COST_PER_MILLION = PROVIDER === "anthropic" ? 4.00 : 0.60;
 
 // Sanitized capabilities (ONLY tiktok-profile enabled)
 const SANITIZED_CAPABILITIES = [
@@ -402,18 +418,18 @@ const INJECTION_ATTEMPTS: TestCase[] = [
 ];
 
 async function runEvaluation() {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = PROVIDER === "anthropic" ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    console.error("❌ ERROR: OPENAI_API_KEY is not configured in .env.local");
+    console.error(`❌ ERROR: ${PROVIDER === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY"} is not configured in .env.local`);
     process.exit(1);
   }
 
-  const client = new OpenAI({ apiKey });
+  const client = PROVIDER === "openai" ? new OpenAI({ apiKey }) : null;
   const allTests = [...ARABIC_REQUESTS, ...INJECTION_ATTEMPTS];
 
   console.log(`\n===============================================================`);
   console.log(`🚀 STARTING REAL MODEL EVALUATION (Phase B)`);
-  console.log(`   Model: ${MODEL_NAME} | Effort: low | Total Cases: ${allTests.length}`);
+  console.log(`   Provider: ${PROVIDER} | Model: ${MODEL_NAME} | Total Cases: ${allTests.length}`);
   console.log(`   Budget Cap: $${MAX_TOTAL_SPEND_USD} USD | Token Cap: ${MAX_TOTAL_TOKENS}`);
   console.log(`   Capabilities: tiktok-profile ONLY (All others disabled)`);
   console.log(`===============================================================\n`);
@@ -450,26 +466,77 @@ async function runEvaluation() {
         userBalancePoints: 100,
       });
 
-      const response = await client.chat.completions.create({
-        model: MODEL_NAME,
-        reasoning_effort: "low",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: test.prompt },
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 500,
-      });
+      let inTokens = 0;
+      let outTokens = 0;
+      let rawJson = "{}";
 
-      const inTokens = response.usage?.prompt_tokens || 0;
-      const outTokens = response.usage?.completion_tokens || 0;
+      if (PROVIDER === "anthropic") {
+        const anthropicRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: MODEL_NAME,
+            max_tokens: 1024,
+            system: systemPrompt,
+            messages: [{ role: "user", content: test.prompt }],
+            tools: [
+              {
+                name: "actionResult",
+                description: "Structured output response from the assistant adhering to Digr system protocols",
+                input_schema: ACTION_RESULT_JSON_SCHEMA,
+              },
+            ],
+            tool_choice: {
+              type: "tool",
+              name: "actionResult",
+            },
+          }),
+        });
+
+        if (!anthropicRes.ok) {
+          const errText = await anthropicRes.text();
+          throw new Error(`Anthropic API error (${anthropicRes.status}): ${errText}`);
+        }
+
+        const aData: any = await anthropicRes.json();
+        inTokens = aData.usage?.input_tokens || 0;
+        outTokens = aData.usage?.output_tokens || 0;
+
+        const toolUse = aData.content?.find((b: any) => b.type === "tool_use" && b.name === "actionResult");
+        if (toolUse && toolUse.input) {
+          rawJson = JSON.stringify(toolUse.input);
+        } else {
+          const textBlock = aData.content?.find((b: any) => b.type === "text");
+          rawJson = textBlock?.text || "{}";
+        }
+      } else {
+        const response = await client!.chat.completions.create({
+          model: MODEL_NAME,
+          reasoning_effort: "low",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: test.prompt },
+          ],
+          response_format: { type: "json_object" },
+          max_completion_tokens: 500,
+        });
+
+        inTokens = response.usage?.prompt_tokens || 0;
+        outTokens = response.usage?.completion_tokens || 0;
+        rawJson = response.choices[0]?.message?.content || "{}";
+      }
+
       const testCost = (inTokens * INPUT_COST_PER_MILLION + outTokens * OUTPUT_COST_PER_MILLION) / 1_000_000;
 
       cumulativeInputTokens += inTokens;
       cumulativeOutputTokens += outTokens;
       cumulativeCostUsd += testCost;
 
-      const rawJson = response.choices[0]?.message?.content || "{}";
+      const rawContent = rawJson;
       const scrubbed = scrubWhiteLabelText(rawJson);
 
       let parsed: LlmTurnOutput | null = null;

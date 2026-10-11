@@ -68,8 +68,9 @@ This document summarizes the current architecture, deployed state, pending items
 1. **Strict Plan Edits**: The LLM can never directly write to the database or trigger spend. It can only propose plan edits through the typed `edit_plan` tool schema.
 2. **Server-Side Validation**: All plan modifications are validated by server-side schemas against the capability registry before updating quotes.
 3. **Quote Expiration & Hash Binding**: Every edit produces a new quote (30-minute expiry) bound to a SHA-256 hash of the plan. Jobs can only start on the latest valid quote. Nothing is reserved or spent prior to the customer explicitly clicking "Start".
+4. **Dual LLM Provider Architecture**: Supports both Anthropic (`LLM_PROVIDER=anthropic`, default `claude-haiku-5-5`, overridable via `ANTHROPIC_MODEL`) and OpenAI (`LLM_PROVIDER=openai`, default `gpt-6-luna`), in addition to deterministic `fake` for testing. Keys are server-only on Appwrite Site (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Pricing is dynamically read from settings rather than hardcoded.
 
 ### E. Operational Guardrails
-1. **No Unapproved Live Spend**: Never make real TREG or OpenAI API calls without explicit, direct user authorization. Use fake fixtures and local mock servers for all automated testing.
+1. **No Unapproved Live Spend**: Never make real TREG, OpenAI, or Anthropic API calls without explicit, direct user authorization. Use fake fixtures and local mock servers for all automated testing.
 2. **Zero Secrets in Code**: Never commit, log, or leak API keys, tokens, or private environment variables into the repo or client bundles.
 3. **No Machine or DNS Alterations**: Never modify host OS, network, firewall, DNS, or browser settings.
