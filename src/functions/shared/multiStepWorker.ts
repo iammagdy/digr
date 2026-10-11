@@ -1,5 +1,5 @@
 import { TablesDB, Storage, Permission, Role, ID, Query } from "node-appwrite";
-import { completeJobWithRelFirst, releaseCredits } from "./ledger";
+import { completeJobWithRelFirst, releaseCredits, releaseReservation } from "./ledger";
 import { calculateFinalSettlement } from "./quotes";
 import {
   generateExcelReport,
@@ -651,13 +651,14 @@ export async function executeMultiStepJob(
 
 /**
  * Watchdog Function: identifies stale or crashed jobs older than threshold (30 mins),
- * fails them cleanly and releases their full reserved points back to the user.
+ * fails them cleanly and releases their full reserved points back to the user idempotently.
  */
 export async function runJobWatchdog(
   tables: TablesDB,
   timeoutMinutes: number = 30
-): Promise<{ recoveredCount: number; jobIds: string[] }> {
-  const timeoutThreshold = new Date(Date.now() - timeoutMinutes * 60 * 1000).toISOString();
+): Promise<{ recoveredCount: number; jobIds: string[]; skippedIds: string[] }> {
+  const timeoutThresholdMs = Date.now() - timeoutMinutes * 60 * 1000;
+  const timeoutThreshold = new Date(timeoutThresholdMs).toISOString();
 
   const staleJobsRes = await tables.listRows({
     databaseId: "digr",
@@ -669,16 +670,32 @@ export async function runJobWatchdog(
   });
 
   const recoveredIds: string[] = [];
+  const skippedIds: string[] = [];
 
   for (const job of staleJobsRes.rows as any[]) {
+    // Secondary safety guard in case mock/DB returns rows newer than threshold
+    if (job.status !== "running" && job.status !== "queued") {
+      skippedIds.push(job.$id);
+      continue;
+    }
+    const jobCreatedMs = job.createdAt ? new Date(job.createdAt).getTime() : 0;
+    if (jobCreatedMs > timeoutThresholdMs) {
+      continue;
+    }
+
     try {
-      await releaseCredits(
+      const releaseRes = await releaseReservation(
         tables,
         job.userId,
         job.$id,
         job.reservedCredits,
         "إلغاء حجز الرصيد لتجاوز مهلة معالجة الطلب (Watchdog Recovery)"
       );
+
+      if (releaseRes.alreadyReleased) {
+        skippedIds.push(job.$id);
+        continue;
+      }
 
       await tables.updateRow({
         databaseId: "digr",
@@ -714,5 +731,79 @@ export async function runJobWatchdog(
   return {
     recoveredCount: recoveredIds.length,
     jobIds: recoveredIds,
+    skippedIds,
   };
 }
+
+export interface StuckJobReportItem {
+  jobId: string;
+  status: string;
+  ageMinutes: number;
+  reservedCredits: number;
+  alreadyReleased: boolean;
+}
+
+/**
+ * Read-only report mode: lists stuck jobs (IDs and ages only, no PII) and how to release them safely.
+ * Performs ZERO writes.
+ */
+export async function reportStuckJobsReadOnly(
+  tables: TablesDB,
+  timeoutMinutes: number = 30
+): Promise<{
+  stuckCount: number;
+  stuckJobs: StuckJobReportItem[];
+  safeReleaseStepsAr: string[];
+}> {
+  const nowMs = Date.now();
+  const timeoutThreshold = new Date(nowMs - timeoutMinutes * 60 * 1000).toISOString();
+
+  const staleJobsRes = await tables.listRows({
+    databaseId: "digr",
+    tableId: "jobs",
+    queries: [
+      Query.equal("status", ["running", "queued"]),
+      Query.lessThan("createdAt", timeoutThreshold),
+    ],
+  });
+
+  const stuckJobs: StuckJobReportItem[] = [];
+
+  for (const job of staleJobsRes.rows as any[]) {
+    if (job.status !== "running" && job.status !== "queued") continue;
+    const createdMs = job.createdAt ? new Date(job.createdAt).getTime() : nowMs;
+    const ageMinutes = Math.floor((nowMs - createdMs) / 60000);
+    if (ageMinutes < timeoutMinutes) continue;
+
+    let alreadyReleased = false;
+    try {
+      await tables.getRow({
+        databaseId: "digr",
+        tableId: "credit_ledger",
+        rowId: `rel_${job.$id}`,
+      });
+      alreadyReleased = true;
+    } catch {
+      alreadyReleased = false;
+    }
+
+    stuckJobs.push({
+      jobId: String(job.$id),
+      status: String(job.status),
+      ageMinutes,
+      reservedCredits: Number(job.reservedCredits || 0),
+      alreadyReleased,
+    });
+  }
+
+  return {
+    stuckCount: stuckJobs.length,
+    stuckJobs,
+    safeReleaseStepsAr: [
+      "1. افتح لوحة تحكم Appwrite -> Databases -> digr -> جدول jobs وحدد معرّف الطلب العالق (jobId).",
+      "2. في جدول credit_ledger تأكد من عدم وجود صف بمعرّف rel_<jobId>، ثم أنشئ صفًا بمعرّف مستند مخصص (Custom Document ID) يساوي rel_<jobId> بالقيم: type='release'، delta=+5 (موجب قيمة reservedCredits)، userId=<نفس userId للطلب>، jobId=<jobId>.",
+      "3. في جدول jobs حدّث حالة الطلب إلى status='failed' وerrorAr='تم إلغاء الطلب واسترجاع النقاط المحجوزة' (أو شغّل دالة job-worker بـ {\"mode\":\"watchdog\"} لتنفيذ الخطوتين تلقائيًا بأمان).",
+    ],
+  };
+}
+

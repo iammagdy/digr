@@ -2,8 +2,12 @@ import { Client, TablesDB, Storage, Permission, Role, ID } from "node-appwrite";
 import { z } from "zod";
 import {
   completeJobWithRelFirst,
-  releaseCredits,
+  releaseReservation,
 } from "../../shared/ledger";
+import {
+  runJobWatchdog,
+  reportStuckJobsReadOnly,
+} from "../../shared/multiStepWorker";
 import { executeTregCall } from "../../shared/tregClient";
 import {
   generateExcelReport,
@@ -30,19 +34,30 @@ export default async ({ req, res, log, error }: any) => {
   const storage = new Storage(client);
 
   try {
-    const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
+    const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
+    const triggerType = req.headers?.["x-appwrite-trigger"];
+
+    // Read-only report mode: lists stuck jobs (IDs and ages only) and safe release steps without writing to DB
+    if (rawBody?.mode === "report_stuck") {
+      const timeoutMinutes = Number(rawBody?.timeoutMinutes) || 30;
+      const report = await reportStuckJobsReadOnly(tables, timeoutMinutes);
+      return res.json({ success: true, mode: "report_stuck", ...report }, 200);
+    }
+
+    // Scheduled watchdog mode: runs every 10 minutes via Appwrite schedule trigger or explicit {"mode":"watchdog"}
+    if (triggerType === "schedule" || rawBody?.mode === "watchdog") {
+      const timeoutMinutes = Number(rawBody?.timeoutMinutes) || 30;
+      log(`[job-worker] Running scheduled watchdog (timeout=${timeoutMinutes}m)`);
+      const watchdogResult = await runJobWatchdog(tables, timeoutMinutes);
+      return res.json({ success: true, mode: "watchdog", ...watchdogResult }, 200);
+    }
+
     const validated = workerPayloadSchema.parse(rawBody);
     const { jobId } = validated;
 
     log(`[job-worker] Starting worker for job ${jobId}`);
 
-    // Verify TREG_LIVE is enabled
-    if (process.env.TREG_LIVE !== "true") {
-      log(`[job-worker] TREG_LIVE is not enabled on this worker.`);
-      return res.json({ success: false, error: "TREG_LIVE is not enabled" }, 403);
-    }
-
-    // 1. Fetch Job from database
+    // 1. Fetch Job from database first so we can always release its reservation if execution is refused
     let job: any;
     try {
       job = await tables.getRow({
@@ -54,13 +69,107 @@ export default async ({ req, res, log, error }: any) => {
       return res.json({ success: false, error: `Job ${jobId} not found` }, 404);
     }
 
-    // Guard: Prevent double-running finished jobs
-    if (job.status === "done" || job.status === "failed" || job.status === "cancelled") {
+    // Guard: Prevent double-running finished jobs; if already failed, ensure hold is released idempotently
+    if (job.status === "done" || job.status === "cancelled") {
       log(`[job-worker] Job ${jobId} is already ${job.status}. Skipping.`);
       return res.json({ success: true, message: `Job already ${job.status}` }, 200);
     }
+    if (job.status === "failed") {
+      const relCheck = await releaseReservation(
+        tables,
+        job.userId,
+        jobId,
+        job.reservedCredits,
+        "تأكيد استرجاع الرصيد المحجوز لطلب متعثر"
+      );
+      log(`[job-worker] Job ${jobId} is already failed (alreadyReleased=${relCheck.alreadyReleased}).`);
+      return res.json({
+        success: true,
+        message: "Job already failed",
+        released: relCheck.released,
+        alreadyReleased: relCheck.alreadyReleased,
+      }, 200);
+    }
 
-    // 2. Mark job as running
+    // Helper: Refuse execution cleanly by releasing reservation idempotently and marking job failed in Arabic
+    const failAndReleaseRefusal = async (reasonAr: string, ledgerNoteAr: string) => {
+      const releaseResult = await releaseReservation(
+        tables,
+        job.userId,
+        jobId,
+        job.reservedCredits,
+        ledgerNoteAr
+      );
+      const nowFailed = new Date().toISOString();
+      await tables.updateRow({
+        databaseId: "digr",
+        tableId: "jobs",
+        rowId: jobId,
+        data: {
+          status: "failed",
+          errorAr: reasonAr,
+          finishedAt: nowFailed,
+        },
+      });
+      await tables.createRow({
+        databaseId: "digr",
+        tableId: "job_events",
+        rowId: ID.unique(),
+        data: {
+          jobId,
+          textAr: reasonAr,
+          count: 0,
+          kind: "error",
+          createdAt: nowFailed,
+        },
+        permissions: [
+          Permission.read(Role.user(job.userId)),
+          Permission.read(Role.label("admin")),
+        ],
+      });
+      return res.json(
+        {
+          success: false,
+          jobId,
+          status: "failed",
+          released: releaseResult.released,
+          alreadyReleased: releaseResult.alreadyReleased,
+          error: reasonAr,
+        },
+        200
+      );
+    };
+
+    // Verify TREG_LIVE is enabled; if not, release reservation idempotently and fail job instead of leaving hold stuck
+    if (process.env.TREG_LIVE !== "true") {
+      log(`[job-worker] TREG_LIVE is not enabled on this worker. Releasing reservation for job ${jobId}.`);
+      return await failAndReleaseRefusal(
+        "الخدمة غير مفعلة حاليًا على الخادم. تم استرجاع كامل الرصيد المحجوز إلى محفظتك.",
+        "استرجاع الرصيد المحجوز لعدم تفعيل الاتصال المباشر بمصدر البيانات"
+      );
+    }
+
+    // 2. Fetch private template settings & internal margins before marking running
+    let tmplPriv: any;
+    try {
+      tmplPriv = await tables.getRow({
+        databaseId: "digr",
+        tableId: "templates_private",
+        rowId: job.templateSlug,
+      });
+    } catch {
+      tmplPriv = null;
+    }
+
+    if (!tmplPriv || !tmplPriv.tregEndpointId) {
+      log(`[job-worker] Missing or unverified template config for ${job.templateSlug}. Releasing reservation.`);
+      return await failAndReleaseRefusal(
+        "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن. تم استرجاع كامل الرصيد المحجوز إلى محفظتك.",
+        "استرجاع الرصيد المحجوز لعدم اكتمال إعدادات المنصة المطلوبة"
+      );
+    }
+
+    // 3. Mark job as running
     const nowStart = new Date().toISOString();
     await tables.updateRow({
       databaseId: "digr",
@@ -84,13 +193,6 @@ export default async ({ req, res, log, error }: any) => {
         Permission.read(Role.user(job.userId)),
         Permission.read(Role.label("admin")),
       ],
-    });
-
-    // 3. Fetch private template settings & internal margins
-    const tmplPriv: any = await tables.getRow({
-      databaseId: "digr",
-      tableId: "templates_private",
-      rowId: job.templateSlug,
     });
 
     const settings: any = await tables.getRow({
@@ -150,8 +252,8 @@ export default async ({ req, res, log, error }: any) => {
 
       log(`[job-worker] Job ${jobId} failed: ${failureNoticeAr}`);
 
-      // Release reserved credits
-      await releaseCredits(tables, job.userId, jobId, job.reservedCredits, "استرجاع الرصيد لفشل استخراج البيانات");
+      // Release reserved credits idempotently
+      await releaseReservation(tables, job.userId, jobId, job.reservedCredits, "استرجاع الرصيد لفشل استخراج البيانات");
 
       // Update job to failed
       await tables.updateRow({
@@ -246,13 +348,13 @@ export default async ({ req, res, log, error }: any) => {
     ];
 
     // Upload all 3 files to bucket 'results' with File Security ON
-    const xlsxFile = new File([xlsxBuffer], `digr_${job.templateSlug}_${jobId}.xlsx`, {
+    const xlsxFile = new File([new Uint8Array(xlsxBuffer)], `digr_${job.templateSlug}_${jobId}.xlsx`, {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
-    const pdfFile = new File([pdfBuffer], `digr_${job.templateSlug}_${jobId}.pdf`, {
+    const pdfFile = new File([new Uint8Array(pdfBuffer)], `digr_${job.templateSlug}_${jobId}.pdf`, {
       type: "application/pdf",
     });
-    const csvFile = new File([csvBuffer], `digr_${job.templateSlug}_${jobId}.csv`, {
+    const csvFile = new File([new Uint8Array(csvBuffer)], `digr_${job.templateSlug}_${jobId}.csv`, {
       type: "text/csv; charset=utf-8",
     });
 

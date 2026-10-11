@@ -93,6 +93,30 @@ export async function releaseCredits(
 }
 
 /**
+ * Idempotent release of a job reservation using deterministic ID `rel_<jobId>`.
+ * If `rel_<jobId>` already exists (409 Conflict), returns `{ released: false, alreadyReleased: true }`
+ * without throwing or double-crediting the user.
+ */
+export async function releaseReservation(
+  tables: TablesDB,
+  userId: string,
+  jobId: string,
+  amount: number,
+  note?: string
+): Promise<{ released: boolean; alreadyReleased: boolean; rowId: string }> {
+  const rowId = `rel_${jobId}`;
+  try {
+    await releaseCredits(tables, userId, jobId, amount, note);
+    return { released: true, alreadyReleased: false, rowId };
+  } catch (err: any) {
+    if (err?.code === 409 || err?.status === 409) {
+      return { released: false, alreadyReleased: true, rowId };
+    }
+    throw err;
+  }
+}
+
+/**
  * Creates a deterministic charge entry: ID = chg_<jobId>
  * Capped at reservedCredits if provided.
  */
