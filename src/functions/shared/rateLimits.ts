@@ -11,7 +11,7 @@ export interface RateLimitConfig {
 export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
   messagesPerMinute: 10,
   messagesPerDay: 100,
-  conversationMaxTokens: 15_000,
+  conversationMaxTokens: 40_000,
   globalDailySpendCapUsd: 1.0,
   userDailySpendCapUsd: 0.10,
 };

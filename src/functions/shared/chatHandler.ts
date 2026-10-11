@@ -59,6 +59,142 @@ export interface ChatHandlerResponse {
   };
 }
 
+/** Rough token estimate for Arabic/English mixed text (chars/4 heuristic). */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+/** Conversation context budget. When reached, older turns are summarized instead of blocking. */
+export const CONTEXT_TOKEN_LIMIT = 40000;
+
+/** Max tokens for a single catalog tool_result block sent back to the model. */
+const CATALOG_RESULT_TOKEN_CAP = 2500;
+
+/**
+ * Compact catalog results for the model's next turn: top 5 endpoints with only
+ * the fields needed to ask questions or propose a plan (id alias, Arabic name,
+ * platform, required params, billing unit, points per unit). No descriptions,
+ * no examples, no full schemas. Capped at ~2,500 tokens.
+ */
+export function buildCompactCatalogSummary(results: CatalogEndpointSummary[]): string {
+  const header =
+    "[نتائج بحث الكتالوج — داخلية: لا تعرضها للمستخدم كنص. استخدمها لاستدعاء ask_questions أو propose_plan]";
+  if (!results || results.length === 0) {
+    return `${header}\nلا توجد أدوات مطابقة في الكتالوج لهذا البحث.`;
+  }
+  const requiredParams = (r: CatalogEndpointSummary): string => {
+    try {
+      const schema: any = typeof r.paramsSchema === "string" ? JSON.parse(r.paramsSchema) : r.paramsSchema;
+      const required: string[] = Array.isArray(schema?.required) ? schema.required : [];
+      const props = schema?.properties ? Object.keys(schema.properties) : [];
+      const names = required.length > 0 ? required : props.slice(0, 3);
+      return names.length > 0 ? names.join(",") : "-";
+    } catch {
+      return "-";
+    }
+  };
+  let count = 5;
+  let block = "";
+  while (count >= 1) {
+    const lines = results.slice(0, count).map(
+      (r, i) =>
+        `${i + 1}. ${r.slug} | ${r.nameAr} | ${r.platform} | مدخلات: ${requiredParams(r)} | الوحدة: ${r.billingUnit || "-"} | ${r.pointsPerUnit ?? "?"} نقطة/وحدة`,
+    );
+    block = `${header}\n${lines.join("\n")}`;
+    if (estimateTokens(block) <= CATALOG_RESULT_TOKEN_CAP) break;
+    count = Math.floor(count / 2);
+  }
+  return block;
+}
+
+/**
+ * Code-built discovery fallback: real questions with real options, never the
+ * generic sentence. Constructed directly (not via model-output normalization)
+ * so trusted code questions are never dropped.
+ */
+export function buildCodeDiscoveryFallback(
+  allCapabilities: Capability[],
+): { intro: string; items: NormalizedClarificationQuestion[] } {
+  const platformLabels = [
+    ...new Set(
+      (allCapabilities || [])
+        .filter((c) => c && c.enabled !== false)
+        .map((c) => {
+          try {
+            return getPlatformLabelAr(String((c as any).platform || (c as any).category || ""));
+          } catch {
+            return "";
+          }
+        })
+        .filter(Boolean),
+    ),
+  ].slice(0, 5);
+  const platforms =
+    platformLabels.length > 0 ? platformLabels : ["فيسبوك", "تيك توك", "إنستغرام", "منصة X", "يوتيوب"];
+  const intro = "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
+  const items: NormalizedClarificationQuestion[] = [
+    {
+      id: "code_platform",
+      text: "ما المنصة المستهدفة لجمع البيانات؟",
+      question: "ما المنصة المستهدفة لجمع البيانات؟",
+      type: "single",
+      options: platforms,
+      allowOther: true,
+    },
+    {
+      id: "code_topic",
+      text: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
+      question: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
+      type: "free",
+      options: [],
+      allowOther: true,
+    },
+    {
+      id: "code_volume",
+      text: "ما حجم البيانات المطلوب جمعها؟",
+      question: "ما حجم البيانات المطلوب جمعها؟",
+      type: "single",
+      options: ["حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
+      allowOther: true,
+    },
+  ];
+  return { intro, items };
+}
+
+/**
+ * Deterministic history compaction: keep the first message and the most recent
+ * turns, replace the middle with a compact internal summary. The active plan
+ * state (if any) is preserved in the summary.
+ */
+export function summarizeConversationHistory(
+  messages: Array<{ role: string; content: string }>,
+  planSummary?: string,
+): Array<{ role: "system" | "user" | "assistant"; content: string }> {
+  const KEEP_RECENT = 6;
+  const normalized = messages.map((m) => ({
+    role: (m.role === "user" || m.role === "assistant" ? m.role : "system") as "system" | "user" | "assistant",
+    content: String(m.content || ""),
+  }));
+  if (normalized.length <= KEEP_RECENT + 1) return normalized;
+  const first = normalized[0];
+  const recent = normalized.slice(-KEEP_RECENT);
+  const middle = normalized.slice(1, -KEEP_RECENT);
+  const lines = middle.map((m) => {
+    const who = m.role === "user" ? "المستخدم" : "المساعد";
+    return `- ${who}: ${m.content.slice(0, 120)}`;
+  });
+  if (planSummary) lines.push(`- الخطة الحالية: ${planSummary}`);
+  return [
+    first,
+    {
+      role: "system",
+      content: `[ملخص المحادثة السابقة — داخلي، لا تعرضه للمستخدم]\n${lines.join("\n")}`,
+    },
+    ...recent,
+  ];
+}
+
 export function buildClarificationPresentation(
   output: Extract<LlmTurnOutput, { type: "ask_clarification" }>,
   context: { capabilities?: Capability[]; userBalancePoints?: number; persona?: string } = {},
@@ -249,8 +385,35 @@ export class ChatHandler {
       }
     }
 
+    // 6b. Context-bloat guard: when the accumulated context reaches the budget,
+    // summarize older turns instead of blocking the user. The DB counter keeps
+    // growing as a cumulative stat; the model only sees the compacted history.
+    let effectiveConvTokens = totalConvTokens;
+    let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
+    if (totalConvTokens >= CONTEXT_TOKEN_LIMIT) {
+      let planSummary: string | undefined;
+      try {
+        const quoteRes = await this.tables.listRows({
+          databaseId: "digr",
+          tableId: "plans_quotes",
+          queries: [
+            Query.equal("conversationId", conversationId),
+            Query.equal("status", "proposed"),
+            Query.orderDesc("createdAt"),
+            Query.limit(1),
+          ],
+        });
+        const q: any = quoteRes.rows?.[0];
+        if (q) planSummary = `${q.summaryAr || "خطة مقترحة"} — ${q.quotedPoints ?? "?"} نقطة`;
+      } catch {
+        // plans_quotes unavailable: summarize without plan state
+      }
+      turnMessages = summarizeConversationHistory(messagesContext, planSummary);
+      effectiveConvTokens = estimateTokens(turnMessages.map((m) => m.content).join("\n"));
+    }
+
     let llmResult = await this.llm.executeTurn({
-      messages: messagesContext,
+      messages: turnMessages,
       sanitizedCapabilities: sanitizedCaps,
       userProfile: userProfile
         ? {
@@ -263,7 +426,7 @@ export class ChatHandler {
       userBalancePoints: userBalance,
       conversationId,
       userId,
-      totalConversationTokens: totalConvTokens,
+      totalConversationTokens: effectiveConvTokens,
       testScenario,
     });
 
@@ -276,19 +439,8 @@ export class ChatHandler {
     // to the user as a list; prices appear only inside a priced plan.
     const MAX_CATALOG_ITERATIONS = 4;
     let catalogIterations = 0;
-    const loopMessages = [...messagesContext];
-    while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
-      catalogIterations++;
-      const searchRes = await searchCatalog(output.query, output.platform);
-      const internalSummary =
-        searchRes.length === 0
-          ? "[نتائج بحث الكتالوج — داخلية] لم يتم العثور على أدوات مطابقة في الكتالوج لهذا البحث."
-          : "[نتائج بحث الكتالوج — داخلية، لا تعرضها للمستخدم كنص]\n" +
-            searchRes
-              .slice(0, 5)
-              .map((r) => `- slug: ${r.slug} | الاسم: ${r.nameAr} | المنصة: ${r.platform}`)
-              .join("\n");
-      loopMessages.push({ role: "system", content: internalSummary } as const);
+    const loopMessages = [...turnMessages];
+    const repeatTurn = async () => {
       llmResult = await this.llm.executeTurn({
         messages: loopMessages,
         sanitizedCapabilities: sanitizedCaps,
@@ -303,10 +455,37 @@ export class ChatHandler {
         userBalancePoints: userBalance,
         conversationId,
         userId,
-        totalConversationTokens: totalConvTokens,
+        totalConversationTokens: effectiveConvTokens,
         testScenario,
       });
       output = llmResult.output;
+    };
+    while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
+      catalogIterations++;
+      const searchRes = await searchCatalog(output.query, output.platform);
+      // Compact internal result (top 5, minimal fields, ~2.5k token cap).
+      // Never persisted, never user-visible.
+      loopMessages.push({ role: "system", content: buildCompactCatalogSummary(searchRes) } as const);
+      await repeatTurn();
+    }
+
+    // 7c. One retry when the model stalled after a catalog search (empty text or
+    // no next step): give it an explicit instruction before giving up.
+    const didSearch = catalogIterations > 0;
+    const isProductiveTerminal = (o: typeof output): boolean => {
+      if (o.type === "ask_clarification" || o.type === "ask_questions" || o.type === "propose_plan") return true;
+      if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim().length > 0;
+      return o.type === "refuse" || o.type === "suggest_alternative" || o.type === "edit_plan" || o.type === "write_note";
+    };
+    if (didSearch && !isProductiveTerminal(output)) {
+      loopMessages.push(
+        {
+          role: "system",
+          content:
+            "[تعليمات داخلية — الخطوة التالية المطلوبة]: بناءً على نتائج بحث الكتالوج أعلاه، استدعِ الآن ask_questions لطرح أسئلة استكشافية أو propose_plan لاقتراح خطة مسعرة. لا تعرض نتائج الكتالوج للمستخدم كنص.",
+        } as const,
+      );
+      await repeatTurn();
     }
 
     let finalContentAr = "";
@@ -314,31 +493,22 @@ export class ChatHandler {
     let clarificationQuestionsList: string[] | undefined = undefined;
     let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
-    // Discovery fallback used when the catalog loop cannot produce a next step:
-    // a real question for the user, never the raw catalog list.
+    // Discovery fallback used when the catalog loop + one retry cannot produce a
+    // next step: real code-built questions (never the generic sentence, never the
+    // raw catalog list).
     const fallbackToDiscovery = () => {
-      const fallback = buildClarificationPresentation(
-        {
-          type: "ask_clarification",
-          reasonAr: "أحتاج توضيحاً إضافياً لمتابعة طلبك بدقة.",
-          questions: [{ question: "ما التفاصيل الإضافية التي تريد تحديدها لطلبك؟" }],
-        } as any,
-        {
-          capabilities: allCapabilities,
-          userBalancePoints: userBalance,
-          persona: userProfile?.persona,
-        },
-      );
-      clarificationQuestionsList = fallback.clarificationQuestions;
-      clarificationItemsList = fallback.clarificationItems;
-      finalContentAr = fallback.contentAr;
+      const fallback = buildCodeDiscoveryFallback(allCapabilities);
+      clarificationQuestionsList = fallback.items.map((item) => item.text);
+      clarificationItemsList = fallback.items;
+      finalContentAr = fallback.intro;
     };
 
     // 8. Process Output Actions
-    if (output.type === "search_catalog") {
-      // The internal loop above exhausted its iterations without the model
-      // choosing a next step. Fall back to a discovery question — the raw
-      // catalog results must never reach the user as a list.
+    const stalledAnswerText =
+      output.type === "answer_question" ? (((output as any).answerAr || "") as string).trim() : "";
+    if (output.type === "search_catalog" || (output.type === "answer_question" && !stalledAnswerText)) {
+      // The model stalled even after the catalog loop + one explicit retry.
+      // Fall back to code-built discovery questions — never the raw catalog list.
       fallbackToDiscovery();
     } else if (output.type === "ask_clarification" || output.type === "ask_questions") {
       const clarification = buildClarificationPresentation(output as any, {
@@ -350,11 +520,7 @@ export class ChatHandler {
       clarificationItemsList = clarification.clarificationItems;
       finalContentAr = clarification.contentAr;
     } else if (output.type === "answer_question") {
-      if ((output.answerAr || "").trim().length > 0) {
-        finalContentAr = output.answerAr;
-      } else {
-        fallbackToDiscovery();
-      }
+      finalContentAr = output.answerAr;
     } else if (output.type === "write_note") {
       finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
     } else if (output.type === "propose_plan") {
