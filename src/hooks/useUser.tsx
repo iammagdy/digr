@@ -27,16 +27,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   const [loading, setLoading] = useState(true);
 
+  const syncBrowserAuthCookies = useCallback(async () => {
+    if (typeof document === "undefined") return;
+    try {
+      const fallbackRaw = window.localStorage?.getItem("cookieFallback");
+      if (fallbackRaw) {
+        const parsed = JSON.parse(fallbackRaw);
+        if (parsed && typeof parsed === "object") {
+          for (const [k, v] of Object.entries(parsed)) {
+            if (k.startsWith("a_session_") && typeof v === "string" && v) {
+              document.cookie = `${k}=${encodeURIComponent(v)}; Path=/; SameSite=Lax`;
+            }
+          }
+        }
+      }
+    } catch {}
+    try {
+      const { jwt } = await account.createJWT();
+      if (jwt) {
+        document.cookie = `digr_jwt=${encodeURIComponent(jwt)}; Path=/; Max-Age=840; SameSite=Lax`;
+      }
+    } catch {}
+  }, []);
+
+  const clearBrowserAuthCookies = useCallback(() => {
+    if (typeof document === "undefined") return;
+    document.cookie = "digr_jwt=; Path=/; Max-Age=0; SameSite=Lax";
+  }, []);
+
   const getUser = useCallback(async () => {
     try {
       const session = await account.get();
       setUser(session);
+      await syncBrowserAuthCookies();
     } catch {
       setUser(null);
+      clearBrowserAuthCookies();
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [syncBrowserAuthCookies, clearBrowserAuthCookies]);
 
   useEffect(() => {
     getUser();
@@ -54,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await account.deleteSession("current");
+    clearBrowserAuthCookies();
     setUser(null);
   };
 
