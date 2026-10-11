@@ -6,7 +6,8 @@ import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
-import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, methodologyAlertText, methodologyMessageText, type BalanceView } from "@/lib/honestDisplay";
+import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText, type BalanceView } from "@/lib/honestDisplay";
+import { buildReadyExampleTemplates, EXAMPLE_TEMPLATES_HEADING_AR, EXAMPLE_PRICE_DISCLAIMER_AR } from "@/functions/shared/exampleTemplates";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
@@ -1005,6 +1006,46 @@ export default function ChatWorkspacePage() {
                   صِف البيانات العامة التي تحتاجها — سأطرح أسئلة توضيحية، ثم أصمّم خطة
                   قابلة للتعديل بعرض سعر شفاف. لا يبدأ أي جمع قبل موافقتك.
                 </p>
+              </div>
+
+              {/* Ready-to-use Example Templates ("أمثلة جاهزة") computed from the capability registry */}
+              <div className="mt-7 space-y-3" aria-label={EXAMPLE_TEMPLATES_HEADING_AR}>
+                <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+                  <h3 className="text-sm font-bold text-ink-900">{EXAMPLE_TEMPLATES_HEADING_AR}</h3>
+                  <span className="text-xs text-sand-500">{EXAMPLE_PRICE_DISCLAIMER_AR}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" role="list">
+                  {buildReadyExampleTemplates().map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      role="listitem"
+                      onClick={() => {
+                        setInputText(tpl.editablePromptAr);
+                        inputRef.current?.focus();
+                      }}
+                      className="group min-h-11 rounded-2xl border border-sand-200 bg-white p-4 text-right shadow-[var(--shadow-card)] transition-all hover:border-accent/40 hover:shadow-[var(--shadow-lift)] cursor-pointer flex flex-col justify-between gap-2"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-sand-600">{tpl.platformAr}</span>
+                          <span className="tnum rounded-lg bg-amber-points-bg px-2 py-0.5 text-xs font-bold text-amber-points">
+                            تقريبيًا {formatNumber(tpl.approximatePoints)} نقطة
+                          </span>
+                        </div>
+                        <div className="text-sm font-bold text-ink-900 group-hover:text-accent-ink">{tpl.titleAr}</div>
+                        <div className="text-xs leading-relaxed text-sand-600">{tpl.shortDescriptionAr}</div>
+                        <div className="text-xs leading-relaxed text-sand-500">
+                          <strong className="text-ink-800">المخرجات: </strong>
+                          {tpl.deliverablesAr}
+                        </div>
+                      </div>
+                      <div className="border-t border-sand-100 pt-2 text-[11px] text-sand-500">
+                        {tpl.disclaimerAr}
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Persona examples are enabled only from the server's capability list. */}
