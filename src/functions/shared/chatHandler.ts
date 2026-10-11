@@ -34,6 +34,16 @@ import {
   type NormalizedClarificationQuestion,
 } from "./clarification";
 import { searchCatalog, getCachedCatalogEndpoints, CatalogEndpointSummary } from "./catalogClient";
+import {
+  isGreetingOrGeneralQuestion,
+  isPriceOrProceedIntent,
+  extractBriefFromMessage,
+  isBriefComplete,
+  formatBriefForSystemPrompt,
+  getConversationBrief,
+  saveConversationBrief,
+  type ResearchBrief,
+} from "./briefManager";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -309,7 +319,7 @@ export function buildPlanFixPrompt(
 }
 
 const TOPIC_STOPWORDS = new Set(
-  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x".split(
+  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم".split(
     " ",
   ),
 );
@@ -327,10 +337,10 @@ export function toArabicIndicDigits(text: string): string {
 export function extractTopicChips(userMessage: string, maxChips = 4): string[] {
   if (!userMessage) return [];
   const words = userMessage
-    .replace(/[؟?!.،,؛:()«»"']/g, " ")
+    .replace(/[؟?!.،,؛:()«»"'_]/g, " ")
     .split(/\s+/)
     .map((w) => w.trim())
-    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && !TOPIC_STOPWORDS.has(w));
+    .filter((w) => w.length > 2 && !/^\d+$/.test(w) && !TOPIC_STOPWORDS.has(w.toLowerCase()));
   return [...new Set(words)].slice(0, maxChips);
 }
 
@@ -488,16 +498,70 @@ export class ChatHandler {
       },
     });
 
-    // 5. Fetch Capabilities and Sanitize for LLM (R1: zero leaks)
+    // 5. Research Brief & Two-Phase Routing
+    const currentBrief = await getConversationBrief(this.tables, conversationId);
+    const brief = extractBriefFromMessage(message, currentBrief);
+
+    const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(message);
+    const wantsPriceOrProceed = isPriceOrProceedIntent(message);
+    const isComplete = isBriefComplete(brief);
+
+    const isTestSearchScenario = typeof testScenario === "string" && testScenario.startsWith("search_");
+    let isPhase2 = false;
+
+    if (isTestSearchScenario) {
+      isPhase2 = false;
+    } else if (isGreeting || isGeneralQuestion) {
+      isPhase2 = false;
+    } else if (isComplete) {
+      isPhase2 = true;
+    } else if (wantsPriceOrProceed && brief.platforms.length > 0 && brief.topics.length > 0) {
+      if (!brief.targetVolume || brief.targetVolume <= 0) {
+        brief.targetVolume = 500;
+        brief.notes = (brief.notes ? brief.notes + " | " : "") + "تم تطبيق الحد الافتراضي (500 سجل) لحساب التكلفة التقديرية بناءً على طلبك";
+      }
+      isPhase2 = true;
+    } else if (testScenario === "search_then_plan" || testScenario === "direct_plan" || testScenario === "summary_then_plan" || testScenario === "multiplatform_plan" || testScenario === "phase2_plan") {
+      isPhase2 = true;
+    }
+
     const [capabilities, catalogCapabilities] = await Promise.all([
       getEnabledCapabilities(this.tables),
       getCatalogCapabilities(this.tables),
     ]);
 
-    // Live catalog access (Phase A & B)
-    const mentionedPlatforms = detectMentionedPlatforms(message);
-    const platformHint = mentionedPlatforms[0] || undefined;
-    const liveCatalogEndpoints = await searchCatalog(message, platformHint);
+    let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
+
+    if (isPhase2) {
+      // Progress line during Phase 2 pricing
+      await this.tables.updateRow({
+        databaseId: "digr",
+        tableId: "messages",
+        rowId: assistantMsgId,
+        data: {
+          content: "أبحث وأحسب السعر...",
+          status: "thinking",
+        },
+      });
+
+      // Server-side: run catalog search once per platform in brief (24h cache)
+      const platformsToSearch = brief.platforms.length > 0 ? brief.platforms : detectMentionedPlatforms(message);
+      const searchTopic = brief.topics.length > 0 ? brief.topics.join(" ") : message;
+
+      if (platformsToSearch.length > 0) {
+        for (const p of platformsToSearch) {
+          const res = await searchCatalog(searchTopic, p);
+          liveCatalogEndpoints.push(...res);
+        }
+      } else {
+        const res = await searchCatalog(searchTopic, undefined);
+        liveCatalogEndpoints.push(...res);
+      }
+    } else if (isTestSearchScenario) {
+      const mentionedPlatforms = detectMentionedPlatforms(message);
+      const platformHint = mentionedPlatforms[0] || undefined;
+      liveCatalogEndpoints = await searchCatalog(message, platformHint);
+    }
 
     const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
 
@@ -558,6 +622,19 @@ export class ChatHandler {
       }
       turnMessages = summarizeConversationHistory(messagesContext, planSummary);
       effectiveConvTokens = estimateTokens(turnMessages.map((m) => m.content).join("\n"));
+    }
+
+    if (isPhase2) {
+      const compactSummary = buildCompactCatalogSummary(liveCatalogEndpoints.length > 0 ? liveCatalogEndpoints : getCachedCatalogEndpoints());
+      turnMessages.push({
+        role: "system",
+        content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
+      });
+    } else if (!isGreeting && !isGeneralQuestion && !isTestSearchScenario) {
+      turnMessages.push({
+        role: "system",
+        content: `${formatBriefForSystemPrompt(brief)}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]:\n- لا تبحث في الكتالوج ولا تقترح خطة مسعرة في هذه المرحلة.\n- افهم قصد المستخدم، واطرح حتى ٣ أسئلة متابعة ذكية كحد أقصى (لا تكرر أي سؤال تمت الإجابة عنه سابقاً).\n- احفظ واستكمل متطلبات البحث عبر استدعاء أداة update_brief (المنصات، الكلمات المفتاحية، حجم البيانات، النطاق الزمني، إلخ).`,
+      });
     }
 
     let llmResult = await this.llm.executeTurn({
@@ -733,7 +810,49 @@ export class ChatHandler {
       // The model stalled even after the catalog loop + one explicit retry.
       // Fall back to code-built discovery questions — never the raw catalog list.
       fallbackToDiscovery();
+    } else if (output.type === "update_brief") {
+      if (output.platforms && output.platforms.length > 0) {
+        for (const p of output.platforms) {
+          if (!brief.platforms.includes(p)) brief.platforms.push(p);
+        }
+      }
+      if (output.topics && output.topics.length > 0) {
+        for (const t of output.topics) {
+          if (!brief.topics.includes(t)) brief.topics.push(t);
+        }
+      }
+      if (output.targetVolume) brief.targetVolume = output.targetVolume;
+      if (output.commentsPerPost) brief.commentsPerPost = output.commentsPerPost;
+      if (output.dateRange) brief.dateRange = output.dateRange;
+      if (output.language) brief.language = output.language;
+      if (output.formats) brief.formats = output.formats;
+      if (output.notes) brief.notes = output.notes;
+
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
+
+      if (output.questions && output.questions.length > 0) {
+        clarificationQuestionsList = output.questions.map((q: any) => q.question || q.text);
+        clarificationItemsList = normalizeClarificationQuestions(
+          { questions: output.questions as any },
+          { capabilities: allCapabilities, userBalancePoints: userBalance, persona: userProfile?.persona },
+        );
+        finalContentAr = output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
+        output = {
+          type: "ask_clarification",
+          reasonAr: finalContentAr,
+          intro: finalContentAr,
+          questions: clarificationItemsList,
+          questionsAr: clarificationQuestionsList,
+        } as any;
+      } else {
+        finalContentAr = output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.";
+        output = {
+          type: "answer_question",
+          answerAr: finalContentAr,
+        } as any;
+      }
     } else if (output.type === "ask_clarification" || output.type === "ask_questions") {
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
       const clarification = buildClarificationPresentation(output as any, {
         capabilities: allCapabilities,
         userBalancePoints: userBalance,
@@ -746,10 +865,13 @@ export class ChatHandler {
         ? llmResult.textBlockAr
         : clarification.contentAr;
     } else if (output.type === "answer_question") {
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
       finalContentAr = output.answerAr;
     } else if (output.type === "write_note") {
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
       finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
     } else if (output.type === "propose_plan") {
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
       const mapPlanItems = (out: any) =>
         ((out as any).capabilities || (out as any).steps || []).map((c: any) => ({
           stepId: c.stepId,
