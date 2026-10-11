@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { balanceText, type BalanceView } from "@/lib/honestDisplay";
 import Link from "next/link";
 import { getPersonaConfig, PersonaType, PERSONA_CONFIGS } from "@/functions/shared/personaConfigs";
 import { Alert } from "@/components/ui";
@@ -17,7 +18,7 @@ interface ChatSidebarProps {
   onSelectConversation: (id: string) => void;
   onNewChat: () => void;
   onDeleteConversation?: (id: string) => void;
-  userBalance: number | null;
+  userBalance: BalanceView;
   userPersona?: PersonaType;
   onChangePersona: (persona: PersonaType) => Promise<void>;
   isBusy?: boolean;
@@ -158,7 +159,7 @@ export default function ChatSidebar({
         <div className="relative space-y-3 border-t border-white/10 p-4">
           <Link href="/dashboard/topup" onClick={onCloseMobile} className="tnum flex items-center justify-between rounded-2xl bg-white/8 px-3.5 py-3 ring-1 ring-white/10 transition-colors hover:bg-white/12">
             <span className="text-xs text-sand-300">رصيد النقاط</span>
-            <span className="text-base font-bold text-amber-points">{userBalance !== null ? userBalance.toLocaleString("ar-EG") : "…"} <span className="text-xs">نقطة +</span></span>
+            <span className="text-base font-bold text-amber-points">{balanceText(userBalance)} <span className="text-xs">نقطة +</span></span>
           </Link>
           <div>
             <label htmlFor="persona-setting" className="mb-1.5 block text-xs font-semibold text-sand-300">

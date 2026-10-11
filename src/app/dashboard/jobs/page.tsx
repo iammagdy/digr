@@ -7,6 +7,7 @@ import { client, databases, account } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { Alert, Badge, Button, Card, EmptyState, Eyebrow, Input, Skeleton, Spinner, Tabs, type StatusTone } from "@/components/ui";
+import { chronological, EVENT_HISTORY_LIMIT, eventHistoryScopeLabel } from "@/lib/honestDisplay";
 
 const storage = new Storage(client);
 
@@ -91,12 +92,13 @@ export default function JobsPage() {
     setExpandedJobId(jobId);
     setLoadingEvents(jobId);
     try {
+      // Latest events first from the server, restored to reading order for display.
       const evRes = await databases.listDocuments("digr", "job_events", [
         Query.equal("jobId", jobId),
-        Query.orderAsc("createdAt"),
-        Query.limit(20),
+        Query.orderDesc("createdAt"),
+        Query.limit(EVENT_HISTORY_LIMIT),
       ]);
-      setEvents((prev) => ({ ...prev, [jobId]: evRes.documents as unknown as JobEvent[] }));
+      setEvents((prev) => ({ ...prev, [jobId]: chronological(evRes.documents as unknown as JobEvent[]) }));
     } catch (err: any) {
       console.error("Error fetching events:", err);
     } finally {
@@ -317,7 +319,10 @@ export default function JobsPage() {
 
                 {isExpanded && (
                   <div className="animate-fade border-t border-sand-100 bg-sand-50/60 p-5">
-                    <h3 className="mb-3 text-xs font-bold text-ink-800">سجل الأحداث المسجّلة</h3>
+                    <h3 className="mb-3 text-xs font-bold text-ink-800">
+                      سجل الأحداث المسجّلة
+                      <span className="ms-2 font-medium text-sand-500">({eventHistoryScopeLabel()})</span>
+                    </h3>
                     {loadingEvents === job.$id ? (
                       <div className="flex items-center gap-2 text-xs text-sand-500"><Spinner label="جاري تحميل الأحداث" /></div>
                     ) : jobEventsList.length === 0 ? (

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Badge, StatusDot, type StatusTone } from "@/components/ui";
+import { timelineWaitingText, type JobStatus } from "@/lib/honestDisplay";
 
 export interface JobEvent {
   $id: string;
@@ -12,12 +13,14 @@ export interface JobEvent {
 }
 
 interface ActivityTimelineProps {
-  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  status: JobStatus;
   events: JobEvent[];
   rowsCollected: number;
+  /** Number of events fetched in this read; shown so a limited history is never mistaken for complete. */
+  eventLimit?: number;
 }
 
-const STATUS_META: Record<ActivityTimelineProps["status"], { label: string; tone: StatusTone; pulse: boolean }> = {
+const STATUS_META: Record<JobStatus, { label: string; tone: StatusTone; pulse: boolean }> = {
   queued: { label: "في الانتظار", tone: "warning", pulse: false },
   running: { label: "جارٍ التنفيذ", tone: "info", pulse: true },
   done: { label: "مكتمل", tone: "success", pulse: false },
@@ -40,19 +43,14 @@ function formatTime(iso: string): string {
   }
 }
 
-export default function ActivityTimeline({ status, events, rowsCollected }: ActivityTimelineProps) {
+export default function ActivityTimeline({ status, events, rowsCollected, eventLimit }: ActivityTimelineProps) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = STATUS_META[status];
   const hasEvents = events && events.length > 0;
-
-  // Fallback stages — shown only when the backend has no recorded events yet.
-  // They describe pipeline stages, never invented record counts.
-  const fallbackStages = [
-    { text: "تحديد الخدمة المطلوبة", done: true },
-    { text: "قبول عرض السعر وحجز الرصيد", done: true },
-    { text: "الاتصال بمصدر البيانات وجمع السجلات", done: status !== "queued", active: status === "running" },
-    { text: "مراجعة التغطية وتجهيز الملفات", done: status === "done", active: false },
-  ];
+  const scopeNote =
+    eventLimit !== undefined && hasEvents && events.length >= eventLimit
+      ? `يعرض أحدث ${eventLimit.toLocaleString("ar-EG")} حدثًا مسجَّلًا.`
+      : null;
 
   return (
     <section className="mt-3 overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-[var(--shadow-card)]" aria-label="سجل نشاط التنفيذ">
@@ -75,38 +73,34 @@ export default function ActivityTimeline({ status, events, rowsCollected }: Acti
       {!collapsed && (
         <div className="p-4">
           {hasEvents ? (
-            <ol className="relative space-y-0 border-s border-sand-200 ps-5">
-              {events.map((evt, idx) => (
-                <li key={evt.$id || idx} className="relative pb-4 last:pb-0">
-                  <span aria-hidden="true" className="absolute -start-5 top-1 flex h-4 w-4 -translate-x-1/2 items-center justify-center">
-                    <StatusDot tone={KIND_TONE[evt.kind]} />
-                  </span>
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <p className="text-xs font-semibold leading-relaxed text-ink-900">{evt.textAr}</p>
-                    <time className="tnum shrink-0 text-xs text-sand-500" dateTime={evt.createdAt}>{formatTime(evt.createdAt)}</time>
-                  </div>
-                  {evt.count !== undefined && (
-                    <p className="tnum mt-0.5 text-xs text-sand-500">الرقم المسجّل في هذا الحدث: {evt.count.toLocaleString("ar-EG")}</p>
-                  )}
-                </li>
-              ))}
-            </ol>
+            <>
+              <ol className="relative space-y-0 border-s border-sand-200 ps-5">
+                {events.map((evt, idx) => (
+                  <li key={evt.$id || idx} className="relative pb-4 last:pb-0">
+                    <span aria-hidden="true" className="absolute -start-5 top-1 flex h-4 w-4 -translate-x-1/2 items-center justify-center">
+                      <StatusDot tone={KIND_TONE[evt.kind]} />
+                    </span>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-xs font-semibold leading-relaxed text-ink-900">{evt.textAr}</p>
+                      <time className="tnum shrink-0 text-xs text-sand-500" dateTime={evt.createdAt}>{formatTime(evt.createdAt)}</time>
+                    </div>
+                    {evt.count !== undefined && (
+                      <p className="tnum mt-0.5 text-xs text-sand-500">الرقم المسجّل في هذا الحدث: {evt.count.toLocaleString("ar-EG")}</p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+              {scopeNote && <p className="mt-3 text-xs text-sand-500">{scopeNote}</p>}
+            </>
           ) : (
-            <ol className="space-y-2.5" aria-label="مراحل التنفيذ">
-              {fallbackStages.map((stage, idx) => (
-                <li key={idx} className="flex items-center gap-2.5 text-xs">
-                  <span aria-hidden="true" className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${stage.done ? "bg-success text-white" : stage.active ? "bg-accent text-white motion-safe:animate-pulse motion-reduce:animate-none" : "bg-sand-200 text-sand-500"}`}>
-                    {stage.done ? "✓" : idx + 1}
-                  </span>
-                  <span className={stage.done || stage.active ? "font-semibold text-ink-900" : "text-sand-500"}>{stage.text}</span>
-                </li>
-              ))}
-            </ol>
+            <div className="rounded-xl bg-sand-50/70 px-4 py-6 text-center">
+              <p className="text-xs leading-relaxed text-sand-600">{timelineWaitingText(status)}</p>
+            </div>
           )}
 
           {status === "done" && (
             <p className="tnum mt-3 border-t border-sand-100 pt-3 text-xs text-sand-600">
-              اكتمل التنفيذ — السجلات المجمّعة: <strong className="text-ink-900">{rowsCollected.toLocaleString("ar-EG")}</strong>.
+              اكتمل التنفيذ وفق سجلّ الخادم — السجلات المجمّعة: <strong className="text-ink-900">{rowsCollected.toLocaleString("ar-EG")}</strong>.
               راجع ملاحظات التغطية في لوحة النتائج.
             </p>
           )}

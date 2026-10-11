@@ -6,6 +6,7 @@ import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
+import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, type BalanceView } from "@/lib/honestDisplay";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
@@ -62,7 +63,7 @@ export default function ChatWorkspacePage() {
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationLoadError, setConversationLoadError] = useState(false);
-  const [userBalance, setUserBalance] = useState<number | null>(null);
+  const [userBalance, setUserBalance] = useState<BalanceView>(balanceLoading());
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
   const [enabledCapabilitySlugs, setEnabledCapabilitySlugs] = useState<string[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -129,9 +130,10 @@ export default function ChatWorkspacePage() {
         if (res.documents.length < limit) break;
         offset += limit;
       }
-      setUserBalance(total);
+      setUserBalance(balanceReady(total));
     } catch {
-      setUserBalance(0);
+      // A failed request proves nothing about the balance — never show a fake zero.
+      setUserBalance(balanceFailed());
     }
   }, [user]);
 
@@ -238,8 +240,8 @@ export default function ChatWorkspacePage() {
         const jobDoc: any = await databases.getDocument("digr", "jobs", activeJob.jobId);
         const eventsRes = await databases.listDocuments("digr", "job_events", [
           Query.equal("jobId", activeJob.jobId),
-          Query.orderAsc("createdAt"),
-          Query.limit(20),
+          Query.orderDesc("createdAt"),
+          Query.limit(EVENT_HISTORY_LIMIT),
         ]);
 
         setActiveJob((prev) => {
@@ -251,7 +253,8 @@ export default function ChatWorkspacePage() {
             chargedCredits: jobDoc.chargedCredits,
             reservedCredits: jobDoc.reservedCredits,
             errorAr: jobDoc.errorAr,
-            events: eventsRes.documents as unknown as JobEvent[],
+            // Latest events first from the server, restored to reading order for display.
+            events: chronological(eventsRes.documents as unknown as JobEvent[]),
           };
         });
 
@@ -980,7 +983,7 @@ export default function ChatWorkspacePage() {
               title="رصيد الحساب وشحن النقاط"
             >
               <span className="font-bold text-amber-points">
-                {userBalance !== null ? userBalance.toLocaleString("ar-EG") : "…"}
+                {balanceText(userBalance)}
               </span>
               <span className="font-semibold text-amber-points">نقطة</span>
               <span aria-hidden="true" className="text-base font-bold leading-none text-amber-points">+</span>
@@ -1172,6 +1175,7 @@ export default function ChatWorkspacePage() {
                 status={activeJob.status}
                 events={activeJob.events}
                 rowsCollected={activeJob.rowsCollected}
+                eventLimit={EVENT_HISTORY_LIMIT}
               />
             </div>
           )}
