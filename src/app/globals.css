@@ -4,7 +4,7 @@
   --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Digr refined palette — calm, crisp, editorial, trustworthy */
+  /* Digr paper — warm, scholarly, calm */
   --color-sand-50: #faf9f6;
   --color-sand-100: #f4f3ee;
   --color-sand-200: #e8e6df;
@@ -16,7 +16,7 @@
   --color-sand-800: #38342e;
   --color-sand-900: #1a1815;
 
-  /* Ink shades for high-contrast, effortless Arabic reading */
+  /* Ink — high-contrast, effortless Arabic reading */
   --color-ink-900: #0f172a;
   --color-ink-800: #1e293b;
   --color-ink-700: #334155;
@@ -27,36 +27,61 @@
   --color-ink-200: #e2e8f0;
   --color-ink-100: #f1f5f9;
 
-  /* Primary interactive actions (deep, confident slate-black) */
+  /* Primary actions — deep, confident ink */
   --color-primary: #0f172a;
   --color-primary-hover: #1e293b;
 
-  /* Focus and interactive accent (clean sapphire) */
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-light: #eff6ff;
+  /* Brand accent — deep pine teal: scholarly, calm, distinctive.
+     Used for interactive emphasis, focus rings, and the Digr identity. */
+  --color-accent: #0b6b5c;
+  --color-accent-hover: #095344;
+  --color-accent-light: #e7f3ef;
+  --color-accent-ink: #083f35;
 
-  /* Points & Value accent (warm bronze amber) */
+  /* Informational blue (secondary, non-brand) */
+  --color-info: #2563eb;
+  --color-info-bg: #eff6ff;
+
+  /* Pine scale — deep surfaces, sidebar, stamps */
+  --color-pine-50: #eef6f3;
+  --color-pine-100: #d9ebe5;
+  --color-pine-200: #b3d7cc;
+  --color-pine-500: #0e7a66;
+  --color-pine-700: #0b5a4c;
+  --color-pine-800: #084739;
+  --color-pine-900: #06332a;
+  --color-pine-950: #04231d;
+
+  /* Points & value — warm brass */
   --color-amber-points: #d97706;
   --color-amber-points-hover: #b45309;
   --color-amber-points-bg: #fffbeb;
 
-  /* Status semantic colors */
+  /* Status semantics */
   --color-success: #059669;
   --color-success-bg: #ecfdf5;
   --color-warning: #d97706;
   --color-warning-bg: #fffbeb;
   --color-danger: #dc2626;
   --color-danger-bg: #fef2f2;
+
+  /* Elevation */
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 16px -4px rgb(15 23 42 / 0.08);
+  --shadow-lift: 0 2px 4px rgb(15 23 42 / 0.05), 0 12px 32px -8px rgb(15 23 42 / 0.14);
+  --shadow-ink: 0 8px 30px -6px rgb(4 35 29 / 0.35);
+
+  /* Motion */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* IBM Plex Sans Arabic from Google Fonts */
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
 
-/* Base styles */
+/* Base */
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -66,47 +91,109 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "ss01", "ss02", "cv01";
+  text-rendering: optimizeLegibility;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-thumb {
-  background-color: #cbd5e1;
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-track {
-  background-color: transparent;
+/* Display typography — editorial Arabic headlines */
+.font-display {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+  text-wrap: balance;
 }
 
-/* Accessible focus ring */
+/* Ledger numerals — tabular, for points and counts */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 9999px; }
+::-webkit-scrollbar-track { background-color: transparent; }
+
+/* Accessible focus */
 *:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
-/* Mobile & Touch Target Utilities */
-.touch-target {
-  min-height: 44px;
-  min-width: 44px;
+/* Touch targets & safe areas */
+.touch-target { min-height: 44px; min-width: 44px; }
+.safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* Hairline rule — the ledger motif */
+.rule-ledger {
+  border: 0;
+  border-top: 1px solid var(--color-sand-200);
 }
 
-.safe-bottom {
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+/* Archival stamp badge */
+.stamp {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1.5px solid currentColor;
+  border-radius: 0.375rem;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transform: rotate(-1.2deg);
+  opacity: 0.92;
+  white-space: nowrap;
 }
 
-.tabular-nums {
-  font-variant-numeric: tabular-nums;
+/* Card surface */
+.surface-card {
+  background: #fff;
+  border: 1px solid var(--color-sand-200);
+  border-radius: 1rem;
+  box-shadow: var(--shadow-card);
 }
 
-/* Motion preference */
+/* Subtle entrance — answers user action, never decorates idly */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-rise {
+  animation: rise-in 0.45s var(--ease-out-soft) both;
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade { animation: fade-in 0.3s ease-out both; }
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--color-sand-100) 25%, var(--color-sand-200) 50%, var(--color-sand-100) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s linear infinite;
+}
+
+/* Dossier paper texture for the hero demo */
+.paper-dossier {
+  background-color: #fffdf8;
+  background-image:
+    radial-gradient(ellipse at 20% 0%, rgb(11 107 92 / 0.05), transparent 55%),
+    linear-gradient(to bottom, transparent 95%, rgb(15 23 42 / 0.03) 100%);
+}
+
+/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
   }
 }
