@@ -124,6 +124,19 @@ describe("redesign wiring stays on existing routes", () => {
     expect(chat).toContain("<ThemeToggle className=\"h-10 w-10\" />");
     expect(chat).toContain("chat-workspace__header");
   });
+
+  it("lens reveals only the text clipped by the visible magnifier and keeps words in a flow", () => {
+    const css = src("src/app/globals.css");
+    const hero = src("src/app/components/HeroLens.tsx");
+    expect(css).toContain("mask-image: radial-gradient(circle var(--lens-radius)");
+    expect(css).toContain("--lens-diameter: 170px");
+    expect(css).toContain("--lens-radius: 85px");
+    expect(css).toContain("--lens-diameter: 112px; --lens-radius: 56px");
+    expect(hero).toContain("mobile ? 80 + Math.sin");
+    expect(css).not.toContain("circle 172px");
+    expect(hero).not.toContain("record.x");
+    expect(hero).toContain("RECORD_TERMS");
+  });
 });
 
 describe("data-honesty corrections (PR #11 fixes)", () => {
