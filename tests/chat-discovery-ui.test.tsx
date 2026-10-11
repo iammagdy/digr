@@ -115,4 +115,11 @@ describe("chat discovery clarification UI", () => {
       for (const option of question.options ?? []) expect(option.length).toBeLessThanOrEqual(160);
     }
   });
+
+  it("hides counter badge when there is only one discovery question", () => {
+    const cardSource = readFileSync("src/app/dashboard/chat/components/DiscoveryCard.tsx", "utf8");
+    expect(cardSource).toContain("normalizedQuestions.length > 1 && (");
+    expect(cardSource).toContain("{formatNumber(answeredCount)} / {formatNumber(normalizedQuestions.length)}");
+  });
 });
+
