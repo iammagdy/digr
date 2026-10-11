@@ -710,6 +710,68 @@ export class LlmClient {
    */
   private executeFakeLlm(options: LlmCallOptions): LlmCallResult {
     const fakeModel = this.modelOverride || "fake";
+
+    // Catalog-search loop test scenarios (multi-turn). The internal catalog
+    // result marker is appended by the caller when search results are fed back.
+    const CATALOG_RESULT_MARKER = "نتائج بحث الكتالوج — داخلية";
+    const hasCatalogResults = (options.messages || []).some(
+      (m) => typeof m.content === "string" && m.content.includes(CATALOG_RESULT_MARKER),
+    );
+    const searchCatalogOutput = {
+      type: "search_catalog",
+      query: "تعليقات فيسبوك",
+      platform: "facebook",
+    } as const;
+    const fakeTokens = { inputTokens: 500, outputTokens: 60, costUsd: 0, model: fakeModel, promptVersion: PROMPT_VERSION };
+    if (options.testScenario === "search_then_plan") {
+      return hasCatalogResults
+        ? {
+            output: {
+              type: "propose_plan",
+              summaryAr: "استخراج تعليقات فيسبوك العامة حول البطالة في مصر",
+              capabilities: [
+                {
+                  stepId: "fb_comments",
+                  capabilitySlug: "facebook-post-comments",
+                  endpointId: "facebook-post-comments",
+                  params: { postUrl: "https://www.facebook.com/post/123", maxPages: 5 },
+                  targetVolumeMin: 10,
+                  targetVolumeMax: 50,
+                  paginationStrategy: "cursor",
+                },
+              ],
+              outputFormats: ["xlsx", "csv"],
+              methodologyNotes: "اختبار وهمي.",
+            },
+            ...fakeTokens,
+          }
+        : { output: searchCatalogOutput, ...fakeTokens };
+    }
+    if (options.testScenario === "search_then_questions") {
+      return hasCatalogResults
+        ? {
+            output: {
+              type: "ask_clarification",
+              reasonAr: "أحتاج توضيحاً قبل إعداد الخطة.",
+              questions: [{ question: "ما الفترة الزمنية المستهدفة للتعليقات؟" }],
+            },
+            ...fakeTokens,
+          }
+        : { output: searchCatalogOutput, ...fakeTokens };
+    }
+    if (options.testScenario === "search_then_empty") {
+      return hasCatalogResults
+        ? { output: { type: "answer_question", answerAr: "" }, ...fakeTokens }
+        : { output: searchCatalogOutput, ...fakeTokens };
+    }
+    if (options.testScenario === "search_then_text") {
+      return hasCatalogResults
+        ? { output: { type: "answer_question", answerAr: "وجدت أدوات مناسبة في الكتالوج لطلبك." }, ...fakeTokens }
+        : { output: searchCatalogOutput, ...fakeTokens };
+    }
+    if (options.testScenario === "search_forever") {
+      return { output: searchCatalogOutput, ...fakeTokens };
+    }
     const lastUserMsg = [...options.messages].reverse().find((m) => m.role === "user")?.content || "";
     const promptLower = lastUserMsg.toLowerCase();
 
