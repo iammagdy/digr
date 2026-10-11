@@ -797,6 +797,44 @@ export class LlmClient {
       if (!hasCatalogResults) return { output: searchCatalogOutput, ...fakeTokens };
       return { output: { type: "answer_question", answerAr: "   " }, ...fakeTokens };
     }
+    if (options.testScenario === "multiplatform_questions") {
+      return {
+        output: {
+          type: "ask_clarification",
+          reasonAr: "محتاج توضيح بسيط قبل الخطة.",
+          questions: [
+            { question: "التعليقات من منشور واحد ولا منشورات كتير؟" },
+            { question: "الفترة الزمنية المستهدفة؟" },
+            { question: "ملف واحد مجمع ولا ملف لكل منصة؟" },
+          ],
+        },
+        ...fakeTokens,
+      };
+    }
+    if (options.testScenario === "multiplatform_plan") {
+      const mpStep = (stepId: string, slug: string, postUrl: string) => ({
+        stepId,
+        capabilitySlug: slug,
+        endpointId: slug,
+        params: { postUrl },
+        targetVolumeMin: 1,
+        targetVolumeMax: 1000,
+        paginationStrategy: "cursor" as const,
+      });
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: "سحب 1000 تعليق من فيسبوك و1000 تعليق من تيك توك",
+          capabilities: [
+            mpStep("fb", "facebook-post-comments", "https://www.facebook.com/post/1"),
+            mpStep("tt", "tiktok-post-comments", "https://www.tiktok.com/@x/video/1"),
+          ],
+          outputFormats: ["xlsx"],
+          methodologyNotes: "اختبار وهمي.",
+        },
+        ...fakeTokens,
+      };
+    }
     if (options.testScenario === "plan_ghost_then_stall") {
       return {
         output: {
