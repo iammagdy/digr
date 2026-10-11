@@ -23,12 +23,29 @@ export const AskClarificationSchema = z.object({
   reasonAr: z.string().min(1),
 }).strict();
 
+export const AskQuestionsSchema = z.object({
+  type: z.literal("ask_questions"),
+  intro: z.string().optional(),
+  questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
+  questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
+  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
+  reasonAr: z.string().min(1),
+}).strict();
+
+export const SearchCatalogSchema = z.object({
+  type: z.literal("search_catalog"),
+  query: z.string().min(1),
+  platform: z.string().optional(),
+});
+
 export const PlanCapabilityItemSchema = z.object({
   stepId: z.string().optional(),
   capabilitySlug: z.string().min(1),
+  endpointId: z.string().optional(),
   params: z.record(z.string(), z.any()),
   targetVolumeMin: z.number().int().min(1),
   targetVolumeMax: z.number().int().min(1),
+  paginationStrategy: z.enum(["cursor", "offset", "page", "none"]).optional(),
   volumeMode: z.enum(["bounded", "open_ended"]).optional(),
   dependsOn: z.array(z.string()).optional(),
   inputFrom: z
@@ -75,6 +92,7 @@ export const ProposePlanSchema = z.object({
   type: z.literal("propose_plan"),
   summaryAr: z.string().min(1),
   capabilities: z.array(PlanCapabilityItemSchema).min(1),
+  steps: z.array(PlanCapabilityItemSchema).optional(),
   executionOptions: ExecutionOptionsSchema.optional(),
   outputSpec: OutputSpecSchema.optional(),
   outputFormats: z.array(z.enum(["xlsx", "pdf", "csv"])).default(["xlsx", "pdf", "csv"]),
@@ -187,6 +205,7 @@ export const EditPlanToolSchema = z.object({
 
 export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
   AskClarificationSchema,
+  AskQuestionsSchema,
   ProposePlanSchema,
   EditPlanToolSchema,
   EditArtifactSchema,
@@ -194,6 +213,7 @@ export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
   AnswerQuestionSchema,
   RefuseSchema,
   SuggestAlternativeSchema,
+  SearchCatalogSchema,
 ]);
 
 export type LlmTurnOutput = z.infer<typeof LlmTurnOutputSchema>;
@@ -351,7 +371,9 @@ export const ACTION_RESULT_JSON_SCHEMA = {
     type: {
       type: "string",
       enum: [
+        "search_catalog",
         "ask_clarification",
+        "ask_questions",
         "propose_plan",
         "edit_plan",
         "edit_artifact",
@@ -361,6 +383,9 @@ export const ACTION_RESULT_JSON_SCHEMA = {
         "refuse",
       ],
     },
+    query: { type: "string" },
+    platform: { type: "string" },
+    intro: { type: "string" },
     questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
     questions: {
       type: "array",
@@ -368,15 +393,20 @@ export const ACTION_RESULT_JSON_SCHEMA = {
       items: {
         type: "object",
         properties: {
+          id: { type: "string" },
+          text: { type: "string" },
           question: { type: "string" },
+          type: { type: "string", enum: ["single", "multi", "free"] },
+          parameterType: { type: "string", enum: ["platform", "time_window", "volume", "output_format", "anonymize", "language", "topic"] },
           options: {
             type: "array",
             maxItems: 4,
             items: { type: "string", maxLength: 40 },
           },
+          allowOther: { type: "boolean" },
+          defaultOption: { type: "string" },
         },
-        required: ["question"],
-        additionalProperties: false,
+        additionalProperties: true,
       },
     },
     reasonAr: { type: "string" },
@@ -388,18 +418,64 @@ export const ACTION_RESULT_JSON_SCHEMA = {
     explanationAr: { type: "string" },
     closestAlternative: { type: "string" },
     canRequestFeature: { type: "boolean" },
+    steps: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          stepId: { type: "string" },
+          capabilitySlug: { type: "string" },
+          endpointId: { type: "string" },
+          params: { type: "object", additionalProperties: true },
+          targetVolumeMin: { type: "integer" },
+          targetVolumeMax: { type: "integer" },
+          paginationStrategy: { type: "string", enum: ["cursor", "offset", "page", "none"] },
+          volumeMode: { type: "string", enum: ["bounded", "open_ended"] },
+          dependsOn: { type: "array", items: { type: "string" } },
+          inputFrom: {
+            type: "object",
+            properties: {
+              stepId: { type: "string" },
+              field: { type: "string" },
+              paramKey: { type: "string" },
+            },
+            additionalProperties: true,
+          },
+          fanOutCap: { type: "integer" },
+          windowed: { type: "boolean" },
+        },
+        required: ["params", "targetVolumeMin", "targetVolumeMax"],
+        additionalProperties: true,
+      },
+    },
     capabilities: {
       type: "array",
       items: {
         type: "object",
         properties: {
+          stepId: { type: "string" },
           capabilitySlug: { type: "string" },
+          endpointId: { type: "string" },
           params: { type: "object", additionalProperties: true },
           targetVolumeMin: { type: "integer" },
           targetVolumeMax: { type: "integer" },
+          paginationStrategy: { type: "string", enum: ["cursor", "offset", "page", "none"] },
+          volumeMode: { type: "string", enum: ["bounded", "open_ended"] },
+          dependsOn: { type: "array", items: { type: "string" } },
+          inputFrom: {
+            type: "object",
+            properties: {
+              stepId: { type: "string" },
+              field: { type: "string" },
+              paramKey: { type: "string" },
+            },
+            additionalProperties: true,
+          },
+          fanOutCap: { type: "integer" },
+          windowed: { type: "boolean" },
         },
-        required: ["capabilitySlug", "params", "targetVolumeMin", "targetVolumeMax"],
-        additionalProperties: false,
+        required: ["params", "targetVolumeMin", "targetVolumeMax"],
+        additionalProperties: true,
       },
     },
     operations: {
@@ -416,7 +492,7 @@ export const ACTION_RESULT_JSON_SCHEMA = {
           params: { type: "object", additionalProperties: true },
         },
         required: ["action"],
-        additionalProperties: false,
+        additionalProperties: true,
       },
     },
     outputFormats: {
@@ -427,7 +503,7 @@ export const ACTION_RESULT_JSON_SCHEMA = {
     rationaleAr: { type: "string" },
   },
   required: ["type"],
-  additionalProperties: false,
+  additionalProperties: true,
 };
 
 // ================= LLM Runtime Diagnostics & Status =================
@@ -744,6 +820,7 @@ export class LlmClient {
               {
                 stepId: "fb_posts_search",
                 capabilitySlug: "facebook-post-search",
+                endpointId: "facebook-post-search",
                 params: {
                   query: "قائمة المنقولات، تكاليف الزواج، المهر، الشبكة، النفقة",
                   dateFrom: "2026-01-01",
@@ -751,16 +828,19 @@ export class LlmClient {
                 },
                 targetVolumeMin: 1,
                 targetVolumeMax: 5,
+                paginationStrategy: "offset",
                 volumeMode: "bounded",
               },
               {
                 stepId: "fb_post_comments",
                 capabilitySlug: "facebook-post-comments",
+                endpointId: "facebook-post-comments",
                 params: {
                   includeReplies: true,
                 },
                 targetVolumeMin: 5,
                 targetVolumeMax: 25,
+                paginationStrategy: "cursor",
                 dependsOn: ["fb_posts_search"],
                 inputFrom: {
                   stepId: "fb_posts_search",
@@ -817,7 +897,135 @@ export class LlmClient {
       };
     }
 
-    // D. Unsupported / Pending-Verification Platforms & "Request this service" trigger
+    // D. Catalog-driven Platform Handling (Phase B)
+    const hasCapForPlatform = (plat: string) => {
+      if (!options.sanitizedCapabilities || options.sanitizedCapabilities.length === 0) return false;
+      return options.sanitizedCapabilities.some((c: any) => {
+        const cPlat = (c.platform || c.category || c.slug || "").toLowerCase();
+        return cPlat.includes(plat.toLowerCase()) && c.enabled !== false;
+      });
+    };
+
+    if (
+      options.testScenario === "phase_b_scenario_d" ||
+      promptLower.includes("منصة_غير_معروفة") ||
+      promptLower.includes("خدمة غير مدعومة")
+    ) {
+      return {
+        output: {
+          type: "suggest_alternative",
+          unsupportedService: "الخدمة المطلوبة",
+          explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (الخدمة المطلوبة). لم تسفر نتائج البحث في الكتالوج عن أي أدوات استخراج صالحة لهذا الطلب.",
+          closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
+          canRequestFeature: true,
+        },
+        inputTokens: 500,
+        outputTokens: 80,
+        costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    if (promptLower.includes("انستغرام") || promptLower.includes("إنستغرام") || promptLower.includes("instagram")) {
+      if (hasCapForPlatform("instagram") || options.testScenario === "phase_b_scenario_c_instagram") {
+        const cap = (options.sanitizedCapabilities || []).find((c: any) => (c.platform || c.slug || "").toLowerCase().includes("instagram")) || {
+          slug: "instagram-profile",
+          id: "treg-instagram-profile-v1",
+        };
+        return {
+          output: {
+            type: "propose_plan",
+            summaryAr: "استخراج بيانات ملف الحساب والمنشورات العامة من إنستغرام",
+            capabilities: [
+              {
+                stepId: "ig_profile",
+                capabilitySlug: cap.slug || "instagram-profile",
+                endpointId: cap.id || cap.slug || "instagram-profile",
+                params: { username: "public_user" },
+                targetVolumeMin: 1,
+                targetVolumeMax: 10,
+                paginationStrategy: "none",
+              },
+            ],
+            outputFormats: ["xlsx", "pdf", "csv"],
+            methodologyNotes: "استخراج البيانات العامة من إنستغرام من خلال الكتالوج المعتمد.",
+          },
+          inputTokens: 600,
+          outputTokens: 120,
+          costUsd: (600 * 0.10 + 120 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+    }
+
+    if (promptLower.includes("ريديت") || promptLower.includes("reddit")) {
+      if (hasCapForPlatform("reddit") || options.testScenario === "phase_b_scenario_c_reddit") {
+        const cap = (options.sanitizedCapabilities || []).find((c: any) => (c.platform || c.slug || "").toLowerCase().includes("reddit")) || {
+          slug: "reddit-post-search",
+          id: "treg-reddit-post-search",
+        };
+        return {
+          output: {
+            type: "propose_plan",
+            summaryAr: "استخراج منشورات وتعليقات عامة من مجتمعات منصة ريديت",
+            capabilities: [
+              {
+                stepId: "reddit_search",
+                capabilitySlug: cap.slug || "reddit-post-search",
+                endpointId: cap.id || cap.slug || "reddit-post-search",
+                params: { query: "search query", limit: 50 },
+                targetVolumeMin: 5,
+                targetVolumeMax: 50,
+                paginationStrategy: "cursor",
+              },
+            ],
+            outputFormats: ["xlsx", "pdf", "csv"],
+            methodologyNotes: "استخراج المنشورات العامة ومناقشات المجتمعات من ريديت.",
+          },
+          inputTokens: 650,
+          outputTokens: 120,
+          costUsd: (650 * 0.10 + 120 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+    }
+
+    if (promptLower.includes("لينكد إن") || promptLower.includes("linkedin")) {
+      if (hasCapForPlatform("linkedin")) {
+        const cap = (options.sanitizedCapabilities || []).find((c: any) => (c.platform || c.slug || "").toLowerCase().includes("linkedin")) || {
+          slug: "linkedin-search",
+          id: "treg-linkedin-search",
+        };
+        return {
+          output: {
+            type: "propose_plan",
+            summaryAr: "استخراج بيانات الشركات والوظائف العامة من لينكد إن",
+            capabilities: [
+              {
+                stepId: "li_search",
+                capabilitySlug: cap.slug || "linkedin-search",
+                endpointId: cap.id || cap.slug || "linkedin-search",
+                params: { query: "search query" },
+                targetVolumeMin: 1,
+                targetVolumeMax: 20,
+                paginationStrategy: "page",
+              },
+            ],
+            outputFormats: ["xlsx", "pdf", "csv"],
+            methodologyNotes: "استخراج البيانات العامة المتاحة من شبكة لينكد إن.",
+          },
+          inputTokens: 650,
+          outputTokens: 120,
+          costUsd: (650 * 0.10 + 120 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+    }
+
     if (
       promptLower.includes("انستغرام") ||
       promptLower.includes("إنستغرام") ||
@@ -876,10 +1084,14 @@ export class LlmClient {
       }
       return options.sanitizedCapabilities.some(
         (c: any) =>
-          c.slug === slug &&
           c.enabled !== false &&
           c.status !== "pending_verification" &&
-          c.status !== "planned"
+          c.status !== "planned" &&
+          (c.slug === slug ||
+            c.id === slug ||
+            c.slug?.includes(slug) ||
+            c.id?.includes(slug) ||
+            (c.platform && c.platform.toLowerCase() === slug.split("-")[0]?.toLowerCase()))
       );
     };
 
@@ -1010,10 +1222,13 @@ export class LlmClient {
             summaryAr: `استخراج بيانات وإحصائيات الحساب العام @${username} على منصة تيك توك`,
             capabilities: [
               {
+                stepId: "tiktok_profile",
                 capabilitySlug: "tiktok-profile",
+                endpointId: "tiktok-profile",
                 params: { username },
                 targetVolumeMin: 1,
                 targetVolumeMax: 1,
+                paginationStrategy: "none",
               },
             ],
             executionOptions: {
@@ -1053,7 +1268,13 @@ export class LlmClient {
 
     // G. X/Twitter tweets plan proposal or coming soon alternative
     if (promptLower.includes("تغريدات") || promptLower.includes("تويتر") || promptLower.includes("منصة x")) {
-      if (!isCapEnabled("x-keyword-search") && !isCapEnabled("x-user-tweets")) {
+      if (
+        options.testScenario !== "phase_b_scenario_c_x" &&
+        !hasCapForPlatform("x") &&
+        !hasCapForPlatform("twitter") &&
+        !isCapEnabled("x-keyword-search") &&
+        !isCapEnabled("x-user-tweets")
+      ) {
         return {
           output: {
             type: "suggest_alternative",
@@ -1100,6 +1321,14 @@ export class LlmClient {
 
       const volumeMatch = lastUserMsg.match(/(\d+)/);
       const targetVolume = volumeMatch ? parseInt(volumeMatch[1], 10) : 100;
+      const cap = (options.sanitizedCapabilities || []).find(
+        (c: any) =>
+          (c.platform || c.category || c.slug || "").toLowerCase().includes("x") ||
+          (c.platform || c.category || c.slug || "").toLowerCase().includes("twitter")
+      ) || {
+        slug: "x-keyword-search",
+        id: "treg-x-keyword-search",
+      };
 
       return {
         output: {
@@ -1107,10 +1336,13 @@ export class LlmClient {
           summaryAr: `استخراج تغريدات منصة X بالكلمات الدلالية حتى ${targetVolume} تغريدة`,
           capabilities: [
             {
-              capabilitySlug: "x-keyword-search",
+              stepId: "x_search",
+              capabilitySlug: cap.slug || "x-keyword-search",
+              endpointId: cap.id || cap.slug || "x-keyword-search",
               params: { query: "search query", max_results: targetVolume },
               targetVolumeMin: 1,
               targetVolumeMax: targetVolume,
+              paginationStrategy: "cursor",
             },
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
@@ -1126,7 +1358,13 @@ export class LlmClient {
 
     // H. YouTube coming soon alternative
     if (promptLower.includes("يوتيوب") || promptLower.includes("youtube")) {
-      if (!isCapEnabled("youtube-search") && !isCapEnabled("youtube-channel-info") && !isCapEnabled("youtube-comments")) {
+      if (
+        options.testScenario !== "phase_b_scenario_c_youtube" &&
+        !hasCapForPlatform("youtube") &&
+        !isCapEnabled("youtube-search") &&
+        !isCapEnabled("youtube-channel-info") &&
+        !isCapEnabled("youtube-comments")
+      ) {
         return {
           output: {
             type: "suggest_alternative",
@@ -1143,16 +1381,26 @@ export class LlmClient {
         };
       }
 
+      const cap = (options.sanitizedCapabilities || []).find(
+        (c: any) => (c.platform || c.category || c.slug || "").toLowerCase().includes("youtube")
+      ) || {
+        slug: promptLower.includes("تعليقات") ? "youtube-comments" : "youtube-search",
+        id: promptLower.includes("تعليقات") ? "youtube-comments" : "youtube-search",
+      };
+
       return {
         output: {
           type: "propose_plan",
           summaryAr: "استخراج مقاطع فيديو وتعليقات من منصة يوتيوب",
           capabilities: [
             {
-              capabilitySlug: promptLower.includes("تعليقات") ? "youtube-comments" : "youtube-search",
+              stepId: "yt_search",
+              capabilitySlug: cap.slug || (promptLower.includes("تعليقات") ? "youtube-comments" : "youtube-search"),
+              endpointId: cap.id || cap.slug || (promptLower.includes("تعليقات") ? "youtube-comments" : "youtube-search"),
               params: { query: "WHO COVID", count: 100 },
               targetVolumeMin: 50,
               targetVolumeMax: 100,
+              paginationStrategy: "page",
             },
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
@@ -1372,9 +1620,23 @@ export class LlmClient {
       const data: any = await response.json();
 
       let rawPayload: any = null;
-      const toolUse = data.content?.find((b: any) => b.type === "tool_use" && b.name === "actionResult");
+      const toolUse = data.content?.find((b: any) => b.type === "tool_use");
       if (toolUse && toolUse.input) {
-        rawPayload = toolUse.input;
+        if (toolUse.name === "search_catalog") {
+          rawPayload = { type: "search_catalog", ...toolUse.input };
+        } else if (toolUse.name === "ask_questions") {
+          rawPayload = { type: "ask_clarification", ...toolUse.input };
+        } else if (toolUse.name === "propose_plan") {
+          rawPayload = {
+            type: "propose_plan",
+            summaryAr: toolUse.input.summaryAr,
+            capabilities: toolUse.input.steps || toolUse.input.capabilities,
+            outputFormats: toolUse.input.outputFormats,
+            methodologyNotes: toolUse.input.methodologyNotes,
+          };
+        } else {
+          rawPayload = toolUse.input;
+        }
       } else {
         const textBlock = data.content?.find((b: any) => b.type === "text");
         if (textBlock && textBlock.text) {
@@ -1405,6 +1667,10 @@ export class LlmClient {
 
       const scrubbedPayload = scrubField(rawPayload);
 
+      if (scrubbedPayload.type === "ask_questions") {
+        scrubbedPayload.type = "ask_clarification";
+      }
+
       if (scrubbedPayload.type === "ask_clarification") {
         if (!scrubbedPayload.questionsAr && scrubbedPayload.questions) {
           scrubbedPayload.questionsAr = scrubbedPayload.questions
@@ -1413,6 +1679,19 @@ export class LlmClient {
         }
         if (!scrubbedPayload.reasonAr) {
           scrubbedPayload.reasonAr = scrubbedPayload.intro || "تحديد تفاصيل الطلب بدقة";
+        }
+      }
+
+      if (scrubbedPayload.type === "propose_plan") {
+        if (!scrubbedPayload.capabilities && scrubbedPayload.steps) {
+          scrubbedPayload.capabilities = scrubbedPayload.steps;
+        }
+        if (Array.isArray(scrubbedPayload.capabilities)) {
+          for (const cap of scrubbedPayload.capabilities) {
+            if (!cap.capabilitySlug && cap.endpointId) {
+              cap.capabilitySlug = cap.endpointId;
+            }
+          }
         }
       }
 
@@ -1522,10 +1801,29 @@ export class LlmClient {
       }
 
       // Adapt to questionsAr if questions were returned or vice versa
+      if (parsedResult.type === "ask_questions") {
+        parsedResult.type = "ask_clarification";
+      }
       if (parsedResult.type === "ask_clarification" && !parsedResult.questionsAr && parsedResult.questions) {
         parsedResult.questionsAr = parsedResult.questions
           .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
           .filter(Boolean);
+      }
+      if (parsedResult.type === "ask_clarification" && !parsedResult.reasonAr) {
+        parsedResult.reasonAr = parsedResult.intro || "تحديد تفاصيل الطلب بدقة";
+      }
+
+      if (parsedResult.type === "propose_plan") {
+        if (!parsedResult.capabilities && parsedResult.steps) {
+          parsedResult.capabilities = parsedResult.steps;
+        }
+        if (Array.isArray(parsedResult.capabilities)) {
+          for (const cap of parsedResult.capabilities) {
+            if (!cap.capabilitySlug && cap.endpointId) {
+              cap.capabilitySlug = cap.endpointId;
+            }
+          }
+        }
       }
 
       const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);

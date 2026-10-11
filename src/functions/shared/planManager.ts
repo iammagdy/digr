@@ -5,6 +5,7 @@ import {
   Capability,
   validateCapabilityParams,
   getEnabledCapabilities,
+  getRegistryPricingSettings,
 } from "./capabilityRegistry";
 import {
   calculateQuote,
@@ -79,9 +80,12 @@ export type EditPlanOperation = z.infer<typeof EditPlanOperationSchema>;
 
 export interface PlanItem {
   capabilitySlug: string;
+  endpointId?: string;
   params: Record<string, any>;
   targetVolumeMin: number;
   targetVolumeMax: number;
+  paginationStrategy?: "cursor" | "offset" | "page" | "none";
+  stepId?: string;
 }
 
 export interface ExecutionOptions {
@@ -283,7 +287,12 @@ export function validatePlanAgainstSchemas(
   const errors: string[] = [];
 
   for (const it of planItems) {
-    const matchedCap = capabilities.find((c) => c.slug === it.capabilitySlug);
+    const matchedCap = capabilities.find(
+      (c) =>
+        c.slug === it.capabilitySlug ||
+        c.tregEndpointId === it.capabilitySlug ||
+        (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
+    );
     if (!matchedCap) {
       errors.push(`الخدمة '${it.capabilitySlug}' غير متوفرة أو معطلة في الكتالوج`);
       continue;
@@ -354,8 +363,16 @@ export async function createAndSaveManagedQuote(
     plan,
     userBalance,
     capabilities,
-    pricingSettings = DEFAULT_PRICING_SETTINGS,
   } = input;
+
+  const regSettings = getRegistryPricingSettings();
+  const effectivePricing: PricingSettings = input.pricingSettings || {
+    usdToEgp: regSettings.usdToEgp,
+    markup: regSettings.markup,
+    creditValueEgp: regSettings.pointValueEgp,
+    safetyBuffer: 0.15,
+    minPoints: regSettings.minimumOrderPoints,
+  };
 
   // 1. Calculate pricing for all plan items
   let totalQuotedPoints = 0;
@@ -364,16 +381,22 @@ export async function createAndSaveManagedQuote(
   let primaryUnitCost = 0.001;
 
   for (const it of plan.items) {
-    const cap = capabilities.find((c) => c.slug === it.capabilitySlug) || capabilities[0];
+    const cap =
+      capabilities.find(
+        (c) =>
+          c.slug === it.capabilitySlug ||
+          c.tregEndpointId === it.capabilitySlug ||
+          (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
+      ) || capabilities[0];
     primaryUnitCost = cap.unitCostUsd;
-    const itemQuote = calculateQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, pricingSettings);
+    const itemQuote = calculateQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, effectivePricing);
     totalQuotedPoints += itemQuote.quotedPoints;
     totalVolumeMax += it.targetVolumeMax;
     effectiveUnitPrice = itemQuote.unitPricePoints;
   }
 
   // Recalculate affordability for the composite quote
-  const quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, pricingSettings);
+  const quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, effectivePricing);
 
   const planHash = computePlanHash(plan.items, plan.outputFormats);
   const quoteId = ID.unique();
