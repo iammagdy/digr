@@ -397,12 +397,94 @@ export const ACTION_RESULT_JSON_SCHEMA = {
   additionalProperties: false,
 };
 
+// ================= LLM Runtime Diagnostics & Status =================
+
+export interface LlmStatusSnapshot {
+  provider: LlmProviderType;
+  llm_enabled: boolean;
+  key_present: boolean;
+  model: string;
+  last_llm_usage_timestamp: string | null;
+  last_fallback_reason: string | null;
+}
+
+let lastFallbackReason: string | null = null;
+
+export function getLastLlmFallbackReason(): string | null {
+  return lastFallbackReason;
+}
+
+export function setLastLlmFallbackReason(reason: string | null): void {
+  lastFallbackReason = reason;
+}
+
+export function resolveRuntimeProvider(override?: LlmProviderType): LlmProviderType {
+  const raw = (override || process.env.LLM_PROVIDER || "fake").trim().toLowerCase();
+  if (raw === "anthropic" || raw === "openai" || raw === "fake") {
+    return raw;
+  }
+  return "fake";
+}
+
+export function resolveRuntimeModel(provider: LlmProviderType, override?: string): string {
+  if (override && override.trim()) return override.trim();
+  if (provider === "anthropic") {
+    return (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
+  }
+  if (provider === "openai") {
+    return (process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-luna").trim();
+  }
+  return (process.env.LLM_MODEL || "fake").trim();
+}
+
+export function isLlmEnabledRuntime(): boolean {
+  const raw = (process.env.LLM_ENABLED || "true").trim().toLowerCase();
+  return raw !== "false" && raw !== "0" && raw !== "off";
+}
+
+export function isProviderKeyPresent(provider: LlmProviderType): boolean {
+  if (provider === "anthropic") {
+    return Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim().length > 0);
+  }
+  if (provider === "openai") {
+    return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0);
+  }
+  return false;
+}
+
+export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): LlmStatusSnapshot {
+  const provider = resolveRuntimeProvider();
+  const llm_enabled = isLlmEnabledRuntime();
+  const key_present = isProviderKeyPresent(provider);
+  const model = resolveRuntimeModel(provider);
+
+  let derivedFallback = lastFallbackReason;
+  if (!derivedFallback) {
+    if (!llm_enabled) {
+      derivedFallback = "llm_disabled";
+    } else if (provider === "fake") {
+      derivedFallback = "provider_is_fake";
+    } else if (!key_present) {
+      derivedFallback = "missing_api_key";
+    }
+  }
+
+  return {
+    provider,
+    llm_enabled,
+    key_present,
+    model,
+    last_llm_usage_timestamp: lastUsageTimestamp,
+    last_fallback_reason: derivedFallback,
+  };
+}
+
 // ================= LLM Client Implementation =================
 
 export class LlmClient {
-  private provider: LlmProviderType;
-  private model: string;
-  private isLive: boolean;
+  private providerOverride?: LlmProviderType;
+  private modelOverride?: string;
+  private isLiveOverride?: boolean;
   private customPricing?: Partial<LlmModelPricing>;
 
   constructor(options?: {
@@ -411,36 +493,30 @@ export class LlmClient {
     isLive?: boolean;
     pricingSettings?: Partial<LlmModelPricing>;
   }) {
-    const providerEnv = (process.env.LLM_PROVIDER as LlmProviderType) || "fake";
-    this.provider = options?.provider || providerEnv;
-    this.isLive = options?.isLive !== undefined ? options.isLive : process.env.LLM_LIVE === "true";
+    this.providerOverride = options?.provider;
+    this.modelOverride = options?.model;
+    this.isLiveOverride = options?.isLive;
     this.customPricing = options?.pricingSettings;
-
-    if (options?.model) {
-      this.model = options.model;
-    } else if (this.provider === "anthropic") {
-      this.model = process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5";
-    } else if (this.provider === "openai") {
-      this.model = process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-luna";
-    } else {
-      this.model = process.env.LLM_MODEL || "fake";
-    }
   }
 
   getProvider(): LlmProviderType {
-    return this.provider;
+    return resolveRuntimeProvider(this.providerOverride);
   }
 
   getModel(): string {
-    return this.model;
+    return resolveRuntimeModel(this.getProvider(), this.modelOverride);
   }
 
   /**
    * Main interaction point with budget enforcement & schema validation
    */
   async executeTurn(options: LlmCallOptions): Promise<LlmCallResult> {
+    const provider = this.getProvider();
+    const model = this.getModel();
+
     // 1. Kill-switch check
-    if (process.env.LLM_ENABLED === "false") {
+    if (!isLlmEnabledRuntime()) {
+      setLastLlmFallbackReason("llm_disabled");
       return {
         output: {
           type: "refuse",
@@ -449,7 +525,7 @@ export class LlmClient {
         inputTokens: 0,
         outputTokens: 0,
         costUsd: 0,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -465,17 +541,28 @@ export class LlmClient {
         inputTokens: 0,
         outputTokens: 0,
         costUsd: 0,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
       };
     }
 
-    // 3. Fake vs Live execution
-    if (!this.isLive || options.testScenario || this.provider === "fake") {
+    // 3. Fake vs Live execution — read at runtime; real providers never silently fall back to fake
+    if (options.testScenario) {
+      setLastLlmFallbackReason("test_scenario");
       return this.executeFakeLlm(options);
     }
 
-    if (this.provider === "anthropic") {
+    if (this.isLiveOverride === false || (process.env.LLM_LIVE || "").trim().toLowerCase() === "false") {
+      setLastLlmFallbackReason("llm_live_disabled");
+      return this.executeFakeLlm(options);
+    }
+
+    if (provider === "fake") {
+      setLastLlmFallbackReason("provider_is_fake");
+      return this.executeFakeLlm(options);
+    }
+
+    if (provider === "anthropic") {
       return this.executeRealAnthropic(options);
     }
 
@@ -486,6 +573,7 @@ export class LlmClient {
    * Deterministic Fake LLM for unit tests, offline development, and zero-cost simulation
    */
   private executeFakeLlm(options: LlmCallOptions): LlmCallResult {
+    const fakeModel = this.modelOverride || "fake";
     const lastUserMsg = [...options.messages].reverse().find((m) => m.role === "user")?.content || "";
     const promptLower = lastUserMsg.toLowerCase();
 
@@ -506,7 +594,7 @@ export class LlmClient {
         inputTokens: 450,
         outputTokens: 50,
         costUsd: (450 * 0.10 + 50 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -529,7 +617,7 @@ export class LlmClient {
         inputTokens: 400,
         outputTokens: 40,
         costUsd: (400 * 0.10 + 40 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -559,7 +647,7 @@ export class LlmClient {
         inputTokens: 450,
         outputTokens: 70,
         costUsd: (450 * 0.10 + 70 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -573,7 +661,12 @@ export class LlmClient {
       promptLower.includes("فيسبوك") ||
       promptLower.includes("facebook")
     ) {
-      const platformName = promptLower.includes("instagram") || promptLower.includes("انستغرام") ? "Instagram" : "LinkedIn";
+      const platformName =
+        promptLower.includes("instagram") || promptLower.includes("انستغرام")
+          ? "Instagram"
+          : promptLower.includes("فيسبوك") || promptLower.includes("facebook")
+          ? "Facebook"
+          : "LinkedIn";
       return {
         output: {
           type: "suggest_alternative",
@@ -585,7 +678,7 @@ export class LlmClient {
         inputTokens: 500,
         outputTokens: 80,
         costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -602,7 +695,7 @@ export class LlmClient {
         inputTokens: 600,
         outputTokens: 60,
         costUsd: (600 * 0.10 + 60 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -635,7 +728,7 @@ export class LlmClient {
           inputTokens: 500,
           outputTokens: 80,
           costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -664,7 +757,7 @@ export class LlmClient {
           inputTokens: 800,
           outputTokens: 140,
           costUsd: (800 * 0.10 + 140 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -728,7 +821,7 @@ export class LlmClient {
             inputTokens: 500,
             outputTokens: 60,
             costUsd: (500 * 0.10 + 60 * 0.50) / 1_000_000,
-            model: this.model,
+            model: fakeModel,
             promptVersion: PROMPT_VERSION,
           };
         }
@@ -776,7 +869,7 @@ export class LlmClient {
           inputTokens: 800,
           outputTokens: 140,
           costUsd: (800 * 0.10 + 140 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -796,7 +889,7 @@ export class LlmClient {
           inputTokens: 500,
           outputTokens: 80,
           costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -824,7 +917,7 @@ export class LlmClient {
           inputTokens: 600,
           outputTokens: 70,
           costUsd: (600 * 0.10 + 70 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -850,7 +943,7 @@ export class LlmClient {
         inputTokens: 850,
         outputTokens: 150,
         costUsd: (850 * 0.10 + 150 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -869,7 +962,7 @@ export class LlmClient {
           inputTokens: 500,
           outputTokens: 80,
           costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: this.model,
+          model: fakeModel,
           promptVersion: PROMPT_VERSION,
         };
       }
@@ -892,7 +985,7 @@ export class LlmClient {
         inputTokens: 850,
         outputTokens: 150,
         costUsd: (850 * 0.10 + 150 * 0.50) / 1_000_000,
-        model: this.model,
+        model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
     }
@@ -925,33 +1018,41 @@ export class LlmClient {
       inputTokens: 700,
       outputTokens: 90,
       costUsd: (700 * 0.10 + 90 * 0.50) / 1_000_000,
-      model: this.model,
+      model: fakeModel,
       promptVersion: PROMPT_VERSION,
     };
   }
 
   /**
    * Handle provider errors cleanly (timeout, 429, 5xx, auth errors):
-   * Return short Arabic error, 0 tokens, 0 cost, so no points are held or charged.
+   * Return short Arabic error ("المساعد غير متاح الآن، حاول لاحقًا"), 0 tokens, 0 cost, so no points are held.
    */
-  private handleProviderError(err: any, provider: string): LlmCallResult {
-    let reasonAr = "عذراً، حدث خطأ أثناء الاتصال بمزود خدمة الذكاء الاصطناعي. يرجى إعادة المحاولة.";
+  private handleProviderError(err: any, _provider: string): LlmCallResult {
+    const model = this.getModel();
+    let reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
+    let fallbackCode = "provider_unreachable";
 
     const status = err?.status || err?.statusCode || (typeof err?.message === "string" && err.message.match(/\((\d{3})\)/)?.[1]);
     const statusNum = Number(status);
 
-    if (
+    if (err?.message?.includes("not configured")) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
+      fallbackCode = "missing_api_key";
+    } else if (
       err?.name === "AbortError" ||
       err?.name === "TimeoutError" ||
       err?.message?.includes("timed out") ||
       err?.message?.includes("timeout") ||
       err?.message?.includes("aborted")
     ) {
-      reasonAr = "عذراً، استغرقت الاستجابة وقتاً أطول من المعتاد. يرجى إعادة المحاولة.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (استغرقت الاستجابة وقتاً أطول من المعتاد).";
+      fallbackCode = "timeout";
     } else if (statusNum === 429 || err?.message?.includes("429") || err?.message?.includes("rate_limit")) {
-      reasonAr = "عذراً، الخدمة مشغولة حالياً بتجاوز حد الطلبات المؤقت. يرجى المحاولة بعد قليل.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (تجاوز حد الطلبات المؤقت).";
+      fallbackCode = "rate_limit_429";
     } else if (statusNum === 529 || err?.message?.includes("529") || err?.message?.includes("overloaded")) {
-      reasonAr = "عذراً، خوادم الخدمة تواجه ضغطاً كبيراً حالياً. يرجى المحاولة بعد لحظات.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (خوادم الخدمة تواجه ضغطاً كبيراً).";
+      fallbackCode = "provider_overloaded_529";
     } else if (
       (statusNum >= 500 && statusNum < 600) ||
       err?.message?.includes("500") ||
@@ -959,7 +1060,8 @@ export class LlmClient {
       err?.message?.includes("503") ||
       err?.message?.includes("504")
     ) {
-      reasonAr = "عذراً، خدمة الذكاء الاصطناعي تواجه صعوبة مؤقتة. يرجى المحاولة لاحقاً.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (صعوبة مؤقتة في الخدمة).";
+      fallbackCode = "provider_5xx";
     } else if (
       statusNum === 401 ||
       statusNum === 403 ||
@@ -967,8 +1069,11 @@ export class LlmClient {
       err?.message?.includes("authentication") ||
       err?.message?.includes("credentials")
     ) {
-      reasonAr = "خدمة المساعد الذكي غير مهيأة بشكل صحيح حالياً. يرجى مراجعة الإعدادات أو التواصل مع الدعم.";
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
+      fallbackCode = "provider_auth_error";
     }
+
+    setLastLlmFallbackReason(fallbackCode);
 
     return {
       output: {
@@ -978,7 +1083,7 @@ export class LlmClient {
       inputTokens: 0,
       outputTokens: 0,
       costUsd: 0,
-      model: this.model,
+      model,
       promptVersion: PROMPT_VERSION,
     };
   }
@@ -987,7 +1092,8 @@ export class LlmClient {
    * Real Anthropic Messages API execution with structured tool use
    */
   private async executeRealAnthropic(options: LlmCallOptions): Promise<LlmCallResult> {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
+    const model = this.getModel();
+    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
     if (!apiKey) {
       return this.handleProviderError(new Error("ANTHROPIC_API_KEY is not configured"), "anthropic");
     }
@@ -1015,7 +1121,7 @@ export class LlmClient {
         },
         signal: controller.signal,
         body: JSON.stringify({
-          model: this.model,
+          model,
           max_tokens: 1024,
           system: systemPrompt,
           messages: formattedMessages,
@@ -1092,17 +1198,19 @@ export class LlmClient {
 
       const pricing = getLlmPricingSettings(
         "anthropic",
-        this.model,
+        model,
         options.pricingSettings || this.customPricing
       );
       const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+
+      setLastLlmFallbackReason(null);
 
       return {
         output: validatedOutput,
         inputTokens: inTokens,
         outputTokens: outTokens,
         costUsd,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
         rawText: JSON.stringify(scrubbedPayload),
       };
@@ -1116,7 +1224,8 @@ export class LlmClient {
    * Real OpenAI Responses API execution
    */
   private async executeRealOpenAi(options: LlmCallOptions): Promise<LlmCallResult> {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const model = this.getModel();
+    const apiKey = process.env.OPENAI_API_KEY?.trim();
     if (!apiKey) {
       return this.handleProviderError(new Error("OPENAI_API_KEY is not configured"), "openai");
     }
@@ -1141,7 +1250,7 @@ export class LlmClient {
         },
         signal: controller.signal,
         body: JSON.stringify({
-          model: this.model,
+          model,
           reasoning: { effort: "low" },
           input: [
             { role: "system", content: systemPrompt },
@@ -1200,17 +1309,19 @@ export class LlmClient {
 
       const pricing = getLlmPricingSettings(
         "openai",
-        this.model,
+        model,
         options.pricingSettings || this.customPricing
       );
       const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+
+      setLastLlmFallbackReason(null);
 
       return {
         output: validatedOutput,
         inputTokens: inTokens,
         outputTokens: outTokens,
         costUsd,
-        model: this.model,
+        model,
         promptVersion: PROMPT_VERSION,
         rawText: scrubbed,
       };
@@ -1220,3 +1331,4 @@ export class LlmClient {
     }
   }
 }
+
