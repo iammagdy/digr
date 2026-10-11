@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
+import { isGreetingOrGeneralQuestion } from "./briefManager";
 
 // ================= Schema Definitions =================
 
@@ -203,6 +204,20 @@ export const EditPlanToolSchema = z.object({
   reasonAr: z.string().min(1),
 });
 
+export const UpdateBriefSchema = z.object({
+  type: z.literal("update_brief"),
+  platforms: z.array(z.string()).optional(),
+  topics: z.array(z.string()).optional(),
+  targetVolume: z.number().int().positive().optional(),
+  commentsPerPost: z.number().int().positive().optional(),
+  dateRange: z.string().optional(),
+  language: z.string().optional(),
+  formats: z.array(z.string()).optional(),
+  notes: z.string().optional(),
+  replyAr: z.string().optional(),
+  questions: z.array(ClarificationQuestionItemSchema).optional(),
+});
+
 export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
   AskClarificationSchema,
   AskQuestionsSchema,
@@ -214,6 +229,7 @@ export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
   RefuseSchema,
   SuggestAlternativeSchema,
   SearchCatalogSchema,
+  UpdateBriefSchema,
 ]);
 
 export type LlmTurnOutput = z.infer<typeof LlmTurnOutputSchema>;
@@ -382,8 +398,18 @@ export const ACTION_RESULT_JSON_SCHEMA = {
         "suggest_alternative",
         "answer_question",
         "refuse",
+        "update_brief",
       ],
     },
+    platforms: { type: "array", items: { type: "string" } },
+    topics: { type: "array", items: { type: "string" } },
+    targetVolume: { type: "integer" },
+    commentsPerPost: { type: "integer" },
+    dateRange: { type: "string" },
+    language: { type: "string" },
+    formats: { type: "array", items: { type: "string" } },
+    notes: { type: "string" },
+    replyAr: { type: "string" },
     query: { type: "string" },
     platform: { type: "string" },
     intro: { type: "string" },
@@ -1000,6 +1026,121 @@ export class LlmClient {
         inputTokens: 400,
         outputTokens: 40,
         costUsd: (400 * 0.10 + 40 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    // B2. Greetings & Casual Questions (Phase 1 fast path)
+    const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(lastUserMsg);
+    if (isGreeting || isGeneralQuestion) {
+      const answerText = isGreeting
+        ? "أهلاً بك! أنا مساعد Digr لجمع وتوثيق البيانات العامة من المنصات الرقمية. كيف يمكنني مساعدتك في بحثك اليوم؟"
+        : "أنا مساعد Digr المتخصص في تصميم وتنفيذ مهام جمع وتوثيق البيانات العامة من شبكات التواصل والمنصات الرقمية وتسليمها بملفات Excel وCSV وPDF موثقة. كيف تحب نبدأ؟";
+      return {
+        output: {
+          type: "answer_question",
+          answerAr: answerText,
+          topic: isGreeting ? "greeting" : "identity",
+        },
+        inputTokens: 250,
+        outputTokens: 50,
+        costUsd: 0,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    // B3. Deterministic Phase 2 Plan Proposal Handling
+    const hasPhase2PlanInstruction = (options.messages || []).some(
+      (m) => typeof m.content === "string" && (m.content.includes("propose_plan") && m.content.includes("خطة مسعرة")),
+    );
+    if (hasPhase2PlanInstruction || options.testScenario === "phase2_plan") {
+      const matchedCap = (options.sanitizedCapabilities || []).find((c: any) =>
+        (c.platform || c.slug || "").toLowerCase().includes(
+          promptLower.includes("فيسبوك") ? "facebook" :
+          promptLower.includes("instagram") || promptLower.includes("انستغرام") ? "instagram" :
+          promptLower.includes("tiktok") || promptLower.includes("تيك توك") ? "tiktok" :
+          promptLower.includes("twitter") || promptLower.includes("تويتر") || promptLower.includes("x") ? "x" :
+          promptLower.includes("youtube") || promptLower.includes("يوتيوب") ? "youtube" :
+          promptLower.includes("reddit") || promptLower.includes("ريديت") ? "reddit" : ""
+        )
+      ) || options.sanitizedCapabilities?.[0] || {
+        slug: "facebook-post-comments",
+        id: "facebook-post-comments",
+        nameAr: "استخراج تعليقات فيسبوك",
+      };
+
+      let volume = 100;
+      const volMatch = lastUserMsg.match(/(\d+)/);
+      if (volMatch) {
+        const parsed = parseInt(volMatch[1], 10);
+        if (parsed > 0) volume = parsed;
+      }
+      for (const m of options.messages) {
+        if (typeof m.content === "string" && m.content.includes("حجم البيانات المستهدف: حتى ")) {
+          const mVol = m.content.match(/حجم البيانات المستهدف: حتى (\d+)/);
+          if (mVol) volume = parseInt(mVol[1], 10);
+        }
+      }
+
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`,
+          capabilities: [
+            {
+              stepId: "plan_step_1",
+              capabilitySlug: matchedCap.slug || "facebook-post-comments",
+              endpointId: matchedCap.id || matchedCap.slug || "facebook-post-comments",
+              params: { query: lastUserMsg.slice(0, 50), postUrl: "https://www.facebook.com/post/123" },
+              targetVolumeMin: 1,
+              targetVolumeMax: volume,
+              paginationStrategy: "cursor",
+            },
+          ],
+          outputFormats: ["xlsx", "pdf", "csv"],
+          methodologyNotes: "استخراج وتوثيق البيانات العامة وفق المعايير البحثية المعتمدة.",
+        },
+        inputTokens: 600,
+        outputTokens: 120,
+        costUsd: (600 * 0.10 + 120 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    // B4. Deterministic Phase 1 Understanding Handling
+    const hasPhase1Instruction = (options.messages || []).some(
+      (m) => typeof m.content === "string" && m.content.includes("مرحلة الاستيعاب (Phase 1)"),
+    );
+    if (hasPhase1Instruction || options.testScenario === "phase1_understanding") {
+      return {
+        output: {
+          type: "update_brief",
+          replyAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف بعض التفاصيل:",
+          questions: [
+            {
+              id: "q_volume",
+              text: "ما حجم البيانات المطلوب جمعها؟",
+              question: "ما حجم البيانات المطلوب جمعها؟",
+              type: "single",
+              options: ["حتى 500 سجل", "حتى 1000 سجل", "أكثر من 1000 سجل"],
+              allowOther: true,
+            },
+            {
+              id: "q_date",
+              text: "ما الفترة الزمنية المستهدفة؟",
+              question: "ما الفترة الزمنية المستهدفة؟",
+              type: "single",
+              options: ["آخر شهر", "آخر 3 شهور", "فترة مخصصة"],
+              allowOther: true,
+            },
+          ],
+        },
+        inputTokens: 450,
+        outputTokens: 80,
+        costUsd: (450 * 0.10 + 80 * 0.50) / 1_000_000,
         model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };
@@ -1878,6 +2019,8 @@ export class LlmClient {
           rawPayload = { type: "search_catalog", ...toolUse.input };
         } else if (toolUse.name === "ask_questions") {
           rawPayload = { type: "ask_clarification", ...toolUse.input };
+        } else if (toolUse.name === "update_brief") {
+          rawPayload = { type: "update_brief", ...toolUse.input };
         } else if (toolUse.name === "propose_plan") {
           rawPayload = {
             type: "propose_plan",
