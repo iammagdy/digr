@@ -666,13 +666,14 @@ export class LlmClient {
       };
     }
 
-    // 2. Budget limits check
+    // 2. Budget limits check (backstop: the chat handler summarizes older turns
+    // before this is reached, so hitting it means compaction did not apply)
     const convTokens = options.totalConversationTokens || 0;
-    if (convTokens > 15000) {
+    if (convTokens > 40000) {
       return {
         output: {
           type: "refuse",
-          reasonAr: "تم بلوغ الحد الأقصى لسياق هذه المحادثة (15,000 توكن). يرجى بدء محادثة جديدة.",
+          reasonAr: "تم بلوغ الحد الأقصى لسياق هذه المحادثة (40,000 توكن). يرجى بدء محادثة جديدة.",
         },
         inputTokens: 0,
         outputTokens: 0,
@@ -771,6 +772,84 @@ export class LlmClient {
     }
     if (options.testScenario === "search_forever") {
       return { output: searchCatalogOutput, ...fakeTokens };
+    }
+    const RETRY_MARKER = "الخطوة التالية المطلوبة";
+    const hasRetryInstruction = (options.messages || []).some(
+      (m) => typeof m.content === "string" && m.content.includes(RETRY_MARKER),
+    );
+    const SUMMARY_MARKER = "ملخص المحادثة";
+    const hasSummary = (options.messages || []).some(
+      (m) => typeof m.content === "string" && m.content.includes(SUMMARY_MARKER),
+    );
+    if (options.testScenario === "search_retry_then_questions") {
+      if (!hasCatalogResults) return { output: searchCatalogOutput, ...fakeTokens };
+      if (!hasRetryInstruction) return { output: { type: "answer_question", answerAr: "" }, ...fakeTokens };
+      return {
+        output: {
+          type: "ask_clarification",
+          reasonAr: "أحتاج توضيحاً قبل إعداد الخطة.",
+          questions: [{ question: "كم عدد المنشورات المطلوب جمع تعليقاتها؟" }],
+        },
+        ...fakeTokens,
+      };
+    }
+    if (options.testScenario === "search_then_stall") {
+      if (!hasCatalogResults) return { output: searchCatalogOutput, ...fakeTokens };
+      return { output: { type: "answer_question", answerAr: "   " }, ...fakeTokens };
+    }
+    if (options.testScenario === "direct_plan") {
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: "استخراج تعليقات فيسبوك العامة حول البطالة في مصر",
+          capabilities: [
+            {
+              stepId: "fb_comments",
+              capabilitySlug: "facebook-post-comments",
+              endpointId: "facebook-post-comments",
+              params: { postUrl: "https://www.facebook.com/post/123", maxPages: 5 },
+              targetVolumeMin: 10,
+              targetVolumeMax: 50,
+              paginationStrategy: "cursor",
+            },
+          ],
+          outputFormats: ["xlsx", "csv"],
+          methodologyNotes: "اختبار وهمي.",
+        },
+        ...fakeTokens,
+      };
+    }
+    if (options.testScenario === "summary_then_plan") {
+      if (hasSummary) {
+        return {
+          output: {
+            type: "propose_plan",
+            summaryAr: "استكمال الخطة بعد تلخيص السياق",
+            capabilities: [
+              {
+                stepId: "fb_comments",
+                capabilitySlug: "facebook-post-comments",
+                endpointId: "facebook-post-comments",
+                params: { postUrl: "https://www.facebook.com/post/123", maxPages: 5 },
+                targetVolumeMin: 10,
+                targetVolumeMax: 50,
+                paginationStrategy: "cursor",
+              },
+            ],
+            outputFormats: ["xlsx", "csv"],
+            methodologyNotes: "اختبار وهمي.",
+          },
+          ...fakeTokens,
+        };
+      }
+      return {
+        output: {
+          type: "ask_clarification",
+          reasonAr: "سؤال بعد التلخيص.",
+          questions: [{ question: "هل نستكمل بنفس الخطة؟" }],
+        },
+        ...fakeTokens,
+      };
     }
     const lastUserMsg = [...options.messages].reverse().find((m) => m.role === "user")?.content || "";
     const promptLower = lastUserMsg.toLowerCase();

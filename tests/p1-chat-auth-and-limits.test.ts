@@ -167,14 +167,17 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     expect(result.reasonAr).toContain("الحد اليومي لاستخدام المساعد");
   });
 
-  it("should enforce conversation context token cap (15,000 tokens)", () => {
+  it("should enforce conversation context token cap (40,000 tokens)", () => {
     const withinCap = checkConversationTokenCap(8000);
     expect(withinCap.allowed).toBe(true);
 
-    const exceededCap = checkConversationTokenCap(15001);
+    const stillWithin = checkConversationTokenCap(15001);
+    expect(stillWithin.allowed).toBe(true);
+
+    const exceededCap = checkConversationTokenCap(40001);
     expect(exceededCap.allowed).toBe(false);
     expect(exceededCap.statusCode).toBe(429);
-    expect(exceededCap.reasonAr).toContain("15,000 توكن");
+    expect(exceededCap.reasonAr).toContain("40,000 توكن");
   });
 
   // ================= 4. LLM Kill-Switch & Fake Provider =================
