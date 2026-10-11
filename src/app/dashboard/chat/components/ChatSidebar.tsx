@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { balanceText, type BalanceView } from "@/lib/honestDisplay";
 import Link from "next/link";
+import { BrandLogo } from "@/components/BrandLogo";
 import { getPersonaConfig, PersonaType, PERSONA_CONFIGS } from "@/functions/shared/personaConfigs";
 import { Alert } from "@/components/ui";
 
@@ -83,9 +84,8 @@ export default function ChatSidebar({
         {/* Header */}
         <div className="relative border-b border-white/10 p-4">
           <div className="mb-4 flex items-center justify-between">
-            <Link href="/dashboard" className="flex items-center gap-2" onClick={onCloseMobile}>
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-sm font-bold ring-1 ring-white/20">دِ</span>
-              <span className="text-lg font-bold tracking-tight">Digr</span>
+            <Link href="/dashboard" className="flex items-center gap-2" aria-label="Digr — لوحة المستخدم" onClick={onCloseMobile}>
+              <BrandLogo tone="inverse" size="medium" />
             </Link>
             <button
               type="button"

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Badge, Button, Card, Eyebrow, Stamp } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 import {
@@ -198,8 +200,7 @@ export default function LandingPage() {
       <header className="sticky top-0 z-30 border-b border-sand-200/80 bg-sand-50/90 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5" aria-label="Digr — الرئيسية">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-pine-800 text-base font-bold text-white shadow-xs">دِ</span>
-            <span className="text-xl font-bold tracking-tight text-ink-900">Digr</span>
+            <BrandLogo size="medium" />
           </Link>
           <nav className="hidden items-center gap-7 text-sm font-medium text-ink-600 md:flex" aria-label="التنقل الرئيسي">
             <a href="#how" className="transition-colors hover:text-ink-900">طريقة العمل</a>
@@ -207,6 +208,7 @@ export default function LandingPage() {
             <a href="#faq" className="transition-colors hover:text-ink-900">الأسئلة الشائعة</a>
           </nav>
           <div className="flex items-center gap-2">
+            <ThemeToggle className="h-10 w-10" />
             <Link href="/login" className="hidden rounded-xl px-4 py-2 text-sm font-semibold text-ink-700 transition-colors hover:bg-sand-100 sm:inline-flex">
               تسجيل الدخول
             </Link>
@@ -459,8 +461,7 @@ export default function LandingPage() {
       <footer className="border-t border-sand-200 bg-sand-100/60 py-10">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-5 px-4 text-sm text-ink-500 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-pine-800 text-xs font-bold text-white">دِ</span>
-            <span className="font-bold text-ink-900">Digr</span>
+            <BrandLogo size="small" />
             <span aria-hidden="true" className="text-sand-300">|</span>
             <span>بيانات عامة جاهزة للتحليل</span>
           </div>

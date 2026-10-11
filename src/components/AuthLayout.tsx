@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { BrandLogo } from "@/components/BrandLogo";
 
 /**
  * Shared premium auth layout.
@@ -27,8 +28,7 @@ export function AuthLayout({
           <div className="absolute bottom-0 end-0 h-72 w-72 rounded-full bg-white/5 blur-3xl" />
         </div>
         <Link href="/" className="relative flex items-center gap-2.5" tabIndex={-1}>
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-lg font-bold text-white ring-1 ring-white/20">دِ</span>
-          <span className="text-2xl font-bold tracking-tight">Digr</span>
+          <BrandLogo tone="inverse" size="large" />
         </Link>
         <div className="relative max-w-md">
           <p className="font-display text-3xl leading-snug text-white">
@@ -52,8 +52,7 @@ export function AuthLayout({
       <div className="flex flex-col px-4 py-8 sm:px-8 sm:py-10">
         <div className="mx-auto w-full max-w-md flex-1">
           <Link href="/" className="mb-8 inline-flex items-center gap-2.5 lg:hidden" aria-label="Digr — الرئيسية">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-pine-800 text-base font-bold text-white">دِ</span>
-            <span className="text-xl font-bold tracking-tight text-ink-900">Digr</span>
+            <BrandLogo size="medium" />
           </Link>
           <div className="mt-2 lg:mt-14">
             <h1 className="font-display text-3xl text-ink-900">{title}</h1>

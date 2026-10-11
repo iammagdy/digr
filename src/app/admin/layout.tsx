@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
@@ -47,12 +49,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="min-h-screen bg-sand-50">
+    <div className="min-h-screen bg-sand-50" data-design-surface="admin">
       <header className="border-b border-sand-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
           <div className="flex items-center gap-6">
-            <Link href="/admin/topups" className="text-lg font-bold text-sand-900">
-              Digr <span className="mr-1 text-xs font-normal text-amber-600 bg-amber-50 px-2 py-0.5 rounded">إدارة</span>
+            <Link href="/admin/topups" className="text-lg font-bold text-sand-900" aria-label="Digr — الإدارة">
+              <BrandLogo size="small" /> <span className="mr-1 rounded bg-amber-points-bg px-2 py-0.5 text-xs font-normal text-amber-points">إدارة</span>
             </Link>
             <nav className="flex items-center gap-4 text-sm">
               <Link href="/admin/topups" className="text-sand-700 hover:text-sand-900 font-medium">
@@ -63,7 +65,10 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               </Link>
             </nav>
           </div>
-          <span className="text-xs text-sand-500">{user?.name} (مسؤول)</span>
+          <div className="flex items-center gap-3">
+            <ThemeToggle className="h-10 w-10" />
+            <span className="text-xs text-sand-500">{user?.name} (مسؤول)</span>
+          </div>
         </div>
       </header>
 

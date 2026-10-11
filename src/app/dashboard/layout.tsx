@@ -5,6 +5,8 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { databases } from "@/lib/appwrite";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Query } from "appwrite";
 import { balanceLoading, balanceReady, balanceFailed, balanceText, type BalanceView } from "@/lib/honestDisplay";
 import { Avatar, Drawer, Spinner } from "@/components/ui";
@@ -141,9 +143,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="absolute -top-24 -start-24 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
         </div>
         <div className="relative p-5 pb-2">
-          <Link href="/dashboard" className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-lg font-bold ring-1 ring-white/20">دِ</span>
-            <span className="text-2xl font-bold tracking-tight">Digr</span>
+          <Link href="/dashboard" className="flex items-center gap-2.5" aria-label="Digr — لوحة المستخدم">
+            <BrandLogo tone="inverse" size="large" />
           </Link>
           <p className="mt-2 ps-0.5 text-xs text-sand-400">مساحة البحث بالبيانات العامة</p>
         </div>
@@ -164,6 +165,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <p className="truncate text-sm font-semibold text-white">{user.name}</p>
               <p className="truncate text-xs text-sand-400" dir="ltr">{user.email}</p>
             </div>
+            <ThemeToggle className="h-10 w-10" />
             <button
               type="button"
               onClick={handleLogout}
@@ -194,19 +196,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-pine-800 text-sm font-bold text-white">دِ</span>
-              <span className="text-lg font-bold text-ink-900">Digr</span>
+            <Link href="/dashboard" className="flex items-center gap-2" aria-label="Digr — لوحة المستخدم">
+              <BrandLogo size="small" />
             </Link>
           </div>
-          <Link
-            href="/dashboard/topup"
-            className="tnum inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3 text-sm font-bold text-amber-points"
-            aria-label={`رصيدك ${balance.status === "failed" ? "غير متاح حاليًا" : balance.status === "loading" ? "جارٍ التحميل" : balanceText(balance)} — شحن الرصيد`}
-          >
-            {balanceText(balance)} نقطة
-            <span aria-hidden="true" className="text-base leading-none">+</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <ThemeToggle className="h-10 w-10" />
+            <Link
+              href="/dashboard/topup"
+              className="tnum inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3 text-sm font-bold text-amber-points"
+              aria-label={`رصيدك ${balance.status === "failed" ? "غير متاح حاليًا" : balance.status === "loading" ? "جارٍ التحميل" : balanceText(balance)} — شحن الرصيد`}
+            >
+              {balanceText(balance)} نقطة
+              <span aria-hidden="true" className="text-base leading-none">+</span>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -219,6 +223,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <p className="truncate text-sm font-bold text-ink-900">{user.name}</p>
               <p className="truncate text-xs text-sand-500" dir="ltr">{user.email}</p>
             </div>
+            <ThemeToggle className="h-10 w-10" />
           </div>
           <button
             type="button"

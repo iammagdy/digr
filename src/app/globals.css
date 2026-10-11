@@ -1,83 +1,192 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: var(--font-vazirmatn), "Vazirmatn", system-ui, sans-serif;
+  --font-display: var(--font-markazi), "Markazi Text", serif;
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Digr paper — warm, scholarly, calm */
-  --color-sand-50: #faf9f6;
-  --color-sand-100: #f4f3ee;
-  --color-sand-200: #e8e6df;
-  --color-sand-300: #d6d3c9;
-  --color-sand-400: #b8b3a7;
-  --color-sand-500: #938d80;
-  --color-sand-600: #6f695e;
-  --color-sand-700: #555047;
-  --color-sand-800: #38342e;
-  --color-sand-900: #1a1815;
+  --color-bg: var(--bg);
+  --color-surface: var(--sf);
+  --color-surface-subtle: var(--sf2);
+  --color-border: var(--ln);
+  --color-border-strong: var(--ln2);
+  --color-foreground: var(--ink);
+  --color-foreground-muted: var(--ink2);
+  --color-muted: var(--mut);
+  --color-faint: var(--fnt);
+  --color-action: var(--ac);
+  --color-on-action: var(--onac);
+  --color-gold: var(--gold);
+  --color-gold-text: var(--goldT);
+  --color-success: var(--ok);
+  --color-danger: var(--bad);
+  --color-info: var(--info);
+  --color-chart: var(--bar);
+  --color-chart-accent: var(--bar2);
+  --color-amber-50: var(--sf2);
+  --color-amber-100: var(--sf2);
+  --color-amber-200: var(--ln2);
+  --color-amber-800: var(--goldT);
+  --color-amber-900: var(--goldT);
+  --color-blue-50: var(--sf2);
+  --color-blue-200: var(--ln2);
+  --color-blue-900: var(--info);
+  --color-emerald-50: var(--sf2);
+  --color-emerald-800: var(--ok);
+  --color-emerald-900: var(--ok);
+  --color-red-50: var(--sf2);
+  --color-rose-800: var(--bad);
+  --color-rose-900: var(--bad);
 
-  /* Ink — high-contrast, effortless Arabic reading */
-  --color-ink-900: #0f172a;
-  --color-ink-800: #1e293b;
-  --color-ink-700: #334155;
-  --color-ink-600: #475569;
-  --color-ink-500: #64748b;
-  --color-ink-400: #94a3b8;
-  --color-ink-300: #cbd5e1;
-  --color-ink-200: #e2e8f0;
-  --color-ink-100: #f1f5f9;
+  /* Keep the existing CSS-first Tailwind class names on the approved palette. */
+  --color-sand-50: var(--bg);
+  --color-sand-100: var(--sf2);
+  --color-sand-200: var(--ln);
+  --color-sand-300: var(--ln2);
+  --color-sand-400: var(--fnt);
+  --color-sand-500: var(--mut);
+  --color-sand-600: var(--ink2);
+  --color-sand-700: var(--ink);
+  --color-sand-800: var(--ink);
+  --color-sand-900: var(--ink);
+  --color-ink-100: var(--sf2);
+  --color-ink-200: var(--ln);
+  --color-ink-300: var(--ln2);
+  --color-ink-400: var(--fnt);
+  --color-ink-500: var(--mut);
+  --color-ink-600: var(--ink2);
+  --color-ink-700: var(--ink2);
+  --color-ink-800: var(--ink2);
+  --color-ink-900: var(--ink);
+  --color-primary: var(--ac);
+  --color-primary-hover: var(--ac);
+  --color-accent: var(--ac);
+  --color-accent-hover: var(--ac);
+  --color-accent-light: var(--sf2);
+  --color-accent-ink: var(--ink);
+  --color-info-bg: var(--sf2);
+  --color-pine-50: var(--sf2);
+  --color-pine-100: var(--sf2);
+  --color-pine-200: var(--ln2);
+  --color-pine-500: var(--ac);
+  --color-pine-700: var(--ac);
+  --color-pine-800: var(--ac);
+  --color-pine-900: var(--ac);
+  --color-pine-950: var(--ac);
+  --color-amber-points: var(--goldT);
+  --color-amber-points-hover: var(--goldT);
+  --color-amber-points-bg: var(--sf2);
+  --color-success-bg: var(--sf2);
+  --color-warning: var(--goldT);
+  --color-warning-bg: var(--sf2);
+  --color-danger-bg: var(--sf2);
 
-  /* Primary actions — deep, confident ink */
-  --color-primary: #0f172a;
-  --color-primary-hover: #1e293b;
-
-  /* Brand accent — deep pine teal: scholarly, calm, distinctive.
-     Used for interactive emphasis, focus rings, and the Digr identity. */
-  --color-accent: #0b6b5c;
-  --color-accent-hover: #095344;
-  --color-accent-light: #e7f3ef;
-  --color-accent-ink: #083f35;
-
-  /* Informational blue (secondary, non-brand) */
-  --color-info: #2563eb;
-  --color-info-bg: #eff6ff;
-
-  /* Pine scale — deep surfaces, sidebar, stamps */
-  --color-pine-50: #eef6f3;
-  --color-pine-100: #d9ebe5;
-  --color-pine-200: #b3d7cc;
-  --color-pine-500: #0e7a66;
-  --color-pine-700: #0b5a4c;
-  --color-pine-800: #084739;
-  --color-pine-900: #06332a;
-  --color-pine-950: #04231d;
-
-  /* Points & value — warm brass */
-  --color-amber-points: #d97706;
-  --color-amber-points-hover: #b45309;
-  --color-amber-points-bg: #fffbeb;
-
-  /* Status semantics */
-  --color-success: #059669;
-  --color-success-bg: #ecfdf5;
-  --color-warning: #d97706;
-  --color-warning-bg: #fffbeb;
-  --color-danger: #dc2626;
-  --color-danger-bg: #fef2f2;
-
-  /* Elevation */
-  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 16px -4px rgb(15 23 42 / 0.08);
-  --shadow-lift: 0 2px 4px rgb(15 23 42 / 0.05), 0 12px 32px -8px rgb(15 23 42 / 0.14);
-  --shadow-ink: 0 8px 30px -6px rgb(4 35 29 / 0.35);
-
-  /* Motion */
-  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --shadow-card: var(--shadow);
+  --shadow-lift: var(--shadow);
+  --shadow-ink: var(--shadow);
+  --radius-pill: 999px;
+  --radius-card: 20px;
+  --radius-card-large: 30px;
+  --radius-admin-card: 18px;
+  --ease-out-soft: cubic-bezier(.2, .7, .2, 1);
+  --ease-digr: cubic-bezier(.2, .7, .2, 1);
 }
 
-/* IBM Plex Sans Arabic from Google Fonts */
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #FAF8F4;
+  --sf: #FFFFFF;
+  --sf2: #F2EFE9;
+  --ln: #E8E4DC;
+  --ln2: #D9D3C8;
+  --ink: #16201F;
+  --ink2: #343C3B;
+  --mut: #6F716C;
+  --fnt: #9A9890;
+  --ac: #0E3B43;
+  --onac: #FAF8F4;
+  --goldT: #8A6420;
+  --gold: #C8963E;
+  --ok: #2F7A4F;
+  --bad: #B4382B;
+  --chrome: #EDEAE3;
+  --kbbg: #D3D6DC;
+  --kbkey: #FFFFFF;
+  --kbfn: #ADB2BA;
+  --shadow: 0 1px 2px rgba(22,32,31,.04), 0 20px 50px -24px rgba(22,32,31,.22);
+}
 
-/* Base */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111413;
+  --sf: #171B1A;
+  --sf2: #1D2221;
+  --ln: #262C2B;
+  --ln2: #343B3A;
+  --ink: #ECEAE4;
+  --ink2: #CFCCC4;
+  --mut: #99978F;
+  --fnt: #6E6D67;
+  --ac: #ECEAE4;
+  --onac: #111413;
+  --goldT: #D4A65A;
+  --gold: #C8963E;
+  --ok: #7CCB9E;
+  --bad: #F08A7C;
+  --chrome: #080A09;
+  --kbbg: #2A2C2E;
+  --kbkey: #58595C;
+  --kbfn: #3E3F42;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 24px 60px -24px rgba(0,0,0,.7);
+}
+
+[data-theme="light"] [data-design-surface="admin"] {
+  --bg: #F6F4EF;
+  --sf: #FFFFFF;
+  --sf2: #F1EEE8;
+  --sf3: #E9E5DD;
+  --ln: #E7E2D9;
+  --ln2: #D6D0C4;
+  --ink: #16201F;
+  --ink2: #343C3B;
+  --mut: #6B6E69;
+  --fnt: #959389;
+  --ac: #0E3B43;
+  --onac: #F6F4EF;
+  --goldT: #8A6420;
+  --ok: #2F7A4F;
+  --bad: #B4382B;
+  --info: #2B5F8A;
+  --chrome: #E9E6DF;
+  --shadow: 0 1px 2px rgba(22,32,31,.04), 0 12px 32px -18px rgba(22,32,31,.18);
+  --bar: #0E3B43;
+  --bar2: #C8963E;
+}
+
+[data-theme="dark"] [data-design-surface="admin"] {
+  --bg: #0F1211;
+  --sf: #161A19;
+  --sf2: #1C2120;
+  --sf3: #242A29;
+  --ln: #252B2A;
+  --ln2: #343B3A;
+  --ink: #ECEAE4;
+  --ink2: #CFCCC4;
+  --mut: #9B998F;
+  --fnt: #6F6E68;
+  --ac: #ECEAE4;
+  --onac: #0F1211;
+  --goldT: #D4A65A;
+  --ok: #7CCB9E;
+  --bad: #F08A7C;
+  --info: #8DB8E0;
+  --chrome: #070908;
+  --shadow: 0 1px 2px rgba(0,0,0,.35), 0 16px 40px -20px rgba(0,0,0,.8);
+  --bar: #A9D5D9;
+  --bar2: #C8963E;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -85,53 +194,55 @@ html {
 }
 
 body {
-  background-color: var(--color-sand-50);
-  color: var(--color-ink-800);
-  font-family: var(--font-sans);
+  min-height: 100%;
+  background-color: var(--bg);
+  color: var(--ink2);
+  font-family: var(--font-vazirmatn), "Vazirmatn", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "ss01", "ss02", "cv01";
   text-rendering: optimizeLegibility;
 }
 
-/* Display typography — editorial Arabic headlines */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 .font-display {
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  line-height: 1.35;
+  font-family: var(--font-markazi), "Markazi Text", serif;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.1;
   text-wrap: balance;
 }
 
-/* Ledger numerals — tabular, for points and counts */
-.tnum {
+.tnum,
+.tabular-nums {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
 
-/* Scrollbars */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 9999px; }
+::-webkit-scrollbar-thumb { background-color: var(--ln2); border-radius: 9999px; }
 ::-webkit-scrollbar-track { background-color: transparent; }
 
-/* Accessible focus */
 *:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--gold);
   outline-offset: 2px;
   border-radius: 4px;
 }
 
-/* Touch targets & safe areas */
 .touch-target { min-height: 44px; min-width: 44px; }
 .safe-bottom { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
-.tabular-nums { font-variant-numeric: tabular-nums; }
 
-/* Hairline rule — the ledger motif */
 .rule-ledger {
   border: 0;
-  border-top: 1px solid var(--color-sand-200);
+  border-top: 1px solid var(--ln);
 }
 
-/* Archival stamp badge */
 .stamp {
   display: inline-flex;
   align-items: center;
@@ -147,53 +258,69 @@ body {
   white-space: nowrap;
 }
 
-/* Card surface */
 .surface-card {
-  background: #fff;
-  border: 1px solid var(--color-sand-200);
+  background: var(--sf);
+  border: 1px solid var(--ln);
   border-radius: 1rem;
   box-shadow: var(--shadow-card);
 }
 
-/* Subtle entrance — answers user action, never decorates idly */
+.bg-pine-950 { background-color: var(--ac); }
+[data-theme="dark"] .bg-pine-950 { background-color: #111413; }
+[data-theme="dark"] .bg-white { background-color: var(--sf); }
+[data-theme="dark"] [class~="bg-white/5"] { background-color: color-mix(in srgb, var(--sf) 5%, transparent); }
+[data-theme="dark"] [class~="bg-white/8"] { background-color: color-mix(in srgb, var(--sf) 8%, transparent); }
+[data-theme="dark"] [class~="bg-white/10"] { background-color: color-mix(in srgb, var(--sf) 10%, transparent); }
+[data-theme="dark"] [class~="bg-white/12"] { background-color: color-mix(in srgb, var(--sf) 12%, transparent); }
+[data-theme="dark"] [class~="bg-white/95"] { background-color: color-mix(in srgb, var(--sf) 95%, transparent); }
+[data-theme="dark"] .bg-accent.text-white,
+[data-theme="dark"] .bg-primary.text-white,
+.bg-emerald-800.text-white,
+.bg-rose-800.text-white { color: var(--onac); }
+
+[data-brand-adaptive] [data-brand-logo-dark] { display: none; }
+[data-theme="dark"] [data-brand-adaptive] [data-brand-logo-light] { display: none; }
+[data-theme="dark"] [data-brand-adaptive] [data-brand-logo-dark] { display: inline-block; }
+
+.theme-toggle__sun { display: none; }
+[data-theme="dark"] .theme-toggle__moon { display: none; }
+[data-theme="dark"] .theme-toggle__sun { display: block; }
+
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.animate-rise {
-  animation: rise-in 0.45s var(--ease-out-soft) both;
-}
+.animate-rise { animation: rise-in 0.45s var(--ease-out-soft) both; }
+
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 .animate-fade { animation: fade-in 0.3s ease-out both; }
 
-/* Skeleton shimmer */
 @keyframes shimmer {
   from { background-position: 200% 0; }
   to { background-position: -200% 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, var(--color-sand-100) 25%, var(--color-sand-200) 50%, var(--color-sand-100) 75%);
+  background: linear-gradient(90deg, var(--sf2) 25%, var(--ln) 50%, var(--sf2) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.6s linear infinite;
 }
 
-/* Dossier paper texture for the hero demo */
 .paper-dossier {
-  background-color: #fffdf8;
+  background-color: var(--sf);
   background-image:
-    radial-gradient(ellipse at 20% 0%, rgb(11 107 92 / 0.05), transparent 55%),
-    linear-gradient(to bottom, transparent 95%, rgb(15 23 42 / 0.03) 100%);
+    radial-gradient(ellipse at 20% 0%, color-mix(in srgb, var(--ac) 5%, transparent), transparent 55%),
+    linear-gradient(to bottom, transparent 95%, color-mix(in srgb, var(--ink) 3%, transparent) 100%);
 }
 
-/* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
