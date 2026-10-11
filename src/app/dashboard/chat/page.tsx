@@ -4,6 +4,9 @@ import { useState, useEffect, useRef, useCallback, type FormEvent } from "react"
 import Link from "next/link";
 import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
+import { takePendingQuestion } from "@/lib/pendingQuestion";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Storage, Query } from "appwrite";
 import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
 import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText, type BalanceView } from "@/lib/honestDisplay";
@@ -88,6 +91,19 @@ export default function ChatWorkspacePage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const conversationLoadSequence = useRef(0);
+
+  useEffect(() => {
+    try {
+      const pendingQuestion = takePendingQuestion(window.sessionStorage);
+      const promptFromLink = new URLSearchParams(window.location.search).get("prompt")?.trim() || "";
+      const initialQuestion = pendingQuestion || promptFromLink;
+      if (promptFromLink) window.history.replaceState(null, "", window.location.pathname);
+      if (!initialQuestion) return;
+      setInputText((current) => current || initialQuestion);
+    } catch {
+      // The composer remains usable when session storage is unavailable.
+    }
+  }, []);
 
   // 1. Check Profile & Onboarding status
   useEffect(() => {
@@ -887,7 +903,7 @@ export default function ChatWorkspacePage() {
 
   return (
     <div
-      className="flex h-dvh min-h-0 w-full bg-sand-50 text-ink-900 overflow-hidden font-sans"
+      className="chat-workspace flex h-dvh min-h-0 w-full bg-sand-50 text-ink-900 overflow-hidden font-sans"
       style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
     >
       {/* 1. Onboarding Modal */}
@@ -917,9 +933,9 @@ export default function ChatWorkspacePage() {
       />
 
       {/* 3. Main Chat Column */}
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden lg:border-s lg:border-sand-200">
+      <div className="chat-workspace__main flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden lg:border-s lg:border-sand-200">
         {/* Top Header — research workspace identity */}
-        <header className="h-16 shrink-0 min-w-0 px-3 sm:px-6 bg-white/95 backdrop-blur-md border-b border-sand-200 flex items-center justify-between">
+        <header className="chat-workspace__header h-16 shrink-0 min-w-0 px-3 sm:px-6 bg-white/95 backdrop-blur-md border-b border-sand-200 flex items-center justify-between">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
             <button
               type="button"
@@ -931,10 +947,10 @@ export default function ChatWorkspacePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <span aria-hidden="true" className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl bg-pine-800 text-sm font-bold text-white shrink-0">دِ</span>
+            <span aria-hidden="true" className="hidden sm:flex shrink-0"><BrandLogo size="small" /></span>
             <div className="min-w-0">
               <h1 className="text-sm sm:text-base font-bold text-ink-900 truncate">
-                المساعد البحثي
+                ملف بحث
               </h1>
               <p className="hidden md:block text-xs text-sand-500">
                 صِف سؤالك — نخطط معًا قبل أي جمع
@@ -943,6 +959,7 @@ export default function ChatWorkspacePage() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <ThemeToggle className="h-10 w-10" />
             {/* Balance Badge */}
             <Link
               href="/dashboard/topup"
@@ -999,8 +1016,8 @@ export default function ChatWorkspacePage() {
           {messages.length === 0 && !conversationLoading && !conversationLoadError && (
             <div className="max-w-2xl mx-auto pt-10 sm:pt-16 px-1">
               <div className="text-center space-y-3">
-                <span aria-hidden="true" className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-pine-800 text-xl font-bold text-white shadow-[var(--shadow-ink)]">
-                  دِ
+                <span aria-hidden="true" className="mx-auto flex h-14 items-center justify-center">
+                  <BrandLogo size="large" />
                 </span>
                 <h2 className="font-display text-2xl sm:text-3xl text-ink-900">
                   ما سؤالك البحثي اليوم؟
@@ -1238,7 +1255,7 @@ export default function ChatWorkspacePage() {
               }}
               disabled={conversationLoading}
               placeholder="مثال: أريد بيانات الملف العام لحساب على تيك توك"
-              className="min-w-0 flex-1 bg-transparent p-2 text-xs leading-5 sm:text-sm text-ink-900 placeholder:text-sand-400 focus:outline-hidden resize-none max-h-20"
+              className="min-w-0 flex-1 bg-transparent p-2 text-base leading-6 sm:text-sm text-ink-900 placeholder:text-sand-400 focus:outline-hidden resize-none max-h-20"
             />
 
             {/* Send Button */}

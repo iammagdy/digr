@@ -5,6 +5,8 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { databases } from "@/lib/appwrite";
+import { BrandLogo } from "@/components/BrandLogo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Query } from "appwrite";
 import { balanceLoading, balanceReady, balanceFailed, balanceText, type BalanceView } from "@/lib/honestDisplay";
 import { Avatar, Drawer, Spinner } from "@/components/ui";
@@ -134,26 +136,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   };
 
   return (
-    <div className="min-h-dvh bg-sand-50 text-ink-800 lg:ps-72">
+    <div className="min-h-dvh bg-bg text-foreground lg:ps-68">
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 start-0 z-40 hidden w-72 flex-col bg-pine-950 text-white lg:flex" aria-label="الشريط الجانبي">
+      <aside className="fixed inset-y-0 start-0 z-40 hidden w-68 flex-col border-e border-border bg-surface text-foreground lg:flex" aria-label="الشريط الجانبي">
         <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
-          <div className="absolute -top-24 -start-24 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
+          <div className="absolute -top-24 -start-24 h-64 w-64 rounded-full bg-gold/8 blur-3xl" />
         </div>
         <div className="relative p-5 pb-2">
-          <Link href="/dashboard" className="flex items-center gap-2.5">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-lg font-bold ring-1 ring-white/20">دِ</span>
-            <span className="text-2xl font-bold tracking-tight">Digr</span>
+          <Link href="/dashboard" className="flex items-center gap-2.5" aria-label="Digr — لوحة المستخدم">
+            <BrandLogo size="large" />
           </Link>
-          <p className="mt-2 ps-0.5 text-xs text-sand-400">مساحة البحث بالبيانات العامة</p>
+          <p className="mt-2 ps-0.5 text-xs text-foreground-muted">مساحة البحث بالبيانات العامة</p>
         </div>
         <div className="relative flex-1 overflow-y-auto p-4">
-          <NavLinks pathname={pathname} dark />
+          <NavLinks pathname={pathname} />
         </div>
-        <div className="relative space-y-3 border-t border-white/10 p-4">
-          <Link href="/dashboard/topup" className="block rounded-2xl bg-white/8 p-3.5 ring-1 ring-white/10 transition-colors hover:bg-white/12">
-            <p className="text-xs text-sand-300">رصيد النقاط المتاح</p>
-            <p className="tnum mt-1 text-2xl font-bold text-white">
+        <div className="relative space-y-3 border-t border-border p-4">
+          <Link href="/dashboard/topup" className="block rounded-2xl border border-border bg-surface-subtle p-3.5 transition-colors hover:border-border-strong">
+            <p className="text-xs text-foreground-muted">رصيد النقاط المتاح</p>
+            <p className="tnum mt-1 text-2xl font-bold text-foreground">
               {balanceText(balance)}{" "}
               <span className="text-xs font-semibold text-amber-points">نقطة</span>
             </p>
@@ -161,19 +162,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-3">
             <Avatar name={user.name} size="sm" />
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-white">{user.name}</p>
-              <p className="truncate text-xs text-sand-400" dir="ltr">{user.email}</p>
+              <p className="truncate text-sm font-semibold text-foreground">{user.name}</p>
+              <p className="truncate text-xs text-foreground-muted" dir="ltr">{user.email}</p>
             </div>
+            <ThemeToggle className="h-10 w-10" />
             <button
               type="button"
               onClick={handleLogout}
-              className="rounded-lg px-2.5 py-2 text-xs font-semibold text-sand-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
+              className="touch-target rounded-lg px-2.5 py-2 text-xs font-semibold text-foreground-muted transition-colors hover:bg-surface-subtle hover:text-foreground cursor-pointer"
             >
               خروج
             </button>
           </div>
           <div className="pt-1 text-center">
-            <span className="font-mono text-[10px] text-sand-400/60" dir="ltr" data-testid="dashboard-build-id">
+              <span className="font-mono text-[10px] text-faint" dir="ltr" data-testid="dashboard-build-id">
               build {process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf"}
             </span>
           </div>
@@ -194,19 +196,21 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-pine-800 text-sm font-bold text-white">دِ</span>
-              <span className="text-lg font-bold text-ink-900">Digr</span>
+            <Link href="/dashboard" className="flex items-center gap-2" aria-label="Digr — لوحة المستخدم">
+              <BrandLogo size="small" />
             </Link>
           </div>
-          <Link
-            href="/dashboard/topup"
-            className="tnum inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3 text-sm font-bold text-amber-points"
-            aria-label={`رصيدك ${balance.status === "failed" ? "غير متاح حاليًا" : balance.status === "loading" ? "جارٍ التحميل" : balanceText(balance)} — شحن الرصيد`}
-          >
-            {balanceText(balance)} نقطة
-            <span aria-hidden="true" className="text-base leading-none">+</span>
-          </Link>
+          <div className="flex items-center gap-2">
+            <ThemeToggle className="h-10 w-10" />
+            <Link
+              href="/dashboard/topup"
+              className="tnum inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3 text-sm font-bold text-amber-points"
+              aria-label={`رصيدك ${balance.status === "failed" ? "غير متاح حاليًا" : balance.status === "loading" ? "جارٍ التحميل" : balanceText(balance)} — شحن الرصيد`}
+            >
+              {balanceText(balance)} نقطة
+              <span aria-hidden="true" className="text-base leading-none">+</span>
+            </Link>
+          </div>
         </div>
       </header>
 
@@ -219,6 +223,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <p className="truncate text-sm font-bold text-ink-900">{user.name}</p>
               <p className="truncate text-xs text-sand-500" dir="ltr">{user.email}</p>
             </div>
+            <ThemeToggle className="h-10 w-10" />
           </div>
           <button
             type="button"

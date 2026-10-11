@@ -41,7 +41,7 @@ export default function RegisterPage() {
 
   return (
     <AuthLayout
-      title="أنشئ حسابك البحثي"
+      title="أنشئ حسابك"
       subtitle="ابدأ في تصميم خطط بحثك والحصول على عروض أسعار شفافة بالنقاط."
       footer={
         <>
@@ -66,6 +66,7 @@ export default function RegisterPage() {
             type="text"
             required
             autoComplete="name"
+            className="auth-input"
             placeholder="مثال: أحمد محمد"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -78,7 +79,7 @@ export default function RegisterPage() {
             required
             autoComplete="email"
             dir="ltr"
-            className="text-left font-mono"
+            className="auth-input text-left font-mono"
             placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -92,7 +93,7 @@ export default function RegisterPage() {
               required
               autoComplete="new-password"
               dir="ltr"
-              className="pe-12 text-left font-mono"
+              className="auth-input pe-12 text-left font-mono"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
