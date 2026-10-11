@@ -556,15 +556,37 @@ export class ChatHandler {
       const platformsToSearch = brief.platforms.length > 0 ? brief.platforms : detectMentionedPlatforms(message);
       const searchTopic = brief.topics.length > 0 ? brief.topics.join(" ") : message;
 
+      const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
+        catalogSearchCount++;
+        let res = await searchCatalog(topic, p);
+        if (res.length > 0) return res;
+        // On empty result or failure, retry silently up to 3 times with alternatives
+        const fallbacks = [
+          { q: p || "", plat: p },
+          { q: "", plat: p },
+          { q: topic, plat: undefined },
+        ];
+        for (let i = 0; i < fallbacks.length && res.length === 0; i++) {
+          try {
+            catalogSearchCount++;
+            res = await searchCatalog(fallbacks[i].q, fallbacks[i].plat);
+          } catch (err: any) {
+            console.warn("[chat:catalog_search_retry_failure]", { attempt: i + 1, error: err?.message });
+          }
+        }
+        if (res.length === 0) {
+          console.warn("[chat:catalog_search_empty_after_retries]", { topic, platform: p });
+        }
+        return res;
+      };
+
       if (platformsToSearch.length > 0) {
         for (const p of platformsToSearch) {
-          catalogSearchCount++;
-          const res = await searchCatalog(searchTopic, p);
+          const res = await runCatalogSearchWithRetries(searchTopic, p);
           liveCatalogEndpoints.push(...res);
         }
       } else {
-        catalogSearchCount++;
-        const res = await searchCatalog(searchTopic, undefined);
+        const res = await runCatalogSearchWithRetries(searchTopic, undefined);
         liveCatalogEndpoints.push(...res);
       }
     } else if (isTestSearchScenario) {
@@ -705,7 +727,26 @@ export class ChatHandler {
     while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
       catalogIterations++;
       catalogSearchCount++;
-      const searchRes = await searchCatalog(output.query, output.platform);
+      let searchRes = await searchCatalog(output.query, output.platform);
+      if (searchRes.length === 0) {
+        // Retry silently up to 3 times with alternatives
+        const fallbacks = [
+          { q: output.platform || "", p: output.platform },
+          { q: "", p: output.platform },
+          { q: output.query, p: undefined },
+        ];
+        for (let i = 0; i < fallbacks.length && searchRes.length === 0; i++) {
+          try {
+            catalogSearchCount++;
+            searchRes = await searchCatalog(fallbacks[i].q, fallbacks[i].p);
+          } catch (err: any) {
+            console.warn("[chat:catalog_tool_retry_failure]", { attempt: i + 1, error: err?.message });
+          }
+        }
+        if (searchRes.length === 0) {
+          console.warn("[chat:catalog_tool_empty_after_retries]", { query: output.query, platform: output.platform });
+        }
+      }
       turnSearchResults.push(...searchRes);
       // Compact internal result (top 5, minimal fields, ~2.5k token cap).
       // Never persisted, never user-visible.
@@ -906,10 +947,10 @@ export class ChatHandler {
         ? validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities)
         : { valid: false, errors: [] as string[], issues: [] as LiveCatalogIssue[] };
 
-      if (platformCheck.valid && !planValidation.valid) {
-        // Retry once inside the same turn: tell the model the specific problems
-        // in plain terms (Arabic names only, never slugs), with the available
-        // endpoints listed.
+      let planRetries = 0;
+      while (platformCheck.valid && !planValidation.valid && planRetries < 3) {
+        planRetries++;
+        console.warn("[chat:plan_fix_retry]", { attempt: planRetries, errors: planValidation.errors });
         loopMessages.push(
           { role: "system", content: buildPlanFixPrompt(planValidation, turnEndpoints) } as const,
         );
@@ -929,10 +970,10 @@ export class ChatHandler {
 
       if (!platformCheck.valid) {
         const closest = getClosestVerifiedCapability(capabilities);
-        finalContentAr = `${platformCheck.errorAr || UNVERIFIED_PLATFORM_MESSAGE_AR}\n\nأقرب خدمة معتمدة متاحة حالياً: ${closest.nameAr}.`;
+        console.warn("[chat:platform_check_invalid]", { message, planItems });
+        finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
       } else if (!planValidation.valid || !planOutput) {
-        // Still invalid after the retry: short message + code-built discovery
-        // questions. Internal slugs never reach the user.
+        console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
         const planFallback = buildCodeDiscoveryFallback(allCapabilities);
         clarificationQuestionsList = planFallback.items.map((item) => item.text);
         clarificationItemsList = planFallback.items;
@@ -1063,11 +1104,11 @@ export class ChatHandler {
         }
       }
       const closest = getClosestVerifiedCapability(capabilities);
-      const baseExplanation = output.explanationAr.includes(UNVERIFIED_PLATFORM_MESSAGE_AR)
-        ? output.explanationAr
-        : `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${output.unsupportedService}). ${output.explanationAr}`;
-      const closestText = output.closestAlternative || `أقرب خدمة معتمدة متاحة حالياً: ${closest.nameAr}.`;
-      finalContentAr = `${baseExplanation}\n\n${closestText}`;
+      console.warn("[chat:suggest_alternative]", {
+        unsupportedService: output.unsupportedService,
+        explanationAr: output.explanationAr,
+      });
+      finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
 
       // Log request in capability_requests table
       await this.tables.createRow({

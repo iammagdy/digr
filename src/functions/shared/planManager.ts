@@ -295,7 +295,7 @@ export function validatePlanAgainstSchemas(
         (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
     );
     if (!matchedCap) {
-      errors.push(`الخدمة '${it.capabilitySlug}' غير متوفرة أو معطلة في الكتالوج`);
+      errors.push(`الخدمة '${it.capabilitySlug}' غير متوافقة مع متطلبات البحث`);
       continue;
     }
 

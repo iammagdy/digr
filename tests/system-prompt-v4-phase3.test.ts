@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildSystemPrompt, PROMPT_VERSION } from "../src/functions/shared/systemPrompt";
-import { APPROVED_CAPABILITY_CATALOG, sanitizeCapabilitiesForLlm } from "../src/functions/shared/capabilityRegistry";
+import { APPROVED_CAPABILITY_CATALOG, sanitizeCapabilitiesForLlm, UNVERIFIED_PLATFORM_MESSAGE_AR } from "../src/functions/shared/capabilityRegistry";
 import { LlmClient } from "../src/functions/shared/llmClient";
 
 describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
@@ -288,7 +288,7 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
             input: {
               type: "suggest_alternative",
               unsupportedService: "Snapchat",
-              explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (Snapchat).",
+              explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (Snapchat).`,
               closestAlternative: "استخراج ملف حساب تيك توك العام (@username)",
               canRequestFeature: true,
             },
@@ -309,7 +309,7 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
     expect(res.output.type).toBe("suggest_alternative");
     if (res.output.type === "suggest_alternative") {
       expect(res.output.unsupportedService).toBe("Snapchat");
-      expect(res.output.explanationAr).toContain("هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن");
+      expect(res.output.explanationAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
       expect(res.output.canRequestFeature).toBe(true);
     }
   });

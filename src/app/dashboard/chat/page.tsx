@@ -1051,33 +1051,25 @@ export default function ChatWorkspacePage() {
                 </div>
               </div>
 
-              {/* Persona examples are enabled only from the server's capability list. */}
+              {/* Persona examples */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-7" role="list" aria-label="أمثلة لبدء البحث">
-                {getPersonaWelcomeExamples(userPersona, enabledCapabilitySlugs).map((example) => example.available && example.prompt ? (
-                  <button
-                    key={example.key}
-                    type="button"
-                    role="listitem"
-                    onClick={() => {
-                      setInputText(example.prompt!);
-                      inputRef.current?.focus();
-                    }}
-                    className="group min-h-11 rounded-2xl border border-sand-200 bg-white p-4 text-right shadow-[var(--shadow-card)] transition-all hover:border-accent/40 hover:shadow-[var(--shadow-lift)] cursor-pointer"
-                  >
-                    <div className="text-sm font-bold text-ink-900 group-hover:text-accent-ink">{example.title}</div>
-                    <div className="mt-1 text-xs leading-relaxed text-sand-500 line-clamp-2">{example.prompt}</div>
-                  </button>
-                ) : (
-                  <div
-                    key={example.key}
-                    role="listitem"
-                    aria-label={`${example.title}، غير متاح حالياً`}
-                    className="min-h-11 rounded-2xl border border-dashed border-sand-300 bg-sand-50/60 p-4 text-right"
-                  >
-                    <div className="text-sm font-semibold text-sand-600">{example.title}</div>
-                    <div className="mt-1 text-xs text-sand-500">قريبًا — يمكنك تسجيل رغبتك عند طلبها</div>
-                  </div>
-                ))}
+                {getPersonaWelcomeExamples(userPersona, enabledCapabilitySlugs)
+                  .filter((example) => example.available && example.prompt)
+                  .map((example) => (
+                    <button
+                      key={example.key}
+                      type="button"
+                      role="listitem"
+                      onClick={() => {
+                        setInputText(example.prompt!);
+                        inputRef.current?.focus();
+                      }}
+                      className="group min-h-11 rounded-2xl border border-sand-200 bg-white p-4 text-right shadow-[var(--shadow-card)] transition-all hover:border-accent/40 hover:shadow-[var(--shadow-lift)] cursor-pointer"
+                    >
+                      <div className="text-sm font-bold text-ink-900 group-hover:text-accent-ink">{example.title}</div>
+                      <div className="mt-1 text-xs leading-relaxed text-sand-500 line-clamp-2">{example.prompt}</div>
+                    </button>
+                  ))}
               </div>
             </div>
           )}
@@ -1136,40 +1128,6 @@ export default function ChatWorkspacePage() {
                     }
                     isStarting={startingQuoteId === msg.planQuote.quoteId}
                   />
-                )}
-
-                {/* Suggested Alternative / Request Service Card */}
-                {msg.outputType === "suggest_alternative" && msg.suggestedAlternative && (
-                  <div className="mt-3 p-3.5 bg-sand-50 border border-sand-300 rounded-xl space-y-2.5">
-                    <div className="text-xs text-sand-700 flex items-center gap-1.5">
-                      <svg className="w-4 h-4 text-amber-points shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                      </svg>
-                      <span>يمكنك تسجيل رغبتك بتفعيل هذه الخدمة وسنبلغك فور اعتمادها:</span>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={requestedFeatures[msg.suggestedAlternative.unsupportedService]}
-                      onClick={() => {
-                        setRequestedFeatures((prev) => ({
-                          ...prev,
-                          [msg.suggestedAlternative.unsupportedService]: true,
-                        }));
-                      }}
-                      className="min-h-11 px-3 py-1.5 bg-white hover:bg-sand-100 border border-sand-300 rounded-lg text-xs font-semibold text-ink-800 transition-colors motion-reduce:transition-none cursor-pointer disabled:opacity-50 inline-flex items-center gap-1.5 focus-visible:outline-2 focus-visible:outline-primary"
-                    >
-                      {requestedFeatures[msg.suggestedAlternative.unsupportedService] ? (
-                        <span className="text-success inline-flex items-center gap-1">
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                          <span>تم تسجيل طلبك بنجاح</span>
-                        </span>
-                      ) : (
-                        <span>طلب تفعيل خدمة ({msg.suggestedAlternative.unsupportedService})</span>
-                      )}
-                    </button>
-                  </div>
                 )}
               </div>
             </div>

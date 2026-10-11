@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
+import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 
 // ================= Schema Definitions =================
 
@@ -1215,7 +1216,7 @@ export class LlmClient {
           output: {
             type: "propose_plan",
             summaryAr:
-              "خطة متعددة الخطوات لجمع منشورات وتعليقات فيسبوك حول موضوعات الزواج في الفترة من 1 يناير إلى 30 سبتمبر 2026 (البحث في المنشورات العامة ثم سحب التعليقات بحد أقصى محدد لكل منشور، مع توضيح أن مقاطع الريلز والفيديو غير المتاحة في الكتالوج المعتمد تُستثنى بصدق)",
+              "خطة متعددة الخطوات لجمع منشورات وتعليقات فيسبوك حول موضوعات الزواج في الفترة من 1 يناير إلى 30 سبتمبر 2026 (البحث في المنشورات العامة ثم سحب التعليقات بحد أقصى محدد لكل منشور، مع توضيح أن مقاطع الريلز والفيديو غير المتاحة حالياً تُستثنى بصدق)",
             capabilities: [
               {
                 stepId: "fb_posts_search",
@@ -1315,7 +1316,7 @@ export class LlmClient {
         output: {
           type: "suggest_alternative",
           unsupportedService: "الخدمة المطلوبة",
-          explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (الخدمة المطلوبة). لم تسفر نتائج البحث في الكتالوج عن أي أدوات استخراج صالحة لهذا الطلب.",
+          explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (الخدمة المطلوبة). لم تسفر نتائج البحث عن أي أدوات صالحة لهذا الطلب.`,
           closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
           canRequestFeature: true,
         },
@@ -1349,7 +1350,7 @@ export class LlmClient {
               },
             ],
             outputFormats: ["xlsx", "pdf", "csv"],
-            methodologyNotes: "استخراج البيانات العامة من إنستغرام من خلال الكتالوج المعتمد.",
+            methodologyNotes: "استخراج البيانات العامة من إنستغرام من خلال الأدوات المعتمدة.",
           },
           inputTokens: 600,
           outputTokens: 120,
@@ -1449,7 +1450,7 @@ export class LlmClient {
         output: {
           type: "suggest_alternative",
           unsupportedService: platformName,
-          explanationAr: `هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (${platformName}).`,
+          explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${platformName}).`,
           closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
           canRequestFeature: true,
         },
@@ -1679,7 +1680,7 @@ export class LlmClient {
           output: {
             type: "suggest_alternative",
             unsupportedService: "منصة X (تويتر)",
-            explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (منصة X). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
+            explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (منصة X). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.`,
             closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
             canRequestFeature: true,
           },
@@ -1769,7 +1770,7 @@ export class LlmClient {
           output: {
             type: "suggest_alternative",
             unsupportedService: "يوتيوب (YouTube)",
-            explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (يوتيوب). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
+            explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (يوتيوب). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.`,
             closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
             canRequestFeature: true,
           },
