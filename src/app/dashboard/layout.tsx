@@ -172,6 +172,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               خروج
             </button>
           </div>
+          <div className="pt-1 text-center">
+            <span className="font-mono text-[10px] text-sand-400/60" dir="ltr" data-testid="dashboard-build-id">
+              build {process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf"}
+            </span>
+          </div>
         </div>
       </aside>
 
@@ -222,10 +227,22 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           >
             تسجيل الخروج
           </button>
+          <div className="pt-2 text-center">
+            <span className="font-mono text-[10px] text-sand-500" dir="ltr">
+              build {process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf"}
+            </span>
+          </div>
         </div>
       </Drawer>
 
-      <main className="min-h-dvh">{children}</main>
+      <main className="flex min-h-dvh flex-col justify-between">
+        <div>{children}</div>
+        <footer className="py-4 text-center">
+          <span className="font-mono text-[11px] text-sand-400" dir="ltr" data-testid="dashboard-footer-build-id">
+            build {process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf"}
+          </span>
+        </footer>
+      </main>
     </div>
   );
 }
