@@ -224,6 +224,11 @@ export function normalizeClarificationQuestions(
     const bankOptions = parameterType && parameterType !== "topic"
       ? getClarificationOptionBank(parameterType, context)
       : [];
+    // Never fall back to model-supplied options for a platform question when
+    // the enabled-capability bank is empty: that would offer disabled or
+    // unavailable platforms as available. Drop the question instead so the
+    // assistant fails safely instead of presenting phantom options.
+    if (parameterType === "platform" && bankOptions.length === 0) return [];
     const modelOptions = Array.isArray(questionItem.options)
       ? questionItem.options.filter((option): option is string => typeof option === "string")
       : [];
@@ -262,6 +267,11 @@ export const StructuredClarificationAnswerSchema = z
             question: z.string().trim().min(1).max(120),
             value: z.union([z.string().trim().max(200), z.array(z.string().trim().min(1).max(40)).max(4)]).optional(),
             skipped: z.boolean().optional(),
+            // Hint from the client that it echoed the displayed default for a
+            // skip. Accepted for compatibility but never treated as proof of
+            // validation: the server cannot revalidate it, so the value is
+            // handled as an explicit user answer (see formatter below).
+            resolvedDefault: z.boolean().optional(),
           })
           .strict()
           .refine((answer) => answer.skipped === true || Boolean(answer.value), {
@@ -294,10 +304,31 @@ export function validateStructuredClarificationAnswers(input: unknown): Structur
 export function formatStructuredClarificationAnswers(answer: StructuredClarificationAnswer): string {
   return JSON.stringify({
     type: "clarification_answers",
-    answers: answer.answers.map(({ questionId, question, value, skipped }) => ({
-      questionId,
-      question,
-      value: skipped ? "استخدم الافتراضي" : value,
-    })),
+    answers: answer.answers.map(({ questionId, question, value, skipped }) => {
+      if (skipped) {
+        // A skipped answer must never surface the literal UI placeholder text.
+        //
+        // Trust boundary: the server cannot revalidate that a client-supplied
+        // value matches the default previously displayed, so it must never be
+        // labeled as a server-validated default. A skipped answer carrying a
+        // value is treated as the user's explicit answer: the value was
+        // sanitized on input, and any plan built from it still passes
+        // server-side plan and quote validation. Without a value, the
+        // assistant must ask the user explicitly instead of guessing.
+        const hasValue = typeof value === "string"
+          ? value.length > 0
+          : Array.isArray(value) && value.length > 0;
+        if (hasValue) {
+          return { questionId, question, value };
+        }
+        return {
+          questionId,
+          question,
+          needsUserChoice: true,
+          note: "لم يختر المستخدم إجابة ولا يوجد افتراضي آمن — اطلب منه الاختيار صراحةً ولا تفترض أي قيمة.",
+        };
+      }
+      return { questionId, question, value };
+    }),
   });
 }
