@@ -168,8 +168,8 @@ describe("catalog plan validation + rate limit + question order (fix/catalog-pla
     const ok = await checkUserRateLimits(tables as any, "u1");
     expect(ok.allowed).toBe(true);
 
-    // 199 more user messages (2h ago, so the per-minute check stays green)
-    // -> 200 total -> daily limit reached.
+    // Even 200 user messages in a day no longer hit a daily limit:
+    // only the per-minute burst guard applies.
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     for (let i = 0; i < 199; i++) {
       await tables.createRow({
@@ -178,10 +178,8 @@ describe("catalog plan validation + rate limit + question order (fix/catalog-pla
         data: { userId: "u1", conversationId: "c1", role: "user", content: `msg ${i}`, createdAt: twoHoursAgo },
       });
     }
-    const blocked = await checkUserRateLimits(tables as any, "u1");
-    expect(blocked.allowed).toBe(false);
-    expect(blocked.statusCode).toBe(429);
-    expect(blocked.reasonAr).toContain("200 رسالة");
+    const stillOk = await checkUserRateLimits(tables as any, "u1");
+    expect(stillOk.allowed).toBe(true);
   });
 
   it("(d) discovery questions ordered: topic, posts, comments per post, date", () => {

@@ -863,21 +863,28 @@ export class ChatHandler {
       },
     });
 
-    // 10. Record Token Usage & Stats in llm_usage (Server-only)
-    await this.tables.createRow({
-      databaseId: "digr",
-      tableId: "llm_usage",
-      rowId: ID.unique(),
-      data: {
-        conversationId,
-        userId,
-        model: llmResult.model,
-        inputTokens: llmResult.inputTokens,
-        outputTokens: llmResult.outputTokens,
-        costUsd: Number(llmResult.costUsd.toFixed(6)),
-        createdAt: new Date().toISOString(),
-      },
-    });
+    // 10. Record Token Usage & Stats in llm_usage (Server-only).
+    // Linked to the assistant message id for per-message cost pricing.
+    // Logging must never block the reply: failures are swallowed.
+    try {
+      await this.tables.createRow({
+        databaseId: "digr",
+        tableId: "llm_usage",
+        rowId: ID.unique(),
+        data: {
+          conversationId,
+          userId,
+          messageId: assistantMsgId,
+          model: llmResult.model,
+          inputTokens: llmResult.inputTokens,
+          outputTokens: llmResult.outputTokens,
+          costUsd: Number(llmResult.costUsd.toFixed(6)),
+          createdAt: new Date().toISOString(),
+        },
+      });
+    } catch (usageErr) {
+      console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
+    }
 
     // 11. Update Conversation Stats
     const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;

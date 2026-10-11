@@ -106,8 +106,7 @@ describe("P1.5 Security & Rate Limits Suite", () => {
 
     const config: RateLimitConfig = {
       messagesPerMinute: 10,
-      messagesPerDay: 100,
-      conversationMaxTokens: 15000,
+      conversationMaxTokens: 40000,
       globalDailySpendCapUsd: 1.0,
     };
 
@@ -115,29 +114,22 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     expect(result.allowed).toBe(false);
     expect(result.statusCode).toBe(429);
     expect(result.type).toBe("minute_limit");
-    expect(result.reasonAr).toContain("الانتظار دقيقة واحدة");
+    expect(result.reasonAr).toContain("لحظة من فضلك");
   });
 
-  it("should enforce per-day rate limit on user messages (429)", async () => {
+  it("has no per-day limit: a high daily count alone never blocks", async () => {
     const mockTables: any = {
-      listRows: vi
-        .fn()
-        .mockResolvedValueOnce({ total: 2, rows: [] }) // Minute check passes (2 msgs)
-        .mockResolvedValueOnce({ total: 100, rows: [] }), // Day check fails (100 msgs)
+      listRows: vi.fn().mockResolvedValueOnce({ total: 2, rows: [] }), // minute check passes
     };
 
     const config: RateLimitConfig = {
-      messagesPerMinute: 10,
-      messagesPerDay: 100,
-      conversationMaxTokens: 15000,
+      messagesPerMinute: 20,
+      conversationMaxTokens: 40000,
       globalDailySpendCapUsd: 1.0,
     };
 
     const result = await checkUserRateLimits(mockTables, "user_test_123", config);
-    expect(result.allowed).toBe(false);
-    expect(result.statusCode).toBe(429);
-    expect(result.type).toBe("daily_limit");
-    expect(result.reasonAr).toContain("للحد اليومي من رسائل المساعد");
+    expect(result.allowed).toBe(true);
   });
 
   // ================= 3. Budget Limits: Global Spend Cap & Context Cap =================
@@ -155,8 +147,7 @@ describe("P1.5 Security & Rate Limits Suite", () => {
 
     const config: RateLimitConfig = {
       messagesPerMinute: 10,
-      messagesPerDay: 100,
-      conversationMaxTokens: 15000,
+      conversationMaxTokens: 40000,
       globalDailySpendCapUsd: 1.0,
     };
 
@@ -164,7 +155,9 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     expect(result.allowed).toBe(false);
     expect(result.statusCode).toBe(503);
     expect(result.type).toBe("global_spend_cap");
-    expect(result.reasonAr).toContain("الحد اليومي لاستخدام المساعد");
+    expect(result.reasonAr).toContain("المساعد مشغول الآن");
+    expect(result.reasonAr).not.toContain("غدا");
+    expect(result.reasonAr).not.toContain("الحد");
   });
 
   it("should enforce conversation context token cap (40,000 tokens)", () => {

@@ -5,6 +5,7 @@ import { setLastLlmFallbackReason } from "../../../functions/shared/llmClient";
 import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
+  checkMessageLength,
   type RateLimitCheckResult,
 } from "../../../functions/shared/rateLimits";
 import {
@@ -43,11 +44,18 @@ export async function POST(req: NextRequest) {
       ? formatStructuredClarificationAnswers(structuredAnswers)
       : body.message;
 
-    // Validate message content
-    if (!message || typeof message !== "string" || message.trim().length === 0 || message.length > 4000) {
+    // Validate message content (friendly messages, setting-driven limits)
+    if (!message || typeof message !== "string" || message.trim().length === 0) {
       return NextResponse.json(
-        { success: false, error: "نص الرسالة مطلوب ويجب ألا يتجاوز 4000 حرف" },
+        { success: false, error: "اكتب رسالتك الأول وبعدين ابعتها." },
         { status: 400 }
+      );
+    }
+    const lengthCheck = checkMessageLength(message);
+    if (!lengthCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: lengthCheck.reasonAr },
+        { status: lengthCheck.statusCode || 400 }
       );
     }
 
