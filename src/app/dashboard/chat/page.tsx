@@ -1094,7 +1094,7 @@ export default function ChatWorkspacePage() {
                     : "bg-white border border-sand-200 text-ink-900 shadow-[var(--shadow-card)] rounded-ss-md"
                 }`}
               >
-                {msg.outputType === "ask_clarification" ? (
+                {msg.outputType === "ask_clarification" || (msg.clarificationItems && (Array.isArray(msg.clarificationItems) ? msg.clarificationItems.length > 0 : true)) ? (
                   <ClarificationReply
                     intro={msg.content}
                     questions={msg.clarificationItems || msg.clarificationQuestions || []}
