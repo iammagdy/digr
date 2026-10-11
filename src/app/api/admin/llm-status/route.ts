@@ -4,6 +4,71 @@ import { getLlmStatusSnapshot } from "../../../../functions/shared/llmClient";
 
 export const dynamic = "force-dynamic";
 
+function extractFallbackSession(headerVal: string | null, projectId: string): string | null {
+  if (!headerVal) return null;
+  try {
+    const parsed = JSON.parse(headerVal);
+    if (parsed && typeof parsed === "object") {
+      const val = parsed[`a_session_${projectId}`] || parsed[`a_session_${projectId}_legacy`];
+      if (typeof val === "string" && val.trim()) {
+        return val.trim();
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function buildBrowserBootstrapHtml(endpoint: string, projectId: string): string {
+  return `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>حالة المساعد الذكي — Digr</title>
+  <style>
+    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #faf8f5; color: #1c1917; padding: 24px; direction: ltr; }
+    pre { background: #ffffff; border: 1px solid #e7e2da; border-radius: 12px; padding: 16px; overflow-x: auto; font-size: 14px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <pre id="out">Checking session...</pre>
+  <script>
+    (async function () {
+      const out = document.getElementById("out");
+      const endpoint = ${JSON.stringify(endpoint)};
+      const projectId = ${JSON.stringify(projectId)};
+      const fallback = window.localStorage ? (window.localStorage.getItem("cookieFallback") || "") : "";
+      let jwt = "";
+      try {
+        const jwtHeaders = { "X-Appwrite-Project": projectId, "Content-Type": "application/json" };
+        if (fallback) jwtHeaders["X-Fallback-Cookies"] = fallback;
+        const jwtRes = await fetch(endpoint + "/account/jwts", {
+          method: "POST",
+          headers: jwtHeaders,
+          credentials: "include"
+        });
+        if (jwtRes.ok) {
+          const data = await jwtRes.json();
+          if (data && data.jwt) {
+            jwt = data.jwt;
+            document.cookie = "digr_jwt=" + encodeURIComponent(jwt) + "; Path=/; Max-Age=840; SameSite=Lax";
+          }
+        }
+      } catch (e) {}
+      const reqHeaders = { "Accept": "application/json" };
+      if (jwt) reqHeaders["Authorization"] = "Bearer " + jwt;
+      if (fallback) reqHeaders["X-Fallback-Cookies"] = fallback;
+      const res = await fetch("/api/admin/llm-status?format=json", {
+        headers: reqHeaders,
+        credentials: "same-origin"
+      });
+      const json = await res.json().catch(() => ({ error: "Failed to parse response" }));
+      out.textContent = JSON.stringify(json, null, 2);
+    })();
+  </script>
+</body>
+</html>`;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const endpoint = process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
@@ -12,11 +77,25 @@ export async function GET(req: NextRequest) {
 
     const authHeader = req.headers.get("authorization");
     const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+    const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
+    const effectiveJwt = bearerJwt || cookieJwt;
+
     const sessionCookie =
       req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+      req.cookies.get(`a_session_${projectId}_legacy`)?.value ||
+      extractFallbackSession(req.headers.get("x-fallback-cookies"), projectId);
 
-    if (!bearerJwt && !sessionCookie) {
+    const acceptsHtml =
+      (req.headers.get("accept") || "").includes("text/html") &&
+      req.nextUrl.searchParams.get("format") !== "json";
+
+    if (!effectiveJwt && !sessionCookie) {
+      if (acceptsHtml) {
+        return new NextResponse(buildBrowserBootstrapHtml(endpoint, projectId), {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
       return NextResponse.json(
         { error: "غير مصرح. يرجى تسجيل الدخول أولاً." },
         { status: 401 },
@@ -24,8 +103,8 @@ export async function GET(req: NextRequest) {
     }
 
     const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (bearerJwt) {
-      userClient.setJWT(bearerJwt);
+    if (effectiveJwt) {
+      userClient.setJWT(effectiveJwt);
     } else if (sessionCookie) {
       userClient.setSession(sessionCookie);
     }
@@ -35,6 +114,12 @@ export async function GET(req: NextRequest) {
       const userAccount = new Account(userClient);
       userDoc = await userAccount.get();
     } catch {
+      if (acceptsHtml) {
+        return new NextResponse(buildBrowserBootstrapHtml(endpoint, projectId), {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
       return NextResponse.json(
         { error: "انتهت صلاحية الجلسة أو أنها غير صالحة." },
         { status: 401 },

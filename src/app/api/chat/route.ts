@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Client as ServerClient, TablesDB, Client as UserClient, Account } from "node-appwrite";
 import { ChatHandler } from "../../../functions/shared/chatHandler";
+import { setLastLlmFallbackReason } from "../../../functions/shared/llmClient";
 import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
@@ -117,6 +118,7 @@ export async function POST(req: NextRequest) {
         checkUserDailySpendCap(tables, verifiedUserId),
       ]);
     } catch {
+      setLastLlmFallbackReason("spend_cap");
       console.warn("[llm:SPEND_CAP_STORAGE_UNAVAILABLE]");
       return NextResponse.json(
         { success: false, error: "المساعد متوقف مؤقتاً للحماية. يرجى المحاولة لاحقاً." },
@@ -124,6 +126,8 @@ export async function POST(req: NextRequest) {
       );
     }
     if (!spendCheck.allowed) {
+      setLastLlmFallbackReason("spend_cap");
+      console.warn("[llm:error] reason=spend_cap");
       return NextResponse.json(
         { success: false, error: spendCheck.reasonAr },
         { status: spendCheck.statusCode || 503 }
@@ -131,6 +135,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (!userSpendCheck.allowed) {
+      setLastLlmFallbackReason("spend_cap");
+      console.warn("[llm:error] reason=spend_cap");
       return NextResponse.json(
         { success: false, error: userSpendCheck.reasonAr },
         { status: userSpendCheck.statusCode || 429 },

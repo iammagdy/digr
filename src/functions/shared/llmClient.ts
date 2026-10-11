@@ -484,7 +484,7 @@ export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): 
     } else if (provider === "fake") {
       derivedFallback = "provider_is_fake";
     } else if (!key_present) {
-      derivedFallback = "missing_api_key";
+      derivedFallback = "missing_key";
     }
   }
 
@@ -1159,56 +1159,73 @@ export class LlmClient {
   }
 
   /**
-   * Handle provider errors cleanly (timeout, 429, 5xx, auth errors):
+   * Handle provider errors cleanly (timeout, 429, 404 model, 401 auth, 5xx):
    * Return short Arabic error ("المساعد غير متاح الآن، حاول لاحقًا"), 0 tokens, 0 cost, so no points are held.
+   * Records a short reason code in server logs and llm-status without ever logging keys or secrets.
    */
-  private handleProviderError(err: any, _provider: string): LlmCallResult {
+  private handleProviderError(err: any, provider: string): LlmCallResult {
     const model = this.getModel();
     let reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
     let fallbackCode = "provider_unreachable";
 
-    const status = err?.status || err?.statusCode || (typeof err?.message === "string" && err.message.match(/\((\d{3})\)/)?.[1]);
+    const msg = typeof err?.message === "string" ? err.message : "";
+    const status = err?.status || err?.statusCode || msg.match(/\((\d{3})\)/)?.[1];
     const statusNum = Number(status);
 
-    if (err?.message?.includes("not configured")) {
+    if (msg.includes("not configured")) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
-      fallbackCode = "missing_api_key";
+      fallbackCode = "missing_key";
     } else if (
       err?.name === "AbortError" ||
       err?.name === "TimeoutError" ||
-      err?.message?.includes("timed out") ||
-      err?.message?.includes("timeout") ||
-      err?.message?.includes("aborted")
+      msg.includes("timed out") ||
+      msg.includes("timeout") ||
+      msg.includes("aborted")
     ) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (استغرقت الاستجابة وقتاً أطول من المعتاد).";
       fallbackCode = "timeout";
-    } else if (statusNum === 429 || err?.message?.includes("429") || err?.message?.includes("rate_limit")) {
+    } else if (statusNum === 404 || msg.includes("not_found_error")) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (اسم النموذج المحدد غير متاح لدى المزود).";
+      fallbackCode = "http_404_model";
+    } else if (statusNum === 429 || msg.includes("429") || msg.includes("rate_limit")) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (تجاوز حد الطلبات المؤقت).";
-      fallbackCode = "rate_limit_429";
-    } else if (statusNum === 529 || err?.message?.includes("529") || err?.message?.includes("overloaded")) {
+      fallbackCode = "http_429";
+    } else if (statusNum === 529 || msg.includes("529") || msg.includes("overloaded")) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (خوادم الخدمة تواجه ضغطاً كبيراً).";
-      fallbackCode = "provider_overloaded_529";
+      fallbackCode = "http_529";
     } else if (
       (statusNum >= 500 && statusNum < 600) ||
-      err?.message?.includes("500") ||
-      err?.message?.includes("502") ||
-      err?.message?.includes("503") ||
-      err?.message?.includes("504")
+      msg.includes("(500)") ||
+      msg.includes("(502)") ||
+      msg.includes("(503)") ||
+      msg.includes("(504)")
     ) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (صعوبة مؤقتة في الخدمة).";
-      fallbackCode = "provider_5xx";
+      fallbackCode = "http_5xx";
+    } else if (statusNum === 403) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
+      fallbackCode = "http_403";
     } else if (
       statusNum === 401 ||
-      statusNum === 403 ||
-      err?.message?.includes("API_KEY") ||
-      err?.message?.includes("authentication") ||
-      err?.message?.includes("credentials")
+      msg.includes("API_KEY") ||
+      msg.includes("authentication") ||
+      msg.includes("credentials")
     ) {
       reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (الخدمة غير مهيأة بشكل صحيح).";
-      fallbackCode = "provider_auth_error";
+      fallbackCode = "http_401";
+    } else if (statusNum === 400 && (msg.toLowerCase().includes("credit balance") || msg.toLowerCase().includes("billing"))) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا (رصيد المزود غير كافٍ).";
+      fallbackCode = "http_400_billing";
+    } else if (statusNum === 400) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
+      fallbackCode = "http_400";
+    } else if (err?.name === "ZodError" || msg.includes("Invalid response format")) {
+      reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
+      fallbackCode = "schema_invalid";
     }
 
     setLastLlmFallbackReason(fallbackCode);
+    console.warn(`[llm:error] provider=${provider} model=${model} reason=${fallbackCode}`);
 
     return {
       output: {
@@ -1320,10 +1337,15 @@ export class LlmClient {
 
       const scrubbedPayload = scrubField(rawPayload);
 
-      if (scrubbedPayload.type === "ask_clarification" && !scrubbedPayload.questionsAr && scrubbedPayload.questions) {
-        scrubbedPayload.questionsAr = scrubbedPayload.questions
-          .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
-          .filter(Boolean);
+      if (scrubbedPayload.type === "ask_clarification") {
+        if (!scrubbedPayload.questionsAr && scrubbedPayload.questions) {
+          scrubbedPayload.questionsAr = scrubbedPayload.questions
+            .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
+            .filter(Boolean);
+        }
+        if (!scrubbedPayload.reasonAr) {
+          scrubbedPayload.reasonAr = scrubbedPayload.intro || "تحديد تفاصيل الطلب بدقة";
+        }
       }
 
       const validatedOutput = LlmTurnOutputSchema.parse(scrubbedPayload);
