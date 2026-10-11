@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { Badge, StatusDot, type StatusTone } from "@/components/ui";
-import { timelineWaitingText, type JobStatus } from "@/lib/honestDisplay";
+import {
+  timelineWaitingText,
+  type JobStatus,
+  JOB_STATUS_LABEL_MAP,
+  JOB_STATUS_TONE_MAP,
+  formatNumber,
+  formatTime,
+} from "@/lib/honestDisplay";
 
 export interface JobEvent {
   $id: string;
@@ -21,11 +28,11 @@ interface ActivityTimelineProps {
 }
 
 const STATUS_META: Record<JobStatus, { label: string; tone: StatusTone; pulse: boolean }> = {
-  queued: { label: "في الانتظار", tone: "warning", pulse: false },
-  running: { label: "جارٍ التنفيذ", tone: "info", pulse: true },
-  done: { label: "مكتمل", tone: "success", pulse: false },
-  failed: { label: "فشل التنفيذ", tone: "danger", pulse: false },
-  cancelled: { label: "ملغى", tone: "neutral", pulse: false },
+  queued: { label: JOB_STATUS_LABEL_MAP.queued, tone: JOB_STATUS_TONE_MAP.queued, pulse: false },
+  running: { label: JOB_STATUS_LABEL_MAP.running, tone: JOB_STATUS_TONE_MAP.running, pulse: true },
+  done: { label: JOB_STATUS_LABEL_MAP.done, tone: JOB_STATUS_TONE_MAP.done, pulse: false },
+  failed: { label: JOB_STATUS_LABEL_MAP.failed, tone: JOB_STATUS_TONE_MAP.failed, pulse: false },
+  cancelled: { label: JOB_STATUS_LABEL_MAP.cancelled, tone: JOB_STATUS_TONE_MAP.cancelled, pulse: false },
 };
 
 const KIND_TONE: Record<JobEvent["kind"], StatusTone> = {
@@ -35,21 +42,13 @@ const KIND_TONE: Record<JobEvent["kind"], StatusTone> = {
   error: "danger",
 };
 
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-}
-
 export default function ActivityTimeline({ status, events, rowsCollected, eventLimit }: ActivityTimelineProps) {
   const [collapsed, setCollapsed] = useState(false);
   const meta = STATUS_META[status];
   const hasEvents = events && events.length > 0;
   const scopeNote =
     eventLimit !== undefined && hasEvents && events.length >= eventLimit
-      ? `يعرض أحدث ${eventLimit.toLocaleString("ar-EG")} حدثًا مسجَّلًا.`
+      ? `يعرض أحدث ${formatNumber(eventLimit)} حدثًا مسجَّلًا.`
       : null;
 
   return (
@@ -85,7 +84,7 @@ export default function ActivityTimeline({ status, events, rowsCollected, eventL
                       <time className="tnum shrink-0 text-xs text-sand-500" dateTime={evt.createdAt}>{formatTime(evt.createdAt)}</time>
                     </div>
                     {evt.count !== undefined && (
-                      <p className="tnum mt-0.5 text-xs text-sand-500">الرقم المسجّل في هذا الحدث: {evt.count.toLocaleString("ar-EG")}</p>
+                      <p className="tnum mt-0.5 text-xs text-sand-500">الرقم المسجّل في هذا الحدث: {formatNumber(evt.count)}</p>
                     )}
                   </li>
                 ))}
@@ -100,7 +99,7 @@ export default function ActivityTimeline({ status, events, rowsCollected, eventL
 
           {status === "done" && (
             <p className="tnum mt-3 border-t border-sand-100 pt-3 text-xs text-sand-600">
-              اكتمل التنفيذ وفق سجلّ الخادم — السجلات المجمّعة: <strong className="text-ink-900">{rowsCollected.toLocaleString("ar-EG")}</strong>.
+              اكتمل التنفيذ وفق سجلّ الخادم — السجلات المجمّعة: <strong className="text-ink-900">{formatNumber(rowsCollected)}</strong>.
               راجع ملاحظات التغطية في لوحة النتائج.
             </p>
           )}

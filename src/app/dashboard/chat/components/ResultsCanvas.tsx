@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
+import { formatNumber } from "@/lib/honestDisplay";
 
 export interface ExtractedRecord {
   id: string;
@@ -52,7 +53,7 @@ const SEVERITY_LABEL: Record<string, string> = {
 };
 
 function formatCell(value: unknown): string {
-  if (typeof value === "number") return value.toLocaleString("en-US");
+  if (typeof value === "number") return formatNumber(value);
   if (typeof value === "boolean") return value ? "نعم" : "لا";
   if (value == null || value === "") return "—";
   return String(value);
@@ -111,12 +112,12 @@ export default function ResultsCanvas({
           <h2 className="text-sm font-bold text-ink-900">لوحة النتائج</h2>
           {records.length > 0 && (
             <span className="tnum rounded-full bg-pine-800 px-2.5 py-0.5 text-xs font-bold text-white">
-              {records.length.toLocaleString("ar-EG")} سجل
+              {formatNumber(records.length)} سجل
             </span>
           )}
           {currentVersion && (
             <span className="tnum rounded-full bg-sand-200 px-2 py-0.5 text-xs font-semibold text-sand-700">
-              نسخة {currentVersion.versionNum}
+              نسخة {formatNumber(currentVersion.versionNum)}
             </span>
           )}
         </div>
@@ -233,7 +234,7 @@ export default function ResultsCanvas({
                     </div>
                   </div>
                   {artifactEditing && <p className="text-xs text-sand-600" role="status">جاري إنشاء نسخة جديدة…</p>}
-                  {versionHistory.length > 0 && <p className="tnum text-xs text-sand-500">عدد النسخ: {versionHistory.length} من 30</p>}
+                  {versionHistory.length > 0 && <p className="tnum text-xs text-sand-500">عدد النسخ: {formatNumber(versionHistory.length)} من {formatNumber(30)}</p>}
                 </div>
               </details>
             )}
@@ -279,7 +280,7 @@ export default function ResultsCanvas({
                   </table>
                 </div>
                 <p className="tnum border-t border-sand-100 bg-sand-50/60 px-3 py-2 text-xs text-sand-500">
-                  عرض {filteredRecords.length.toLocaleString("ar-EG")} من أصل {records.length.toLocaleString("ar-EG")} سجل
+                  عرض {formatNumber(filteredRecords.length)} من أصل {formatNumber(records.length)} سجل
                 </p>
               </div>
             )}
@@ -355,7 +356,7 @@ export default function ResultsCanvas({
               <dl className="space-y-1.5 text-sand-600">
                 <div className="flex justify-between gap-2"><dt>المصدر</dt><dd className="font-semibold text-ink-800" dir="auto">بيانات عامة (@{profile?.username || "tiktok"})</dd></div>
                 <div className="flex justify-between gap-2"><dt>تاريخ الجمع</dt><dd className="font-semibold text-ink-800">{profile?.collectedDate || (records[0]?.extractedAt as string) || "غير متاح"}</dd></div>
-                <div className="flex justify-between gap-2"><dt>السجلات المعروضة</dt><dd className="tnum font-semibold text-ink-800">{records.length.toLocaleString("ar-EG")}</dd></div>
+                <div className="flex justify-between gap-2"><dt>السجلات المعروضة</dt><dd className="tnum font-semibold text-ink-800">{formatNumber(records.length)}</dd></div>
               </dl>
             </div>
             <div className="grid gap-2">
@@ -363,7 +364,7 @@ export default function ResultsCanvas({
                 اشرح لي كيف تم جمع البيانات
               </Button>
               <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
-                اكتب المنهجية الرسمية (10 نقاط)
+                اكتب المنهجية الرسمية ({formatNumber(10)} نقاط)
               </Button>
             </div>
           </div>

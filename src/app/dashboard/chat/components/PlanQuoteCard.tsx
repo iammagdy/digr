@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { Alert, Badge, Stamp } from "@/components/ui";
+import { formatNumber, formatCurrency } from "@/lib/honestDisplay";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -109,10 +110,10 @@ export default function PlanQuoteCard({
         </div>
         <div className="shrink-0 text-center">
           <div className="tnum inline-flex items-baseline gap-1 rounded-2xl border border-amber-points/30 bg-amber-points-bg px-3.5 py-2">
-            <span className="text-2xl font-bold text-amber-points">{quote.quotedPoints}</span>
+            <span className="text-2xl font-bold text-amber-points">{formatNumber(quote.quotedPoints)}</span>
             <span className="text-xs font-bold text-amber-points">نقطة</span>
           </div>
-          <p className="tnum mt-1 text-xs text-sand-500">≈ {(quote.quotedPoints * 0.1).toFixed(1)} ج.م</p>
+          <p className="tnum mt-1 text-xs text-sand-500">≈ {formatCurrency(quote.quotedPoints * 0.1)}</p>
         </div>
       </div>
 
@@ -126,7 +127,7 @@ export default function PlanQuoteCard({
             </div>
             <div className="flex items-center justify-between gap-3 px-4 py-3">
               <dt className="text-sand-600">حجم الجمع المطلوب</dt>
-              <dd className="tnum font-bold text-ink-900">حتى {quote.targetVolumeMax.toLocaleString("ar-EG")} سجل</dd>
+              <dd className="tnum font-bold text-ink-900">حتى {formatNumber(quote.targetVolumeMax)} سجل</dd>
             </div>
             <div className="flex items-center justify-between gap-3 px-4 py-3">
               <dt className="text-sand-600">ملفات التسليم</dt>
@@ -203,7 +204,7 @@ export default function PlanQuoteCard({
             {(quote.stepCostRanges || []).length > 0 && (
               <ul className="tnum mt-2 space-y-1">
                 {(quote.stepCostRanges || []).map((range) => (
-                  <li key={range.stepId}>{range.labelAr || range.capabilitySlug}: من {range.minPoints} إلى {range.maxPoints} نقطة — حتى {range.maxUnits} وحدة.</li>
+                  <li key={range.stepId}>{range.labelAr || range.capabilitySlug}: من {formatNumber(range.minPoints)} إلى {formatNumber(range.maxPoints)} نقطة — حتى {formatNumber(range.maxUnits)} وحدة.</li>
                 ))}
               </ul>
             )}
@@ -222,7 +223,7 @@ export default function PlanQuoteCard({
 
         {/* Affordability */}
         {!quote.isAffordable && (
-          <Alert tone="warning" title={`رصيدك (${quote.userBalance} نقطة) أقل من المطلوب (${quote.quotedPoints} نقطة)`}>
+          <Alert tone="warning" title={`رصيدك (${formatNumber(quote.userBalance)} نقطة) أقل من المطلوب (${formatNumber(quote.quotedPoints)} نقطة)`}>
             <div className="mt-1 flex flex-wrap items-center gap-2">
               <Link href="/dashboard/topup" className="font-bold underline">شحن الرصيد</Link>
               {quote.downscaledOffer && onAcceptDownscaled && (
@@ -231,7 +232,7 @@ export default function PlanQuoteCard({
                   onClick={() => onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
                   className="tnum min-h-11 cursor-pointer rounded-xl bg-amber-points px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-amber-points-hover focus-visible:outline-2 focus-visible:outline-accent"
                 >
-                  قبول العرض المخفض: حتى {quote.downscaledOffer.maxAffordableUnits} سجل مقابل {quote.downscaledOffer.affordableQuotedPoints} نقطة
+                  قبول العرض المخفض: حتى {formatNumber(quote.downscaledOffer.maxAffordableUnits)} سجل مقابل {formatNumber(quote.downscaledOffer.affordableQuotedPoints)} نقطة
                 </button>
               )}
             </div>
@@ -241,7 +242,7 @@ export default function PlanQuoteCard({
         {/* Balance line */}
         <div className="tnum flex items-center justify-between rounded-xl bg-sand-50 px-4 py-2.5 text-xs">
           <span className="text-sand-600">رصيدك المتاح</span>
-          <span className={`font-bold ${quote.isAffordable ? "text-ink-900" : "text-danger"}`}>{quote.userBalance} نقطة</span>
+          <span className={`font-bold ${quote.isAffordable ? "text-ink-900" : "text-danger"}`}>{formatNumber(quote.userBalance)} نقطة</span>
         </div>
 
         {/* Actions */}
