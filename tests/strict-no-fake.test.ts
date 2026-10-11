@@ -1,11 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { executeMultiStepJob, parseTikTokProfileResponse } from "../src/functions/shared/multiStepWorker";
 
 describe("Strict No-Fake Guard and Data Integrity Suite", () => {
-  const originalEnv = process.env.NODE_ENV;
-
   afterEach(() => {
-    process.env.NODE_ENV = originalEnv;
+    vi.unstubAllEnvs();
   });
 
   function createMockTables() {
@@ -48,7 +46,7 @@ describe("Strict No-Fake Guard and Data Integrity Suite", () => {
   }
 
   it("Test 1: A job with dataSource=fake cannot complete in production environment and gets 100% refund", async () => {
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     const tables = createMockTables();
 
     const result = await executeMultiStepJob(tables as any, null, {
@@ -76,7 +74,7 @@ describe("Strict No-Fake Guard and Data Integrity Suite", () => {
   });
 
   it("Test 2: A job cannot output placeholder text (e.g. 'Record 1 for...') and fails with 100% refund", async () => {
-    process.env.NODE_ENV = "development";
+    vi.stubEnv("NODE_ENV", "development");
     const tables = createMockTables();
 
     const placeholderFetcher = async () => ({

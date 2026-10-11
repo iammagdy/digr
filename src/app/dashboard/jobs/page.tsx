@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { client, databases, account } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
+import { Alert, Badge, Button, Card, EmptyState, Eyebrow, Input, Skeleton, Spinner, Tabs, type StatusTone } from "@/components/ui";
+import { chronological, EVENT_HISTORY_LIMIT, eventHistoryScopeLabel } from "@/lib/honestDisplay";
 
 const storage = new Storage(client);
 
@@ -32,6 +34,14 @@ interface JobEvent {
   kind: "info" | "progress" | "warning" | "error";
   createdAt: string;
 }
+
+const STATUS_META: Record<Job["status"], { label: string; tone: StatusTone }> = {
+  queued: { label: "في الانتظار", tone: "warning" },
+  running: { label: "جارٍ التنفيذ", tone: "info" },
+  done: { label: "مكتمل", tone: "success" },
+  failed: { label: "تعذّر", tone: "danger" },
+  cancelled: { label: "ملغى", tone: "neutral" },
+};
 
 export default function JobsPage() {
   const { user } = useUser();
@@ -64,17 +74,13 @@ export default function JobsPage() {
 
   useEffect(() => {
     fetchJobs();
-
     const interval = setInterval(() => {
       setJobs((currentJobs) => {
         const hasActive = currentJobs.some((j) => j.status === "queued" || j.status === "running");
-        if (hasActive) {
-          fetchJobs();
-        }
+        if (hasActive) fetchJobs();
         return currentJobs;
       });
     }, 3000);
-
     return () => clearInterval(interval);
   }, [fetchJobs]);
 
@@ -85,17 +91,14 @@ export default function JobsPage() {
     }
     setExpandedJobId(jobId);
     setLoadingEvents(jobId);
-
     try {
+      // Latest events first from the server, restored to reading order for display.
       const evRes = await databases.listDocuments("digr", "job_events", [
         Query.equal("jobId", jobId),
-        Query.orderAsc("createdAt"),
-        Query.limit(20),
+        Query.orderDesc("createdAt"),
+        Query.limit(EVENT_HISTORY_LIMIT),
       ]);
-      setEvents((prev) => ({
-        ...prev,
-        [jobId]: evRes.documents as unknown as JobEvent[],
-      }));
+      setEvents((prev) => ({ ...prev, [jobId]: chronological(evRes.documents as unknown as JobEvent[]) }));
     } catch (err: any) {
       console.error("Error fetching events:", err);
     } finally {
@@ -107,23 +110,17 @@ export default function JobsPage() {
     const key = `${job.$id}_${format}`;
     setDownloadingKey(key);
     setDownloadError(null);
-
     try {
       const jwtRes = await account.createJWT();
       const fileId = `${format}_${job.$id}`;
       const downloadUrl = storage.getFileDownload("results", fileId);
-
       const res = await fetch(downloadUrl, {
         headers: {
           "X-Appwrite-Project": process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!,
           "X-Appwrite-JWT": jwtRes.jwt,
         },
       });
-
-      if (!res.ok) {
-        throw new Error(`Download failed with status ${res.status}`);
-      }
-
+      if (!res.ok) throw new Error(`Download failed with status ${res.status}`);
       const blob = await res.blob();
       const filename = `digr_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${format}`;
       const url = window.URL.createObjectURL(blob);
@@ -138,12 +135,8 @@ export default function JobsPage() {
       }, 250);
     } catch (err: any) {
       console.error("Download error:", err);
-      const formatNames: Record<string, string> = {
-        xlsx: "Excel (.xlsx)",
-        pdf: "PDF (.pdf)",
-        csv: "CSV (.csv)",
-      };
-      setDownloadError(`تعذر تحميل ملف ${formatNames[format] || format}. يرجى إعادة المحاولة.`);
+      const formatNames: Record<string, string> = { xlsx: "Excel (.xlsx)", pdf: "PDF (.pdf)", csv: "CSV (.csv)" };
+      setDownloadError(`تعذّر تحميل ملف ${formatNames[format] || format}. يرجى إعادة المحاولة.`);
     } finally {
       setDownloadingKey(null);
     }
@@ -154,9 +147,7 @@ export default function JobsPage() {
       const parsed = JSON.parse(paramStr || "{}");
       if (parsed.username) return `@${parsed.username.replace(/^@/, "")}`;
       if (parsed.query) return `بحث: ${parsed.query}`;
-      return Object.entries(parsed)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join(", ");
+      return Object.entries(parsed).map(([k, v]) => `${k}: ${v}`).join(", ");
     } catch {
       return paramStr;
     }
@@ -174,318 +165,186 @@ export default function JobsPage() {
     router.push(`/dashboard/chat?prompt=${encodeURIComponent(prompt)}`);
   };
 
-  // Filter jobs by search and status
   const filteredJobs = useMemo(() => {
     return jobs.filter((j) => {
-      // Status filter
       if (statusFilter === "running" && j.status !== "running" && j.status !== "queued") return false;
       if (statusFilter === "done" && j.status !== "done") return false;
       if (statusFilter === "failed" && j.status !== "failed" && j.status !== "cancelled") return false;
-
-      // Search filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
-        const paramStr = (j.params || "").toLowerCase();
-        const idStr = j.$id.toLowerCase();
-        return paramStr.includes(q) || idStr.includes(q);
+        return (j.params || "").toLowerCase().includes(q) || j.$id.toLowerCase().includes(q);
       }
       return true;
     });
   }, [jobs, statusFilter, searchQuery]);
 
-  return (
-    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-8 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-ink-900">سجل طلباتي</h1>
-          <p className="mt-1 text-xs sm:text-sm text-ink-500">
-            متابعة حالة الطلبات، استعراض مراحل المعالجة، وتحميل ملفات البيانات المستخرجة
-          </p>
-        </div>
+  const counts = useMemo(() => ({
+    all: jobs.length,
+    running: jobs.filter((j) => j.status === "running" || j.status === "queued").length,
+    done: jobs.filter((j) => j.status === "done").length,
+    failed: jobs.filter((j) => j.status === "failed" || j.status === "cancelled").length,
+  }), [jobs]);
 
-        <Link
-          href="/dashboard/chat"
-          className="touch-target inline-flex items-center justify-center rounded-xl bg-ink-900 px-4 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-xs hover:bg-ink-800 transition-all text-center"
-        >
-          + طلب استخراج جديد
+  return (
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8 sm:px-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <Eyebrow>سجل النشاط</Eyebrow>
+          <h1 className="font-display mt-2 text-3xl text-ink-900">طلباتي</h1>
+          <p className="mt-1.5 text-sm text-ink-600">تابع حالة طلباتك واستعرض سجل الأحداث وحمّل ملفاتك.</p>
+        </div>
+        <Link href="/dashboard/chat" className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-accent px-5 py-2.5 text-sm font-bold text-white shadow-[var(--shadow-ink)] transition-colors hover:bg-accent-hover">
+          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
+          طلب جديد
         </Link>
       </div>
 
       {downloadError && (
-        <div className="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 p-3.5 text-xs text-danger">
-          <span>{downloadError}</span>
-          <button
-            type="button"
-            onClick={() => setDownloadError(null)}
-            className="text-xs font-semibold underline"
-          >
-            إغلاق
-          </button>
-        </div>
+        <Alert tone="danger" title="تعذّر التحميل">
+          <div className="flex items-center justify-between gap-3">
+            <span>{downloadError}</span>
+            <button type="button" onClick={() => setDownloadError(null)} className="shrink-0 font-bold underline cursor-pointer">إغلاق</button>
+          </div>
+        </Alert>
       )}
 
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 rounded-2xl border border-sand-200 bg-white shadow-2xs">
-        {/* Status Filters */}
-        <div className="flex items-center gap-1 bg-sand-100/70 p-1 rounded-xl text-xs font-medium">
-          <button
-            onClick={() => setStatusFilter("all")}
-            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
-              statusFilter === "all" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
-            }`}
-          >
-            الكل ({jobs.length})
-          </button>
-          <button
-            onClick={() => setStatusFilter("running")}
-            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
-              statusFilter === "running" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
-            }`}
-          >
-            قيد المعالجة
-          </button>
-          <button
-            onClick={() => setStatusFilter("done")}
-            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
-              statusFilter === "done" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
-            }`}
-          >
-            المكتملة
-          </button>
-          <button
-            onClick={() => setStatusFilter("failed")}
-            className={`touch-target px-3 py-1.5 rounded-lg transition-colors ${
-              statusFilter === "failed" ? "bg-white text-ink-900 font-semibold shadow-2xs" : "text-ink-600 hover:text-ink-900"
-            }`}
-          >
-            تعذر
-          </button>
-        </div>
-
-        {/* Search Input */}
+      {/* Filters */}
+      <Card className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <Tabs
+          tabs={[
+            { id: "all" as const, label: "الكل", count: counts.all },
+            { id: "running" as const, label: "قيد التنفيذ", count: counts.running },
+            { id: "done" as const, label: "المكتملة", count: counts.done },
+            { id: "failed" as const, label: "المتعثرة", count: counts.failed },
+          ]}
+          active={statusFilter}
+          onChange={setStatusFilter}
+        />
         <div className="w-full sm:w-64">
-          <input
-            type="text"
-            placeholder="بحث بحساب أو معرف..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-sand-300 bg-sand-50/50 px-3.5 py-2 text-xs text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900"
-          />
+          <Input type="search" placeholder="بحث بحساب أو معرّف..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} aria-label="بحث في الطلبات" />
         </div>
-      </div>
+      </Card>
 
-      {/* Jobs Cards Stream */}
+      {/* Jobs list */}
       {loading ? (
-        <div className="flex min-h-[300px] items-center justify-center">
-          <div className="flex items-center gap-2 text-xs text-ink-500 font-medium">
-            <span className="h-3.5 w-3.5 rounded-full border-2 border-ink-900 border-t-transparent animate-spin" />
-            <span>جاري تحميل سجل الطلبات...</span>
-          </div>
-        </div>
+        <div className="space-y-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-32 w-full" />)}</div>
       ) : filteredJobs.length === 0 ? (
-        <div className="rounded-2xl border border-sand-200 bg-white p-12 text-center space-y-3 shadow-2xs">
-          <div className="inline-flex p-3 rounded-2xl bg-sand-100 text-sand-600 mx-auto">
-            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden="true">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          </div>
-          <h3 className="text-base font-bold text-ink-900">لا توجد طلبات مطابقة</h3>
-          <p className="text-xs text-ink-500 max-w-sm mx-auto">
-            لم نجد أي طلبات تطابق معايير البحث المحددة. يمكنك بدء طلب جديد عبر المساعد الذكي.
-          </p>
-          <div className="pt-2">
-            <Link
-              href="/dashboard/chat"
-              className="touch-target inline-flex items-center justify-center rounded-xl bg-ink-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-ink-800 transition-all"
-            >
-              بدء استخراج جديد
-            </Link>
-          </div>
-        </div>
+        <Card>
+          <EmptyState
+            title={jobs.length === 0 ? "لا توجد طلبات بعد" : "لا توجد طلبات مطابقة"}
+            description={jobs.length === 0 ? "ابدأ أول بحث لك من المساعد البحثي — سيظهر هنا مع حالته وملفاته." : "جرّب تعديل البحث أو فلتر الحالة."}
+            action={
+              <Link href="/dashboard/chat" className="inline-flex min-h-11 items-center rounded-xl bg-primary px-5 py-2.5 text-sm font-bold text-white hover:bg-primary-hover">
+                بدء استخراج جديد
+              </Link>
+            }
+          />
+        </Card>
       ) : (
         <div className="space-y-4">
           {filteredJobs.map((job) => {
             const isExpanded = expandedJobId === job.$id;
             const jobEventsList = events[job.$id] || [];
-
+            const meta = STATUS_META[job.status];
+            const isActive = job.status === "queued" || job.status === "running";
             return (
-              <div
-                key={job.$id}
-                className="rounded-2xl border border-sand-200 bg-white p-5 shadow-2xs transition-all hover:border-sand-300 space-y-4"
-              >
-                {/* Order Card Top Bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-sand-100">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-sand-100 text-xs font-bold text-ink-800">
-                      {job.templateSlug === "tiktok-profile" ? "تيك توك" : "بيانات"}
-                    </span>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-ink-900 font-mono" dir="ltr">
-                          {parseParams(job.params)}
-                        </span>
-                        <span className="text-[11px] text-ink-400 font-mono" dir="ltr">
-                          #{job.$id.slice(0, 8)}
-                        </span>
+              <Card key={job.$id} className={`overflow-hidden transition-colors ${isActive ? "border-accent/40" : ""}`}>
+                <div className="p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-pine-800 text-xs font-bold text-white">
+                        {job.templateSlug === "tiktok-profile" ? "تك" : "ب"}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-ink-900" dir="auto">{parseParams(job.params)}</p>
+                        <p className="tnum mt-0.5 text-xs text-sand-500">
+                          {new Date(job.createdAt).toLocaleString("ar-EG", { dateStyle: "medium", timeStyle: "short" })}
+                          <span dir="ltr" className="ms-2">#{job.$id.slice(0, 8)}</span>
+                        </p>
                       </div>
-                      <span className="text-[11px] text-ink-400">
-                        {new Date(job.createdAt).toLocaleString("ar-EG", {
-                          dateStyle: "medium",
-                          timeStyle: "short",
-                        })}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge tone={meta.tone}>
+                        {isActive && <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse motion-reduce:animate-none" />}
+                        {meta.label}
+                        {job.status === "done" && typeof job.rowsCollected === "number" && (
+                          <span className="tnum"> · {job.rowsCollected.toLocaleString("ar-EG")} سجل</span>
+                        )}
+                      </Badge>
+                      <span className="tnum rounded-xl bg-sand-100 px-2.5 py-1.5 text-xs font-bold text-ink-800">
+                        {job.status === "done" ? `${job.chargedCredits ?? job.reservedCredits} نقطة` : `حجز: ${job.reservedCredits} نقطة`}
                       </span>
                     </div>
                   </div>
 
-                  {/* Status Badge & Charged Credits */}
-                  <div className="flex items-center gap-3">
-                    {job.status === "queued" && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        قيد الانتظار
-                      </span>
-                    )}
-                    {job.status === "running" && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
-                        <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
-                        جاري المعالجة...
-                      </span>
-                    )}
-                    {job.status === "done" && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800">
-                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
-                        مكتمل ({job.rowsCollected || 1} سجل)
-                      </span>
-                    )}
-                    {job.status === "failed" && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-danger">
-                        تعذر الاكتمال
-                      </span>
-                    )}
+                  {job.errorAr && (
+                    <Alert tone="danger" title="ملاحظة الخطأ">
+                      <div className="mt-3">{job.errorAr}</div>
+                    </Alert>
+                  )}
 
-                    <span className="rounded-lg bg-sand-100 px-2.5 py-1 text-xs font-bold text-ink-800 font-mono">
-                      {job.status === "done"
-                        ? `${job.chargedCredits ?? job.reservedCredits} نقطة`
-                        : `حجز: ${job.reservedCredits} نقطة`}
-                    </span>
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sand-100 pt-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {job.status === "done" ? (
+                        (["xlsx", "pdf", "csv"] as const).map((fmt) => (
+                          <Button
+                            key={fmt}
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => handleDownload(job, fmt)}
+                            disabled={downloadingKey === `${job.$id}_${fmt}`}
+                            className="tnum uppercase"
+                          >
+                            {downloadingKey === `${job.$id}_${fmt}` ? "جاري..." : `تحميل ${fmt}`}
+                          </Button>
+                        ))
+                      ) : (
+                        <span className="text-xs text-sand-500">
+                          {job.status === "failed" || job.status === "cancelled"
+                            ? "تم استرداد الرصيد المحجوز بالكامل إلى محفظتك."
+                            : "ستتاح الملفات فور انتهاء الجمع."}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="ghost" onClick={() => handleReRunOrder(job)}>
+                        إعادة الطلب ⟳
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => loadJobEvents(job.$id)} aria-expanded={isExpanded}>
+                        {isExpanded ? "إخفاء السجل" : "سجل الأحداث"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Actions & Deliverables Row */}
-                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                  {/* Download Action Buttons */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {job.status === "done" ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => handleDownload(job, "xlsx")}
-                          disabled={downloadingKey === `${job.$id}_xlsx`}
-                          className="touch-target inline-flex items-center gap-1.5 rounded-xl bg-emerald-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-900 transition-colors shadow-2xs disabled:opacity-50"
-                        >
-                          {downloadingKey === `${job.$id}_xlsx` ? (
-                            <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                          ) : (
-                            <span>Excel (.xlsx)</span>
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDownload(job, "pdf")}
-                          disabled={downloadingKey === `${job.$id}_pdf`}
-                          className="touch-target inline-flex items-center gap-1.5 rounded-xl bg-rose-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-rose-900 transition-colors shadow-2xs disabled:opacity-50"
-                        >
-                          {downloadingKey === `${job.$id}_pdf` ? (
-                            <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                          ) : (
-                            <span>PDF (.pdf)</span>
-                          )}
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDownload(job, "csv")}
-                          disabled={downloadingKey === `${job.$id}_csv`}
-                          className="touch-target inline-flex items-center gap-1.5 rounded-xl bg-sky-800 px-3.5 py-2 text-xs font-semibold text-white hover:bg-sky-900 transition-colors shadow-2xs disabled:opacity-50"
-                        >
-                          {downloadingKey === `${job.$id}_csv` ? (
-                            <span className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                          ) : (
-                            <span>CSV (.csv)</span>
-                          )}
-                        </button>
-                      </>
-                    ) : (
-                      <span className="text-xs text-ink-400">
-                        {job.status === "failed" ? "تم استرداد الرصيد المحجوز بالكامل" : "الملفات ستتاح فور انتهاء الجمع"}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Secondary Actions: Timeline toggle & Re-run */}
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleReRunOrder(job)}
-                      className="touch-target rounded-xl border border-sand-300 bg-white px-3 py-2 text-xs font-medium text-ink-700 hover:bg-sand-50 transition-colors"
-                      title="فتح المساعد وإعادة إعداد هذا الطلب"
-                    >
-                      إعادة الطلب ⟳
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => loadJobEvents(job.$id)}
-                      className="touch-target rounded-xl border border-sand-200 px-3 py-2 text-xs font-medium text-ink-600 hover:bg-sand-50 transition-colors"
-                    >
-                      {isExpanded ? "إخفاء السجل" : "سجل المراحل"}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Collapsible Timeline */}
                 {isExpanded && (
-                  <div className="rounded-xl border border-sand-200 bg-sand-50/70 p-4 space-y-3 mt-3 animate-in fade-in duration-200">
-                    <span className="text-xs font-bold text-ink-800 block">مراحل معالجة الطلب:</span>
-
-                    {job.errorAr && (
-                      <div className="rounded-lg bg-red-50 p-2.5 text-xs text-danger">
-                        ملاحظة الخطأ: {job.errorAr}
-                      </div>
-                    )}
-
+                  <div className="animate-fade border-t border-sand-100 bg-sand-50/60 p-5">
+                    <h3 className="mb-3 text-xs font-bold text-ink-800">
+                      سجل الأحداث المسجّلة
+                      <span className="ms-2 font-medium text-sand-500">({eventHistoryScopeLabel()})</span>
+                    </h3>
                     {loadingEvents === job.$id ? (
-                      <div className="text-xs text-ink-400">جاري تحميل سجل الأحداث...</div>
+                      <div className="flex items-center gap-2 text-xs text-sand-500"><Spinner label="جاري تحميل الأحداث" /></div>
                     ) : jobEventsList.length === 0 ? (
-                      <div className="text-xs text-ink-400">لا توجد أحداث مسجلة لهذا الطلب.</div>
+                      <p className="text-xs text-sand-500">لا توجد أحداث مسجلة لهذا الطلب بعد.</p>
                     ) : (
-                      <div className="space-y-2">
+                      <ol className="space-y-2.5">
                         {jobEventsList.map((ev) => (
-                          <div key={ev.$id} className="flex items-center justify-between text-xs text-ink-700">
-                            <span className="flex items-center gap-2">
-                              <span
-                                className={`h-2 w-2 rounded-full ${
-                                  ev.kind === "error"
-                                    ? "bg-danger"
-                                    : ev.kind === "progress"
-                                    ? "bg-blue-600"
-                                    : "bg-emerald-600"
-                                }`}
-                              />
-                              <span>{ev.textAr}</span>
+                          <li key={ev.$id} className="flex items-start justify-between gap-3 text-xs">
+                            <span className="flex items-start gap-2">
+                              <span aria-hidden="true" className={`mt-1 h-2 w-2 shrink-0 rounded-full ${ev.kind === "error" ? "bg-danger" : ev.kind === "warning" ? "bg-warning" : ev.kind === "progress" ? "bg-info" : "bg-success"}`} />
+                              <span className="font-medium text-ink-800">{ev.textAr}</span>
                             </span>
-                            <span className="font-mono text-[11px] text-ink-400" dir="ltr">
-                              {new Date(ev.createdAt).toLocaleTimeString("ar-EG")}
-                            </span>
-                          </div>
+                            <time className="tnum shrink-0 text-sand-500" dateTime={ev.createdAt}>
+                              {new Date(ev.createdAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" })}
+                            </time>
+                          </li>
                         ))}
-                      </div>
+                      </ol>
                     )}
                   </div>
                 )}
-              </div>
+              </Card>
             );
           })}
         </div>

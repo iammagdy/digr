@@ -4,7 +4,13 @@ import { ChatHandler } from "../../../functions/shared/chatHandler";
 import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
+  checkUserDailySpendCap,
+  type RateLimitCheckResult,
 } from "../../../functions/shared/rateLimits";
+import {
+  formatStructuredClarificationAnswers,
+  validateStructuredClarificationAnswers,
+} from "../../../functions/shared/clarification";
 
 const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
 const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
@@ -21,12 +27,24 @@ const chatHandler = new ChatHandler(tables);
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    const { message, conversationId } = body;
+    const { conversationId } = body;
+    const structuredAnswers = body.clarificationAnswers === undefined
+      ? null
+      : validateStructuredClarificationAnswers(body.clarificationAnswers);
+    if (body.clarificationAnswers !== undefined && !structuredAnswers) {
+      return NextResponse.json(
+        { success: false, error: "إجابات الاستكشاف غير مكتملة أو غير صالحة" },
+        { status: 400 },
+      );
+    }
+    const message = structuredAnswers
+      ? formatStructuredClarificationAnswers(structuredAnswers)
+      : body.message;
 
     // Validate message content
-    if (!message || typeof message !== "string" || message.trim().length === 0) {
+    if (!message || typeof message !== "string" || message.trim().length === 0 || message.length > 4000) {
       return NextResponse.json(
-        { success: false, error: "نص الرسالة مطلوب" },
+        { success: false, error: "نص الرسالة مطلوب ويجب ألا يتجاوز 4000 حرف" },
         { status: 400 }
       );
     }
@@ -87,12 +105,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Global Platform Daily Spend Cap Guard
-    const spendCheck = await checkGlobalDailySpendCap(tables);
+    // 2. Global and per-user daily spend caps. If the server-only usage table is
+    // unavailable, fail closed instead of making an unmetered model call.
+    let spendCheck: RateLimitCheckResult;
+    let userSpendCheck: RateLimitCheckResult;
+    try {
+      [spendCheck, userSpendCheck] = await Promise.all([
+        checkGlobalDailySpendCap(tables),
+        checkUserDailySpendCap(tables, verifiedUserId),
+      ]);
+    } catch {
+      console.warn("[llm:SPEND_CAP_STORAGE_UNAVAILABLE]");
+      return NextResponse.json(
+        { success: false, error: "المساعد متوقف مؤقتاً للحماية. يرجى المحاولة لاحقاً." },
+        { status: 503 },
+      );
+    }
     if (!spendCheck.allowed) {
       return NextResponse.json(
         { success: false, error: spendCheck.reasonAr },
         { status: spendCheck.statusCode || 503 }
+      );
+    }
+
+    if (!userSpendCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: userSpendCheck.reasonAr },
+        { status: userSpendCheck.statusCode || 429 },
       );
     }
 
@@ -116,13 +155,12 @@ export async function POST(req: NextRequest) {
       success: true,
       ...result,
     });
-  } catch (err: any) {
-    console.error("Chat API error:", err);
+  } catch {
+    console.error("[chat:request_failed]");
     return NextResponse.json(
       {
         success: false,
         error: "حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.",
-        detail: err.message,
       },
       { status: 500 }
     );
