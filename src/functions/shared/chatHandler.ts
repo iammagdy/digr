@@ -1003,12 +1003,16 @@ export class ChatHandler {
             isAffordable: managedQuote.isAffordable,
             userBalance,
             downscaledOffer: managedQuote.downscaledOffer,
+            capacityConstrained: managedQuote.capacityConstrained,
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
             methodologyNotes: planOutput.methodologyNotes,
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          if (managedQuote.capacityConstrained) {
+            planSummaryText += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+          }
           if (!managedQuote.isAffordable) {
             planSummaryText += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
             if (managedQuote.downscaledOffer) {
@@ -1077,11 +1081,15 @@ export class ChatHandler {
               isAffordable: managedQuote.isAffordable,
               userBalance,
               downscaledOffer: managedQuote.downscaledOffer,
+              capacityConstrained: managedQuote.capacityConstrained,
               outputFormats: managedQuote.outputFormats,
               expiresAt: managedQuote.expiresAt,
             };
 
             finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المحدثة: ${managedQuote.quotedPoints} نقطة`;
+            if (managedQuote.capacityConstrained) {
+              finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+            }
             if (!managedQuote.isAffordable) {
               finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
               if (managedQuote.downscaledOffer) {
