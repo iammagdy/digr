@@ -377,7 +377,7 @@ export function validatePlanAgainstLiveCatalog(
       errors.push(`الخدمة "${nameAr}" تحتاج مدخلات إضافية: ${missing.join("، ")}`);
       issues.push({ itemIndex: index, nameAr, kind: "missing_params", missingParams: missing });
     }
-    const maxRows = (ep.pagination as any)?.maxLimit || 5000;
+    const maxRows = 5000;
     if (it.targetVolumeMax > maxRows) {
       errors.push(`الحد الأقصى المطلوب (${it.targetVolumeMax}) يتجاوز سقف الخدمة "${nameAr}" المسموح (${maxRows})`);
       issues.push({ itemIndex: index, nameAr, kind: "over_limit" });

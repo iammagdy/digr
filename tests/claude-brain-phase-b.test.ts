@@ -204,8 +204,8 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
   });
 
   describe("System Prompt v5 Integrity & Guardrails", () => {
-    it("enforces v5 version, zero emojis, zero provider leaks, and no legality claims", () => {
-      expect(PROMPT_VERSION).toBe("5.0.0");
+    it("enforces v6 version, zero emojis, zero provider leaks, and no legality claims", () => {
+      expect(PROMPT_VERSION).toBe("6.0.0");
 
       const prompt = buildSystemPrompt({
         sanitizedCapabilities: APPROVED_CAPABILITY_CATALOG,
@@ -214,6 +214,7 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
       });
 
       expect(prompt).toContain("System Prompt v5");
+      expect(prompt).toContain("(v6)");
       expect(prompt).toContain("NO EMOJI");
       expect(prompt).toContain("NO PROVIDER OR TOOL NAMES");
       expect(prompt).toContain("NO LEGALITY OR ACADEMIC-VALIDITY PROMISES");
