@@ -203,12 +203,16 @@ export function applyPlanOperations(
   currentPlan: PlanState,
   operations: EditPlanOperation[]
 ): PlanState {
-  // Deep clone to prevent mutating input
-  const newItems: PlanItem[] = JSON.parse(JSON.stringify(currentPlan.items));
-  let newFormats: Array<"xlsx" | "pdf" | "csv"> = [...currentPlan.outputFormats];
+  const basePlan = Array.isArray(currentPlan?.items)
+    ? currentPlan
+    : parseStoredPlan(currentPlan?.items);
 
-  let newExecutionOptions: ExecutionOptions | undefined = currentPlan.executionOptions
-    ? { ...currentPlan.executionOptions }
+  // Deep clone to prevent mutating input
+  const newItems: PlanItem[] = JSON.parse(JSON.stringify(basePlan.items));
+  let newFormats: Array<"xlsx" | "pdf" | "csv"> = [...basePlan.outputFormats];
+
+  let newExecutionOptions: ExecutionOptions | undefined = currentPlan.executionOptions || basePlan.executionOptions
+    ? { ...(currentPlan.executionOptions || basePlan.executionOptions) }
     : undefined;
 
   for (const op of operations) {
@@ -262,6 +266,7 @@ export function applyPlanOperations(
 
   return {
     ...currentPlan,
+    summaryAr: currentPlan?.summaryAr || basePlan.summaryAr || "خطة استخراج بيانات",
     items: newItems,
     outputFormats: newFormats,
     executionOptions: newExecutionOptions,
@@ -410,7 +415,7 @@ export async function createAndSaveManagedQuote(
       userId,
       status: "proposed",
       summaryAr: plan.summaryAr,
-      itemsJson: JSON.stringify(plan.items),
+      itemsJson: JSON.stringify(serializeStoredPlan(plan)),
       targetVolumeMax: totalVolumeMax,
       unitPricePoints: quoteCalc.unitPricePoints,
       quotedPoints: quoteCalc.quotedPoints,

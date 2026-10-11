@@ -1,5 +1,5 @@
 import { TablesDB, ID, Query, Permission, Role } from "node-appwrite";
-import { computePlanHash, PlanItem } from "./planManager";
+import { computePlanHash, parseStoredPlan, PlanItem } from "./planManager";
 import { isQuoteExpired } from "./quotes";
 import { calculateBalance, reserveCredits, releaseCredits } from "./ledger";
 
@@ -99,14 +99,10 @@ export async function acceptQuote(
   }
 
   // 5. Plan Hash Binding Check (Ensures plan was not tampered with after quoting)
-  let items: PlanItem[] = [];
-  try {
-    items = typeof quoteDoc.itemsJson === "string" ? JSON.parse(quoteDoc.itemsJson) : quoteDoc.itemsJson;
-  } catch {
-    items = [];
-  }
+  const parsedPlan = parseStoredPlan(quoteDoc.itemsJson);
+  const items: PlanItem[] = parsedPlan.items;
 
-  const computedHash = computePlanHash(items);
+  const computedHash = computePlanHash(items, parsedPlan.outputFormats);
   if (expectedPlanHash && expectedPlanHash !== computedHash) {
     return {
       success: false,
