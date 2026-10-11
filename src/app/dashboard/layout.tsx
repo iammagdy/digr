@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { databases } from "@/lib/appwrite";
 import { Query } from "appwrite";
+import { balanceLoading, balanceReady, balanceFailed, balanceText, type BalanceView } from "@/lib/honestDisplay";
 import { Avatar, Drawer, Spinner } from "@/components/ui";
 
 const NAV = [
@@ -84,7 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { user, loading, logout } = useUser();
   const router = useRouter();
   const pathname = usePathname();
-  const [balance, setBalance] = useState<number | null>(null);
+  const [balance, setBalance] = useState<BalanceView>(balanceLoading());
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const loadBalance = useCallback(async () => {
@@ -103,9 +104,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         if (res.documents.length < limit) break;
         offset += limit;
       }
-      setBalance(total);
+      setBalance(balanceReady(total));
     } catch {
-      setBalance(0);
+      // A failed request proves nothing about the balance — never show a fake zero.
+      setBalance(balanceFailed());
     }
   }, [user]);
 
@@ -152,7 +154,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link href="/dashboard/topup" className="block rounded-2xl bg-white/8 p-3.5 ring-1 ring-white/10 transition-colors hover:bg-white/12">
             <p className="text-xs text-sand-300">رصيد النقاط المتاح</p>
             <p className="tnum mt-1 text-2xl font-bold text-white">
-              {balance === null ? "…" : balance.toLocaleString("ar-EG")}{" "}
+              {balanceText(balance)}{" "}
               <span className="text-xs font-semibold text-amber-points">نقطة</span>
             </p>
           </Link>
@@ -195,9 +197,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <Link
             href="/dashboard/topup"
             className="tnum inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3 text-sm font-bold text-amber-points"
-            aria-label={`رصيدك ${balance === null ? "غير معروف" : balance} نقطة — شحن الرصيد`}
+            aria-label={`رصيدك ${balance.status === "failed" ? "غير متاح حاليًا" : balance.status === "loading" ? "جارٍ التحميل" : balanceText(balance)} — شحن الرصيد`}
           >
-            {balance === null ? "…" : balance.toLocaleString("ar-EG")} نقطة
+            {balanceText(balance)} نقطة
             <span aria-hidden="true" className="text-base leading-none">+</span>
           </Link>
         </div>

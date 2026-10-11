@@ -102,3 +102,51 @@ describe("accessibility foundations", () => {
     expect(layout).toContain('dir="rtl"');
   });
 });
+
+describe("data-honesty corrections (PR #11 fixes)", () => {
+  const BALANCE_FILES = [
+    "src/app/dashboard/page.tsx",
+    "src/app/dashboard/layout.tsx",
+    "src/app/dashboard/topup/page.tsx",
+    "src/app/dashboard/chat/page.tsx",
+  ];
+
+  it("no failed balance fetch presents as a fake zero", () => {
+    for (const f of BALANCE_FILES) {
+      const code = src(f);
+      expect(code, f).not.toMatch(/set(Balance|UserBalance)\(0\)/);
+      expect(code, f).not.toMatch(/\(balance \?\? 0\)/);
+      expect(code, f).not.toMatch(/\(userBalance \?\? 0\)/);
+    }
+  });
+
+  it("balance displays route through the honest-display helpers", () => {
+    for (const f of BALANCE_FILES) {
+      expect(src(f), f).toContain("balanceFailed()");
+      expect(src(f), f).toContain("@/lib/honestDisplay");
+    }
+  });
+
+  it("dashboard job total comes from the response total, not the page length", () => {
+    const page = src("src/app/dashboard/page.tsx");
+    expect(page).toContain("jobsRes.total");
+    expect(page).toContain("jobTotalFromResponse");
+    expect(page).not.toMatch(/إجمالي طلبات البحث[\s\S]{0,400}recentJobs\.length/);
+  });
+
+  it("activity timeline never marks stages complete from assumptions", () => {
+    const tl = src("src/app/dashboard/chat/components/ActivityTimeline.tsx");
+    expect(tl).not.toMatch(/done:\s*true/);
+    expect(tl).toContain("timelineWaitingText");
+    expect(tl).toContain("eventLimit");
+  });
+
+  it("event histories are fetched latest-first and scope-labeled", () => {
+    const jobs = src("src/app/dashboard/jobs/page.tsx");
+    expect(jobs).toContain("orderDesc");
+    expect(jobs).toContain("eventHistoryScopeLabel");
+    const chat = src("src/app/dashboard/chat/page.tsx");
+    expect(chat).toContain("EVENT_HISTORY_LIMIT");
+    expect(chat).toContain("chronological(");
+  });
+});

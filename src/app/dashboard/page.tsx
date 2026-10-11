@@ -6,6 +6,16 @@ import { databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Query } from "appwrite";
 import { Alert, Badge, Card, EmptyState, Eyebrow, Skeleton, Stat, type StatusTone } from "@/components/ui";
+import {
+  balanceLoading,
+  balanceReady,
+  balanceFailed,
+  balanceText,
+  showDerivedAmounts,
+  jobTotalFromResponse,
+  jobCountText,
+  type BalanceView,
+} from "@/lib/honestDisplay";
 
 interface RecentJob {
   $id: string;
@@ -53,17 +63,19 @@ function formatDate(iso: string): string {
 
 export default function DashboardOverviewPage() {
   const { user } = useUser();
-  const [balance, setBalance] = useState<number | null>(null);
-  const [balanceLoading, setBalanceLoading] = useState(true);
+  const [balance, setBalance] = useState<BalanceView>(balanceLoading());
   const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
+  const [totalJobs, setTotalJobs] = useState<number | null>(null);
   const [jobsLoading, setJobsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
 
   const fetchOverviewData = useCallback(async () => {
     if (!user) return;
-    setBalanceLoading(true);
+    setBalance(balanceLoading());
     setJobsLoading(true);
     setLoadError(false);
+    // Ledger balance — independent of the jobs query so one failure
+    // never poisons the other display.
     try {
       let total = 0;
       let offset = 0;
@@ -78,18 +90,27 @@ export default function DashboardOverviewPage() {
         if (res.documents.length < limit) break;
         offset += limit;
       }
-      setBalance(total);
+      // A genuinely successful query may legitimately total zero.
+      setBalance(balanceReady(total));
+    } catch {
+      // A failed request proves nothing about the balance — never show a fake zero.
+      setBalance(balanceFailed());
+      setLoadError(true);
+    }
+    try {
       const jobsRes = await databases.listDocuments("digr", "jobs", [
         Query.equal("userId", user.$id),
         Query.orderDesc("createdAt"),
         Query.limit(5),
       ]);
       setRecentJobs(jobsRes.documents as unknown as RecentJob[]);
+      // Authoritative total comes from the response itself, never from the page length.
+      setTotalJobs(jobTotalFromResponse(jobsRes.total));
     } catch {
+      setRecentJobs([]);
+      setTotalJobs(null);
       setLoadError(true);
-      setBalance(0);
     } finally {
-      setBalanceLoading(false);
       setJobsLoading(false);
     }
   }, [user]);
@@ -130,24 +151,31 @@ export default function DashboardOverviewPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card className="border-t-2 border-t-amber-points p-5">
           <p className="text-xs font-semibold text-sand-500">رصيد النقاط المتاح</p>
-          {balanceLoading ? (
+          {balance.status === "loading" ? (
             <Skeleton className="mt-2 h-9 w-28" />
           ) : (
             <p className="tnum mt-1.5 text-3xl font-bold text-ink-900">
-              {(balance ?? 0).toLocaleString("ar-EG")} <span className="text-sm font-bold text-amber-points">نقطة</span>
+              {balanceText(balance)} <span className="text-sm font-bold text-amber-points">نقطة</span>
             </p>
           )}
           <div className="mt-3 flex items-center justify-between border-t border-sand-100 pt-3 text-xs">
-            <span className="tnum text-sand-500">≈ {((balance ?? 0) * 0.1).toFixed(2)} ج.م</span>
+            <span className="tnum text-sand-500">
+              {showDerivedAmounts(balance) ? `≈ ${((balance.value ?? 0) * 0.1).toFixed(2)} ج.م` : "—"}
+            </span>
             <Link href="/dashboard/topup" className="font-bold text-amber-points hover:underline">شحن الرصيد ←</Link>
           </div>
+          {balance.status === "failed" && (
+            <p className="mt-2 text-xs text-warning">
+              تعذّر تحميل الرصيد — <button type="button" onClick={() => void fetchOverviewData()} className="font-bold underline cursor-pointer">إعادة المحاولة</button>
+            </p>
+          )}
         </Card>
         <Card className="p-5">
           <p className="text-xs font-semibold text-sand-500">إجمالي طلبات البحث</p>
           {jobsLoading ? (
             <Skeleton className="mt-2 h-9 w-20" />
           ) : (
-            <p className="tnum mt-1.5 text-3xl font-bold text-ink-900">{recentJobs.length}<span className="text-sm font-semibold text-sand-500"> طلب</span></p>
+            <p className="tnum mt-1.5 text-3xl font-bold text-ink-900">{jobCountText(totalJobs)}<span className="text-sm font-semibold text-sand-500"> طلب</span></p>
           )}
           <div className="mt-3 flex items-center justify-between border-t border-sand-100 pt-3 text-xs">
             <span className="text-sand-500">سجل المعالجات الكامل</span>

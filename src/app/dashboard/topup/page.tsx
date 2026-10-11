@@ -5,6 +5,7 @@ import { client, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Functions, ID, Permission, Role, Query } from "appwrite";
 import { Alert, Badge, Button, Card, EmptyState, Eyebrow, Field, Input, Skeleton, type StatusTone } from "@/components/ui";
+import { balanceLoading, balanceReady, balanceFailed, balanceText, showDerivedAmounts, type BalanceView } from "@/lib/honestDisplay";
 
 const storage = new Storage(client);
 const functions = new Functions(client);
@@ -55,7 +56,7 @@ export default function TopupPage() {
   const [reference, setReference] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [creditRate, setCreditRate] = useState<number>(0.1);
-  const [userBalance, setUserBalance] = useState<number | null>(null);
+  const [userBalance, setUserBalance] = useState<BalanceView>(balanceLoading());
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -97,7 +98,7 @@ export default function TopupPage() {
         if (res.documents.length < limit) break;
         offset += limit;
       }
-      setUserBalance(total);
+      setUserBalance(balanceReady(total));
       let running = 0;
       const computed: LedgerEntry[] = allDocs.map((doc) => {
         running += (doc.delta as number) || 0;
@@ -105,7 +106,8 @@ export default function TopupPage() {
       });
       setLedgerEntries(computed.reverse().slice(0, 30));
     } catch {
-      setUserBalance(0);
+      // A failed request proves nothing about the balance — never show a fake zero.
+      setUserBalance(balanceFailed());
     } finally {
       setDataLoading(false);
     }
@@ -205,15 +207,24 @@ export default function TopupPage() {
         <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-xs font-semibold text-sand-300">رصيد النقاط المتاح</p>
-            {dataLoading ? (
+            {dataLoading || userBalance.status === "loading" ? (
               <Skeleton className="mt-2 h-11 w-40 !bg-white/10" />
+            ) : userBalance.status === "failed" ? (
+              <div className="mt-1.5">
+                <p className="text-2xl font-bold text-sand-200">تعذّر تحميل الرصيد</p>
+                <button type="button" onClick={() => { setDataLoading(true); void loadLedgerAndBalance(); }} className="mt-1 text-sm font-bold text-amber-points underline cursor-pointer">
+                  إعادة المحاولة
+                </button>
+              </div>
             ) : (
               <p className="tnum mt-1.5 text-4xl font-bold sm:text-5xl">
-                {(userBalance ?? 0).toLocaleString("ar-EG")} <span className="text-lg font-bold text-amber-points">نقطة</span>
+                {balanceText(userBalance)} <span className="text-lg font-bold text-amber-points">نقطة</span>
               </p>
             )}
             <p className="tnum mt-2 text-sm text-sand-300">
-              ≈ {((userBalance ?? 0) * creditRate).toFixed(2)} ج.م · السعر المعتمد: 1 نقطة = {creditRate} ج.م
+              {showDerivedAmounts(userBalance)
+                ? `≈ ${((userBalance.value ?? 0) * creditRate).toFixed(2)} ج.م · السعر المعتمد: 1 نقطة = ${creditRate} ج.م`
+                : `السعر المعتمد: 1 نقطة = ${creditRate} ج.م`}
             </p>
           </div>
           <a href="#topup-card" className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-2xl bg-amber-points px-6 py-3 text-sm font-bold text-white transition-colors hover:bg-amber-points-hover">
