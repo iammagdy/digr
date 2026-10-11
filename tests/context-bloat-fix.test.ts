@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // search_catalog must be intercepted before chatHandler loads it.
 vi.mock("../src/functions/shared/catalogClient", () => ({
   searchCatalog: vi.fn(),
+  getCachedCatalogEndpoints: vi.fn(() => []),
 }));
 
 import { searchCatalog } from "../src/functions/shared/catalogClient";
