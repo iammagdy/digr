@@ -298,8 +298,8 @@ export default function LandingPage() {
                 <Card key={tpl.id} className="flex flex-col justify-between p-5 sm:p-6">
                   <div className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <Badge tone={tpl.status === "verified" ? "success" : "warning"}>
-                        {tpl.platformAr} · {tpl.status === "verified" ? "متاح الآن" : "قيد التجهيز"}
+                      <Badge tone="neutral">
+                        {tpl.platformAr}
                       </Badge>
                       <span className="tnum rounded-xl bg-amber-points-bg px-3 py-1 text-xs font-bold text-amber-points">
                         تقريبيًا {formatNumber(tpl.approximatePoints)} نقطة

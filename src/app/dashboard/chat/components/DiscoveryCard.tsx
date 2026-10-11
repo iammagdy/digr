@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { normalizeDiscoveryQuestions, sanitizeDiscoveryText, type DiscoveryAnswer } from "./discoveryQuestions";
-import { Badge } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 
 interface DiscoveryCardProps {
@@ -150,8 +149,12 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
       <div className="border-b border-sand-100 bg-sand-50/60 px-4 py-3.5 sm:px-5">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-ink-900">لنخصّص خطة بحثك</h3>
-            <p className="mt-0.5 text-xs text-sand-600">أجب عن الأسئلة التالية — أو تخطَّ ما يناسبك</p>
+            <h3 className="text-sm font-bold text-ink-900">
+              {normalizedQuestions.length > 1 ? "لنخصّص خطة بحثك" : "تخصيص الخطة"}
+            </h3>
+            <p className="mt-0.5 text-xs text-sand-600">
+              {normalizedQuestions.length > 1 ? "أجب عن الأسئلة التالية — أو تخطَّ ما يناسبك" : "أجب عن السؤال التالي — أو تخطَّه"}
+            </p>
           </div>
           {normalizedQuestions.length > 1 && (
             <span className="tnum shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-ink-800 ring-1 ring-sand-200" aria-live="polite" dir="ltr">
@@ -181,14 +184,11 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
             >
               <div className="flex items-start justify-between gap-3">
                 <p className="text-sm font-bold leading-relaxed text-ink-900" dir="auto">
-                  <span aria-hidden="true" className="tnum me-1.5 text-xs font-bold text-accent">{formatNumber(index + 1)}.</span>
+                  {normalizedQuestions.length > 1 && (
+                    <span aria-hidden="true" className="tnum me-1.5 text-xs font-bold text-accent">{formatNumber(index + 1)}.</span>
+                  )}
                   {item.text}
                 </p>
-                {isAnswered && (
-                  <Badge tone={wasSkipped ? "neutral" : "success"} className="shrink-0">
-                    {wasSkipped ? "مقترح" : "تم"}
-                  </Badge>
-                )}
               </div>
 
               {item.options.length > 0 && (

@@ -59,7 +59,7 @@ export function computeRegistryPointsPerUnit(
 
 export const VERIFICATION_NOTE = "to verify against the real charge of the first call";
 export const UNVERIFIED_PLATFORM_MESSAGE_AR =
-  "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن";
+  "هتحقق من الطلب وأرجعلك";
 
 export interface Capability {
   id?: string;
@@ -608,7 +608,7 @@ export function validatePlanPlatformMatch(
       valid: false,
       userPlatforms,
       planPlatforms,
-      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels}). تم إيقاف الخطة لأن المنصة المقترحة لا تطابق المنصة المطلوبة.`,
+      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels}).`,
     };
   }
 
