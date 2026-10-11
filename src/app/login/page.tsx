@@ -37,7 +37,7 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="مرحبًا بعودتك"
-      subtitle="سجّل الدخول لمتابعة أبحاثك وخططك المحفوظة."
+      subtitle="سجّل الدخول لمتابعة أبحاثك وملفاتك ورصيدك."
       footer={
         <>
           ليس لديك حساب بعد؟{" "}
@@ -62,7 +62,7 @@ export default function LoginPage() {
             required
             autoComplete="email"
             dir="ltr"
-            className="text-left font-mono"
+            className="auth-input text-left font-mono"
             placeholder="name@example.com"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -76,7 +76,7 @@ export default function LoginPage() {
               required
               autoComplete="current-password"
               dir="ltr"
-              className="pe-12 text-left font-mono"
+              className="auth-input pe-12 text-left font-mono"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

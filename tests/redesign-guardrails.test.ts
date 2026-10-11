@@ -42,9 +42,13 @@ describe("no placeholder text as research parameters", () => {
 });
 
 describe("no fabricated marketing claims", () => {
-  it("landing page labels the demo as illustrative", () => {
+  it("landing hero submits a real question and does not show a simulated completed job", () => {
     const landing = src("src/app/page.tsx");
-    expect(landing).toContain("عرض توضيحي");
+    const hero = src("src/app/components/HeroLens.tsx");
+    expect(landing).toContain("<HeroLens />");
+    expect(hero).toContain("savePendingQuestion");
+    expect(hero).not.toContain("تم تسليم");
+    expect(hero).not.toContain("مكتمل");
   });
 
   it("landing page contains no invented customer counts or success rates", () => {
@@ -100,6 +104,24 @@ describe("accessibility foundations", () => {
     const layout = src("src/app/layout.tsx");
     expect(layout).toContain('lang="ar"');
     expect(layout).toContain('dir="rtl"');
+  });
+});
+
+describe("redesign wiring stays on existing routes", () => {
+  it("landing question is preserved through auth and prefilled in chat without auto-sending", () => {
+    const auth = src("src/components/AuthLayout.tsx");
+    const chat = src("src/app/dashboard/chat/page.tsx");
+    expect(auth).toContain("peekPendingQuestion");
+    expect(chat).toContain("takePendingQuestion");
+    expect(chat).toContain("setInputText((current) => current || initialQuestion)");
+    expect(chat).not.toMatch(/initialQuestion[\s\S]{0,240}handleSendMessage/);
+  });
+
+  it("chat retains official branding and the existing theme control", () => {
+    const chat = src("src/app/dashboard/chat/page.tsx");
+    expect(chat).toContain("<BrandLogo size=\"small\" />");
+    expect(chat).toContain("<ThemeToggle className=\"h-10 w-10\" />");
+    expect(chat).toContain("chat-workspace__header");
   });
 });
 

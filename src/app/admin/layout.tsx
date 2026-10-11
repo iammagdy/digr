@@ -49,30 +49,38 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   return (
-    <div className="min-h-screen bg-sand-50" data-design-surface="admin">
-      <header className="border-b border-sand-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-6">
-            <Link href="/admin/topups" className="text-lg font-bold text-sand-900" aria-label="Digr — الإدارة">
-              <BrandLogo size="small" /> <span className="mr-1 rounded bg-amber-points-bg px-2 py-0.5 text-xs font-normal text-amber-points">إدارة</span>
-            </Link>
-            <nav className="flex items-center gap-4 text-sm">
-              <Link href="/admin/topups" className="text-sand-700 hover:text-sand-900 font-medium">
-                طلبات الشحن
-              </Link>
-              <Link href="/dashboard" className="text-sand-400 hover:text-sand-600">
-                لوحة المستخدم
-              </Link>
-            </nav>
+    <div className="admin-shell min-h-screen bg-bg text-foreground" data-design-surface="admin">
+      <aside className="admin-sidebar" aria-label="قائمة الإدارة">
+        <Link href="/admin/topups" className="admin-brand" aria-label="Digr — الإدارة">
+          <BrandLogo size="medium" />
+          <span>إدارة</span>
+        </Link>
+        <nav className="admin-nav" aria-label="التنقل الإداري">
+          <Link href="/admin/topups" aria-current="page" className="admin-nav__active">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 7h18M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm3 9h4m-4 4h8" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>
+            طلبات الشحن
+          </Link>
+          <Link href="/dashboard" className="admin-nav__link">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5M5.5 9v11h13V9M9 20v-6h6v6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            لوحة المستخدم
+          </Link>
+        </nav>
+        <div className="admin-sidebar__account">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-bold text-foreground">{user?.name}</p>
+            <p className="text-xs text-foreground-muted">مسؤول النظام</p>
           </div>
-          <div className="flex items-center gap-3">
-            <ThemeToggle className="h-10 w-10" />
-            <span className="text-xs text-sand-500">{user?.name} (مسؤول)</span>
-          </div>
+          <ThemeToggle className="h-10 w-10" />
         </div>
-      </header>
+      </aside>
 
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+      <div className="admin-main">
+        <header className="admin-topbar">
+          <h1>طلبات الشحن</h1>
+          <Link href="/dashboard" className="admin-topbar__user">{user?.name} <span>مسؤول</span></Link>
+        </header>
+        <main className="admin-content">{children}</main>
+      </div>
     </div>
   );
 }
