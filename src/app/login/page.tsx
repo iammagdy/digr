@@ -4,19 +4,20 @@ import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
+import { AuthLayout } from "@/components/AuthLayout";
+import { Alert, Button, Field, Input } from "@/components/ui";
 
 export default function LoginPage() {
   const { user, loading: authLoading, login } = useUser();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!authLoading && user) {
-      router.push("/dashboard/chat");
-    }
+    if (!authLoading && user) router.push("/dashboard/chat");
   }, [user, authLoading, router]);
 
   async function handleSubmit(e: FormEvent) {
@@ -27,94 +28,78 @@ export default function LoginPage() {
       await login(email, password);
       router.push("/dashboard/chat");
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "حدث خطأ غير متوقع أثناء تسجيل الدخول";
-      setError(message);
+      setError(err instanceof Error ? err.message : "حدث خطأ غير متوقع أثناء تسجيل الدخول");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <main className="min-h-screen flex flex-col justify-center items-center px-4 sm:px-6 bg-sand-50 text-ink-800">
-      {/* Brand Header */}
-      <div className="w-full max-w-sm text-center mb-8">
-        <Link href="/" className="inline-flex items-center gap-2 text-2xl font-bold tracking-tight text-ink-900">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink-900 text-sm font-semibold text-white">
-            دِ
-          </span>
-          <span>Digr</span>
-        </Link>
-        <h1 className="mt-4 text-xl font-bold text-ink-900">تسجيل الدخول</h1>
-        <p className="mt-1 text-xs text-ink-500">
-          أدخل بيانات حسابك للمتابعة إلى منصة استخراج البيانات
-        </p>
-      </div>
-
-      {/* Form Card */}
-      <div className="w-full max-w-sm rounded-3xl border border-sand-300 bg-white p-6 sm:p-8 shadow-xs text-right">
-        {error && (
-          <div className="mb-4 rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-danger">
+    <AuthLayout
+      title="مرحبًا بعودتك"
+      subtitle="سجّل الدخول لمتابعة أبحاثك وخططك المحفوظة."
+      footer={
+        <>
+          ليس لديك حساب بعد؟{" "}
+          <Link href="/register" className="font-bold text-accent hover:text-accent-hover">
+            أنشئ حسابًا جديدًا
+          </Link>
+        </>
+      }
+    >
+      {error && (
+        <div className="mb-5">
+          <Alert tone="danger" title="تعذّر تسجيل الدخول">
             {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="email" className="block text-xs font-semibold text-ink-700">
-              البريد الإلكتروني
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              autoComplete="email"
-              dir="ltr"
-              className="mt-1 block w-full rounded-xl border border-sand-300 bg-sand-50/50 px-4 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900 transition-all font-mono"
-              placeholder="name@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-xs font-semibold text-ink-700">
-              كلمة المرور
-            </label>
-            <input
+          </Alert>
+        </div>
+      )}
+      <form onSubmit={handleSubmit} className="space-y-5" noValidate={false}>
+        <Field label="البريد الإلكتروني" htmlFor="email">
+          <Input
+            id="email"
+            type="email"
+            required
+            autoComplete="email"
+            dir="ltr"
+            className="text-left font-mono"
+            placeholder="name@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </Field>
+        <Field label="كلمة المرور" htmlFor="password">
+          <div className="relative">
+            <Input
               id="password"
-              type="password"
+              type={showPassword ? "text" : "password"}
               required
               autoComplete="current-password"
               dir="ltr"
-              className="mt-1 block w-full rounded-xl border border-sand-300 bg-sand-50/50 px-4 py-2.5 text-sm text-ink-900 placeholder:text-ink-400 focus:bg-white focus:border-ink-900 transition-all font-mono"
+              className="pe-12 text-left font-mono"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-label={showPassword ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+              aria-pressed={showPassword}
+              className="absolute end-2 top-1/2 -translate-y-1/2 rounded-lg p-2 text-sand-500 transition-colors hover:bg-sand-100 hover:text-ink-900"
+            >
+              {showPassword ? (
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" /></svg>
+              ) : (
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+              )}
+            </button>
           </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="touch-target w-full rounded-xl bg-ink-900 px-4 py-3 text-sm font-semibold text-white hover:bg-ink-800 disabled:opacity-50 transition-all shadow-xs mt-2"
-          >
-            {loading ? "جاري التحقق..." : "تسجيل الدخول"}
-          </button>
-        </form>
-
-        <div className="mt-6 pt-4 border-t border-sand-100 text-center text-xs text-ink-500">
-          ليس لديك حساب بعد؟{" "}
-          <Link href="/register" className="font-semibold text-ink-900 underline hover:no-underline">
-            أنشئ حساباً جديداً
-          </Link>
-        </div>
-      </div>
-
-      <div className="mt-8 text-center text-xs text-ink-400">
-        <Link href="/" className="hover:text-ink-700 transition-colors">
-          ← العودة للصفحة الرئيسية
-        </Link>
-      </div>
-    </main>
+        </Field>
+        <Button type="submit" size="lg" className="w-full" disabled={loading || authLoading}>
+          {loading ? "جاري التحقق..." : "تسجيل الدخول"}
+        </Button>
+      </form>
+    </AuthLayout>
   );
 }
