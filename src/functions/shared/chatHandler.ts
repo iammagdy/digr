@@ -2,8 +2,14 @@ import { TablesDB, ID, Query } from "node-appwrite";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import {
   getEnabledCapabilities,
+  getCatalogCapabilities,
   sanitizeCapabilitiesForLlm,
   validateCapabilityParams,
+  validatePlanPlatformMatch,
+  detectMentionedPlatforms,
+  getPlatformLabelAr,
+  getClosestVerifiedCapability,
+  UNVERIFIED_PLATFORM_MESSAGE_AR,
   Capability,
 } from "./capabilityRegistry";
 import {
@@ -176,8 +182,11 @@ export class ChatHandler {
     });
 
     // 5. Fetch Capabilities and Sanitize for LLM (R1: zero leaks)
-    const capabilities = await getEnabledCapabilities(this.tables);
-    const sanitizedCaps = sanitizeCapabilitiesForLlm(capabilities);
+    const [capabilities, catalogCapabilities] = await Promise.all([
+      getEnabledCapabilities(this.tables),
+      getCatalogCapabilities(this.tables),
+    ]);
+    const sanitizedCaps = sanitizeCapabilitiesForLlm(catalogCapabilities);
 
     // 6. Fetch previous messages for context
     const historyRes = await this.tables.listRows({
@@ -251,44 +260,51 @@ export class ChatHandler {
         targetVolumeMax: c.targetVolumeMax,
       }));
 
-      const planValidation = validatePlanAgainstSchemas(planItems, capabilities);
-      if (!planValidation.valid) {
-        finalContentAr = `يرجى تدقيق المدخلات: ${planValidation.errors.join(", ")}`;
+      // Deterministic check: platform mentioned by user must match platform in proposed plan
+      const platformCheck = validatePlanPlatformMatch(message, planItems, catalogCapabilities);
+      if (!platformCheck.valid) {
+        const closest = getClosestVerifiedCapability(capabilities);
+        finalContentAr = `${platformCheck.errorAr || UNVERIFIED_PLATFORM_MESSAGE_AR}\n\nأقرب خدمة معتمدة متاحة حالياً: ${closest.nameAr}.`;
       } else {
-        const managedQuote = await createAndSaveManagedQuote(this.tables, {
-          conversationId,
-          userId,
-          plan: {
-            summaryAr: output.summaryAr,
-            items: planItems,
-            outputFormats: (output.outputFormats as any) || ["xlsx", "pdf", "csv"],
+        const planValidation = validatePlanAgainstSchemas(planItems, capabilities);
+        if (!planValidation.valid) {
+          finalContentAr = `يرجى تدقيق المدخلات: ${planValidation.errors.join(", ")}`;
+        } else {
+          const managedQuote = await createAndSaveManagedQuote(this.tables, {
+            conversationId,
+            userId,
+            plan: {
+              summaryAr: output.summaryAr,
+              items: planItems,
+              outputFormats: (output.outputFormats as any) || ["xlsx", "pdf", "csv"],
+              methodologyNotes: output.methodologyNotes,
+            },
+            userBalance: userBalance ?? 0,
+            capabilities,
+          });
+
+          planQuoteData = {
+            quoteId: managedQuote.quoteId,
+            planHash: managedQuote.planHash,
+            summaryAr: managedQuote.summaryAr,
+            items: managedQuote.items,
+            targetVolumeMax: managedQuote.targetVolumeMax,
+            unitPricePoints: managedQuote.unitPricePoints,
+            quotedPoints: managedQuote.quotedPoints,
+            isAffordable: managedQuote.isAffordable,
+            userBalance,
+            downscaledOffer: managedQuote.downscaledOffer,
+            outputFormats: managedQuote.outputFormats,
+            expiresAt: managedQuote.expiresAt,
             methodologyNotes: output.methodologyNotes,
-          },
-          userBalance: userBalance ?? 0,
-          capabilities,
-        });
+          };
 
-        planQuoteData = {
-          quoteId: managedQuote.quoteId,
-          planHash: managedQuote.planHash,
-          summaryAr: managedQuote.summaryAr,
-          items: managedQuote.items,
-          targetVolumeMax: managedQuote.targetVolumeMax,
-          unitPricePoints: managedQuote.unitPricePoints,
-          quotedPoints: managedQuote.quotedPoints,
-          isAffordable: managedQuote.isAffordable,
-          userBalance,
-          downscaledOffer: managedQuote.downscaledOffer,
-          outputFormats: managedQuote.outputFormats,
-          expiresAt: managedQuote.expiresAt,
-          methodologyNotes: output.methodologyNotes,
-        };
-
-        finalContentAr = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${output.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
-        if (!managedQuote.isAffordable) {
-          finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
-          if (managedQuote.downscaledOffer) {
-            finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+          finalContentAr = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${output.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          if (!managedQuote.isAffordable) {
+            finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
+            if (managedQuote.downscaledOffer) {
+              finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+            }
           }
         }
       }
@@ -367,10 +383,21 @@ export class ChatHandler {
         }
       }
     } else if (output.type === "suggest_alternative") {
-      finalContentAr = output.explanationAr;
-      if (output.closestAlternative) {
-        finalContentAr += `\n\n${output.closestAlternative}`;
+      // Ensure we never name a different platform than the one the user asked for
+      const mentioned = detectMentionedPlatforms(message);
+      if (mentioned.length > 0) {
+        const expectedLabel = getPlatformLabelAr(mentioned[0]);
+        const mentionedOutputPlatforms = detectMentionedPlatforms(output.unsupportedService);
+        if (mentionedOutputPlatforms.length > 0 && !mentionedOutputPlatforms.includes(mentioned[0])) {
+          output.unsupportedService = expectedLabel;
+        }
       }
+      const closest = getClosestVerifiedCapability(capabilities);
+      const baseExplanation = output.explanationAr.includes(UNVERIFIED_PLATFORM_MESSAGE_AR)
+        ? output.explanationAr
+        : `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${output.unsupportedService}). ${output.explanationAr}`;
+      const closestText = output.closestAlternative || `أقرب خدمة معتمدة متاحة حالياً: ${closest.nameAr}.`;
+      finalContentAr = `${baseExplanation}\n\n${closestText}`;
 
       // Log request in capability_requests table
       await this.tables.createRow({

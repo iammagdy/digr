@@ -652,27 +652,32 @@ export class LlmClient {
       };
     }
 
-    // D. Unsupported Platforms & "Request this service" trigger
+    // D. Unsupported / Pending-Verification Platforms & "Request this service" trigger
     if (
       promptLower.includes("انستغرام") ||
+      promptLower.includes("إنستغرام") ||
       promptLower.includes("instagram") ||
       promptLower.includes("linkedin") ||
       promptLower.includes("لينكد إن") ||
       promptLower.includes("فيسبوك") ||
-      promptLower.includes("facebook")
+      promptLower.includes("facebook") ||
+      promptLower.includes("ريديت") ||
+      promptLower.includes("reddit")
     ) {
       const platformName =
-        promptLower.includes("instagram") || promptLower.includes("انستغرام")
+        promptLower.includes("instagram") || promptLower.includes("انستغرام") || promptLower.includes("إنستغرام")
           ? "Instagram"
           : promptLower.includes("فيسبوك") || promptLower.includes("facebook")
           ? "Facebook"
+          : promptLower.includes("ريديت") || promptLower.includes("reddit")
+          ? "Reddit"
           : "LinkedIn";
       return {
         output: {
           type: "suggest_alternative",
           unsupportedService: platformName,
-          explanationAr: `خدمة استخراج البيانات من منصة ${platformName} غير متوفرة حالياً في كتالوج الخدمات المعتمد.`,
-          closestAlternative: "يمكنك استخدام خدمات تيك توك المعتمدة والمتاحة حالياً، أو تسجيل طلب لتفعيل هذه الخدمة قريباً.",
+          explanationAr: `هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (${platformName}).`,
+          closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
           canRequestFeature: true,
         },
         inputTokens: 500,
@@ -704,7 +709,13 @@ export class LlmClient {
       if (!options.sanitizedCapabilities || options.sanitizedCapabilities.length === 0) {
         return true;
       }
-      return options.sanitizedCapabilities.some((c: any) => c.slug === slug);
+      return options.sanitizedCapabilities.some(
+        (c: any) =>
+          c.slug === slug &&
+          c.enabled !== false &&
+          c.status !== "pending_verification" &&
+          c.status !== "planned"
+      );
     };
 
     // F. TikTok requests handling
@@ -882,7 +893,7 @@ export class LlmClient {
           output: {
             type: "suggest_alternative",
             unsupportedService: "منصة X (تويتر)",
-            explanationAr: "خدمة استخراج البيانات من منصة X قيد التحقق وستتاح قريباً في المنصة. الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
+            explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (منصة X). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
             closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
             canRequestFeature: true,
           },
@@ -955,7 +966,7 @@ export class LlmClient {
           output: {
             type: "suggest_alternative",
             unsupportedService: "يوتيوب (YouTube)",
-            explanationAr: "خدمة استخراج البيانات من منصة يوتيوب غير مفعلة حالياً في الكتالوج المعتمد بانتظار استكمال اختبارات التحقق. الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
+            explanationAr: "هذه المنصة قيد التجهيز وغير متاحة للتشغيل الآن (يوتيوب). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.",
             closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
             canRequestFeature: true,
           },
