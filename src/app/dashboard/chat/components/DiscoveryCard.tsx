@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { normalizeDiscoveryQuestions, sanitizeDiscoveryText, type DiscoveryAnswer } from "./discoveryQuestions";
 import { Badge } from "@/components/ui";
+import { formatNumber } from "@/lib/honestDisplay";
 
 interface DiscoveryCardProps {
   questions: unknown;
@@ -30,7 +31,7 @@ function compactFieldLabel(parameterType: string | undefined, index: number): st
     language: "اللغة",
     topic: "الموضوع",
   };
-  return parameterType ? labels[parameterType] ?? `الإجابة ${index + 1}` : `الإجابة ${index + 1}`;
+  return parameterType ? labels[parameterType] ?? `الإجابة ${formatNumber(index + 1)}` : `الإجابة ${formatNumber(index + 1)}`;
 }
 
 export default function DiscoveryCard({ questions, completedAnswers, disabled = false, onSubmit }: DiscoveryCardProps) {
@@ -152,13 +153,17 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
             <h3 className="text-sm font-bold text-ink-900">لنخصّص خطة بحثك</h3>
             <p className="mt-0.5 text-xs text-sand-600">أجب عن الأسئلة التالية — أو تخطَّ ما يناسبك</p>
           </div>
-          <span className="tnum shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-ink-800 ring-1 ring-sand-200" aria-live="polite">
-            {answeredCount} / {normalizedQuestions.length}
-          </span>
+          {normalizedQuestions.length > 1 && (
+            <span className="tnum shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-ink-800 ring-1 ring-sand-200" aria-live="polite" dir="ltr">
+              {formatNumber(answeredCount)} / {formatNumber(normalizedQuestions.length)}
+            </span>
+          )}
         </div>
-        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-sand-200" role="progressbar" aria-valuenow={answeredCount} aria-valuemin={0} aria-valuemax={normalizedQuestions.length} aria-label="تقدم الإجابات">
-          <div className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${normalizedQuestions.length ? (answeredCount / normalizedQuestions.length) * 100 : 0}%` }} />
-        </div>
+        {normalizedQuestions.length > 1 && (
+          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-sand-200" role="progressbar" aria-valuenow={answeredCount} aria-valuemin={0} aria-valuemax={normalizedQuestions.length} aria-label="تقدم الإجابات">
+            <div className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${normalizedQuestions.length ? (answeredCount / normalizedQuestions.length) * 100 : 0}%` }} />
+          </div>
+        )}
       </div>
 
       <div className="space-y-3 p-3.5 sm:p-5">
@@ -176,7 +181,7 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
             >
               <div className="flex items-start justify-between gap-3">
                 <p className="text-sm font-bold leading-relaxed text-ink-900" dir="auto">
-                  <span aria-hidden="true" className="tnum me-1.5 text-xs font-bold text-accent">{index + 1}.</span>
+                  <span aria-hidden="true" className="tnum me-1.5 text-xs font-bold text-accent">{formatNumber(index + 1)}.</span>
                   {item.text}
                 </p>
                 {isAnswered && (
