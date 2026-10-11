@@ -1139,6 +1139,8 @@ export default function ChatWorkspacePage() {
                 events={activeJob.events}
                 rowsCollected={activeJob.rowsCollected}
                 eventLimit={EVENT_HISTORY_LIMIT}
+                spentPoints={activeJob.chargedCredits}
+                reservedPoints={activeJob.reservedCredits}
               />
             </div>
           )}
