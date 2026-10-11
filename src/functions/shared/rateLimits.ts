@@ -1,28 +1,26 @@
 import { TablesDB, Query } from "node-appwrite";
 
 export interface RateLimitConfig {
+  /** Per-account burst protection: max USER messages per minute. No daily quota. */
   messagesPerMinute: number;
-  messagesPerDay: number;
   conversationMaxTokens: number;
   globalDailySpendCapUsd: number;
-  userDailySpendCapUsd?: number;
 }
 
 export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
-  messagesPerMinute: 10,
-  // Per-account daily assistant budget: one unit = one USER message
-  // (not per model call or tool iteration). Overridable via env.
-  messagesPerDay: 200,
+  // The assistant is open and free: no per-account daily limit. Only a burst
+  // guard (per USER message, never per model call) plus the global kill switch.
+  messagesPerMinute: 20,
   conversationMaxTokens: 40_000,
+  // Global kill switch (platform protection). Override via LLM_DAILY_SPEND_CAP_USD.
   globalDailySpendCapUsd: 1.0,
-  userDailySpendCapUsd: 0.10,
 };
 
 export interface RateLimitCheckResult {
   allowed: boolean;
   reasonAr?: string;
-  statusCode?: 429 | 503;
-  type?: "minute_limit" | "daily_limit" | "global_spend_cap" | "user_spend_cap" | "conversation_token_cap";
+  statusCode?: 429 | 503 | 413;
+  type?: "minute_limit" | "message_too_long" | "global_spend_cap" | "conversation_token_cap";
 }
 
 function utcStartOfDay(): string {
@@ -35,25 +33,27 @@ function configuredCap(name: string, fallback: number): number {
   return Number.isFinite(configured) && configured >= 0 ? configured : fallback;
 }
 
-function spendCapResult(type: "global_spend_cap" | "user_spend_cap"): RateLimitCheckResult {
+function spendCapResult(): RateLimitCheckResult {
   return {
     allowed: false,
-    statusCode: type === "global_spend_cap" ? 503 : 429,
-    type,
-    reasonAr: type === "global_spend_cap"
-      ? "تم بلوغ الحد اليومي لاستخدام المساعد على مستوى المنصة مؤقتاً للحماية. يرجى المحاولة غداً."
-      : "تم بلوغ الحد اليومي لاستخدام المساعد لهذا الحساب. يرجى المحاولة غداً.",
+    statusCode: 503,
+    type: "global_spend_cap",
+    // Honest and generic: never mention limits, quotas, or "tomorrow".
+    reasonAr: "المساعد مشغول الآن، حاول بعد قليل.",
   };
 }
 
-/** Check per-user message rate limits (per minute and per UTC day). */
+/**
+ * Per-account burst protection only: max USER messages per minute. There is no
+ * daily quota — internal model calls and tool iterations never count.
+ */
 export async function checkUserRateLimits(
   tables: TablesDB,
   userId: string,
   config: RateLimitConfig = DEFAULT_RATE_LIMITS,
 ): Promise<RateLimitCheckResult> {
   const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
-  const startOfDay = utcStartOfDay();
+  const burstLimit = configuredCap("CHAT_MESSAGES_PER_MINUTE", config.messagesPerMinute);
 
   const minuteRes = await tables.listRows({
     databaseId: "digr",
@@ -62,37 +62,31 @@ export async function checkUserRateLimits(
       Query.equal("userId", userId),
       Query.equal("role", "user"),
       Query.greaterThanEqual("createdAt", oneMinuteAgo),
-      Query.limit(config.messagesPerMinute + 1),
+      Query.limit(burstLimit + 1),
     ],
   });
-  if (minuteRes.total >= config.messagesPerMinute) {
+  if (minuteRes.total >= burstLimit) {
     return {
       allowed: false,
       statusCode: 429,
       type: "minute_limit",
-      reasonAr: `لقد أرسلت عدة رسائل بسرعة. يرجى الانتظار دقيقة واحدة قبل المتابعة (الحد الأقصى: ${config.messagesPerMinute} رسائل/دقيقة).`,
+      reasonAr: "لحظة من فضلك، أرسلت رسائل كثيرة بسرعة. استنى دقيقة وكمل عادي.",
     };
   }
+  return { allowed: true };
+}
 
-  // One unit per USER message per account per UTC day — internal model calls
-  // and tool iterations never consume budget.
-  const dailyLimit = configuredCap("LLM_USER_DAILY_MESSAGES", config.messagesPerDay);
-  const dayRes = await tables.listRows({
-    databaseId: "digr",
-    tableId: "messages",
-    queries: [
-      Query.equal("userId", userId),
-      Query.equal("role", "user"),
-      Query.greaterThanEqual("createdAt", startOfDay),
-      Query.limit(dailyLimit + 1),
-    ],
-  });
-  if (dayRes.total >= dailyLimit) {
+/** Maximum input size per user message (characters). Friendly rejection. */
+export function checkMessageLength(
+  message: string,
+  maxChars: number = configuredCap("CHAT_MAX_MESSAGE_CHARS", 4000),
+): RateLimitCheckResult {
+  if ((message || "").length > maxChars) {
     return {
       allowed: false,
-      statusCode: 429,
-      type: "daily_limit",
-      reasonAr: `وصلت للحد اليومي من رسائل المساعد (${dailyLimit} رسالة). يتجدد الرصيد تلقائياً غداً.`,
+      statusCode: 413,
+      type: "message_too_long",
+      reasonAr: `رسالتك طويلة شوية (أكتر من ${maxChars} حرف). اختصرها أو قسمها على رسالتين وهكمل معاك عادي.`,
     };
   }
   return { allowed: true };
@@ -130,18 +124,7 @@ export async function checkGlobalDailySpendCap(
 ): Promise<RateLimitCheckResult> {
   const cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", config.globalDailySpendCapUsd);
   const totalCostUsd = await sumDailyUsageCost(tables);
-  return totalCostUsd >= cap ? spendCapResult("global_spend_cap") : { allowed: true };
-}
-
-/** Check a user's daily provider spend using server-side usage rows only. */
-export async function checkUserDailySpendCap(
-  tables: TablesDB,
-  userId: string,
-  config: RateLimitConfig = DEFAULT_RATE_LIMITS,
-): Promise<RateLimitCheckResult> {
-  const cap = configuredCap("LLM_USER_DAILY_SPEND_CAP_USD", config.userDailySpendCapUsd ?? 0.10);
-  const totalCostUsd = await sumDailyUsageCost(tables, userId);
-  return totalCostUsd >= cap ? spendCapResult("user_spend_cap") : { allowed: true };
+  return totalCostUsd >= cap ? spendCapResult() : { allowed: true };
 }
 
 /** Check an individual conversation context token cap. */
