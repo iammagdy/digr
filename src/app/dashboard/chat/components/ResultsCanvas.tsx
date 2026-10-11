@@ -1,18 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
+import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
+import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 
 export interface ExtractedRecord {
   id: string;
-  username: string;
-  displayName: string;
-  followers: number;
-  following: number;
-  likes: number;
-  videosCount: number;
-  verified: boolean;
-  bio: string;
-  extractedAt: string;
+  [key: string]: unknown;
 }
 
 interface ResultsCanvasProps {
@@ -24,6 +19,43 @@ interface ResultsCanvasProps {
   onExplainMethodology: () => void;
   onRequestDocxMethodology: () => void;
   onCloseMobile: () => void;
+  review?: ResultReview | null;
+  reviewSeverity?: ReviewSeverity;
+  onKeepResult: () => void;
+  onEditAndFetch: () => void;
+  onReviewSuggestion: (suggestion: ReviewSuggestion) => void;
+  currentVersion?: { id: string; versionNum: number } | null;
+  versionHistory?: Array<{ id: string; versionNum: number; parentVersionId?: string | null }>;
+  artifactHistoryAvailable?: boolean;
+  artifactEditing: boolean;
+  onArtifactEdit: (operation: ArtifactEditOperation) => void;
+  onUndoVersion: (targetVersionId: string) => void;
+}
+
+const COLUMN_LABELS: Record<string, string> = {
+  username: "اسم المستخدم", displayName: "الاسم التعريفي", followers: "المتابعون",
+  following: "المتابعَون", likes: "الإعجابات", videosCount: "المقاطع", verified: "موثّق",
+  bio: "النبذة", bioLink: "رابط النبذة", profileUrl: "رابط الملف", collectedDate: "تاريخ الجمع",
+  count: "العدد", averageFollowers: "متوسط المتابعين",
+};
+
+const SEVERITY_TONE: Record<string, StatusTone> = {
+  critical: "danger",
+  warning: "warning",
+  ok: "success",
+};
+
+const SEVERITY_LABEL: Record<string, string> = {
+  critical: "تحتاج مراجعة",
+  warning: "ملاحظات على التغطية",
+  ok: "ضمن النطاق المرصود",
+};
+
+function formatCell(value: unknown): string {
+  if (typeof value === "number") return value.toLocaleString("en-US");
+  if (typeof value === "boolean") return value ? "نعم" : "لا";
+  if (value == null || value === "") return "—";
+  return String(value);
 }
 
 export default function ResultsCanvas({
@@ -35,257 +67,304 @@ export default function ResultsCanvas({
   onExplainMethodology,
   onRequestDocxMethodology,
   onCloseMobile,
+  review,
+  reviewSeverity,
+  onKeepResult,
+  onEditAndFetch,
+  onReviewSuggestion,
+  currentVersion,
+  versionHistory = [],
+  artifactHistoryAvailable,
+  artifactEditing,
+  onArtifactEdit,
+  onUndoVersion,
 }: ResultsCanvasProps) {
   const [tab, setTab] = useState<"table" | "pdf" | "notes" | "files">("table");
   const [searchTerm, setSearchTerm] = useState("");
-  const [notesText, setNotesText] = useState(
-    "ملاحظات الباحث:\n- تم استخراج البيانات العامة وتوثيق مصدر الحساب.\n- العينة معتمدة للتحليل والدراسة المقارنة."
-  );
+  const [notesText, setNotesText] = useState("");
+  const [renameFrom, setRenameFrom] = useState("");
+  const [renameTo, setRenameTo] = useState("");
+  const [columnOrderText, setColumnOrderText] = useState("");
 
-  const filteredRecords = records.filter((r) =>
-    (r.username || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (r.displayName || "").toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredRecords = records.filter((record) =>
+    Object.values(record).some((value) => String(value ?? "").toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()))
   );
+  const tableColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id"))));
+  const editDisabled = artifactEditing || artifactHistoryAvailable === false;
+
+  const quickEdits: Array<{ label: string; op: ArtifactEditOperation; needsSearch?: boolean; needsNotes?: boolean }> = [
+    { label: "حذف التكرار", op: { action: "dedupe", keys: ["id", "username", "profileUrl"] } },
+    { label: "ترتيب حسب المتابعين", op: { action: "sort", field: "followers", direction: "desc" } },
+    { label: "الأعمدة الأساسية", op: { action: "select_columns", columns: ["username", "displayName", "followers", "likes"] } },
+    { label: "إخفاء المعرّفات", op: { action: "anonymize", fields: ["username", "displayName", "bio", "bioLink", "profileUrl"] } },
+    { label: "تجميع حسب التوثيق", op: { action: "group_aggregate", groupBy: "verified", metrics: [{ operation: "count", as: "count" }, { field: "followers", operation: "average", as: "averageFollowers" }] } },
+    { label: "حفظ البحث كفلتر", op: { action: "filter", field: "username", operator: "contains", value: searchTerm.trim() }, needsSearch: true },
+    { label: "حفظ الملخص كنسخة", op: { action: "rewrite_summary", summaryAr: notesText.slice(0, 1000) }, needsNotes: true },
+    { label: "إعادة توليد الصيغ", op: { action: "convert_formats", formats: ["xlsx", "pdf", "csv"] } },
+  ];
 
   return (
-    <div className="h-full min-h-0 flex flex-col bg-white border-t border-sand-300 lg:border-t-0 lg:border-r">
-      {/* Canvas Top Bar */}
-      <div className="p-4 border-b border-sand-200 flex items-center justify-between bg-sand-50">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-bold text-ink-900">لوحة النتائج</span>
+    <div className="flex h-full min-h-0 flex-col bg-white">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-sand-200 bg-sand-50/70 px-4 py-3">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-sm font-bold text-ink-900">لوحة النتائج</h2>
           {records.length > 0 && (
-            <span className="text-2xs px-2 py-0.5 rounded-full bg-sand-200 text-sand-800 font-bold tabular-nums">
-              {records.length} سجل
+            <span className="tnum rounded-full bg-pine-800 px-2.5 py-0.5 text-xs font-bold text-white">
+              {records.length.toLocaleString("ar-EG")} سجل
+            </span>
+          )}
+          {currentVersion && (
+            <span className="tnum rounded-full bg-sand-200 px-2 py-0.5 text-xs font-semibold text-sand-700">
+              نسخة {currentVersion.versionNum}
             </span>
           )}
         </div>
-
         <button
+          type="button"
           onClick={onCloseMobile}
-          className="p-1.5 text-sand-500 hover:text-ink-900 lg:hidden rounded-lg hover:bg-sand-200"
-          aria-label="إغلاق مساحة النتائج"
+          aria-label="إغلاق لوحة النتائج"
+          className="touch-target inline-flex items-center justify-center rounded-xl text-sand-500 hover:bg-sand-200 hover:text-ink-900 lg:hidden"
         >
-          ✕
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+            <path strokeLinecap="round" d="m6 6 12 12M18 6 6 18" />
+          </svg>
         </button>
       </div>
 
-      {/* Tabs Switcher */}
-      <div className="flex border-b border-sand-200 px-4 bg-sand-50/50">
-        {[
-          { key: "table", label: "البيانات" },
-          { key: "pdf", label: "التقرير" },
-          { key: "notes", label: "الملاحظات" },
-          { key: "files", label: "الملفات" },
-        ].map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key as any)}
-            className={`px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
-              tab === t.key
-                ? "border-primary text-ink-900"
-                : "border-transparent text-sand-500 hover:text-ink-900"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="border-b border-sand-200 bg-white px-3">
+        <Tabs
+          tabs={[
+            { id: "table" as const, label: "البيانات" },
+            { id: "pdf" as const, label: "التقرير" },
+            { id: "notes" as const, label: "الملاحظات" },
+            { id: "files" as const, label: "الملفات" },
+          ]}
+          active={tab}
+          onChange={setTab}
+        />
       </div>
 
-      {/* Tab Content */}
-      <div className="flex-1 overflow-y-auto p-4">
-        {/* Tab 1: Data Table */}
+      {/* Result review */}
+      {jobId && review && (
+        <section className="border-b border-sand-200 bg-sand-50/60 p-4" aria-label="مراجعة النتيجة">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h3 className="text-sm font-bold text-ink-900">مراجعة النتيجة</h3>
+            <Badge tone={SEVERITY_TONE[reviewSeverity ?? "ok"] ?? "neutral"}>
+              {SEVERITY_LABEL[reviewSeverity ?? "ok"] ?? reviewSeverity}
+            </Badge>
+          </div>
+          <p className="text-xs leading-6 text-sand-700">{review.comparisonAr}</p>
+          {review.suggestions.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {review.suggestions.slice(0, 3).map((suggestion, index) => (
+                <button
+                  key={`${suggestion.type}-${index}`}
+                  type="button"
+                  onClick={() => onReviewSuggestion(suggestion)}
+                  className="min-h-11 cursor-pointer rounded-xl border border-sand-300 bg-white px-3 py-2 text-xs font-semibold text-ink-800 transition-colors hover:border-accent/40 hover:bg-accent-light/40"
+                >
+                  {suggestion.labelAr}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button size="sm" onClick={onKeepResult}>كمّل بالنتيجة دي</Button>
+            <Button size="sm" variant="secondary" onClick={onEditAndFetch}>عدّل واسحب تاني</Button>
+          </div>
+        </section>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {tab === "table" && (
           <div className="space-y-4">
-            <div className="flex items-center justify-between gap-2">
-              <input
-                type="text"
-                placeholder="بحث داخل السجلات المستخرجة..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs bg-sand-50 border border-sand-300 rounded-lg focus:outline-hidden focus:border-primary"
-              />
-            </div>
+            {/* Quick artifact edits */}
+            {jobId && (
+              <details className="group rounded-2xl border border-sand-200 bg-sand-50/60">
+                <summary className="min-h-11 cursor-pointer list-none px-4 py-3 text-xs font-bold text-ink-900 [&::-webkit-details-marker]:hidden">
+                  <span className="inline-flex items-center gap-2">
+                    <svg className="h-4 w-4 text-accent transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                    أدوات تنقيح البيانات
+                  </span>
+                </summary>
+                <div className="space-y-3 border-t border-sand-200 p-4">
+                  <div className="flex flex-wrap gap-2">
+                    {quickEdits.map((q) => (
+                      <button
+                        key={q.label}
+                        type="button"
+                        disabled={editDisabled || (q.needsSearch && !searchTerm.trim()) || (q.needsNotes && !notesText.trim())}
+                        onClick={() => onArtifactEdit(q.op)}
+                        className="min-h-11 cursor-pointer rounded-xl border border-sand-300 bg-white px-3 py-2 text-xs font-semibold text-ink-800 transition-colors hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {q.label}
+                      </button>
+                    ))}
+                    {(() => {
+                      const current = versionHistory.find((v) => v.id === currentVersion?.id);
+                      const parentId = current?.parentVersionId;
+                      return parentId ? (
+                        <button type="button" disabled={editDisabled} onClick={() => onUndoVersion(parentId)} className="min-h-11 cursor-pointer rounded-xl border border-amber-points/40 bg-amber-points-bg px-3 py-2 text-xs font-bold text-amber-points transition-colors hover:bg-amber-points-bg/70 disabled:cursor-not-allowed disabled:opacity-50">
+                          التراجع لنسخة سابقة
+                        </button>
+                      ) : null;
+                    })()}
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-xs font-semibold text-sand-700" htmlFor="rc-rename-from">إعادة تسمية عمود</label>
+                        <Input id="rc-rename-from" value={renameFrom} onChange={(e) => setRenameFrom(e.target.value)} maxLength={80} placeholder="الاسم الحالي" />
+                      </div>
+                      <Input value={renameTo} onChange={(e) => setRenameTo(e.target.value)} maxLength={80} placeholder="الاسم الجديد" aria-label="الاسم الجديد للعمود" className="flex-1" />
+                      <Button size="sm" variant="secondary" disabled={editDisabled || !renameFrom.trim() || !renameTo.trim()} onClick={() => onArtifactEdit({ action: "rename_columns", renames: { [renameFrom.trim()]: renameTo.trim() } })}>
+                        تطبيق
+                      </Button>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 space-y-1">
+                        <label className="text-xs font-semibold text-sand-700" htmlFor="rc-col-order">ترتيب الأعمدة (افصل بفاصلة)</label>
+                        <Input id="rc-col-order" value={columnOrderText} onChange={(e) => setColumnOrderText(e.target.value)} maxLength={1000} placeholder="username, followers, likes" dir="ltr" className="text-left" />
+                      </div>
+                      <Button size="sm" variant="secondary" disabled={editDisabled || !columnOrderText.trim()} onClick={() => onArtifactEdit({ action: "select_columns", columns: columnOrderText.split(",").map((c) => c.trim()).filter(Boolean).slice(0, 80) })}>
+                        تطبيق
+                      </Button>
+                    </div>
+                  </div>
+                  {artifactEditing && <p className="text-xs text-sand-600" role="status">جاري إنشاء نسخة جديدة…</p>}
+                  {versionHistory.length > 0 && <p className="tnum text-xs text-sand-500">عدد النسخ: {versionHistory.length} من 30</p>}
+                </div>
+              </details>
+            )}
+
+            <Input
+              type="search"
+              placeholder="بحث داخل السجلات..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              aria-label="بحث داخل السجلات"
+            />
 
             {records.length === 0 ? (
-              <div className="p-8 text-center text-xs text-sand-500 bg-sand-50/50 rounded-xl border border-dashed border-sand-300">
-                لا توجد سجلات مستخرجة بعد. ابدأ الاستخراج لعرض جدول البيانات هنا.
-              </div>
+              <EmptyState
+                title={jobId ? "تفاصيل السجلات غير متاحة هنا" : "لا توجد بيانات بعد"}
+                description={jobId ? "راجع تنبيه النتيجة أعلاه أو حمّل الملفات الأصلية من تبويب الملفات." : "ابدأ استخراجًا لعرض جدول البيانات هنا."}
+              />
             ) : (
-              <div className="border border-sand-200 rounded-xl overflow-hidden shadow-2xs">
+              <div className="overflow-hidden rounded-2xl border border-sand-200">
                 <div className="overflow-x-auto">
                   <table className="w-full text-right text-xs">
-                    <thead className="bg-sand-100 text-sand-700 font-semibold border-b border-sand-200">
-                      <tr>
-                        <th className="p-3">اسم المستخدم</th>
-                        <th className="p-3">الاسم التعريفي</th>
-                        <th className="p-3">المتابعون</th>
-                        <th className="p-3">المتابعَون</th>
-                        <th className="p-3">الإعجابات</th>
-                        <th className="p-3">المقاطع</th>
+                    <thead>
+                      <tr className="border-b border-sand-200 bg-sand-100/80">
+                        {tableColumns.map((column) => (
+                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{COLUMN_LABELS[column] || column}</th>
+                        ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-sand-200">
+                    <tbody className="divide-y divide-sand-100 bg-white">
                       {filteredRecords.map((r, idx) => (
-                        <tr key={idx} className="hover:bg-sand-50/60 transition-colors">
-                          <td className="p-3 font-semibold text-ink-900" dir="ltr">
-                            @{r.username}
-                          </td>
-                          <td className="p-3 text-sand-700">{r.displayName || "—"}</td>
-                          <td className="p-3 font-bold tabular-nums text-ink-900">
-                            {r.followers?.toLocaleString("en-US") || "0"}
-                          </td>
-                          <td className="p-3 tabular-nums text-sand-600">
-                            {r.following?.toLocaleString("en-US") || "0"}
-                          </td>
-                          <td className="p-3 tabular-nums text-sand-600">
-                            {r.likes?.toLocaleString("en-US") || "0"}
-                          </td>
-                          <td className="p-3 tabular-nums text-sand-600">
-                            {r.videosCount?.toLocaleString("en-US") || "0"}
-                          </td>
+                        <tr key={String(r.id ?? idx)} className="transition-colors hover:bg-sand-50/70">
+                          {tableColumns.map((column) => {
+                            const value = r[column];
+                            return (
+                              <td key={column} dir={column === "username" ? "ltr" : undefined} className={`max-w-55 truncate px-3 py-2.5 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
+                                {formatCell(value)}
+                              </td>
+                            );
+                          })}
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
+                <p className="tnum border-t border-sand-100 bg-sand-50/60 px-3 py-2 text-xs text-sand-500">
+                  عرض {filteredRecords.length.toLocaleString("ar-EG")} من أصل {records.length.toLocaleString("ar-EG")} سجل
+                </p>
               </div>
             )}
           </div>
         )}
 
-        {/* Tab 2: PDF Preview */}
         {tab === "pdf" && (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 bg-sand-50/60 rounded-xl border border-sand-200">
+          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-sand-300 bg-sand-50/60 p-8 text-center">
             {jobId ? (
-              <div className="w-full space-y-4">
-                <div className="p-4 bg-white border border-sand-300 rounded-xl shadow-xs">
-                  <div className="text-sm font-bold text-ink-900 mb-1">تقرير استخراج الحساب المعتمد (PDF)</div>
-                  <div className="text-xs text-sand-500 mb-4">
-                    جاهز للمعاينة والمراجعة والطباعة الأكاديمية والتنفيذية.
-                  </div>
-                  <button
-                    onClick={() => onDownload("pdf")}
-                    disabled={downloadingKey === "pdf"}
-                    className="px-4 py-2 bg-primary hover:bg-primary-hover text-white text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
-                  >
-                    {downloadingKey === "pdf" ? "جاري التجهيز..." : "فتح وتحميل تقرير PDF"}
-                  </button>
+              <div className="w-full max-w-sm space-y-4">
+                <span aria-hidden="true" className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-danger shadow-xs ring-1 ring-sand-200">
+                  <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}><path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-ink-900">تقرير نتائج جمع البيانات (PDF)</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-sand-600">يعكس محتوى الملفات المولّدة لهذا الطلب — متاح للمعاينة والطباعة.</p>
                 </div>
+                <Button onClick={() => onDownload("pdf")} disabled={downloadingKey === "pdf"} className="w-full">
+                  {downloadingKey === "pdf" ? "جاري التجهيز..." : "فتح وتحميل تقرير PDF"}
+                </Button>
               </div>
             ) : (
-              <div className="text-xs text-sand-500">
-                يبدأ توليد تقرير PDF الموثق بمجرد اعتماد الخطة وبدء الاستخراج.
-              </div>
+              <p className="text-xs text-sand-500">يبدأ توليد تقرير PDF بعد اكتمال طلب جمع البيانات.</p>
             )}
           </div>
         )}
 
-        {/* Tab 3: Notes */}
         {tab === "notes" && (
           <div className="space-y-3">
-            <label className="block text-xs font-semibold text-sand-700">
-              ملاحظات البحث والمنهجية الميدانية (قابلة للتحرير):
+            <label className="block text-xs font-bold text-ink-900" htmlFor="rc-notes">
+              ملاحظات البحث والمنهجية — قابلة للتحرير
             </label>
-            <textarea
+            <TextArea
+              id="rc-notes"
               rows={8}
               value={notesText}
               onChange={(e) => setNotesText(e.target.value)}
-              className="w-full p-3 text-xs bg-white border border-sand-300 rounded-xl focus:outline-hidden focus:border-primary leading-relaxed"
+              placeholder="اكتب ملخصًا للنتيجة أو توثيقًا ترغب بحفظه كنسخة جديدة…"
+              className="min-h-44 leading-relaxed"
             />
-            <div className="text-3xs text-sand-500 text-left">
-              تُحفظ الملاحظات تلقائياً مع محادثتك وتُدمج في توثيق النتائج.
-            </div>
+            <p className="text-xs text-sand-500">هذه الملاحظات مؤقتة على الشاشة — استخدم «حفظ الملخص كنسخة» من أدوات التنقيح لحفظها.</p>
           </div>
         )}
 
-        {/* Tab 4: Downloads */}
         {tab === "files" && (
           <div className="space-y-3">
-            <div className="p-3.5 bg-white border border-sand-200 rounded-xl flex items-center justify-between">
-              <div>
-                <div className="text-xs font-bold text-ink-900">ملف Excel كامل (.xlsx)</div>
-                <div className="text-3xs text-sand-500">يتضمن جدول البيانات، دليل المتغيرات، وصفحة المنهجية.</div>
+            {[
+              { ext: "xlsx" as const, title: "ملف Excel كامل (.xlsx)", desc: "جدول البيانات + دليل المتغيرات + صفحة المنهجية." },
+              { ext: "pdf" as const, title: "تقرير ملخص (.pdf)", desc: "صياغة موثقة مع مقاييس التغطية." },
+              { ext: "csv" as const, title: "بيانات خام (.csv)", desc: "UTF-8 — للتحليل الإحصائي والبرمجي." },
+            ].map((f) => (
+              <div key={f.ext} className="flex items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-pine-800 text-xs font-bold text-white uppercase">{f.ext}</span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-ink-900">{f.title}</p>
+                    <p className="mt-0.5 text-xs text-sand-500">{f.desc}</p>
+                  </div>
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => onDownload(f.ext)} disabled={downloadingKey === f.ext || !jobId}>
+                  {downloadingKey === f.ext ? "جاري التنزيل..." : "تحميل"}
+                </Button>
               </div>
-              <button
-                onClick={() => onDownload("xlsx")}
-                disabled={downloadingKey === "xlsx" || !jobId}
-                className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors disabled:opacity-50 cursor-pointer"
-              >
-                {downloadingKey === "xlsx" ? "جاري التنزيل..." : "تحميل XLSX"}
-              </button>
-            </div>
-
-            <div className="p-3.5 bg-white border border-sand-200 rounded-xl flex items-center justify-between">
-              <div>
-                <div className="text-xs font-bold text-ink-900">تقرير ملخص (.pdf)</div>
-                <div className="text-3xs text-sand-500">صياغة أنيقة موثقة مع مقاييس التغطية وتفاصيل الحساب.</div>
-              </div>
-              <button
-                onClick={() => onDownload("pdf")}
-                disabled={downloadingKey === "pdf" || !jobId}
-                className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors disabled:opacity-50 cursor-pointer"
-              >
-                {downloadingKey === "pdf" ? "جاري التنزيل..." : "تحميل PDF"}
-              </button>
-            </div>
-
-            <div className="p-3.5 bg-white border border-sand-200 rounded-xl flex items-center justify-between">
-              <div>
-                <div className="text-xs font-bold text-ink-900">بيانات خام (.csv)</div>
-                <div className="text-3xs text-sand-500">ملف نصي قياسي بتنسيق UTF-8 للتحليل الإحصائي والبرمجي.</div>
-              </div>
-              <button
-                onClick={() => onDownload("csv")}
-                disabled={downloadingKey === "csv" || !jobId}
-                className="px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-800 text-xs font-semibold rounded-lg border border-sand-300 transition-colors disabled:opacity-50 cursor-pointer"
-              >
-                {downloadingKey === "csv" ? "جاري التنزيل..." : "تحميل CSV"}
-              </button>
-            </div>
+            ))}
           </div>
         )}
 
-        {/* Methodology On Demand (Section 7) */}
+        {/* Methodology facts */}
         {jobId && (
-          <div className="mt-6 pt-4 border-t border-sand-200 space-y-3">
-            <div className="p-3.5 bg-sand-50 border border-sand-200 rounded-xl text-xs space-y-2">
-              <div className="font-bold text-ink-900 flex items-center gap-1.5">
-                <svg className="w-4 h-4 text-sand-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                </svg>
-                <span>ملخص حقائق الاستخراج (Methodology Facts):</span>
-              </div>
-              <div className="space-y-1 text-sand-600 text-2xs">
-                <div>• المصدر: الحساب الرسمي على المنصة (@{profile?.username || "tiktok"})</div>
-                <div>• التاريخ المطلق: {new Date().toISOString().split("T")[0]}</div>
-                <div>• التغطية المحققة: 100% من الحقول المتاحة علناً</div>
-                <div>• إزالة التكرار: معتمد آلياً</div>
-              </div>
+          <div className="mt-6 space-y-3 border-t border-sand-200 pt-4">
+            <div className="rounded-2xl border border-sand-200 bg-sand-50/70 p-4 text-xs">
+              <p className="mb-2 font-bold text-ink-900">حقائق الاستخراج والمنهجية</p>
+              <dl className="space-y-1.5 text-sand-600">
+                <div className="flex justify-between gap-2"><dt>المصدر</dt><dd className="font-semibold text-ink-800" dir="auto">بيانات عامة (@{profile?.username || "tiktok"})</dd></div>
+                <div className="flex justify-between gap-2"><dt>تاريخ الجمع</dt><dd className="font-semibold text-ink-800">{profile?.collectedDate || (records[0]?.extractedAt as string) || "غير متاح"}</dd></div>
+                <div className="flex justify-between gap-2"><dt>السجلات المعروضة</dt><dd className="tnum font-semibold text-ink-800">{records.length.toLocaleString("ar-EG")}</dd></div>
+              </dl>
             </div>
-
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={onExplainMethodology}
-                className="w-full py-2 px-3 text-xs font-medium text-ink-800 bg-sand-100 hover:bg-sand-200 border border-sand-300 rounded-xl transition-colors cursor-pointer text-center inline-flex items-center justify-center gap-1.5"
-              >
-                <svg className="w-3.5 h-3.5 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                <span>اشرح لي كيف تم جمع البيانات</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={onRequestDocxMethodology}
-                className="w-full py-2 px-3 text-xs font-semibold text-amber-points hover:text-amber-points-hover bg-amber-points-bg hover:bg-amber-points-bg/80 border border-amber-points/30 rounded-xl transition-colors cursor-pointer text-center flex items-center justify-center gap-1.5"
-              >
-                <svg className="w-3.5 h-3.5 text-amber-points" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <span>اكتب المنهجية الرسمية (PDF / Word)</span>
-                <span className="text-2xs font-bold">(10 نقاط)</span>
-              </button>
+            <div className="grid gap-2">
+              <Button size="sm" variant="secondary" onClick={onExplainMethodology} className="w-full">
+                اشرح لي كيف تم جمع البيانات
+              </Button>
+              <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
+                اكتب المنهجية الرسمية (10 نقاط)
+              </Button>
             </div>
           </div>
         )}
