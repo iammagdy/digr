@@ -30,6 +30,7 @@ import {
   sanitizeClarificationText,
   type NormalizedClarificationQuestion,
 } from "./clarification";
+import { searchCatalog, CatalogEndpointSummary } from "./catalogClient";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -186,7 +187,39 @@ export class ChatHandler {
       getEnabledCapabilities(this.tables),
       getCatalogCapabilities(this.tables),
     ]);
-    const sanitizedCaps = sanitizeCapabilitiesForLlm(catalogCapabilities);
+
+    // Live catalog access (Phase A & B)
+    const mentionedPlatforms = detectMentionedPlatforms(message);
+    const platformHint = mentionedPlatforms[0] || undefined;
+    const liveCatalogEndpoints = await searchCatalog(message, platformHint);
+
+    const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map((ep) => ({
+      id: ep.slug,
+      slug: ep.slug,
+      platform: ep.platform as any,
+      category: ep.platform as any,
+      status: "verified",
+      unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
+      estimatedCostUsdPerUnit: ep.catalogPriceUsd,
+      pointsPerUnit: ep.pointsPerUnit,
+      maxItemsPerCall: ep.pagination.maxLimit || 100,
+      estimatedSuccessRate: ep.observedSuccessRate,
+      nameAr: ep.nameAr,
+      nameEn: ep.nameEn,
+      descriptionAr: ep.summaryAr,
+      paramsSchema: JSON.stringify(ep.paramsSchema || {}),
+      tregEndpointId: ep.id,
+      tregMethod: ep.method,
+      pricingUnit: (ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
+      unitCostUsd: ep.catalogPriceUsd,
+      maxRows: 5000,
+      paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
+      enabled: true,
+    }));
+
+    const allCapabilities = [...dynamicCapabilities, ...capabilities];
+    const allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
+    const sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
 
     // 6. Fetch previous messages for context
     const historyRes = await this.tables.listRows({
@@ -241,9 +274,17 @@ export class ChatHandler {
     let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
     // 8. Process Output Actions
-    if (output.type === "ask_clarification") {
-      const clarification = buildClarificationPresentation(output, {
-        capabilities,
+    if (output.type === "search_catalog") {
+      const searchRes = await searchCatalog(output.query, output.platform);
+      if (searchRes.length === 0) {
+        finalContentAr = "لم تسفر نتائج البحث في الكتالوج عن أي أدوات مطابقة. يرجى تجربة كلمات بحث أخرى أو منصة بديلة.";
+      } else {
+        const top = searchRes.slice(0, 3).map((r) => `• ${r.nameAr} (${r.pointsPerUnit} نقطة)`).join("\n");
+        finalContentAr = `نتائج البحث في الكتالوج المعتمد:\n${top}`;
+      }
+    } else if (output.type === "ask_clarification" || output.type === "ask_questions") {
+      const clarification = buildClarificationPresentation(output as any, {
+        capabilities: allCapabilities,
         userBalancePoints: userBalance,
         persona: userProfile?.persona,
       });
@@ -255,20 +296,24 @@ export class ChatHandler {
     } else if (output.type === "write_note") {
       finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
     } else if (output.type === "propose_plan") {
-      const planItems = output.capabilities.map((c) => ({
-        capabilitySlug: c.capabilitySlug,
+      const rawCaps = (output as any).capabilities || (output as any).steps || [];
+      const planItems = rawCaps.map((c: any) => ({
+        stepId: c.stepId,
+        capabilitySlug: c.capabilitySlug || c.endpointId,
+        endpointId: c.endpointId || c.capabilitySlug,
+        paginationStrategy: c.paginationStrategy,
         params: c.params,
-        targetVolumeMin: 1,
+        targetVolumeMin: c.targetVolumeMin || 1,
         targetVolumeMax: c.targetVolumeMax,
       }));
 
       // Deterministic check: platform mentioned by user must match platform in proposed plan
-      const platformCheck = validatePlanPlatformMatch(message, planItems, catalogCapabilities);
+      const platformCheck = validatePlanPlatformMatch(message, planItems, allCatalogCapabilities);
       if (!platformCheck.valid) {
         const closest = getClosestVerifiedCapability(capabilities);
         finalContentAr = `${platformCheck.errorAr || UNVERIFIED_PLATFORM_MESSAGE_AR}\n\nأقرب خدمة معتمدة متاحة حالياً: ${closest.nameAr}.`;
       } else {
-        const planValidation = validatePlanAgainstSchemas(planItems, capabilities);
+        const planValidation = validatePlanAgainstSchemas(planItems, allCapabilities);
         if (!planValidation.valid) {
           finalContentAr = `يرجى تدقيق المدخلات: ${planValidation.errors.join(", ")}`;
         } else {
@@ -282,7 +327,7 @@ export class ChatHandler {
               methodologyNotes: output.methodologyNotes,
             },
             userBalance: userBalance ?? 0,
-            capabilities,
+            capabilities: allCapabilities,
           });
 
           planQuoteData = {
@@ -354,7 +399,7 @@ export class ChatHandler {
               userId,
               plan: updatedPlan,
               userBalance: userBalance ?? 0,
-              capabilities,
+              capabilities: allCapabilities,
             });
 
             planQuoteData = {
