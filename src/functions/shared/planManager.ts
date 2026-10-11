@@ -119,6 +119,58 @@ export interface PlanState {
  * Computes a deterministic SHA-256 hash of a plan's items and configuration.
  * Used to cryptographically bind quotes to their exact plan parameters.
  */
+export interface ParsedStoredPlan extends PlanState {
+  requestSpec?: unknown;
+  legacy: boolean;
+}
+
+const DEFAULT_OUTPUT_FORMATS: Array<"xlsx" | "pdf" | "csv"> = ["xlsx", "pdf", "csv"];
+
+/**
+ * Stored-plan envelope helpers (release port from the redesign stack).
+ * Pure parse/serialize only: read both legacy arrays and the versioned plan
+ * envelope stored in itemsJson. No pricing, quoting, or storage behavior.
+ */
+export function parseStoredPlan(raw: unknown): ParsedStoredPlan {
+  let value = raw;
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { value = null; }
+  }
+  if (Array.isArray(value)) {
+    return { summaryAr: "", items: value as PlanItem[], outputFormats: [...DEFAULT_OUTPUT_FORMATS], legacy: true };
+  }
+  if (!value || typeof value !== "object" || !Array.isArray((value as any).items)) {
+    return { summaryAr: "", items: [], outputFormats: [...DEFAULT_OUTPUT_FORMATS], legacy: true };
+  }
+  const plan = value as any;
+  const allowedFormats = Array.isArray(plan.outputFormats)
+    ? plan.outputFormats.filter((format: unknown): format is "xlsx" | "pdf" | "csv" => format === "xlsx" || format === "pdf" || format === "csv")
+    : [];
+  return {
+    summaryAr: typeof plan.summaryAr === "string" ? plan.summaryAr : "",
+    items: plan.items as PlanItem[],
+    outputFormats: allowedFormats.length ? Array.from(new Set(allowedFormats)) : [...DEFAULT_OUTPUT_FORMATS],
+    executionOptions: plan.executionOptions && typeof plan.executionOptions === "object" ? plan.executionOptions : undefined,
+    outputSpec: plan.outputSpec && typeof plan.outputSpec === "object" ? plan.outputSpec : undefined,
+    methodologyNotes: typeof plan.methodologyNotes === "string" ? plan.methodologyNotes : undefined,
+    requestSpec: plan.requestSpec,
+    legacy: false,
+  };
+}
+
+export function serializeStoredPlan(plan: PlanState, requestSpec?: unknown): Record<string, unknown> {
+  return {
+    version: 1,
+    summaryAr: plan.summaryAr,
+    items: plan.items,
+    outputFormats: plan.outputFormats,
+    executionOptions: plan.executionOptions || {},
+    outputSpec: plan.outputSpec || null,
+    methodologyNotes: plan.methodologyNotes || "",
+    ...(requestSpec === undefined ? {} : { requestSpec }),
+  };
+}
+
 export function computePlanHash(items: PlanItem[], formats: string[] = ["xlsx", "pdf", "csv"]): string {
   // Sort items deterministically
   const sorted = items.map((it) => {

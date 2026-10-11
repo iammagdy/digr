@@ -19,6 +19,11 @@ import {
   PlanState,
 } from "./planManager";
 import { getBalance } from "./ledger";
+import {
+  normalizeClarificationQuestions,
+  sanitizeClarificationText,
+  type NormalizedClarificationQuestion,
+} from "./clarification";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -36,7 +41,8 @@ export interface ChatHandlerResponse {
   outputType: LlmTurnOutput["type"];
   planQuote?: any;
   clarificationQuestions?: string[];
-  clarificationItems?: Array<{ question: string; options?: string[] }>;
+  clarificationItems?: NormalizedClarificationQuestion[];
+  clarificationIntro?: string;
   suggestedAlternative?: any;
   refusalReason?: string;
   tokensUsed: {
@@ -47,16 +53,26 @@ export interface ChatHandlerResponse {
 }
 
 export function buildClarificationPresentation(
-  output: Extract<LlmTurnOutput, { type: "ask_clarification" }>
+  output: Extract<LlmTurnOutput, { type: "ask_clarification" }>,
+  context: { capabilities?: Capability[]; userBalancePoints?: number; persona?: string } = {},
 ) {
-  const clarificationQuestions = output.questions?.map((item) => item.question) ?? output.questionsAr ?? [];
-  const clarificationItems = clarificationQuestions.map((question, index) => {
-    const options = output.questions?.[index]?.options ?? output.optionsAr?.[index];
-    return options?.length ? { question, options } : { question };
+  // PR #3 trust boundary (release port): questions are normalized against the
+  // enabled capabilities only — platform questions with no enabled backing
+  // capability are dropped rather than offered as phantom choices.
+  const clarificationItems = normalizeClarificationQuestions(output, {
+    capabilities: context.capabilities ?? [],
+    userBalancePoints: context.userBalancePoints,
+    persona: context.persona,
   });
+  const clarificationQuestions = clarificationItems.map((item) => item.text);
+  const intro = sanitizeClarificationText(
+    output.reasonAr || "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:",
+    200,
+  ) || "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:";
 
   return {
-    contentAr: "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:",
+    contentAr: intro,
+    clarificationIntro: intro,
     clarificationQuestions,
     clarificationItems,
   };
@@ -211,11 +227,15 @@ export class ChatHandler {
     let finalContentAr = "";
     let planQuoteData: any = undefined;
     let clarificationQuestionsList: string[] | undefined = undefined;
-    let clarificationItemsList: Array<{ question: string; options?: string[] }> | undefined = undefined;
+    let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
     // 8. Process Output Actions
     if (output.type === "ask_clarification") {
-      const clarification = buildClarificationPresentation(output);
+      const clarification = buildClarificationPresentation(output, {
+        capabilities,
+        userBalancePoints: userBalance,
+        persona: userProfile?.persona,
+      });
       clarificationQuestionsList = clarification.clarificationQuestions;
       clarificationItemsList = clarification.clarificationItems;
       finalContentAr = clarification.contentAr;

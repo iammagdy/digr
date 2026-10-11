@@ -5,37 +5,54 @@ export interface RateLimitConfig {
   messagesPerDay: number;
   conversationMaxTokens: number;
   globalDailySpendCapUsd: number;
+  userDailySpendCapUsd?: number;
 }
 
 export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
   messagesPerMinute: 10,
   messagesPerDay: 100,
-  conversationMaxTokens: 15000,
-  globalDailySpendCapUsd: 1.0, // $1.00 USD hard global daily safety cap
+  conversationMaxTokens: 15_000,
+  globalDailySpendCapUsd: 1.0,
+  userDailySpendCapUsd: 0.10,
 };
 
 export interface RateLimitCheckResult {
   allowed: boolean;
   reasonAr?: string;
   statusCode?: 429 | 503;
-  type?: "minute_limit" | "daily_limit" | "global_spend_cap" | "conversation_token_cap";
+  type?: "minute_limit" | "daily_limit" | "global_spend_cap" | "user_spend_cap" | "conversation_token_cap";
 }
 
-/**
- * Check per-user message rate limits (per minute and per day)
- */
+function utcStartOfDay(): string {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+}
+
+function configuredCap(name: string, fallback: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured >= 0 ? configured : fallback;
+}
+
+function spendCapResult(type: "global_spend_cap" | "user_spend_cap"): RateLimitCheckResult {
+  return {
+    allowed: false,
+    statusCode: type === "global_spend_cap" ? 503 : 429,
+    type,
+    reasonAr: type === "global_spend_cap"
+      ? "تم بلوغ الحد اليومي لاستخدام المساعد على مستوى المنصة مؤقتاً للحماية. يرجى المحاولة غداً."
+      : "تم بلوغ الحد اليومي لاستخدام المساعد لهذا الحساب. يرجى المحاولة غداً.",
+  };
+}
+
+/** Check per-user message rate limits (per minute and per UTC day). */
 export async function checkUserRateLimits(
   tables: TablesDB,
   userId: string,
-  config: RateLimitConfig = DEFAULT_RATE_LIMITS
+  config: RateLimitConfig = DEFAULT_RATE_LIMITS,
 ): Promise<RateLimitCheckResult> {
-  const now = new Date();
-  const oneMinuteAgo = new Date(now.getTime() - 60 * 1000).toISOString();
-  
-  // Start of day UTC (midnight)
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+  const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
+  const startOfDay = utcStartOfDay();
 
-  // 1. Check Messages Per Minute
   const minuteRes = await tables.listRows({
     databaseId: "digr",
     tableId: "messages",
@@ -46,7 +63,6 @@ export async function checkUserRateLimits(
       Query.limit(config.messagesPerMinute + 1),
     ],
   });
-
   if (minuteRes.total >= config.messagesPerMinute) {
     return {
       allowed: false,
@@ -56,7 +72,6 @@ export async function checkUserRateLimits(
     };
   }
 
-  // 2. Check Messages Per Day
   const dayRes = await tables.listRows({
     databaseId: "digr",
     tableId: "messages",
@@ -67,7 +82,6 @@ export async function checkUserRateLimits(
       Query.limit(config.messagesPerDay + 1),
     ],
   });
-
   if (dayRes.total >= config.messagesPerDay) {
     return {
       allowed: false,
@@ -76,63 +90,59 @@ export async function checkUserRateLimits(
       reasonAr: `تم بلوغ الحد الأقصى اليومي المسموح به من الرسائل (${config.messagesPerDay} رسالة/يوم). يتجدد الرصيد غداً.`,
     };
   }
-
   return { allowed: true };
 }
 
-/**
- * Check platform-wide global daily LLM spend cap
- */
-export async function checkGlobalDailySpendCap(
-  tables: TablesDB,
-  config: RateLimitConfig = DEFAULT_RATE_LIMITS
-): Promise<RateLimitCheckResult> {
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-
+async function sumDailyUsageCost(tables: TablesDB, userId?: string): Promise<number> {
+  const queries = [
+    ...(userId ? [Query.equal("userId", userId)] : []),
+    Query.greaterThanEqual("createdAt", utcStartOfDay()),
+  ];
   let totalCostUsd = 0;
   let offset = 0;
   const limit = 100;
-
   while (true) {
     const res = await tables.listRows({
       databaseId: "digr",
       tableId: "llm_usage",
-      queries: [
-        Query.greaterThanEqual("createdAt", startOfDay),
-        Query.limit(limit),
-        Query.offset(offset),
-      ],
+      queries: [...queries, Query.limit(limit), Query.offset(offset)],
     });
-
     for (const row of res.rows) {
-      totalCostUsd += (row as any).costUsd || 0;
+      const rowCost = Number((row as any).costUsd);
+      if (Number.isFinite(rowCost) && rowCost > 0) totalCostUsd += rowCost;
     }
-
-    if (res.rows.length < limit || offset > 500) {
-      break;
-    }
+    if (res.rows.length < limit) break;
     offset += limit;
+    if (Number.isFinite(res.total) && offset >= res.total) break;
   }
-
-  if (totalCostUsd >= config.globalDailySpendCapUsd) {
-    return {
-      allowed: false,
-      statusCode: 503,
-      type: "global_spend_cap",
-      reasonAr: "تم بلوغ الحد الأقصى لميزانية المساعد الذكي اليومية للمنصة مؤقتاً للحماية. يرجى المحاولة غداً أو التواصل مع الإدارة.",
-    };
-  }
-
-  return { allowed: true };
+  return totalCostUsd;
 }
 
-/**
- * Check individual conversation context token cap
- */
+/** Check platform-wide global daily LLM spend cap. */
+export async function checkGlobalDailySpendCap(
+  tables: TablesDB,
+  config: RateLimitConfig = DEFAULT_RATE_LIMITS,
+): Promise<RateLimitCheckResult> {
+  const cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", config.globalDailySpendCapUsd);
+  const totalCostUsd = await sumDailyUsageCost(tables);
+  return totalCostUsd >= cap ? spendCapResult("global_spend_cap") : { allowed: true };
+}
+
+/** Check a user's daily provider spend using server-side usage rows only. */
+export async function checkUserDailySpendCap(
+  tables: TablesDB,
+  userId: string,
+  config: RateLimitConfig = DEFAULT_RATE_LIMITS,
+): Promise<RateLimitCheckResult> {
+  const cap = configuredCap("LLM_USER_DAILY_SPEND_CAP_USD", config.userDailySpendCapUsd ?? 0.10);
+  const totalCostUsd = await sumDailyUsageCost(tables, userId);
+  return totalCostUsd >= cap ? spendCapResult("user_spend_cap") : { allowed: true };
+}
+
+/** Check an individual conversation context token cap. */
 export function checkConversationTokenCap(
   totalConversationTokens: number,
-  config: RateLimitConfig = DEFAULT_RATE_LIMITS
+  config: RateLimitConfig = DEFAULT_RATE_LIMITS,
 ): RateLimitCheckResult {
   if (totalConversationTokens >= config.conversationMaxTokens) {
     return {
