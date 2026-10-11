@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { balanceText, type BalanceView } from "@/lib/honestDisplay";
 import Link from "next/link";
 import { getPersonaConfig, PersonaType, PERSONA_CONFIGS } from "@/functions/shared/personaConfigs";
+import { Alert } from "@/components/ui";
 
 export interface ConversationItem {
   $id: string;
@@ -16,7 +18,7 @@ interface ChatSidebarProps {
   onSelectConversation: (id: string) => void;
   onNewChat: () => void;
   onDeleteConversation?: (id: string) => void;
-  userBalance: number | null;
+  userBalance: BalanceView;
   userPersona?: PersonaType;
   onChangePersona: (persona: PersonaType) => Promise<void>;
   isBusy?: boolean;
@@ -52,7 +54,7 @@ export default function ChatSidebar({
     try {
       await onChangePersona(value as PersonaType);
     } catch (error: any) {
-      setPersonaError(error.message || "تعذر حفظ الشخصية");
+      setPersonaError(error.message || "تعذّر حفظ الشخصية");
     } finally {
       setPersonaSaving(false);
     }
@@ -60,71 +62,74 @@ export default function ChatSidebar({
 
   return (
     <>
-      {/* Mobile & Tablet Backdrop */}
-        {isOpen && (
+      {isOpen && (
         <div
           onClick={onCloseMobile}
           aria-hidden="true"
-          className="fixed inset-0 z-40 bg-ink-900/40 lg:hidden backdrop-blur-xs"
+          className="fixed inset-0 z-40 bg-ink-900/45 backdrop-blur-xs lg:hidden"
         />
       )}
 
-      {/* Sidebar Panel */}
       <aside
-        className={`fixed lg:static inset-y-0 right-0 z-40 w-72 bg-sand-100/90 border-l border-sand-300 flex flex-col transition-transform duration-200 ease-out motion-reduce:transition-none lg:translate-x-0 ${
-          isOpen ? "translate-x-0 shadow-xl" : "translate-x-full lg:shadow-none"
+        aria-label="المحادثات والإعدادات"
+        className={`fixed inset-y-0 start-0 z-40 flex w-80 max-w-[85vw] flex-col bg-pine-950 text-white transition-transform duration-200 ease-out motion-reduce:transition-none lg:static lg:z-auto lg:w-72 lg:translate-x-0 lg:shadow-none ${
+          isOpen ? "translate-x-0 shadow-2xl" : "translate-x-full"
         }`}
       >
-        {/* Brand & New Chat */}
-        <div className="p-4 border-b border-sand-200">
-          <div className="flex items-center justify-between mb-4">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <span className="text-xl font-bold tracking-tight text-ink-900">Digr</span>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-sand-200 text-sand-700 font-medium">
-                استشارات بحثية
-              </span>
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div className="absolute -top-20 -start-20 h-56 w-56 rounded-full bg-accent/15 blur-3xl" />
+        </div>
+
+        {/* Header */}
+        <div className="relative border-b border-white/10 p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <Link href="/dashboard" className="flex items-center gap-2" onClick={onCloseMobile}>
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/10 text-sm font-bold ring-1 ring-white/20">دِ</span>
+              <span className="text-lg font-bold tracking-tight">Digr</span>
             </Link>
             <button
               type="button"
               onClick={onCloseMobile}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center text-sand-500 hover:text-ink-900 md:hidden rounded-lg hover:bg-sand-200 focus-visible:outline-2 focus-visible:outline-primary"
               aria-label="إغلاق القائمة"
+              className="touch-target inline-flex items-center justify-center rounded-xl text-sand-300 hover:bg-white/10 hover:text-white lg:hidden"
             >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" d="m6 6 12 12M18 6 6 18" />
               </svg>
             </button>
           </div>
-
           <button
             type="button"
             onClick={onNewChat}
             disabled={isBusy}
-            className="min-h-11 w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-primary hover:bg-primary-hover text-white text-sm font-semibold rounded-xl shadow-xs transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            className="touch-target flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-accent px-4 py-3 text-sm font-bold text-white shadow-[var(--shadow-ink)] transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <span>+</span>
-            <span>محادثة جديدة</span>
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            محادثة بحث جديدة
           </button>
+          <div className="relative mt-3">
+            <input
+              type="search"
+              aria-label="بحث في المحادثات"
+              placeholder="بحث في المحادثات..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="min-h-11 w-full rounded-xl border border-white/10 bg-white/8 px-3.5 pe-10 text-sm text-white placeholder:text-sand-400 outline-none focus:border-accent"
+            />
+            <svg className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-sand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
         </div>
 
-        {/* Search Input */}
-        <div className="px-4 py-2 border-b border-sand-200/60">
-          <input
-            type="text"
-            aria-label="بحث في المحادثات"
-            placeholder="بحث في المحادثات..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="min-h-11 w-full px-3 py-1.5 text-xs bg-white border border-sand-300 rounded-lg placeholder:text-sand-400 focus:outline-hidden focus:border-primary focus-visible:outline-2 focus-visible:outline-primary"
-          />
-        </div>
-
-        {/* Conversations List */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        {/* Conversations */}
+        <div className="relative flex-1 space-y-1 overflow-y-auto p-3" role="list" aria-label="قائمة المحادثات">
           {filteredConversations.length === 0 ? (
-            <div className="p-4 text-center text-xs text-sand-500" role="status">
-              {search.trim() ? "لا توجد محادثات تطابق البحث" : activeId ? "المحادثة الحالية" : "لا توجد محادثات سابقة"}
-            </div>
+            <p className="p-4 text-center text-xs text-sand-400" role="status">
+              {search.trim() ? "لا توجد محادثات تطابق البحث" : "لا توجد محادثات سابقة بعد"}
+            </p>
           ) : (
             filteredConversations.map((c) => {
               const isActive = c.$id === activeId;
@@ -132,72 +137,50 @@ export default function ChatSidebar({
                 <button
                   key={c.$id}
                   type="button"
+                  role="listitem"
                   disabled={isBusy}
                   onClick={() => {
                     onSelectConversation(c.$id);
                     onCloseMobile();
                   }}
                   aria-current={isActive ? "page" : undefined}
-                  className={`min-h-11 w-full text-right px-3 py-2.5 rounded-xl text-xs sm:text-sm font-medium transition-colors truncate cursor-pointer block disabled:cursor-wait disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-primary ${
-                    isActive
-                      ? "bg-sand-200 text-ink-900 font-semibold shadow-2xs"
-                      : "text-sand-700 hover:bg-sand-200/60 hover:text-ink-900"
+                  className={`touch-target block w-full cursor-pointer truncate rounded-xl px-3.5 py-3 text-right text-sm transition-colors disabled:cursor-wait disabled:opacity-60 ${
+                    isActive ? "bg-white/12 font-bold text-white" : "text-sand-300 hover:bg-white/6 hover:text-white"
                   }`}
                 >
-                  <div className="truncate">{c.title || "محادثة استخراج"}</div>
+                  {c.title || "محادثة استخراج"}
                 </button>
               );
             })
           )}
         </div>
 
-        {/* Navigation Quick Links */}
-        <div className="p-3 border-t border-sand-200 bg-sand-50/60 space-y-1">
-          <Link
-            href="/dashboard/jobs"
-            className="min-h-11 flex items-center justify-between px-3 py-2 text-xs font-medium text-sand-700 hover:text-ink-900 rounded-lg hover:bg-sand-200/50 transition-colors focus-visible:outline-2 focus-visible:outline-primary"
-          >
-            <span>طلباتي وسجل الاستخراج</span>
-            <span className="text-sand-400">←</span>
+        {/* Footer */}
+        <div className="relative space-y-3 border-t border-white/10 p-4">
+          <Link href="/dashboard/topup" onClick={onCloseMobile} className="tnum flex items-center justify-between rounded-2xl bg-white/8 px-3.5 py-3 ring-1 ring-white/10 transition-colors hover:bg-white/12">
+            <span className="text-xs text-sand-300">رصيد النقاط</span>
+            <span className="text-base font-bold text-amber-points">{balanceText(userBalance)} <span className="text-xs">نقطة +</span></span>
           </Link>
-          <Link
-            href="/dashboard/topup"
-            className="min-h-11 flex items-center justify-between px-3 py-2 text-xs font-medium text-sand-700 hover:text-ink-900 rounded-lg hover:bg-sand-200/50 transition-colors focus-visible:outline-2 focus-visible:outline-primary"
-          >
-            <span>شحن الرصيد (Instapay)</span>
-            <span className="text-sand-400">←</span>
-          </Link>
-        </div>
-
-        {/* Footer: User Persona & Balance Badge */}
-        <div className="p-4 border-t border-sand-300 bg-sand-100 space-y-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs text-sand-600 mb-0.5">الرصيد المتاح:</div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-base font-bold text-amber-points tabular-nums">
-                  {userBalance !== null ? userBalance : "..."}
-                </span>
-                <span className="text-xs font-semibold text-amber-points">نقطة</span>
-              </div>
-            </div>
-            <span className="text-xs font-medium text-ink-800">{personaConfig.titleAr.split(" ")[0]}</span>
+          <div>
+            <label htmlFor="persona-setting" className="mb-1.5 block text-xs font-semibold text-sand-300">
+              طريقة المساعد <span className="font-normal text-sand-500">— {personaConfig.titleAr.split(" ")[0]}</span>
+            </label>
+            <select
+              id="persona-setting"
+              value={userPersona ?? "other"}
+              disabled={personaSaving}
+              onChange={(event) => handlePersonaChange(event.target.value)}
+              className="min-h-11 w-full cursor-pointer rounded-xl border border-white/10 bg-white/8 px-3 text-sm text-white outline-none focus:border-accent disabled:opacity-60 [&>option]:text-ink-900"
+            >
+              {Object.values(PERSONA_CONFIGS).map((persona) => (
+                <option key={persona.key} value={persona.key}>{persona.titleAr}</option>
+              ))}
+            </select>
+            {personaSaving && <p className="mt-1.5 text-xs text-sand-400" aria-live="polite">جاري حفظ التخصيص...</p>}
+            {personaError && (
+              <div className="mt-2"><Alert tone="danger">{personaError}</Alert></div>
+            )}
           </div>
-          <label htmlFor="persona-setting" className="block text-xs font-semibold text-sand-700">طريقة المساعد</label>
-          <select
-            id="persona-setting"
-            aria-label="تغيير الشخصية"
-            value={userPersona ?? "other"}
-            disabled={personaSaving}
-            onChange={(event) => handlePersonaChange(event.target.value)}
-            className="min-h-11 w-full rounded-lg border border-sand-300 bg-white px-3 text-sm text-ink-900 outline-none focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
-          >
-            {Object.values(PERSONA_CONFIGS).map((persona) => (
-              <option key={persona.key} value={persona.key}>{persona.titleAr}</option>
-            ))}
-          </select>
-          {personaSaving && <div className="text-xs text-sand-600" aria-live="polite">جاري حفظ التخصيص...</div>}
-          {personaError && <div className="text-xs text-danger" role="alert">{personaError}</div>}
         </div>
       </aside>
     </>

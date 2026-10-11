@@ -6,6 +6,7 @@ import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
+import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, methodologyAlertText, methodologyMessageText, type BalanceView } from "@/lib/honestDisplay";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
@@ -62,7 +63,7 @@ export default function ChatWorkspacePage() {
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationLoadError, setConversationLoadError] = useState(false);
-  const [userBalance, setUserBalance] = useState<number | null>(null);
+  const [userBalance, setUserBalance] = useState<BalanceView>(balanceLoading());
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
   const [enabledCapabilitySlugs, setEnabledCapabilitySlugs] = useState<string[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -129,9 +130,10 @@ export default function ChatWorkspacePage() {
         if (res.documents.length < limit) break;
         offset += limit;
       }
-      setUserBalance(total);
+      setUserBalance(balanceReady(total));
     } catch {
-      setUserBalance(0);
+      // A failed request proves nothing about the balance — never show a fake zero.
+      setUserBalance(balanceFailed());
     }
   }, [user]);
 
@@ -238,8 +240,8 @@ export default function ChatWorkspacePage() {
         const jobDoc: any = await databases.getDocument("digr", "jobs", activeJob.jobId);
         const eventsRes = await databases.listDocuments("digr", "job_events", [
           Query.equal("jobId", activeJob.jobId),
-          Query.orderAsc("createdAt"),
-          Query.limit(20),
+          Query.orderDesc("createdAt"),
+          Query.limit(EVENT_HISTORY_LIMIT),
         ]);
 
         setActiveJob((prev) => {
@@ -251,7 +253,8 @@ export default function ChatWorkspacePage() {
             chargedCredits: jobDoc.chargedCredits,
             reservedCredits: jobDoc.reservedCredits,
             errorAr: jobDoc.errorAr,
-            events: eventsRes.documents as unknown as JobEvent[],
+            // Latest events first from the server, restored to reading order for display.
+            events: chronological(eventsRes.documents as unknown as JobEvent[]),
           };
         });
 
@@ -394,7 +397,9 @@ export default function ChatWorkspacePage() {
     const summary = answers
       .map((answer) => {
         const value = answer.skipped
-          ? "استخدم الافتراضي"
+          ? (answer.resolvedDefault && answer.value
+              ? (Array.isArray(answer.value) ? answer.value.join("، ") : answer.value)
+              : "سيُطلب منك الاختيار")
           : Array.isArray(answer.value)
             ? answer.value.join("، ")
             : answer.value || "";
@@ -780,12 +785,12 @@ export default function ChatWorkspacePage() {
       const methodologyMsg: MessageItem = {
         id: `meth_${Date.now()}`,
         role: "assistant",
-        content: `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${data.chargedPoints} نقاط (رصيدك الحالي: ${data.remainingBalance} نقطة):\n\n${data.methodologyText}`,
+        content: methodologyMessageText(data.chargedPoints, data.remainingBalance, data.methodologyText),
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, methodologyMsg]);
       loadBalance();
-      alert("تمت صياغة المنهجية الأكاديمية بنجاح واقتطاع 10 نقاط من الرصيد.");
+      alert(methodologyAlertText(data.chargedPoints));
     } catch (err: any) {
       alert("تعذر طلب صياغة المنهجية: " + err.message);
     }
@@ -944,44 +949,44 @@ export default function ChatWorkspacePage() {
       />
 
       {/* 3. Main Chat Column */}
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden border-l border-sand-300">
-        {/* Top Header - Compact Single Line (Never Wraps) */}
-        <header className="h-14 shrink-0 min-w-0 px-2 sm:px-6 bg-white border-b border-sand-200 flex items-center justify-between shadow-2xs">
-          <div className="flex items-center gap-1.5 sm:gap-3 min-w-0 shrink">
+      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden lg:border-s lg:border-sand-200">
+        {/* Top Header — research workspace identity */}
+        <header className="h-16 shrink-0 min-w-0 px-3 sm:px-6 bg-white/95 backdrop-blur-md border-b border-sand-200 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              className="min-h-11 min-w-11 inline-flex items-center justify-center lg:hidden text-sand-600 hover:text-ink-900 rounded-lg hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary"
-              aria-label="فتح القائمة الجانبية"
+              className="touch-target inline-flex items-center justify-center lg:hidden text-sand-600 hover:text-ink-900 rounded-xl hover:bg-sand-100"
+              aria-label="فتح قائمة المحادثات"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
+            <span aria-hidden="true" className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl bg-pine-800 text-sm font-bold text-white shrink-0">دِ</span>
             <div className="min-w-0">
-              <h1 aria-label="مساعد Digr البحثي" className="text-xs sm:text-base font-bold text-ink-900 truncate">
-                <span className="hidden sm:inline">مساعد Digr البحثي</span>
-                <span aria-hidden="true" className="sm:hidden">Digr</span>
+              <h1 className="text-sm sm:text-base font-bold text-ink-900 truncate">
+                المساعد البحثي
               </h1>
-              <p className="hidden md:block text-3xs sm:text-2xs text-sand-500">
-                استشارات وتصميم خطط جمع البيانات العامة المعتمدة
+              <p className="hidden md:block text-xs text-sand-500">
+                صِف سؤالك — نخطط معًا قبل أي جمع
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <NotificationsBell />
             {/* Balance Badge */}
             <Link
               href="/dashboard/topup"
-              className="min-h-11 flex items-center gap-1 px-2 py-1 sm:px-3 sm:py-1.5 bg-amber-points-bg hover:bg-amber-points-bg/80 border border-amber-points/30 rounded-xl transition-colors text-2xs sm:text-xs focus-visible:outline-2 focus-visible:outline-primary"
+              className="tnum min-h-11 inline-flex items-center gap-1.5 rounded-2xl border border-amber-points/30 bg-amber-points-bg px-3 py-1.5 text-xs sm:text-sm transition-colors hover:bg-amber-points-bg/70"
               title="رصيد الحساب وشحن النقاط"
             >
-              <span className="font-bold text-amber-points tabular-nums">
-                {userBalance !== null ? userBalance : "..."}
+              <span className="font-bold text-amber-points">
+                {balanceText(userBalance)}
               </span>
               <span className="font-semibold text-amber-points">نقطة</span>
-              <span className="text-sand-400 font-bold">+</span>
+              <span aria-hidden="true" className="text-base font-bold leading-none text-amber-points">+</span>
             </Link>
 
             {/* Results Toggle (Desktop & Mobile) */}
@@ -990,13 +995,13 @@ export default function ChatWorkspacePage() {
               onClick={() => setCanvasOpen(!canvasOpen)}
               aria-expanded={canvasOpen}
               aria-controls="results-canvas"
-              className={`min-h-11 px-2.5 py-1 sm:px-3 sm:py-1.5 text-2xs sm:text-xs font-semibold rounded-xl border transition-colors cursor-pointer inline-flex items-center gap-1.5 focus-visible:outline-2 focus-visible:outline-primary ${
+              className={`min-h-11 inline-flex cursor-pointer items-center gap-1.5 rounded-2xl border px-3 py-1.5 text-xs sm:text-sm font-semibold transition-colors ${
                 canvasOpen
-                  ? "bg-sand-200 border-sand-400 text-ink-900"
-                  : "bg-white border-sand-300 text-sand-700 hover:bg-sand-100"
+                  ? "border-accent bg-accent text-white"
+                  : "border-sand-300 bg-white text-ink-800 hover:border-accent/40 hover:bg-accent-light/40"
               }`}
             >
-              <svg className="w-3.5 h-3.5 text-sand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               <span className="hidden sm:inline">لوحة النتائج</span>
@@ -1025,44 +1030,45 @@ export default function ChatWorkspacePage() {
           )}
           {/* Empty First Screen State */}
           {messages.length === 0 && !conversationLoading && !conversationLoadError && (
-            <div className="max-w-xl mx-auto pt-8 sm:pt-16 text-center space-y-6">
-              <div className="space-y-2">
-                <div className="inline-flex p-3 rounded-2xl bg-sand-200/80 text-primary">
-                  <svg className="w-6 h-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-                <h2 className="text-xl sm:text-2xl font-bold text-ink-900 tracking-tight">
-                  أهلاً بك في Digr
+            <div className="max-w-2xl mx-auto pt-10 sm:pt-16 px-1">
+              <div className="text-center space-y-3">
+                <span aria-hidden="true" className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-pine-800 text-xl font-bold text-white shadow-[var(--shadow-ink)]">
+                  دِ
+                </span>
+                <h2 className="font-display text-2xl sm:text-3xl text-ink-900">
+                  ما سؤالك البحثي اليوم؟
                 </h2>
-                <p className="text-xs sm:text-sm text-sand-600 max-w-md mx-auto">
-                  صف لي البيانات العامة التي تحتاجها لبحثك، وسأساعدك في تصميم خطة الجمع وتوثيق المنهجية وتسليم ملفات نظيفة.
+                <p className="text-sm sm:text-base leading-relaxed text-ink-600 max-w-lg mx-auto">
+                  صِف البيانات العامة التي تحتاجها — سأطرح أسئلة توضيحية، ثم أصمّم خطة
+                  قابلة للتعديل بعرض سعر شفاف. لا يبدأ أي جمع قبل موافقتك.
                 </p>
               </div>
 
               {/* Persona examples are enabled only from the server's capability list. */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-right pt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-7" role="list" aria-label="أمثلة لبدء البحث">
                 {getPersonaWelcomeExamples(userPersona, enabledCapabilitySlugs).map((example) => example.available && example.prompt ? (
                   <button
                     key={example.key}
                     type="button"
+                    role="listitem"
                     onClick={() => {
                       setInputText(example.prompt!);
                       inputRef.current?.focus();
                     }}
-                    className="min-h-11 p-3.5 bg-white hover:bg-sand-100/80 border border-sand-300 hover:border-sand-400 rounded-xl text-xs transition-colors shadow-2xs group cursor-pointer text-right focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+                    className="group min-h-11 rounded-2xl border border-sand-200 bg-white p-4 text-right shadow-[var(--shadow-card)] transition-all hover:border-accent/40 hover:shadow-[var(--shadow-lift)] cursor-pointer"
                   >
-                    <div className="font-bold text-ink-900 group-hover:text-primary mb-1">{example.title}</div>
-                    <div className="text-3xs text-sand-500 line-clamp-2">{example.prompt}</div>
+                    <div className="text-sm font-bold text-ink-900 group-hover:text-accent-ink">{example.title}</div>
+                    <div className="mt-1 text-xs leading-relaxed text-sand-500 line-clamp-2">{example.prompt}</div>
                   </button>
                 ) : (
                   <div
                     key={example.key}
+                    role="listitem"
                     aria-label={`${example.title}، غير متاح حالياً`}
-                    className="min-h-11 p-3.5 bg-sand-50 border border-sand-200 rounded-xl text-xs text-right"
+                    className="min-h-11 rounded-2xl border border-dashed border-sand-300 bg-sand-50/60 p-4 text-right"
                   >
-                    <div className="font-semibold text-sand-700 mb-1">{example.title}</div>
-                    <div className="text-3xs text-sand-500">قريباً</div>
+                    <div className="text-sm font-semibold text-sand-600">{example.title}</div>
+                    <div className="mt-1 text-xs text-sand-500">قريبًا — يمكنك تسجيل رغبتك عند طلبها</div>
                   </div>
                 ))}
               </div>
@@ -1078,10 +1084,10 @@ export default function ChatWorkspacePage() {
               }`}
             >
               <div
-                className={`max-w-2xl w-full p-4 rounded-2xl text-xs sm:text-sm leading-relaxed ${
+                className={`max-w-2xl w-full p-4 sm:p-5 rounded-2xl text-sm leading-relaxed animate-fade ${
                   msg.role === "user"
-                    ? "bg-sand-200/80 text-ink-900 rounded-tr-xs"
-                    : "bg-white border border-sand-300/80 text-ink-900 shadow-2xs rounded-tl-xs"
+                    ? "bg-pine-800 text-white rounded-es-md shadow-[var(--shadow-card)]"
+                    : "bg-white border border-sand-200 text-ink-900 shadow-[var(--shadow-card)] rounded-ss-md"
                 }`}
               >
                 {msg.outputType === "ask_clarification" ? (
@@ -1169,15 +1175,20 @@ export default function ChatWorkspacePage() {
                 status={activeJob.status}
                 events={activeJob.events}
                 rowsCollected={activeJob.rowsCollected}
+                eventLimit={EVENT_HISTORY_LIMIT}
               />
             </div>
           )}
 
           {/* Thinking Indicator */}
           {loading && (
-            <div className="flex items-center gap-2 p-3 text-xs text-sand-500 bg-white border border-sand-200 rounded-2xl w-fit shadow-2xs">
-              <span className="w-2 h-2 rounded-full bg-primary motion-safe:animate-ping motion-reduce:animate-none" />
-              <span>جاري التفكير وتحليل متطلبات البحث...</span>
+            <div className="flex items-center gap-2.5 rounded-2xl border border-sand-200 bg-white px-4 py-3 text-xs text-sand-600 shadow-[var(--shadow-card)] w-fit" role="status">
+              <span className="flex gap-1" aria-hidden="true">
+                {[0, 1, 2].map((i) => (
+                  <span key={i} className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-bounce motion-reduce:animate-none" style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </span>
+              <span>يفكّر في سؤالك ويجهّز الخطوة التالية...</span>
             </div>
           )}
 
@@ -1185,10 +1196,10 @@ export default function ChatWorkspacePage() {
         </div>
 
         {/* Pinned Composer */}
-        <div className="shrink-0 p-3 sm:p-4 bg-white border-t border-sand-200 safe-bottom">
+        <div className="shrink-0 p-3 sm:p-5 bg-white/80 backdrop-blur-md border-t border-sand-200 safe-bottom">
           <form
             onSubmit={handleFormSubmit}
-            className="relative max-w-3xl mx-auto flex items-end gap-2 bg-sand-50 border border-sand-300 focus-within:border-primary rounded-2xl p-2 transition-all shadow-2xs"
+            className="relative max-w-3xl mx-auto flex items-end gap-2 rounded-3xl border border-sand-300 bg-white p-2 shadow-[var(--shadow-lift)] transition-colors focus-within:border-accent"
           >
             {/* Hidden File Input for Untrusted CSV/TXT lists */}
             <input
@@ -1267,10 +1278,10 @@ export default function ChatWorkspacePage() {
             <button
               type="submit"
               disabled={loading || conversationLoading || !inputText.trim()}
-              className="min-h-11 min-w-11 flex items-center justify-center bg-primary hover:bg-primary-hover text-white rounded-xl shadow-xs transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0 focus-visible:outline-2 focus-visible:outline-primary"
+              className="touch-target flex items-center justify-center bg-accent hover:bg-accent-hover text-white rounded-2xl shadow-[var(--shadow-ink)] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0"
               aria-label="إرسال"
             >
-              <svg className="w-4 h-4 text-white rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+              <svg className="w-5 h-5 text-white -scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
               </svg>
             </button>

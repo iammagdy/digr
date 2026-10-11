@@ -16,6 +16,8 @@ export interface DiscoveryAnswer {
   question: string;
   value?: string | string[];
   skipped?: boolean;
+  // Set when the client resolved the server-validated default for a skip.
+  resolvedDefault?: boolean;
 }
 
 export function sanitizeDiscoveryText(value: unknown, maxLength: number): string {

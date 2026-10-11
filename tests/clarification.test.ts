@@ -90,13 +90,16 @@ describe("strict discovery clarification", () => {
   });
 
   it("normalizes free-text, single-select, and multi-select questions without duplicate display fields", () => {
+    // tiktok is enabled here so the inferred platform question ("المصدر؟")
+    // keeps its bank options; with an empty registry it is dropped instead
+    // (covered in discovery-defaults.test.ts).
     const result = normalizeClarificationQuestions({
       questions: [
         { id: "topic", text: "الموضوع؟", type: "free", options: [], allowOther: true },
         { id: "source", question: "المصدر؟", type: "single", options: ["تيك توك"] },
         { id: "langs", text: "اللغات؟", type: "multi", options: ["العربية", "الإنجليزية"] },
       ],
-    }, { capabilities: [] });
+    }, { capabilities: [...capabilities] });
     expect(result.map((question) => question.type)).toEqual(["free", "single", "multi"]);
     expect(result.map((question) => question.text)).toEqual(["الموضوع؟", "المصدر؟", "اللغات؟"]);
     expect(result.map((question) => question.id)).toEqual(["topic", "source", "langs"]);
@@ -107,12 +110,21 @@ describe("strict discovery clarification", () => {
       type: "clarification_answers",
       answers: [
         { questionId: "platform", question: "ما المنصة؟", value: "تيك توك" },
-        { questionId: "window", question: "ما الفترة؟", skipped: true },
+        { questionId: "window", question: "ما الفترة؟", skipped: true, resolvedDefault: true, value: "آخر ٣ شهور" },
+        { questionId: "topic", question: "ما الموضوع؟", skipped: true },
       ],
     });
     expect(parsed).not.toBeNull();
-    expect(formatStructuredClarificationAnswers(parsed!)).toContain('"type":"clarification_answers"');
-    expect(formatStructuredClarificationAnswers(parsed!)).toContain("استخدم الافتراضي");
+    const formatted = formatStructuredClarificationAnswers(parsed!);
+    expect(formatted).toContain('"type":"clarification_answers"');
+    // The literal UI placeholder must never reach the assistant as a value.
+    expect(formatted).not.toContain("استخدم الافتراضي");
+    // A skip carrying a value is treated as the user's explicit answer —
+    // never labeled as a server-validated default.
+    expect(formatted).toContain("آخر ٣ شهور");
+    expect(formatted).not.toContain("appliedDefault");
+    // A skip without a default must request an explicit user choice.
+    expect(formatted).toContain("needsUserChoice");
     expect(validateStructuredClarificationAnswers({
       type: "clarification_answers",
       answers: [{ questionId: "bad id", question: "x", value: "y" }],
