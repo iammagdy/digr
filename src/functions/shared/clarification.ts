@@ -48,6 +48,26 @@ export type AskClarificationInput = z.infer<typeof AskClarificationSchema>;
 export type ClarificationQuestionType = "single" | "multi" | "free";
 export type ClarificationParameterType = z.infer<typeof ClarificationParameterTypeSchema>;
 
+/**
+ * Discovery question priority: topic keywords first, then number of posts,
+ * then comments per post, then date range. Never comments-per-post before
+ * number of posts. Used to order questions before the max-3 slice.
+ */
+export function discoveryQuestionPriority(q: { text?: string; parameterType?: string }): number {
+  const text = (q.text || "").toLowerCase();
+  const pt = q.parameterType;
+  if (pt === "platform" || /منصة/.test(text)) return 0;
+  if (/كلمات|موضوع|كلمة|محور|angle|keyword/.test(text)) return 1;
+  const isVolume = pt === "volume" || /عدد|حجم|عينة|سجل|كم/.test(text);
+  if (isVolume) {
+    if (/تعليق|comment/.test(text)) return 3; // comments per post — after post count
+    return 2; // number of posts
+  }
+  if (pt === "time_window" || /فترة|تاريخ|زمن|شهر|أسبوع|يوم|آخر/.test(text)) return 4;
+  if (!pt) return 1; // open/unknown question: treat as topic-ish, ask early
+  return 5;
+}
+
 export interface NormalizedClarificationQuestion {
   id: string;
   text: string;
@@ -212,7 +232,20 @@ export function normalizeClarificationQuestions(
         options: legacyOptions[index],
       }));
 
-  return questions.slice(0, 3).flatMap((item, index) => {
+  // Order questions before the max-3 cut so the most important ones survive.
+  const ordered = questions
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const ta = typeof a.item === "object" && a.item !== null
+        ? String((a.item as Record<string, unknown>).text ?? (a.item as Record<string, unknown>).question ?? "")
+        : "";
+      const tb = typeof b.item === "object" && b.item !== null
+        ? String((b.item as Record<string, unknown>).text ?? (b.item as Record<string, unknown>).question ?? "")
+        : "";
+      return discoveryQuestionPriority({ text: ta }) - discoveryQuestionPriority({ text: tb }) || a.index - b.index;
+    })
+    .map(({ item }) => item);
+  return ordered.slice(0, 3).flatMap((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const questionItem = item as Record<string, unknown>;
     const rawQuestion = questionItem.text ?? questionItem.question ?? "";

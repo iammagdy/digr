@@ -14,6 +14,7 @@ import {
   DEFAULT_PRICING_SETTINGS,
   PricingSettings,
 } from "./quotes";
+import type { CatalogEndpointSummary } from "./catalogClient";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -317,6 +318,73 @@ export function validatePlanAgainstSchemas(
     valid: errors.length === 0,
     errors,
   };
+}
+
+export interface LiveCatalogIssue {
+  itemIndex: number;
+  /** Arabic display name for user-facing text — never an internal slug. */
+  nameAr: string;
+  kind: "not_found" | "missing_params" | "over_limit";
+  missingParams?: string[];
+}
+
+function liveEndpointRequiredParams(ep: CatalogEndpointSummary): string[] {
+  try {
+    const schema: any =
+      typeof ep.paramsSchema === "string" ? JSON.parse(ep.paramsSchema) : ep.paramsSchema;
+    if (Array.isArray(schema?.required)) return schema.required.filter((x: any) => typeof x === "string");
+    return [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Validate a proposed plan against the LIVE catalog results of the current turn
+ * (or the 24h cached catalog), keyed by the same alias the model received.
+ * The hardcoded registry is NOT a validator here — it only supplies optional
+ * Arabic display names. User-facing errors never contain internal slugs or ids.
+ * Checks: endpoint exists in live results, required params present, volume cap.
+ */
+export function validatePlanAgainstLiveCatalog(
+  planItems: PlanItem[],
+  liveResults: CatalogEndpointSummary[],
+  registryCaps: Capability[] = [],
+): { valid: boolean; errors: string[]; issues: LiveCatalogIssue[] } {
+  const errors: string[] = [];
+  const issues: LiveCatalogIssue[] = [];
+
+  const displayName = (slug: string, ep?: CatalogEndpointSummary): string => {
+    if (ep?.nameAr) return ep.nameAr;
+    const reg = registryCaps.find((c) => c.slug === slug || (c as any).tregEndpointId === slug);
+    if (reg?.nameAr) return reg.nameAr;
+    return "الخدمة المطلوبة";
+  };
+
+  planItems.forEach((it, index) => {
+    const ep = liveResults.find(
+      (r) => r.slug === it.capabilitySlug || r.id === it.capabilitySlug || (it.endpointId && (r.slug === it.endpointId || r.id === it.endpointId)),
+    );
+    const nameAr = displayName(it.capabilitySlug, ep);
+    if (!ep) {
+      errors.push(`الخدمة "${nameAr}" غير متوفرة في نتائج البحث الحالية`);
+      issues.push({ itemIndex: index, nameAr, kind: "not_found" });
+      return;
+    }
+    const required = liveEndpointRequiredParams(ep);
+    const missing = required.filter((p) => it.params?.[p] === undefined || it.params?.[p] === null || it.params?.[p] === "");
+    if (missing.length > 0) {
+      errors.push(`الخدمة "${nameAr}" تحتاج مدخلات إضافية: ${missing.join("، ")}`);
+      issues.push({ itemIndex: index, nameAr, kind: "missing_params", missingParams: missing });
+    }
+    const maxRows = (ep.pagination as any)?.maxLimit || 5000;
+    if (it.targetVolumeMax > maxRows) {
+      errors.push(`الحد الأقصى المطلوب (${it.targetVolumeMax}) يتجاوز سقف الخدمة "${nameAr}" المسموح (${maxRows})`);
+      issues.push({ itemIndex: index, nameAr, kind: "over_limit" });
+    }
+  });
+
+  return { valid: errors.length === 0, errors, issues };
 }
 
 export interface QuoteCreationInput {
