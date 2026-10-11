@@ -35,13 +35,15 @@
 | `NEXT_PUBLIC_APPWRITE_ENDPOINT` | عنوان واجهة برمجة التطبيقات لـ Appwrite (الواجهة الأمامية) | إلزامي |
 | `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | معرف مشروع Appwrite في الواجهة الأمامية | إلزامي |
 | `APP_URL` | الرابط الأساسي للمنصة (مثل: `https://digr.thewise.cloud`) | إلزامي |
-| `LLM_PROVIDER` | مزود نموذج المحادثة (`fake` للتطوير والاختبار، `openai` للنموذج الحقيقي) | إلزامي |
+| `LLM_PROVIDER` | مزود نموذج المحادثة (`fake` للتطوير والاختبار، `anthropic` أو `openai` للنموذج الحقيقي) | إلزامي |
 | `LLM_ENABLED` | تفعيل أو إيقاف المساعد الذكي (`true` / `false`) | إلزامي |
-| `OPENAI_API_KEY` | مفتاح واجهة برمجة التطبيقات لـ OpenAI (يقرأ على الخادم فقط) | اختياري (مطلوب فقط عند `LLM_PROVIDER=openai`) |
-| `OPENAI_MODEL` | اسم النموذج المعتمد (مثل: `gpt-6-luna` أو `gpt-4o-mini`) | اختياري |
+| `ANTHROPIC_API_KEY` | مفتاح واجهة برمجة التطبيقات لـ Anthropic (يقرأ على الخادم فقط) | اختياري (مطلوب عند `LLM_PROVIDER=anthropic`) |
+| `ANTHROPIC_MODEL` | اسم نموذج Anthropic (الافتراضي: `claude-haiku-5-5`) | اختياري |
+| `OPENAI_API_KEY` | مفتاح واجهة برمجة التطبيقات لـ OpenAI (يقرأ على الخادم فقط) | اختياري (مطلوب عند `LLM_PROVIDER=openai`) |
+| `OPENAI_MODEL` | اسم نموذج OpenAI (مثل: `gpt-6-luna` أو `gpt-4o-mini`) | اختياري |
 | `LLM_DAILY_SPEND_CAP_USD` | الحد اليومي الأقصى لتكلفة النموذج الحقيقي بالدولار | اختياري (افتراضي 5.00 USD) |
 
-> **قاعدة أمان:** المتغيرات السرية (`OPENAI_API_KEY`) لا تبدأ بـ `NEXT_PUBLIC_` ويتم فحص حزم العميل تلقائيًا أثناء عملية البناء (`npm run build`) لمنع أي تسريب إلى المتصفح.
+> **قاعدة أمان:** المتغيرات السرية (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) لا تبدأ بـ `NEXT_PUBLIC_` ويتم فحص حزم العميل تلقائيًا أثناء عملية البناء (`npm run build`) لمنع أي تسريب إلى المتصفح.
 
 ### 2. دوال الخلفية (Appwrite Functions)
 

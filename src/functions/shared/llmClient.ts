@@ -179,6 +179,59 @@ export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
 
 export type LlmTurnOutput = z.infer<typeof LlmTurnOutputSchema>;
 
+export type LlmProviderType = "fake" | "openai" | "anthropic";
+
+export interface LlmModelPricing {
+  inputCostPerMillion: number;
+  outputCostPerMillion: number;
+}
+
+export const DEFAULT_LLM_PRICING: Record<string, LlmModelPricing> = {
+  "claude-haiku-5-5": { inputCostPerMillion: 0.80, outputCostPerMillion: 4.00 },
+  "claude-3-5-haiku-20241022": { inputCostPerMillion: 0.80, outputCostPerMillion: 4.00 },
+  "claude-3-haiku-20240307": { inputCostPerMillion: 0.25, outputCostPerMillion: 1.25 },
+  "gpt-6-luna": { inputCostPerMillion: 0.15, outputCostPerMillion: 0.60 },
+  "gpt-4o-mini": { inputCostPerMillion: 0.15, outputCostPerMillion: 0.60 },
+  "gpt-4o": { inputCostPerMillion: 2.50, outputCostPerMillion: 10.00 },
+  "fake": { inputCostPerMillion: 0.10, outputCostPerMillion: 0.50 },
+};
+
+export function getLlmPricingSettings(
+  provider: LlmProviderType,
+  model: string,
+  customSettings?: Partial<LlmModelPricing>
+): LlmModelPricing {
+  if (customSettings?.inputCostPerMillion !== undefined && customSettings?.outputCostPerMillion !== undefined) {
+    return {
+      inputCostPerMillion: customSettings.inputCostPerMillion,
+      outputCostPerMillion: customSettings.outputCostPerMillion,
+    };
+  }
+
+  const envInput =
+    provider === "anthropic"
+      ? process.env.ANTHROPIC_INPUT_COST_PER_MILLION || process.env.LLM_INPUT_COST_PER_MILLION
+      : process.env.OPENAI_INPUT_COST_PER_MILLION || process.env.LLM_INPUT_COST_PER_MILLION;
+
+  const envOutput =
+    provider === "anthropic"
+      ? process.env.ANTHROPIC_OUTPUT_COST_PER_MILLION || process.env.LLM_OUTPUT_COST_PER_MILLION
+      : process.env.OPENAI_OUTPUT_COST_PER_MILLION || process.env.LLM_OUTPUT_COST_PER_MILLION;
+
+  const fallback = DEFAULT_LLM_PRICING[model] || (
+    provider === "anthropic"
+      ? { inputCostPerMillion: 0.80, outputCostPerMillion: 4.00 }
+      : provider === "openai"
+      ? { inputCostPerMillion: 0.15, outputCostPerMillion: 0.60 }
+      : { inputCostPerMillion: 0.10, outputCostPerMillion: 0.50 }
+  );
+
+  return {
+    inputCostPerMillion: envInput ? parseFloat(envInput) : (customSettings?.inputCostPerMillion ?? fallback.inputCostPerMillion),
+    outputCostPerMillion: envOutput ? parseFloat(envOutput) : (customSettings?.outputCostPerMillion ?? fallback.outputCostPerMillion),
+  };
+}
+
 export interface LlmCallOptions {
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
   sanitizedCapabilities: any[];
@@ -194,6 +247,7 @@ export interface LlmCallOptions {
   userId?: string;
   totalConversationTokens?: number;
   testScenario?: string;
+  pricingSettings?: Partial<LlmModelPricing>;
 }
 
 export interface LlmCallResult {
@@ -211,6 +265,8 @@ export interface LlmCallResult {
 const FORBIDDEN_WORDS = [
   /openai/gi,
   /chatgpt/gi,
+  /anthropic/gi,
+  /claude/gi,
   /gpt-4/gi,
   /gpt-5/gi,
   /gpt-6/gi,
@@ -228,15 +284,155 @@ export function scrubWhiteLabelText(text: string): string {
   return cleaned;
 }
 
+export function sanitizeMessagesForAnthropic(
+  messages: Array<{ role: string; content: string }>
+): Array<{ role: "user" | "assistant"; content: string }> {
+  const filtered = messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content || "" }));
+
+  if (filtered.length === 0) {
+    return [{ role: "user", content: "مرحباً" }];
+  }
+
+  const combined: Array<{ role: "user" | "assistant"; content: string }> = [];
+  for (const msg of filtered) {
+    const last = combined[combined.length - 1];
+    if (last && last.role === msg.role) {
+      last.content += `\n\n${msg.content}`;
+    } else {
+      combined.push({ role: msg.role, content: msg.content });
+    }
+  }
+
+  if (combined.length > 0 && combined[0].role !== "user") {
+    combined.unshift({ role: "user", content: "مرحباً" });
+  }
+
+  return combined;
+}
+
+export const ACTION_RESULT_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    type: {
+      type: "string",
+      enum: [
+        "ask_clarification",
+        "propose_plan",
+        "edit_plan",
+        "edit_artifact",
+        "write_note",
+        "suggest_alternative",
+        "answer_question",
+        "refuse",
+      ],
+    },
+    questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
+    questions: {
+      type: "array",
+      maxItems: 3,
+      items: {
+        type: "object",
+        properties: {
+          question: { type: "string" },
+          options: {
+            type: "array",
+            maxItems: 4,
+            items: { type: "string", maxLength: 40 },
+          },
+        },
+        required: ["question"],
+        additionalProperties: false,
+      },
+    },
+    reasonAr: { type: "string" },
+    summaryAr: { type: "string" },
+    answerAr: { type: "string" },
+    titleAr: { type: "string" },
+    contentAr: { type: "string" },
+    unsupportedService: { type: "string" },
+    explanationAr: { type: "string" },
+    closestAlternative: { type: "string" },
+    canRequestFeature: { type: "boolean" },
+    capabilities: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          capabilitySlug: { type: "string" },
+          params: { type: "object", additionalProperties: true },
+          targetVolumeMin: { type: "integer" },
+          targetVolumeMax: { type: "integer" },
+        },
+        required: ["capabilitySlug", "params", "targetVolumeMin", "targetVolumeMax"],
+        additionalProperties: false,
+      },
+    },
+    operations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          action: { type: "string" },
+          capabilitySlug: { type: "string" },
+          key: { type: "string" },
+          value: { type: "string" },
+          targetVolumeMax: { type: "integer" },
+          formats: { type: "array", items: { type: "string" } },
+          params: { type: "object", additionalProperties: true },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+    outputFormats: {
+      type: "array",
+      items: { type: "string" },
+    },
+    methodologyNotes: { type: "string" },
+    rationaleAr: { type: "string" },
+  },
+  required: ["type"],
+  additionalProperties: false,
+};
+
 // ================= LLM Client Implementation =================
 
 export class LlmClient {
+  private provider: LlmProviderType;
   private model: string;
   private isLive: boolean;
+  private customPricing?: Partial<LlmModelPricing>;
 
-  constructor() {
-    this.model = process.env.LLM_MODEL || "gpt-6-luna";
-    this.isLive = process.env.LLM_LIVE === "true";
+  constructor(options?: {
+    provider?: LlmProviderType;
+    model?: string;
+    isLive?: boolean;
+    pricingSettings?: Partial<LlmModelPricing>;
+  }) {
+    const providerEnv = (process.env.LLM_PROVIDER as LlmProviderType) || "fake";
+    this.provider = options?.provider || providerEnv;
+    this.isLive = options?.isLive !== undefined ? options.isLive : process.env.LLM_LIVE === "true";
+    this.customPricing = options?.pricingSettings;
+
+    if (options?.model) {
+      this.model = options.model;
+    } else if (this.provider === "anthropic") {
+      this.model = process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5";
+    } else if (this.provider === "openai") {
+      this.model = process.env.OPENAI_MODEL || process.env.LLM_MODEL || "gpt-6-luna";
+    } else {
+      this.model = process.env.LLM_MODEL || "fake";
+    }
+  }
+
+  getProvider(): LlmProviderType {
+    return this.provider;
+  }
+
+  getModel(): string {
+    return this.model;
   }
 
   /**
@@ -275,8 +471,12 @@ export class LlmClient {
     }
 
     // 3. Fake vs Live execution
-    if (!this.isLive || options.testScenario || !process.env.OPENAI_API_KEY) {
+    if (!this.isLive || options.testScenario || this.provider === "fake") {
       return this.executeFakeLlm(options);
+    }
+
+    if (this.provider === "anthropic") {
+      return this.executeRealAnthropic(options);
     }
 
     return this.executeRealOpenAi(options);
@@ -731,12 +931,65 @@ export class LlmClient {
   }
 
   /**
-   * Real OpenAI Responses API execution
+   * Handle provider errors cleanly (timeout, 429, 5xx, auth errors):
+   * Return short Arabic error, 0 tokens, 0 cost, so no points are held or charged.
    */
-  private async executeRealOpenAi(options: LlmCallOptions): Promise<LlmCallResult> {
-    const apiKey = process.env.OPENAI_API_KEY;
+  private handleProviderError(err: any, provider: string): LlmCallResult {
+    let reasonAr = "عذراً، حدث خطأ أثناء الاتصال بمزود خدمة الذكاء الاصطناعي. يرجى إعادة المحاولة.";
+
+    const status = err?.status || err?.statusCode || (typeof err?.message === "string" && err.message.match(/\((\d{3})\)/)?.[1]);
+    const statusNum = Number(status);
+
+    if (
+      err?.name === "AbortError" ||
+      err?.name === "TimeoutError" ||
+      err?.message?.includes("timed out") ||
+      err?.message?.includes("timeout") ||
+      err?.message?.includes("aborted")
+    ) {
+      reasonAr = "عذراً، استغرقت الاستجابة وقتاً أطول من المعتاد. يرجى إعادة المحاولة.";
+    } else if (statusNum === 429 || err?.message?.includes("429") || err?.message?.includes("rate_limit")) {
+      reasonAr = "عذراً، الخدمة مشغولة حالياً بتجاوز حد الطلبات المؤقت. يرجى المحاولة بعد قليل.";
+    } else if (statusNum === 529 || err?.message?.includes("529") || err?.message?.includes("overloaded")) {
+      reasonAr = "عذراً، خوادم الخدمة تواجه ضغطاً كبيراً حالياً. يرجى المحاولة بعد لحظات.";
+    } else if (
+      (statusNum >= 500 && statusNum < 600) ||
+      err?.message?.includes("500") ||
+      err?.message?.includes("502") ||
+      err?.message?.includes("503") ||
+      err?.message?.includes("504")
+    ) {
+      reasonAr = "عذراً، خدمة الذكاء الاصطناعي تواجه صعوبة مؤقتة. يرجى المحاولة لاحقاً.";
+    } else if (
+      statusNum === 401 ||
+      statusNum === 403 ||
+      err?.message?.includes("API_KEY") ||
+      err?.message?.includes("authentication") ||
+      err?.message?.includes("credentials")
+    ) {
+      reasonAr = "خدمة المساعد الذكي غير مهيأة بشكل صحيح حالياً. يرجى مراجعة الإعدادات أو التواصل مع الدعم.";
+    }
+
+    return {
+      output: {
+        type: "refuse",
+        reasonAr,
+      },
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      model: this.model,
+      promptVersion: PROMPT_VERSION,
+    };
+  }
+
+  /**
+   * Real Anthropic Messages API execution with structured tool use
+   */
+  private async executeRealAnthropic(options: LlmCallOptions): Promise<LlmCallResult> {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      throw new Error("OPENAI_API_KEY is not configured");
+      return this.handleProviderError(new Error("ANTHROPIC_API_KEY is not configured"), "anthropic");
     }
 
     const systemPrompt = buildSystemPrompt({
@@ -747,155 +1000,223 @@ export class LlmClient {
       conversationState: options.conversationState,
     });
 
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: this.model,
-        reasoning: { effort: "low" },
-        input: [
-          { role: "system", content: systemPrompt },
-          ...options.messages,
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            strict: true,
-            schema: {
-              type: "object",
-              properties: {
-                actionResult: {
-                  type: "object",
-                  properties: {
-                    type: {
-                      type: "string",
-                      enum: [
-                        "ask_clarification",
-                        "propose_plan",
-                        "edit_plan",
-                        "edit_artifact",
-                        "write_note",
-                        "suggest_alternative",
-                        "answer_question",
-                        "refuse",
-                      ],
-                    },
-                    questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
-                    questions: {
-                      type: "array",
-                      maxItems: 3,
-                      items: {
-                        type: "object",
-                        properties: {
-                          question: { type: "string" },
-                          options: {
-                            type: "array",
-                            maxItems: 4,
-                            items: { type: "string", maxLength: 40 },
-                          },
-                        },
-                        required: ["question"],
-                        additionalProperties: false,
-                      },
-                    },
-                    reasonAr: { type: "string" },
-                    summaryAr: { type: "string" },
-                    answerAr: { type: "string" },
-                    titleAr: { type: "string" },
-                    contentAr: { type: "string" },
-                    unsupportedService: { type: "string" },
-                    explanationAr: { type: "string" },
-                    closestAlternative: { type: "string" },
-                    canRequestFeature: { type: "boolean" },
-                    capabilities: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          capabilitySlug: { type: "string" },
-                          params: { type: "object", additionalProperties: true },
-                          targetVolumeMin: { type: "integer" },
-                          targetVolumeMax: { type: "integer" },
-                        },
-                        required: ["capabilitySlug", "params", "targetVolumeMin", "targetVolumeMax"],
-                        additionalProperties: false,
-                      },
-                    },
-                    operations: {
-                      type: "array",
-                      items: {
-                        type: "object",
-                        properties: {
-                          action: { type: "string" },
-                          capabilitySlug: { type: "string" },
-                          key: { type: "string" },
-                          value: { type: "string" },
-                          targetVolumeMax: { type: "integer" },
-                          formats: { type: "array", items: { type: "string" } },
-                          params: { type: "object", additionalProperties: true },
-                        },
-                        required: ["action"],
-                        additionalProperties: false,
-                      },
-                    },
-                    outputFormats: {
-                      type: "array",
-                      items: { type: "string" },
-                    },
-                    methodologyNotes: { type: "string" },
-                    rationaleAr: { type: "string" },
-                  },
-                  required: ["type"],
-                  additionalProperties: false,
-                },
-              },
-              required: ["actionResult"],
-              additionalProperties: false,
-            },
-          },
+    const formattedMessages = sanitizeMessagesForAnthropic(options.messages);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
         },
-      }),
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.model,
+          max_tokens: 1024,
+          system: systemPrompt,
+          messages: formattedMessages,
+          tools: [
+            {
+              name: "actionResult",
+              description: "Structured output response from the assistant adhering to Digr system protocols",
+              input_schema: ACTION_RESULT_JSON_SCHEMA,
+            },
+          ],
+          tool_choice: {
+            type: "tool",
+            name: "actionResult",
+          },
+        }),
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return this.handleProviderError(
+          new Error(`Anthropic API error (${response.status}): ${errText}`),
+          "anthropic"
+        );
+      }
+
+      const data: any = await response.json();
+
+      let rawPayload: any = null;
+      const toolUse = data.content?.find((b: any) => b.type === "tool_use" && b.name === "actionResult");
+      if (toolUse && toolUse.input) {
+        rawPayload = toolUse.input;
+      } else {
+        const textBlock = data.content?.find((b: any) => b.type === "text");
+        if (textBlock && textBlock.text) {
+          try {
+            rawPayload = JSON.parse(textBlock.text);
+          } catch {
+            rawPayload = {};
+          }
+        }
+      }
+
+      if (!rawPayload || typeof rawPayload !== "object") {
+        return this.handleProviderError(new Error("Invalid response format from Anthropic"), "anthropic");
+      }
+
+      const scrubField = (val: any): any => {
+        if (typeof val === "string") return scrubWhiteLabelText(val);
+        if (Array.isArray(val)) return val.map(scrubField);
+        if (val && typeof val === "object") {
+          const obj: any = {};
+          for (const [k, v] of Object.entries(val)) {
+            obj[k] = scrubField(v);
+          }
+          return obj;
+        }
+        return val;
+      };
+
+      const scrubbedPayload = scrubField(rawPayload);
+
+      if (scrubbedPayload.type === "ask_clarification" && !scrubbedPayload.questionsAr && scrubbedPayload.questions) {
+        scrubbedPayload.questionsAr = scrubbedPayload.questions.map((q: any) =>
+          typeof q === "string" ? q : q.question
+        );
+      }
+
+      const validatedOutput = LlmTurnOutputSchema.parse(scrubbedPayload);
+
+      const inTokens = data.usage?.input_tokens || 800;
+      const outTokens = data.usage?.output_tokens || 150;
+
+      const pricing = getLlmPricingSettings(
+        "anthropic",
+        this.model,
+        options.pricingSettings || this.customPricing
+      );
+      const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+
+      return {
+        output: validatedOutput,
+        inputTokens: inTokens,
+        outputTokens: outTokens,
+        costUsd,
+        model: this.model,
+        promptVersion: PROMPT_VERSION,
+        rawText: JSON.stringify(scrubbedPayload),
+      };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      return this.handleProviderError(err, "anthropic");
+    }
+  }
+
+  /**
+   * Real OpenAI Responses API execution
+   */
+  private async executeRealOpenAi(options: LlmCallOptions): Promise<LlmCallResult> {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return this.handleProviderError(new Error("OPENAI_API_KEY is not configured"), "openai");
+    }
+
+    const systemPrompt = buildSystemPrompt({
+      userProfile: options.userProfile,
+      sanitizedCapabilities: options.sanitizedCapabilities,
+      todayDate: options.todayDate,
+      userBalancePoints: options.userBalancePoints,
+      conversationState: options.conversationState,
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`OpenAI API error (${response.status}): ${errText}`);
-    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    const data: any = await response.json();
-    const rawContent = data.output_text || data.choices?.[0]?.message?.content || "{}";
-    const scrubbed = scrubWhiteLabelText(rawContent);
-
-    let parsedResult: any;
     try {
-      const parsedWrapper = JSON.parse(scrubbed);
-      parsedResult = parsedWrapper.actionResult || parsedWrapper;
-    } catch {
-      parsedResult = JSON.parse(scrubbed);
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: this.model,
+          reasoning: { effort: "low" },
+          input: [
+            { role: "system", content: systemPrompt },
+            ...options.messages,
+          ],
+          text: {
+            format: {
+              type: "json_schema",
+              strict: true,
+              schema: {
+                type: "object",
+                properties: {
+                  actionResult: ACTION_RESULT_JSON_SCHEMA,
+                },
+                required: ["actionResult"],
+                additionalProperties: false,
+              },
+            },
+          },
+        }),
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return this.handleProviderError(
+          new Error(`OpenAI API error (${response.status}): ${errText}`),
+          "openai"
+        );
+      }
+
+      const data: any = await response.json();
+      const rawContent = data.output_text || data.choices?.[0]?.message?.content || "{}";
+      const scrubbed = scrubWhiteLabelText(rawContent);
+
+      let parsedResult: any;
+      try {
+        const parsedWrapper = JSON.parse(scrubbed);
+        parsedResult = parsedWrapper.actionResult || parsedWrapper;
+      } catch {
+        parsedResult = JSON.parse(scrubbed);
+      }
+
+      // Adapt to questionsAr if questions were returned or vice versa
+      if (parsedResult.type === "ask_clarification" && !parsedResult.questionsAr && parsedResult.questions) {
+        parsedResult.questionsAr = parsedResult.questions.map((q: any) =>
+          typeof q === "string" ? q : q.question
+        );
+      }
+
+      const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);
+
+      const inTokens = data.usage?.input_tokens || 800;
+      const outTokens = data.usage?.output_tokens || 150;
+
+      const pricing = getLlmPricingSettings(
+        "openai",
+        this.model,
+        options.pricingSettings || this.customPricing
+      );
+      const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+
+      return {
+        output: validatedOutput,
+        inputTokens: inTokens,
+        outputTokens: outTokens,
+        costUsd,
+        model: this.model,
+        promptVersion: PROMPT_VERSION,
+        rawText: scrubbed,
+      };
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      return this.handleProviderError(err, "openai");
     }
-
-    // Adapt to questionsAr if questions were returned or vice versa
-    if (parsedResult.type === "ask_clarification" && !parsedResult.questionsAr && parsedResult.questions) {
-      parsedResult.questionsAr = parsedResult.questions.map((q: any) => typeof q === "string" ? q : q.question);
-    }
-
-    const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);
-
-    const inTokens = data.usage?.input_tokens || 800;
-    const outTokens = data.usage?.output_tokens || 150;
-    const costUsd = (inTokens * 0.15 + outTokens * 0.60) / 1_000_000;
-
-    return {
-      output: validatedOutput,
-      inputTokens: inTokens,
-      outputTokens: outTokens,
-      costUsd,
-      model: this.model,
-      promptVersion: PROMPT_VERSION,
-      rawText: scrubbed,
-    };
   }
 }
