@@ -5,7 +5,6 @@ import { setLastLlmFallbackReason } from "../../../functions/shared/llmClient";
 import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
-  checkUserDailySpendCap,
   type RateLimitCheckResult,
 } from "../../../functions/shared/rateLimits";
 import {
@@ -108,15 +107,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Global and per-user daily spend caps. If the server-only usage table is
-    // unavailable, fail closed instead of making an unmetered model call.
+    // 2. Global daily spend cap (platform protection). If the server-only usage
+    // table is unavailable, fail closed instead of making an unmetered model call.
+    // Per-account daily budget is message-based (200 user messages/day, see
+    // checkUserRateLimits) — one unit per USER message, never per model call.
     let spendCheck: RateLimitCheckResult;
-    let userSpendCheck: RateLimitCheckResult;
     try {
-      [spendCheck, userSpendCheck] = await Promise.all([
-        checkGlobalDailySpendCap(tables),
-        checkUserDailySpendCap(tables, verifiedUserId),
-      ]);
+      spendCheck = await checkGlobalDailySpendCap(tables);
     } catch {
       setLastLlmFallbackReason("spend_cap");
       console.warn("[llm:SPEND_CAP_STORAGE_UNAVAILABLE]");
@@ -131,15 +128,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: spendCheck.reasonAr },
         { status: spendCheck.statusCode || 503 }
-      );
-    }
-
-    if (!userSpendCheck.allowed) {
-      setLastLlmFallbackReason("spend_cap");
-      console.warn("[llm:error] reason=spend_cap");
-      return NextResponse.json(
-        { success: false, error: userSpendCheck.reasonAr },
-        { status: userSpendCheck.statusCode || 429 },
       );
     }
 

@@ -10,7 +10,9 @@ export interface RateLimitConfig {
 
 export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
   messagesPerMinute: 10,
-  messagesPerDay: 100,
+  // Per-account daily assistant budget: one unit = one USER message
+  // (not per model call or tool iteration). Overridable via env.
+  messagesPerDay: 200,
   conversationMaxTokens: 40_000,
   globalDailySpendCapUsd: 1.0,
   userDailySpendCapUsd: 0.10,
@@ -72,6 +74,9 @@ export async function checkUserRateLimits(
     };
   }
 
+  // One unit per USER message per account per UTC day — internal model calls
+  // and tool iterations never consume budget.
+  const dailyLimit = configuredCap("LLM_USER_DAILY_MESSAGES", config.messagesPerDay);
   const dayRes = await tables.listRows({
     databaseId: "digr",
     tableId: "messages",
@@ -79,15 +84,15 @@ export async function checkUserRateLimits(
       Query.equal("userId", userId),
       Query.equal("role", "user"),
       Query.greaterThanEqual("createdAt", startOfDay),
-      Query.limit(config.messagesPerDay + 1),
+      Query.limit(dailyLimit + 1),
     ],
   });
-  if (dayRes.total >= config.messagesPerDay) {
+  if (dayRes.total >= dailyLimit) {
     return {
       allowed: false,
       statusCode: 429,
       type: "daily_limit",
-      reasonAr: `تم بلوغ الحد الأقصى اليومي المسموح به من الرسائل (${config.messagesPerDay} رسالة/يوم). يتجدد الرصيد غداً.`,
+      reasonAr: `وصلت للحد اليومي من رسائل المساعد (${dailyLimit} رسالة). يتجدد الرصيد تلقائياً غداً.`,
     };
   }
   return { allowed: true };
