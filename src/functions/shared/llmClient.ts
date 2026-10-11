@@ -4,12 +4,19 @@ import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 // ================= Schema Definitions =================
 
 export const ClarificationQuestionItemSchema = z.object({
-  question: z.string().trim().min(1),
+  id: z.string().optional(),
+  question: z.string().trim().min(1).optional(),
+  text: z.string().trim().min(1).optional(),
+  type: z.enum(["single", "multi", "free"]).optional(),
+  parameterType: z.enum(["platform", "time_window", "volume", "output_format", "anonymize", "language", "topic"]).optional(),
   options: z.array(z.string().trim().min(1).max(40)).max(4).optional(),
+  allowOther: z.boolean().optional(),
+  defaultOption: z.string().optional(),
 }).strict();
 
 export const AskClarificationSchema = z.object({
   type: z.literal("ask_clarification"),
+  intro: z.string().optional(),
   questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
   questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
   optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
@@ -17,10 +24,22 @@ export const AskClarificationSchema = z.object({
 }).strict();
 
 export const PlanCapabilityItemSchema = z.object({
+  stepId: z.string().optional(),
   capabilitySlug: z.string().min(1),
   params: z.record(z.string(), z.any()),
   targetVolumeMin: z.number().int().min(1),
   targetVolumeMax: z.number().int().min(1),
+  volumeMode: z.enum(["bounded", "open_ended"]).optional(),
+  dependsOn: z.array(z.string()).optional(),
+  inputFrom: z
+    .object({
+      stepId: z.string(),
+      field: z.string(),
+      paramKey: z.string(),
+    })
+    .optional(),
+  fanOutCap: z.number().int().min(1).max(50).optional(),
+  windowed: z.boolean().optional(),
 });
 
 export const ExecutionOptionsSchema = z.object({
@@ -652,6 +671,111 @@ export class LlmClient {
       };
     }
 
+    // D0. Facebook multi-topic & discovery handling when Facebook capabilities are verified or for Facebook research queries
+    const hasVerifiedFacebook =
+      Array.isArray(options.sanitizedCapabilities) &&
+      options.sanitizedCapabilities.length > 0 &&
+      options.sanitizedCapabilities.some(
+        (c: any) =>
+          (c.slug === "facebook-post-comments" || c.slug === "facebook-post-search" || c.id === "facebook-post-comments" || c.id === "facebook-post-search") &&
+          c.enabled !== false &&
+          c.status !== "pending_verification" &&
+          c.status !== "planned"
+      );
+
+    const isFacebookRequest = promptLower.includes("فيسبوك") || promptLower.includes("facebook");
+    const isQaimatManqulat = promptLower.includes("قائمة المنقولات");
+    const isLongMarriageTopicsRequest =
+      (promptLower.includes("الزواج") || promptLower.includes("خطوبة") || promptLower.includes("مهر") || promptLower.includes("شبكة")) &&
+      (promptLower.includes("يناير") || promptLower.includes("سبتمبر") || promptLower.includes("2026") || promptLower.includes("reels") || promptLower.includes("ريلز"));
+
+    const hasCatalogCapabilities =
+      Array.isArray(options.sanitizedCapabilities) && options.sanitizedCapabilities.length > 0;
+
+    if (isFacebookRequest && (hasVerifiedFacebook || isLongMarriageTopicsRequest || (isQaimatManqulat && hasCatalogCapabilities))) {
+      if (isLongMarriageTopicsRequest) {
+        return {
+          output: {
+            type: "propose_plan",
+            summaryAr:
+              "خطة متعددة الخطوات لجمع منشورات وتعليقات فيسبوك حول موضوعات الزواج في الفترة من 1 يناير إلى 30 سبتمبر 2026 (البحث في المنشورات العامة ثم سحب التعليقات بحد أقصى محدد لكل منشور، مع توضيح أن مقاطع الريلز والفيديو غير المتاحة في الكتالوج المعتمد تُستثنى بصدق)",
+            capabilities: [
+              {
+                stepId: "fb_posts_search",
+                capabilitySlug: "facebook-post-search",
+                params: {
+                  query: "قائمة المنقولات، تكاليف الزواج، المهر، الشبكة، النفقة",
+                  dateFrom: "2026-01-01",
+                  dateTo: "2026-09-30",
+                },
+                targetVolumeMin: 1,
+                targetVolumeMax: 5,
+                volumeMode: "bounded",
+              },
+              {
+                stepId: "fb_post_comments",
+                capabilitySlug: "facebook-post-comments",
+                params: {
+                  includeReplies: true,
+                },
+                targetVolumeMin: 5,
+                targetVolumeMax: 25,
+                dependsOn: ["fb_posts_search"],
+                inputFrom: {
+                  stepId: "fb_posts_search",
+                  field: "postUrl",
+                  paramKey: "postUrl",
+                },
+                fanOutCap: 25,
+                windowed: true,
+              },
+            ],
+            outputFormats: ["xlsx", "pdf", "csv"],
+            methodologyNotes:
+              "يتم تقسيم الموضوعات المتعددة خلال الفترة من 2026-01-01 إلى 2026-09-30 إلى خطوة بحث في المنشورات العامة على فيسبوك تليها خطوة جلب التعليقات والردود بحد أقصى صريح لكل منشور. السعر النهائي بالنقاط يُحسب من الخادم فقط.",
+          },
+          inputTokens: 650,
+          outputTokens: 140,
+          costUsd: (650 * 0.10 + 140 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+
+      return {
+        output: {
+          type: "ask_clarification",
+          intro: "لتجهيز خطة جمع تعليقات فيسبوك حول قائمة المنقولات في مصر بدقة، يرجى تحديد الخيارات الأساسية التالية:",
+          questions: [
+            {
+              id: "time_window",
+              text: "ما الفترة الزمنية المطلوبة للمنشورات والتعليقات على فيسبوك؟",
+              type: "single",
+              parameterType: "time_window",
+              options: ["آخر 30 يوماً", "آخر 3 أشهر", "من 1 يناير إلى 30 سبتمبر 2026", "فترة مخصصة"],
+              allowOther: true,
+              defaultOption: "آخر 30 يوماً",
+            },
+            {
+              id: "volume",
+              text: "ما الحد الأقصى لعدد المنشورات وعدد التعليقات لكل منشور؟",
+              type: "single",
+              parameterType: "volume",
+              options: ["حتى 10 منشورات و50 تعليقاً للمنشور", "حتى 25 منشوراً و100 تعليق للمنشور", "حتى 50 منشوراً و100 تعليق للمنشور"],
+              allowOther: true,
+              defaultOption: "حتى 10 منشورات و50 تعليقاً للمنشور",
+            },
+          ],
+          reasonAr: "تحديد الفترة الزمنية والحد الأقصى للمنشورات والتعليقات على فيسبوك قبل حساب عرض السعر من الخادم",
+        },
+        inputTokens: 520,
+        outputTokens: 95,
+        costUsd: (520 * 0.10 + 95 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
     // D. Unsupported / Pending-Verification Platforms & "Request this service" trigger
     if (
       promptLower.includes("انستغرام") ||
@@ -1197,9 +1321,9 @@ export class LlmClient {
       const scrubbedPayload = scrubField(rawPayload);
 
       if (scrubbedPayload.type === "ask_clarification" && !scrubbedPayload.questionsAr && scrubbedPayload.questions) {
-        scrubbedPayload.questionsAr = scrubbedPayload.questions.map((q: any) =>
-          typeof q === "string" ? q : q.question
-        );
+        scrubbedPayload.questionsAr = scrubbedPayload.questions
+          .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
+          .filter(Boolean);
       }
 
       const validatedOutput = LlmTurnOutputSchema.parse(scrubbedPayload);
@@ -1308,9 +1432,9 @@ export class LlmClient {
 
       // Adapt to questionsAr if questions were returned or vice versa
       if (parsedResult.type === "ask_clarification" && !parsedResult.questionsAr && parsedResult.questions) {
-        parsedResult.questionsAr = parsedResult.questions.map((q: any) =>
-          typeof q === "string" ? q : q.question
-        );
+        parsedResult.questionsAr = parsedResult.questions
+          .map((q: any) => (typeof q === "string" ? q : q.question || q.text || ""))
+          .filter(Boolean);
       }
 
       const validatedOutput = LlmTurnOutputSchema.parse(parsedResult);
