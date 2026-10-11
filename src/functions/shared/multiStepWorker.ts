@@ -6,7 +6,25 @@ import {
   generatePdfReport,
   generateCsvReport,
 } from "./fileGenerators";
-import { executeTregCall } from "./tregClient";
+import { executeTregCall, TregCallOptions, TregCallResult } from "./tregClient";
+import { parseStoredPlan } from "./planManager";
+import { searchCatalog } from "./catalogClient";
+import {
+  checkProviderDailySpendCap,
+  recordProviderCallSpend,
+  getConfiguredJobPointsCap,
+} from "./providerSpend";
+
+export interface GenericJobStep {
+  stepId: string;
+  capabilitySlug?: string;
+  endpointId?: string;
+  params?: Record<string, any>;
+  targetVolumeMin?: number;
+  targetVolumeMax?: number;
+  paginationStrategy?: "cursor" | "offset" | "page" | "none";
+  unitPricePoints?: number;
+}
 
 export interface WorkerStepInput {
   jobId: string;
@@ -17,6 +35,7 @@ export interface WorkerStepInput {
   templateSlug: string;
   params: Record<string, any>;
   pricingUnit?: "call" | "item" | "page";
+  steps?: GenericJobStep[];
   fetchPageFn?: (cursor: string | null, page: number) => Promise<PageFetchResult>;
   isTestMode?: boolean;
 }
@@ -39,10 +58,13 @@ export interface WorkerExecutionResult {
   reservedCredits: number;
   chargedCredits: number;
   refundCredits: number;
+  released?: boolean;
+  alreadyReleased?: boolean;
   resultFiles?: {
     xlsxFileId: string;
     pdfFileId: string;
     csvFileId: string;
+    methodologyFileId?: string;
     jsonFileId?: string;
   };
   errorAr?: string;
@@ -114,8 +136,183 @@ export function parseTikTokProfileResponse(rawBody: any, requestedUsername: stri
 }
 
 /**
- * Generalized multi-step worker with strict no-fake guards, live TREG execution,
- * release-first settlement, and comprehensive artifact generation (Excel, PDF, CSV, JSON).
+ * Generic row flattener: flattens top-level and 1 nested level (e.g. user.name -> user_name, stats.likes -> likes).
+ * Joins arrays of primitives with comma.
+ */
+export function flattenRow(row: any): Record<string, any> {
+  if (!row || typeof row !== "object") {
+    return { value: row !== undefined && row !== null ? row : "" };
+  }
+
+  let baseRow = { ...row };
+  if (baseRow.userInfo && typeof baseRow.userInfo === "object") {
+    baseRow = {
+      ...(baseRow.userInfo.user || {}),
+      ...(baseRow.userInfo.stats || {}),
+      ...baseRow,
+    };
+    delete baseRow.userInfo;
+  }
+
+  const flattened: Record<string, any> = {};
+
+  for (const [key, val] of Object.entries(baseRow)) {
+    if (val === null || val === undefined) {
+      flattened[key] = "";
+    } else if (Array.isArray(val)) {
+      if (val.length === 0) {
+        flattened[key] = "";
+      } else if (typeof val[0] === "object" && val[0] !== null) {
+        flattened[key] = val.map((v) => JSON.stringify(v)).join(", ");
+      } else {
+        flattened[key] = val.map((v) => String(v)).join(", ");
+      }
+    } else if (typeof val === "object") {
+      for (const [subKey, subVal] of Object.entries(val)) {
+        const compositeKey = `${key}_${subKey}`;
+        if (subVal === null || subVal === undefined) {
+          flattened[compositeKey] = "";
+        } else if (Array.isArray(subVal)) {
+          flattened[compositeKey] = subVal.map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v))).join(", ");
+        } else if (typeof subVal === "object") {
+          flattened[compositeKey] = JSON.stringify(subVal);
+        } else {
+          flattened[compositeKey] = subVal;
+        }
+      }
+    } else {
+      flattened[key] = val;
+    }
+  }
+
+  return flattened;
+}
+
+/**
+ * Generic row extractor: whatever JSON structure comes back, extracts array and flattens into row objects.
+ */
+export function extractAndFlattenRows(rawResponse: any): Array<Record<string, any>> {
+  if (!rawResponse) return [];
+
+  let candidates: any[] = [];
+
+  if (Array.isArray(rawResponse)) {
+    candidates = rawResponse;
+  } else if (typeof rawResponse === "object") {
+    const arrayCandidates = [
+      rawResponse.data,
+      rawResponse.items,
+      rawResponse.results,
+      rawResponse.records,
+      rawResponse.posts,
+      rawResponse.tweets,
+      rawResponse.videos,
+      rawResponse.users,
+      rawResponse.data?.items,
+      rawResponse.data?.results,
+      rawResponse.data?.data,
+      rawResponse.data?.posts,
+      rawResponse.data?.tweets,
+      rawResponse.data?.videos,
+      rawResponse.data?.users,
+    ];
+
+    for (const arr of arrayCandidates) {
+      if (Array.isArray(arr)) {
+        candidates = arr;
+        break;
+      }
+    }
+
+    if (candidates.length === 0) {
+      for (const val of Object.values(rawResponse)) {
+        if (Array.isArray(val) && val.length > 0 && typeof val[0] === "object") {
+          candidates = val;
+          break;
+        }
+      }
+    }
+
+    if (candidates.length === 0) {
+      const obj = rawResponse.data || rawResponse.user || rawResponse.profile || rawResponse;
+      if (obj && typeof obj === "object" && Object.keys(obj).length > 0) {
+        candidates = [obj];
+      }
+    }
+  }
+
+  return candidates.map(flattenRow);
+}
+
+/**
+ * Builds white-label methodology facts document (.txt).
+ */
+export function generateMethodologyText(payload: any): string {
+  const meta = payload.metadata || {};
+  const dateStr = meta.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const rowsCount = payload.rows?.length || (payload.profile ? 1 : 0);
+  const template = meta.template || meta.platform || "Digr Data Extraction";
+  const jobId = meta.jobId || "N/A";
+
+  return [
+    "============================================================",
+    "             منصة Digr لاستخراج البيانات العامة             ",
+    "               وثيقة المنهجية وإخلاء المسؤولية             ",
+    "============================================================",
+    "",
+    `معرّف الطلب (Job ID): ${jobId}`,
+    `تاريخ الجمع: ${dateStr}`,
+    `المصدر / المنصة: ${template}`,
+    `إجمالي السجلات المستخرجة: ${rowsCount}`,
+    "",
+    "------------------------------------------------------------",
+    "الملاحظات المنهجية ومعايير الجمع:",
+    "------------------------------------------------------------",
+    meta.methodology || `تم استخراج هذه البيانات آلياً من المصدر الرسمي العام بتاريخ ${dateStr}.`,
+    "",
+    "إخلاء المسؤولية العلمية والإحصائية:",
+    "• هذه البيانات عامة ومتاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
+    "• لا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.",
+    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية.",
+    "",
+    "تم الإنشاء آلياً عبر منصة Digr • جميع الحقوق محفوظة.",
+    "============================================================",
+  ].join("\n");
+}
+
+async function executeTregCallWithRetry(
+  options: TregCallOptions,
+  maxRetries: number = 3
+): Promise<TregCallResult> {
+  let attempt = 0;
+  let lastResult: TregCallResult;
+
+  while (attempt <= maxRetries) {
+    lastResult = await executeTregCall(options);
+
+    if (lastResult.ok) return lastResult;
+
+    const isRetryable =
+      lastResult.httpStatus === 429 ||
+      (lastResult.httpStatus >= 500 && lastResult.httpStatus <= 599) ||
+      lastResult.error === "network_failure" ||
+      lastResult.error === "rate_limit";
+
+    if (!isRetryable || attempt === maxRetries) {
+      return lastResult;
+    }
+
+    attempt++;
+    const backoffMs = Math.min(1000, 50 * Math.pow(2, attempt - 1));
+    await new Promise((r) => setTimeout(r, backoffMs));
+  }
+
+  return lastResult!;
+}
+
+/**
+ * Generic multi-step worker with live TREG execution, pagination loops, spend caps,
+ * retries on 429/5xx, release-first settlement, and comprehensive artifact generation (Excel, PDF, CSV, TXT, JSON).
  */
 export async function executeMultiStepJob(
   tables: TablesDB,
@@ -163,13 +360,66 @@ export async function executeMultiStepJob(
     };
   }
 
+  // TREG_LIVE Verification Guard: Fail safely with clear Arabic refusal if TREG_LIVE is not 'true'
+  if (!fetchPageFn && process.env.TREG_LIVE !== "true") {
+    const errorAr = "مزود البيانات الحقيقي معطل حالياً في البيئة (TREG_LIVE!=true). تم استرجاع كامل الرصيد المحجوز إلى محفظتك.";
+    const relRes = await releaseReservation(
+      tables,
+      userId,
+      jobId,
+      reservedCredits,
+      "استرجاع الرصيد المحجوز لعدم تفعيل مزود البيانات الحقيقي"
+    );
+    try {
+      await tables.updateRow({
+        databaseId: "digr",
+        tableId: "jobs",
+        rowId: jobId,
+        data: {
+          status: "failed",
+          errorAr,
+          finishedAt: new Date().toISOString(),
+        },
+      });
+    } catch {}
+    try {
+      await tables.createRow({
+        databaseId: "digr",
+        tableId: "job_events",
+        rowId: ID.unique(),
+        data: {
+          jobId,
+          textAr: errorAr,
+          count: 0,
+          kind: "error",
+          createdAt: new Date().toISOString(),
+        },
+        permissions: [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))],
+      });
+    } catch {}
+    return {
+      success: false,
+      jobId,
+      status: "failed",
+      released: relRes.released,
+      alreadyReleased: relRes.alreadyReleased,
+      deliveredUnits: 0,
+      reservedCredits,
+      chargedCredits: 0,
+      refundCredits: reservedCredits,
+      errorAr,
+    };
+  }
+
   // 1. Mark Job as running
-  await tables.updateRow({
-    databaseId: "digr",
-    tableId: "jobs",
-    rowId: jobId,
-    data: { status: "running" },
-  });
+  try {
+    await tables.updateRow({
+      databaseId: "digr",
+      tableId: "jobs",
+      rowId: jobId,
+      data: { status: "running" },
+    });
+  } catch {}
 
   // Helper to emit progress events
   const emitProgress = async (textAr: string, count: number, kind: string = "progress") => {
@@ -192,171 +442,18 @@ export async function executeMultiStepJob(
     }
   };
 
-  await emitProgress("جاري الاتصال بمصدر البيانات والتحقق من الحساب...", 0, "progress");
+  await emitProgress("جاري الاتصال بمصدر البيانات والبدء في استخراج السجلات...", 0, "progress");
 
   let collectedRows: any[] = [];
-  let profileData: any = null;
   let totalCostMicro = 0;
   let isCancelled = false;
 
-  // 2. Handle TikTok Profile Live Call
-  if (templateSlug === "tiktok-profile" && !fetchPageFn) {
-    const cleanUsername = String(params.username || "").replace(/^@/, "").trim();
-    if (!cleanUsername) {
-      const errorAr = "اسم المستخدم للحساب المطلوب غير محدد.";
-      await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم تحديد الحساب");
-      await tables.updateRow({
-        databaseId: "digr",
-        tableId: "jobs",
-        rowId: jobId,
-        data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
-      });
-      await emitProgress(errorAr, 0, "error");
-      return {
-        success: false,
-        jobId,
-        status: "failed",
-        deliveredUnits: 0,
-        reservedCredits,
-        chargedCredits: 0,
-        refundCredits: reservedCredits,
-        errorAr,
-      };
-    }
-
-    await emitProgress(`جاري جلب بيانات الحساب @${cleanUsername} من المصدر...`, 0, "progress");
-
-    // Execute real TREG API call with strict $0.01 route cost cap
-    const callResult = await executeTregCall({
-      endpointId: "tikhub.tiktok.user.profile",
-      method: "GET",
-      params: { username: cleanUsername },
-      userId,
-      jobId,
-      routeMaxCostUsd: "0.01",
-    });
-
-    totalCostMicro = callResult.costMicro || 0;
-
-    // Record upstream call in server-only job_calls collection
-    try {
-      await tables.createRow({
-        databaseId: "digr",
-        tableId: "job_calls",
-        rowId: ID.unique(),
-        data: {
-          jobId,
-          tregCallId: callResult.tregCallId || `treg_${Date.now()}`,
-          endpointId: "tikhub.tiktok.user.profile",
-          idemKey: `idem_${jobId}`,
-          httpStatus: callResult.httpStatus,
-          costMicro: totalCostMicro,
-          cacheHit: false,
-          fetchedAt: new Date().toISOString(),
-          createdAt: new Date().toISOString(),
-        },
-      });
-    } catch (callErr: any) {
-      console.warn("Failed to record job_call:", callErr.message);
-    }
-
-    if (!callResult.ok) {
-      let errorAr = "تعذر استخراج بيانات الحساب من المصدر.";
-      if (callResult.isRouteMaxCost) {
-        errorAr = "تجاوز الطلب سقف التكلفة المسموح به للمصدر ($0.01).";
-      } else if (callResult.isPlatformBalanceLow) {
-        errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
-      } else if (callResult.httpStatus === 404) {
-        errorAr = `الحساب @${cleanUsername} غير موجود أو أنه حساب خاص.`;
-      } else if (callResult.errorDetails) {
-        errorAr = `خطأ في استجابة المصدر: ${callResult.errorDetails}`;
-      }
-
-      await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لفشل الاستدعاء");
-      await tables.updateRow({
-        databaseId: "digr",
-        tableId: "jobs",
-        rowId: jobId,
-        data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
-      });
-      await emitProgress(errorAr, 0, "error");
-
-      // Record in jobs_internal
-      try {
-        await tables.createRow({
-          databaseId: "digr",
-          tableId: "jobs_internal",
-          rowId: ID.unique(),
-          data: {
-            jobId,
-            actualCostMicro: totalCostMicro,
-            revenueCredits: 0,
-            marginEgp: -(totalCostMicro / 1_000_000 * 50),
-            dataSource: "live",
-          },
-        });
-      } catch {}
-
-      return {
-        success: false,
-        jobId,
-        status: "failed",
-        deliveredUnits: 0,
-        reservedCredits,
-        chargedCredits: 0,
-        refundCredits: reservedCredits,
-        errorAr,
-      };
-    }
-
-    // Parse profile
-    profileData = parseTikTokProfileResponse(callResult.data, cleanUsername);
-    if (!profileData || (!profileData.uniqueId && !profileData.nickname)) {
-      const errorAr = `لم يتم العثور على بيانات عامة للحساب @${cleanUsername}. قد يكون الحساب مغلقاً أو محذوفاً.`;
-      await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم وجود بيانات للحساب");
-      await tables.updateRow({
-        databaseId: "digr",
-        tableId: "jobs",
-        rowId: jobId,
-        data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
-      });
-      await emitProgress(errorAr, 0, "error");
-      return {
-        success: false,
-        jobId,
-        status: "failed",
-        deliveredUnits: 0,
-        reservedCredits,
-        chargedCredits: 0,
-        refundCredits: reservedCredits,
-        errorAr,
-      };
-    }
-
-    // Create single structured row
-    collectedRows = [
-      {
-        id: profileData.id,
-        username: `@${profileData.uniqueId}`,
-        displayName: profileData.nickname,
-        bio: profileData.signature,
-        verified: profileData.verified ? "نعم" : "لا",
-        followers: profileData.followerCount,
-        following: profileData.followingCount,
-        likes: profileData.heartCount,
-        videosCount: profileData.videoCount,
-        bioLink: profileData.bioLink,
-        profileUrl: profileData.profileUrl,
-        collectedDate: profileData.collectedDate,
-      },
-    ];
-  } else if (fetchPageFn) {
-    // Pagination loop for custom/tested fetchPageFn
+  // Branch A: Custom mock fetcher (used in specialized pagination unit tests)
+  if (fetchPageFn) {
     let cursor: string | null = null;
     let page = 1;
 
     while (collectedRows.length < targetVolumeMax) {
-      // Check if job was cancelled externally mid-run
       try {
         const currentJobDoc: any = await tables.getRow({
           databaseId: "digr",
@@ -367,16 +464,13 @@ export async function executeMultiStepJob(
           isCancelled = true;
           break;
         }
-      } catch {
-        // Continue if job document read fails
-      }
+      } catch {}
 
       let pageResult = await fetchPageFn(cursor, page);
 
-      // Rate limit retry logic: if 429, retry once with backoff
       if (!pageResult.ok && (pageResult.httpStatus === 429 || pageResult.errorType === "rate_limit")) {
         await emitProgress("تم رصد ضغط مؤقت في المصدر. جاري إعادة المحاولة...", collectedRows.length, "info");
-        await new Promise((r) => setTimeout(r, 100)); // Short backoff
+        await new Promise((r) => setTimeout(r, 100));
         pageResult = await fetchPageFn(cursor, page);
       }
 
@@ -421,15 +515,287 @@ export async function executeMultiStepJob(
       page++;
     }
   } else {
-    // No fetchPageFn and capability is not implemented
-    const errorAr = `خدمة ${templateSlug} قيد التفعيل ولا يتوفر لها مزود بيانات نشط حالياً.`;
-    await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم توفر الخدمة");
+    // Branch B: Generic Multi-Step Executor (TREG API calls via POST https://treg.to/call/{endpointId})
+    let steps: GenericJobStep[] = [];
+
+    if (input.steps && input.steps.length > 0) {
+      steps = input.steps;
+    } else {
+      // Look up quote from plans_quotes if available
+      try {
+        const quotesRes = await tables.listRows({
+          databaseId: "digr",
+          tableId: "plans_quotes",
+          queries: [Query.equal("jobId", jobId), Query.limit(1)],
+        });
+        if (quotesRes.rows.length > 0) {
+          const quote = quotesRes.rows[0] as any;
+          const items = parseStoredPlan(quote.itemsJson);
+          if (Array.isArray(items) && items.length > 0) {
+            steps = items.map((it: any, idx: number) => ({
+              stepId: it.stepId || `step_${idx + 1}`,
+              capabilitySlug: it.capabilitySlug,
+              endpointId: it.endpointId || it.capabilitySlug,
+              params: it.params || {},
+              targetVolumeMin: it.targetVolumeMin,
+              targetVolumeMax: it.targetVolumeMax || targetVolumeMax,
+              paginationStrategy: it.paginationStrategy || "none",
+              unitPricePoints: it.unitPricePoints || unitPricePoints,
+            }));
+          }
+        }
+      } catch {}
+
+      if (steps.length === 0 && params._planItems && Array.isArray(params._planItems)) {
+        steps = params._planItems.map((it: any, idx: number) => ({
+          stepId: it.stepId || `step_${idx + 1}`,
+          capabilitySlug: it.capabilitySlug,
+          endpointId: it.endpointId || it.capabilitySlug,
+          params: it.params || {},
+          targetVolumeMax: it.targetVolumeMax || targetVolumeMax,
+          paginationStrategy: it.paginationStrategy || "none",
+          unitPricePoints: it.unitPricePoints || unitPricePoints,
+        }));
+      }
+
+      if (steps.length === 0) {
+        steps = [
+          {
+            stepId: "step_1",
+            capabilitySlug: templateSlug,
+            endpointId: params.endpointId || (templateSlug === "tiktok-profile" ? "tikhub.tiktok.user.profile" : templateSlug),
+            params,
+            targetVolumeMax,
+            paginationStrategy: (params.paginationStrategy || (templateSlug === "tiktok-profile" ? "none" : "page")) as any,
+            unitPricePoints,
+          },
+        ];
+      }
+    }
+
+    const jobPointsCap = getConfiguredJobPointsCap();
+
+    for (const step of steps) {
+      if (collectedRows.length >= targetVolumeMax) break;
+
+      let endpointId = step.endpointId;
+      if (!endpointId || endpointId === step.capabilitySlug) {
+        if (step.capabilitySlug === "tiktok-profile") {
+          endpointId = "tikhub.tiktok.user.profile";
+        } else {
+          try {
+            const catMatches = await searchCatalog(step.capabilitySlug || "");
+            if (catMatches.length > 0) {
+              endpointId = catMatches[0].id || catMatches[0].slug;
+            }
+          } catch {}
+          endpointId = endpointId || step.capabilitySlug || "unknown";
+        }
+      }
+
+      const paginationStrategy = step.paginationStrategy || "none";
+      const stepTargetVolume = step.targetVolumeMax || targetVolumeMax;
+      const pageSize = Number(step.params?.limit || step.params?.count || step.params?.per_page || 20);
+
+      let cursor: string | null = null;
+      let offset = 0;
+      let page = 1;
+      const maxPagesPerStep = 50;
+
+      while (collectedRows.length < targetVolumeMax && page <= maxPagesPerStep) {
+        // Spend Cap Check before EVERY page call
+        const currentChargeEstimate = Math.ceil(collectedRows.length * unitPricePoints);
+        const remainingForStep = Math.max(1, stepTargetVolume - collectedRows.length);
+        const estItemsThisPage = Math.min(pageSize, remainingForStep);
+        const estPagePoints = pricingStrategyPointsEstimate(input.pricingUnit, estItemsThisPage, unitPricePoints);
+
+        if (currentChargeEstimate + estPagePoints > reservedCredits || currentChargeEstimate + estPagePoints > jobPointsCap) {
+          if (collectedRows.length === 0) {
+            const errorAr = "الرصيد المحجوز غير كافٍ لمعالجة الدفعة الأولى من السجلات.";
+            await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم كفاية الرصيد للدفعة الأولى");
+            await tables.updateRow({
+              databaseId: "digr",
+              tableId: "jobs",
+              rowId: jobId,
+              data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
+            });
+            await emitProgress(errorAr, 0, "error");
+            return {
+              success: false,
+              jobId,
+              status: "failed",
+              deliveredUnits: 0,
+              reservedCredits,
+              chargedCredits: 0,
+              refundCredits: reservedCredits,
+              errorAr,
+            };
+          }
+          await emitProgress("تم الوصول إلى سقف النقاط المحجوزة للطلب، تم إنهاء الجمع وحفظ السجلات المتاحة.", collectedRows.length, "info");
+          break;
+        }
+
+        const spendCapCheck = await checkProviderDailySpendCap(0.01, tables);
+        if (!spendCapCheck.allowed) {
+          if (collectedRows.length === 0) {
+            const errorAr = "تم بلوغ الحد اليومي لمزود البيانات ($0.80 USD). تم إيقاف الطلب واسترجاع الرصيد المحجوز.";
+            await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع الرصيد لبلوغ الحد اليومي للمزود");
+            await tables.updateRow({
+              databaseId: "digr",
+              tableId: "jobs",
+              rowId: jobId,
+              data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
+            });
+            await emitProgress(errorAr, 0, "error");
+            return {
+              success: false,
+              jobId,
+              status: "failed",
+              deliveredUnits: 0,
+              reservedCredits,
+              chargedCredits: 0,
+              refundCredits: reservedCredits,
+              errorAr,
+            };
+          }
+          await emitProgress("تم بلوغ الحد اليومي لمزود البيانات ($0.80 USD). تم حفظ السجلات المستخرجة.", collectedRows.length, "warning");
+          break;
+        }
+
+        // Merge step.params with pagination params
+        const pageParams: Record<string, any> = { ...(step.params || {}) };
+        if (paginationStrategy === "cursor") {
+          if (cursor) {
+            pageParams.cursor = cursor;
+            pageParams.next_cursor = cursor;
+          }
+        } else if (paginationStrategy === "offset") {
+          pageParams.offset = offset;
+          pageParams.limit = pageSize;
+        } else if (paginationStrategy === "page") {
+          pageParams.page = page;
+          pageParams.limit = pageSize;
+        }
+
+        const callResult = await executeTregCallWithRetry({
+          endpointId,
+          method: "POST",
+          params: pageParams,
+          userId,
+          jobId,
+          stepId: step.stepId,
+          page,
+          routeMaxCostUsd: "0.05",
+        });
+
+        // Record call in job_calls collection
+        try {
+          await tables.createRow({
+            databaseId: "digr",
+            tableId: "job_calls",
+            rowId: ID.unique(),
+            data: {
+              jobId,
+              tregCallId: callResult.tregCallId || `treg_${Date.now()}`,
+              endpointId,
+              idemKey: `job_${jobId}_step_${step.stepId}_p${page}`,
+              httpStatus: callResult.httpStatus,
+              costMicro: callResult.costMicro || 0,
+              cacheHit: false,
+              fetchedAt: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
+            },
+          });
+        } catch {}
+
+        if (callResult.costMicro) {
+          totalCostMicro += callResult.costMicro;
+          await recordProviderCallSpend(callResult.costMicro, tables);
+        }
+
+        if (!callResult.ok) {
+          if (collectedRows.length === 0) {
+            let errorAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
+            if (callResult.isRouteMaxCost) {
+              errorAr = "تجاوز الطلب سقف التكلفة المسموح به للمصدر ($0.05).";
+            } else if (callResult.isPlatformBalanceLow) {
+              errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
+            } else if (callResult.httpStatus === 404) {
+              errorAr = "الهدف المطلوب غير موجود أو محمي.";
+            } else if (callResult.httpStatus === 429) {
+              errorAr = "المصدر مشغول حالياً (429 Rate Limit) بعد استنفاد محاولات الإعادة.";
+            }
+
+            await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لفشل الاستخراج من المصدر");
+            await tables.updateRow({
+              databaseId: "digr",
+              tableId: "jobs",
+              rowId: jobId,
+              data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
+            });
+            await emitProgress(errorAr, 0, "error");
+            return {
+              success: false,
+              jobId,
+              status: "failed",
+              deliveredUnits: 0,
+              reservedCredits,
+              chargedCredits: 0,
+              refundCredits: reservedCredits,
+              errorAr,
+            };
+          }
+          // Failed page after collecting some rows: keep rows collected from earlier pages
+          await emitProgress(`توقف المصدر مؤقتاً عند الصفحة ${page}. تم الاحتفاظ بـ ${collectedRows.length} سجل مجمع.`, collectedRows.length, "warning");
+          break;
+        }
+
+        const newRows = extractAndFlattenRows(callResult.data);
+        if (newRows.length === 0) {
+          break;
+        }
+
+        collectedRows.push(...newRows);
+        await emitProgress(`تم جمع ${collectedRows.length} سجل حتى الآن...`, collectedRows.length, "progress");
+
+        if (paginationStrategy === "cursor") {
+          const nextCur =
+            callResult.data?.next_cursor ||
+            callResult.data?.cursor ||
+            callResult.data?.nextCursor ||
+            callResult.data?.pagination?.next_cursor ||
+            callResult.data?.meta?.next_cursor ||
+            callResult.data?.next_max_id;
+
+          if (!nextCur || nextCur === cursor) break;
+          cursor = String(nextCur);
+          page++;
+        } else if (paginationStrategy === "offset") {
+          offset += newRows.length;
+          if (newRows.length < pageSize) break;
+          page++;
+        } else if (paginationStrategy === "page") {
+          page++;
+          if (newRows.length < pageSize) break;
+        } else {
+          break; // strategy === "none"
+        }
+
+        if (collectedRows.length >= stepTargetVolume) break;
+      }
+    }
+  }
+
+  if (collectedRows.length === 0) {
+    const errorAr = "لم يُعثر على أي بيانات مطابقة من المصدر.";
+    await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم وجود بيانات");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
       rowId: jobId,
       data: { status: "failed", errorAr, finishedAt: new Date().toISOString() },
     });
+    await emitProgress(errorAr, 0, "error");
     return {
       success: false,
       jobId,
@@ -442,7 +808,7 @@ export async function executeMultiStepJob(
     };
   }
 
-  // STRICT GUARD 2: Refuse any row containing placeholder text
+  // Refuse placeholder data
   const hasPlaceholder = collectedRows.some((r) => {
     const s = JSON.stringify(r);
     return s.includes("Record 1 for") || s.includes("placeholder");
@@ -472,12 +838,12 @@ export async function executeMultiStepJob(
 
   const deliveredUnits = Math.min(collectedRows.length, targetVolumeMax);
 
-  // 3. Exact Settlement Formula: charge = ceil(deliveredUnits * unitPricePoints)
+  // Settlement: charge = ceil(deliveredUnits * unitPricePoints)
   const settlement = calculateFinalSettlement(deliveredUnits, unitPricePoints, reservedCredits);
   const chargedCredits = settlement.chargePoints;
   const refundCredits = settlement.refundPoints;
 
-  // 4. Release-First Completion Sequence in Ledger
+  // Release-first completion order (rel_ first then chg_)
   await completeJobWithRelFirst(
     tables,
     userId,
@@ -487,33 +853,26 @@ export async function executeMultiStepJob(
     isCancelled ? "تسوية طلب ملغى جزئياً" : "تسوية واكتمال استخراج البيانات"
   );
 
-  // 5. Generate and Store Output Files (Excel, PDF, CSV, JSON)
+  // Artifact generation
   const dateStr = new Date().toISOString().slice(0, 10);
   const finalPayload: any = {
     metadata: {
       platform: "Digr Data Platform",
       company: "Digr",
-      title: profileData
-        ? `نتائج استخراج ملف تيك توك الشخصي (${profileData.nickname})`
-        : `نتائج استخراج ${templateSlug}`,
+      title: `نتائج استخراج ${templateSlug}`,
       template: templateSlug,
       jobId,
       collectedAt: new Date().toISOString(),
       rowsCount: deliveredUnits,
-      methodology: profileData
-        ? `تم استخراج بيانات الحساب العام @${profileData.uniqueId} بنجاح بتاريخ ${dateStr} من المصدر الرسمي. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`
-        : `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
+      methodology: `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
     },
-    rows: collectedRows,
+    rows: collectedRows.slice(0, deliveredUnits),
   };
-
-  if (profileData) {
-    finalPayload.profile = profileData;
-  }
 
   const xlsxFileId = `xlsx_${jobId}`;
   const pdfFileId = `pdf_${jobId}`;
   const csvFileId = `csv_${jobId}`;
+  const methodologyFileId = `methodology_${jobId}`;
   const jsonFileId = `json_${jobId}`;
 
   if (storage) {
@@ -523,11 +882,11 @@ export async function executeMultiStepJob(
         generatePdfReport(finalPayload),
         Promise.resolve(generateCsvReport(finalPayload)),
       ]);
+      const methodologyText = generateMethodologyText(finalPayload);
 
       const permissions = [Permission.read(Role.user(userId)), Permission.read(Role.label("admin"))];
 
-      // Safe idempotent deletion of existing file IDs before upload
-      for (const fid of [xlsxFileId, pdfFileId, csvFileId]) {
+      for (const fid of [xlsxFileId, pdfFileId, csvFileId, methodologyFileId]) {
         try {
           await storage.deleteFile("results", fid);
         } catch {}
@@ -562,12 +921,20 @@ export async function executeMultiStepJob(
           permissions
         ),
         storage.createFile(
+          "results",
+          methodologyFileId,
+          new File([new Uint8Array(Buffer.from(methodologyText, "utf-8"))], `methodology_${jobId}.txt`, {
+            type: "text/plain; charset=utf-8",
+          }),
+          permissions
+        ),
+        storage.createFile(
           "job_data",
           jsonFileId,
           new File([new Uint8Array(Buffer.from(JSON.stringify(finalPayload, null, 2)))], `digr_${templateSlug}_${jobId}.json`, {
             type: "application/json",
           }),
-          [] // server-only: no client permissions
+          []
         ),
       ]);
     } catch (storageErr: any) {
@@ -575,9 +942,9 @@ export async function executeMultiStepJob(
     }
   }
 
-  // 6. Record server-only jobs_internal data
+  // Record jobs_internal
   try {
-    const marginEgp = (chargedCredits * 0.1) - (totalCostMicro / 1_000_000 * 50);
+    const marginEgp = chargedCredits * 0.1 - (totalCostMicro / 1_000_000) * 50;
     const internalDoc = {
       jobId,
       actualCostMicro: totalCostMicro,
@@ -611,20 +978,22 @@ export async function executeMultiStepJob(
     console.warn("Failed to record jobs_internal:", intErr.message);
   }
 
-  // 7. Update Job Document to status: 'done'
+  // Update Job Document to status: 'done'
   const finalStatus = isCancelled ? "cancelled" : "done";
-  await tables.updateRow({
-    databaseId: "digr",
-    tableId: "jobs",
-    rowId: jobId,
-    data: {
-      status: finalStatus,
-      chargedCredits,
-      rowsCollected: deliveredUnits,
-      resultFileId: xlsxFileId,
-      finishedAt: new Date().toISOString(),
-    },
-  });
+  try {
+    await tables.updateRow({
+      databaseId: "digr",
+      tableId: "jobs",
+      rowId: jobId,
+      data: {
+        status: finalStatus,
+        chargedCredits,
+        rowsCollected: deliveredUnits,
+        resultFileId: xlsxFileId,
+        finishedAt: new Date().toISOString(),
+      },
+    });
+  } catch {}
 
   await emitProgress(
     `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${chargedCredits} نقطة، وتم استرداد ${refundCredits} نقطة لمحافظتك.`,
@@ -644,9 +1013,21 @@ export async function executeMultiStepJob(
       xlsxFileId,
       pdfFileId,
       csvFileId,
+      methodologyFileId,
       jsonFileId,
     },
   };
+}
+
+function pricingStrategyPointsEstimate(
+  pricingUnit: "call" | "item" | "page" | undefined,
+  pageSize: number,
+  unitPricePoints: number
+): number {
+  if (pricingUnit === "page" || pricingUnit === "call") {
+    return unitPricePoints;
+  }
+  return Math.ceil(pageSize * unitPricePoints);
 }
 
 /**
@@ -673,7 +1054,6 @@ export async function runJobWatchdog(
   const skippedIds: string[] = [];
 
   for (const job of staleJobsRes.rows as any[]) {
-    // Secondary safety guard in case mock/DB returns rows newer than threshold
     if (job.status !== "running" && job.status !== "queued") {
       skippedIds.push(job.$id);
       continue;
@@ -806,4 +1186,3 @@ export async function reportStuckJobsReadOnly(
     ],
   };
 }
-

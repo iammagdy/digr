@@ -2,10 +2,12 @@ export interface TregCallOptions {
   baseUrl?: string;
   token?: string;
   endpointId: string;
-  method: "GET" | "POST";
+  method?: "GET" | "POST";
   params?: Record<string, any>;
   userId: string;
   jobId: string;
+  stepId?: string;
+  page?: number;
   routeMaxCostUsd?: string | number;
   idempotencyKey?: string;
   testScenario?: string;
@@ -29,8 +31,8 @@ export interface TregCallResult {
  * - URL: https://treg.to/call/<endpoint-id>
  * - Auth: X-Treg-Token
  * - Cost cap: X-Treg-Route-Max-Cost (USD, default 0.05)
- * - Metadata tag: X-Treg-Meta (customer=USERID, job=JOBID)
- * - Retry key: Idempotency-Key
+ * - Metadata tag: X-Treg-Meta json with job_id, user_id, step_id
+ * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
 export async function executeTregCall(options: TregCallOptions): Promise<TregCallResult> {
@@ -59,13 +61,20 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     ? String(options.routeMaxCostUsd)
     : "0.05";
 
-  const idemKey = options.idempotencyKey || `idem_${options.jobId}`;
+  const stepId = options.stepId || "step_1";
+  const page = options.page || 1;
+  const idemKey = options.idempotencyKey || `job_${options.jobId}_step_${stepId}_p${page}`;
+  const metaJson = JSON.stringify({
+    job_id: options.jobId,
+    user_id: options.userId,
+    step_id: stepId,
+  });
 
   let targetUrl = `${baseUrl}/call/${options.endpointId}`;
   const headers: Record<string, string> = {
     "X-Treg-Token": token,
     "X-Treg-Route-Max-Cost": costCapUsd,
-    "X-Treg-Meta": `customer=${options.userId}, job=${options.jobId}`,
+    "X-Treg-Meta": metaJson,
     "Idempotency-Key": idemKey,
   };
 
@@ -76,7 +85,8 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
 
   let requestBody: string | undefined = undefined;
 
-  if (options.method === "GET") {
+  const method = options.method || "POST";
+  if (method === "GET") {
     const searchParams = new URLSearchParams();
     for (const [k, v] of Object.entries(cleanParams)) {
       if (v !== undefined && v !== null && v !== "") {
@@ -97,7 +107,7 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
 
   try {
     response = await fetch(targetUrl, {
-      method: options.method,
+      method,
       headers,
       body: requestBody,
     });
