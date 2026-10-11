@@ -174,8 +174,8 @@ export default function ResultsCanvas({
             </div>
           )}
           <div className="mt-3 grid grid-cols-2 gap-2">
-            <Button size="sm" onClick={onKeepResult}>اعتماد النتيجة</Button>
-            <Button size="sm" variant="secondary" onClick={onEditAndFetch}>تعديل وإعادة الجمع</Button>
+            <Button size="sm" onClick={onKeepResult}>كمّل بالنتيجة دي</Button>
+            <Button size="sm" variant="secondary" onClick={onEditAndFetch}>عدّل واسحب تاني</Button>
           </div>
           <button
             type="button"
@@ -183,7 +183,7 @@ export default function ResultsCanvas({
             aria-expanded={complaintOpen}
             className="mt-2 min-h-11 w-full cursor-pointer rounded-xl border border-dashed border-sand-300 px-3 py-2 text-xs font-semibold text-sand-600 transition-colors hover:text-ink-900"
           >
-            النتيجة لا تطابق ما طلبت؟
+            مش ده المطلوب؟
           </button>
           {complaintOpen && (
             <div className="animate-fade mt-2 space-y-2 rounded-xl bg-white p-3 ring-1 ring-sand-200" role="group" aria-label="ما المشكلة؟">

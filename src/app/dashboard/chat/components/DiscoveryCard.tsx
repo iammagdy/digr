@@ -243,7 +243,7 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                     onClick={() => setOtherOpen((current) => ({ ...current, [item.id]: !current[item.id] }))}
                     className="min-h-11 cursor-pointer rounded-xl border border-dashed border-sand-300 bg-white px-3.5 text-xs font-semibold text-ink-700 transition-colors hover:border-accent/50 hover:text-accent-ink focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    + خيار آخر
+                    + أخرى
                   </button>
                   {otherOpen[item.id] && (
                     <div className="animate-fade mt-2 flex flex-col gap-2 sm:flex-row">
@@ -285,7 +285,7 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                     onClick={() => setAnswer(item.id, "", true)}
                     className="min-h-11 cursor-pointer rounded-xl px-3 text-xs font-semibold text-accent underline decoration-accent/40 underline-offset-4 transition-colors hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    تخطَّ واستخدم المقترح: {item.defaultOption}
+                    تخطّى واستخدم الافتراضي: {item.defaultOption}
                   </button>
                 )}
               </div>

@@ -236,7 +236,8 @@ describe("dependent multi-step plans (fake data only)", () => {
     const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
     expect(card).toContain("quote.isDependent");
     expect(card).toContain("التنفيذ الفعلي غير مفعّل حالياً");
-    expect(card).toContain("حتى {quote.targetVolumeMax} سجل");
-    expect(card).toContain("disabled={isStarting || !quote.isAffordable || quote.isDependent}");
+    expect(card).toContain("حتى {quote.targetVolumeMax");
+    // The start button also disables on quote expiry — strictly stronger than dependent-only.
+    expect(card).toContain("disabled={isStarting || !quote.isAffordable || quote.isDependent || expired}");
   });
 });

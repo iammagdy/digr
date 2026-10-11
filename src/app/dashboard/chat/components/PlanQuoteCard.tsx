@@ -182,14 +182,14 @@ export default function PlanQuoteCard({
               </div>
             </fieldset>
             <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setIsEditing(false)} className="min-h-11 cursor-pointer rounded-xl px-4 text-xs font-semibold text-sand-600 hover:text-ink-900">
+              <button type="button" onClick={() => setIsEditing(false)} className="min-h-11 cursor-pointer rounded-xl px-4 text-xs font-semibold text-sand-600 transition-colors hover:text-ink-900 focus-visible:outline-2 focus-visible:outline-accent">
                 إلغاء
               </button>
               <button
                 type="button"
                 onClick={handleSave}
                 disabled={savingEdit}
-                className="min-h-11 cursor-pointer rounded-xl bg-accent px-5 text-xs font-bold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                className="focus-visible:outline-2 focus-visible:outline-accent min-h-11 cursor-pointer rounded-xl bg-accent px-5 text-xs font-bold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {savingEdit ? "جاري تحديث العرض..." : "تطبيق وتحديث العرض"}
               </button>
@@ -199,7 +199,7 @@ export default function PlanQuoteCard({
 
         {quote.isDependent && (
           <Alert tone="warning" title="خطة متعددة المراحل">
-            الحجز محسوب على سقف كل مرحلة، والتنفيذ الفعلي غير مفعّل حاليًا.
+            الحجز محسوب على سقف كل مرحلة، والتنفيذ الفعلي غير مفعّل حالياً.
             {(quote.stepCostRanges || []).length > 0 && (
               <ul className="tnum mt-2 space-y-1">
                 {(quote.stepCostRanges || []).map((range) => (
@@ -229,7 +229,7 @@ export default function PlanQuoteCard({
                 <button
                   type="button"
                   onClick={() => onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
-                  className="tnum min-h-11 cursor-pointer rounded-xl bg-amber-points px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-amber-points-hover"
+                  className="tnum min-h-11 cursor-pointer rounded-xl bg-amber-points px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-amber-points-hover focus-visible:outline-2 focus-visible:outline-accent"
                 >
                   قبول العرض المخفض: حتى {quote.downscaledOffer.maxAffordableUnits} سجل مقابل {quote.downscaledOffer.affordableQuotedPoints} نقطة
                 </button>
@@ -251,7 +251,7 @@ export default function PlanQuoteCard({
             onClick={() => setIsEditing(!isEditing)}
             disabled={quote.isDependent}
             title={quote.isDependent ? "تعديل كل مرحلة غير متاح في هذه النسخة" : undefined}
-            className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-sand-600 underline decoration-sand-300 underline-offset-4 transition-colors hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-xl px-3 text-xs font-semibold text-sand-600 underline decoration-sand-300 underline-offset-4 transition-colors hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent"
           >
             <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -262,7 +262,7 @@ export default function PlanQuoteCard({
             type="button"
             onClick={() => onStart(quote)}
             disabled={isStarting || !quote.isAffordable || quote.isDependent || expired}
-            className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-2xl bg-primary px-7 py-3 text-sm font-bold text-white shadow-xs transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex min-h-12 cursor-pointer items-center gap-2 rounded-2xl bg-primary px-7 py-3 text-sm font-bold text-white shadow-xs transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-white"
           >
             {isStarting ? (
               <>

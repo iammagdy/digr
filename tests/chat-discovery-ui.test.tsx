@@ -7,11 +7,34 @@ import { LlmClient } from "../src/functions/shared/llmClient";
 describe("chat discovery clarification UI", () => {
   it("normalizes a legacy question once and retains the current Arabic intro", () => {
     const question = "ما المنصة المستهدفة؟";
-    const presentation = buildClarificationPresentation({
-      type: "ask_clarification",
-      reasonAr: "نحتاج تحديد المصدر قبل إعداد الخطة.",
-      questions: [{ question, options: ["تيك توك"] }],
-    });
+    // The trust boundary only offers platform options backed by an enabled
+    // capability, so the test supplies the enabled TikTok capability explicitly.
+    const presentation = buildClarificationPresentation(
+      {
+        type: "ask_clarification",
+        reasonAr: "نحتاج تحديد المصدر قبل إعداد الخطة.",
+        questions: [{ question, options: ["تيك توك"] }],
+      },
+      {
+        capabilities: [
+          {
+            slug: "tiktok-profile",
+            category: "tiktok",
+            enabled: true,
+            nameAr: "تيك توك",
+            nameEn: "TikTok Profile",
+            descriptionAr: "استخراج بيانات حساب تيك توك",
+            paramsSchema: "{}",
+            tregEndpointId: "tiktok-profile",
+            tregMethod: "GET",
+            pricingUnit: "call",
+            unitCostUsd: 0.01,
+            maxRows: 500,
+            paginationType: "none",
+          },
+        ],
+      },
+    );
 
     expect(presentation.contentAr).toBe("نحتاج تحديد المصدر قبل إعداد الخطة.");
     expect(presentation.clarificationItems).toHaveLength(1);
