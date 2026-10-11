@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { normalizeDiscoveryQuestions, sanitizeDiscoveryText, type DiscoveryAnswer } from "./discoveryQuestions";
+import { Badge } from "@/components/ui";
 
 interface DiscoveryCardProps {
   questions: unknown;
@@ -12,7 +13,10 @@ interface DiscoveryCardProps {
 
 function answerLabel(answer: DiscoveryAnswer | undefined): string {
   if (!answer) return "بانتظار الإجابة";
-  if (answer.skipped) return "استخدم الافتراضي";
+  if (answer.skipped) {
+    const v = Array.isArray(answer.value) ? answer.value.join("، ") : answer.value;
+    return v ? `القيمة المقترحة: ${v}` : "سيُطلب منك الاختيار";
+  }
   return Array.isArray(answer.value) ? answer.value.join("، ") : answer.value || "";
 }
 
@@ -40,10 +44,17 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
 
   const answerList = normalizedQuestions.map((question) => answers[question.id]).filter(Boolean);
   const allAnswered = normalizedQuestions.length > 0 && answerList.length === normalizedQuestions.length;
+  const answeredCount = answerList.length;
 
   function setAnswer(questionId: string, value: string | string[], skipped = false) {
     const question = normalizedQuestions.find((item) => item.id === questionId);
     if (!question) return;
+    // Trust boundary: on skip, the client echoes the displayed default (computed
+    // server-side) so the assistant receives a real value instead of placeholder
+    // text. The server treats this as the user's explicit answer — it cannot
+    // revalidate the default — and any plan built from it still passes
+    // server-side plan and quote validation.
+    const resolvedDefault = skipped ? question.defaultOption : undefined;
     setAnswers((previous) => ({
       ...previous,
       [questionId]: {
@@ -51,6 +62,7 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
         question: question.text,
         ...(skipped ? {} : { value }),
         ...(skipped ? { skipped: true } : {}),
+        ...(resolvedDefault ? { value: resolvedDefault, resolvedDefault: true } : {}),
       },
     }));
   }
@@ -107,14 +119,15 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
     setSummaryDraft("");
   }
 
+  /* Completed summary */
   if (completedAnswers?.length) {
     return (
-      <div className="mt-3 rounded-xl border border-sand-200 bg-sand-50 p-3" aria-label="ملخص الإجابات">
-        <div className="mb-2 text-xs font-semibold text-ink-800">ملخص إجاباتك</div>
+      <div className="mt-3 rounded-2xl border border-sand-200 bg-sand-50 p-4" aria-label="ملخص الإجابات">
+        <p className="mb-2.5 text-xs font-bold text-ink-800">ملخص إجاباتك</p>
         <div className="flex flex-wrap gap-1.5">
           {completedAnswers.map((answer) => (
-            <span key={answer.questionId} className="max-w-full rounded-lg border border-sand-200 bg-white px-2.5 py-1.5 text-xs text-ink-800 break-words">
-              <bdi>{answer.question}:</bdi> {answerLabel(answer)}
+            <span key={answer.questionId} className="max-w-full rounded-xl border border-sand-200 bg-white px-3 py-2 text-xs text-ink-800 break-words">
+              <bdi className="font-semibold">{answer.question}:</bdi> {answerLabel(answer)}
             </span>
           ))}
         </div>
@@ -124,50 +137,82 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
 
   if (normalizedQuestions.length === 0) {
     return (
-      <div className="mt-3 rounded-xl border border-sand-300 bg-sand-50 p-3 text-xs text-sand-700">
-        تعذر عرض أسئلة التوضيح. يمكنك كتابة تفاصيل طلبك في مربع الرسالة.
+      <div className="mt-3 rounded-2xl border border-sand-200 bg-sand-50 p-4 text-xs leading-relaxed text-sand-700">
+        تعذّر عرض أسئلة التوضيح. يمكنك كتابة تفاصيل طلبك في مربع الرسالة.
       </div>
     );
   }
 
   return (
-    <section className="mt-3 rounded-2xl border border-sand-300 bg-sand-50 p-3.5 sm:p-4 shadow-2xs" aria-label="أسئلة استكشافية">
-      <div className="mb-3 text-xs font-semibold text-ink-700">أسئلة استكشافية لتخصيص الخطة:</div>
+    <section className="mt-3 overflow-hidden rounded-2xl border border-sand-200 bg-white shadow-[var(--shadow-card)]" aria-label="أسئلة استكشافية">
+      {/* Header with progress */}
+      <div className="border-b border-sand-100 bg-sand-50/60 px-4 py-3.5 sm:px-5">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-ink-900">لنخصّص خطة بحثك</h3>
+            <p className="mt-0.5 text-xs text-sand-600">أجب عن الأسئلة التالية — أو تخطَّ ما يناسبك</p>
+          </div>
+          <span className="tnum shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-ink-800 ring-1 ring-sand-200" aria-live="polite">
+            {answeredCount} / {normalizedQuestions.length}
+          </span>
+        </div>
+        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-sand-200" role="progressbar" aria-valuenow={answeredCount} aria-valuemin={0} aria-valuemax={normalizedQuestions.length} aria-label="تقدم الإجابات">
+          <div className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${normalizedQuestions.length ? (answeredCount / normalizedQuestions.length) * 100 : 0}%` }} />
+        </div>
+      </div>
 
-      <div className="space-y-3">
+      <div className="space-y-3 p-3.5 sm:p-5">
         {normalizedQuestions.map((item, index) => {
           const selectedValue = answers[item.id]?.value;
           const selectedOptions = Array.isArray(selectedValue) ? selectedValue : selectedValue ? [selectedValue] : [];
           const isAnswered = Boolean(answers[item.id]);
+          const wasSkipped = Boolean(answers[item.id]?.skipped);
           return (
-            <div id={`discovery-${item.id}`} key={item.id} className="rounded-xl border border-sand-200 bg-white p-3" dir="rtl">
-              <div className="mb-2 break-words text-sm font-semibold text-ink-900" dir="auto">
-                {index + 1}. {item.text}
+            <div
+              id={`discovery-${item.id}`}
+              key={item.id}
+              className={`rounded-2xl border p-4 transition-colors ${isAnswered ? "border-accent/30 bg-accent-light/30" : "border-sand-200 bg-white"}`}
+              dir="rtl"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-bold leading-relaxed text-ink-900" dir="auto">
+                  <span aria-hidden="true" className="tnum me-1.5 text-xs font-bold text-accent">{index + 1}.</span>
+                  {item.text}
+                </p>
+                {isAnswered && (
+                  <Badge tone={wasSkipped ? "neutral" : "success"} className="shrink-0">
+                    {wasSkipped ? "مقترح" : "تم"}
+                  </Badge>
+                )}
               </div>
 
               {item.options.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-start gap-2">
-                  {item.options.map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      disabled={disabled}
-                      aria-pressed={selectedOptions.includes(option)}
-                      onClick={() => chooseOption(item.id, option)}
-                      className={`min-h-11 max-w-full rounded-lg border px-3 py-2 text-xs font-medium leading-5 whitespace-normal break-words transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60 ${
-                        selectedOptions.includes(option)
-                          ? "border-primary bg-primary/10 text-ink-900"
-                          : "border-sand-300 bg-sand-100 text-ink-800 hover:bg-sand-200"
-                      }`}
-                    >
-                      {option}
-                    </button>
-                  ))}
+                <div className="mt-3 flex flex-wrap gap-2" role={item.type === "multi" ? "group" : "radiogroup"} aria-label={item.text}>
+                  {item.options.map((option) => {
+                    const selected = selectedOptions.includes(option);
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        disabled={disabled}
+                        role={item.type === "multi" ? "checkbox" : "radio"}
+                        aria-checked={selected}
+                        onClick={() => chooseOption(item.id, option)}
+                        className={`min-h-11 max-w-full cursor-pointer rounded-xl border px-3.5 py-2 text-xs font-semibold whitespace-normal break-words transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60 ${
+                          selected
+                            ? "border-accent bg-accent text-white shadow-xs"
+                            : "border-sand-300 bg-white text-ink-800 hover:border-accent/50 hover:bg-accent-light/40"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
               {item.type === "free" && (
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                   <input
                     type="text"
                     maxLength={200}
@@ -175,13 +220,14 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                     value={freeDraft[item.id] ?? (typeof selectedValue === "string" && !item.options.includes(selectedValue) ? selectedValue : "")}
                     onChange={(event) => setFreeDraft((current) => ({ ...current, [item.id]: event.target.value }))}
                     placeholder="اكتب إجابة قصيرة"
-                    className="min-h-11 min-w-0 flex-1 rounded-lg border border-sand-300 px-3 text-sm text-ink-900 outline-none focus-visible:outline-2 focus-visible:outline-primary"
+                    aria-label={item.text}
+                    className="min-h-11 min-w-0 flex-1 rounded-xl border border-sand-300 bg-white px-3.5 text-sm text-ink-900 outline-none placeholder:text-sand-400 focus:border-accent"
                   />
                   <button
                     type="button"
                     disabled={disabled || !sanitizeDiscoveryText(freeDraft[item.id], 200)}
                     onClick={() => submitFreeText(item.id)}
-                    className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 text-xs font-semibold text-ink-800 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50"
+                    className="min-h-11 shrink-0 cursor-pointer rounded-xl bg-primary px-4 text-xs font-bold text-white transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     اعتماد الإجابة
                   </button>
@@ -189,18 +235,18 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
               )}
 
               {item.allowOther && (
-                <div className="mt-2">
+                <div className="mt-2.5">
                   <button
                     type="button"
                     disabled={disabled}
                     aria-expanded={Boolean(otherOpen[item.id])}
                     onClick={() => setOtherOpen((current) => ({ ...current, [item.id]: !current[item.id] }))}
-                    className="min-h-11 rounded-lg border border-sand-300 bg-white px-3 text-xs font-semibold text-ink-800 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
+                    className="min-h-11 cursor-pointer rounded-xl border border-dashed border-sand-300 bg-white px-3.5 text-xs font-semibold text-ink-700 transition-colors hover:border-accent/50 hover:text-accent-ink focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    أخرى
+                    + خيار آخر
                   </button>
                   {otherOpen[item.id] && (
-                    <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                    <div className="animate-fade mt-2 flex flex-col gap-2 sm:flex-row">
                       <input
                         type="text"
                         maxLength={item.type === "multi" ? 40 : 120}
@@ -208,13 +254,14 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                         value={otherDraft[item.id] ?? ""}
                         onChange={(event) => setOtherDraft((current) => ({ ...current, [item.id]: event.target.value }))}
                         placeholder="اكتب اختيارك"
-                        className="min-h-11 min-w-0 flex-1 rounded-lg border border-sand-300 px-3 text-sm text-ink-900 outline-none focus-visible:outline-2 focus-visible:outline-primary"
+                        aria-label={`خيار آخر لـ: ${item.text}`}
+                        className="min-h-11 min-w-0 flex-1 rounded-xl border border-sand-300 bg-white px-3.5 text-sm text-ink-900 outline-none placeholder:text-sand-400 focus:border-accent"
                       />
                       <button
                         type="button"
                         disabled={disabled || !sanitizeDiscoveryText(otherDraft[item.id], item.type === "multi" ? 40 : 120)}
                         onClick={() => submitOther(item.id)}
-                        className="min-h-11 rounded-lg bg-primary px-3 text-xs font-semibold text-white hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50"
+                        className="min-h-11 shrink-0 cursor-pointer rounded-xl bg-primary px-4 text-xs font-bold text-white transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         إضافة الإجابة
                       </button>
@@ -223,18 +270,24 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                 </div>
               )}
 
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-sand-100 pt-2.5">
                 <span className="text-xs text-sand-600" aria-live="polite">
-                  {isAnswered ? `الإجابة: ${answerLabel(answers[item.id])}` : "اختر إجابة أو استخدم الافتراضي"}
+                  {isAnswered ? (
+                    <span>الإجابة: <strong className="text-ink-800">{answerLabel(answers[item.id])}</strong></span>
+                  ) : (
+                    "اختر إجابة أو استخدم القيمة المقترحة"
+                  )}
                 </span>
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => setAnswer(item.id, "", true)}
-                  className="min-h-11 rounded-lg px-3 text-xs font-medium text-sand-700 underline decoration-sand-400 underline-offset-2 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"
-                >
-                  تخطّى واستخدم الافتراضي
-                </button>
+                {!isAnswered && item.defaultOption && (
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setAnswer(item.id, "", true)}
+                    className="min-h-11 cursor-pointer rounded-xl px-3 text-xs font-semibold text-accent underline decoration-accent/40 underline-offset-4 transition-colors hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    تخطَّ واستخدم المقترح: {item.defaultOption}
+                  </button>
+                )}
               </div>
             </div>
           );
@@ -242,8 +295,8 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
       </div>
 
       {allAnswered && (
-        <div className="mt-3 rounded-xl border border-sand-200 bg-white p-3" aria-label="ملخص الطلب قبل الإرسال">
-          <div className="mb-2 text-xs font-semibold text-ink-800">ملخص إجاباتك — اضغط على أي إجابة لتعديلها</div>
+        <div className="animate-rise border-t border-sand-200 bg-sand-50/70 p-4 sm:p-5" aria-label="ملخص الطلب قبل الإرسال">
+          <p className="mb-3 text-xs font-bold text-ink-800">ملخص إجاباتك — اضغط على أي إجابة لتعديلها</p>
           <div className="flex flex-wrap gap-2">
             {normalizedQuestions.map((question, index) => {
               const answer = answers[question.id];
@@ -258,9 +311,9 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                         onChange={(event) => setSummaryDraft(event.target.value)}
                         maxLength={200}
                         aria-label={`تعديل ${fieldLabel}: ${question.text}`}
-                        className="min-h-11 min-w-32 rounded-lg border border-primary px-3 text-xs outline-none focus-visible:outline-2 focus-visible:outline-primary"
+                        className="min-h-11 min-w-32 rounded-xl border border-accent bg-white px-3 text-xs outline-none"
                       />
-                      <button type="button" onClick={() => submitSummaryEdit(question.id)} className="min-h-11 rounded-lg bg-sand-200 px-3 text-xs font-semibold text-ink-800 focus-visible:outline-2 focus-visible:outline-primary">حفظ</button>
+                      <button type="button" onClick={() => submitSummaryEdit(question.id)} className="min-h-11 cursor-pointer rounded-xl bg-sand-200 px-4 text-xs font-bold text-ink-800 hover:bg-sand-300">حفظ</button>
                     </div>
                   ) : (
                     <button
@@ -269,9 +322,9 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
                         setSummaryEditId(question.id);
                         setSummaryDraft(answer.skipped ? question.defaultOption ?? "" : Array.isArray(answer.value) ? answer.value.join("، ") : answer.value ?? "");
                       }}
-                      className="min-h-11 max-w-full rounded-lg border border-sand-200 bg-sand-50 px-3 py-2 text-xs text-ink-800 hover:bg-sand-100 focus-visible:outline-2 focus-visible:outline-primary break-words"
+                      className="min-h-11 max-w-full cursor-pointer rounded-xl border border-sand-200 bg-white px-3.5 py-2 text-xs text-ink-800 break-words transition-colors hover:border-accent/40 hover:bg-accent-light/30"
                     >
-                      <bdi>{fieldLabel}:</bdi> {answerLabel(answer)}
+                      <bdi className="font-bold">{fieldLabel}:</bdi> {answerLabel(answer)}
                     </button>
                   )}
                 </div>
@@ -282,7 +335,7 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
             type="button"
             disabled={disabled}
             onClick={() => onSubmit(normalizedQuestions.map((question) => answers[question.id]))}
-            className="mt-3 min-h-11 w-full rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-60"
+            className="mt-4 min-h-12 w-full cursor-pointer rounded-2xl bg-accent px-4 py-3 text-sm font-bold text-white shadow-[var(--shadow-ink)] transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
           >
             تأكيد الإجابات وإرسالها
           </button>

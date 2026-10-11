@@ -6,19 +6,87 @@ import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { databases } from "@/lib/appwrite";
 import { Query } from "appwrite";
+import { Avatar, Drawer, Spinner } from "@/components/ui";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+const NAV = [
+  {
+    href: "/dashboard",
+    label: "لوحة المتابعة",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 12l9-9 9 9M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10" />
+      </svg>
+    ),
+  },
+  {
+    href: "/dashboard/chat",
+    label: "المساعد البحثي",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H5l-2 2V12a8 8 0 018-8h2a8 8 0 018 8z" />
+      </svg>
+    ),
+  },
+  {
+    href: "/dashboard/jobs",
+    label: "طلباتي",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    href: "/dashboard/topup",
+    label: "الرصيد والشحن",
+    icon: (
+      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8} aria-hidden="true">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+    ),
+  },
+];
+
+function NavLinks({ pathname, onNavigate, dark = false }: { pathname: string; onNavigate?: () => void; dark?: boolean }) {
+  return (
+    <nav aria-label="التنقل في التطبيق" className="space-y-1">
+      {NAV.map((item) => {
+        const active = pathname === item.href;
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={onNavigate}
+            aria-current={active ? "page" : undefined}
+            className={`touch-target relative flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-semibold transition-colors ${
+              active
+                ? dark
+                  ? "bg-white/10 text-white"
+                  : "bg-accent-light text-accent-ink"
+                : dark
+                  ? "text-sand-300 hover:bg-white/5 hover:text-white"
+                  : "text-ink-600 hover:bg-sand-100 hover:text-ink-900"
+            }`}
+          >
+            {active && (
+              <span aria-hidden="true" className={`absolute inset-y-2 start-0 w-1 rounded-full ${dark ? "bg-pine-200" : "bg-accent"}`} />
+            )}
+            <span aria-hidden="true" className={active ? "" : "opacity-70"}>{item.icon}</span>
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { user, loading, logout } = useUser();
   const router = useRouter();
   const pathname = usePathname();
   const [balance, setBalance] = useState<number | null>(null);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  // Load balance for header badge
   const loadBalance = useCallback(async () => {
     if (!user) return;
     try {
@@ -31,9 +99,7 @@ export default function DashboardLayout({
           Query.limit(limit),
           Query.offset(offset),
         ]);
-        for (const doc of res.documents) {
-          total += (doc.delta as number) || 0;
-        }
+        for (const doc of res.documents) total += (doc.delta as number) || 0;
         if (res.documents.length < limit) break;
         offset += limit;
       }
@@ -44,154 +110,120 @@ export default function DashboardLayout({
   }, [user]);
 
   useEffect(() => {
-    if (!loading && !user) {
-      router.push("/login");
-    } else if (user) {
-      loadBalance();
-    }
+    if (!loading && !user) router.push("/login");
+    else if (user) loadBalance();
   }, [user, loading, router, loadBalance]);
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-sand-50">
-        <div className="flex items-center gap-3 text-sm text-ink-500 font-medium">
-          <span className="h-4 w-4 rounded-full border-2 border-ink-900 border-t-transparent animate-spin" />
-          <span>جاري التحميل...</span>
-        </div>
+      <div className="flex min-h-dvh items-center justify-center bg-sand-50">
+        <Spinner label="جاري تحميل مساحة العمل" />
       </div>
     );
   }
-
   if (!user) return null;
 
-  const navLinks = [
-    { href: "/dashboard/chat", label: "المساعد الذكي" },
-    { href: "/dashboard/jobs", label: "طلباتي" },
-    { href: "/dashboard/topup", label: "شحن الرصيد" },
-  ];
+  // Chat renders its own full-screen workspace
+  if (pathname === "/dashboard/chat") return <>{children}</>;
 
-  if (pathname === "/dashboard/chat") {
-    return <>{children}</>;
-  }
+  const handleLogout = async () => {
+    await logout();
+    router.push("/");
+  };
 
   return (
-    <div className="min-h-screen flex flex-col bg-sand-50 text-ink-800">
-      {/* Top Application Header */}
-      <header className="sticky top-0 z-40 border-b border-sand-200/90 bg-white/95 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 sm:px-6 h-16">
-          <div className="flex items-center gap-6">
-            <Link href="/dashboard/chat" className="flex items-center gap-2 text-lg font-bold tracking-tight text-ink-900">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-ink-900 text-xs font-semibold text-white">
-                دِ
-              </span>
-              <span>Digr</span>
-            </Link>
-
-            {/* Desktop Navigation */}
-            <nav className="hidden md:flex items-center gap-1 text-sm font-medium">
-              {navLinks.map((item) => {
-                const isActive = pathname === item.href;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`rounded-lg px-3.5 py-2 transition-colors ${
-                      isActive
-                        ? "bg-sand-100 text-ink-900 font-semibold"
-                        : "text-ink-600 hover:text-ink-900 hover:bg-sand-50"
-                    }`}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-
+    <div className="min-h-dvh bg-sand-50 text-ink-800 lg:ps-72">
+      {/* Desktop sidebar */}
+      <aside className="fixed inset-y-0 start-0 z-40 hidden w-72 flex-col bg-pine-950 text-white lg:flex" aria-label="الشريط الجانبي">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div className="absolute -top-24 -start-24 h-64 w-64 rounded-full bg-accent/15 blur-3xl" />
+        </div>
+        <div className="relative p-5 pb-2">
+          <Link href="/dashboard" className="flex items-center gap-2.5">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-lg font-bold ring-1 ring-white/20">دِ</span>
+            <span className="text-2xl font-bold tracking-tight">Digr</span>
+          </Link>
+          <p className="mt-2 ps-0.5 text-xs text-sand-400">مساحة البحث بالبيانات العامة</p>
+        </div>
+        <div className="relative flex-1 overflow-y-auto p-4">
+          <NavLinks pathname={pathname} dark />
+        </div>
+        <div className="relative space-y-3 border-t border-white/10 p-4">
+          <Link href="/dashboard/topup" className="block rounded-2xl bg-white/8 p-3.5 ring-1 ring-white/10 transition-colors hover:bg-white/12">
+            <p className="text-xs text-sand-300">رصيد النقاط المتاح</p>
+            <p className="tnum mt-1 text-2xl font-bold text-white">
+              {balance === null ? "…" : balance.toLocaleString("ar-EG")}{" "}
+              <span className="text-xs font-semibold text-amber-points">نقطة</span>
+            </p>
+          </Link>
           <div className="flex items-center gap-3">
-            {/* Balance Badge */}
-            <Link
-              href="/dashboard/topup"
-              className="touch-target flex items-center gap-2 rounded-xl border border-sand-200 bg-sand-50/80 px-3 py-1.5 hover:border-sand-300 transition-colors"
-              title="رصيد محفظتك المتاح"
-            >
-              <span className="text-xs text-ink-500 hidden sm:inline">الرصيد:</span>
-              <span className="text-xs sm:text-sm font-bold text-ink-900 font-mono">
-                {balance === null ? "..." : `${balance.toLocaleString("ar-EG")} نقطة`}
-              </span>
-              <span className="rounded-md bg-amber-100 border border-amber-200 text-amber-800 px-1.5 py-0.5 text-[10px] font-bold">
-                + شحن
-              </span>
-            </Link>
-
-            {/* User Profile / Logout */}
-            <div className="hidden sm:flex items-center gap-3 border-r border-sand-200 pr-3 mr-1 text-xs">
-              <span className="text-ink-600 font-medium">{user.name}</span>
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push("/");
-                }}
-                className="text-ink-400 hover:text-danger transition-colors font-medium"
-              >
-                خروج
-              </button>
+            <Avatar name={user.name} size="sm" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold text-white">{user.name}</p>
+              <p className="truncate text-xs text-sand-400" dir="ltr">{user.email}</p>
             </div>
-
-            {/* Mobile Hamburger Button */}
             <button
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="touch-target md:hidden rounded-lg p-2 text-ink-600 hover:bg-sand-100 transition-colors"
-              aria-label="القائمة"
+              type="button"
+              onClick={handleLogout}
+              className="rounded-lg px-2.5 py-2 text-xs font-semibold text-sand-300 transition-colors hover:bg-white/10 hover:text-white cursor-pointer"
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                {mobileMenuOpen ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                )}
-              </svg>
+              خروج
             </button>
           </div>
         </div>
+      </aside>
 
-        {/* Mobile Navigation Drawer */}
-        {mobileMenuOpen && (
-          <div className="md:hidden border-t border-sand-200 bg-white px-4 pt-3 pb-5 space-y-2 animate-in fade-in duration-200">
-            <div className="text-xs text-ink-500 pb-2 border-b border-sand-100">
-              المستخدم: <strong className="text-ink-800">{user.name}</strong> ({user.email})
-            </div>
-            {navLinks.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`touch-target block rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
-                  pathname === item.href
-                    ? "bg-sand-100 text-ink-900 font-semibold"
-                    : "text-ink-600 hover:bg-sand-50"
-                }`}
-              >
-                {item.label}
-              </Link>
-            ))}
-            <div className="pt-2 border-t border-sand-100">
-              <button
-                onClick={async () => {
-                  await logout();
-                  router.push("/");
-                }}
-                className="touch-target w-full text-right rounded-lg px-3 py-2 text-sm text-danger hover:bg-red-50 font-medium"
-              >
-                تسجيل الخروج
-              </button>
-            </div>
+      {/* Mobile top bar */}
+      <header className="sticky top-0 z-40 border-b border-sand-200 bg-white/95 backdrop-blur-md lg:hidden">
+        <div className="flex h-16 items-center justify-between px-4">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              aria-label="فتح قائمة التنقل"
+              className="touch-target inline-flex items-center justify-center rounded-xl text-ink-700 hover:bg-sand-100"
+            >
+              <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <Link href="/dashboard" className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-pine-800 text-sm font-bold text-white">دِ</span>
+              <span className="text-lg font-bold text-ink-900">Digr</span>
+            </Link>
           </div>
-        )}
+          <Link
+            href="/dashboard/topup"
+            className="tnum inline-flex min-h-10 items-center gap-1.5 rounded-xl border border-amber-points/30 bg-amber-points-bg px-3 text-sm font-bold text-amber-points"
+            aria-label={`رصيدك ${balance === null ? "غير معروف" : balance} نقطة — شحن الرصيد`}
+          >
+            {balance === null ? "…" : balance.toLocaleString("ar-EG")} نقطة
+            <span aria-hidden="true" className="text-base leading-none">+</span>
+          </Link>
+        </div>
       </header>
 
-      {/* Main Workspace Viewport */}
-      <main className="flex-1 flex flex-col">{children}</main>
+      <Drawer open={mobileOpen} onClose={() => setMobileOpen(false)} title="التنقل" side="start">
+        <div className="space-y-5">
+          <NavLinks pathname={pathname} onNavigate={() => setMobileOpen(false)} />
+          <div className="flex items-center gap-3 border-t border-sand-200 pt-5">
+            <Avatar name={user.name} />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-bold text-ink-900">{user.name}</p>
+              <p className="truncate text-xs text-sand-500" dir="ltr">{user.email}</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="touch-target w-full rounded-xl border border-danger/25 bg-danger-bg px-4 py-2.5 text-sm font-bold text-danger cursor-pointer"
+          >
+            تسجيل الخروج
+          </button>
+        </div>
+      </Drawer>
+
+      <main className="min-h-dvh">{children}</main>
     </div>
   );
 }
