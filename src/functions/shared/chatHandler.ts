@@ -70,6 +70,11 @@ export interface ChatHandlerResponse {
     output: number;
     costUsd: number;
   };
+  turnStats?: {
+    modelCalls: number;
+    catalogSearches: number;
+    latencyMs: number;
+  };
 }
 
 /** Rough token estimate for Arabic/English mixed text (chars/4 heuristic). */
@@ -413,6 +418,9 @@ export class ChatHandler {
   async handleUserMessage(input: ChatHandlerInput): Promise<ChatHandlerResponse> {
     const { userId, message, testScenario } = input;
     const nowIso = new Date().toISOString();
+    const turnStartTime = Date.now();
+    let modelCallCount = 0;
+    let catalogSearchCount = 0;
 
     // 1. Get or Create Conversation
     let conversationId = input.conversationId;
@@ -550,14 +558,17 @@ export class ChatHandler {
 
       if (platformsToSearch.length > 0) {
         for (const p of platformsToSearch) {
+          catalogSearchCount++;
           const res = await searchCatalog(searchTopic, p);
           liveCatalogEndpoints.push(...res);
         }
       } else {
+        catalogSearchCount++;
         const res = await searchCatalog(searchTopic, undefined);
         liveCatalogEndpoints.push(...res);
       }
     } else if (isTestSearchScenario) {
+      catalogSearchCount++;
       const mentionedPlatforms = detectMentionedPlatforms(message);
       const platformHint = mentionedPlatforms[0] || undefined;
       liveCatalogEndpoints = await searchCatalog(message, platformHint);
@@ -637,6 +648,7 @@ export class ChatHandler {
       });
     }
 
+    modelCallCount++;
     let llmResult = await this.llm.executeTurn({
       messages: turnMessages,
       sanitizedCapabilities: sanitizedCaps,
@@ -670,6 +682,7 @@ export class ChatHandler {
     // plan validation accepts, not the hardcoded registry.
     const turnSearchResults: CatalogEndpointSummary[] = [...liveCatalogEndpoints];
     const repeatTurn = async () => {
+      modelCallCount++;
       llmResult = await this.llm.executeTurn({
         messages: loopMessages,
         sanitizedCapabilities: sanitizedCaps,
@@ -691,6 +704,7 @@ export class ChatHandler {
     };
     while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
       catalogIterations++;
+      catalogSearchCount++;
       const searchRes = await searchCatalog(output.query, output.platform);
       turnSearchResults.push(...searchRes);
       // Compact internal result (top 5, minimal fields, ~2.5k token cap).
@@ -1122,6 +1136,11 @@ export class ChatHandler {
       },
     });
 
+    const totalLatencyMs = Date.now() - turnStartTime;
+    console.log(
+      `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=${modelCallCount} catalogSearches=${catalogSearchCount} latencyMs=${totalLatencyMs}`,
+    );
+
     return {
       conversationId,
       messageId: assistantMsgId,
@@ -1137,6 +1156,11 @@ export class ChatHandler {
         input: llmResult.inputTokens,
         output: llmResult.outputTokens,
         costUsd: llmResult.costUsd,
+      },
+      turnStats: {
+        modelCalls: modelCallCount,
+        catalogSearches: catalogSearchCount,
+        latencyMs: totalLatencyMs,
       },
     };
   }

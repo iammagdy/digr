@@ -162,6 +162,8 @@ export async function GET(req: NextRequest) {
       llm_enabled: snapshot.llm_enabled,
       key_present: snapshot.key_present,
       model: snapshot.model,
+      reasoning_effort: snapshot.reasoning_effort,
+      reasoning_effort_status: snapshot.reasoning_effort_status,
       last_llm_usage_timestamp: snapshot.last_llm_usage_timestamp,
       last_fallback_reason: snapshot.last_fallback_reason,
       last_fallback_detail: snapshot.last_fallback_detail,

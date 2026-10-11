@@ -59,6 +59,7 @@ export default function ChatWorkspacePage() {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingStatusText, setLoadingStatusText] = useState("يفكّر في سؤالك ويجهّز الخطوة التالية...");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
@@ -307,6 +308,8 @@ export default function ChatWorkspacePage() {
       createdAt: new Date().toISOString(),
     };
 
+    const isPriceOrPlanRequest = /(هيكلفني كام|احسبلي|احسب لي|السعر|بكام|كم نقطة|كم يكلف|تكلف كام|التكلفة|كم التكلفة|السعر كام|ابدأ|نفذ|تمام جهز الخطة|اعمل الخطة)/i.test(textToSend);
+    setLoadingStatusText(isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : "يفكّر في سؤالك ويجهّز الخطوة التالية...");
     setMessages((prev) => [...prev, userMsg]);
     setInputText("");
     setLoading(true);
@@ -1194,7 +1197,7 @@ export default function ChatWorkspacePage() {
                   <span key={i} className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-bounce motion-reduce:animate-none" style={{ animationDelay: `${i * 0.15}s` }} />
                 ))}
               </span>
-              <span>يفكّر في سؤالك ويجهّز الخطوة التالية...</span>
+              <span>{loadingStatusText}</span>
             </div>
           )}
 
