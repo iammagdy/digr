@@ -182,6 +182,7 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
         model: "claude-haiku-5-5",
         last_llm_usage_timestamp: "2026-10-11T09:30:00.000Z",
         last_fallback_reason: null,
+        last_fallback_detail: null,
       });
 
       const serialized = JSON.stringify(body);

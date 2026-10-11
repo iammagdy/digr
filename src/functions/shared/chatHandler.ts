@@ -199,10 +199,12 @@ export class ChatHandler {
       ],
     });
 
-    const messagesContext = historyRes.rows.map((r: any) => ({
-      role: r.role as "user" | "assistant" | "system",
-      content: r.content,
-    }));
+    const messagesContext = historyRes.rows
+      .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
+      .map((r: any) => ({
+        role: r.role as "user" | "assistant" | "system",
+        content: r.content,
+      }));
 
     // 7. Execute LLM Turn
     let parsedPurposes: string[] = [];

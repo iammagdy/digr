@@ -164,6 +164,7 @@ export async function GET(req: NextRequest) {
       model: snapshot.model,
       last_llm_usage_timestamp: snapshot.last_llm_usage_timestamp,
       last_fallback_reason: snapshot.last_fallback_reason,
+      last_fallback_detail: snapshot.last_fallback_detail,
     });
   } catch {
     return NextResponse.json(

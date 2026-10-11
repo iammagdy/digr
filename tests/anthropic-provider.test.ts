@@ -4,6 +4,11 @@ import {
   sanitizeMessagesForAnthropic,
   getLlmPricingSettings,
   scrubWhiteLabelText,
+  getLastLlmFallbackReason,
+  getLastLlmFallbackDetail,
+  getLlmStatusSnapshot,
+  setLastLlmFallbackReason,
+  setLastLlmFallbackDetail,
 } from "../src/functions/shared/llmClient";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 
@@ -96,12 +101,44 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
 
       const sanitized = sanitizeMessagesForAnthropic(messages);
       expect(sanitized[0].role).toBe("user");
+      expect(sanitized[sanitized.length - 1].role).toBe("user");
     });
 
-    it("returns default user message if input messages array is empty", () => {
-      const sanitized = sanitizeMessagesForAnthropic([]);
+    it("ensures conversation strictly ends with user role by popping trailing assistant messages (tool_choice requirement)", () => {
+      const messages = [
+        { role: "user" as const, content: "أريد تحليل حساب" },
+        { role: "assistant" as const, content: "جاري التفكير وتحليل طلبك..." },
+      ];
+
+      const sanitized = sanitizeMessagesForAnthropic(messages, { ensureUserEnd: true });
       expect(sanitized).toHaveLength(1);
       expect(sanitized[0].role).toBe("user");
+      expect(sanitized[0].content).toBe("أريد تحليل حساب");
+    });
+
+    it("filters out empty or whitespace-only messages to avoid Anthropic 400 empty content errors", () => {
+      const messages = [
+        { role: "user" as const, content: "  " },
+        { role: "assistant" as const, content: "" },
+        { role: "user" as const, content: "سؤال حقيقي" },
+      ];
+
+      const sanitized = sanitizeMessagesForAnthropic(messages);
+      expect(sanitized).toHaveLength(1);
+      expect(sanitized[0].role).toBe("user");
+      expect(sanitized[0].content).toBe("سؤال حقيقي");
+    });
+
+    it("returns default user message if input messages array is empty or contains only assistant messages", () => {
+      const sanitizedEmpty = sanitizeMessagesForAnthropic([]);
+      expect(sanitizedEmpty).toHaveLength(1);
+      expect(sanitizedEmpty[0].role).toBe("user");
+
+      const sanitizedOnlyAssistant = sanitizeMessagesForAnthropic([
+        { role: "assistant" as const, content: "مرحبا" },
+      ], { ensureUserEnd: true });
+      expect(sanitizedOnlyAssistant).toHaveLength(1);
+      expect(sanitizedOnlyAssistant[0].role).toBe("user");
     });
   });
 
@@ -379,6 +416,174 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
       }
       expect(result.costUsd).toBe(0);
     });
+
+    it("handles 400 invalid_request_error: parses type and message, records last_fallback_detail without leaking secrets", async () => {
+      const secretKey = "sk-ant-api03-TOP-SECRET-KEY-112233";
+      process.env.LLM_PROVIDER = "anthropic";
+      process.env.LLM_LIVE = "true";
+      process.env.ANTHROPIC_API_KEY = secretKey;
+      process.env.ANTHROPIC_MODEL = "claude-haiku-5-5";
+
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const anthropic400Response = {
+        type: "error",
+        error: {
+          type: "invalid_request_error",
+          message: "tool_choice: may not be specified when prefilling assistant response",
+        },
+      };
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify(anthropic400Response),
+        }),
+      );
+
+      const client = new LlmClient();
+      const result = await client.executeTurn({
+        messages: [{ role: "user", content: "مرحبا" }],
+        sanitizedCapabilities: [],
+      });
+
+      expect(result.output.type).toBe("refuse");
+      expect(result.inputTokens).toBe(0);
+      expect(result.outputTokens).toBe(0);
+      expect(result.costUsd).toBe(0);
+
+      expect(getLastLlmFallbackReason()).toBe("http_400");
+      expect(getLastLlmFallbackDetail()).toBe(
+        "invalid_request_error: tool_choice: may not be specified when prefilling assistant response",
+      );
+
+      const snapshot = getLlmStatusSnapshot();
+      expect(snapshot.last_fallback_reason).toBe("http_400");
+      expect(snapshot.last_fallback_detail).toBe(
+        "invalid_request_error: tool_choice: may not be specified when prefilling assistant response",
+      );
+
+      // Verify server log has sanitized reason and detail, and zero secret leak
+      const warnCall = warnSpy.mock.calls.find((c) =>
+        String(c[0]).includes("[llm:error]"),
+      );
+      expect(warnCall).toBeDefined();
+      const logLine = String(warnCall![0]);
+      expect(logLine).toContain("provider=anthropic");
+      expect(logLine).toContain("model=claude-haiku-5-5");
+      expect(logLine).toContain("reason=http_400");
+      expect(logLine).toContain(
+        "detail=invalid_request_error: tool_choice: may not be specified when prefilling assistant response",
+      );
+      expect(logLine).not.toContain(secretKey);
+      expect(logLine).not.toContain("TOP-SECRET");
+    });
+
+    it("handles 400 billing error with http_400_billing and Arabic refusal", async () => {
+      process.env.LLM_PROVIDER = "anthropic";
+      process.env.LLM_LIVE = "true";
+      process.env.ANTHROPIC_API_KEY = "test-key";
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: false,
+          status: 400,
+          text: async () =>
+            JSON.stringify({
+              error: {
+                type: "invalid_request_error",
+                message: "Your credit balance is too low to access the Anthropic API.",
+              },
+            }),
+        }),
+      );
+
+      const client = new LlmClient();
+      const result = await client.executeTurn({
+        messages: [{ role: "user", content: "مرحبا" }],
+        sanitizedCapabilities: [],
+      });
+
+      expect(result.output.type).toBe("refuse");
+      if (result.output.type === "refuse") {
+        expect(result.output.reasonAr).toContain("رصيد المزود غير كافٍ");
+      }
+      expect(getLastLlmFallbackReason()).toBe("http_400_billing");
+      expect(getLastLlmFallbackDetail()).toContain("credit balance is too low");
+    });
+
+    it("asserts exact request body shape sent to Anthropic Messages API", async () => {
+      process.env.LLM_PROVIDER = "anthropic";
+      process.env.LLM_LIVE = "true";
+      process.env.ANTHROPIC_API_KEY = "test-key-mock";
+      process.env.ANTHROPIC_MODEL = "claude-haiku-5-5";
+
+      let capturedBody: any = null;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(async (url: string, init: any) => {
+          capturedBody = JSON.parse(init.body);
+          return {
+            ok: true,
+            json: async () => ({
+              id: "msg_123",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  name: "actionResult",
+                  input: {
+                    type: "ask_clarification",
+                    questionsAr: ["ما هي المنصة؟"],
+                    reasonAr: "تحديد المنصة بدقة",
+                  },
+                },
+              ],
+              usage: { input_tokens: 100, output_tokens: 50 },
+            }),
+          };
+        }),
+      );
+
+      const client = new LlmClient();
+      // Pass messages that end with an assistant message (like the thinking placeholder)
+      await client.executeTurn({
+        messages: [
+          { role: "user", content: "أريد بيانات تيك توك" },
+          { role: "assistant", content: "جاري التفكير وتحليل طلبك..." },
+        ],
+        sanitizedCapabilities: [],
+      });
+
+      expect(capturedBody).toBeDefined();
+      expect(capturedBody.model).toBe("claude-haiku-5-5");
+      expect(capturedBody.max_tokens).toBe(1024);
+      expect(typeof capturedBody.system).toBe("string");
+      expect(capturedBody.system.length).toBeGreaterThan(0);
+
+      // Verify messages strictly ends with a user turn
+      expect(Array.isArray(capturedBody.messages)).toBe(true);
+      expect(capturedBody.messages.length).toBe(1);
+      expect(capturedBody.messages[0].role).toBe("user");
+      expect(capturedBody.messages[0].content).toBe("أريد بيانات تيك توك");
+
+      // Verify tools structure
+      expect(Array.isArray(capturedBody.tools)).toBe(true);
+      expect(capturedBody.tools).toHaveLength(1);
+      expect(capturedBody.tools[0].name).toBe("actionResult");
+      expect(capturedBody.tools[0].input_schema).toBeDefined();
+      expect(capturedBody.tools[0].input_schema.type).toBe("object");
+
+      // Verify tool_choice
+      expect(capturedBody.tool_choice).toEqual({
+        type: "tool",
+        name: "actionResult",
+      });
+    });
   });
 
   describe("7. ChatHandler End-to-End Trust Boundary with Anthropic Error", () => {
@@ -429,6 +634,78 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
       expect(llmUsageCalls[0][0].data.inputTokens).toBe(0);
       expect(llmUsageCalls[0][0].data.outputTokens).toBe(0);
       expect(llmUsageCalls[0][0].data.costUsd).toBe(0);
+    });
+
+    it("ChatHandler excludes active thinking placeholder from messagesContext sent to Anthropic", async () => {
+      process.env.LLM_PROVIDER = "anthropic";
+      process.env.LLM_LIVE = "true";
+      process.env.ANTHROPIC_API_KEY = "test-key-valid";
+
+      let capturedFetchBody: any = null;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockImplementation(async (url: string, init: any) => {
+          capturedFetchBody = JSON.parse(init.body);
+          return {
+            ok: true,
+            json: async () => ({
+              id: "msg_ok",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  name: "actionResult",
+                  input: {
+                    type: "ask_clarification",
+                    questionsAr: ["ما اسم الحساب؟"],
+                    reasonAr: "تحديد الحساب",
+                  },
+                },
+              ],
+              usage: { input_tokens: 150, output_tokens: 40 },
+            }),
+          };
+        }),
+      );
+
+      const createdRows: any[] = [];
+      const mockTables: any = {
+        createRow: vi.fn().mockImplementation(async (arg: any) => {
+          const row = { $id: "id_" + createdRows.length, ...arg.data };
+          createdRows.push(row);
+          return row;
+        }),
+        getRow: vi.fn().mockResolvedValue({ totalTokens: 0 }),
+        listRows: vi.fn().mockImplementation(async (arg: any) => {
+          if (arg.tableId === "messages") {
+            // listRows returns created messages including the thinking placeholder
+            return { rows: [...createdRows] };
+          }
+          return { rows: [] };
+        }),
+        updateRow: vi.fn().mockResolvedValue({}),
+      };
+
+      const handler = new ChatHandler(mockTables);
+      await handler.handleUserMessage({
+        userId: "user-test",
+        conversationId: "conv-test",
+        message: "أريد تحليل الحساب @test",
+        userBalance: 100,
+      });
+
+      // Verify Anthropic was called with messages ending in user turn (no thinking placeholder!)
+      expect(capturedFetchBody).toBeDefined();
+      const lastMsg =
+        capturedFetchBody.messages[capturedFetchBody.messages.length - 1];
+      expect(lastMsg.role).toBe("user");
+      expect(lastMsg.content).toBe("أريد تحليل الحساب @test");
+      expect(
+        capturedFetchBody.messages.some((m: any) =>
+          m.content.includes("جاري التفكير"),
+        ),
+      ).toBe(false);
     });
   });
 });

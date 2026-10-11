@@ -304,11 +304,16 @@ export function scrubWhiteLabelText(text: string): string {
 }
 
 export function sanitizeMessagesForAnthropic(
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string }>,
+  options?: { ensureUserEnd?: boolean }
 ): Array<{ role: "user" | "assistant"; content: string }> {
   const filtered = messages
     .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content || "" }));
+    .map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: (m.content || "").trim(),
+    }))
+    .filter((m) => m.content.length > 0);
 
   if (filtered.length === 0) {
     return [{ role: "user", content: "مرحباً" }];
@@ -326,6 +331,15 @@ export function sanitizeMessagesForAnthropic(
 
   if (combined.length > 0 && combined[0].role !== "user") {
     combined.unshift({ role: "user", content: "مرحباً" });
+  }
+
+  if (options?.ensureUserEnd) {
+    while (combined.length > 0 && combined[combined.length - 1].role !== "user") {
+      combined.pop();
+    }
+    if (combined.length === 0) {
+      combined.push({ role: "user", content: "مرحباً" });
+    }
   }
 
   return combined;
@@ -425,9 +439,27 @@ export interface LlmStatusSnapshot {
   model: string;
   last_llm_usage_timestamp: string | null;
   last_fallback_reason: string | null;
+  last_fallback_detail: string | null;
 }
 
 let lastFallbackReason: string | null = null;
+let lastFallbackDetail: string | null = null;
+
+export function sanitizeFallbackDetail(raw: string): string {
+  if (!raw || typeof raw !== "string") return "";
+  let clean = raw
+    .replace(/sk-[a-zA-Z0-9_\-]{6,}/gi, "[REDACTED]")
+    .replace(/key-[a-zA-Z0-9_\-]{6,}/gi, "[REDACTED]")
+    .replace(/Bearer\s+[a-zA-Z0-9_\-\.]+/gi, "Bearer [REDACTED]")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  if (clean.length > 200) {
+    clean = clean.slice(0, 200).trim();
+  }
+  return clean;
+}
 
 export function getLastLlmFallbackReason(): string | null {
   return lastFallbackReason;
@@ -435,6 +467,14 @@ export function getLastLlmFallbackReason(): string | null {
 
 export function setLastLlmFallbackReason(reason: string | null): void {
   lastFallbackReason = reason;
+}
+
+export function getLastLlmFallbackDetail(): string | null {
+  return lastFallbackDetail;
+}
+
+export function setLastLlmFallbackDetail(detail: string | null): void {
+  lastFallbackDetail = detail ? sanitizeFallbackDetail(detail) : null;
 }
 
 export function resolveRuntimeProvider(override?: LlmProviderType): LlmProviderType {
@@ -495,6 +535,7 @@ export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): 
     model,
     last_llm_usage_timestamp: lastUsageTimestamp,
     last_fallback_reason: derivedFallback,
+    last_fallback_detail: lastFallbackDetail,
   };
 }
 
@@ -1163,7 +1204,12 @@ export class LlmClient {
    * Return short Arabic error ("المساعد غير متاح الآن، حاول لاحقًا"), 0 tokens, 0 cost, so no points are held.
    * Records a short reason code in server logs and llm-status without ever logging keys or secrets.
    */
-  private handleProviderError(err: any, provider: string): LlmCallResult {
+  /**
+   * Handle provider errors cleanly (timeout, 429, 404 model, 401 auth, 5xx):
+   * Return short Arabic error ("المساعد غير متاح الآن، حاول لاحقًا"), 0 tokens, 0 cost, so no points are held.
+   * Records a short reason code in server logs and llm-status without ever logging keys or secrets.
+   */
+  private handleProviderError(err: any, provider: string, detail?: string | null): LlmCallResult {
     const model = this.getModel();
     let reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
     let fallbackCode = "provider_unreachable";
@@ -1224,8 +1270,12 @@ export class LlmClient {
       fallbackCode = "schema_invalid";
     }
 
+    const sanitizedDetail = detail ? sanitizeFallbackDetail(detail) : null;
     setLastLlmFallbackReason(fallbackCode);
-    console.warn(`[llm:error] provider=${provider} model=${model} reason=${fallbackCode}`);
+    setLastLlmFallbackDetail(sanitizedDetail);
+
+    const logDetail = sanitizedDetail ? ` detail=${sanitizedDetail}` : "";
+    console.warn(`[llm:error] provider=${provider} model=${model} reason=${fallbackCode}${logDetail}`);
 
     return {
       output: {
@@ -1258,7 +1308,9 @@ export class LlmClient {
       conversationState: options.conversationState,
     });
 
-    const formattedMessages = sanitizeMessagesForAnthropic(options.messages);
+    const formattedMessages = sanitizeMessagesForAnthropic(options.messages, {
+      ensureUserEnd: true,
+    });
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -1295,10 +1347,26 @@ export class LlmClient {
 
       if (!response.ok) {
         const errText = await response.text();
-        return this.handleProviderError(
-          new Error(`Anthropic API error (${response.status}): ${errText}`),
-          "anthropic"
-        );
+        let fallbackDetail: string | null = null;
+        try {
+          const parsed = JSON.parse(errText);
+          const errObj = parsed.error || parsed;
+          const errType = typeof errObj.type === "string" ? errObj.type.trim() : "";
+          const errMsg = typeof errObj.message === "string" ? errObj.message.trim() : "";
+          if (errType && errMsg) {
+            fallbackDetail = `${errType}: ${errMsg}`;
+          } else if (errMsg) {
+            fallbackDetail = errMsg;
+          } else if (errType) {
+            fallbackDetail = errType;
+          }
+        } catch {
+          fallbackDetail = errText;
+        }
+
+        const err = new Error(`Anthropic API error (${response.status}): ${errText}`);
+        (err as any).status = response.status;
+        return this.handleProviderError(err, "anthropic", fallbackDetail);
       }
 
       const data: any = await response.json();
@@ -1361,6 +1429,7 @@ export class LlmClient {
       const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
 
       setLastLlmFallbackReason(null);
+      setLastLlmFallbackDetail(null);
 
       return {
         output: validatedOutput,
@@ -1472,6 +1541,7 @@ export class LlmClient {
       const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
 
       setLastLlmFallbackReason(null);
+      setLastLlmFallbackDetail(null);
 
       return {
         output: validatedOutput,
