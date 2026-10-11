@@ -267,21 +267,79 @@ export class ChatHandler {
       testScenario,
     });
 
-    const output = llmResult.output;
+    let output: typeof llmResult.output = llmResult.output;
+
+    // 7b. Internal catalog-search loop: search_catalog is never a final answer.
+    // The results go back to the model (in-memory only, never persisted) so it
+    // can continue with ask_questions / propose_plan / plain text. Raw catalog
+    // results — tool names and bare per-tool point prices — are never shown
+    // to the user as a list; prices appear only inside a priced plan.
+    const MAX_CATALOG_ITERATIONS = 4;
+    let catalogIterations = 0;
+    const loopMessages = [...messagesContext];
+    while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
+      catalogIterations++;
+      const searchRes = await searchCatalog(output.query, output.platform);
+      const internalSummary =
+        searchRes.length === 0
+          ? "[نتائج بحث الكتالوج — داخلية] لم يتم العثور على أدوات مطابقة في الكتالوج لهذا البحث."
+          : "[نتائج بحث الكتالوج — داخلية، لا تعرضها للمستخدم كنص]\n" +
+            searchRes
+              .slice(0, 5)
+              .map((r) => `- slug: ${r.slug} | الاسم: ${r.nameAr} | المنصة: ${r.platform}`)
+              .join("\n");
+      loopMessages.push({ role: "system", content: internalSummary } as const);
+      llmResult = await this.llm.executeTurn({
+        messages: loopMessages,
+        sanitizedCapabilities: sanitizedCaps,
+        userProfile: userProfile
+          ? {
+              persona: userProfile.persona,
+              purposes: parsedPurposes,
+              topic: userProfile.topic,
+            }
+          : undefined,
+        todayDate: new Date().toISOString().split("T")[0],
+        userBalancePoints: userBalance,
+        conversationId,
+        userId,
+        totalConversationTokens: totalConvTokens,
+        testScenario,
+      });
+      output = llmResult.output;
+    }
+
     let finalContentAr = "";
     let planQuoteData: any = undefined;
     let clarificationQuestionsList: string[] | undefined = undefined;
     let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
+    // Discovery fallback used when the catalog loop cannot produce a next step:
+    // a real question for the user, never the raw catalog list.
+    const fallbackToDiscovery = () => {
+      const fallback = buildClarificationPresentation(
+        {
+          type: "ask_clarification",
+          reasonAr: "أحتاج توضيحاً إضافياً لمتابعة طلبك بدقة.",
+          questions: [{ question: "ما التفاصيل الإضافية التي تريد تحديدها لطلبك؟" }],
+        } as any,
+        {
+          capabilities: allCapabilities,
+          userBalancePoints: userBalance,
+          persona: userProfile?.persona,
+        },
+      );
+      clarificationQuestionsList = fallback.clarificationQuestions;
+      clarificationItemsList = fallback.clarificationItems;
+      finalContentAr = fallback.contentAr;
+    };
+
     // 8. Process Output Actions
     if (output.type === "search_catalog") {
-      const searchRes = await searchCatalog(output.query, output.platform);
-      if (searchRes.length === 0) {
-        finalContentAr = "لم تسفر نتائج البحث في الكتالوج عن أي أدوات مطابقة. يرجى تجربة كلمات بحث أخرى أو منصة بديلة.";
-      } else {
-        const top = searchRes.slice(0, 3).map((r) => `• ${r.nameAr} (${r.pointsPerUnit} نقطة)`).join("\n");
-        finalContentAr = `نتائج البحث في الكتالوج المعتمد:\n${top}`;
-      }
+      // The internal loop above exhausted its iterations without the model
+      // choosing a next step. Fall back to a discovery question — the raw
+      // catalog results must never reach the user as a list.
+      fallbackToDiscovery();
     } else if (output.type === "ask_clarification" || output.type === "ask_questions") {
       const clarification = buildClarificationPresentation(output as any, {
         capabilities: allCapabilities,
@@ -292,7 +350,11 @@ export class ChatHandler {
       clarificationItemsList = clarification.clarificationItems;
       finalContentAr = clarification.contentAr;
     } else if (output.type === "answer_question") {
-      finalContentAr = output.answerAr;
+      if ((output.answerAr || "").trim().length > 0) {
+        finalContentAr = output.answerAr;
+      } else {
+        fallbackToDiscovery();
+      }
     } else if (output.type === "write_note") {
       finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
     } else if (output.type === "propose_plan") {
