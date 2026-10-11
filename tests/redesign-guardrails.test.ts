@@ -141,6 +141,13 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
     expect(tl).toContain("eventLimit");
   });
 
+  it("methodology success never hardcodes a charge amount", () => {
+    const chat = src("src/app/dashboard/chat/page.tsx");
+    expect(chat).not.toContain("اقتطاع 10 نقاط");
+    expect(chat).toContain("methodologyAlertText(data.chargedPoints)");
+    expect(chat).toContain("methodologyMessageText(data.chargedPoints");
+  });
+
   it("event histories are fetched latest-first and scope-labeled", () => {
     const jobs = src("src/app/dashboard/jobs/page.tsx");
     expect(jobs).toContain("orderDesc");

@@ -20,6 +20,8 @@ import {
   EVENT_HISTORY_LIMIT,
   eventHistoryScopeLabel,
   chronological,
+  methodologyAlertText,
+  methodologyMessageText,
 } from "../src/lib/honestDisplay";
 
 describe("balance states", () => {
@@ -100,5 +102,35 @@ describe("event history scope", () => {
     expect(chronological(desc).map((d) => d.id)).toEqual([1, 2, 3]);
     // does not mutate the input
     expect(desc.map((d) => d.id)).toEqual([3, 2, 1]);
+  });
+});
+
+describe("methodology charge honesty (regression: hardcoded 10-point claim)", () => {
+  it("reports the actual server-reported charge, whatever it is", () => {
+    expect(methodologyAlertText(10)).toContain((10).toLocaleString("ar-EG"));
+    expect(methodologyAlertText(25)).toContain((25).toLocaleString("ar-EG"));
+    expect(methodologyAlertText(25)).not.toContain("اقتطاع 10");
+    expect(methodologyAlertText(0)).toContain("اقتطاع");
+  });
+
+  it("makes no monetary claim when the server value is untrustworthy", () => {
+    for (const bad of [undefined, null, Number.NaN, -5, "10", {}]) {
+      const text = methodologyAlertText(bad as unknown);
+      expect(text).not.toContain("اقتطاع");
+      expect(text).not.toMatch(/\d/);
+      expect(text).toContain("بنجاح");
+    }
+  });
+
+  it("message includes charge and balance only when both are trustworthy", () => {
+    const withValues = methodologyMessageText(10, 290, "نص المنهجية");
+    expect(withValues).toContain("خصم 10 نقاط");
+    expect(withValues).toContain("290");
+    expect(withValues).toContain("نص المنهجية");
+
+    const missing = methodologyMessageText(undefined, undefined, "نص المنهجية");
+    expect(missing).not.toContain("خصم");
+    expect(missing).not.toContain("undefined");
+    expect(missing).toContain("نص المنهجية");
   });
 });

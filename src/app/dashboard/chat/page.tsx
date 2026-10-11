@@ -6,7 +6,7 @@ import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { Storage, Query } from "appwrite";
 import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
-import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, type BalanceView } from "@/lib/honestDisplay";
+import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, methodologyAlertText, methodologyMessageText, type BalanceView } from "@/lib/honestDisplay";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
@@ -785,12 +785,12 @@ export default function ChatWorkspacePage() {
       const methodologyMsg: MessageItem = {
         id: `meth_${Date.now()}`,
         role: "assistant",
-        content: `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${data.chargedPoints} نقاط (رصيدك الحالي: ${data.remainingBalance} نقطة):\n\n${data.methodologyText}`,
+        content: methodologyMessageText(data.chargedPoints, data.remainingBalance, data.methodologyText),
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, methodologyMsg]);
       loadBalance();
-      alert("تمت صياغة المنهجية الأكاديمية بنجاح واقتطاع 10 نقاط من الرصيد.");
+      alert(methodologyAlertText(data.chargedPoints));
     } catch (err: any) {
       alert("تعذر طلب صياغة المنهجية: " + err.message);
     }

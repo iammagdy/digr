@@ -94,3 +94,32 @@ export function eventHistoryScopeLabel(limit: number = EVENT_HISTORY_LIMIT): str
 export function chronological<T>(descDocs: T[]): T[] {
   return [...descDocs].reverse();
 }
+
+/**
+ * Success text for the paid methodology rewrite.
+ * A monetary claim is made ONLY from a trustworthy server-reported charge.
+ * When the server value is missing or invalid, the message stays generic
+ * and names no amount — never a hardcoded figure.
+ */
+function trustworthyAmount(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+export function methodologyAlertText(chargedPoints: unknown): string {
+  const charged = trustworthyAmount(chargedPoints);
+  if (charged === null) return "تمت صياغة المنهجية الأكاديمية بنجاح.";
+  return `تمت صياغة المنهجية الأكاديمية بنجاح واقتطاع ${charged.toLocaleString("ar-EG")} نقطة من الرصيد.`;
+}
+
+export function methodologyMessageText(
+  chargedPoints: unknown,
+  remainingBalance: unknown,
+  methodologyText: string,
+): string {
+  const charged = trustworthyAmount(chargedPoints);
+  const balance = trustworthyAmount(remainingBalance);
+  if (charged === null || balance === null) {
+    return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}`;
+  }
+  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${charged} نقاط (رصيدك الحالي: ${balance} نقطة):\n\n${methodologyText}`;
+}
