@@ -118,7 +118,60 @@ export function buildCompactCatalogSummary(results: CatalogEndpointSummary[]): s
  */
 export function buildCodeDiscoveryFallback(
   allCapabilities: Capability[],
+  userMessage: string = "",
+  colonFallback: boolean = false,
 ): { intro: string; items: NormalizedClarificationQuestion[] } {
+  const intro = "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
+  const chips = extractTopicChips(userMessage);
+  const dateHint = extractDateHint(userMessage);
+
+  if (colonFallback) {
+    const items: NormalizedClarificationQuestion[] = [
+      {
+        id: "code_topic_angle",
+        text: "ما زوايا أو محاور الموضوع المستهدفة؟",
+        question: "ما زوايا أو محاور الموضوع المستهدفة؟",
+        type: chips.length > 0 ? "single" : "free",
+        options: chips.length > 0 ? chips : ["أسعار وتداولات", "آراء وتجارب الجمهور", "الأخبار والتحليلات"],
+        allowOther: true,
+      },
+      {
+        id: "code_post_count",
+        text: "ما عدد المنشورات المستهدف فحصها؟",
+        question: "ما عدد المنشورات المستهدف فحصها؟",
+        type: "single",
+        options: ["حتى 10 منشورات", "حتى 30 منشوراً", "حتى 50 منشوراً"],
+        allowOther: true,
+      },
+      {
+        id: "code_comments_per_post",
+        text: "ما الحد الأقصى للتعليقات لكل منشور؟",
+        question: "ما الحد الأقصى للتعليقات لكل منشور؟",
+        type: "single",
+        options: ["حتى 50 تعليقاً", "حتى 100 تعليق", "كل التعليقات المتاحة"],
+        allowOther: true,
+      },
+      {
+        id: "code_date_range",
+        text: "ما الفترة الزمنية لجمع البيانات؟",
+        question: "ما الفترة الزمنية لجمع البيانات؟",
+        type: "single",
+        options: ["آخر شهر", "آخر ٣ شهور", "آخر ٦ شهور"],
+        allowOther: true,
+        ...(dateHint ? { defaultOption: toArabicIndicDigits(dateHint) } : {}),
+      },
+      {
+        id: "code_language_dialect",
+        text: "ما اللغة أو اللهجات المطلوبة؟",
+        question: "ما اللغة أو اللهجات المطلوبة؟",
+        type: "single",
+        options: ["العربية والمصرية", "العربية والإنجليزية", "كل اللغات"],
+        allowOther: true,
+      },
+    ];
+    return { intro, items: items.slice(0, 3) };
+  }
+
   const platformLabels = [
     ...new Set(
       (allCapabilities || [])
@@ -135,7 +188,6 @@ export function buildCodeDiscoveryFallback(
   ].slice(0, 5);
   const platforms =
     platformLabels.length > 0 ? platformLabels : ["فيسبوك", "تيك توك", "إنستغرام", "منصة X", "يوتيوب"];
-  const intro = "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
   const items: NormalizedClarificationQuestion[] = [
     {
       id: "code_platform",
@@ -149,8 +201,8 @@ export function buildCodeDiscoveryFallback(
       id: "code_topic",
       text: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
       question: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
-      type: "free",
-      options: [],
+      type: chips.length > 0 ? "single" : "free",
+      options: chips,
       allowOther: true,
     },
     {
@@ -597,12 +649,56 @@ export class ChatHandler {
     // Discovery fallback used when the catalog loop + one retry cannot produce a
     // next step: real code-built questions (never the generic sentence, never the
     // raw catalog list).
-    const fallbackToDiscovery = () => {
-      const fallback = buildCodeDiscoveryFallback(allCapabilities);
+    const fallbackToDiscovery = (customIntro?: string, colonFallback: boolean = false) => {
+      const fallback = buildCodeDiscoveryFallback(allCapabilities, message, colonFallback);
       clarificationQuestionsList = fallback.items.map((item) => item.text);
       clarificationItemsList = fallback.items;
-      finalContentAr = fallback.intro;
+      finalContentAr = customIntro || fallback.intro;
+      output = {
+        type: "ask_clarification",
+        reasonAr: finalContentAr,
+        intro: finalContentAr,
+        questions: fallback.items,
+        questionsAr: clarificationQuestionsList,
+      } as any;
     };
+
+    // 7d. Check if reply ended with a colon without a tool call (cut-off reply guard)
+    const getEffectiveAnswerText = (o: typeof output): string => {
+      if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim();
+      return (llmResult.textBlockAr || "").trim();
+    };
+    const hasActiveTool = (o: typeof output): boolean => {
+      return (
+        o.type === "ask_clarification" ||
+        o.type === "ask_questions" ||
+        o.type === "propose_plan" ||
+        o.type === "edit_plan" ||
+        o.type === "edit_artifact" ||
+        o.type === "suggest_alternative" ||
+        o.type === "refuse"
+      );
+    };
+
+    let answerCandidate = getEffectiveAnswerText(output);
+    const isEndingColon = (t: string) => /[:：](\s*)$/.test(t);
+
+    if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
+      // Retry once inside the turn
+      loopMessages.push({
+        role: "system",
+        content:
+          "[تعليمات داخلية — أكمل الرد]: انتهى الرد بنقطتين (:) دون استدعاء أي أداة. استدعِ الآن ask_questions لطرح أسئلة استكشافية محددة أو propose_plan لاقتراح الخطة المسعرة. لا تترك الرد منتهياً بنقطتين دون بطاقة.",
+      } as const);
+      await repeatTurn();
+      answerCandidate = getEffectiveAnswerText(output);
+    }
+
+    if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
+      // Still ending with colon and no tool call came: build discovery card in code
+      // (topic angle, number of posts, comments per post, date range, language/dialect)
+      fallbackToDiscovery(answerCandidate || undefined, true);
+    }
 
     // Turn catalog endpoints: live results of this turn + 24h cached catalog,
     // deduped by alias. Plan validation and pricing use these first.
@@ -646,7 +742,9 @@ export class ChatHandler {
       });
       clarificationQuestionsList = clarification.clarificationQuestions;
       clarificationItemsList = clarification.clarificationItems;
-      finalContentAr = clarification.contentAr;
+      finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
+        ? llmResult.textBlockAr
+        : clarification.contentAr;
     } else if (output.type === "answer_question") {
       finalContentAr = output.answerAr;
     } else if (output.type === "write_note") {
@@ -733,13 +831,16 @@ export class ChatHandler {
             methodologyNotes: planOutput.methodologyNotes,
           };
 
-          finalContentAr = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
           if (!managedQuote.isAffordable) {
-            finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
+            planSummaryText += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
             if (managedQuote.downscaledOffer) {
-              finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+              planSummaryText += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
             }
           }
+          finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
+            ? `${llmResult.textBlockAr}\n\n${planSummaryText}`
+            : planSummaryText;
         }
     } else if (output.type === "edit_plan") {
       let activeQuote: any = null;

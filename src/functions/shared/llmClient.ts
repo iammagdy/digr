@@ -297,6 +297,7 @@ export interface LlmCallResult {
   model: string;
   promptVersion?: string;
   rawText?: string;
+  textBlockAr?: string;
 }
 
 // ================= White-Label Scrubber =================
@@ -796,6 +797,51 @@ export class LlmClient {
     if (options.testScenario === "search_then_stall") {
       if (!hasCatalogResults) return { output: searchCatalogOutput, ...fakeTokens };
       return { output: { type: "answer_question", answerAr: "   " }, ...fakeTokens };
+    }
+    const hasColonRetry = (options.messages || []).some(
+      (m) => typeof m.content === "string" && m.content.includes("انتهى الرد بنقطتين"),
+    );
+    if (options.testScenario === "colon_cutoff_then_questions") {
+      if (!hasColonRetry) {
+        return {
+          output: { type: "answer_question", answerAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:" },
+          ...fakeTokens,
+          textBlockAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+        };
+      }
+      return {
+        output: {
+          type: "ask_clarification",
+          reasonAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+          questions: [
+            { question: "ما زوايا أو محاور الموضوع المستهدفة؟" },
+            { question: "ما عدد المنشورات المستهدف فحصها؟" },
+          ],
+        },
+        ...fakeTokens,
+        textBlockAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+      };
+    }
+    if (options.testScenario === "colon_cutoff_always") {
+      return {
+        output: { type: "answer_question", answerAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:" },
+        ...fakeTokens,
+        textBlockAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+      };
+    }
+    if (options.testScenario === "text_plus_tool_turn") {
+      return {
+        output: {
+          type: "ask_clarification",
+          reasonAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+          questions: [
+            { question: "ما زوايا أو محاور الموضوع المستهدفة؟" },
+            { question: "ما عدد المنشورات المستهدف فحصها؟" },
+          ],
+        },
+        ...fakeTokens,
+        textBlockAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+      };
     }
     if (options.testScenario === "multiplatform_questions") {
       return {
@@ -1821,6 +1867,11 @@ export class LlmClient {
       const data: any = await response.json();
 
       let rawPayload: any = null;
+      const textBlocks = data.content?.filter(
+        (b: any) => b.type === "text" && typeof b.text === "string" && b.text.trim().length > 0,
+      ) || [];
+      const extractedText = textBlocks.map((b: any) => b.text.trim()).join("\n\n");
+
       const toolUse = data.content?.find((b: any) => b.type === "tool_use");
       if (toolUse && toolUse.input) {
         if (toolUse.name === "search_catalog") {
@@ -1838,14 +1889,27 @@ export class LlmClient {
         } else {
           rawPayload = toolUse.input;
         }
-      } else {
-        const textBlock = data.content?.find((b: any) => b.type === "text");
-        if (textBlock && textBlock.text) {
-          try {
-            rawPayload = JSON.parse(textBlock.text);
-          } catch {
-            rawPayload = {};
+
+        if (extractedText) {
+          if (rawPayload.type === "ask_clarification" || rawPayload.type === "ask_questions") {
+            if (!rawPayload.intro) rawPayload.intro = extractedText;
+            if (!rawPayload.reasonAr) rawPayload.reasonAr = extractedText;
+          } else if (rawPayload.type === "propose_plan") {
+            if (!rawPayload.rationaleAr) rawPayload.rationaleAr = extractedText;
           }
+        }
+      } else {
+        if (extractedText) {
+          try {
+            rawPayload = JSON.parse(extractedText);
+          } catch {
+            rawPayload = {
+              type: "answer_question",
+              answerAr: extractedText,
+            };
+          }
+        } else {
+          rawPayload = {};
         }
       }
 
@@ -1919,6 +1983,7 @@ export class LlmClient {
         model,
         promptVersion: PROMPT_VERSION,
         rawText: JSON.stringify(scrubbedPayload),
+        textBlockAr: extractedText ? scrubWhiteLabelText(extractedText) : undefined,
       };
     } catch (err: any) {
       clearTimeout(timeoutId);
