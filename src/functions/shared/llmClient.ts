@@ -540,6 +540,8 @@ export interface LlmStatusSnapshot {
   llm_enabled: boolean;
   key_present: boolean;
   model: string;
+  reasoning_effort: string;
+  reasoning_effort_status: string;
   last_llm_usage_timestamp: string | null;
   last_fallback_reason: string | null;
   last_fallback_detail: string | null;
@@ -619,6 +621,14 @@ export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): 
   const llm_enabled = isLlmEnabledRuntime();
   const key_present = isProviderKeyPresent(provider);
   const model = resolveRuntimeModel(provider);
+  const reasoning_effort = (process.env.LLM_REASONING_EFFORT || "low").trim().toLowerCase();
+
+  let reasoning_effort_status = "not applied (fake provider)";
+  if (provider === "anthropic") {
+    reasoning_effort_status = "not applied (model does not support it)";
+  } else if (provider === "openai") {
+    reasoning_effort_status = "applied";
+  }
 
   let derivedFallback = lastFallbackReason;
   if (!derivedFallback) {
@@ -636,6 +646,8 @@ export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): 
     llm_enabled,
     key_present,
     model,
+    reasoning_effort,
+    reasoning_effort_status,
     last_llm_usage_timestamp: lastUsageTimestamp,
     last_fallback_reason: derivedFallback,
     last_fallback_detail: lastFallbackDetail,
@@ -2165,7 +2177,7 @@ export class LlmClient {
         signal: controller.signal,
         body: JSON.stringify({
           model,
-          reasoning: { effort: "low" },
+          reasoning: { effort: (process.env.LLM_REASONING_EFFORT || "low").trim().toLowerCase() },
           input: [
             { role: "system", content: systemPrompt },
             ...options.messages,

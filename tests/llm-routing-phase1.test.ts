@@ -180,6 +180,8 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
         llm_enabled: true,
         key_present: true,
         model: "claude-haiku-5-5",
+        reasoning_effort: "low",
+        reasoning_effort_status: "not applied (model does not support it)",
         last_llm_usage_timestamp: "2026-10-11T09:30:00.000Z",
         last_fallback_reason: null,
         last_fallback_detail: null,
