@@ -1,38 +1,51 @@
-# Production Cutover & Pre-Launch Runbook (Supabase)
+# Production Cutover & Pre-Launch Runbook (Supabase + Vercel Hobby)
 
-This document details the mandatory steps, verification leftovers reconciliation, Supabase Auth dashboard configurations, environment variable placements, and security actions required prior to opening Digr to live customer traffic on Supabase.
+This document details the mandatory pre-launch checklist, verification leftovers reconciliation, Supabase Auth dashboard configurations, Vercel Hobby plan settings, environment variable placements, and DNS cutover runbook for launching **Diger (`diger.tech`)** on Supabase as the sole backend.
 
 ---
 
 ## 1. Pre-Cutover Verification Leftovers Reconciled
 
-During local and synthetic verification, test operations run against two isolated test users:
-- **Test User 1 UUID:** `00000000-0000-0000-0000-000000000001` (balance: 1917 points, 169 ledger rows)
+During automated live verification on Supabase project `pfinlfaqwnytesedchik`, test operations ran strictly against two isolated test users:
+- **Test User 1 UUID:** `00000000-0000-0000-0000-000000000001` (balance: 1,917 points, 169 ledger rows)
 - **Test User 2 UUID:** `00000000-0000-0000-0000-000000000002` (balance: 440 points, 18 ledger rows)
 - **Fixture Key Prefixes:** `vrun_<timestamp>_<uuid>_`
 
 ### Expected Leftovers
-- **Jobs Table:** Temporary test rows with status `running`, `queued`, `completed`, or `failed` created under the `vrun_` prefix.
+- **Jobs Table:** Temporary test rows created under the `vrun_` prefix.
 - **Topups Table:** Test top-up records created under the `vrun_` prefix.
 - **Credit Ledger:** Test reservation (`res_`), release (`rel_`), charge (`chg_`), and top-up (`top_`) rows (187 total rows across test users 1 & 2).
-- **Provider Costs:** Test synthetic calls or small verification spend rows logged under test jobs ($0.6160 USD committed out of $0.80 daily cap).
-- **Storage:** Test objects uploaded during verification in buckets `receipts` and `results`.
+- **Provider Costs:** Test verification spend rows logged under test jobs (`$0.6160` USD committed out of `$0.80` daily cap).
+- **Storage:** Test objects uploaded during verification in private buckets `receipts` and `results`.
 
 > [!IMPORTANT]
-> Do NOT manually delete or modify ledger rows during Phase B development. All test ledger entries are protected by database immutability triggers and are strictly reconciled and purged only during the clean child-first pre-launch reset detailed in [OWNER_SQL.md](file:///d:/Digr/docs/OWNER_SQL.md).
+> Do NOT manually delete or modify ledger rows during development. All test ledger entries are protected by database immutability triggers (`trg_credit_ledger_immutable`) and are reconciled and purged only when the owner executes the child-first pre-launch reset in [OWNER_SQL.md](file:///d:/Digr/docs/OWNER_SQL.md) (Stop Gate G4).
 
 ---
 
-## 2. Temporary Fixture RPC Removal (Mandatory Pre-Launch Step)
+## 2. Seed Configuration Applied (Phase B Verified)
 
-The RPC `public.create_verify_fixture(TEXT, JSONB)` exists strictly to facilitate automated live verification without bypassing ledger immutability or granting client write privileges.
+Seed data has been applied via migration `20261012200628_seed_initial_configuration.sql` and verified live:
+- **`settings_public` (1 row, key = `pricing`):**
+  - `usdToEgp = 55.0` fixed, `markup = 10.0` applied once, `creditValueEgp = 0.10` (`5,500` points per `1.00 USD` of provider cost), `safetyBuffer = 0.15` (on reserve only), `minPoints = 1`, `maxJobPoints = 600`.
+- **`settings_private` (1 row, key = `provider_limits`):**
+  - `providerDailySpendCapUsd = 0.80`, `jobMaxPointsCap = 600`.
+- **`capability_registry` (12 rows):**
+  - Only `tiktok-profile` is `enabled = true` (`unit_cost_usd = 0.0010`, `6 points` / `0.60 EGP`). All other 11 capabilities are seeded with `enabled = false` until individually verified.
+- **`templates` (6 rows):**
+  - Arabic research starter templates seeded.
 
-Before opening to live production traffic:
-1. Execute the following SQL statement in the Supabase SQL Editor:
+---
+
+## 3. Temporary Fixture RPC Removal (Stop Gate G4 — Owner SQL)
+
+The RPC `public.create_verify_fixture(TEXT, JSONB)` exists strictly for automated verification without bypassing ledger immutability.
+
+Before opening to live customer traffic, run in the **Supabase SQL Editor**:
 ```sql
 DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);
 ```
-2. Verify removal:
+Verify removal:
 ```sql
 SELECT proname FROM pg_proc WHERE proname = 'create_verify_fixture';
 -- Must return 0 rows
@@ -40,99 +53,132 @@ SELECT proname FROM pg_proc WHERE proname = 'create_verify_fixture';
 
 ---
 
-## 3. Owner Admin Role Assignment
+## 4. Owner Admin Role Assignment (Supabase SQL Editor)
 
-To assign the system administrator role to the owner in Supabase without relying on Appwrite:
-1. In the Supabase SQL Editor, execute:
+After registering your owner account on Diger, assign the `admin` role in the **Supabase SQL Editor**:
 ```sql
 UPDATE auth.users
 SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"role": "admin"}'::jsonb
 WHERE email = 'YOUR_OWNER_EMAIL@example.com';
 ```
-2. Verify that the admin role is reflected in `auth.users`:
+Verify that the admin role is reflected:
 ```sql
 SELECT id, email, raw_app_meta_data->>'role' AS role
 FROM auth.users
 WHERE email = 'YOUR_OWNER_EMAIL@example.com';
 -- Role must be 'admin'
 ```
-3. Ensure the environment variable `ENABLE_APPWRITE_ADMIN_FALLBACK` is set to `false` (or left unset, as default is `false`) so all administrative access is strictly authenticated via Supabase JWTs.
 
 ---
 
-## 4. Supabase Auth Dashboard Settings
+## 5. Supabase Auth Dashboard Settings
 
-Configure the following settings in the **Supabase Dashboard** under **Authentication**:
+Configure the following settings in the **Supabase Dashboard** (`Authentication`):
 
-### A. Leaked Password Protection (Security Advisor)
-- Navigate to **Authentication** -> **Security**.
-- Under **Password Protection**, turn ON:
-  - **Prevent leaked passwords** (checks against HaveIBeenPwned.org database).
-  - Minimum password length: 8 characters.
+### A. Leaked Password Protection
+1. Open **Authentication** -> **Providers** -> **Email** (or **Authentication** -> **Attack Protection / Security**).
+2. Enable **Prevent use of leaked passwords** (HaveIBeenPwned check).
+3. Set **Minimum password length** to `8` characters.
 
-### B. Redirect URLs
-- Navigate to **Authentication** -> **URL Configuration**.
-- **Site URL:** `https://diger.tech`
-- **Redirect URLs:**
-  - `https://diger.tech/auth/callback`
-  - `https://diger.tech/dashboard`
-  - `http://localhost:3000/auth/callback` (for local development)
+### B. Site URL & Redirect URLs
+1. Open **Authentication** -> **URL Configuration**.
+2. **Site URL:** `https://diger.tech`
+3. **Redirect URLs:**
+   - `https://diger.tech/auth/callback`
+   - `https://diger.tech/verify`
+   - `https://diger.tech/reset`
+   - `https://diger.tech/dashboard/**`
+   - `http://localhost:3000/auth/callback`
+   - `http://localhost:3000/verify`
 
 ### C. Custom SMTP Configuration (Resend)
-- Navigate to **Authentication** -> **SMTP Settings**.
-- Enable **Custom SMTP**.
-- **Sender Email:** `noreply@diger.tech`
-- **Sender Name:** `ديجر | Diger`
-- **Host:** `smtp.resend.com`
-- **Port:** `465` (SSL) or `587` (TLS)
-- **Username:** `resend`
-- **Password:** `[RESEND_API_KEY]` (from your Resend account)
+1. Open **Authentication** -> **SMTP Settings**.
+2. Enable **Custom SMTP**:
+   - **Sender Email:** `noreply@diger.tech`
+   - **Sender Name:** `ديجر`
+   - **Host:** `smtp.resend.com`
+   - **Port:** `465` (SSL) or `587` (STARTTLS)
+   - **Username:** `resend`
+   - **Password:** `<RESEND_API_KEY>`
 
-### D. Arabic Email Templates (RTL)
-- Navigate to **Authentication** -> **Email Templates**.
-- **Confirm Signup:**
-  - Subject: `تأكيد بريدك الإلكتروني في ديجر`
-  - Body: Arabic RTL formatted message with confirmation link.
-- **Magic Link / Login:**
-  - Subject: `رابط تسجيل الدخول إلى ديجر`
-- **Password Reset:**
-  - Subject: `إعادة تعيين كلمة المرور في ديجر`
+### D. Arabic RTL Email Templates
+Open **Authentication** -> **Email Templates** and paste these RTL Arabic templates:
+
+#### 1. Confirm Signup (`تأكيد بريدك الإلكتروني في ديجر`)
+```html
+<div dir="rtl" style="font-family: Tahoma, Arial, sans-serif; text-align: right; color: #1c1917; line-height: 1.8;">
+  <h2>مرحباً بك في ديجر</h2>
+  <p>شكراً لتسجيلك في منصة ديجر للبيانات البحثية. لتفعيل حسابك والبدء في استخدام المنصة، يرجى الضغط على الزر التالي:</p>
+  <p style="margin: 24px 0;">
+    <a href="{{ .ConfirmationURL }}" style="background: #1c1917; color: #ffffff; padding: 12px 24px; border-radius: 999px; text-decoration: none; display: inline-block;">تفعيل البريد الإلكتروني</a>
+  </p>
+  <p style="font-size: 12px; color: #78716c;">إذا لم تقم بإنشاء هذا الحساب، يمكنك تجاهل هذه الرسالة بأمان.</p>
+</div>
+```
+
+#### 2. Reset Password (`إعادة تعيين كلمة المرور في ديجر`)
+```html
+<div dir="rtl" style="font-family: Tahoma, Arial, sans-serif; text-align: right; color: #1c1917; line-height: 1.8;">
+  <h2>إعادة تعيين كلمة المرور</h2>
+  <p>تلقينا طلباً لإعادة تعيين كلمة المرور الخاصة بحسابك في ديجر. اضغط على الزر التالي لاختيار كلمة مرور جديدة:</p>
+  <p style="margin: 24px 0;">
+    <a href="{{ .ConfirmationURL }}" style="background: #1c1917; color: #ffffff; padding: 12px 24px; border-radius: 999px; text-decoration: none; display: inline-block;">تعيين كلمة مرور جديدة</a>
+  </p>
+  <p style="font-size: 12px; color: #78716c;">إذا لم تطلب تغيير كلمة المرور، فلا داعي لاتخاذ أي إجراء.</p>
+</div>
+```
 
 ---
 
-## 5. Environment Variables Placement
+## 6. Vercel Hobby Plan Configuration (`vercel.json`)
 
-Ensure the following environment variables are set in the respective environments:
+The repository includes `vercel.json` tailored for the **Vercel Hobby** plan:
+- **Cron Schedule:** Exactly 1 daily cron job (`/api/cron/watchdog` at `0 0 * * *` UTC), which:
+  1. Releases expired unaccepted quotes (`status = 'quoted'` past `expires_at`).
+  2. Force-releases stalled running/queued jobs whose worker lease has expired (`release_job_atomic(job_id, reason, true)` — full reserve refunded, zero charge).
+  3. Purges accounts whose 30-day deletion grace period (`deletion_scheduled_for <= now()`) has elapsed (isolating each user in its own `try/catch`, deleting `results` storage files and non-financial rows, preserving `receipts` and all financial ledger rows, anonymizing the profile, and banning the auth account).
+- **Function Max Duration:** `60` seconds (`"maxDuration": 60`) for both `src/app/api/worker/chunk/route.ts` and `src/app/api/cron/watchdog/route.ts`.
+- **Worker Self-Chaining:** Because Hobby crons run once daily, job execution does not wait for cron. `/api/chat/accept-quote` immediately triggers `/api/worker/chunk` with `x-cron-secret: CRON_SECRET`, and `/api/worker/chunk` self-chains the next chunk until all chunks complete and `settle_job_atomic` runs. Users can also nudge a stalled job via `/api/jobs/[id]/nudge`.
 
-| Variable Name | Location | Client Exposed? | Purpose |
-| :--- | :--- | :---: | :--- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Vercel / `.env.local` | Yes | Supabase Project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Vercel / `.env.local` | Yes | Supabase Public Anonymous API Key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Vercel (Server Only) | **NO** | Supabase Backend Elevated Key (Security Definer RPCs) |
-| `CRON_SECRET` | Vercel (Server Only) | **NO** | Timing-safe secret for watchdog cron & worker chunk chaining |
-| `ENABLE_APPWRITE_ADMIN_FALLBACK` | Vercel (Server Only) | **NO** | Set to `false` (disables legacy Appwrite fallback) |
-| `RESEND_API_KEY` | Vercel (Server Only) | **NO** | Transactional email delivery via Resend API / SMTP |
-| `TREG_API_KEY` | Vercel (Server Only) | **NO** | Research capability data provider key |
-| `ANTHROPIC_API_KEY` | Vercel (Server Only) | **NO** | LLM assistant integration key |
+---
+
+## 7. Production Environment Variables (Vercel)
+
+Set the following environment variables in **Vercel Project Settings -> Environment Variables** (Production & Preview):
+
+| Variable Name | Client Exposed? | Required Value / Purpose |
+| :--- | :---: | :--- |
+| `NEXT_PUBLIC_SITE_URL` | Yes | `https://diger.tech` |
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | `https://pfinlfaqwnytesedchik.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase public `anon` key |
+| `NEXT_PUBLIC_INSTAPAY_HANDLE` | Yes | Owner Instapay IPA address |
+| `SUPABASE_SERVICE_ROLE_KEY` | **NO** | Supabase `service_role` secret key (server-only) |
+| `CRON_SECRET` | **NO** | Strong random secret (32+ hex chars) for `/api/cron/watchdog` and `/api/worker/chunk` |
+| `TREG_TOKEN` | **NO** | Live provider API token (`treg_...`) |
+| `TREG_LIVE` | **NO** | `true` in production when ready for live provider calls |
+| `TREG_BASE_URL` | **NO** | `https://treg.to` |
+| `LLM_ENABLED` | **NO** | `true` |
+| `LLM_PROVIDER` | **NO** | `anthropic` |
+| `ANTHROPIC_API_KEY` | **NO** | Anthropic server API key (`sk-ant-...`) |
+| `ANTHROPIC_MODEL` | **NO** | `claude-haiku-4-5` |
+| `RESEND_API_KEY` | **NO** | Resend API key (`re_...`) for email notifications |
+| `PROVIDER_DAILY_SPEND_CAP_USD` | **NO** | `0.80` (hard UTC daily cap) |
+| `JOB_MAX_POINTS_CAP` | **NO** | `600` (hard per-job points cap) |
+| `ENABLE_APPWRITE_ADMIN_FALLBACK` | **NO** | `false` |
 
 > [!CAUTION]
-> Never expose `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `RESEND_API_KEY`, `TREG_API_KEY`, or `ANTHROPIC_API_KEY` to client-side bundles. Run `scripts/check-client-bundle-secrets.ts` to verify before production deployments.
+> Do **NOT** set `NEXT_PUBLIC_APPWRITE_ENDPOINT`, `NEXT_PUBLIC_APPWRITE_PROJECT_ID`, or `APPWRITE_API_KEY` in Vercel. Run `npm run build` (which automatically executes `scripts/check-client-bundle-secrets.ts`) to verify zero secrets leak into `.next/static`.
 
 ---
 
-## 6. Seed Data Application (Gate G2)
+## 8. Final Cutover Sequence (Stop Gates G3, G4, G5)
 
-Seed tables (`settings_public`, `settings_private`, `capability_registry`, `templates`) currently hold **0 rows** in production.
-- Review proposed rows in [SEED_PROPOSAL.md](file:///d:/Digr/docs/SEED_PROPOSAL.md).
-- Once approved by the owner, execute the transaction-wrapped SQL in [SEED_PROPOSAL.md](file:///d:/Digr/docs/SEED_PROPOSAL.md) in the Supabase SQL Editor.
-
----
-
-## 7. Final Pre-Launch Child-First Reset Execution
-
-Immediately prior to opening live customer traffic (Phase C cutover):
-1. Confirm all existing rows in `credit_ledger` belong strictly to test users (run Step 1 query in [OWNER_SQL.md](file:///d:/Digr/docs/OWNER_SQL.md)).
-2. Execute the child-first clean reset script from Step 2 in [OWNER_SQL.md](file:///d:/Digr/docs/OWNER_SQL.md).
-3. Confirm that the ledger is 0 rows and immutability triggers are active.
-4. Execute temporary RPC drop: `DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);`.
-5. Verify admin account role and pricing settings.
+1. **Gate G4 (Pre-Launch Clean Reset):**
+   - Run the pre-check query and child-first reset transaction in [OWNER_SQL.md](file:///d:/Digr/docs/OWNER_SQL.md) in the Supabase SQL Editor.
+   - Drop `public.create_verify_fixture(TEXT, JSONB)`.
+2. **Gate G3 (Deploy & Domain Cutover):**
+   - Merge PR #43 (`migrate/supabase` -> `main`) **ONLY after explicit owner approval**.
+   - Connect the GitHub repository to Vercel and deploy `main` with the environment variables in Section 7.
+   - Point `diger.tech` DNS (`A` record -> `76.76.21.21`, `CNAME` `www` -> `cname.vercel-dns.com`) to Vercel and verify SSL certificate issuance.
+3. **Gate G5 (Tiny Live Preview Job):**
+   - Run the single-unit preview check (`tiktok-profile`, 1 unit = 6 points reserved, 5 points charged, 1 point refunded) only after explicit owner approval.
