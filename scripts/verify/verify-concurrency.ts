@@ -6,11 +6,13 @@
 import https from "https";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
-const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const ANON_KEY =
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 if (!ANON_KEY) {
-  console.error("ERROR: NEXT_PUBLIC_SUPABASE_ANON_KEY must be provided via environment variable.");
+  console.error("ERROR: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY must be provided via environment variable.");
   process.exit(1);
 }
 
