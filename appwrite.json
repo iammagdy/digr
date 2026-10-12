@@ -10,11 +10,14 @@
       "commands": "npm install",
       "path": "src/functions/on-user-create",
       "events": [
-        "users.*.create"
+        "users.*.create",
+        "users.*.verification.*.update"
       ],
       "execute": [],
       "scopes": [
-        "rows.write"
+        "rows.write",
+        "users.read",
+        "messages.write"
       ],
       "timeout": 15
     },
@@ -52,7 +55,8 @@
       "scopes": [
         "users.read",
         "rows.read",
-        "rows.write"
+        "rows.write",
+        "messages.write"
       ],
       "timeout": 15
     },
@@ -88,7 +92,9 @@
         "rows.read",
         "rows.write",
         "files.read",
-        "files.write"
+        "files.write",
+        "users.read",
+        "messages.write"
       ],
       "timeout": 60
     },

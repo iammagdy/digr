@@ -57,18 +57,28 @@
 [data-theme="light"][data-area="admin"] {
   --bg: #f6f4ef;
   --sf2: #f1eee8;
+  --sf3: #e9e5dd;
   --ln: #e7e2d9;
   --ln2: #d6d0c4;
   --mut: #6b6e69;
+  --fnt: #959389;
+  --onac: #f6f4ef;
+  --admin-shadow: 0 1px 2px rgba(22, 32, 31, 0.04), 0 12px 32px -18px rgba(22, 32, 31, 0.18);
+  --ok-btn: #1f5e3b;
 }
 [data-theme="dark"] [data-area="admin"],
 [data-theme="dark"][data-area="admin"] {
   --bg: #0f1211;
   --sf: #161a19;
   --sf2: #1c2120;
+  --sf3: #242a29;
   --ln: #252b2a;
   --ln2: #343b3a;
   --mut: #9b998f;
+  --fnt: #6f6e68;
+  --onac: #0f1211;
+  --admin-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
+  --ok-btn: #2f7a4f;
 }
 
 @theme inline {
@@ -80,6 +90,7 @@
   --color-bg: var(--bg);
   --color-sf: var(--sf);
   --color-sf2: var(--sf2);
+  --color-sf3: var(--sf3);
   --color-ln: var(--ln);
   --color-ln2: var(--ln2);
   --color-ink: var(--ink);
@@ -308,3 +319,6 @@ input::placeholder, textarea::placeholder { color: var(--fnt); }
 /* Scrollbars: the app chrome hides them, content areas keep the thin one */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes spin { to { transform: rotate(360deg) } }

@@ -1,4 +1,5 @@
 import { Client, TablesDB, Permission, Role } from "node-appwrite";
+import { notifyUser } from "../../shared/notify";
 
 export default async ({ req, res, log, error }: any) => {
   const apiKey =
@@ -22,6 +23,15 @@ export default async ({ req, res, log, error }: any) => {
     if (!userId) {
       error("Missing user ID in event");
       return res.json({ success: false, error: "Missing user ID" }, 400);
+    }
+
+    // Email verified (users.*.verification.*.update): welcome notification, nothing else to do.
+    if (String(req.headers?.["x-appwrite-event"] || "").includes(".verification.")) {
+      await notifyUser(client, {
+        userId, kind: "welcome", title: "مرحبًا بك في ديجر",
+        body: "أكّدت بريدك بنجاح. اشحن رصيدك وابدأ أول بحث.", link: "/dashboard/topup",
+      }, log);
+      return res.json({ success: true, userId, welcome: true });
     }
 
     log(`Creating profile for user: ${userId}`);
