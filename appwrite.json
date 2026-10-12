@@ -30,6 +30,7 @@
         "users"
       ],
       "scopes": [
+        "users.read",
         "rows.read",
         "rows.write",
         "files.read",

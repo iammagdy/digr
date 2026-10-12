@@ -272,6 +272,13 @@ export function isInstapayAvailable(handle?: string | null, phone?: string | nul
   return true;
 }
 
+/** The IPA (instant payment address) alone: configured and not a demo value. */
+export function isIpaAvailable(handle?: string | null): boolean {
+  const h = handle?.trim().toLowerCase();
+  if (!h) return false;
+  return !(PLACEHOLDER_HANDLES.has(h) || h.includes("placeholder") || h.includes("example"));
+}
+
 /* ------------------------------------------------------------------ */
 /* Wallet Ledger Row Grouping (Net Job Display)                        */
 /* ------------------------------------------------------------------ */

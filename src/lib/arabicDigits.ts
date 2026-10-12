@@ -32,3 +32,17 @@ export function timeAgoAr(iso: string, now = Date.now()): string {
   if (d === 1) return "أمس";
   return new Date(iso).toLocaleDateString("ar-EG", { day: "numeric", month: "long" });
 }
+
+/** Three-part sender name check: at least 3 words (as the design validates it). */
+export function normalizeSenderName(input: string): string {
+  return input.replace(/\s+/g, " ").trim();
+}
+export function isThreePartName(input: string): boolean {
+  return normalizeSenderName(input).split(" ").filter((w) => w.length > 0).length >= 3;
+}
+
+/** Egyptian mobile after digit normalisation; strips spaces and dashes. */
+export function normalizePhone(input: string): string {
+  return normalizeDigits(input).replace(/[\s-]/g, "");
+}
+export const EG_MOBILE_RE = /^01[0125]\d{8}$/;

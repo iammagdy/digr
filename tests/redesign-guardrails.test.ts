@@ -81,7 +81,7 @@ describe("no internal identifiers in customer-facing code", () => {
 describe("honest financial presentation", () => {
   it("wallet page derives balance from the ledger, never hardcodes it", () => {
     const topup = src("src/app/dashboard/topup/page.tsx");
-    expect(topup).toContain("credit_ledger");
+    expect(topup).toContain("CREDIT_LEDGER_COLLECTION");
     // No hardcoded demo balance.
     expect(topup).not.toMatch(/useState<number \| null>\(\d{3,}\)/);
   });
@@ -114,7 +114,6 @@ describe("accessibility foundations", () => {
 describe("data-honesty corrections (PR #11 fixes)", () => {
   const BALANCE_FILES = [
     "src/hooks/useBalance.tsx",
-    "src/app/dashboard/topup/page.tsx",
   ];
 
   it("no failed balance fetch presents as a fake zero", () => {
@@ -126,8 +125,12 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
     }
   });
 
-  it("the chat reads the shared ledger balance instead of its own copy", () => {
+  it("the chat and wallet read the shared ledger balance instead of their own copy", () => {
     expect(src("src/app/dashboard/chat/page.tsx")).toContain("useBalance()");
+    const wallet = src("src/app/dashboard/topup/page.tsx");
+    expect(wallet).toContain("useBalance()");
+    expect(wallet).toContain("balanceText(balance)");
+    expect(wallet).not.toMatch(/set(Balance|UserBalance)\(0\)/);
   });
 
   it("balance displays route through the honest-display helpers", () => {
