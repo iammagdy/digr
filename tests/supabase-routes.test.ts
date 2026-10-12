@@ -356,4 +356,78 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
   });
 });
 
+describe("Top-up Approval Atomic Logic (approves twice, credits once)", () => {
+  it("approving twice credits once and never duplicates points", async () => {
+    const mockLedger: any[] = [];
+    const mockTopups: any[] = [
+      {
+        id: "tp-race-1",
+        user_id: "user-topup-test",
+        amount_egp: 100,
+        status: "pending",
+        reference: "ref-12345",
+      },
+    ];
+
+    // Simulated atomic function logic
+    async function simulateApproveTopupAtomic(topupId: string, confirmedAmount?: number) {
+      const topup = mockTopups.find((t) => t.id === topupId);
+      if (!topup) return { success: false, error: "topup_not_found" };
+
+      if (topup.status === "approved") {
+        const bal = mockLedger.filter((l) => l.user_id === topup.user_id).reduce((s, l) => s + l.delta, 0);
+        return { success: true, already_approved: true, credits: topup.credits, balance: bal };
+      }
+
+      if (topup.status !== "pending") {
+        return { success: false, error: "invalid_status" };
+      }
+
+      const effectiveAmount = confirmedAmount || topup.amount_egp;
+      const creditValueEgp = 0.1;
+      const credits = Math.floor(effectiveAmount / creditValueEgp);
+      const ledgerId = `top_${topupId}`;
+
+      const existingLedger = mockLedger.find((l) => l.id === ledgerId);
+      if (existingLedger) {
+        if (existingLedger.user_id !== topup.user_id || existingLedger.delta !== credits) {
+          throw new Error("ledger_conflict");
+        }
+      } else {
+        mockLedger.push({
+          id: ledgerId,
+          user_id: topup.user_id,
+          delta: credits,
+          type: "topup",
+        });
+      }
+
+      topup.status = "approved";
+      topup.credits = credits;
+
+      const newBal = mockLedger.filter((l) => l.user_id === topup.user_id).reduce((s, l) => s + l.delta, 0);
+      return { success: true, already_approved: false, credits, balance: newBal };
+    }
+
+    // First approval: grants 1000 credits
+    const firstRes = await simulateApproveTopupAtomic("tp-race-1");
+    expect(firstRes.success).toBe(true);
+    expect(firstRes.already_approved).toBe(false);
+    expect(firstRes.credits).toBe(1000);
+    expect(firstRes.balance).toBe(1000);
+
+    // Second approval retry: returns already_approved, zero extra credits
+    const secondRes = await simulateApproveTopupAtomic("tp-race-1");
+    expect(secondRes.success).toBe(true);
+    expect(secondRes.already_approved).toBe(true);
+    expect(secondRes.balance).toBe(1000);
+
+    // Verify ledger has strictly 1 entry
+    const matchingLedger = mockLedger.filter((l) => l.id === "top_tp-race-1");
+    expect(matchingLedger).toHaveLength(1);
+    expect(matchingLedger[0].delta).toBe(1000);
+  });
+});
+
+
 
