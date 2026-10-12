@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { formatNumber, formatCurrency } from "@/lib/honestDisplay";
+import { useEffect, useState } from "react";
+import { formatNumber } from "@/lib/honestDisplay";
+import { formatAr } from "@/lib/arabicDigits";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -47,6 +47,16 @@ interface PlanQuoteCardProps {
   onSaveEdit: (quote: PlanQuoteData, newLimit: number, newParam: string, newFormats: string[]) => Promise<void>;
   onAcceptDownscaled?: (units: number) => void;
   isStarting: boolean;
+  /** Live available points (ledger sum). null while unknown: the quote's own snapshot is used. */
+  available: number | null;
+  /** EGP value of one point (settings_public.creditValueEgp). */
+  creditValue: number;
+  /** «اشحن {الفرق} والعودة هنا»: shortfall in EGP, rounded up to the next 50. */
+  onTopupShort: (shortEgp: number) => void;
+  /** «تحديث السعر»: recompute the quote on the server (an expired quote is never accepted). */
+  onRefresh: (quote: PlanQuoteData) => Promise<void>;
+  /** The plan was approved and a run exists: show the quote read-only. */
+  locked?: boolean;
 }
 
 export function formatExpiry(expiresAt: string): string {
@@ -63,31 +73,34 @@ export function formatExpiry(expiresAt: string): string {
   }
 }
 
-function getPlatformLabel(slug: string): string {
-  const s = slug.toLowerCase();
-  if (s.includes("facebook") || s.includes("fb")) return "فيسبوك";
-  if (s.includes("tiktok")) return "تيك توك";
-  if (s.includes("instagram") || s.includes("ig")) return "إنستغرام";
-  if (s.includes("youtube") || s.includes("yt")) return "يوتيوب";
-  if (s.includes("x-") || s.includes("twitter")) return "منصة X";
-  if (s.includes("reddit")) return "ريديت";
-  return "الإنترنت العام";
+const FORMAT_LABEL: Record<string, string> = { xlsx: "Excel", pdf: "PDF", csv: "CSV" };
+
+/** «ينتهي العرض خلال ٢٨ دقيقة» */
+function expiryShort(expiresAt: string, now: number): string {
+  const ms = new Date(expiresAt).getTime() - now;
+  if (Number.isNaN(ms) || ms <= 0) return "";
+  const mins = Math.max(1, Math.floor(ms / 60000));
+  if (mins < 60) return `ينتهي العرض خلال ${formatAr(mins)} دقيقة`;
+  return `ينتهي العرض خلال ${formatAr(Math.floor(mins / 60))} ساعة`;
 }
 
-function getActionLabel(slug: string): string {
-  const s = slug.toLowerCase();
-  if (s.includes("comment")) return "سحب التعليقات";
-  if (s.includes("profile") || s.includes("user")) return "بيانات الحساب";
-  if (s.includes("search") || s.includes("post") || s.includes("keyword")) return "جمع المنشورات";
-  return "جمع البيانات";
-}
+const PRIMARY_BTN =
+  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-full border-0 bg-ac text-onac focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-40";
+const SECONDARY_BTN =
+  "cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2 disabled:opacity-50";
 
+/** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
 export default function PlanQuoteCard({
   quote,
   onStart,
   onSaveEdit,
   onAcceptDownscaled,
   isStarting,
+  available,
+  creditValue,
+  onTopupShort,
+  onRefresh,
+  locked = false,
 }: PlanQuoteCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
@@ -96,9 +109,21 @@ export default function PlanQuoteCard({
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [now, setNow] = useState(() => Date.now());
 
-  const expiryText = formatExpiry(quote.expiresAt);
-  const expired = expiryText === "انتهت صلاحية عرض السعر";
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  const expired = new Date(quote.expiresAt).getTime() <= now;
+  const balance = available ?? quote.userBalance;
+  const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
+  const shortPts = Math.max(0, quote.quotedPoints - balance);
+  const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
+  const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] ?? f.toUpperCase());
 
   function toggleFormat(fmt: string) {
     if (editFormats.includes(fmt)) {
@@ -110,187 +135,140 @@ export default function PlanQuoteCard({
 
   async function handleSave() {
     setSavingEdit(true);
+    setEditError("");
     try {
       await onSaveEdit(quote, editLimit, editParamVal, editFormats);
       setIsEditing(false);
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : "فشل تحديث الخطة وعرض السعر");
     } finally {
       setSavingEdit(false);
     }
   }
 
-  // Derive plain language steps: (what, from where, how many)
-  const steps: Array<{ what: string; fromWhere: string; howMany: number }> = [];
-  if (quote.items && quote.items.length > 0) {
-    for (const item of quote.items) {
-      const slug = item.capabilitySlug || "";
-      steps.push({
-        what: getActionLabel(slug),
-        fromWhere: getPlatformLabel(slug),
-        howMany: item.targetVolumeMax || quote.targetVolumeMax || 1,
-      });
-    }
-  } else if (quote.stepCostRanges && quote.stepCostRanges.length > 0) {
-    for (const r of quote.stepCostRanges) {
-      const slug = r.capabilitySlug || "";
-      steps.push({
-        what: r.labelAr || getActionLabel(slug),
-        fromWhere: getPlatformLabel(slug),
-        howMany: r.maxUnits || quote.targetVolumeMax || 1,
-      });
-    }
-  } else {
-    steps.push({
-      what: "جمع البيانات",
-      fromWhere: "المنصة المطلوبة",
-      howMany: quote.targetVolumeMax || 1,
-    });
+  async function handleRefresh() {
+    setRefreshing(true);
+    try { await onRefresh(quote); } finally { setRefreshing(false); }
   }
 
   return (
-    <div
-      className="mt-3 overflow-hidden rounded-2xl border border-sand-300 bg-white p-4 sm:p-5 shadow-[var(--shadow-card)]"
-      aria-label="خطة البحث وعرض السعر"
-      dir="rtl"
-    >
-      {/* Short Arabic Title & Approximate Points Total */}
-      <div className="flex flex-wrap items-start justify-between gap-3 pb-3 border-b border-sand-100">
-        <h3 className="text-base font-bold leading-relaxed text-ink-900 max-w-md">
-          {quote.summaryAr}
-        </h3>
-        <div className="text-left shrink-0" dir="ltr">
-          <div className="tnum text-lg font-bold text-amber-points">
-            {formatNumber(quote.quotedPoints)} نقطة
-          </div>
-          <div className="tnum text-xs text-sand-500">
-            ≈ {formatCurrency(quote.quotedPoints * 0.1)}
-          </div>
+    <div className="mt-[18px] rounded-2xl border border-ln bg-sf p-4" style={{ animation: "up .6s both" }} aria-label="خطة البحث وعرض السعر" dir="rtl">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="m-0 text-[34px] font-normal leading-none text-ink">
+            {formatAr(quote.quotedPoints)}
+            <span className="text-base text-mut" style={{ marginInlineStart: 8 }}>نقطة</span>
+          </p>
+          <p className="mb-0 mt-2 text-[13px] font-light text-mut">
+            ≈ {formatAr(Number((quote.quotedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatNumber(balance)} نقطة`}
+          </p>
         </div>
+        <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
+          حتى {formatAr(quote.targetVolumeMax)} سجل<br />
+          {formats.join(" · ")}
+          {!locked && !expired && expiryShort(quote.expiresAt, now) && <><br />{expiryShort(quote.expiresAt, now)}</>}
+        </p>
       </div>
 
-      {/* Steps in plain language (what, from where, how many) */}
-      {!isEditing ? (
-        <div className="py-3.5 space-y-2.5">
-          <div className="text-xs font-semibold text-sand-500">خطوات التنفيذ:</div>
-          <ul className="space-y-2 text-xs sm:text-sm text-ink-800">
-            {steps.map((st, idx) => (
-              <li key={idx} className="flex items-center gap-2">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sand-100 text-[11px] font-bold text-sand-600">
-                  {formatNumber(idx + 1)}
-                </span>
-                <span>
-                  {st.what} من <strong>{st.fromWhere}</strong> — حتى{" "}
-                  <strong className="tnum">{formatNumber(st.howMany)}</strong> سجل
-                </span>
-              </li>
+      <p className="mb-0 mt-[18px] border-t border-ln pt-4 text-[13px] font-light leading-[1.9] text-ink2">
+        المنهجية: جمع البيانات العامة المتاحة للحساب فقط، مع توثيق تاريخ الجمع وفصل المطلوب عن المجمَّع فعليًا.
+      </p>
+
+      {isEditing && !locked && (
+        <div className="mt-4 space-y-3 rounded-[18px] bg-sf2 p-3.5 text-xs">
+          <div>
+            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الهدف المستهدف</label>
+            <input
+              id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
+              className="min-h-11 w-full rounded-full border border-ln bg-sf px-4 text-base font-light text-ink outline-none focus:border-ln2"
+            />
+          </div>
+          <div>
+            <label htmlFor={`pq-limit-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الحد الأقصى للسجلات</label>
+            <input
+              id={`pq-limit-${quote.quoteId}`} type="number" inputMode="numeric" min={1} max={10000} value={editLimit} onChange={(e) => setEditLimit(Number(e.target.value))}
+              className="tnum min-h-11 w-full rounded-full border border-ln bg-sf px-4 text-base font-light text-ink outline-none focus:border-ln2"
+            />
+          </div>
+          <div className="flex flex-wrap gap-2" role="group" aria-label="الصيغ">
+            {["xlsx", "pdf", "csv"].map((f) => (
+              <button
+                key={f} type="button" aria-pressed={editFormats.includes(f)} onClick={() => toggleFormat(f)}
+                className="min-h-11 cursor-pointer rounded-full px-3.5 text-[13px] text-ink"
+                style={{ border: `1px solid ${editFormats.includes(f) ? "var(--gold)" : "var(--ln)"}`, background: editFormats.includes(f) ? "var(--sf)" : "transparent" }}
+              >
+                {FORMAT_LABEL[f]}
+              </button>
             ))}
-          </ul>
-        </div>
-      ) : (
-        /* Inline editor */
-        <div className="my-3 space-y-3 rounded-xl border border-sand-200 bg-sand-50 p-3.5 text-xs">
-          <div>
-            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-semibold text-ink-800">
-              الهدف المستهدف
-            </label>
-            <input
-              id={`pq-param-${quote.quoteId}`}
-              type="text"
-              value={editParamVal}
-              onChange={(e) => setEditParamVal(e.target.value)}
-              dir="auto"
-              className="min-h-10 w-full rounded-lg border border-sand-300 bg-white px-3 text-xs text-ink-900 outline-none focus:border-accent"
-            />
           </div>
-          <div>
-            <label htmlFor={`pq-limit-${quote.quoteId}`} className="mb-1 block font-semibold text-ink-800">
-              الحد الأقصى للسجلات
-            </label>
-            <input
-              id={`pq-limit-${quote.quoteId}`}
-              type="number"
-              min={1}
-              max={10000}
-              value={editLimit}
-              onChange={(e) => setEditLimit(Number(e.target.value))}
-              className="tnum min-h-10 w-full rounded-lg border border-sand-300 bg-white px-3 text-xs text-ink-900 outline-none focus:border-accent"
-            />
-          </div>
+          {editError && <p role="alert" className="m-0 text-xs text-bad">{editError}</p>}
           <div className="flex items-center justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => setIsEditing(false)}
-              className="cursor-pointer px-3 py-1.5 text-xs text-sand-600 hover:text-ink-900"
-            >
-              إلغاء
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={savingEdit}
-              className="cursor-pointer rounded-lg bg-accent px-4 py-1.5 text-xs font-bold text-white hover:bg-accent-hover disabled:opacity-50"
-            >
+            <button type="button" onClick={() => setIsEditing(false)} className="min-h-11 cursor-pointer border-0 bg-transparent px-3 text-xs text-mut">إلغاء</button>
+            <button type="button" onClick={handleSave} disabled={savingEdit} className={`${PRIMARY_BTN} min-h-11 px-5 text-xs`}>
               {savingEdit ? "جاري التحديث..." : "حفظ التعديل"}
             </button>
           </div>
         </div>
       )}
 
-      {/* Affordability & Balance note (plain, no colored warning boxes) */}
-      {!quote.isAffordable && (
-        <div className="mt-2 text-xs text-danger flex flex-wrap items-center gap-1.5">
-          <span>رصيدك الحالي ({formatNumber(quote.userBalance)} نقطة) غير كافٍ.</span>
-          <Link href="/dashboard/topup" className="font-bold underline text-accent">
-            شحن الرصيد
-          </Link>
-          {quote.downscaledOffer && onAcceptDownscaled && (
+      {!locked && low && !expired && (
+        <div className="mt-[18px] flex flex-col gap-3 rounded-[18px] px-4 py-3.5" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)", animation: "up .4s both" }}>
+          <p className="m-0 text-sm leading-[1.8] text-ink">
+            رصيدك <strong>{formatNumber(balance)}</strong> نقطة — تحتاج <strong className="text-goldT">{formatNumber(shortPts)} نقطة</strong> إضافية لبدء هذا البحث.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => onTopupShort(shortEgp)} className={`${PRIMARY_BTN} min-h-11 min-w-[180px] flex-1 text-[13px]`}>
+              اشحن {formatAr(shortEgp)} ج.م والعودة هنا
+            </button>
             <button
               type="button"
-              onClick={() => onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
-              className="tnum ms-2 cursor-pointer rounded-lg bg-sand-100 px-2 py-1 text-xs font-semibold text-ink-800 hover:bg-sand-200"
+              onClick={() => (quote.downscaledOffer && onAcceptDownscaled ? onAcceptDownscaled(quote.downscaledOffer.maxAffordableUnits) : setIsEditing(true))}
+              disabled={quote.isDependent && !quote.downscaledOffer}
+              className={`${SECONDARY_BTN} min-h-11`}
             >
-              قبول {formatNumber(quote.downscaledOffer.maxAffordableUnits)} سجل مقابل{" "}
-              {formatNumber(quote.downscaledOffer.affordableQuotedPoints)} نقطة
+              قلّل عدد السجلات
             </button>
-          )}
+          </div>
         </div>
       )}
 
-      {/* Expiry note */}
-      {expiryText && (
-        <div className={`mt-1.5 text-xs ${expired ? "text-danger" : "text-sand-500"}`}>
-          {expiryText}
+      {!locked && expired && (
+        <div className="mt-[18px] flex flex-wrap items-center justify-between gap-3 rounded-[18px] bg-sf2 px-4 py-3.5" style={{ animation: "up .4s both" }}>
+          <p className="m-0 text-sm leading-[1.8] text-ink">انتهت صلاحية عرض السعر. نحتاج تحديثه قبل الموافقة.</p>
+          <button type="button" onClick={handleRefresh} disabled={refreshing} className={`${PRIMARY_BTN} min-h-11 whitespace-nowrap px-[18px] text-[13px]`}>
+            {refreshing ? (
+              <span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            ) : null}
+            تحديث السعر
+          </button>
         </div>
       )}
 
-      {/* Action buttons: one primary "ابدأ" button and secondary "تعديل" link */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-sand-100 pt-3">
-        <button
-          type="button"
-          onClick={() => setIsEditing(!isEditing)}
-          disabled={quote.isDependent}
-          className="cursor-pointer text-xs font-semibold text-sand-600 underline underline-offset-4 hover:text-ink-900 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-accent"
-        >
-          {isEditing ? "إلغاء التعديل" : "تعديل"}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => onStart(quote)}
-          disabled={isStarting || !quote.isAffordable || quote.isDependent || expired}
-          className="cursor-pointer min-h-10 rounded-xl bg-primary px-6 py-2 text-sm font-bold text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-white inline-flex items-center gap-2"
-        >
-          {isStarting ? (
-            <>
-              <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              جاري البدء...
-            </>
-          ) : expired ? (
-            "انتهت صلاحية العرض"
-          ) : (
-            "ابدأ"
-          )}
-        </button>
-      </div>
+      {!locked && !low && !expired && (
+        <>
+          <div className="mt-[18px] flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => onStart(quote)}
+              disabled={isStarting || quote.isDependent}
+              className={`${PRIMARY_BTN} min-h-11 min-w-[200px] flex-1 text-[13px]`}
+            >
+              {isStarting ? (
+                <>
+                  <span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                  جاري البدء...
+                </>
+              ) : (
+                "أوافق وابدأ البحث"
+              )}
+            </button>
+            <button type="button" onClick={() => setIsEditing((v) => !v)} disabled={quote.isDependent} className={`${SECONDARY_BTN} min-h-11`}>
+              {isEditing ? "إلغاء التعديل" : "تعديل"}
+            </button>
+          </div>
+          <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">بالموافقة سيُحجز المبلغ تقديريًا — ولا يُخصم النهائي إلا بعد تسليم السجلات.</p>
+        </>
+      )}
     </div>
   );
 }

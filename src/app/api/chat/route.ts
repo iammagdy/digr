@@ -90,10 +90,12 @@ export async function POST(req: NextRequest) {
     }
 
     let verifiedUserId: string;
+    let emailVerified = false;
     try {
       const userAccount = new Account(userClient);
       const userDoc = await userAccount.get();
       verifiedUserId = userDoc.$id;
+      emailVerified = userDoc.emailVerification === true;
     } catch (authErr: any) {
       return NextResponse.json(
         {
@@ -102,6 +104,11 @@ export async function POST(req: NextRequest) {
         },
         { status: 401 }
       );
+    }
+
+    // Research is blocked until the email is verified (WIRING §2); the client gate is only a convenience.
+    if (!emailVerified) {
+      return NextResponse.json({ success: false, error: "فعّل بريدك الإلكتروني أولًا لبدء البحث." }, { status: 403 });
     }
 
     // Strict Security Guard: If request body maliciously claimed another user's id, REJECT

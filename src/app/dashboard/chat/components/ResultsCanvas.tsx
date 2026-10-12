@@ -105,13 +105,13 @@ export default function ResultsCanvas({
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-white">
+    <div className="flex h-full min-h-0 flex-col bg-sf">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-sand-200 bg-sand-50/70 px-4 py-3">
         <div className="flex items-center gap-2.5">
           <h2 className="text-sm font-bold text-ink-900">لوحة النتائج</h2>
           {records.length > 0 && (
-            <span className="tnum rounded-full bg-pine-800 px-2.5 py-0.5 text-xs font-bold text-white">
+            <span className="tnum rounded-full bg-ac px-2.5 py-0.5 text-xs font-semibold text-onac">
               {formatNumber(records.length)} سجل
             </span>
           )}
@@ -133,7 +133,7 @@ export default function ResultsCanvas({
         </button>
       </div>
 
-      <div className="border-b border-sand-200 bg-white px-3">
+      <div className="border-b border-sand-200 bg-sf px-3">
         <Tabs
           tabs={[
             { id: "table" as const, label: "البيانات" },
@@ -163,7 +163,7 @@ export default function ResultsCanvas({
                   key={`${suggestion.type}-${index}`}
                   type="button"
                   onClick={() => onReviewSuggestion(suggestion)}
-                  className="min-h-11 cursor-pointer rounded-xl border border-sand-300 bg-white px-3 py-2 text-xs font-semibold text-ink-800 transition-colors hover:border-accent/40 hover:bg-accent-light/40"
+                  className="min-h-11 cursor-pointer rounded-xl border border-sand-300 bg-sf px-3 py-2 text-xs font-semibold text-ink-800 transition-colors hover:border-gold hover:bg-accent-light/40"
                 >
                   {suggestion.labelAr}
                 </button>
@@ -182,7 +182,7 @@ export default function ResultsCanvas({
           <div className="space-y-4">
             {/* Quick artifact edits */}
             {jobId && (
-              <details className="group rounded-2xl border border-sand-200 bg-sand-50/60">
+              <details className="group rounded-[20px] border border-sand-200 bg-sand-50/60">
                 <summary className="min-h-11 cursor-pointer list-none px-4 py-3 text-xs font-bold text-ink-900 [&::-webkit-details-marker]:hidden">
                   <span className="inline-flex items-center gap-2">
                     <svg className="h-4 w-4 text-accent transition-transform group-open:rotate-90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
@@ -197,7 +197,7 @@ export default function ResultsCanvas({
                         type="button"
                         disabled={editDisabled || (q.needsSearch && !searchTerm.trim()) || (q.needsNotes && !notesText.trim())}
                         onClick={() => onArtifactEdit(q.op)}
-                        className="min-h-11 cursor-pointer rounded-xl border border-sand-300 bg-white px-3 py-2 text-xs font-semibold text-ink-800 transition-colors hover:border-accent/40 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="min-h-11 cursor-pointer rounded-xl border border-sand-300 bg-sf px-3 py-2 text-xs font-semibold text-ink-800 transition-colors hover:border-gold disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {q.label}
                       </button>
@@ -253,7 +253,7 @@ export default function ResultsCanvas({
                 description={jobId ? "راجع تنبيه النتيجة أعلاه أو حمّل الملفات الأصلية من تبويب الملفات." : "ابدأ استخراجًا لعرض جدول البيانات هنا."}
               />
             ) : (
-              <div className="overflow-hidden rounded-2xl border border-sand-200">
+              <div className="overflow-hidden rounded-[20px] border border-sand-200">
                 <div className="overflow-x-auto">
                   <table className="w-full text-right text-xs">
                     <thead>
@@ -263,7 +263,7 @@ export default function ResultsCanvas({
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-sand-100 bg-white">
+                    <tbody className="divide-y divide-sand-100 bg-sf">
                       {filteredRecords.map((r, idx) => (
                         <tr key={String(r.id ?? idx)} className="transition-colors hover:bg-sand-50/70">
                           {tableColumns.map((column) => {
@@ -288,10 +288,10 @@ export default function ResultsCanvas({
         )}
 
         {tab === "pdf" && (
-          <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-dashed border-sand-300 bg-sand-50/60 p-8 text-center">
+          <div className="flex h-full flex-col items-center justify-center rounded-[20px] border border-dashed border-sand-300 bg-sand-50/60 p-8 text-center">
             {jobId ? (
               <div className="w-full max-w-sm space-y-4">
-                <span aria-hidden="true" className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-danger shadow-xs ring-1 ring-sand-200">
+                <span aria-hidden="true" className="mx-auto flex h-14 w-14 items-center justify-center rounded-[20px] bg-sf text-danger shadow-xs ring-1 ring-sand-200">
                   <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}><path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
                 </span>
                 <div>
@@ -332,9 +332,9 @@ export default function ResultsCanvas({
               { ext: "pdf" as const, title: "تقرير ملخص (.pdf)", desc: "صياغة موثقة مع مقاييس التغطية." },
               { ext: "csv" as const, title: "بيانات خام (.csv)", desc: "UTF-8 — للتحليل الإحصائي والبرمجي." },
             ].map((f) => (
-              <div key={f.ext} className="flex items-center justify-between gap-3 rounded-2xl border border-sand-200 bg-white p-4">
+              <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">
                 <div className="flex min-w-0 items-center gap-3">
-                  <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-pine-800 text-xs font-bold text-white uppercase">{f.ext}</span>
+                  <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ac text-xs font-semibold text-onac uppercase">{f.ext}</span>
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-ink-900">{f.title}</p>
                     <p className="mt-0.5 text-xs text-sand-500">{f.desc}</p>
@@ -351,7 +351,7 @@ export default function ResultsCanvas({
         {/* Methodology facts */}
         {jobId && (
           <div className="mt-6 space-y-3 border-t border-sand-200 pt-4">
-            <div className="rounded-2xl border border-sand-200 bg-sand-50/70 p-4 text-xs">
+            <div className="rounded-[20px] border border-sand-200 bg-sand-50/70 p-4 text-xs">
               <p className="mb-2 font-bold text-ink-900">حقائق الاستخراج والمنهجية</p>
               <dl className="space-y-1.5 text-sand-600">
                 <div className="flex justify-between gap-2"><dt>المصدر</dt><dd className="font-semibold text-ink-800" dir="auto">بيانات عامة (@{profile?.username || "tiktok"})</dd></div>

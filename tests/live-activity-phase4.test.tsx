@@ -161,9 +161,7 @@ describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, 
 
     const timelineSource = readFileSync("src/app/dashboard/chat/components/ActivityTimeline.tsx", "utf-8");
     expect(timelineSource).toContain("deriveLiveActivitySnapshot");
-    expect(timelineSource).toContain("formatCurrentPostProgress");
-    expect(timelineSource).toContain("formatItemsCollectedProgress");
-    expect(timelineSource).toContain("formatPointsSpentVsReserved");
+    expect(timelineSource).toContain("مصروف ${formatAr(spent)} من ${formatAr(reserved)}");
     expect(timelineSource).toContain("sanitizeActivityText");
   });
 });

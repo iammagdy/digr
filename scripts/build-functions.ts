@@ -8,6 +8,8 @@ const functions = [
   "approve-topup",
   "create-job",
   "job-worker",
+  "request-account-deletion",
+  "purge-deleted-accounts",
 ];
 
 async function bundleFunctions() {

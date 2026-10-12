@@ -1,83 +1,168 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: "IBM Plex Sans Arabic", "Noto Sans Arabic", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-
-  /* Digr paper — warm, scholarly, calm */
-  --color-sand-50: #faf9f6;
-  --color-sand-100: #f4f3ee;
-  --color-sand-200: #e8e6df;
-  --color-sand-300: #d6d3c9;
-  --color-sand-400: #b8b3a7;
-  --color-sand-500: #938d80;
-  --color-sand-600: #6f695e;
-  --color-sand-700: #555047;
-  --color-sand-800: #38342e;
-  --color-sand-900: #1a1815;
-
-  /* Ink — high-contrast, effortless Arabic reading */
-  --color-ink-900: #0f172a;
-  --color-ink-800: #1e293b;
-  --color-ink-700: #334155;
-  --color-ink-600: #475569;
-  --color-ink-500: #64748b;
-  --color-ink-400: #94a3b8;
-  --color-ink-300: #cbd5e1;
-  --color-ink-200: #e2e8f0;
-  --color-ink-100: #f1f5f9;
-
-  /* Primary actions — deep, confident ink */
-  --color-primary: #0f172a;
-  --color-primary-hover: #1e293b;
-
-  /* Brand accent — deep pine teal: scholarly, calm, distinctive.
-     Used for interactive emphasis, focus rings, and the Digr identity. */
-  --color-accent: #0b6b5c;
-  --color-accent-hover: #095344;
-  --color-accent-light: #e7f3ef;
-  --color-accent-ink: #083f35;
-
-  /* Informational blue (secondary, non-brand) */
-  --color-info: #2563eb;
-  --color-info-bg: #eff6ff;
-
-  /* Pine scale — deep surfaces, sidebar, stamps */
-  --color-pine-50: #eef6f3;
-  --color-pine-100: #d9ebe5;
-  --color-pine-200: #b3d7cc;
-  --color-pine-500: #0e7a66;
-  --color-pine-700: #0b5a4c;
-  --color-pine-800: #084739;
-  --color-pine-900: #06332a;
-  --color-pine-950: #04231d;
-
-  /* Points & value — warm brass */
-  --color-amber-points: #d97706;
-  --color-amber-points-hover: #b45309;
-  --color-amber-points-bg: #fffbeb;
-
-  /* Status semantics */
-  --color-success: #059669;
-  --color-success-bg: #ecfdf5;
-  --color-warning: #d97706;
-  --color-warning-bg: #fffbeb;
-  --color-danger: #dc2626;
-  --color-danger-bg: #fef2f2;
-
-  /* Elevation */
-  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 16px -4px rgb(15 23 42 / 0.08);
-  --shadow-lift: 0 2px 4px rgb(15 23 42 / 0.05), 0 12px 32px -8px rgb(15 23 42 / 0.14);
-  --shadow-ink: 0 8px 30px -6px rgb(4 35 29 / 0.35);
-
-  /* Motion */
-  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+/* ───────────────────────────────────────────────────────────────
+   Digr V7 «سكون+عدسة» design tokens.
+   Single source of truth: CSS variables on [data-theme]. Components never
+   hardcode colors; Tailwind utilities (bg-bg, text-ink, border-ln …) read these.
+   ─────────────────────────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  --bg: #faf8f4;
+  --sf: #ffffff;
+  --sf2: #f2efe9;
+  --ln: #e8e4dc;
+  --ln2: #d9d3c8;
+  --ink: #16201f;
+  --ink2: #343c3b;
+  --mut: #6f716c;
+  --fnt: #9a9890;
+  --ac: #0e3b43;
+  --onac: #faf8f4;
+  --goldT: #8a6420;
+  --gold: #c8963e;
+  --ok: #2f7a4f;
+  --bad: #b4382b;
+  --info: #2b5f8a;
+  --bar: #0e3b43;
+  --bar2: #c8963e;
+  --shadow: 0 1px 2px rgba(22, 32, 31, 0.04), 0 20px 50px -24px rgba(22, 32, 31, 0.22);
+  color-scheme: light;
 }
 
-/* IBM Plex Sans Arabic from Google Fonts */
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap");
+[data-theme="dark"] {
+  --bg: #111413;
+  --sf: #171b1a;
+  --sf2: #1d2221;
+  --ln: #262c2b;
+  --ln2: #343b3a;
+  --ink: #ece9e4;
+  --ink2: #cfccc4;
+  --mut: #99978f;
+  --fnt: #6e6d67;
+  --ac: #ece9e4;
+  --onac: #111413;
+  --goldT: #d4a65a;
+  --gold: #c8963e;
+  --ok: #7ccb9e;
+  --bad: #f08a7c;
+  --info: #8db8e0;
+  --bar: #a9d5d9;
+  --bar2: #c8963e;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 24px 60px -24px rgba(0, 0, 0, 0.7);
+  color-scheme: dark;
+}
+
+/* Admin area uses its own surface values (design: Digr Admin). */
+[data-theme="light"] [data-area="admin"],
+[data-theme="light"][data-area="admin"] {
+  --bg: #f6f4ef;
+  --sf2: #f1eee8;
+  --sf3: #e9e5dd;
+  --ln: #e7e2d9;
+  --ln2: #d6d0c4;
+  --mut: #6b6e69;
+  --fnt: #959389;
+  --onac: #f6f4ef;
+  --admin-shadow: 0 1px 2px rgba(22, 32, 31, 0.04), 0 12px 32px -18px rgba(22, 32, 31, 0.18);
+  --ok-btn: #1f5e3b;
+}
+[data-theme="dark"] [data-area="admin"],
+[data-theme="dark"][data-area="admin"] {
+  --bg: #0f1211;
+  --sf: #161a19;
+  --sf2: #1c2120;
+  --sf3: #242a29;
+  --ln: #252b2a;
+  --ln2: #343b3a;
+  --mut: #9b998f;
+  --fnt: #6f6e68;
+  --onac: #0f1211;
+  --admin-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
+  --ok-btn: #2f7a4f;
+}
+
+@theme inline {
+  --font-sans: var(--font-vazirmatn), "Vazirmatn", system-ui, sans-serif;
+  --font-display: var(--font-markazi), "Markazi Text", serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Design tokens */
+  --color-bg: var(--bg);
+  --color-sf: var(--sf);
+  --color-sf2: var(--sf2);
+  --color-sf3: var(--sf3);
+  --color-ln: var(--ln);
+  --color-ln2: var(--ln2);
+  --color-ink: var(--ink);
+  --color-ink2: var(--ink2);
+  --color-mut: var(--mut);
+  --color-fnt: var(--fnt);
+  --color-ac: var(--ac);
+  --color-onac: var(--onac);
+  --color-goldT: var(--goldT);
+  --color-gold: var(--gold);
+  --color-ok: var(--ok);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
+  --color-bar: var(--bar);
+  --color-bar2: var(--bar2);
+
+  --shadow-card: var(--shadow);
+  --shadow-lift: var(--shadow);
+  --ease-out-soft: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  /* Legacy palette names, aliased onto the tokens so screens not yet
+     rebuilt follow the theme. Remove once every screen uses the tokens. */
+  --color-sand-50: var(--bg);
+  --color-sand-100: var(--sf2);
+  --color-sand-200: var(--ln);
+  --color-sand-300: var(--ln2);
+  --color-sand-400: var(--fnt);
+  --color-sand-500: var(--fnt);
+  --color-sand-600: var(--mut);
+  --color-sand-700: var(--ink2);
+  --color-sand-800: var(--ink);
+  --color-sand-900: var(--ink);
+  --color-ink-900: var(--ink);
+  --color-ink-800: var(--ink);
+  --color-ink-700: var(--ink2);
+  --color-ink-600: var(--mut);
+  --color-ink-500: var(--mut);
+  --color-ink-400: var(--fnt);
+  --color-ink-300: var(--ln2);
+  --color-ink-200: var(--ln);
+  --color-ink-100: var(--sf2);
+  --color-primary: var(--ac);
+  --color-primary-hover: color-mix(in oklab, var(--ac) 88%, var(--bg));
+  --color-accent: var(--ac);
+  --color-accent-hover: var(--ink2);
+  --color-accent-light: var(--sf2);
+  --color-accent-ink: var(--ink);
+  --color-pine-50: var(--sf2);
+  --color-pine-100: var(--sf2);
+  --color-pine-200: var(--ln2);
+  --color-pine-500: var(--ac);
+  --color-pine-700: var(--ac);
+  --color-pine-800: var(--ac);
+  --color-pine-900: var(--ac);
+  --color-pine-950: var(--ac);
+  --color-amber-points: var(--goldT);
+  --color-amber-points-hover: var(--goldT);
+  --color-amber-points-bg: color-mix(in oklab, var(--gold) 12%, transparent);
+  --color-info-bg: color-mix(in oklab, var(--info) 10%, transparent);
+  --color-success: var(--ok);
+  --color-success-bg: color-mix(in oklab, var(--ok) 10%, transparent);
+  --color-warning: var(--goldT);
+  --color-warning-bg: color-mix(in oklab, var(--gold) 12%, transparent);
+  --color-danger: var(--bad);
+  --color-danger-bg: color-mix(in oklab, var(--bad) 10%, transparent);
+}
 
 /* Base */
+* { -webkit-tap-highlight-color: transparent; }
+button, input, textarea, select { font-family: inherit; }
+input, textarea, select { font-size: max(16px, 1em); } /* no iOS auto-zoom */
+
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
@@ -85,20 +170,20 @@ html {
 }
 
 body {
-  background-color: var(--color-sand-50);
-  color: var(--color-ink-800);
+  background-color: var(--bg);
+  color: var(--ink2);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  font-feature-settings: "ss01", "ss02", "cv01";
   text-rendering: optimizeLegibility;
 }
 
 /* Display typography — editorial Arabic headlines */
 .font-display {
-  font-weight: 700;
-  letter-spacing: -0.015em;
-  line-height: 1.35;
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.1;
   text-wrap: balance;
 }
 
@@ -110,12 +195,12 @@ body {
 
 /* Scrollbars */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 9999px; }
+::-webkit-scrollbar-thumb { background-color: var(--ln2); border-radius: 9999px; }
 ::-webkit-scrollbar-track { background-color: transparent; }
 
 /* Accessible focus */
 *:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--gold);
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -128,7 +213,7 @@ body {
 /* Hairline rule — the ledger motif */
 .rule-ledger {
   border: 0;
-  border-top: 1px solid var(--color-sand-200);
+  border-top: 1px solid var(--ln);
 }
 
 /* Archival stamp badge */
@@ -149,9 +234,9 @@ body {
 
 /* Card surface */
 .surface-card {
-  background: #fff;
-  border: 1px solid var(--color-sand-200);
-  border-radius: 1rem;
+  background: var(--sf);
+  border: 1px solid var(--ln);
+  border-radius: 20px;
   box-shadow: var(--shadow-card);
 }
 
@@ -175,16 +260,16 @@ body {
   to { background-position: -200% 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, var(--color-sand-100) 25%, var(--color-sand-200) 50%, var(--color-sand-100) 75%);
+  background: linear-gradient(90deg, var(--sf2) 25%, var(--ln) 50%, var(--sf2) 75%);
   background-size: 200% 100%;
   animation: shimmer 1.6s linear infinite;
 }
 
 /* Dossier paper texture for the hero demo */
 .paper-dossier {
-  background-color: #fffdf8;
+  background-color: var(--sf);
   background-image:
-    radial-gradient(ellipse at 20% 0%, rgb(11 107 92 / 0.05), transparent 55%),
+    radial-gradient(ellipse at 20% 0%, color-mix(in oklab, var(--gold) 6%, transparent), transparent 55%),
     linear-gradient(to bottom, transparent 95%, rgb(15 23 42 / 0.03) 100%);
 }
 
@@ -197,3 +282,47 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ── Landing motion (design V7) ───────────────────────────────── */
+@keyframes ring { 0% { transform: scale(.55); opacity: 0 } 20% { opacity: .6 } 100% { transform: scale(1.5); opacity: 0 } }
+@keyframes up { from { opacity: 0; transform: translateY(16px) } to { opacity: 1; transform: none } }
+@keyframes fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes drawCk { to { stroke-dashoffset: 0 } }
+@keyframes breathe { 0%, 100% { opacity: .35 } 50% { opacity: 1 } }
+@keyframes grow { from { transform: scaleY(0) } to { transform: scaleY(1) } }
+@keyframes sheetUp { from { transform: translateY(100%) } to { transform: none } }
+@keyframes sheetL { from { transform: translateX(-100%) } to { transform: none } }
+@keyframes drawer { from { transform: translateX(100%) } to { transform: none } }
+
+/* Glass header pill */
+:root, [data-theme="light"] {
+  --pill-bg: color-mix(in oklab, #ffffff 55%, transparent);
+  --pill-bd: rgba(255, 255, 255, 0.75);
+  --pill-gloss: rgba(255, 255, 255, 0.65);
+  --pill-sh: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(22, 32, 31, 0.05), 0 18px 40px -20px rgba(22, 32, 31, 0.28);
+}
+[data-theme="dark"] {
+  --pill-bg: color-mix(in oklab, #171b1a 58%, transparent);
+  --pill-bd: rgba(255, 255, 255, 0.1);
+  --pill-gloss: rgba(255, 255, 255, 0.07);
+  --pill-sh: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.3), 0 18px 40px -18px rgba(0, 0, 0, 0.7);
+}
+
+/* Cost-calculator range */
+input[type="range"].r6 { -webkit-appearance: none; appearance: none; width: 100%; height: 44px; background: transparent; cursor: pointer; }
+input[type="range"].r6::-webkit-slider-runnable-track { height: 2px; background: var(--ln2); }
+input[type="range"].r6::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; margin-top: -10px; border-radius: 50%; background: var(--bg); border: 2px solid var(--gold); }
+input[type="range"].r6::-moz-range-track { height: 2px; background: var(--ln2); }
+input[type="range"].r6::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: var(--bg); border: 2px solid var(--gold); }
+input::placeholder, textarea::placeholder { color: var(--fnt); }
+
+/* Scrollbars: the app chrome hides them, content areas keep the thin one */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+@keyframes spin { to { transform: rotate(360deg) } }
+
+/* Extends the tap area to 44px without changing the visual size. */
+.hit { position: relative; }
+.hit::after { content: ""; position: absolute; inset: -7px -4px; }

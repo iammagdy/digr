@@ -103,7 +103,7 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
           </button>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-sand-200" role="progressbar" aria-valuenow={step} aria-valuemin={1} aria-valuemax={3} aria-label="تقدم التخصيص">
-          <div className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${(step / 3) * 100}%` }} />
+          <div className="h-full rounded-full bg-gold transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${(step / 3) * 100}%` }} />
         </div>
       </div>
 
@@ -121,7 +121,7 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
               return (
                 <label
                   key={opt.key}
-                  className={`block cursor-pointer rounded-2xl border p-4 transition-all ${selected ? "border-accent bg-accent-light/50 ring-1 ring-accent/30" : "border-sand-200 bg-white hover:border-sand-400"}`}
+                  className={`block cursor-pointer rounded-[20px] border p-4 transition-all ${selected ? "border-gold bg-sf2 ring-1 ring-gold/40" : "border-sand-200 bg-sf hover:border-sand-400"}`}
                 >
                   <span className="flex items-start gap-3">
                     <input
@@ -130,7 +130,7 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
                       value={opt.key}
                       checked={selected}
                       onChange={() => setSelectedPersona(opt.key)}
-                      className="mt-1 h-4 w-4 accent-[#0b6b5c]"
+                      className="mt-1 h-4 w-4 accent-[var(--gold)]"
                     />
                     <span>
                       <span className="block text-sm font-bold text-ink-900 sm:text-base">{opt.title}</span>
@@ -165,9 +165,9 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
               return (
                 <label
                   key={purp}
-                  className={`flex cursor-pointer items-center gap-3 rounded-2xl border p-3.5 transition-all ${checked ? "border-accent bg-accent-light/50 ring-1 ring-accent/30" : "border-sand-200 bg-white hover:border-sand-400"}`}
+                  className={`flex cursor-pointer items-center gap-3 rounded-[20px] border p-3.5 transition-all ${checked ? "border-gold bg-sf2 ring-1 ring-gold/40" : "border-sand-200 bg-sf hover:border-sand-400"}`}
                 >
-                  <input type="checkbox" checked={checked} onChange={() => togglePurpose(purp)} className="h-4 w-4 rounded accent-[#0b6b5c]" />
+                  <input type="checkbox" checked={checked} onChange={() => togglePurpose(purp)} className="h-4 w-4 rounded accent-[var(--gold)]" />
                   <span className="text-sm font-semibold text-ink-900">{purp}</span>
                 </label>
               );

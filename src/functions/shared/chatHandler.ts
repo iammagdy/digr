@@ -1,3 +1,4 @@
+import { logProviderCost } from "./providerCosts";
 import { TablesDB, ID, Query } from "node-appwrite";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import {
@@ -1458,6 +1459,11 @@ export class ChatHandler {
     } catch (usageErr) {
       console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
     }
+    await logProviderCost(this.tables, {
+      provider: "llm",
+      units: (llmResult.inputTokens || 0) + (llmResult.outputTokens || 0),
+      costUsd: llmResult.costUsd || 0,
+    });
 
     // 11. Update Conversation Stats
     const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;

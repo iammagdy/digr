@@ -1,6 +1,7 @@
 import { Client, TablesDB, Storage } from "node-appwrite";
 import { z } from "zod";
 import { releaseReservation } from "../../shared/ledger";
+import { notifyJobOutcome } from "../../shared/notify";
 import {
   runJobWatchdog,
   reportStuckJobsReadOnly,
@@ -99,6 +100,8 @@ export default async ({ req, res, log, error }: any) => {
     });
 
     log(`[job-worker] Job ${jobId} finished with status: ${execResult.status} (deliveredUnits=${execResult.deliveredUnits}, charged=${execResult.chargedCredits})`);
+
+    await notifyJobOutcome(client, job.userId, execResult as any, log);
 
     return res.json(execResult, 200);
   } catch (err: any) {

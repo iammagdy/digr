@@ -1,3 +1,4 @@
+import { logProviderCost } from "./providerCosts";
 import { TablesDB, Storage, Permission, Role, ID, Query } from "node-appwrite";
 import { completeJobWithRelFirst, releaseCredits, releaseReservation } from "./ledger";
 import { calculateFinalSettlement } from "./quotes";
@@ -509,6 +510,7 @@ export async function executeMultiStepJob(
 
       collectedRows.push(...pageResult.items);
       totalCostMicro += pageResult.costMicro || 0;
+      if (pageResult.costMicro) await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: pageResult.costMicro / 1_000_000 });
       await emitProgress(`تم جمع ${collectedRows.length} سجل من أصل ${targetVolumeMax}...`, collectedRows.length, "progress");
 
       if (!pageResult.nextCursor) break;
@@ -730,6 +732,7 @@ export async function executeMultiStepJob(
         if (callResult.costMicro) {
           totalCostMicro += callResult.costMicro;
           await recordProviderCallSpend(callResult.costMicro, tables);
+          await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: callResult.costMicro / 1_000_000 });
         }
 
         if (!callResult.ok) {

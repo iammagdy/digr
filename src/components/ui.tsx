@@ -10,17 +10,17 @@ type ButtonVariant = "primary" | "accent" | "secondary" | "ghost" | "danger";
 type ButtonSize = "sm" | "md" | "lg";
 
 const buttonVariants: Record<ButtonVariant, string> = {
-  primary: "bg-primary text-white hover:bg-primary-hover shadow-xs",
-  accent: "bg-accent text-white hover:bg-accent-hover shadow-xs",
-  secondary: "bg-white text-ink-900 border border-sand-300 hover:bg-sand-100",
-  ghost: "text-ink-700 hover:bg-sand-100",
-  danger: "bg-danger text-white hover:bg-danger/90 shadow-xs",
+  primary: "bg-ac text-onac hover:opacity-90",
+  accent: "bg-ac text-onac hover:opacity-90",
+  secondary: "bg-sf text-ink border border-ln2 hover:bg-sf2",
+  ghost: "text-ink2 hover:bg-sf2",
+  danger: "bg-bad text-bg hover:opacity-90",
 };
 
 const buttonSizes: Record<ButtonSize, string> = {
-  sm: "min-h-9 px-3 text-xs",
-  md: "min-h-11 px-4 text-sm",
-  lg: "min-h-12 px-6 text-base",
+  sm: "min-h-11 px-3.5 text-xs",
+  md: "min-h-11 px-[18px] text-sm",
+  lg: "min-h-14 px-6 text-base",
 };
 
 export function Button({
@@ -35,7 +35,7 @@ export function Button({
   return (
     <button
       type="button"
-      className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-semibold transition-colors duration-150 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-40 ${buttonVariants[variant]} ${buttonSizes[size]} ${className}`}
+      className={`inline-flex cursor-pointer items-center justify-center gap-2 rounded-full font-normal transition-[opacity,background-color] duration-150 motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-40 ${buttonVariants[variant]} ${buttonSizes[size]} ${className}`}
       {...props}
     />
   );
@@ -67,7 +67,7 @@ export function Card({
 }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={`rounded-2xl border border-sand-200 bg-white shadow-[var(--shadow-card)] ${className}`}
+      className={`rounded-[20px] border border-ln bg-sf shadow-[var(--shadow)] ${className}`}
       {...props}
     />
   );
@@ -75,8 +75,8 @@ export function Card({
 
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (
-    <p className="flex items-center gap-2 text-xs font-semibold text-accent">
-      <span aria-hidden="true" className="inline-block h-px w-6 bg-accent/50" />
+    <p className="flex items-center gap-2 text-xs font-medium text-goldT">
+      <span aria-hidden="true" className="inline-block h-px w-6 bg-gold/50" />
       {children}
     </p>
   );
@@ -94,7 +94,7 @@ const toneStyles: Record<StatusTone, string> = {
   success: "bg-success-bg text-success border-success/25",
   warning: "bg-warning-bg text-warning border-warning/30",
   danger: "bg-danger-bg text-danger border-danger/25",
-  accent: "bg-accent-light text-accent-ink border-accent/25",
+  accent: "bg-sf2 text-ink border-ln2",
 };
 
 export function Badge({
@@ -104,7 +104,7 @@ export function Badge({
 }: React.HTMLAttributes<HTMLSpanElement> & { tone?: StatusTone }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${toneStyles[tone]} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium whitespace-nowrap ${toneStyles[tone]} ${className}`}
       {...props}
     />
   );
@@ -139,7 +139,7 @@ export function StatusDot({ tone = "neutral", pulse = false }: { tone?: StatusTo
     success: "bg-success",
     warning: "bg-warning",
     danger: "bg-danger",
-    accent: "bg-accent",
+    accent: "bg-gold",
   };
   return (
     <span className="relative inline-flex h-2.5 w-2.5 shrink-0" aria-hidden="true">
@@ -156,7 +156,7 @@ export function StatusDot({ tone = "neutral", pulse = false }: { tone?: StatusTo
 /* ------------------------------------------------------------------ */
 
 const fieldInput =
-  "w-full rounded-xl border border-sand-300 bg-white px-3.5 py-2.5 text-sm text-ink-900 placeholder:text-sand-400 transition-colors focus:border-accent focus:outline-none disabled:bg-sand-100 disabled:opacity-60";
+  "w-full rounded-[20px] border border-ln bg-sf px-5 py-2.5 text-base font-light text-ink placeholder:text-fnt transition-[border-color,box-shadow] focus:border-ln2 focus:shadow-[var(--shadow)] focus:outline-none disabled:bg-sf2 disabled:opacity-60";
 
 export function Field({
   label,
@@ -175,7 +175,7 @@ export function Field({
   const inputId = htmlFor ?? `field-${id}`;
   return (
     <div className="space-y-1.5">
-      <label htmlFor={inputId} className="block text-sm font-semibold text-ink-900">
+      <label htmlFor={inputId} className="block text-sm font-medium text-ink">
         {label}
       </label>
       {children}
@@ -190,7 +190,7 @@ export function Field({
 }
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className={`${fieldInput} min-h-11 ${props.className ?? ""}`} />;
+  return <input {...props} className={`${fieldInput} min-h-[52px] ${props.className ?? ""}`} />;
 }
 
 export function TextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
@@ -247,8 +247,8 @@ export function Modal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="absolute inset-0 bg-ink-900/45 backdrop-blur-xs animate-fade" onClick={onClose} aria-hidden="true" />
-      <div className={`relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl animate-rise sm:rounded-3xl ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}>
+      <div className="absolute inset-0 bg-ink/45 backdrop-blur-xs animate-fade" onClick={onClose} aria-hidden="true" />
+      <div className={`relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf shadow-2xl animate-rise sm:rounded-[28px] ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}>
         <div className="flex items-center justify-between border-b border-sand-200 px-5 py-4">
           <h2 className="text-base font-bold text-ink-900">{title}</h2>
           <IconButton label="إغلاق" onClick={onClose}>
@@ -282,8 +282,8 @@ export function Drawer({
   const pos = side === "start" ? "right-0" : "left-0";
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="absolute inset-0 bg-ink-900/45 backdrop-blur-xs animate-fade" onClick={onClose} aria-hidden="true" />
-      <div className={`absolute inset-y-0 ${pos} flex w-full max-w-sm flex-col bg-white shadow-2xl animate-rise`}>
+      <div className="absolute inset-0 bg-ink/45 backdrop-blur-xs animate-fade" onClick={onClose} aria-hidden="true" />
+      <div className={`absolute inset-y-0 ${pos} flex w-full max-w-sm flex-col bg-sf shadow-2xl animate-rise`}>
         <div className="flex items-center justify-between border-b border-sand-200 px-5 py-4">
           <h2 className="text-base font-bold text-ink-900">{title}</h2>
           <IconButton label="إغلاق" onClick={onClose}>
@@ -328,11 +328,11 @@ export function Tabs<T extends string>({
           >
             {tab.label}
             {typeof tab.count === "number" && (
-              <span className="tnum ms-1.5 rounded-full bg-sand-100 px-1.5 py-0.5 text-xs text-sand-600">
+              <span className="tnum ms-1.5 rounded-full bg-sf2 px-1.5 py-0.5 text-xs text-mut">
                 {tab.count}
               </span>
             )}
-            {selected && <span aria-hidden="true" className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-accent" />}
+            {selected && <span aria-hidden="true" className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-gold" />}
           </button>
         );
       })}
@@ -355,7 +355,7 @@ export function Progress({
     return (
       <div className="flex items-center gap-2.5" role="status">
         <span className="h-2 flex-1 overflow-hidden rounded-full bg-sand-200">
-          <span className="block h-full w-1/3 rounded-full bg-accent/70 motion-safe:animate-pulse motion-reduce:animate-none" />
+          <span className="block h-full w-1/3 rounded-full bg-gold motion-safe:animate-pulse motion-reduce:animate-none" />
         </span>
         {label && <span className="text-xs font-medium text-sand-600">{label}</span>}
       </div>
@@ -365,7 +365,7 @@ export function Progress({
   return (
     <div className="space-y-1.5" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={label ?? "التقدم"}>
       <div className="h-2 overflow-hidden rounded-full bg-sand-200">
-        <div className="h-full rounded-full bg-accent transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${pct}%` }} />
+        <div className="h-full rounded-full bg-gold transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${pct}%` }} />
       </div>
       {label && (
         <div className="flex items-center justify-between text-xs">
@@ -391,7 +391,7 @@ export function Alert({
   children: ReactNode;
 }) {
   return (
-    <div role={tone === "danger" ? "alert" : "status"} className={`flex gap-3 rounded-2xl border p-4 text-sm ${toneStyles[tone]}`}>
+    <div role={tone === "danger" ? "alert" : "status"} className={`flex gap-3 rounded-[20px] border p-4 text-sm ${toneStyles[tone]}`}>
       <StatusDot tone={tone} />
       <div className="min-w-0">
         {title && <p className="font-bold">{title}</p>}
@@ -415,7 +415,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center px-6 py-12 text-center">
       {icon && (
-        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-sand-100 text-sand-500">
+        <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-[20px] bg-sf2 text-fnt">
           {icon}
         </div>
       )}
@@ -470,7 +470,7 @@ export function Avatar({ name, size = "md" }: { name?: string; size?: "sm" | "md
   const sizes = { sm: "h-8 w-8 text-xs", md: "h-10 w-10 text-sm", lg: "h-14 w-14 text-lg" };
   const initial = (name ?? "؟").trim().charAt(0) || "؟";
   return (
-    <span aria-hidden="true" className={`inline-flex shrink-0 items-center justify-center rounded-full bg-pine-800 font-bold text-white ${sizes[size]}`}>
+    <span aria-hidden="true" className={`inline-flex shrink-0 items-center justify-center rounded-full bg-ac font-semibold text-onac ${sizes[size]}`}>
       {initial}
     </span>
   );

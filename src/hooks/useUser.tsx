@@ -1,5 +1,6 @@
 "use client";
 
+import { appBaseUrl } from "@/lib/site";
 import {
   createContext,
   useContext,
@@ -14,8 +15,10 @@ import { type Models } from "appwrite";
 interface AuthContextType {
   user: Models.User<Models.Preferences> | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<Models.User<Models.Preferences> | null>;
   register: (email: string, password: string, name: string) => Promise<void>;
+  /** Re-read the account (e.g. after email verification) and update the context. */
+  refresh: () => Promise<Models.User<Models.Preferences> | null>;
   logout: () => Promise<void>;
 }
 
@@ -60,9 +63,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await account.get();
       setUser(session);
       await syncBrowserAuthCookies();
+      return session;
     } catch {
       setUser(null);
       clearBrowserAuthCookies();
+      return null;
     } finally {
       setLoading(false);
     }
@@ -74,12 +79,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     await account.createEmailPasswordSession(email, password);
-    await getUser();
+    return getUser();
   };
 
   const register = async (email: string, password: string, name: string) => {
     await account.create("unique()", email, password, name);
     await login(email, password);
+    // Email must be verified before top-ups / research (see /verify). A failed send
+    // is not fatal: the verify screen has a resend button.
+    try {
+      await account.createVerification(`${appBaseUrl()}/verify`);
+    } catch { /* resend available on /verify */ }
   };
 
   const logout = async () => {
@@ -89,7 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh: getUser }}>
       {children}
     </AuthContext.Provider>
   );

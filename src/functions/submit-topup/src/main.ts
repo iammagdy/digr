@@ -1,10 +1,31 @@
-import { Client, TablesDB, Storage, Query, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Storage, Users, Query, Permission, Role, ID } from "node-appwrite";
 import { z } from "zod";
+import { EG_MOBILE_RE, isThreePartName, normalizeDigits, normalizePhone, normalizeSenderName } from "../../../lib/arabicDigits";
 
+const DEFAULT_MAX_PENDING = 3;
+
+// Arabic digits are normalised on the server too: the client is never trusted to have done it.
 const submitTopupSchema = z.object({
-  amountEgp: z.number().positive("المبلغ يجب أن يكون أكبر من صفر"),
-  reference: z.string().min(3, "رقم العملية مطلوب"),
-  receiptFileId: z.string().optional(),
+  amountEgp: z.preprocess(
+    (v) => (typeof v === "string" ? Number(normalizeDigits(v)) : v),
+    z.number("المبلغ يجب أن يكون أكبر من صفر").positive("المبلغ يجب أن يكون أكبر من صفر"),
+  ),
+  reference: z.preprocess(
+    (v) => (typeof v === "string" ? normalizeDigits(v).trim() : v),
+    z.string("رقم العملية مطلوب").min(3, "رقم العملية مطلوب").max(128, "رقم العملية مطلوب"),
+  ),
+  senderName: z.preprocess(
+    (v) => (typeof v === "string" ? normalizeSenderName(v) : v),
+    z.string("اكتب اسم المحوِّل الثلاثي كما يظهر في إنستاباي")
+      .max(120, "اكتب اسم المحوِّل الثلاثي كما يظهر في إنستاباي")
+      .refine(isThreePartName, "اكتب اسم المحوِّل الثلاثي كما يظهر في إنستاباي"),
+  ),
+  senderPhone: z.preprocess(
+    (v) => (typeof v === "string" ? normalizePhone(v) : v),
+    z.string("رقم الموبايل غير صحيح — ١١ رقمًا يبدأ بـ 01").regex(EG_MOBILE_RE, "رقم الموبايل غير صحيح — ١١ رقمًا يبدأ بـ 01"),
+  ),
+  // Required since the V7 redesign: a top-up cannot be reviewed without the transfer receipt.
+  receiptFileId: z.string("صورة إيصال التحويل مطلوبة لمراجعة الطلب").min(1, "صورة إيصال التحويل مطلوبة لمراجعة الطلب"),
 });
 
 export default async ({ req, res, log, error }: any) => {
@@ -26,12 +47,24 @@ export default async ({ req, res, log, error }: any) => {
 
   const tables = new TablesDB(client);
   const storage = new Storage(client);
+  const users = new Users(client);
 
   try {
     const rawBody = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body;
     const validated = submitTopupSchema.parse(rawBody);
 
-    // 2. Cap on pending top-ups per user (max 3)
+    // 1b. Top-ups require a verified email (enforced here, not only in the UI)
+    const caller = await users.get({ userId: callerId });
+    if (!caller.emailVerification) {
+      return res.json({ success: false, error: "يرجى تأكيد بريدك الإلكتروني أولاً قبل شحن الرصيد." }, 403);
+    }
+
+    // 2. Cap on pending top-ups per user (settings_public.maxPendingTopups, default 3)
+    let maxPending = DEFAULT_MAX_PENDING;
+    try {
+      const pub: any = await tables.getRow({ databaseId: "digr", tableId: "settings_public", rowId: "pricing" });
+      if (Number.isInteger(pub?.maxPendingTopups) && pub.maxPendingTopups > 0) maxPending = pub.maxPendingTopups;
+    } catch { /* settings row or column missing: keep the default */ }
     const pendingTopups = await tables.listRows({
       databaseId: "digr",
       tableId: "topups",
@@ -47,11 +80,11 @@ export default async ({ req, res, log, error }: any) => {
         ? pendingTopups.total
         : pendingTopups.rows?.length || 0;
 
-    if (pendingCount >= 3) {
+    if (pendingCount >= maxPending) {
       return res.json(
         {
           success: false,
-          error: "لديك 3 طلبات شحن معلقة بالفعل. يرجى انتظار معالجتها قبل تقديم طلب جديد.",
+          error: `لديك ${maxPending} طلبات شحن معلقة بالفعل. يرجى انتظار معالجتها قبل تقديم طلب جديد.`,
         },
         400
       );
@@ -82,8 +115,8 @@ export default async ({ req, res, log, error }: any) => {
       );
     }
 
-    // 4. Receipt verification (never trust client-supplied receiptFileId)
-    if (validated.receiptFileId) {
+    // 4. Receipt verification (never trust client-supplied receiptFileId). The receipt is mandatory.
+    {
       // 4a. Fetch file with server/dynamic key
       let file: any;
       try {
@@ -156,7 +189,9 @@ export default async ({ req, res, log, error }: any) => {
         userId: callerId,
         amountEgp: validated.amountEgp,
         reference: validated.reference,
-        receiptFileId: validated.receiptFileId || null,
+        senderName: validated.senderName,
+        senderPhone: validated.senderPhone,
+        receiptFileId: validated.receiptFileId,
         status: "pending",
         createdAt: new Date().toISOString(),
       },
@@ -173,7 +208,7 @@ export default async ({ req, res, log, error }: any) => {
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) {
-      return res.json({ success: false, error: err.errors[0]?.message || "بيانات غير صالحة" }, 400);
+      return res.json({ success: false, error: err.issues[0]?.message || "بيانات غير صالحة" }, 400);
     }
     if (err.code === 409) {
       return res.json({ success: false, error: "رقم العملية أو الإيصال مستخدم مسبقاً." }, 400);

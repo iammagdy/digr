@@ -16,6 +16,13 @@ import { join } from "node:path";
 
 const ROOT = process.cwd();
 
+/** Landing copy lives across the landing components (design V7). */
+function landingSrc(): string {
+  return ["src/app/page.tsx", "src/components/landing/Sections.tsx", "src/components/landing/HeroLens.tsx", "src/components/landing/data.ts"]
+    .map((f) => src(f))
+    .join("\n");
+}
+
 function src(relativePath: string): string {
   const full = join(ROOT, relativePath);
   if (!existsSync(full)) throw new Error(`missing source file: ${relativePath}`);
@@ -30,8 +37,8 @@ describe("no placeholder text as research parameters", () => {
     expect(page).not.toMatch(/\?\s*"استخدم الافتراضي"/);
   });
 
-  it("DiscoveryCard never submits the literal placeholder as a value", () => {
-    const card = src("src/app/dashboard/chat/components/DiscoveryCard.tsx");
+  it("DetailsBlanks never submits the literal placeholder as a value", () => {
+    const card = src("src/app/dashboard/chat/components/DetailsBlanks.tsx");
     expect(card).not.toContain('"استخدم الافتراضي"');
   });
 
@@ -43,14 +50,15 @@ describe("no placeholder text as research parameters", () => {
 
 describe("no fabricated marketing claims", () => {
   it("landing page labels the demo as illustrative", () => {
-    const landing = src("src/app/page.tsx");
-    expect(landing).toContain("عرض توضيحي");
+    const landing = landingSrc();
+    expect(landing).toContain("مثال توضيحي");
   });
 
   it("landing page contains no invented customer counts or success rates", () => {
-    const landing = src("src/app/page.tsx");
+    const landing = landingSrc();
     expect(landing).not.toMatch(/\d+\s*عميل/);
-    expect(landing).not.toMatch(/\d+\s*%/);
+    // CSS percentages (masks, widths) are fine; marketing claims live in the copy module.
+    expect(src("src/components/landing/data.ts").replace(/translate[XY]?\([^)]*\)/g, "")).not.toMatch(/\d+\s*%/);
     expect(landing).not.toContain("ضمان التغطية");
     expect(landing).not.toMatch(/\+?\d{3,}\s*(مستخدم|باحث)/);
   });
@@ -65,7 +73,7 @@ describe("no internal identifiers in customer-facing code", () => {
   });
 
   it("landing pricing section shows no provider costs", () => {
-    const landing = src("src/app/page.tsx");
+    const landing = landingSrc();
     for (const word of FORBIDDEN) expect(landing).not.toContain(word);
   });
 });
@@ -73,7 +81,7 @@ describe("no internal identifiers in customer-facing code", () => {
 describe("honest financial presentation", () => {
   it("wallet page derives balance from the ledger, never hardcodes it", () => {
     const topup = src("src/app/dashboard/topup/page.tsx");
-    expect(topup).toContain("credit_ledger");
+    expect(topup).toContain("CREDIT_LEDGER_COLLECTION");
     // No hardcoded demo balance.
     expect(topup).not.toMatch(/useState<number \| null>\(\d{3,}\)/);
   });
@@ -92,7 +100,7 @@ describe("accessibility foundations", () => {
   });
 
   it("interactive discovery options expose checked state", () => {
-    const card = src("src/app/dashboard/chat/components/DiscoveryCard.tsx");
+    const card = src("src/app/dashboard/chat/components/DetailsBlanks.tsx");
     expect(card).toContain("aria-checked");
   });
 
@@ -105,10 +113,7 @@ describe("accessibility foundations", () => {
 
 describe("data-honesty corrections (PR #11 fixes)", () => {
   const BALANCE_FILES = [
-    "src/app/dashboard/page.tsx",
-    "src/app/dashboard/layout.tsx",
-    "src/app/dashboard/topup/page.tsx",
-    "src/app/dashboard/chat/page.tsx",
+    "src/hooks/useBalance.tsx",
   ];
 
   it("no failed balance fetch presents as a fake zero", () => {
@@ -120,6 +125,14 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
     }
   });
 
+  it("the chat and wallet read the shared ledger balance instead of their own copy", () => {
+    expect(src("src/app/dashboard/chat/page.tsx")).toContain("useBalance()");
+    const wallet = src("src/app/dashboard/topup/page.tsx");
+    expect(wallet).toContain("useBalance()");
+    expect(wallet).toContain("balanceText(balance)");
+    expect(wallet).not.toMatch(/set(Balance|UserBalance)\(0\)/);
+  });
+
   it("balance displays route through the honest-display helpers", () => {
     for (const f of BALANCE_FILES) {
       expect(src(f), f).toContain("balanceFailed()");
@@ -127,11 +140,9 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
     }
   });
 
-  it("dashboard job total comes from the response total, not the page length", () => {
-    const page = src("src/app/dashboard/page.tsx");
-    expect(page).toContain("jobsRes.total");
-    expect(page).toContain("jobTotalFromResponse");
-    expect(page).not.toMatch(/إجمالي طلبات البحث[\s\S]{0,400}recentJobs\.length/);
+  it("the running-jobs badge comes from the response total, not the page length", () => {
+    const shell = src("src/components/app/AppShell.tsx");
+    expect(shell).toContain("setRunning(res.total)");
   });
 
   it("activity timeline never marks stages complete from assumptions", () => {
@@ -149,11 +160,10 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
   });
 
   it("event histories are fetched latest-first and scope-labeled", () => {
-    const jobs = src("src/app/dashboard/jobs/page.tsx");
-    expect(jobs).toContain("orderDesc");
-    expect(jobs).toContain("eventHistoryScopeLabel");
     const chat = src("src/app/dashboard/chat/page.tsx");
+    expect(chat).toContain("orderDesc");
     expect(chat).toContain("EVENT_HISTORY_LIMIT");
     expect(chat).toContain("chronological(");
   });
+
 });

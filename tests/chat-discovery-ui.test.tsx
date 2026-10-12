@@ -47,10 +47,9 @@ describe("chat discovery clarification UI", () => {
     });
 
     const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(chatPage.split("<ClarificationReply")).toHaveLength(2);
-    expect(chatPage).toContain("questions={msg.clarificationItems || msg.clarificationQuestions || []}");
-    expect(chatPage).toContain("onComplete={(answers) => handleSubmitClarification(msg.id, answers)}");
-    expect(chatPage).not.toContain("<DiscoveryCard");
+    expect(chatPage.split("<DetailsBlanks")).toHaveLength(2);
+    expect(chatPage).toContain("questions={m.clarificationItems || m.clarificationQuestions || []}");
+    expect(chatPage).toContain("onComplete={(answers) => handleSubmitClarification(m.id, answers)}");
     expect(chatPage).toContain('clarificationAnswers: { type: "clarification_answers", answers }');
   });
 
@@ -60,10 +59,9 @@ describe("chat discovery clarification UI", () => {
     ]);
     expect(normalized[0].defaultOption).toBe("تيك توك");
 
-    const cardSource = readFileSync("src/app/dashboard/chat/components/DiscoveryCard.tsx", "utf8");
+    const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(cardSource).toContain("أخرى");
     expect(cardSource).toContain("تخطّى واستخدم الافتراضي");
-    expect(cardSource).toContain("ملخص إجاباتك");
     expect(cardSource).toContain("completedAnswers?.length");
     expect(cardSource).not.toMatch(/dangerouslySetInnerHTML/i);
     expect(cardSource).toContain("min-h-11");
@@ -116,10 +114,10 @@ describe("chat discovery clarification UI", () => {
     }
   });
 
-  it("hides counter badge when there is only one discovery question", () => {
-    const cardSource = readFileSync("src/app/dashboard/chat/components/DiscoveryCard.tsx", "utf8");
-    expect(cardSource).toContain("normalizedQuestions.length > 1 && (");
-    expect(cardSource).toContain("{formatNumber(answeredCount)} / {formatNumber(normalizedQuestions.length)}");
+  it("renders at most three underlined words (one sentence), never a counter or progress bar", () => {
+    const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
+    expect(cardSource).not.toContain("answeredCount");
+    expect(cardSource).toContain("underline");
   });
 });
 

@@ -119,6 +119,7 @@ describe("LLM Error Reason Codes & Browser-Accessible Admin Status", () => {
     vi.spyOn(Account.prototype, "get").mockResolvedValue({
       $id: "user_1",
       labels: [],
+      emailVerification: true,
     } as any);
 
     vi.spyOn(TablesDB.prototype, "listRows").mockResolvedValue({

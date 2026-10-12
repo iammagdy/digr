@@ -1,23 +1,33 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
-import Link from "next/link";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { client, account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
+import { useBalance } from "@/hooks/useBalance";
+import { useCreditValue } from "@/hooks/useCreditValue";
+import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { Storage, Query } from "appwrite";
-import { getPersonaConfig, getPersonaWelcomeExamples, PersonaType } from "@/functions/shared/personaConfigs";
-import { balanceLoading, balanceReady, balanceFailed, balanceText, chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText, type BalanceView } from "@/lib/honestDisplay";
-import { buildReadyExampleTemplates, EXAMPLE_TEMPLATES_HEADING_AR, EXAMPLE_PRICE_DISCLAIMER_AR } from "@/functions/shared/exampleTemplates";
+import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
+import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText } from "@/lib/honestDisplay";
+import { formatAr } from "@/lib/arabicDigits";
+import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
 import type { DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 
 import OnboardingModal from "./components/OnboardingModal";
-import ChatSidebar, { ConversationItem } from "./components/ChatSidebar";
-import ClarificationReply from "./components/ClarificationReply";
+import { useShell } from "@/components/app/AppShell";
+import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
+import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
+import EmptyChat from "./components/EmptyChat";
+import { FailureBox, FilesSection } from "./components/RunSections";
+import Composer from "./components/Composer";
+
+interface ConversationItem { $id: string; title: string; updatedAt: string }
 
 const storage = new Storage(client);
 
@@ -33,6 +43,8 @@ interface MessageItem {
   suggestedAlternative?: any;
   refusalReason?: string;
   jobId?: string;
+  /** Internal turns (clarification-answer summaries) are shown through the details sentence instead. */
+  hidden?: boolean;
   errorRetryPrompt?: string;
   createdAt: string;
 }
@@ -46,6 +58,8 @@ interface ActiveJobState {
   reservedCredits?: number;
   errorAr?: string;
   events: JobEvent[];
+  /** Records the approved plan asked for. */
+  requestedRows?: number;
   review?: ResultReview | null;
   reviewSeverity?: ReviewSeverity;
   artifactVersion?: { id: string; versionNum: number; rowCount: number } | null;
@@ -64,14 +78,10 @@ export default function ChatWorkspacePage() {
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationLoadError, setConversationLoadError] = useState(false);
-  const [userBalance, setUserBalance] = useState<BalanceView>(balanceLoading());
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
-  const [enabledCapabilitySlugs, setEnabledCapabilitySlugs] = useState<string[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
-  const [requestedFeatures, setRequestedFeatures] = useState<Record<string, boolean>>({});
 
   // Active Job & Canvas Data
   const [startingQuoteId, setStartingQuoteId] = useState<string | null>(null);
@@ -81,12 +91,9 @@ export default function ChatWorkspacePage() {
   const loadedResultJobs = useRef(new Set<string>());
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [artifactEditing, setArtifactEditing] = useState(false);
-  const [plusMenuOpen, setPlusMenuOpen] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const conversationLoadSequence = useRef(0);
 
   // 1. Check Profile & Onboarding status
@@ -112,35 +119,11 @@ export default function ChatWorkspacePage() {
     checkProfile();
   }, [user]);
 
-  // 2. Load User Balance
-  const loadBalance = useCallback(async () => {
-    if (!user) return;
-    try {
-      let total = 0;
-      let offset = 0;
-      const limit = 100;
-      while (true) {
-        const res = await databases.listDocuments("digr", "credit_ledger", [
-          Query.equal("userId", user.$id),
-          Query.limit(limit),
-          Query.offset(offset),
-        ]);
-        for (const doc of res.documents) {
-          total += (doc.delta as number) || 0;
-        }
-        if (res.documents.length < limit) break;
-        offset += limit;
-      }
-      setUserBalance(balanceReady(total));
-    } catch {
-      // A failed request proves nothing about the balance — never show a fake zero.
-      setUserBalance(balanceFailed());
-    }
-  }, [user]);
-
-  useEffect(() => {
-    loadBalance();
-  }, [loadBalance]);
+  // 2. Shared balance (sidebar, header and wallet read the same ledger sum)
+  const { balance: userBalance, refresh: loadBalance } = useBalance();
+  const creditValue = useCreditValue();
+  const llmEnabled = useLlmEnabled();
+  const router = useRouter();
 
   // 3. Load Conversations
   const loadConversations = useCallback(async () => {
@@ -167,58 +150,24 @@ export default function ChatWorkspacePage() {
     loadConversations();
   }, [loadConversations]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadEnabledCapabilities() {
-      if (!user) {
-        setEnabledCapabilitySlugs([]);
-        return;
-      }
-      try {
-        let jwtToken: string | undefined;
-        try {
-          jwtToken = (await account.createJWT()).jwt;
-        } catch {}
-        const headers: Record<string, string> = {};
-        if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
-        const response = await fetch("/api/chat/metadata", { headers });
-        const data = await response.json();
-        if (!cancelled && response.ok && data.success && Array.isArray(data.enabledCapabilitySlugs)) {
-          setEnabledCapabilitySlugs(data.enabledCapabilitySlugs.filter((slug: unknown): slug is string => typeof slug === "string"));
-        } else if (!cancelled) {
-          setEnabledCapabilitySlugs([]);
-        }
-      } catch {
-        if (!cancelled) setEnabledCapabilitySlugs([]);
-      }
-    }
-    loadEnabledCapabilities();
-    return () => { cancelled = true; };
-  }, [user]);
-
-  async function handleChangePersona(persona: PersonaType) {
-    if (!user) throw new Error("يرجى تسجيل الدخول لتغيير التخصيص");
-    let jwtToken: string | undefined;
-    try {
-      jwtToken = (await account.createJWT()).jwt;
-    } catch {}
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
-    const response = await fetch("/api/onboarding", {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ persona }),
-    });
-    const data = await response.json();
-    if (!response.ok || !data.success) throw new Error(data.error || "تعذر حفظ الشخصية");
-    setUserPersona(getPersonaConfig(data.profile?.persona ?? persona).key);
-  }
-
   // 4. Scroll to bottom
   useEffect(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     messagesEndRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" });
   }, [messages, loading, activeJob, viewportHeight]);
+
+  // Shell integration: header title + «سؤال بحثي جديد» from the sidebar.
+  const shell = useShell();
+  useEffect(() => {
+    shell.setTitle(conversationTitle || "محادثة جديدة");
+  }, [shell, conversationTitle]);
+  const startNewChatRef = useRef<() => void>(() => {});
+  startNewChatRef.current = handleStartNewChat;
+  useEffect(() => {
+    const on = () => startNewChatRef.current();
+    window.addEventListener("digr:new-chat", on);
+    return () => window.removeEventListener("digr:new-chat", on);
+  }, []);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -229,6 +178,35 @@ export default function ChatWorkspacePage() {
     viewport.addEventListener("resize", syncViewportHeight);
     return () => viewport.removeEventListener("resize", syncViewportHeight);
   }, []);
+
+  // Load rows / review / versions once a job is finished (polling transition or opening a finished file).
+  async function loadJobResults(jobId: string) {
+    if (loadedResultJobs.current.has(jobId)) return;
+    loadedResultJobs.current.add(jobId);
+    void loadBalance();
+    try {
+      const [dataRes, versionsRes] = await Promise.all([
+        fetch(`/api/jobs/${jobId}/data`),
+        fetch(`/api/jobs/${jobId}/artifacts`),
+      ]);
+      const [dataJson, versionsJson] = await Promise.all([dataRes.json(), versionsRes.json()]);
+      if (dataJson.success) {
+        if (dataJson.profile) setExtractedProfile(dataJson.profile);
+        if (dataJson.rows && Array.isArray(dataJson.rows)) setExtractedRecords(dataJson.rows);
+        setActiveJob((previous) => previous ? {
+          ...previous,
+          review: dataJson.review || null,
+          reviewSeverity: dataJson.runFacts?.severity,
+          artifactVersion: dataJson.artifactVersion || null,
+          fileIds: dataJson.fileIds,
+          versionHistory: versionsJson.success ? versionsJson.versions : [],
+          artifactHistoryAvailable: versionsJson.success && versionsJson.historyAvailable,
+        } : null);
+      }
+    } catch (fetchErr) {
+      console.warn("Failed to fetch real job data:", fetchErr);
+    }
+  }
 
   // 5. Poll active job status
   useEffect(() => {
@@ -260,33 +238,7 @@ export default function ChatWorkspacePage() {
         });
 
         if ((jobDoc.status === "done" || jobDoc.status === "cancelled") && !loadedResultJobs.current.has(jobDoc.$id)) {
-          loadedResultJobs.current.add(jobDoc.$id);
-          loadBalance();
-          setCanvasOpen(true);
-          try {
-            const [dataRes, versionsRes] = await Promise.all([
-              fetch(`/api/jobs/${jobDoc.$id}/data`),
-              fetch(`/api/jobs/${jobDoc.$id}/artifacts`),
-            ]);
-            const [dataJson, versionsJson] = await Promise.all([dataRes.json(), versionsRes.json()]);
-            if (dataJson.success) {
-              if (dataJson.profile) setExtractedProfile(dataJson.profile);
-              if (dataJson.rows && Array.isArray(dataJson.rows)) {
-                setExtractedRecords(dataJson.rows);
-              }
-              setActiveJob((previous) => previous ? {
-                ...previous,
-                review: dataJson.review || null,
-                reviewSeverity: dataJson.runFacts?.severity,
-                artifactVersion: dataJson.artifactVersion || null,
-                fileIds: dataJson.fileIds,
-                versionHistory: versionsJson.success ? versionsJson.versions : [],
-                artifactHistoryAvailable: versionsJson.success && versionsJson.historyAvailable,
-              } : null);
-            }
-          } catch (fetchErr) {
-            console.warn("Failed to fetch real job data:", fetchErr);
-          }
+          await loadJobResults(jobDoc.$id);
         }
       } catch (err) {
         console.warn("Polling job status error:", err);
@@ -313,7 +265,6 @@ export default function ChatWorkspacePage() {
     setMessages((prev) => [...prev, userMsg]);
     setInputText("");
     setLoading(true);
-    setPlusMenuOpen(false);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 35000);
@@ -389,11 +340,6 @@ export default function ChatWorkspacePage() {
     }
   }
 
-  function handleFormSubmit(e: FormEvent) {
-    e.preventDefault();
-    handleSendMessage(inputText);
-  }
-
   async function handleSubmitClarification(assistantMessageId: string, answers: DiscoveryAnswer[]) {
     if (loading || !user || !answers.length) return;
     const summary = answers
@@ -413,6 +359,7 @@ export default function ChatWorkspacePage() {
       id: `usr_${Date.now()}`,
       role: "user",
       content: summary,
+      hidden: true,
       createdAt: new Date().toISOString(),
     }]);
     setLoading(true);
@@ -480,13 +427,12 @@ export default function ChatWorkspacePage() {
   }
 
   async function handleOpenConversation(id: string) {
-    const selected = conversationsList.find((item) => item.$id === id);
-    if (!user || !selected || loading || conversationLoading) return;
+    if (!user || loading || conversationLoading) return;
     const sequence = ++conversationLoadSequence.current;
     setConversationLoading(true);
     setConversationLoadError(false);
     setConversationId(id);
-    setConversationTitle(selected.title);
+    setConversationTitle(conversationsList.find((item) => item.$id === id)?.title ?? "");
     setMessages([]);
     setInputText("");
     setActiveJob(null);
@@ -496,6 +442,11 @@ export default function ChatWorkspacePage() {
     loadedResultJobs.current.clear();
 
     try {
+      if (!conversationsList.some((item) => item.$id === id)) {
+        const doc: any = await databases.getDocument("digr", "conversations", id);
+        if (doc.userId !== user.$id) throw new Error("forbidden");
+        if (sequence === conversationLoadSequence.current) setConversationTitle(doc.title || "");
+      }
       const documents: any[] = [];
       const pageSize = 100;
       let offset = 0;
@@ -521,6 +472,35 @@ export default function ChatWorkspacePage() {
           content: String(document.content || "").slice(0, 20000),
           createdAt: String(document.createdAt || document.$createdAt || new Date().toISOString()),
         })));
+
+      // Restore the run (progress / files) of the conversation's accepted quote, if any.
+      const accepted = await databases.listDocuments("digr", "plans_quotes", [
+        Query.equal("conversationId", id),
+        Query.equal("status", "accepted"),
+        Query.orderDesc("createdAt"),
+        Query.limit(1),
+      ]);
+      const quote: any = accepted.documents[0];
+      if (quote?.jobId && sequence === conversationLoadSequence.current) {
+        const jobDoc: any = await databases.getDocument("digr", "jobs", quote.jobId);
+        const eventsRes = await databases.listDocuments("digr", "job_events", [
+          Query.equal("jobId", jobDoc.$id), Query.orderDesc("createdAt"), Query.limit(EVENT_HISTORY_LIMIT),
+        ]);
+        let items: any[] = [];
+        try { items = JSON.parse(quote.itemsJson || "[]"); } catch { /* keep empty */ }
+        setActiveJob({
+          jobId: jobDoc.$id,
+          status: jobDoc.status,
+          templateSlug: items[0]?.capabilitySlug || jobDoc.templateSlug || "tiktok-profile",
+          rowsCollected: jobDoc.rowsCollected || 0,
+          chargedCredits: jobDoc.chargedCredits,
+          reservedCredits: jobDoc.reservedCredits,
+          errorAr: jobDoc.errorAr,
+          requestedRows: quote.targetVolumeMax,
+          events: chronological(eventsRes.documents as unknown as JobEvent[]),
+        });
+        if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jobDoc.$id);
+      }
     } catch {
       if (sequence === conversationLoadSequence.current) setConversationLoadError(true);
     } finally {
@@ -638,6 +618,7 @@ export default function ChatWorkspacePage() {
         templateSlug: quote.items?.[0]?.capabilitySlug || "tiktok-profile",
         rowsCollected: 0,
         reservedCredits: data.reservedCredits,
+        requestedRows: quote.targetVolumeMax,
         events: [
           {
             $id: `init_${Date.now()}`,
@@ -798,50 +779,6 @@ export default function ChatWorkspacePage() {
     }
   }
 
-  // Handle Upload Untrusted List
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Strict size limit: 200 KB max
-    if (file.size > 200 * 1024) {
-      alert("حجم الملف يتجاوز الحد الأقصى المسموح به (200 كيلوبايت)");
-      e.target.value = "";
-      return;
-    }
-
-    // Strict extension check
-    if (!file.name.match(/\.(csv|txt)$/i)) {
-      alert("نوع الملف غير مدعوم. يُسمح بملفات CSV أو TXT فقط");
-      e.target.value = "";
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target?.result as string;
-      if (text) {
-        // Treat content as strictly untrusted: sanitize characters, cap count and length
-        const sanitizedIdentifiers = text
-          .split(/[\r\n,]+/)
-          .map((l) => l.replace(/[^a-zA-Z0-9_.-]/g, "").trim())
-          .filter((l) => l.length > 0 && l.length <= 64)
-          .slice(0, 20);
-
-        if (sanitizedIdentifiers.length > 0) {
-          const sample = sanitizedIdentifiers.slice(0, 3).join(", ");
-          handleSendMessage(
-            `أرفقت قائمة تضم ${sanitizedIdentifiers.length} حساب: [${sample}${sanitizedIdentifiers.length > 3 ? "..." : ""}]، يرجى فحص الحساب الأول وإعداد خطة استخراج`
-          );
-        } else {
-          alert("لم يتم العثور على معرّفات صالحة داخل الملف");
-        }
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  }
-
   function handleKeepResult() {
     setMessages((previous) => [...previous, {
       id: `review_keep_${Date.now()}`,
@@ -885,12 +822,189 @@ export default function ChatWorkspacePage() {
     handleSendMessage(`${request}. ${needsNewQuote ? "اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ." : "لا تعِد جمع البيانات."}`);
   }
 
+  /* ── wiring for the design's states ─────────────────────────────────── */
+
+  // «تحديث السعر»: the server recomputes the quote (same plan). An expired quote is never accepted server-side.
+  async function handleRefreshQuote(quote: PlanQuoteData) {
+    try {
+      await handleSaveDirectEdit(quote, quote.targetVolumeMax, "", quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]);
+    } catch (err: any) {
+      setMessages((prev) => [...prev, { id: `err_refresh_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تحديث السعر. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
+    }
+  }
+
+  // «اشحن {الفرق} والعودة هنا»
+  function handleTopupShort(shortEgp: number) {
+    const back = conversationId ? `/dashboard/chat?c=${conversationId}` : "/dashboard/chat";
+    router.push(`/dashboard/topup?amount=${shortEgp}&return=${encodeURIComponent(back)}`);
+  }
+
+  // A question typed on the landing page is sent as the first message, then forgotten.
+  const pendingHandled = useRef(false);
+  useEffect(() => {
+    if (!user || pendingHandled.current) return;
+    const q = readPendingQuestion();
+    if (!q) return;
+    pendingHandled.current = true;
+    clearPendingQuestion();
+    void handleSendMessage(q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
+  sendRef.current = handleSendMessage;
+
+  // Deep link from «طلباتي» / the wallet return: /dashboard/chat?c=<conversationId>
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    if (!user || deepLinkHandled.current) return;
+    const id = new URLSearchParams(window.location.search).get("c");
+    if (!id || !/^[A-Za-z0-9_-]{1,36}$/.test(id)) return;
+    deepLinkHandled.current = true;
+    const retry = new URLSearchParams(window.location.search).get("retry") === "1";
+    void handleOpenConversation(id).then(() => {
+      // «إعادة المحاولة» from طلباتي: ask for a fresh quote on the same plan.
+      // (sendRef always points at the latest closure, which already knows the opened conversation id.)
+      if (retry) setTimeout(() => void sendRef.current("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ."), 350);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
+
+  /* ── derived document state ───────────────────────────────────────── */
+  const isClarification = (m: MessageItem) =>
+    m.outputType === "ask_clarification" || (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems);
+  const firstUserIdx = messages.findIndex((m) => m.role === "user");
+  const question = conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : "");
+  const startIdx = messages.findIndex((m) => !!m.jobId);
+  const lastPlanIdx = messages.reduce((acc, m, i) => (m.planQuote ? i : acc), -1);
+  const lastClarIdx = messages.reduce((acc, m, i) => (isClarification(m) ? i : acc), -1);
+  const jobFinished = activeJob?.status === "done" || activeJob?.status === "cancelled";
+  const answeringNow = loading && lastClarIdx >= 0 && !!messages[lastClarIdx].completedClarificationAnswers;
+
+  let stage: DocStage = 0;
+  if (activeJob) stage = jobFinished ? 4 : 3;
+  else if (lastPlanIdx >= 0 && lastPlanIdx > lastClarIdx) stage = 2;
+  else if (answeringNow) stage = 1;
+
+  const beforeJob = startIdx >= 0 ? messages.slice(0, startIdx) : messages;
+  const afterJob = startIdx >= 0 ? messages.slice(startIdx + 1) : [];
+  const dateLabel = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long", year: "numeric" })
+    .format(new Date(messages[0]?.createdAt || Date.now()));
+  const balanceValue = userBalance.status === "ready" ? userBalance.value : null;
+  const firstName = (user?.name || "").trim().split(/\s+/)[0] || "";
+  const chatEmpty = messages.length === 0 && !conversationLoading && !conversationLoadError;
+
+  const renderNote = (m: MessageItem) => {
+    if (m.hidden || m.jobId) return null;
+    if (m.role === "user") {
+      return <p key={m.id} className="mb-0 mt-3 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>;
+    }
+    return (
+      <div key={m.id}>
+        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>}
+        {m.errorRetryPrompt && (
+          <button
+            type="button" onClick={() => handleSendMessage(m.errorRetryPrompt!)}
+            className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
+          >
+            إعادة المحاولة الآن
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const detailsNode = (
+    <div>
+      {beforeJob.map((m, i) => {
+        if (i === firstUserIdx || m.planQuote) return null;
+        if (isClarification(m)) {
+          return (
+            <div key={m.id}>
+              <div className="mt-3.5">
+                <DetailsBlanks
+                  questions={m.clarificationItems || m.clarificationQuestions || []}
+                  completedAnswers={m.completedClarificationAnswers}
+                  disabled={loading}
+                  onComplete={(answers) => handleSubmitClarification(m.id, answers)}
+                />
+              </div>
+            </div>
+          );
+        }
+        return renderNote(m);
+      })}
+      {loading && stage === 0 && (
+        <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>{loadingStatusText}</p>
+      )}
+    </div>
+  );
+
+  const planMsg = lastPlanIdx >= 0 ? messages[lastPlanIdx] : null;
+  const planNode = (
+    <>
+      {stage === 1 && <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>يحسب الخادم عرض السعر…</p>}
+      {planMsg?.planQuote && (stage >= 2 || lastPlanIdx > lastClarIdx) && (
+        <>
+          <PlanQuoteCard
+            quote={planMsg.planQuote}
+            onStart={handleStartExecution}
+            onSaveEdit={handleSaveDirectEdit}
+            onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${units} سجل تناسب رصيدي المتاح`)}
+            isStarting={startingQuoteId === planMsg.planQuote.quoteId}
+            available={balanceValue}
+            creditValue={creditValue}
+            onTopupShort={handleTopupShort}
+            onRefresh={handleRefreshQuote}
+            locked={!!activeJob}
+          />
+        </>
+      )}
+    </>
+  );
+
+  const runNode = activeJob ? (
+    activeJob.status === "failed" ? (
+      <FailureBox
+        providerMessage={activeJob.errorAr}
+        refunded={activeJob.reservedCredits}
+        onRetry={() => handleSendMessage("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ.")}
+        onGoRequests={() => router.push("/dashboard/requests")}
+      />
+    ) : (
+      <ActivityTimeline
+        status={activeJob.status}
+        events={activeJob.events}
+        rowsCollected={activeJob.rowsCollected}
+        eventLimit={EVENT_HISTORY_LIMIT}
+        spentPoints={activeJob.chargedCredits}
+        reservedPoints={activeJob.reservedCredits}
+        requestedRows={activeJob.requestedRows}
+      />
+    )
+  ) : null;
+
+  const filesNode = (
+    <>
+      {activeJob && jobFinished && (
+        <FilesSection
+          rows={activeJob.rowsCollected}
+          requested={activeJob.requestedRows}
+          charged={activeJob.chargedCredits}
+          reserved={activeJob.reservedCredits}
+          downloadingKey={downloadingKey}
+          onDownload={handleDownload}
+          onOpenCanvas={() => setCanvasOpen((v) => !v)}
+          canvasOpen={canvasOpen}
+        />
+      )}
+      {afterJob.map(renderNote)}
+    </>
+  );
+
   return (
-    <div
-      className="flex h-dvh min-h-0 w-full bg-sand-50 text-ink-900 overflow-hidden font-sans"
-      style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
-    >
-      {/* 1. Onboarding Modal */}
+    <div className="flex min-h-0 w-full flex-1 overflow-hidden bg-bg font-sans text-ink">
+      {/* 1. Onboarding (existing first-run persona step) */}
       <OnboardingModal
         isOpen={showOnboarding}
         onComplete={(p) => {
@@ -900,371 +1014,66 @@ export default function ChatWorkspacePage() {
         onSkip={() => setShowOnboarding(false)}
       />
 
-      {/* 2. Left Sidebar (Collapsible) */}
-      <ChatSidebar
-        conversations={conversationId && conversationTitle && !conversationsList.some((item) => item.$id === conversationId)
-          ? [{ $id: conversationId, title: conversationTitle, updatedAt: new Date().toISOString() }, ...conversationsList]
-          : conversationsList}
-        activeId={conversationId}
-        onSelectConversation={(id) => void handleOpenConversation(id)}
-        onNewChat={handleStartNewChat}
-        isBusy={loading || conversationLoading}
-        userBalance={userBalance}
-        userPersona={userPersona}
-        onChangePersona={handleChangePersona}
-        isOpen={sidebarOpen}
-        onCloseMobile={() => setSidebarOpen(false)}
-      />
-
-      {/* 3. Main Chat Column */}
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden lg:border-s lg:border-sand-200">
-        {/* Top Header — research workspace identity */}
-        <header className="h-16 shrink-0 min-w-0 px-3 sm:px-6 bg-white/95 backdrop-blur-md border-b border-sand-200 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="touch-target inline-flex items-center justify-center lg:hidden text-sand-600 hover:text-ink-900 rounded-xl hover:bg-sand-100"
-              aria-label="فتح قائمة المحادثات"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <span aria-hidden="true" className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl bg-pine-800 text-sm font-bold text-white shrink-0">دِ</span>
-            <div className="min-w-0">
-              <h1 className="text-sm sm:text-base font-bold text-ink-900 truncate">
-                المساعد البحثي
-              </h1>
-              <p className="hidden md:block text-xs text-sand-500">
-                صِف سؤالك — نخطط معًا قبل أي جمع
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {/* Balance Badge */}
-            <Link
-              href="/dashboard/topup"
-              className="tnum min-h-11 inline-flex items-center gap-1.5 rounded-2xl border border-amber-points/30 bg-amber-points-bg px-3 py-1.5 text-xs sm:text-sm transition-colors hover:bg-amber-points-bg/70"
-              title="رصيد الحساب وشحن النقاط"
-            >
-              <span className="font-bold text-amber-points">
-                {balanceText(userBalance)}
-              </span>
-              <span className="font-semibold text-amber-points">نقطة</span>
-              <span aria-hidden="true" className="text-base font-bold leading-none text-amber-points">+</span>
-            </Link>
-
-            {/* Results Toggle (Desktop & Mobile) */}
-            <button
-              type="button"
-              onClick={() => setCanvasOpen(!canvasOpen)}
-              aria-expanded={canvasOpen}
-              aria-controls="results-canvas"
-              className={`min-h-11 inline-flex cursor-pointer items-center gap-1.5 rounded-2xl border px-3 py-1.5 text-xs sm:text-sm font-semibold transition-colors ${
-                canvasOpen
-                  ? "border-accent bg-accent text-white"
-                  : "border-sand-300 bg-white text-ink-800 hover:border-accent/40 hover:bg-accent-light/40"
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span className="hidden sm:inline">لوحة النتائج</span>
-              <span className="sm:hidden">النتائج</span>
-            </button>
-          </div>
-        </header>
-
-        {/* Messages Stream */}
-        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 space-y-4">
+      {/* 2. Research document + composer */}
+      <div data-screen-label="Chat" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ containerType: "inline-size" }}>
+        <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-[18px] pb-7 pt-5">
           {conversationLoading && (
-            <div role="status" aria-label="جاري تحميل المحادثة" className="mx-auto w-full max-w-2xl space-y-3 py-4">
+            <div role="status" aria-label="جاري تحميل المحادثة" className="mx-auto w-full max-w-[680px] space-y-3 py-4">
               <span className="sr-only">جاري تحميل المحادثة</span>
               {["w-3/5", "w-4/5", "w-2/5"].map((width, index) => (
-                <div key={index} className={`h-14 ${width} rounded-2xl bg-sand-200/70 motion-safe:animate-pulse motion-reduce:animate-none`} />
+                <div key={index} className={`h-10 ${width} rounded-[14px] bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none`} />
               ))}
             </div>
           )}
           {conversationLoadError && conversationId && !conversationLoading && (
-            <div role="alert" className="mx-auto max-w-xl rounded-xl border border-danger/30 bg-danger-bg p-4 text-sm text-ink-800">
-              <p>تعذر تحميل المحادثة. تحقق من الاتصال ثم حاول مرة أخرى.</p>
-              <button type="button" onClick={() => void handleOpenConversation(conversationId)} className="mt-3 min-h-11 rounded-lg border border-danger/30 bg-white px-4 text-xs font-semibold focus-visible:outline-2 focus-visible:outline-danger">
+            <div role="alert" className="mx-auto max-w-[680px] rounded-[18px] p-4 text-sm text-ink" style={{ background: "color-mix(in oklab, var(--bad) 8%, var(--sf))" }}>
+              <p className="m-0">تعذر تحميل المحادثة. تحقق من الاتصال ثم حاول مرة أخرى.</p>
+              <button type="button" onClick={() => void handleOpenConversation(conversationId)} className="mt-3 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-4 text-xs text-ink focus-visible:outline-2">
                 إعادة المحاولة
               </button>
             </div>
           )}
-          {/* Empty First Screen State */}
-          {messages.length === 0 && !conversationLoading && !conversationLoadError && (
-            <div className="max-w-2xl mx-auto pt-10 sm:pt-16 px-1">
-              <div className="text-center space-y-3">
-                <span aria-hidden="true" className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-pine-800 text-xl font-bold text-white shadow-[var(--shadow-ink)]">
-                  دِ
-                </span>
-                <h2 className="font-display text-2xl sm:text-3xl text-ink-900">
-                  ما سؤالك البحثي اليوم؟
-                </h2>
-                <p className="text-sm sm:text-base leading-relaxed text-ink-600 max-w-lg mx-auto">
-                  صِف البيانات العامة التي تحتاجها — سأطرح أسئلة توضيحية، ثم أصمّم خطة
-                  قابلة للتعديل بعرض سعر شفاف. لا يبدأ أي جمع قبل موافقتك.
-                </p>
-              </div>
 
-              {/* Ready-to-use Example Templates ("أمثلة جاهزة") computed from the capability registry */}
-              <div className="mt-7 space-y-3" aria-label={EXAMPLE_TEMPLATES_HEADING_AR}>
-                <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-                  <h3 className="text-sm font-bold text-ink-900">{EXAMPLE_TEMPLATES_HEADING_AR}</h3>
-                  <span className="text-xs text-sand-500">{EXAMPLE_PRICE_DISCLAIMER_AR}</span>
+          {chatEmpty && (
+            <EmptyChat
+              firstName={firstName}
+              zeroBalance={balanceValue !== null && balanceValue <= 0}
+              onStart={(prompt) => handleSendMessage(prompt)}
+            />
+          )}
+
+          {!chatEmpty && !conversationLoading && messages.length > 0 && (
+            <ResearchDocument
+              dateLabel={dateLabel}
+              question={question}
+              stage={stage}
+              failed={activeJob?.status === "failed"}
+              banner={!llmEnabled ? (
+                <div role="status" className="mb-[18px] flex items-start gap-2.5 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.8] text-ink2">
+                  <span className="mt-0.5 flex text-goldT"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 8v5M12 16.5v.5M10.3 4l-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0z" /></svg></span>
+                  <span>المساعد الذكي يعمل الآن بالوضع المبسّط: أسئلة ثابتة وخطة قياسية. السعر والموافقة والتنفيذ تعمل بشكل طبيعي.</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" role="list">
-                  {buildReadyExampleTemplates().map((tpl) => (
-                    <button
-                      key={tpl.id}
-                      type="button"
-                      role="listitem"
-                      onClick={() => {
-                        setInputText(tpl.editablePromptAr);
-                        inputRef.current?.focus();
-                      }}
-                      className="group min-h-11 rounded-2xl border border-sand-200 bg-white p-4 text-right shadow-[var(--shadow-card)] transition-all hover:border-accent/40 hover:shadow-[var(--shadow-lift)] cursor-pointer flex flex-col justify-between gap-2"
-                    >
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-sand-600">{tpl.platformAr}</span>
-                          <span className="tnum rounded-lg bg-amber-points-bg px-2 py-0.5 text-xs font-bold text-amber-points">
-                            تقريبيًا {formatNumber(tpl.approximatePoints)} نقطة
-                          </span>
-                        </div>
-                        <div className="text-sm font-bold text-ink-900 group-hover:text-accent-ink">{tpl.titleAr}</div>
-                        <div className="text-xs leading-relaxed text-sand-600">{tpl.shortDescriptionAr}</div>
-                        <div className="text-xs leading-relaxed text-sand-500">
-                          <strong className="text-ink-800">المخرجات: </strong>
-                          {tpl.deliverablesAr}
-                        </div>
-                      </div>
-                      <div className="border-t border-sand-100 pt-2 text-[11px] text-sand-500">
-                        {tpl.disclaimerAr}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Persona examples */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-7" role="list" aria-label="أمثلة لبدء البحث">
-                {getPersonaWelcomeExamples(userPersona, enabledCapabilitySlugs)
-                  .filter((example) => example.available && example.prompt)
-                  .map((example) => (
-                    <button
-                      key={example.key}
-                      type="button"
-                      role="listitem"
-                      onClick={() => {
-                        setInputText(example.prompt!);
-                        inputRef.current?.focus();
-                      }}
-                      className="group min-h-11 rounded-2xl border border-sand-200 bg-white p-4 text-right shadow-[var(--shadow-card)] transition-all hover:border-accent/40 hover:shadow-[var(--shadow-lift)] cursor-pointer"
-                    >
-                      <div className="text-sm font-bold text-ink-900 group-hover:text-accent-ink">{example.title}</div>
-                      <div className="mt-1 text-xs leading-relaxed text-sand-500 line-clamp-2">{example.prompt}</div>
-                    </button>
-                  ))}
-              </div>
-            </div>
+              ) : null}
+              details={detailsNode}
+              plan={planNode}
+              run={runNode}
+              files={filesNode}
+            />
           )}
-
-          {/* Messages List */}
-          {messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex flex-col ${
-                msg.role === "user" ? "items-start" : "items-end"
-              }`}
-            >
-              <div
-                className={`max-w-2xl w-full p-4 sm:p-5 rounded-2xl text-sm leading-relaxed animate-fade ${
-                  msg.role === "user"
-                    ? "bg-pine-800 text-white rounded-es-md shadow-[var(--shadow-card)]"
-                    : "bg-white border border-sand-200 text-ink-900 shadow-[var(--shadow-card)] rounded-ss-md"
-                }`}
-              >
-                {msg.outputType === "ask_clarification" || (msg.clarificationItems && (Array.isArray(msg.clarificationItems) ? msg.clarificationItems.length > 0 : true)) ? (
-                  <ClarificationReply
-                    intro={msg.content}
-                    questions={msg.clarificationItems || msg.clarificationQuestions || []}
-                    completedAnswers={msg.completedClarificationAnswers}
-                    disabled={loading}
-                    onComplete={(answers) => handleSubmitClarification(msg.id, answers)}
-                  />
-                ) : (
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
-                )}
-
-                {/* Error with Retry Button */}
-                {msg.errorRetryPrompt && (
-                  <div className="mt-3 pt-2 border-t border-sand-200">
-                    <button
-                      type="button"
-                      onClick={() => handleSendMessage(msg.errorRetryPrompt!)}
-                      className="min-h-11 px-3 py-1.5 bg-sand-100 hover:bg-sand-200 text-ink-900 border border-sand-300 rounded-lg text-xs font-semibold cursor-pointer inline-flex items-center gap-1.5 transition-colors motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-primary"
-                    >
-                      <svg className="w-3.5 h-3.5 text-sand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      <span>إعادة المحاولة الآن</span>
-                    </button>
-                  </div>
-                )}
-
-                {/* Interactive Plan Quote Card */}
-                {msg.planQuote && (
-                  <PlanQuoteCard
-                    quote={msg.planQuote}
-                    onStart={handleStartExecution}
-                    onSaveEdit={handleSaveDirectEdit}
-                    onAcceptDownscaled={(units) =>
-                      handleSendMessage(`أوافق على الخطة المخفضة حتى ${units} سجل تناسب رصيدي المتاح`)
-                    }
-                    isStarting={startingQuoteId === msg.planQuote.quoteId}
-                  />
-                )}
-              </div>
-            </div>
-          ))}
-
-          {/* Live Activity Timeline */}
-          {activeJob && (
-            <div className="max-w-2xl w-full mx-auto">
-              <ActivityTimeline
-                status={activeJob.status}
-                events={activeJob.events}
-                rowsCollected={activeJob.rowsCollected}
-                eventLimit={EVENT_HISTORY_LIMIT}
-                spentPoints={activeJob.chargedCredits}
-                reservedPoints={activeJob.reservedCredits}
-              />
-            </div>
-          )}
-
-          {/* Thinking Indicator */}
-          {loading && (
-            <div className="flex items-center gap-2.5 rounded-2xl border border-sand-200 bg-white px-4 py-3 text-xs text-sand-600 shadow-[var(--shadow-card)] w-fit" role="status">
-              <span className="flex gap-1" aria-hidden="true">
-                {[0, 1, 2].map((i) => (
-                  <span key={i} className="h-1.5 w-1.5 rounded-full bg-accent motion-safe:animate-bounce motion-reduce:animate-none" style={{ animationDelay: `${i * 0.15}s` }} />
-                ))}
-              </span>
-              <span>{loadingStatusText}</span>
-            </div>
-          )}
-
           <div ref={messagesEndRef} />
         </div>
-
-        {/* Pinned Composer */}
-        <div className="shrink-0 p-3 sm:p-5 bg-white/80 backdrop-blur-md border-t border-sand-200 safe-bottom">
-          <form
-            onSubmit={handleFormSubmit}
-            className="relative max-w-3xl mx-auto flex items-end gap-2 rounded-3xl border border-sand-300 bg-white p-2 shadow-[var(--shadow-lift)] transition-colors focus-within:border-accent"
-          >
-            {/* Hidden File Input for Untrusted CSV/TXT lists */}
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              accept=".csv,.txt"
-              className="hidden"
-            />
-
-            {/* "+" Actions Menu Button */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setPlusMenuOpen(!plusMenuOpen)}
-                aria-expanded={plusMenuOpen}
-                aria-label={plusMenuOpen ? "إغلاق قائمة الإضافات" : "فتح قائمة الإضافات"}
-                className="min-h-11 min-w-11 flex items-center justify-center rounded-xl text-sand-600 hover:text-ink-900 hover:bg-sand-200/80 transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
-                title="خيارات إضافية"
-              >
-                <svg className="w-5 h-5 text-sand-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-
-              {plusMenuOpen && (
-                <div className="absolute bottom-11 right-0 w-52 bg-white border border-sand-300 rounded-xl shadow-lg p-1.5 space-y-1 z-20 animate-in fade-in zoom-in-95 motion-reduce:animate-none">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      fileInputRef.current?.click();
-                      setPlusMenuOpen(false);
-                    }}
-                    className="min-h-11 w-full text-right px-3 py-2 text-xs text-ink-900 hover:bg-sand-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    <svg className="w-4 h-4 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                    </svg>
-                    <span>إرفاق قائمة حسابات (CSV أو TXT) - تجريبي</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleSendMessage("أريد استخراج البيانات بصيغة ملفات Excel و PDF معاً");
-                      setPlusMenuOpen(false);
-                    }}
-                    className="min-h-11 w-full text-right px-3 py-2 text-xs text-ink-900 hover:bg-sand-100 rounded-lg transition-colors flex items-center gap-2 cursor-pointer focus-visible:outline-2 focus-visible:outline-primary"
-                  >
-                    <svg className="w-4 h-4 text-sand-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                    </svg>
-                    <span>تفضيلات المخرجات</span>
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Textarea Input */}
-            <textarea
-              ref={inputRef}
-              rows={2}
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage(inputText);
-                }
-              }}
-              disabled={conversationLoading}
-              placeholder="مثال: أريد بيانات الملف العام لحساب على تيك توك"
-              className="min-w-0 flex-1 bg-transparent p-2 text-xs leading-5 sm:text-sm text-ink-900 placeholder:text-sand-400 focus:outline-hidden resize-none max-h-20"
-            />
-
-            {/* Send Button */}
-            <button
-              type="submit"
-              disabled={loading || conversationLoading || !inputText.trim()}
-              className="touch-target flex items-center justify-center bg-accent hover:bg-accent-hover text-white rounded-2xl shadow-[var(--shadow-ink)] transition-all disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer shrink-0"
-              aria-label="إرسال"
-            >
-              <svg className="w-5 h-5 text-white -scale-x-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            </button>
-          </form>
-        </div>
+        <Composer value={inputText} onChange={setInputText} onSend={handleSendMessage} disabled={conversationLoading || loading} />
       </div>
 
-      {/* 4. Results Workspace Column (Drawer with Backdrop on Mobile & Tablet / Side-by-side on Desktop) */}
+      {/* 3. Results workspace (record preview, review, versions): drawer on mobile, side column on desktop */}
       {canvasOpen && (
         <>
           <div
             onClick={() => setCanvasOpen(false)}
             aria-hidden="true"
-            className="fixed inset-0 z-40 bg-ink-900/40 lg:hidden backdrop-blur-xs"
+            className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-xs lg:hidden"
           />
-          <div id="results-canvas" role="region" aria-label="لوحة النتائج" className="fixed inset-x-0 bottom-0 z-50 h-[85dvh] max-h-[85vh] w-full rounded-t-2xl bg-white shadow-2xl animate-in slide-in-from-bottom duration-200 motion-reduce:animate-none flex flex-col overflow-hidden lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:shadow-none lg:animate-none">
+          <div id="results-canvas" role="region" aria-label="لوحة النتائج" className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf shadow-2xl motion-reduce:animate-none lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
             <ResultsCanvas
               records={extractedRecords}
               profile={extractedProfile}

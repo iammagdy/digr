@@ -67,7 +67,7 @@ describe("P1.5 Security & Rate Limits Suite", () => {
     });
     const accountGet = vi
       .spyOn(Account.prototype, "get")
-      .mockResolvedValue({ $id: "user_a" } as any);
+      .mockResolvedValue({ $id: "user_a", emailVerification: true } as any);
 
     const res = await POST(req);
     expect(accountGet).toHaveBeenCalledTimes(1);
@@ -77,7 +77,7 @@ describe("P1.5 Security & Rate Limits Suite", () => {
   });
 
   it("fails closed with a friendly response when llm_usage is unavailable", async () => {
-    vi.spyOn(Account.prototype, "get").mockResolvedValue({ $id: "user_a" } as any);
+    vi.spyOn(Account.prototype, "get").mockResolvedValue({ $id: "user_a", emailVerification: true } as any);
     vi.spyOn(TablesDB.prototype, "listRows").mockRejectedValue(new Error("private missing-table details"));
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const req = new NextRequest("http://localhost:3000/api/chat", {
@@ -204,5 +204,22 @@ describe("P1.5 Security & Rate Limits Suite", () => {
 
     expect(res.output.type).toBe("propose_plan");
     expect((res.output as any).summaryAr).toContain("تيك توك");
+  });
+});
+
+describe("email verification gate on research routes", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("rejects /api/chat for an unverified account (403)", async () => {
+    vi.spyOn(Account.prototype, "get").mockResolvedValue({ $id: "user_a", emailVerification: false } as any);
+    const req = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer jwt" },
+      body: JSON.stringify({ message: "استخرج بيانات" }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain("بريدك");
   });
 });

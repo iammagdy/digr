@@ -10,11 +10,14 @@
       "commands": "npm install",
       "path": "src/functions/on-user-create",
       "events": [
-        "users.*.create"
+        "users.*.create",
+        "users.*.verification.*.update"
       ],
       "execute": [],
       "scopes": [
-        "rows.write"
+        "rows.write",
+        "users.read",
+        "messages.write"
       ],
       "timeout": 15
     },
@@ -30,6 +33,7 @@
         "users"
       ],
       "scopes": [
+        "users.read",
         "rows.read",
         "rows.write",
         "files.read",
@@ -51,7 +55,8 @@
       "scopes": [
         "users.read",
         "rows.read",
-        "rows.write"
+        "rows.write",
+        "messages.write"
       ],
       "timeout": 15
     },
@@ -87,9 +92,50 @@
         "rows.read",
         "rows.write",
         "files.read",
-        "files.write"
+        "files.write",
+        "users.read",
+        "messages.write"
       ],
       "timeout": 60
+    },
+    {
+      "$id": "request-account-deletion",
+      "name": "request-account-deletion",
+      "runtime": "node-22",
+      "entrypoint": "dist/index.js",
+      "commands": "npm install",
+      "path": "src/functions/request-account-deletion",
+      "events": [],
+      "execute": [
+        "users"
+      ],
+      "scopes": [
+        "users.read",
+        "users.write",
+        "rows.read",
+        "rows.write"
+      ],
+      "timeout": 15
+    },
+    {
+      "$id": "purge-deleted-accounts",
+      "name": "purge-deleted-accounts",
+      "runtime": "node-22",
+      "entrypoint": "dist/index.js",
+      "commands": "npm install",
+      "path": "src/functions/purge-deleted-accounts",
+      "events": [],
+      "execute": [],
+      "scopes": [
+        "users.read",
+        "users.write",
+        "rows.read",
+        "rows.write",
+        "files.read",
+        "files.write"
+      ],
+      "timeout": 60,
+      "schedule": "0 3 * * *"
     }
   ]
 }

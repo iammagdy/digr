@@ -1,518 +1,296 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Query } from "appwrite";
 import { client, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
-import { Storage, Functions, ID, Permission, Role, Query } from "appwrite";
-import { Alert, Badge, Button, Card, EmptyState, Eyebrow, Field, Input, Skeleton, type StatusTone } from "@/components/ui";
-import {
-  balanceLoading,
-  balanceReady,
-  balanceFailed,
-  balanceText,
-  showDerivedAmounts,
-  formatNumber,
-  formatPoints,
-  formatCurrency,
-  formatDate,
-  isInstapayAvailable,
-  groupLedgerEntries,
-  type BalanceView,
-  type RawLedgerEntry,
-} from "@/lib/honestDisplay";
+import { useBalance } from "@/hooks/useBalance";
+import { useCreditValue } from "@/hooks/useCreditValue";
+import { Icon, UI } from "@/components/app/icons";
+import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/honestDisplay";
+import { formatAr } from "@/lib/arabicDigits";
+import { CREDIT_LEDGER_COLLECTION, DATABASE_ID, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
+import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
+import SubmittedCard from "./SubmittedCard";
+import TopupForm from "./TopupForm";
+import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
-const storage = new Storage(client);
-const functions = new Functions(client);
+const LEDGER_LABEL: Record<LedgerRow["type"], string> = {
+  topup: "شحن رصيد", reserve: "حجز مؤقت", release: "استرداد حجز", charge: "خصم التسليم", promo: "رصيد ترحيبي", adjust: "تسوية إدارية",
+};
+type LedgerKind = "topup" | "charge" | "refund";
+const kindOf = (t: LedgerRow["type"]): LedgerKind => (t === "topup" || t === "promo" || t === "adjust" ? "topup" : t === "release" ? "refund" : "charge");
+const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "استرداد"]];
 
-interface TopupRecord {
-  $id: string;
-  amountEgp: number;
-  credits?: number;
-  reference: string;
-  receiptFileId?: string;
-  status: "pending" | "approved" | "rejected";
-  createdAt: string;
+const ipaFromEnv = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
+
+/** عدد الأبحاث بالمعدود الصحيح: بحث واحد · بحثين · ٣ أبحاث · ١١ بحثًا */
+function searchesAr(n: number): string {
+  if (n === 1) return "بحث واحد";
+  if (n === 2) return "بحثين";
+  return `${formatAr(n)} ${n >= 3 && n <= 10 ? "أبحاث" : "بحثًا"}`;
 }
 
-const PRESET_AMOUNTS = [
-  { egp: 50, points: 500 },
-  { egp: 100, points: 1000 },
-  { egp: 250, points: 2500 },
-  { egp: 500, points: 5000 },
-];
+function safeReturn(raw: string | null): string {
+  return raw && /^\/dashboard\/[A-Za-z0-9/_?=&%-]*$/.test(raw) ? raw : "/dashboard/chat";
+}
 
-const LEDGER_TYPE: Record<string, { label: string; tone: StatusTone }> = {
-  topup: { label: "شحن رصيد", tone: "success" },
-  reserve: { label: "حجز مؤقت", tone: "warning" },
-  release: { label: "استرداد حجز", tone: "info" },
-  charge: { label: "خصم التسليم", tone: "danger" },
-  adjust: { label: "تسوية إدارية", tone: "neutral" },
-};
-
-const TOPUP_STATUS: Record<TopupRecord["status"], { label: string; tone: StatusTone }> = {
-  approved: { label: "معتمد", tone: "success" },
-  pending: { label: "قيد المراجعة", tone: "warning" },
-  rejected: { label: "مرفوض", tone: "danger" },
-};
-
-export default function TopupPage() {
+export default function WalletPage() {
   const { user } = useUser();
-  const [amountEgp, setAmountEgp] = useState<number>(100);
-  const [reference, setReference] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [creditRate, setCreditRate] = useState<number>(0.1);
-  const [userBalance, setUserBalance] = useState<BalanceView>(balanceLoading());
-  const [ledgerEntries, setLedgerEntries] = useState<RawLedgerEntry[]>([]);
-  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [history, setHistory] = useState<TopupRecord[]>([]);
-  const [dataLoading, setDataLoading] = useState(true);
-  const [copiedHandle, setCopiedHandle] = useState(false);
-  const [copiedPhone, setCopiedPhone] = useState(false);
+  const router = useRouter();
+  const { balance, refresh: refreshBalance } = useBalance();
+  const creditValue = useCreditValue();
 
-  const rawInstapayHandle = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
-  const rawInstapayPhone = process.env.NEXT_PUBLIC_INSTAPAY_PHONE;
-  const instapayConfigured = isInstapayAvailable(rawInstapayHandle, rawInstapayPhone);
+  const [ledger, setLedger] = useState<LedgerRow[]>([]);
+  const [ledgerFailed, setLedgerFailed] = useState(false);
+  const [topups, setTopups] = useState<TopupRecord[]>([]);
+  const [monthRows, setMonthRows] = useState(0);
+  const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
+  const [amount, setAmount] = useState(100);
+  const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
+  const [ipa, setIpa] = useState<string | null>(isIpaAvailable(ipaFromEnv) ? ipaFromEnv! : null);
+  const [maxPending, setMaxPending] = useState(3);
+  const formRef = useRef<HTMLDivElement>(null);
+  const returnTo = useRef("/dashboard/chat");
 
+  /* ?amount=…&return=… from the chat's «اشحن {الفرق} والعودة هنا» */
   useEffect(() => {
-    async function loadRate() {
-      try {
-        const doc: any = await databases.getDocument("digr", "settings_public", "pricing");
-        if (doc?.creditValueEgp) setCreditRate(doc.creditValueEgp);
-      } catch { /* fallback default */ }
-    }
-    loadRate();
+    const q = new URLSearchParams(window.location.search);
+    const a = Number(q.get("amount"));
+    if (Number.isFinite(a) && a > 0) setAmount(a);
+    returnTo.current = safeReturn(q.get("return"));
   }, []);
 
-  const loadLedgerAndBalance = useCallback(async () => {
-    if (!user) return;
-    try {
-      let total = 0;
-      let offset = 0;
-      const limit = 100;
-      const allDocs: any[] = [];
-      while (true) {
-        const res = await databases.listDocuments("digr", "credit_ledger", [
-          Query.equal("userId", user.$id),
-          Query.orderAsc("createdAt"),
-          Query.limit(limit),
-          Query.offset(offset),
-        ]);
-        allDocs.push(...res.documents);
-        for (const doc of res.documents) total += (doc.delta as number) || 0;
-        if (res.documents.length < limit) break;
-        offset += limit;
-      }
-      setUserBalance(balanceReady(total));
-      let running = 0;
-      const computed: RawLedgerEntry[] = allDocs.map((doc) => {
-        running += (doc.delta as number) || 0;
-        const extractedJobId = doc.jobId || (doc.$id.match(/^(?:res|rel|chg)_(.+)$/)?.[1]);
-        return {
-          $id: doc.$id,
-          type: doc.type,
-          delta: doc.delta,
-          reference: doc.reference,
-          note: doc.note,
-          jobId: extractedJobId,
-          createdAt: doc.createdAt,
-          runningBalance: running,
-        };
-      });
-      setLedgerEntries(computed);
-    } catch {
-      // A failed request proves nothing about the balance — never show a fake zero.
-      setUserBalance(balanceFailed());
-    } finally {
-      setDataLoading(false);
-    }
-  }, [user]);
-
-  const loadHistory = useCallback(async () => {
-    if (!user) return;
-    try {
-      const res = await databases.listDocuments("digr", "topups", [
-        Query.equal("userId", user.$id),
-        Query.orderDesc("createdAt"),
-        Query.limit(20),
-      ]);
-      setHistory(res.documents as unknown as TopupRecord[]);
-    } catch { /* no topups yet */ }
-  }, [user]);
-
+  /* public settings: IPA + pending cap (fall back to env / 3) */
   useEffect(() => {
-    loadLedgerAndBalance();
-    loadHistory();
-  }, [loadLedgerAndBalance, loadHistory]);
+    databases.getDocument(DATABASE_ID, SETTINGS_PUBLIC_COLLECTION, "pricing")
+      .then((doc) => {
+        const d = doc as unknown as { ipa?: string; maxPendingTopups?: number };
+        if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
+        if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
+      })
+      .catch(() => {});
+  }, []);
 
-  const handleCopy = (text: string, type: "handle" | "phone") => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      if (type === "handle") {
-        setCopiedHandle(true);
-        setTimeout(() => setCopiedHandle(false), 2000);
-      } else {
-        setCopiedPhone(true);
-        setTimeout(() => setCopiedPhone(false), 2000);
+  const loadLedger = useCallback(async () => {
+    if (!user) return;
+    try {
+      const rows: LedgerRow[] = [];
+      for (let offset = 0; ; offset += 100) {
+        const res = await databases.listDocuments(DATABASE_ID, CREDIT_LEDGER_COLLECTION, [
+          Query.equal("userId", user.$id), Query.orderDesc("createdAt"), Query.limit(100), Query.offset(offset),
+        ]);
+        rows.push(...(res.documents as unknown as LedgerRow[]));
+        if (res.documents.length < 100) break;
+      }
+      setLedger(rows);
+      setLedgerFailed(false);
+    } catch {
+      setLedgerFailed(true);
+    }
+  }, [user]);
+
+  const loadTopups = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await databases.listDocuments(DATABASE_ID, TOPUPS_COLLECTION, [
+        Query.equal("userId", user.$id), Query.orderDesc("createdAt"), Query.limit(50),
+      ]);
+      setTopups(res.documents as unknown as TopupRecord[]);
+    } catch { /* none yet */ }
+  }, [user]);
+
+  useEffect(() => { void loadLedger(); void loadTopups(); }, [loadLedger, loadTopups]);
+
+  /* records delivered this month (for «خُصم هذا الشهر … على N سجلًا») */
+  useEffect(() => {
+    if (!user) return;
+    const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);
+    databases.listDocuments(DATABASE_ID, JOBS_COLLECTION, [
+      Query.equal("userId", user.$id), Query.equal("status", "done"), Query.greaterThanEqual("createdAt", start.toISOString()), Query.limit(100),
+    ]).then((res) => setMonthRows(res.documents.reduce((a, d) => a + ((d as unknown as { rowsCollected?: number }).rowsCollected || 0), 0))).catch(() => {});
+  }, [user, ledger.length]);
+
+  /* live status of topup requests (approve / reject by the admin) */
+  useEffect(() => {
+    if (!user) return;
+    try {
+      return client.subscribe(`databases.${DATABASE_ID}.collections.${TOPUPS_COLLECTION}.documents`, (e) => {
+        const doc = e.payload as unknown as TopupRecord;
+        if (doc.userId !== user.$id) return;
+        setTopups((prev) => (prev.some((t) => t.$id === doc.$id) ? prev.map((t) => (t.$id === doc.$id ? doc : t)) : [doc, ...prev]));
+        setSubmitted((cur) => (cur && cur.$id === doc.$id ? doc : cur));
+        if (doc.status === "approved") { void refreshBalance(); void loadLedger(); }
+      });
+    } catch { return; }
+  }, [user, refreshBalance, loadLedger]);
+
+  /* month figures + held points from the ledger */
+  const stats = useMemo(() => {
+    const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);
+    const inMonth = (r: LedgerRow) => new Date(r.createdAt) >= start;
+    const byJob = new Map<string, { reserve: number; release: number; charge: number; releaseInMonth: boolean }>();
+    for (const r of ledger) {
+      if (!r.jobId) continue;
+      const j = byJob.get(r.jobId) ?? { reserve: 0, release: 0, charge: 0, releaseInMonth: false };
+      if (r.type === "reserve") j.reserve += Math.abs(r.delta);
+      if (r.type === "release") { j.release += Math.abs(r.delta); j.releaseInMonth = inMonth(r); }
+      if (r.type === "charge") j.charge += Math.abs(r.delta);
+      byJob.set(r.jobId, j);
+    }
+    let held = 0, refunded = 0, refundJobs = 0;
+    for (const j of byJob.values()) {
+      if (j.reserve > 0 && j.release === 0) held += j.reserve;
+      if (j.releaseInMonth) {
+        const back = Math.max(0, j.release - j.charge);
+        if (back > 0) { refunded += back; refundJobs += 1; }
       }
     }
+    const charged = ledger.filter((r) => r.type === "charge" && inMonth(r)).reduce((a, r) => a + Math.abs(r.delta), 0);
+    return { held, refunded, refundJobs, charged };
+  }, [ledger]);
+
+  const available = balance.status === "ready" ? balance.value! : null;
+  const total = (available ?? 0) + stats.held;
+  const pendingCount = topups.filter((t) => t.status === "pending").length;
+
+  const visibleLedger = ledger.filter((r) => r.type !== undefined && (ledFilter === "all" || kindOf(r.type) === ledFilter));
+
+  const scrollToForm = () => {
+    setSubmitted(null);
+    setTimeout(() => formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
   };
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    setSuccess("");
-    if (!amountEgp || amountEgp <= 0) {
-      setError("يرجى إدخال مبلغ صحيح");
-      return;
-    }
-    if (!reference.trim()) {
-      setError("يرجى إدخال رقم العملية المرجعي من تطبيق انستاباي");
-      return;
-    }
-    setLoading(true);
-    try {
-      let receiptFileId: string | undefined = undefined;
-      if (file) {
-        if (file.size > 5 * 1024 * 1024) throw new Error("حجم الإيصال يجب ألا يتجاوز 5 ميجابايت");
-        const allowed = ["image/png", "image/jpeg", "image/jpg", "application/pdf"];
-        if (!allowed.includes(file.type)) throw new Error("صيغة الملف غير مدعومة. الصيغ المسموحة: PNG, JPG, PDF");
-        const uploaded = await storage.createFile(
-          "receipts",
-          ID.unique(),
-          file,
-          user ? [Permission.read(Role.user(user.$id))] : []
-        );
-        receiptFileId = uploaded.$id;
-      }
-      const execution = await functions.createExecution(
-        "submit-topup",
-        JSON.stringify({ amountEgp: Number(amountEgp), reference: reference.trim(), receiptFileId }),
-        false
-      );
-      const res = JSON.parse(execution.responseBody || "{}");
-      if (!res.success) throw new Error(res.error || "فشل إرسال طلب الشحن");
-      setSuccess("تم تسجيل طلب الشحن بنجاح! سيتم مراجعته واعتماد النقاط لمحفظتك فور التحقق.");
-      setReference("");
-      setFile(null);
-      loadHistory();
-      loadLedgerAndBalance();
-    } catch (err: any) {
-      setError(err.message || "حدث خطأ غير متوقع");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const estimatedCredits = Math.floor(amountEgp / creditRate);
-  const groupedRows = useMemo(() => groupLedgerEntries(ledgerEntries).slice(0, 30), [ledgerEntries]);
-
   return (
-    <div className="mx-auto max-w-5xl space-y-8 px-4 py-8 sm:px-6">
-      <div>
-        <Eyebrow>المحفظة</Eyebrow>
-        <h1 className="font-display mt-2 text-3xl text-ink-900">الرصيد والشحن</h1>
-        <p className="mt-1.5 text-sm text-ink-600">كل حركة في محفظتك مسجّلة في سجل مالي غير قابل للتعديل.</p>
-      </div>
-
-      {/* Wallet hero */}
-      <div className="relative overflow-hidden rounded-3xl bg-pine-950 p-6 text-white shadow-[var(--shadow-lift)] sm:p-8">
-        <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-          <div className="absolute -top-24 -start-24 h-64 w-64 rounded-full bg-accent/20 blur-3xl" />
-        </div>
-        <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+    <div data-screen-label="Wallet" className="flex-1">
+      <div className="mx-auto max-w-[720px] px-5 pb-16 pt-6">
+        <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-xs font-semibold text-sand-300">رصيد النقاط المتاح</p>
-            {dataLoading || userBalance.status === "loading" ? (
-              <Skeleton className="mt-2 h-11 w-40 !bg-white/10" />
-            ) : userBalance.status === "failed" ? (
-              <div className="mt-1.5">
-                <p className="text-2xl font-bold text-sand-200">تعذّر تحميل الرصيد</p>
-                <button type="button" onClick={() => { setDataLoading(true); void loadLedgerAndBalance(); }} className="mt-1 text-sm font-bold text-amber-points underline cursor-pointer">
-                  إعادة المحاولة
-                </button>
-              </div>
-            ) : (
-              <p className="tnum mt-1.5 text-4xl font-bold sm:text-5xl">
-                {balanceText(userBalance)} <span className="text-lg font-bold text-amber-points">نقطة</span>
-              </p>
-            )}
-            <p className="tnum mt-2 text-sm text-sand-300">
-              {showDerivedAmounts(userBalance)
-                ? `≈ ${formatCurrency((userBalance.value ?? 0) * creditRate)} · السعر المعتمد: ١ نقطة = ${formatCurrency(creditRate)}`
-                : `السعر المعتمد: ١ نقطة = ${formatCurrency(creditRate)}`}
-            </p>
+            <h2 className="m-0 font-display text-4xl font-medium leading-[1.1] text-ink">المحفظة</h2>
+            <p className="mb-0 mt-1 text-[13px] font-light text-mut">النقطة الواحدة = {formatAr(creditValue, 2)} ج.م · تدفع على السجلات المسلَّمة فقط</p>
           </div>
-          <a href="#topup-card" className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-2xl bg-amber-points px-6 py-3 text-sm font-bold text-white transition-colors hover:bg-amber-points-hover">
-            شحن المحفظة
-          </a>
+          <button type="button" onClick={scrollToForm} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-4 text-[13px] text-onac">+ شحن الرصيد</button>
         </div>
-        <div className="relative mt-6 grid grid-cols-3 gap-3 border-t border-white/10 pt-5 text-center">
-          {[
-            ["حجز مؤقت", "يُحجز عند موافقتك على خطة"],
-            ["خصم نهائي", "فقط بعد تسليم السجلات"],
-            ["استرداد", "أي فرق يعود تلقائيًا"],
-          ].map(([t, d]) => (
-            <div key={t}>
-              <p className="text-xs font-bold text-white">{t}</p>
-              <p className="mt-0.5 text-xs text-sand-400">{d}</p>
+
+        <div className="mt-4 grid grid-cols-2 gap-2.5 min-[760px]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="col-span-2 flex flex-col gap-3 rounded-[20px] border border-ln bg-sf p-4 min-[760px]:col-span-1">
+            <div className="flex items-end justify-between gap-2.5">
+              <div>
+                <p className="m-0 text-xs text-mut">متاح للاستخدام</p>
+                <p className="mb-0 mt-1.5 text-[34px] font-medium leading-none tracking-[-.01em] text-ink">
+                  {balance.status === "failed" ? "غير متاح" : balanceText(balance)} <span className="text-[13px] font-normal text-mut">نقطة</span>
+                </p>
+              </div>
+              {available !== null && <p className="m-0 text-[13px] text-mut">≈ {formatAr(Number((available * creditValue).toFixed(2)))} ج.م</p>}
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Top-up grid */}
-      <div id="topup-card" className="grid items-start gap-6 lg:grid-cols-12">
-        <Card className="space-y-6 p-6 lg:col-span-7">
-          <div>
-            <h2 className="text-lg font-bold text-ink-900">طلب شحن جديد عبر Instapay</h2>
-            <p className="mt-1 text-xs text-sand-600">اختر المبلغ أو أدخله، ثم حوّل من تطبيق انستاباي وسجّل رقم العملية المرجعي.</p>
+            <div className="flex h-1.5 overflow-hidden rounded-md bg-sf2">
+              <span style={{ width: `${total > 0 ? ((available ?? 0) / total) * 100 : 0}%`, background: "var(--ac)" }} />
+              <span style={{ width: `${total > 0 ? (stats.held / total) * 100 : 0}%`, background: "var(--gold)" }} />
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-mut">
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--ac)" }} />متاح</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--gold)" }} />محجوز في بحث جارٍ · {formatAr(stats.held)} نقطة</span>
+            </div>
           </div>
-          {error && <Alert tone="danger">{error}</Alert>}
-          {success && <Alert tone="success">{success}</Alert>}
-          <form onSubmit={handleSubmit} className="space-y-5">
-            <fieldset>
-              <legend className="mb-2 block text-xs font-bold text-ink-800">المبالغ المقترحة</legend>
-              <div className="grid grid-cols-4 gap-2" role="radiogroup" aria-label="المبالغ المقترحة">
-                {PRESET_AMOUNTS.map((p) => {
-                  const selected = amountEgp === p.egp;
-                  return (
-                    <button
-                      key={p.egp}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => setAmountEgp(p.egp)}
-                      className={`touch-target rounded-2xl border p-2.5 text-center transition-all cursor-pointer ${selected ? "border-accent bg-accent-light/60 ring-1 ring-accent/30" : "border-sand-200 bg-white hover:border-sand-400"}`}
-                    >
-                      <span className="tnum block text-xs font-bold text-ink-900">{formatNumber(p.egp)} ج.م</span>
-                      <span className="tnum mt-0.5 block text-xs font-bold text-amber-points">{formatPoints(p.points)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </fieldset>
-            <Field label="المبلغ بالجنيه المصري" htmlFor="amount" hint={`يعطيك هذا المبلغ: ${formatPoints(estimatedCredits)}`}>
-              <Input id="amount" type="number" min={10} step={5} required dir="ltr" value={amountEgp} onChange={(e) => setAmountEgp(Number(e.target.value))} className="tnum text-left font-mono" />
-            </Field>
-            <Field label="رقم العملية المرجعي" htmlFor="ref" hint="يظهر في إشعار تأكيد التحويل داخل تطبيق انستاباي.">
-              <Input id="ref" type="text" required dir="ltr" placeholder="مثال: 418290384729" value={reference} onChange={(e) => setReference(e.target.value)} className="text-left font-mono" />
-            </Field>
-            <Field label="صورة إيصال التحويل (اختياري)" htmlFor="receipt" hint="PNG أو JPG أو PDF — بحد أقصى 5 ميجابايت.">
-              <div className="flex flex-wrap items-center gap-3">
-                <label
-                  htmlFor="receipt"
-                  className="inline-flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-sand-300 bg-sand-100 px-4 py-2 text-xs font-bold text-ink-800 transition-colors hover:bg-sand-200 focus-within:ring-2 focus-within:ring-accent"
-                >
-                  اختر صورة الإيصال
-                </label>
-                <input
-                  id="receipt"
-                  type="file"
-                  accept="image/png,image/jpeg,image/jpg,application/pdf"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  className="sr-only"
-                />
-                <span className="text-xs text-sand-600 truncate max-w-xs">
-                  {file ? file.name : "لم يتم اختيار ملف"}
-                </span>
-                {file && (
-                  <button
-                    type="button"
-                    onClick={() => setFile(null)}
-                    className="text-xs text-danger hover:underline cursor-pointer"
-                  >
-                    إلغاء
-                  </button>
-                )}
-              </div>
-            </Field>
-            <Button type="submit" size="lg" variant="accent" className="w-full" disabled={loading}>
-              {loading ? "جاري إرسال الطلب..." : "تأكيد وإرسال طلب الشحن"}
-            </Button>
-          </form>
-        </Card>
-
-        <Card className="space-y-5 bg-sand-50/50 p-6 lg:col-span-5">
-          <div>
-            <h3 className="text-sm font-bold text-ink-900">بيانات التحويل عبر Instapay</h3>
-            <p className="mt-1 text-xs text-sand-600">
-              {instapayConfigured ? "انسخ البيانات التالية لاستخدامها في تطبيق انستاباي." : "خدمة الشحن المباشر عبر انستاباي."}
-            </p>
+          <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
+            <p className="m-0 text-xs text-mut">رجع لرصيدك هذا الشهر</p>
+            <p className="m-0 text-2xl font-medium text-goldT" dir="ltr" style={{ textAlign: "right" }}>+{formatAr(stats.refunded)}</p>
+            <p className="m-0 text-[11px] text-fnt">فرق الحجز من {searchesAr(stats.refundJobs)}</p>
           </div>
-          {instapayConfigured ? (
-            <>
-              {[
-                { label: "عنوان الدفع اللحظي (IPA)", value: rawInstapayHandle!, copied: copiedHandle, type: "handle" as const },
-                { label: "أو عبر رقم الهاتف", value: rawInstapayPhone!, copied: copiedPhone, type: "phone" as const },
-              ].map((row) => (
-                <div key={row.label} className="rounded-2xl border border-sand-200 bg-white p-4">
-                  <p className="text-xs text-sand-500">{row.label}</p>
-                  <div className="mt-1.5 flex items-center justify-between gap-2">
-                    <span className="tnum font-mono text-sm font-bold text-ink-900" dir="ltr">{row.value}</span>
-                    <Button size="sm" variant="secondary" onClick={() => handleCopy(row.value, row.type)}>
-                      {row.copied ? "تم النسخ ✓" : "نسخ"}
-                    </Button>
-                  </div>
-                </div>
-              ))}
-              <div className="rounded-2xl border border-sand-200 bg-white p-4">
-                <p className="text-xs text-sand-500">اسم المستلم</p>
-                <p className="mt-1 text-sm font-bold text-ink-900">منصة Digr</p>
-              </div>
-              <Alert tone="info">
-                بعد التحويل، يراجع فريق الإدارة الرقم المرجعي ويعتمد الرصيد في محفظتك.
-              </Alert>
-            </>
-          ) : (
-            <Alert tone="warning" title="الشحن غير متاح حاليًا">
-              الشحن غير متاح حاليًا — يرجى التواصل مع فريق الدعم أو المحاولة في وقت لاحق.
-            </Alert>
-          )}
-        </Card>
-      </div>
-
-      {/* Ledger */}
-      <Card className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-sand-100 p-5">
-          <h2 className="text-base font-bold text-ink-900">سجل حركات المحفظة</h2>
-          <span className="tnum text-xs text-sand-500">آخر {formatNumber(30)} حركة</span>
+          <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
+            <p className="m-0 text-xs text-mut">خُصم هذا الشهر</p>
+            <p className="m-0 text-2xl font-medium text-ink">{formatAr(stats.charged)}</p>
+            <p className="m-0 text-[11px] text-fnt">على {formatAr(monthRows)} سجلًا مسلَّمًا</p>
+          </div>
         </div>
-        {dataLoading ? (
-          <div className="space-y-2 p-5">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
-        ) : groupedRows.length === 0 ? (
-          <EmptyState title="لا توجد حركات بعد" description="ستظهر هنا كل عمليات الشحن والحجز والخصم والاسترداد." />
+
+        <div className="mt-2.5 flex flex-col gap-2.5 rounded-[20px] bg-sf2 px-4 py-3.5">
+          <p className="m-0 text-xs font-semibold text-ink2">رصيدك يكفي تقريبًا لـ</p>
+          <div className="grid grid-cols-3 gap-2">
+            {ILLUSTRATIVE_SEARCH_PRICES.map((p) => (
+              <div key={p.records} className="rounded-[14px] bg-sf px-3 py-2.5">
+                <p className="m-0 text-xl font-semibold text-ink">{available === null ? "—" : formatAr(Math.floor(available / p.points))}</p>
+                <p className="mb-0 mt-0.5 text-[11px] leading-[1.5] text-mut">{p.label}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div ref={formRef} data-topup-form="1" />
+        {!submitted ? (
+          <TopupForm
+            amount={amount}
+            onAmount={setAmount}
+            creditValue={creditValue}
+            ipa={ipa}
+            existingRefs={topups.map((t) => t.reference)}
+            pendingCount={pendingCount}
+            maxPending={maxPending}
+            onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
+          />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-right text-xs">
-              <thead>
-                <tr className="border-b border-sand-100 bg-sand-50/60 text-sand-600">
-                  <th scope="col" className="px-4 py-3 font-semibold">التاريخ</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">نوع الحركة</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">التغيّر الصافي</th>
-                  <th scope="col" className="px-4 py-3 font-semibold">الرصيد بعدها</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-sand-100">
-                {groupedRows.map((row) => {
-                  const positive = row.netDelta > 0;
-                  const isExpanded = Boolean(expandedRows[row.key]);
-                  return (
-                    <tbody key={row.key} className="divide-y divide-sand-100 border-b border-sand-100 last:border-b-0">
-                      <tr className="transition-colors hover:bg-sand-50/60">
-                        <td className="tnum whitespace-nowrap px-4 py-3 text-sand-500">
-                          {formatDate(row.createdAt, { dateStyle: "short", timeStyle: "short" })}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            {row.isJob ? (
-                              <>
-                                <Badge tone={row.netDelta < 0 ? "danger" : row.netDelta > 0 ? "success" : "neutral"}>
-                                  {row.netDelta < 0 ? "خصم الطلب" : row.netDelta === 0 ? "تسوية كاملة" : "إيداع"}
-                                </Badge>
-                                <span className="font-semibold text-ink-900">{row.title}</span>
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedRows((prev) => ({ ...prev, [row.key]: !prev[row.key] }))}
-                                  className="inline-flex items-center gap-1 text-xs font-bold text-accent hover:underline cursor-pointer"
-                                  aria-expanded={isExpanded}
-                                >
-                                  <span>التفاصيل</span>
-                                  <svg className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <Badge tone={LEDGER_TYPE[row.movements[0]?.type || "topup"]?.tone ?? "neutral"}>
-                                  {LEDGER_TYPE[row.movements[0]?.type || "topup"]?.label ?? row.movements[0]?.type ?? "حركة رصيد"}
-                                </Badge>
-                                <span className="text-ink-800">{row.title}</span>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                        <td className={`tnum whitespace-nowrap px-4 py-3 font-bold ${positive ? "text-success" : row.netDelta < 0 ? "text-danger" : "text-sand-600"}`} dir="ltr">
-                          {positive ? `+${formatNumber(row.netDelta)}` : row.netDelta < 0 ? `-${formatNumber(Math.abs(row.netDelta))}` : "٠"}
-                        </td>
-                        <td className="tnum whitespace-nowrap px-4 py-3 font-semibold text-ink-900">
-                          {formatPoints(row.runningBalance)}
-                        </td>
-                      </tr>
-                      {row.isJob && isExpanded && (
-                        <tr className="bg-sand-50/70">
-                          <td colSpan={4} className="px-4 py-3">
-                            <div className="space-y-2 rounded-xl border border-sand-200 bg-white p-3.5">
-                              <p className="text-xs font-bold text-ink-900">تفاصيل حركات هذا الطلب:</p>
-                              <ul className="divide-y divide-sand-100 text-xs">
-                                {row.movements.map((m) => {
-                                  const mType = m.type || "adjust";
-                                  const meta = LEDGER_TYPE[mType] ?? { label: m.type || "حركة", tone: "neutral" as StatusTone };
-                                  const mPos = m.delta > 0;
-                                  return (
-                                    <li key={m.$id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                                      <div className="flex items-center gap-2">
-                                        <Badge tone={meta.tone}>{meta.label}</Badge>
-                                        <span className="tnum text-sand-500">{formatDate(m.createdAt, { dateStyle: "short", timeStyle: "short" })}</span>
-                                        {m.note && <span className="text-sand-700">({m.note})</span>}
-                                      </div>
-                                      <div className="flex items-center gap-3">
-                                        <span className={`tnum font-bold ${mPos ? "text-success" : "text-danger"}`} dir="ltr">
-                                          {mPos ? `+${formatNumber(m.delta)}` : `-${formatNumber(Math.abs(m.delta))}`}
-                                        </span>
-                                        {m.runningBalance !== undefined && (
-                                          <span className="tnum text-sand-500">الرصيد: {formatPoints(m.runningBalance)}</span>
-                                        )}
-                                      </div>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <SubmittedCard topup={submitted} creditValue={creditValue} onBack={() => setSubmitted(null)} onContinue={() => router.push(returnTo.current)} />
         )}
-      </Card>
 
-      {/* Top-up history */}
-      <Card className="overflow-hidden">
-        <div className="border-b border-sand-100 p-5">
-          <h2 className="text-base font-bold text-ink-900">طلبات الشحن السابقة</h2>
-        </div>
-        {history.length === 0 ? (
-          <EmptyState title="لا توجد طلبات شحن" description="عند إرسالك طلب شحن سيظهر هنا مع حالته." />
-        ) : (
-          <ul className="divide-y divide-sand-100">
-            {history.map((item) => {
-              const st = TOPUP_STATUS[item.status];
+        {topups.length > 0 && (
+          <div className="mt-10">
+            <h3 className="mb-1.5 mt-0 text-[15px] font-medium text-ink">طلبات الشحن</h3>
+            {topups.map((t) => {
+              const b = statusBadge(t.status);
+              const pts = t.status === "approved" ? (t.credits ?? 0) : Math.floor(t.amountEgp / creditValue);
               return (
-                <li key={item.$id} className="flex flex-wrap items-center gap-3 p-4 sm:px-5">
+                <div key={t.$id} className="flex items-center gap-3.5 border-b border-ln py-3.5">
                   <div className="min-w-0 flex-1">
-                    <p className="tnum text-sm font-bold text-ink-900">
-                      {formatNumber(item.amountEgp)} ج.م
-                      {item.credits ? <span className="text-amber-points"> · +{formatPoints(item.credits)}</span> : null}
-                    </p>
-                    <p className="tnum mt-0.5 text-xs text-sand-500" dir="ltr">
-                      {item.reference} · {formatDate(item.createdAt)}
-                    </p>
+                    <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م · {formatAr(pts)} نقطة</p>
+                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt"><span dir="ltr">{t.reference}</span> · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
+                    {t.status === "rejected" && t.rejectReason && <p className="mb-0 mt-1.5 text-xs leading-[1.7] text-bad">سبب الرفض: {t.rejectReason}</p>}
                   </div>
-                  <Badge tone={st.tone}>{st.label}</Badge>
-                </li>
+                  <span className="shrink-0 rounded-full px-3 py-1 text-xs font-medium" style={{ background: b.bg, color: b.fg }}>{USER_STATUS[t.status]}</span>
+                </div>
               );
             })}
-          </ul>
+          </div>
         )}
-      </Card>
+
+        <div className="mt-7">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2.5">
+            <h3 className="m-0 text-[15px] font-semibold text-ink">سجل الحركات</h3>
+            <div className="no-scrollbar flex max-w-full gap-1 overflow-x-auto rounded-full bg-sf2 p-[3px]" role="tablist">
+              {LEDGER_TABS.map(([id, label]) => {
+                const on = ledFilter === id;
+                return (
+                  <button
+                    key={id} type="button" role="tab" aria-selected={on} onClick={() => setLedFilter(id)}
+                    className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-full border-0 px-3 text-xs font-medium"
+                    style={{ background: on ? "var(--sf)" : "transparent", color: on ? "var(--ink)" : "var(--mut)", boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {ledgerFailed && <p role="alert" className="text-[13px] text-bad">تعذّر تحميل سجل الحركات الآن.</p>}
+          {visibleLedger.map((l) => {
+            const k = kindOf(l.type);
+            const ico = k === "topup" ? [UI.wallet, "var(--ok)"] : k === "refund" ? [UI.refund, "var(--goldT)"] : ["M5 12h14", "var(--ink2)"];
+            const tint = k === "topup" ? "var(--ok)" : k === "refund" ? "var(--gold)" : "var(--mut)";
+            const plus = l.delta > 0;
+            return (
+              <div key={l.$id} className="flex items-center gap-3 border-b border-ln py-3">
+                <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="m-0 text-sm text-ink">{LEDGER_LABEL[l.type] ?? l.type}</p>
+                  <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{l.note ? `${l.note} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
+                </div>
+                <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--goldT)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
+              </div>
+            );
+          })}
+          {!ledgerFailed && visibleLedger.length === 0 && <p className="py-6 text-center text-[13px] font-light text-fnt">لا توجد حركات بعد.</p>}
+        </div>
+      </div>
     </div>
   );
 }
