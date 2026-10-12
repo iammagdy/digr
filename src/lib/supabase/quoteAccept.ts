@@ -14,13 +14,22 @@ export interface AcceptQuoteResult {
   alreadyAccepted?: boolean;
   errorAr?: string;
   statusCode?: number;
+  currentBalance?: number;
 }
 
 export const MAX_CONCURRENT_JOBS_PER_USER = 2;
 
 /**
+ * Converts English digits (0-9) to Arabic-Indic digits (٠-٩).
+ */
+export function toArabicDigits(val: number | string): string {
+  const arabicDigits = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+  return String(val).replace(/[0-9]/g, (d) => arabicDigits[Number(d)]);
+}
+
+/**
  * Server-side atomic quote acceptance and job initiation on Supabase.
- * Delegates 100% of concurrency locks, balance check, credit reservation,
+ * Delegates all concurrency locks, balance checks, credit reservation,
  * and deterministic job creation to the approved accept_quote_atomic RPC.
  */
 export async function acceptQuoteSupabase(
@@ -63,40 +72,110 @@ export async function acceptQuoteSupabase(
     p_expected_quote_hash: hashToVerify,
   });
 
+  // Never return raw database error messages or SQL syntax to callers
   if (rpcErr) {
+    console.error("[acceptQuoteSupabase] RPC Execution Error:", rpcErr);
     return {
       success: false,
-      statusCode: 400,
-      errorAr: rpcErr.message || "تعذر اعتماد العرض في قاعدة البيانات.",
+      statusCode: 500,
+      errorAr: "حدث خطأ أثناء معالجة اعتماد العرض. يرجى المحاولة مرة أخرى.",
     };
   }
 
   if (!rpcRes?.success) {
-    const errMap: Record<string, { status: number; msg: string }> = {
-      quote_not_found: { status: 404, msg: "عرض السعر غير موجود أو تم حذفه." },
-      quote_user_mismatch: { status: 403, msg: "غير مصرح لك باعتماد هذا العرض." },
-      quote_hash_mismatch: { status: 400, msg: "تغيرت تفاصيل الخطة بعد إصدار العرض. يرجى إعادة طلب عرض سعر." },
-      invalid_quote_status: { status: 409, msg: "حالة العرض غير صالحة للبدء." },
-      quote_expired: { status: 410, msg: "انتهت صلاحية هذا العرض (30 دقيقة). يرجى طلب عرض جديد." },
-      concurrency_limit_exceeded: { status: 429, msg: "لديك طلبات قيد المعالجة حالياً تجاوزت الحد الأقصى (طلبان نشطان)." },
-      insufficient_balance: { status: 402, msg: "رصيدك الحالي غير كافٍ لتغطية تكلفة العرض. يرجى شحن الرصيد أولاً." },
-      single_item_quote_required: { status: 400, msg: "عروض الأسعار تدعم تنفيذ قدرة بحثية واحدة لكل طلب حالياً." },
-      missing_item_unit_price: { status: 400, msg: "سعر الوحدة غير محدد أو غير صالح في بنود العرض." },
-      invalid_required_argument: { status: 400, msg: "بيانات العرض أو بصمة الخطة غير صالحة." },
-    };
+    const errCode = rpcRes?.error;
 
-    const mapped = errMap[rpcRes?.error] || {
-      status: 400,
-      msg: rpcRes?.error || "تعذر اعتماد العرض.",
-    };
+    // 402 Insufficient Balance with current balance rendered in Arabic-Indic numerals
+    if (errCode === "insufficient_balance") {
+      const balanceNum = Number(rpcRes?.balance ?? 0);
+      const balanceArabic = toArabicDigits(balanceNum);
+      return {
+        success: false,
+        statusCode: 402,
+        currentBalance: balanceNum,
+        errorAr: `رصيدك الحالي (${balanceArabic} نقطة) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.`,
+      };
+    }
 
+    // 410 Expired Quote
+    if (errCode === "quote_expired") {
+      return {
+        success: false,
+        statusCode: 410,
+        errorAr: "انتهت صلاحية هذا العرض (30 دقيقة). يرجى طلب عرض جديد.",
+      };
+    }
+
+    // 429 Concurrency Limit
+    if (errCode === "concurrency_limit" || errCode === "concurrency_limit_exceeded") {
+      return {
+        success: false,
+        statusCode: 429,
+        errorAr: "لديك طلبات قيد المعالجة حالياً تجاوزت الحد الأقصى (طلبان نشطان). يرجى الانتظار حتى اكتمال أحدهما.",
+      };
+    }
+
+    // 409 Quote Already Accepted or invalid status
+    if (errCode === "invalid_quote_status") {
+      return {
+        success: false,
+        statusCode: 409,
+        errorAr: "حالة العرض غير صالحة للبدء.",
+      };
+    }
+
+    // 404 Quote Not Found
+    if (errCode === "quote_not_found") {
+      return {
+        success: false,
+        statusCode: 404,
+        errorAr: "عرض السعر غير موجود أو تم حذفه.",
+      };
+    }
+
+    // 403 Quote User Mismatch
+    if (errCode === "quote_user_mismatch") {
+      return {
+        success: false,
+        statusCode: 403,
+        errorAr: "غير مصرح لك باعتماد هذا العرض.",
+      };
+    }
+
+    // 400 Hash mismatch or single-item restriction
+    if (errCode === "quote_hash_mismatch") {
+      return {
+        success: false,
+        statusCode: 400,
+        errorAr: "تغيرت تفاصيل الخطة بعد إصدار العرض. يرجى إعادة طلب عرض سعر.",
+      };
+    }
+
+    if (errCode === "single_item_quote_required") {
+      return {
+        success: false,
+        statusCode: 400,
+        errorAr: "عروض الأسعار تدعم تنفيذ قدرة بحثية واحدة لكل طلب حالياً.",
+      };
+    }
+
+    if (errCode === "missing_item_unit_price" || errCode === "invalid_item_unit_price") {
+      return {
+        success: false,
+        statusCode: 400,
+        errorAr: "سعر الوحدة غير محدد أو غير صالح في بنود العرض.",
+      };
+    }
+
+    // Default 400 with clean Arabic text, never leaking raw strings
     return {
       success: false,
-      statusCode: mapped.status,
-      errorAr: mapped.msg,
+      statusCode: 400,
+      errorAr: "تعذر اعتماد العرض. يرجى المحاولة مرة أخرى أو مراجعة المشرف.",
     };
   }
 
+  // Idempotent duplicate accept check
   if (rpcRes.already_accepted) {
     return {
       success: false,

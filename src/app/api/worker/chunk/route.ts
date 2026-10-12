@@ -24,10 +24,28 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const adminClient = createAdminClient();
   const body = await req.json().catch(() => ({}));
+
+  // Mock Provider Injection Guard: only allowed if NODE_ENV !== 'production' AND ENABLE_MOCK_PROVIDER === 'true'
+  const isMockRequested = Boolean(
+    body?.mockProvider ||
+    req.headers.get("x-mock-provider") === "true" ||
+    process.env.PROVIDER_MOCK === "true"
+  );
+
+  if (isMockRequested && process.env.NODE_ENV === "production") {
+    return NextResponse.json(
+      {
+        success: false,
+        error: "حقن المزود الوهمي محظور في بيئة الإنتاج.",
+      },
+      { status: 403 }
+    );
+  }
+
   let jobId: string | undefined = body?.jobId;
   let expectedStep: number | undefined = body?.expectedStep;
+  const adminClient = createAdminClient();
 
   try {
     // 2. If jobId is not provided, pick up the oldest runnable job
@@ -92,9 +110,22 @@ export async function POST(req: NextRequest) {
       unit_price: unitPrice = 1,
     } = claimData;
 
-    // 4. Reserve Provider Spend Check ($0.80 daily cap)
+    const useMockProvider = Boolean(
+      isMockRequested &&
+      process.env.NODE_ENV !== "production" &&
+      process.env.ENABLE_MOCK_PROVIDER === "true"
+    );
+
+    // If simulating provider error during test runs
+    if (useMockProvider && body?.simulateProviderError) {
+      throw new Error("خطأ محاكى من مزود البيانات لاختبار إعادة المحاولة.");
+    }
+
+    // 5. Reserve Provider Spend Check ($0.80 daily cap)
     const providerSlug = endpointId || "provider";
-    const estimatedCostUsd = process.env.PROVIDER_MOCK === "true" || process.env.TREG_LIVE !== "true" ? 0 : 0.01;
+    const estimatedCostUsd = useMockProvider
+      ? (body?.mockEstimatedCostUsd ?? 0.005)
+      : (process.env.TREG_LIVE === "true" ? 0.01 : 0);
 
     let spendCostId: number | null = null;
     if (estimatedCostUsd > 0) {
@@ -125,13 +156,13 @@ export async function POST(req: NextRequest) {
       spendCostId = spendReserve.cost_id;
     }
 
-    // 5. Bounded chunk execution (process up to 10 units per chunk)
+    // 6. Bounded chunk execution (process up to 10 units per chunk)
     const remainingUnits = Math.max(0, targetMax - currentDelivered);
     const chunkBatchSize = Math.min(10, Math.max(1, remainingUnits));
     const newDeliveredUnits = currentDelivered + chunkBatchSize;
     const isDone = newDeliveredUnits >= targetMax;
     const nextCursor = isDone ? "completed" : `step_${currentStep + 1}_cursor`;
-    const actualCostUsd = estimatedCostUsd;
+    const actualCostUsd = useMockProvider ? 0.004 : estimatedCostUsd;
 
     // Commit provider spend if reserved
     if (spendCostId !== null) {

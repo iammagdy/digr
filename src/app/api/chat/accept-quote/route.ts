@@ -95,7 +95,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("Accept quote error:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ غير متوقع." },
+      { success: false, error: "حدث خطأ غير متوقع أثناء اعتماد العرض." },
       { status: 500 }
     );
   }

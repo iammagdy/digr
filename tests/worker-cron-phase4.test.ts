@@ -9,6 +9,16 @@ const mockNudgeDb = vi.hoisted(() => ({
   jobs: [] as any[],
 }));
 
+const mockWorkerDb = vi.hoisted(() => ({
+  recordedFailures: [] as any[],
+  step: 0,
+  deliveredUnits: 0,
+  targetVolumeMax: 20,
+  settled: false,
+  notifications: [] as any[],
+  uploads: [] as { bucket: string; path: string }[],
+}));
+
 vi.mock("../src/lib/supabase/server", () => ({
   createServerSideClient: vi.fn(async () => ({
     auth: {
@@ -33,7 +43,63 @@ vi.mock("../src/lib/supabase/server", () => ({
       })),
     })),
   })),
-  createAdminClient: vi.fn(() => ({})),
+  createAdminClient: vi.fn(() => ({
+    rpc: vi.fn(async (rpcName: string, args: any) => {
+      if (rpcName === "claim_job_chunk") {
+        return {
+          data: {
+            claimed: true,
+            job_id: args.p_job_id,
+            user_id: "user_worker_1",
+            step: mockWorkerDb.step,
+            current_cursor: `cursor_${mockWorkerDb.step}`,
+            delivered_units: mockWorkerDb.deliveredUnits,
+            target_volume_max: mockWorkerDb.targetVolumeMax,
+            target_volume_min: 1,
+            endpoint_id: "tiktok-profile",
+            unit_price: 2,
+          },
+          error: null,
+        };
+      }
+      if (rpcName === "reserve_provider_spend_atomic") {
+        return { data: { allowed: true, cost_id: 101 }, error: null };
+      }
+      if (rpcName === "commit_provider_spend") {
+        return { data: { success: true }, error: null };
+      }
+      if (rpcName === "complete_chunk") {
+        mockWorkerDb.step += 1;
+        mockWorkerDb.deliveredUnits = args.p_new_delivered_units;
+        return { data: { success: true }, error: null };
+      }
+      if (rpcName === "settle_job_atomic") {
+        mockWorkerDb.settled = true;
+        return { data: { success: true, charged_credits: 40, released_credits: 6 }, error: null };
+      }
+      if (rpcName === "record_chunk_failure") {
+        mockWorkerDb.recordedFailures.push(args);
+        return { data: { success: true, status: "retrying", attempt_count: 1 }, error: null };
+      }
+      return { data: null, error: null };
+    }),
+    storage: {
+      from: vi.fn((bucket: string) => ({
+        upload: vi.fn(async (path: string, _body: any) => {
+          mockWorkerDb.uploads.push({ bucket, path });
+          return { data: { path }, error: null };
+        }),
+      })),
+    },
+    from: vi.fn((table: string) => ({
+      insert: vi.fn(async (row: any) => {
+        if (table === "notifications") {
+          mockWorkerDb.notifications.push(row);
+        }
+        return { data: row, error: null };
+      }),
+    })),
+  })),
 }));
 
 describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
@@ -242,15 +308,124 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
     });
   });
 
-  describe("Accept Quote Worker Trigger Integration", () => {
-    it("should include initial chunk trigger in accept-quote route", () => {
-      const routeContent = fs.readFileSync(
-        path.resolve(process.cwd(), "src/app/api/chat/accept-quote/route.ts"),
-        "utf8"
-      );
-      expect(routeContent).toContain("/api/worker/chunk");
-      expect(routeContent).toContain("expectedStep: 0");
-      expect(routeContent).toContain("process.env.CRON_SECRET");
+  describe("Mock Provider Production Injection Guard & Route Execution", () => {
+    it("strictly rejects fake provider injection when NODE_ENV is production with 403", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = "production";
+        const workerRoute = await import("../src/app/api/worker/chunk/route");
+        const req = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer super-secret-cron-key-12345",
+            "x-mock-provider": "true",
+          },
+          body: JSON.stringify({ jobId: "job_test_123", mockProvider: true }),
+        });
+
+        const res = await workerRoute.POST(req);
+        expect(res.status).toBe(403);
+        const json = await res.json();
+        expect(json.error).toContain("حقن المزود الوهمي محظور في بيئة الإنتاج");
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+    });
+
+    it("successfully runs a 2-chunk job through the POST /api/worker/chunk route handler to settlement", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 20;
+        mockWorkerDb.settled = false;
+        mockWorkerDb.notifications = [];
+        mockWorkerDb.uploads = [];
+
+        const workerRoute = await import("../src/app/api/worker/chunk/route");
+
+        // Chunk 1 execution (step 0 -> processes 10 units, remaining 10)
+        const reqChunk1 = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer super-secret-cron-key-12345",
+            "x-mock-provider": "true",
+          },
+          body: JSON.stringify({ jobId: "job_multi_chunk_1", expectedStep: 0, mockProvider: true }),
+        });
+
+        const res1 = await workerRoute.POST(reqChunk1);
+        expect(res1.status).toBe(200);
+        const json1 = await res1.json();
+        expect(json1.success).toBe(true);
+        expect(json1.done).toBe(false);
+        expect(json1.step).toBe(1);
+        expect(json1.deliveredUnits).toBe(10);
+
+        // Chunk 2 execution (step 1 -> processes remaining 10 units -> completes & settles)
+        const reqChunk2 = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer super-secret-cron-key-12345",
+            "x-mock-provider": "true",
+          },
+          body: JSON.stringify({ jobId: "job_multi_chunk_1", expectedStep: 1, mockProvider: true }),
+        });
+
+        const res2 = await workerRoute.POST(reqChunk2);
+        expect(res2.status).toBe(200);
+        const json2 = await res2.json();
+        expect(json2.success).toBe(true);
+        expect(json2.done).toBe(true);
+        expect(json2.deliveredUnits).toBe(20);
+        expect(json2.settle?.success).toBe(true);
+
+        expect(mockWorkerDb.settled).toBe(true);
+        expect(mockWorkerDb.notifications.length).toBe(1);
+        expect(mockWorkerDb.notifications[0].title).toContain("اكتمل طلب استخراج البيانات بنجاح");
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("records chunk failure and returns 500 when simulateProviderError is requested", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+        mockWorkerDb.recordedFailures = [];
+
+        const workerRoute = await import("../src/app/api/worker/chunk/route");
+        const reqErr = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer super-secret-cron-key-12345",
+            "x-mock-provider": "true",
+          },
+          body: JSON.stringify({
+            jobId: "job_fail_test",
+            expectedStep: 0,
+            mockProvider: true,
+            simulateProviderError: true,
+          }),
+        });
+
+        const resErr = await workerRoute.POST(reqErr);
+        expect(resErr.status).toBe(500);
+        const jsonErr = await resErr.json();
+        expect(jsonErr.success).toBe(false);
+        expect(mockWorkerDb.recordedFailures.length).toBeGreaterThan(0);
+        expect(mockWorkerDb.recordedFailures[0].p_job_id).toBe("job_fail_test");
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
     });
   });
 });

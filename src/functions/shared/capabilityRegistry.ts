@@ -33,7 +33,7 @@ export function getRegistryPricingSettings(
   return {
     usdToEgp:
       overrides?.usdToEgp ??
-      (Number.isFinite(envUsdToEgp) && envUsdToEgp > 0 ? envUsdToEgp : 53),
+      (Number.isFinite(envUsdToEgp) && envUsdToEgp > 0 ? envUsdToEgp : 55),
     markup:
       overrides?.markup ??
       (Number.isFinite(envMarkup) && envMarkup > 0 ? envMarkup : 10),

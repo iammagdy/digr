@@ -29,16 +29,17 @@ export interface QuoteCalculationResult {
 }
 
 export const DEFAULT_PRICING_SETTINGS: PricingSettings = {
-  usdToEgp: 53.0,
-  markup: 2.0,
-  creditValueEgp: 0.1,
+  usdToEgp: 55.0,
+  markup: 10.0,
+  creditValueEgp: 0.10,
   safetyBuffer: 0.15, // 15%
   minPoints: 1,
 };
 
 /**
  * Compute the explicit unit price in points (EXCLUDING safety buffer)
- * Formula: (unitCostUsd * usdToEgp * markup) / creditValueEgp
+ * Formula: Math.ceil(unitCostUsd * (usdToEgp * markup) / creditValueEgp)
+ * Produces exactly 5500 points per USD of provider cost.
  */
 export function calculateUnitPricePoints(
   unitCostUsd: number,

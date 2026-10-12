@@ -61,32 +61,32 @@ describe("P1: Capabilities & Quotes Module", () => {
   });
 
   it("should compute unit price in points using formula: (cost * usdToEgp * markup) / creditVal", () => {
-    // 0.035 USD * 53 * 2.0 / 0.1 = 37.1 points for 500 units -> 0.0742 per unit
+    // 0.035 USD * 55 * 10.0 / 0.1 = 192.5 points for 500 units -> 0.385 per unit
     const unitPrice = calculateUnitPricePoints(0.035 / 500, DEFAULT_PRICING_SETTINGS);
-    expect(unitPrice).toBeCloseTo(0.0742, 4);
+    expect(unitPrice).toBeCloseTo(0.385, 4);
   });
 
   it("should apply safety buffer (15%) ONLY to the quotedPoints and reserve", () => {
-    // 500 units, each 0.0742 points = 37.1 points. With 15% buffer = 42.665 -> ceil is 43 points
-    const quote = calculateQuote(500, 0.035 / 500, 100, DEFAULT_PRICING_SETTINGS);
-    expect(quote.rawPoints).toBeCloseTo(37.1, 1);
-    expect(quote.quotedPoints).toBe(43);
+    // 500 units, each 0.385 points = 192.5 points. With 15% buffer = 221.375 -> ceil is 222 points
+    const quote = calculateQuote(500, 0.035 / 500, 300, DEFAULT_PRICING_SETTINGS);
+    expect(quote.rawPoints).toBeCloseTo(192.5, 1);
+    expect(quote.quotedPoints).toBe(222);
     expect(quote.isAffordable).toBe(true);
   });
 
   it("should calculate settlement with explicit formula and EXCLUDE safety buffer from charge (Worked Example)", () => {
-    // Reserved = 43 points (quote for 500 units)
+    // Reserved = 222 points (quote for 500 units)
     const unitPrice = calculateUnitPricePoints(0.035 / 500, DEFAULT_PRICING_SETTINGS);
-    const reservedPoints = 43;
+    const reservedPoints = 222;
 
     // 420 units delivered
     const settlement = calculateFinalSettlement(420, unitPrice, reservedPoints);
 
-    // charge = ceil(420 * 0.0742) = ceil(31.164) = 32 points
-    expect(settlement.chargePoints).toBe(32);
+    // charge = ceil(420 * 0.385) = ceil(161.7) = 162 points
+    expect(settlement.chargePoints).toBe(162);
 
-    // refund = 43 - 32 = 11 points refunded to user
-    expect(settlement.refundPoints).toBe(11);
+    // refund = 222 - 162 = 60 points refunded to user
+    expect(settlement.refundPoints).toBe(60);
   });
 
   it("should never charge more than the approved quotedPoints if cost overruns", () => {

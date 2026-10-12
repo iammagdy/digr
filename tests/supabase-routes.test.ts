@@ -336,6 +336,51 @@ describe("Supabase Route Handlers & Business Rules", () => {
     expect(overSettlement.chargePoints).toBe(40);
     expect(overSettlement.refundPoints).toBe(0);
   });
+
+  it("acceptQuoteSupabase returns 402 with Arabic-Indic numerals on insufficient balance", async () => {
+    mockQuotes.push({
+      id: "quote-indic-test",
+      user_id: "user-1",
+      status: "quoted",
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+      items: [{ endpointId: "test-ep", unitPricePoints: 10, targetVolumeMin: 10, targetVolumeMax: 10 }],
+      total_reserved_credits: 100,
+    });
+
+    mockLedger.push({ user_id: "user-1", delta: 45 }); // 45 points -> ٤٥ in Arabic-Indic
+
+    const res = await acceptQuoteSupabase(mockAdminClient, {
+      userId: "user-1",
+      quoteId: "quote-indic-test",
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.statusCode).toBe(402);
+    expect(res.errorAr).toContain("٤٥");
+    expect(res.errorAr).not.toMatch(/[0-9]/); // No Western digits in user balance display
+  });
+
+  it("acceptQuoteSupabase never leaks database rpc error or SQL text", async () => {
+    const brokenClient = {
+      ...mockAdminClient,
+      rpc: vi.fn(async () => {
+        return { data: null, error: new Error("relation public.credit_ledger does not exist at line 42") };
+      }),
+    };
+
+    const res = await acceptQuoteSupabase(brokenClient, {
+      userId: "user-1",
+      quoteId: "quote-any",
+      expectedPlanHash: "a".repeat(64),
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.statusCode).toBe(500);
+    expect(res.errorAr).not.toContain("relation");
+    expect(res.errorAr).not.toContain("credit_ledger");
+    expect(res.errorAr).not.toContain("line 42");
+    expect(res.errorAr).toContain("حدث خطأ أثناء معالجة اعتماد العرض");
+  });
 });
 
 describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {

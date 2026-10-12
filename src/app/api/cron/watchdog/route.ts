@@ -92,9 +92,18 @@ export async function GET(req: NextRequest) {
           await adminClient.from("notes").delete().eq("user_id", uId);
           await adminClient.from("conversations").delete().eq("user_id", uId);
           await adminClient.from("notifications").delete().eq("user_id", uId);
-          await adminClient.from("artifact_versions").delete().eq("user_id", uId);
+          // B. Delete user's results-bucket storage files (keep receipts intact for financial audit)
+          try {
+            const { data: userFiles } = await adminClient.storage.from("results").list(uId);
+            if (userFiles && userFiles.length > 0) {
+              const filePaths = userFiles.map((f: any) => `${uId}/${f.name}`);
+              await adminClient.storage.from("results").remove(filePaths);
+            }
+          } catch (storageErr) {
+            console.error(`Failed to clean up results storage for ${uId}:`, storageErr);
+          }
 
-          // B. Anonymize profile (never hard delete profiles to satisfy foreign keys)
+          // C. Anonymize profile (never hard delete profiles to satisfy foreign keys)
           await adminClient.from("profiles").update({
             email: `deleted_${uId}@purged.local`,
             sender_name: "مستخدم محذوف",

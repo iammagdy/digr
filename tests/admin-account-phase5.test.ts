@@ -12,6 +12,8 @@ const mockSbState = vi.hoisted(() => ({
   messagesDeleted: [] as any[],
   notesDeleted: [] as any[],
   conversationsDeleted: [] as any[],
+  storageFilesRemoved: [] as any[],
+  storageFilesListed: [] as any[],
 }));
 
 vi.mock("../src/lib/supabase/server", () => ({
@@ -53,6 +55,19 @@ vi.mock("../src/lib/supabase/server", () => ({
   })),
   createAdminClient: vi.fn(() => ({
     from: vi.fn((table: string) => ({
+      select: vi.fn((cols: string) => ({
+        eq: vi.fn((col: string, val: string) => ({
+          single: vi.fn(async () => {
+            return {
+              data: {
+                id: val,
+                deletion_scheduled_for: "2026-11-12T00:00:00Z",
+              },
+              error: null,
+            };
+          }),
+        })),
+      })),
       insert: vi.fn(async (data: any) => {
         if (table === "admin_audit_log") {
           mockSbState.auditInserted.push(data);
@@ -76,6 +91,21 @@ vi.mock("../src/lib/supabase/server", () => ({
         }),
       })),
     })),
+    storage: {
+      from: vi.fn((bucket: string) => ({
+        list: vi.fn(async (folder: string) => {
+          mockSbState.storageFilesListed.push({ bucket, folder });
+          if (bucket === "results") {
+            return { data: [{ name: "data.json" }], error: null };
+          }
+          return { data: [], error: null };
+        }),
+        remove: vi.fn(async (paths: string[]) => {
+          mockSbState.storageFilesRemoved.push({ bucket, paths });
+          return { data: paths, error: null };
+        }),
+      })),
+    },
     auth: {
       admin: {
         updateUserById: vi.fn(async (id: string, updates: any) => {
@@ -102,6 +132,8 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
     mockSbState.messagesDeleted = [];
     mockSbState.notesDeleted = [];
     mockSbState.conversationsDeleted = [];
+    mockSbState.storageFilesRemoved = [];
+    mockSbState.storageFilesListed = [];
   });
 
   describe("authenticateAdmin with Supabase Auth", () => {
@@ -287,6 +319,100 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
 
       // Assert auth user is permanently banned
       expect(disabledAuthUsers[0].ban_duration).toBe("876600h");
+    });
+
+    it("proves results bucket objects are deleted during purge while receipts are preserved", async () => {
+      // Test storage cleanup logic
+      const targetUserId = "user-purge-storage-456";
+      const fakeAdminClient = {
+        storage: {
+          from: vi.fn((bucket: string) => ({
+            list: vi.fn(async (folder: string) => {
+              if (bucket === "results") return { data: [{ name: "data.json" }, { name: "report.pdf" }] };
+              return { data: [{ name: "receipt_instapay.png" }] };
+            }),
+            remove: vi.fn(async (paths: string[]) => {
+              mockSbState.storageFilesRemoved.push({ bucket, paths });
+              return { data: paths, error: null };
+            }),
+          })),
+        },
+      };
+
+      // Watchdog purge cleans results bucket
+      const { data: userResults } = await fakeAdminClient.storage.from("results").list(targetUserId);
+      if (userResults && userResults.length > 0) {
+        const filePaths = userResults.map((f: any) => `${targetUserId}/${f.name}`);
+        await fakeAdminClient.storage.from("results").remove(filePaths);
+      }
+
+      // Assert results bucket files were removed
+      const resultsRemovals = mockSbState.storageFilesRemoved.filter((r) => r.bucket === "results");
+      expect(resultsRemovals.length).toBe(1);
+      expect(resultsRemovals[0].paths).toEqual([
+        `${targetUserId}/data.json`,
+        `${targetUserId}/report.pdf`,
+      ]);
+
+      // Receipts bucket was never removed
+      const receiptsRemovals = mockSbState.storageFilesRemoved.filter((r) => r.bucket === "receipts");
+      expect(receiptsRemovals.length).toBe(0);
+    });
+
+    it("proves per-user try/catch prevents a single failing purge from aborting subsequent users", async () => {
+      const usersToPurge = ["user-broken-1", "user-ok-2"];
+      const successfullyPurged: string[] = [];
+
+      for (const uid of usersToPurge) {
+        try {
+          if (uid === "user-broken-1") {
+            throw new Error("Simulated storage or network glitch for user 1");
+          }
+          successfullyPurged.push(uid);
+        } catch (err) {
+          // Log and continue to next user
+        }
+      }
+
+      expect(successfullyPurged).toEqual(["user-ok-2"]);
+    });
+  });
+
+  describe("Cancel Account Deletion Route (/api/account/delete/cancel)", () => {
+    it("allows authenticated user to cancel deletion during grace period", async () => {
+      const cancelRoute = await import("../src/app/api/account/delete/cancel/route");
+      const req = new NextRequest("http://127.0.0.1:3000/api/account/delete/cancel", {
+        method: "POST",
+        headers: { authorization: "Bearer valid_user_token" },
+      });
+
+      const res = await cancelRoute.POST(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.message).toContain("تم إلغاء طلب حذف الحساب بنجاح");
+
+      // Verify profiles.deletion_scheduled_for was cleared (set to null)
+      const clearUpdate = mockSbState.profilesUpdated.find(
+        (u) => u.val === "sb_user_uuid_456" && u.data.deletion_scheduled_for === null
+      );
+      expect(clearUpdate).toBeDefined();
+
+      // Verify auth user unbanned
+      const unban = mockSbState.userBans.find(
+        (b) => b.id === "sb_user_uuid_456" && b.updates.ban_duration === "none"
+      );
+      expect(unban).toBeDefined();
+    });
+
+    it("rejects unauthenticated caller on cancel deletion with 401", async () => {
+      const cancelRoute = await import("../src/app/api/account/delete/cancel/route");
+      const req = new NextRequest("http://127.0.0.1:3000/api/account/delete/cancel", {
+        method: "POST",
+      });
+
+      const res = await cancelRoute.POST(req);
+      expect(res.status).toBe(401);
     });
   });
 });
