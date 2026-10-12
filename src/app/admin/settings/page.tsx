@@ -21,7 +21,7 @@ export default function AdminSettingsPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    adminFetch<Settings>("/api/admin/settings").then((r) => { setS(r); setCredit(String(r.creditValueEgp)); setMaxPending(String(r.maxPendingTopups)); setIpa(r.ipa); }).catch((e) => setError(e.message));
+    adminFetch<Settings>("/api/admin/settings").then((r) => { setS(r); setCredit(r.creditValueEgp.toFixed(2)); setMaxPending(String(r.maxPendingTopups)); setIpa(r.ipa); }).catch((e) => setError(e.message));
   }, []);
 
   const creditNum = Number(normalizeDigits(credit).replace(",", "."));

@@ -278,10 +278,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           </header>
 
           {!online && (
-            <div role="alert" className="flex shrink-0 items-center gap-2.5 px-4 py-2.5 text-[13px] text-ink" style={{ background: "color-mix(in oklab, var(--bad) 10%, var(--bg))", animation: "up .3s both" }}>
+            <div role="alert" className="flex shrink-0 items-center gap-2.5 px-4 py-2 text-[13px] text-ink" style={{ background: "color-mix(in oklab, var(--bad) 10%, var(--bg))", animation: "up .3s both" }}>
               <span className="flex text-bad"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 2l20 20M8.5 16.5a5 5 0 0 1 7 0M5 12.6a10 10 0 0 1 5.2-2.6M19 12.6a10 10 0 0 0-2.1-1.4M12 20h.01" /></svg></span>
               <span className="flex-1 leading-[1.7]">أنت غير متصل بالإنترنت. سنحاول مجددًا تلقائيًا — لن تُخصم أي نقاط.</span>
-              <button type="button" onClick={() => { if (navigator.onLine) void refreshBalance(); }} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border border-ln2 bg-sf px-3 text-xs text-ink">إعادة المحاولة</button>
+              <button type="button" onClick={() => { if (navigator.onLine) void refreshBalance(); }} className="hit min-h-8 cursor-pointer whitespace-nowrap rounded-full border border-ln2 bg-sf px-3 text-xs text-ink">إعادة المحاولة</button>
             </div>
           )}
 

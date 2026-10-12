@@ -182,7 +182,7 @@ export default function WalletPage() {
                   {balance.status === "failed" ? "غير متاح" : balanceText(balance)} <span className="text-[13px] font-normal text-mut">نقطة</span>
                 </p>
               </div>
-              {available !== null && <p className="m-0 text-[13px] text-mut">≈ {formatAr(available * creditValue, 2)} ج.م</p>}
+              {available !== null && <p className="m-0 text-[13px] text-mut">≈ {formatAr(Number((available * creditValue).toFixed(2)))} ج.م</p>}
             </div>
             <div className="flex h-1.5 overflow-hidden rounded-md bg-sf2">
               <span style={{ width: `${total > 0 ? ((available ?? 0) / total) * 100 : 0}%`, background: "var(--ac)" }} />

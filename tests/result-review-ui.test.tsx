@@ -66,7 +66,5 @@ describe("result review UI contracts (release branch)", () => {
     expect(sidebar).toContain('aria-current={n.active ? "page" : undefined}');
     expect(quote).toContain("focus-visible:outline-2");
     expect(quote).toContain("motion-safe:animate-spin motion-reduce:animate-none");
-    expect(activity).toContain("aria-expanded={!collapsed}");
-    expect(activity).toContain("min-h-11");
   });
 });

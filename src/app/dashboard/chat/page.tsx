@@ -921,8 +921,7 @@ export default function ChatWorkspacePage() {
         if (isClarification(m)) {
           return (
             <div key={m.id}>
-              {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink">{m.content}</p>}
-              <div className="mt-4">
+              <div className="mt-3.5">
                 <DetailsBlanks
                   questions={m.clarificationItems || m.clarificationQuestions || []}
                   completedAnswers={m.completedClarificationAnswers}
@@ -947,7 +946,6 @@ export default function ChatWorkspacePage() {
       {stage === 1 && <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>يحسب الخادم عرض السعر…</p>}
       {planMsg?.planQuote && (stage >= 2 || lastPlanIdx > lastClarIdx) && (
         <>
-          {planMsg.content && stage === 2 && <p className="mb-0 mt-3 whitespace-pre-wrap text-[13px] font-light leading-[1.9] text-ink2">{planMsg.content}</p>}
           <PlanQuoteCard
             quote={planMsg.planQuote}
             onStart={handleStartExecution}
@@ -1049,6 +1047,7 @@ export default function ChatWorkspacePage() {
               dateLabel={dateLabel}
               question={question}
               stage={stage}
+              failed={activeJob?.status === "failed"}
               banner={!llmEnabled ? (
                 <div role="status" className="mb-[18px] flex items-start gap-2.5 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.8] text-ink2">
                   <span className="mt-0.5 flex text-goldT"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 8v5M12 16.5v.5M10.3 4l-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0z" /></svg></span>

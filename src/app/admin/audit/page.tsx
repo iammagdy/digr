@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch, downloadCsv } from "@/lib/adminApi";
 import { useAdmin } from "@/components/admin/AdminShell";
-import { dateTimeAr, initials, tint } from "@/components/admin/format";
+import { shortStampAr, initials, tint } from "@/components/admin/format";
 
 interface Entry { id: string; kind: string; who: string; label: string; target: string; ip: string; createdAt: string }
 
@@ -56,7 +56,7 @@ export default function AuditPage() {
                 <p className="m-0 flex flex-wrap items-center gap-1.5 text-[13px] text-ink"><strong className="font-semibold">{e.who}</strong><span className="rounded-full px-2 py-0.5 text-[11px] font-semibold" style={{ background: tint(c, 14), color: c === "var(--gold)" ? "var(--goldT)" : c }}>{e.label}</span></p>
                 <p className="mb-0 mt-1 text-xs leading-[1.7] text-ink2">{e.target}</p>
               </div>
-              <span className="shrink-0 text-left"><span className="block whitespace-nowrap text-[11px] text-fnt">{dateTimeAr(e.createdAt)}</span>{!isMobile && <span dir="ltr" className="block text-[10px] text-fnt" style={{ fontFamily: "ui-monospace,monospace" }}>{e.ip || "—"}</span>}</span>
+              <span className="shrink-0 text-left"><span className="block whitespace-nowrap text-[11px] text-fnt">{shortStampAr(e.createdAt)}</span>{!isMobile && <span dir="ltr" className="block text-[10px] text-fnt" style={{ fontFamily: "ui-monospace,monospace" }}>{e.ip || "—"}</span>}</span>
             </div>
           );
         })}

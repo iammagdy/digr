@@ -50,11 +50,11 @@ export default function RegisterPage() {
         <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جاري إنشاء الحساب..." : "إنشاء الحساب"}</button>
       </form>
       {error && <AuthToast tone="bad">{error}</AuthToast>}
-      <p className="mb-0 mt-6 text-center text-sm font-light text-mut">
+      <p className="mb-0 mt-[34px] text-center text-sm font-light text-mut">
         لديك حساب بالفعل؟{" "}
         <Link href="/login" className="p-1 text-sm font-medium text-ink underline decoration-gold underline-offset-[5px]">سجّل الدخول</Link>
       </p>
-      <p className="mb-0 mt-2 text-center text-xs font-light leading-[1.8] text-fnt">
+      <p className="mb-0 mt-3.5 text-center text-xs font-light leading-[1.8] text-fnt">
         بإنشائك الحساب أنت توافق على جمع البيانات العامة فقط وفق معايير البحث الأخلاقية.{" "}
         <Link href="/legal/terms" className="text-xs text-mut underline">الشروط</Link> · <Link href="/legal/privacy" className="text-xs text-mut underline">الخصوصية</Link>
       </p>

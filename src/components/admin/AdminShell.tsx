@@ -148,6 +148,20 @@ export function AdminShell({ children }: { children: ReactNode }) {
     setSeen(signature);
   };
 
+  const hasRange = page === "overview" || page === "finance";
+  const rangeSwitch = (
+                  <div className="flex gap-0.5 rounded-xl bg-sf2 p-[3px]" role="group" aria-label="الفترة">
+      {([7, 30, 90] as Range[]).map((r) => (
+        <button
+          key={r} type="button" onClick={() => setRange(r)} aria-pressed={range === r}
+          className="min-h-11 min-w-11 cursor-pointer whitespace-nowrap rounded-[9px] border-0 px-2.5 text-xs font-semibold"
+          style={{ background: range === r ? "var(--sf)" : "transparent", color: range === r ? "var(--ink)" : "var(--mut)", boxShadow: range === r ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
+        >
+          {mobile ? `${toArabicDigits(r)}ي` : `${toArabicDigits(r)} ${r === 7 ? "أيام" : "يومًا"}`}
+        </button>
+      ))}
+    </div>
+  );
   const ctx = useMemo<AdminCtx>(() => ({ range, setRange, alerts, providers, refresh, isMobile: mobile, pendingOpenTopup, setPendingOpenTopup, toast }), [range, setRange, alerts, providers, refresh, mobile, pendingOpenTopup, toast]);
 
   const llmDot = providers ? (providers.llm.enabled && providers.llm.provider !== "fake" ? "var(--ok)" : providers.llm.enabled ? "var(--gold)" : "var(--bad)") : "var(--ln2)";
@@ -226,19 +240,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ابحث عن مستخدم أو بريد أو رقم مرجعي" aria-label="بحث" className="min-w-0 flex-1 border-0 bg-transparent text-[13px] text-ink outline-none" />
                   </form>
                 )}
-                {(page === "overview" || page === "finance") && (
-                  <div className="flex gap-0.5 rounded-xl bg-sf2 p-[3px]" role="group" aria-label="الفترة">
-                    {([7, 30, 90] as Range[]).map((r) => (
-                      <button
-                        key={r} type="button" onClick={() => setRange(r)} aria-pressed={range === r}
-                        className="min-h-11 min-w-11 cursor-pointer whitespace-nowrap rounded-[9px] border-0 px-2.5 text-xs font-semibold"
-                        style={{ background: range === r ? "var(--sf)" : "transparent", color: range === r ? "var(--ink)" : "var(--mut)", boxShadow: range === r ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
-                      >
-                        {mobile ? `${toArabicDigits(r)}ي` : `${toArabicDigits(r)} ${r === 7 ? "أيام" : "يومًا"}`}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                {hasRange && !mobile && rangeSwitch}
                 <button
                   type="button" onClick={openBell} aria-label="تنبيهات الإدارة" aria-expanded={bell}
                   className="relative flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-ln text-ink"
@@ -269,6 +271,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   </div>
                 </>
               )}
+                          {hasRange && mobile && <div className="flex justify-center px-3.5 pb-2.5">{rangeSwitch}</div>}
             </header>
 
             <main className="flex flex-1 flex-col gap-4" style={{ padding: mobile ? "14px 14px 24px" : "22px 24px 40px" }}>{children}</main>

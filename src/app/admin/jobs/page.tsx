@@ -5,7 +5,7 @@ import { adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { EGP, tint } from "@/components/admin/format";
-import { formatDate, formatTime } from "@/lib/honestDisplay";
+import { dayLabel } from "@/lib/dayLabel";
 
 interface JobRow { id: string; title: string; platform: string; createdAt: string; user: string; requested: number | null; delivered: number; held: number; charged: number; costEgp: number | null; status: "done" | "running" | "failed" | "refunded" }
 interface Resp { jobs: JobRow[]; stats: { last30: number; runningNow: number; successRate: number | null; refundedPoints: number } }
@@ -56,7 +56,7 @@ export default function AdminJobsPage() {
             <div key={j.id} className="grid items-center gap-x-3 gap-y-2 border-t border-ln px-[18px] py-3.5 text-[13px] text-ink2 first:border-t-0" style={{ gridTemplateColumns: isMobile ? "minmax(0,1fr) auto" : COLS }}>
               <span className="min-w-0" style={{ gridColumn: isMobile ? "1 / -1" : "auto" }}>
                 <span className="block truncate font-semibold text-ink">{j.title}</span>
-                <span className="block text-[11px] text-fnt">{j.platform} · {formatDate(j.createdAt)} {formatTime(j.createdAt)}</span>
+                <span className="block text-[11px] text-fnt">{j.platform} · {dayLabel(j.createdAt)}</span>
               </span>
               <span className="min-w-0 truncate">{j.user}</span>
               <span><span className="block">{formatAr(j.delivered)}{j.requested ? ` / ${formatAr(j.requested)}` : ""}</span><span className="mt-1 block h-1 overflow-hidden rounded bg-sf2"><span className="block h-full" style={{ width: `${pct}%`, background: j.status === "failed" ? "var(--bad)" : "var(--bar)" }} /></span></span>

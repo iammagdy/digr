@@ -55,7 +55,7 @@ export default function LoginPage() {
       </form>
       {error && <AuthToast tone="bad">{error}</AuthToast>}
       {toast && <AuthToast>{toast}</AuthToast>}
-      <p className="mb-0 mt-6 text-center text-sm font-light text-mut">
+      <p className="mb-0 mt-[34px] text-center text-sm font-light text-mut">
         ليس لديك حساب؟{" "}
         <Link href="/register" className="p-1 text-sm font-medium text-ink underline decoration-gold underline-offset-[5px]">أنشئ حسابًا</Link>
       </p>

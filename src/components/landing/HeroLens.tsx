@@ -233,7 +233,7 @@ export function HeroLens() {
       onPointerMove={onMove}
       onPointerLeave={onLeave}
       onPointerDown={onDown}
-      className="relative flex min-h-[max(640px,min(100dvh,860px))] flex-col items-center justify-center overflow-hidden px-5 pb-20 pt-[110px] min-[760px]:min-h-screen"
+      className="relative flex min-h-[max(640px,calc(100dvh-64px))] flex-col items-center justify-center overflow-hidden px-5 pb-20 pt-[110px] min-[760px]:min-h-screen"
       style={{ perspective: 1400 }}
     >
       {/* back layer: blurred records */}

@@ -5,12 +5,12 @@ export const initials = (name: string) => {
   const a = (name || "").trim().split(/\s+/);
   return [a[0]?.[0], a[1]?.[0]].filter(Boolean).join(" ") || "؟";
 };
-/** «١١/١٠/٢٠٢٦، ٩:٤٢ ص» */
+/** «١١/١٠/٢٠٢٦، ٩:٤٢ ص» — day/month/year, always read left-to-right like the design. */
 export function dateTimeAr(iso?: string | null): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return `${new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "numeric", year: "numeric" }).format(d)}، ${new Intl.DateTimeFormat("ar-EG-u-nu-arab", { hour: "numeric", minute: "2-digit" }).format(d)}`;
+  return `${`\u2066${toArabicDigits(`${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`)}\u2069`}، ${new Intl.DateTimeFormat("ar-EG-u-nu-arab", { hour: "numeric", minute: "2-digit" }).format(d)}`;
 }
 /** «منذ ٤ دقائق» … «منذ شهر» */
 export function agoAr(iso?: string | null, now = Date.now()): string {
@@ -37,3 +37,12 @@ export function badgeFor(status: string): { bg: string; fg: string; label: strin
   return { bg: "color-mix(in oklab, var(--gold) 16%, transparent)", fg: "var(--goldT)", label: "قيد المراجعة" };
 }
 export const tint = (color: string, pct: number) => `color-mix(in oklab, ${color} ${pct}%, transparent)`;
+
+/** Compact audit stamp «٦/١٠ · ٥:١٢ م» (day/month, no year). */
+export function shortStampAr(iso?: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const time = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { hour: "numeric", minute: "2-digit" }).format(d);
+  return `\u2066${toArabicDigits(`${d.getDate()}/${d.getMonth() + 1}`)}\u2069 · ${time}`;
+}

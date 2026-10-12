@@ -18,7 +18,7 @@ const MON_COLS = "minmax(0,1.4fr) repeat(5,minmax(0,1fr)) minmax(0,.6fr)";
 const pct = (m: number | null) => (m === null ? "—" : `${formatAr(m, 0)}٪`);
 
 export default function AdminFinancePage() {
-  const { range, isMobile } = useAdmin();
+  const { range, isMobile, providers } = useAdmin();
   const [d, setD] = useState<Resp | null>(null);
   const [error, setError] = useState("");
 
@@ -33,7 +33,7 @@ export default function AdminFinancePage() {
     { k: "إيراد محقق", v: EGP(c.realized), c: "var(--ink)", sub: "نقاط خُصمت على سجلات مسلَّمة" },
     { k: "مستردات", v: EGP(c.refunds), c: "var(--goldT)", sub: "فرق الحجز المرتجع للمستخدمين" },
     { k: "تكلفة TREG", v: EGP(c.treg), c: "var(--mut)", sub: "استدعاءات جمع البيانات" },
-    { k: "تكلفة النماذج", v: EGP(c.llm), c: "var(--mut)", sub: "النماذج اللغوية" },
+    { k: "تكلفة النماذج", v: EGP(c.llm), c: "var(--mut)", sub: providers ? `${providers.llm.provider === "openai" ? "OpenAI" : providers.llm.provider === "anthropic" ? "Anthropic" : "وضع تجريبي"} · ${providers.llm.model}` : "النماذج اللغوية" },
     { k: "صافي الربح", v: EGP(c.profit), c: "var(--ok)", sub: c.margin === null ? "لا إيرادات بعد" : `هامش ${formatAr(c.margin, 1)}٪` },
   ];
   const totalCost = d.costSplit.treg + d.costSplit.llm;

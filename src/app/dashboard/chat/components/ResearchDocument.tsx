@@ -21,13 +21,13 @@ const STEPS: StepDef[] = [
   { n: 4, title: "الملفات", doneAt: 5, curAt: 4, labels: ["", "جاهزة", "عند الاكتمال"] },
 ];
 
-function Step({ def, stage, last, children }: { def: StepDef; stage: number; last: boolean; children?: ReactNode }) {
+function Step({ def, stage, last, failed, children }: { def: StepDef; stage: number; last: boolean; failed?: boolean; children?: ReactNode }) {
   const done = stage >= def.doneAt;
   const cur = !done && stage >= def.curAt;
-  const ring = done ? "var(--gold)" : cur ? "var(--ink)" : "var(--ln2)";
-  const bg = done ? "var(--gold)" : "transparent";
-  const fg = done ? "#fff" : cur ? "var(--ink)" : "var(--fnt)";
-  const status = done ? def.labels[0] : cur ? def.labels[1] : def.labels[2];
+  const ring = failed ? "var(--bad)" : done ? "var(--gold)" : cur ? "var(--ink)" : "var(--ln2)";
+  const bg = failed ? "var(--bad)" : done ? "var(--gold)" : "transparent";
+  const fg = failed || done ? "#fff" : cur ? "var(--ink)" : "var(--fnt)";
+  const status = failed ? "تعذّر الإكمال · استُرد الرصيد" : done ? def.labels[0] : cur ? def.labels[1] : def.labels[2];
   return (
     <section
       className="relative"
@@ -38,7 +38,7 @@ function Step({ def, stage, last, children }: { def: StepDef; stage: number; las
         className="absolute right-0 top-0.5 flex h-[22px] w-[22px] items-center justify-center rounded-full text-[11px]"
         style={{ border: `1px solid ${ring}`, background: bg, color: fg }}
       >
-        {done ? "✓" : formatAr(def.n)}
+        {failed ? "!" : done ? "✓" : formatAr(def.n)}
       </span>
       {!last && <span className="absolute bottom-1.5 right-[11px] top-[30px] w-px bg-ln" />}
       <div className="flex items-baseline justify-between gap-3">
@@ -52,18 +52,20 @@ function Step({ def, stage, last, children }: { def: StepDef; stage: number; las
 
 /** Design «ملف بحث»: one document, four steps. Sections only render their content once reached. */
 export default function ResearchDocument({
-  dateLabel, question, stage, banner, details, plan, run, files,
+  dateLabel, question, stage, failed, banner, details, plan, run, files,
 }: {
   dateLabel: string;
   question: string;
   stage: DocStage;
+  /** The run failed: step 3 turns red and the plan card collapses, as in the design. */
+  failed?: boolean;
   banner?: ReactNode;
   details: ReactNode;
   plan: ReactNode;
   run: ReactNode;
   files: ReactNode;
 }) {
-  const slots = [details, plan, run, files];
+  const slots = [details, failed ? null : plan, run, files];
   return (
     <article className="mx-auto max-w-[680px]">
       {banner}
@@ -76,7 +78,7 @@ export default function ResearchDocument({
       </h1>
       <div className="mt-6 flex flex-col">
         {STEPS.map((def, i) => (
-          <Step key={def.n} def={def} stage={stage} last={i === STEPS.length - 1}>{slots[i]}</Step>
+          <Step key={def.n} def={def} stage={stage} last={i === STEPS.length - 1} failed={failed && def.n === 3}>{slots[i]}</Step>
         ))}
       </div>
     </article>

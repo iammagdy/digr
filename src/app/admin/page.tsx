@@ -37,7 +37,7 @@ function spark(series: number[], n = 14) {
 
 function delta(pct: number) {
   const good = pct >= 0;
-  return { text: `${pct >= 0 ? "▲" : "▼"} ${toArabicDigits(Math.abs(pct).toFixed(1)).replace(".", "٫")}%`, bg: tint(good ? "var(--ok)" : "var(--bad)", 13), fg: good ? "var(--ok)" : "var(--bad)" };
+  return { text: `${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}%`, bg: tint(good ? "var(--ok)" : "var(--bad)", 13), fg: good ? "var(--ok)" : "var(--bad)" };
 }
 
 export default function AdminOverview() {

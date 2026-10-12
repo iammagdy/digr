@@ -6,7 +6,7 @@ import { Query } from "appwrite";
 import { account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
 import { formatAr } from "@/lib/arabicDigits";
-import { formatTime } from "@/lib/honestDisplay";
+import { dayLabel } from "@/lib/dayLabel";
 import { DATABASE_ID, JOBS_COLLECTION } from "@/lib/constants";
 
 interface JobDoc {
@@ -41,16 +41,6 @@ function platformOf(slug: string): string {
   if (s.includes("reddit")) return "ريديت";
   if (s.startsWith("x-") || s.includes("twitter")) return "إكس";
   return "الإنترنت العام";
-}
-
-/** «اليوم ١٢:٤٦» · «أمس ٩:١٨ م» · «٨ أكتوبر» */
-function dayLabel(iso: string): string {
-  const d = new Date(iso), now = new Date();
-  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diff = Math.round((startOf(now) - startOf(d)) / 86400000);
-  if (diff === 0) return `اليوم ${formatTime(iso)}`;
-  if (diff === 1) return `أمس ${formatTime(iso)}`;
-  return new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(d);
 }
 
 function targetOf(params?: string): string {

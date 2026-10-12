@@ -46,7 +46,7 @@ function useReceiptUrl(fileId: string | null) {
 }
 
 export default function AdminTopupsPage() {
-  const { refresh, toast, pendingOpenTopup, setPendingOpenTopup } = useAdmin();
+  const { refresh, toast, pendingOpenTopup, setPendingOpenTopup, isMobile } = useAdmin();
   const creditValue = useCreditValue();
   const [topups, setTopups] = useState<AdminTopup[]>([]);
   const [stats, setStats] = useState<TopupStats | null>(null);
@@ -158,7 +158,7 @@ export default function AdminTopupsPage() {
                 <span className="flex h-[42px] w-[42px] items-center justify-center rounded-full text-[13px] font-semibold" style={{ background: pending ? tint("var(--gold)", 16) : "var(--sf2)", color: pending ? "var(--goldT)" : "var(--mut)" }}>{initials(t.senderName)}</span>
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-semibold text-ink">{t.senderName || "—"}</span>
-                  <span className="block truncate text-[11px] text-fnt"><span dir="ltr">{t.senderPhone}</span> · {dateTimeAr(t.createdAt)}</span>
+                  <span className="block truncate text-[11px] text-fnt"><span dir="ltr">{t.senderPhone}</span>{!isMobile && <> · {dateTimeAr(t.createdAt)}</>}</span>
                 </span>
                 <span className="hidden min-w-0 min-[900px]:block"><span className="block text-[11px] text-fnt">الرقم المرجعي</span><span dir="ltr" className="block text-right text-xs text-ink2" style={{ fontFamily: "ui-monospace,monospace" }}>{t.reference}</span></span>
                 <span className="hidden min-w-0 min-[900px]:block"><span className="block text-[11px] text-fnt">الحساب</span><span dir="ltr" className="block truncate text-right text-xs text-ink2">{t.accEmail}</span></span>

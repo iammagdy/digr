@@ -1,18 +1,19 @@
 "use client";
 
-import { useState } from "react";
 import {
   timelineWaitingText,
   type JobStatus,
   formatNumber,
-  formatTime,
 } from "@/lib/honestDisplay";
-import { formatAr } from "@/lib/arabicDigits";
+import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
+
+/** Design timeline clock: 24-hour «١٢:٤٠», no AM/PM. */
+const clock = (iso?: string) => {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime()) ? toArabicDigits(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`) : "";
+};
 import {
   deriveLiveActivitySnapshot,
-  formatCurrentPostProgress,
-  formatItemsCollectedProgress,
-  formatPointsSpentVsReserved,
   sanitizeActivityText,
 } from "@/functions/shared/liveActivityFeed";
 
@@ -45,7 +46,6 @@ export default function ActivityTimeline({
   reservedPoints,
   requestedRows,
 }: ActivityTimelineProps) {
-  const [collapsed, setCollapsed] = useState(false);
   const hasEvents = events && events.length > 0;
   const scopeNote =
     eventLimit !== undefined && hasEvents && events.length >= eventLimit
@@ -67,25 +67,15 @@ export default function ActivityTimeline({
   return (
     <div className="mt-4" style={{ animation: "up .5s both" }} aria-label="سجل نشاط التنفيذ" role="region">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="tnum text-2xl font-normal text-ink">{formatAr(rowsCollected)}</span>
+        <span className="text-2xl font-normal text-ink">{formatAr(rowsCollected)}</span>
         <span className="text-[13px] font-light text-mut">
           {requestedRows ? `من ${formatAr(requestedRows)} سجل · ` : ""}
-          {typeof reserved === "number" && reserved > 0 ? formatPointsSpentVsReserved(spent, reserved) : null}
+          {typeof reserved === "number" && reserved > 0 ? `مصروف ${formatAr(spent)} من ${formatAr(reserved)}` : null}
         </span>
       </div>
       <div className="mt-2.5 h-[3px] overflow-hidden rounded-[3px] bg-sf2">
         <div className="h-full bg-gold" style={{ width: `${pct}%`, transition: "width .8s cubic-bezier(.2,.7,.2,1)" }} />
       </div>
-
-      {(liveSnapshot.currentStepAr || liveSnapshot.currentPostIndex !== undefined) && status === "running" && (
-        <p className="tnum mb-0 mt-3 text-xs font-light text-fnt">
-          {liveSnapshot.currentStepAr}
-          {liveSnapshot.currentPostIndex !== undefined && liveSnapshot.totalPosts !== undefined && (
-            <> · {formatCurrentPostProgress(liveSnapshot.currentPostIndex, liveSnapshot.totalPosts, liveSnapshot.currentPostTitleOrUrl || "منشور عام")}</>
-          )}
-          {(liveSnapshot.lastBatchComments !== undefined) && <> · {formatItemsCollectedProgress(liveSnapshot.lastBatchComments, rowsCollected)}</>}
-        </p>
-      )}
 
       {liveSnapshot.capReached && (
         <p className="mb-0 mt-3 rounded-[14px] px-3.5 py-2.5 text-xs text-ink" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)" }}>
@@ -93,19 +83,8 @@ export default function ActivityTimeline({
         </p>
       )}
 
-      {hasEvents && (
-        <button
-          type="button"
-          onClick={() => setCollapsed((v) => !v)}
-          aria-expanded={!collapsed}
-          className="mt-3 min-h-11 cursor-pointer border-0 bg-transparent px-0 text-xs text-mut"
-        >
-          {collapsed ? "عرض السجل" : "طي السجل"}
-        </button>
-      )}
-
-      {!collapsed && (
-        <div className="mt-1 flex flex-col gap-2.5">
+      {(
+        <div className="mt-4 flex flex-col gap-3">
           {hasEvents ? (
             events.map((evt, idx) => (
               <p
@@ -113,7 +92,7 @@ export default function ActivityTimeline({
                 className="m-0 flex gap-3 text-sm font-light"
                 style={{ color: evt.kind === "error" ? "var(--bad)" : "var(--ink2)", animation: "up .35s both" }}
               >
-                <time className="tnum min-w-10 text-fnt" dateTime={evt.createdAt}>{formatTime(evt.createdAt)}</time>
+                <time className="tnum min-w-10 text-fnt" dateTime={evt.createdAt}>{clock(evt.createdAt)}</time>
                 <span>
                   {sanitizeActivityText(evt.textAr)}
                   {evt.count !== undefined && <span className="tnum text-fnt"> · {formatNumber(evt.count)}</span>}

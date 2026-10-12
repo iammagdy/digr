@@ -160,7 +160,7 @@ export default function PlanQuoteCard({
             <span className="text-base text-mut" style={{ marginInlineStart: 8 }}>نقطة</span>
           </p>
           <p className="mb-0 mt-2 text-[13px] font-light text-mut">
-            ≈ {formatAr(quote.quotedPoints * creditValue, 2)} ج.م {locked ? "" : `· رصيدك ${formatNumber(balance)} نقطة`}
+            ≈ {formatAr(Number((quote.quotedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatNumber(balance)} نقطة`}
           </p>
         </div>
         <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
