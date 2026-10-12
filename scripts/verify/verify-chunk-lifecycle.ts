@@ -109,6 +109,39 @@ async function main() {
     throw new Error(`Job must be failed and rel_ must exist in ledger`);
   }
 
+  // 7. Explicit Check: record_chunk_failure on a COMPLETED job changes nothing
+  const completedJobId = `job_test_completed_${Date.now()}`;
+  await supabase.from("jobs").insert({
+    id: completedJobId,
+    user_id: TEST_USER_ID,
+    status: "completed",
+    endpoint_id: "tiktok-profile",
+    step: 2,
+    attempt_count: 0,
+    unit_price: 1,
+    reserved_credits: 10,
+    charged_credits: 5,
+    delivered_units: 5,
+    lease_until: null,
+  });
+
+  const { data: compFailRes, error: compFailErr } = await supabase.rpc("record_chunk_failure", {
+    p_job_id: completedJobId,
+    p_error_message: "Failure on already completed job",
+  });
+  if (compFailErr) throw compFailErr;
+  console.log("record_chunk_failure on completed job result:", compFailRes);
+
+  if (!compFailRes.success || !compFailRes.ignored || compFailRes.status !== "completed") {
+    throw new Error("Expected record_chunk_failure on completed job to be ignored without change");
+  }
+
+  // Verify job remains completed and attempt_count is still 0
+  const { data: stillCompletedJob } = await supabase.from("jobs").select("status, attempt_count").eq("id", completedJobId).single();
+  if (stillCompletedJob?.status !== "completed" || stillCompletedJob?.attempt_count !== 0) {
+    throw new Error(`Completed job was modified: ${JSON.stringify(stillCompletedJob)}`);
+  }
+
   console.log("PASS: Chunk lifecycle verification passed (idempotent step completion, exponential backoff, auto-release at 5th attempt).");
 }
 

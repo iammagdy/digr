@@ -91,7 +91,67 @@ async function main() {
     throw new Error(`Expected exactly 1 rel_ and 1 chg_ row, got rel=${relRows?.length}, chg=${chgRows?.length}`);
   }
 
-  console.log("PASS: settle_job_atomic verification passed (settled correctly, idempotent on retry).");
+  // 6. Explicit Check: Settle with active lease MUST raise
+  const leaseJobId = `job_test_lease_${Date.now()}`;
+  await supabase.from("credit_ledger").insert({
+    id: `res_${leaseJobId}`,
+    user_id: TEST_USER_ID,
+    delta: -10,
+    type: "reserve",
+    job_id: leaseJobId,
+    note: "Lease test hold",
+  });
+  await supabase.from("jobs").insert({
+    id: leaseJobId,
+    user_id: TEST_USER_ID,
+    status: "running",
+    endpoint_id: "tiktok-profile",
+    unit_price: 1,
+    delivered_units: 5,
+    reserved_credits: 10,
+    lease_until: new Date(Date.now() + 60_000).toISOString(), // Active lease in future
+  });
+
+  const { error: leaseSettleErr } = await supabase.rpc("settle_job_atomic", {
+    p_job_id: leaseJobId,
+    p_points_cap: 600,
+  });
+  console.log("Settle with active lease error (expected):", leaseSettleErr?.message);
+  if (!leaseSettleErr || !leaseSettleErr.message.includes("active chunk lease")) {
+    throw new Error("Expected settle_job_atomic to raise when active lease is held");
+  }
+
+  // 7. Explicit Check: Settle with unit_price NULL or <= 0 MUST raise
+  const invalidPriceJobId = `job_test_bad_price_${Date.now()}`;
+  await supabase.from("credit_ledger").insert({
+    id: `res_${invalidPriceJobId}`,
+    user_id: TEST_USER_ID,
+    delta: -10,
+    type: "reserve",
+    job_id: invalidPriceJobId,
+    note: "Invalid price test hold",
+  });
+  await supabase.from("jobs").insert({
+    id: invalidPriceJobId,
+    user_id: TEST_USER_ID,
+    status: "running",
+    endpoint_id: "tiktok-profile",
+    unit_price: null,
+    delivered_units: 5,
+    reserved_credits: 10,
+    lease_until: null,
+  });
+
+  const { error: badPriceErr } = await supabase.rpc("settle_job_atomic", {
+    p_job_id: invalidPriceJobId,
+    p_points_cap: 600,
+  });
+  console.log("Settle with null unit_price error (expected):", badPriceErr?.message);
+  if (!badPriceErr || !badPriceErr.message.includes("invalid unit_price")) {
+    throw new Error("Expected settle_job_atomic to raise when unit_price is NULL or <= 0");
+  }
+
+  console.log("PASS: settle_job_atomic verification passed (settled correctly, idempotent, active lease raises, bad price raises).");
 }
 
 main().catch((err) => {
