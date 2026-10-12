@@ -49,15 +49,21 @@ export async function POST(req: NextRequest) {
     else if (sessionCookie) userClient.setSession(sessionCookie);
 
     let verifiedUserId: string;
+    let emailVerified = false;
     try {
       const userAccount = new Account(userClient);
       const userDoc = await userAccount.get();
       verifiedUserId = userDoc.$id;
+      emailVerified = userDoc.emailVerification === true;
     } catch {
       return NextResponse.json(
         { success: false, error: "انتهت صلاحية الجلسة. يرجى تسجيل الدخول مجدداً." },
         { status: 401 }
       );
+    }
+
+    if (!emailVerified) {
+      return NextResponse.json({ success: false, error: "فعّل بريدك الإلكتروني أولًا لبدء البحث." }, { status: 403 });
     }
 
     // 2. Accept Quote & Reserve Credits atomically
