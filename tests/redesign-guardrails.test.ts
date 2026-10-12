@@ -37,8 +37,8 @@ describe("no placeholder text as research parameters", () => {
     expect(page).not.toMatch(/\?\s*"استخدم الافتراضي"/);
   });
 
-  it("DiscoveryCard never submits the literal placeholder as a value", () => {
-    const card = src("src/app/dashboard/chat/components/DiscoveryCard.tsx");
+  it("DetailsBlanks never submits the literal placeholder as a value", () => {
+    const card = src("src/app/dashboard/chat/components/DetailsBlanks.tsx");
     expect(card).not.toContain('"استخدم الافتراضي"');
   });
 
@@ -100,7 +100,7 @@ describe("accessibility foundations", () => {
   });
 
   it("interactive discovery options expose checked state", () => {
-    const card = src("src/app/dashboard/chat/components/DiscoveryCard.tsx");
+    const card = src("src/app/dashboard/chat/components/DetailsBlanks.tsx");
     expect(card).toContain("aria-checked");
   });
 
@@ -115,7 +115,6 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
   const BALANCE_FILES = [
     "src/hooks/useBalance.tsx",
     "src/app/dashboard/topup/page.tsx",
-    "src/app/dashboard/chat/page.tsx",
   ];
 
   it("no failed balance fetch presents as a fake zero", () => {
@@ -125,6 +124,10 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
       expect(code, f).not.toMatch(/\(balance \?\? 0\)/);
       expect(code, f).not.toMatch(/\(userBalance \?\? 0\)/);
     }
+  });
+
+  it("the chat reads the shared ledger balance instead of its own copy", () => {
+    expect(src("src/app/dashboard/chat/page.tsx")).toContain("useBalance()");
   });
 
   it("balance displays route through the honest-display helpers", () => {

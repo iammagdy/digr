@@ -59,8 +59,9 @@ describe("result review UI contracts (release branch)", () => {
   });
 
   it("keeps chat panels touch-accessible, focusable, and reduced-motion aware", () => {
-    expect(page).toContain("aria-controls=\"results-canvas\"");
-    expect(page).toContain("min-h-11 min-w-11");
+    const runSections = readFileSync("src/app/dashboard/chat/components/RunSections.tsx", "utf8");
+    expect(runSections).toContain("aria-controls=\"results-canvas\"");
+    expect(runSections).toContain("min-h-11 min-w-11");
     expect(page).toContain("motion-reduce:animate-none");
     expect(sidebar).toContain('aria-current={n.active ? "page" : undefined}');
     expect(quote).toContain("focus-visible:outline-2");

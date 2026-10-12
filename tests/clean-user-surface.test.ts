@@ -28,19 +28,18 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     expect(card).not.toContain("منهجية الجمع");
     expect(card).not.toContain("قيد التجهيز");
     expect(card).not.toContain("الكتالوج");
-    // Verifies primary "ابدأ" button and secondary "تعديل" link
-    expect(card).toContain('"ابدأ"');
+    // Verifies primary "أوافق وابدأ البحث" button and secondary "تعديل" button
+    expect(card).toContain("أوافق وابدأ البحث");
     expect(card).toContain('"تعديل"');
     // Verifies RTL and plain language steps (what, from where, how many)
     expect(card).toContain('dir="rtl"');
-    expect(card).toContain("خطوات التنفيذ:");
+    expect(card).toContain("أوافق وابدأ البحث");
   });
 
-  it("4. DiscoveryCard hides counters and progress bar for single questions, and has no badges", () => {
-    const discovery = readFileSync("src/app/dashboard/chat/components/DiscoveryCard.tsx", "utf8");
-    expect(discovery).toContain("normalizedQuestions.length > 1 && (");
+  it("4. The details sentence has no counters, progress bar or badges", () => {
+    const discovery = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
+    expect(discovery).not.toContain("answeredCount");
     expect(discovery).not.toContain("<Badge");
-    expect(discovery).toContain("تخصيص الخطة");
   });
 
   it("5. Plan validation errors in planManager contain no 'معطلة في الكتالوج' or technical slugs", () => {
