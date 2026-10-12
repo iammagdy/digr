@@ -31,31 +31,75 @@ If `total_rows` equals `test_user_rows` and the first query returns 0 rows, it i
 > [!NOTE]
 > The known test-only residue is limited to the dedicated test user: **24 compensating ledger rows** and **71 orphan ledger references**. Do not edit or delete these ledger records manually. They are to be removed only by the documented pre-launch reset above, after its pre-check passes. This note is not authorization to run the reset, and it must never be run after launch.
 
-### Step 2: Clean Reset Execution (Child-First Order)
+### Step 2: Clean Reset Execution (Transaction-Wrapped Child-First Order)
+
 ```sql
--- 1. Temporarily disable ledger immutability triggers
+BEGIN;
+
+-- 1. Pre-check guard within transaction: abort if any non-test user data exists
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.credit_ledger 
+    WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid
+  ) THEN
+    RAISE EXCEPTION 'ABORT: Non-test user records exist in credit_ledger! Reset aborted.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.jobs 
+    WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid
+  ) THEN
+    RAISE EXCEPTION 'ABORT: Non-test user records exist in jobs! Reset aborted.';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM public.topups 
+    WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid
+  ) THEN
+    RAISE EXCEPTION 'ABORT: Non-test user records exist in topups! Reset aborted.';
+  END IF;
+END $$;
+
+-- 2. Temporarily disable ledger immutability triggers
 ALTER TABLE public.credit_ledger DISABLE TRIGGER trg_block_ledger_mutation;
 ALTER TABLE public.credit_ledger DISABLE TRIGGER trg_block_ledger_truncate;
 
--- 2. Child-first deletion of all test records (test user 00000000-0000-0000-0000-000000000001)
+-- 3. Child-first deletion of all test records (test user 00000000-0000-0000-0000-000000000001)
 -- Delete dependent grandchild/child rows first to maintain foreign key integrity:
 DELETE FROM public.provider_costs WHERE job_id IN (
   SELECT id FROM public.jobs WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid
 );
 DELETE FROM public.job_events WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
-TRUNCATE TABLE public.credit_ledger;
+DELETE FROM public.credit_ledger WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM public.jobs WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM public.topups WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM public.plans_quotes WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM public.profiles WHERE id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-000000000001'::uuid;
 
--- 3. IMMEDIATELY re-enable ledger immutability triggers
+-- 4. IMMEDIATELY re-enable ledger immutability triggers
 ALTER TABLE public.credit_ledger ENABLE TRIGGER trg_block_ledger_mutation;
 ALTER TABLE public.credit_ledger ENABLE TRIGGER trg_block_ledger_truncate;
 
--- 4. Post-reset verification: Ensure ledger is completely empty
+COMMIT;
+
+-- 5. Post-reset verification: Ensure ledger is completely empty
 SELECT count(*) AS remaining_ledger_rows FROM public.credit_ledger;
+```
+
+### Step 3: Storage Manual Cleanup (Receipts Bucket)
+
+Test run receipts uploaded during verification must be deleted from Supabase Storage:
+
+1. In Supabase Dashboard, navigate to **Storage** -> **Buckets** -> **receipts**.
+2. Select all files uploaded during test runs (prefixed with `vrun_` or matching test receipt IDs).
+3. Click **Delete** to purge test files.
+4. Alternatively, verify via SQL that no orphaned objects remain in the bucket:
+```sql
+SELECT id, name, bucket_id, created_at 
+FROM storage.objects 
+WHERE bucket_id = 'receipts';
 ```
 
 ---
