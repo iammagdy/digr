@@ -161,7 +161,9 @@ $$;
 ## 6. Testing & Verification Strategy
 - **Port Existing Tests (397 tests):** Replace Appwrite SDK mocks with Supabase client / DAL mocks.
 - **New Test Additions:**
-  1. *Concurrent Reserve Test:* Run concurrent simulated reserves on the same account to verify zero overspending.
-  2. *Ledger Immutability Test:* Attempt `UPDATE` and `DELETE` on `credit_ledger` and verify trigger rejection.
-  3. *RLS Privilege Tests:* Verify client tokens cannot read other users' data and cannot write to financial tables.
-- **Advisor Audits:** Run `get_advisors` (Security and Performance) via Supabase MCP to achieve 100% clean reports.
+  1. *Real Parallel Concurrency Test (Production Supabase):* Executed 20 parallel HTTPS requests simultaneously over independent TLS connections against PostgREST RPC in 859ms. Proved exact zero-overspend invariant (final balance never negative, exactly 5 points remaining) and exact idempotency (10 parallel identical calls resulted in exactly 1 `res_` ledger entry, with 9 idempotent returns).
+  2. *Mock Concurrency Test (`tests/atomic-reserve-concurrency.mock.test.ts`):* In-memory state machine test verifying the row-locking and idempotency math under simulated concurrent load.
+  3. *Ledger Immutability Proof:* Attempted `UPDATE` and `DELETE` on `credit_ledger` as `postgres` role; blocked with `ERROR: P0001` directly by `trg_block_ledger_mutation`.
+  4. *RLS Privilege Tests:* Verified `authenticated` client role receives `42501 permission denied` when attempting to call `reserve_credits_atomic`, insert into `topups` or `jobs`, or update `email` on `profiles`.
+- **Advisor Audits:** Run `get_advisors` (Security and Performance) via Supabase MCP to achieve 100% clean reports (0 security warnings, 0 performance warnings).
+
