@@ -5,7 +5,9 @@ import { extractDateHint, extractTopicChips } from "./chatHandler";
 export interface ResearchBrief {
   platforms: string[];
   topics: string[];
+  keywords?: string[];
   targetVolume?: number;
+  postCount?: number;
   commentsPerPost?: number;
   dateRange?: string;
   language?: string;
@@ -43,31 +45,129 @@ export function isGreetingOrGeneralQuestion(text: string): {
  */
 export function isPriceOrProceedIntent(text: string): boolean {
   const pattern =
-    /(هيكلفني كام|احسبلي|احسب لي|السعر|بكام|كم نقطة|كم يكلف|تكلف كام|التكلفة|كم التكلفة|السعر كام|ابدأ|توكل على الله|نفذ|تمام جهز الخطة|اعمل الخطة|موافق|استمر|جاهز|اعتمد)/i;
+    /(خطة|هيكلفني كام|احسبلي|احسب لي|السعر|بكام|كم نقطة|كم يكلف|تكلف كام|التكلفة|كم التكلفة|السعر كام|ابدأ|توكل على الله|نفذ|تمام جهز الخطة|اعمل الخطة|موافق|استمر|جاهز|اعتمد)/i;
   return pattern.test(text);
 }
 
 /**
+ * Extract post/item count if explicitly mentioned (e.g. "10 منشورات", "10 بوستات").
+ */
+export function extractPostCount(text: string): number | undefined {
+  if (!text) return undefined;
+  const m = text.match(/(\d+|[٠-٩]+)\s*(بوست|بوستات|منشور|منشورات|posts?|فيديو|مقاطع)/i);
+  if (m) {
+    const raw = m[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+    const val = parseInt(raw, 10);
+    if (val > 0) return val;
+  }
+  return undefined;
+}
+
+/**
+ * Extract comments-per-post cap if explicitly mentioned.
+ */
+export function extractCommentsPerPost(text: string): number | undefined {
+  if (!text) return undefined;
+  const m = text.match(/(\d+|[٠-٩]+)\s*(تعليق[^\s]*\s*(لكل|في|على)\s*(منشور|بوست)|comments?\s*per\s*post)/i);
+  if (m) {
+    const raw = m[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+    const v = parseInt(raw, 10);
+    if (v > 0) return v;
+  }
+  return undefined;
+}
+
+/**
+ * Infer 5 to 10 relevant Arabic search keywords covering angles of the topic.
+ */
+export function inferRelatedKeywords(topic: string, message: string = ""): string[] {
+  const combined = `${topic} ${message}`.toLowerCase();
+  if (
+    combined.includes("منقولات") ||
+    combined.includes("زواج") ||
+    combined.includes("مهر") ||
+    combined.includes("عروس") ||
+    combined.includes("شبكة")
+  ) {
+    return [
+      "قائمة المنقولات",
+      "المهر",
+      "الشبكة",
+      "تجهيز منزل الزوجية",
+      "حقوق الزوجين",
+      "تكاليف الزواج",
+      "مؤخر الصداق",
+      "شوار العروسة",
+    ];
+  }
+  if (
+    combined.includes("دهب") ||
+    combined.includes("ذهب") ||
+    combined.includes("صاغة") ||
+    combined.includes("عيار")
+  ) {
+    return [
+      "أسعار الذهب",
+      "سعر الذهب عيار 21",
+      "سوق الصاغة",
+      "الجنيه الذهب",
+      "تداولات الذهب",
+      "المصنعية والدمغة",
+      "توقعات أسعار الذهب",
+    ];
+  }
+  if (
+    combined.includes("عقارات") ||
+    combined.includes("شقق") ||
+    combined.includes("إيجار") ||
+    combined.includes("ايجار")
+  ) {
+    return [
+      "أسعار العقارات",
+      "شقق للبيع",
+      "الإيجار القديم والجديد",
+      "التمويل العقاري",
+      "سوق العقارات في مصر",
+      "المطورين العقاريين",
+    ];
+  }
+
+  // General extraction of meaningful terms
+  const chips = extractTopicChips(message || topic, 8);
+  if (chips.length >= 2) return chips;
+  return [topic];
+}
+
+/**
  * Extract target volume count from user request text.
+ * If user explicitly provided postCount and commentsPerPost, volume is calculated as postCount * commentsPerPost.
  */
 export function extractTargetVolume(text: string): number | undefined {
   if (!text) return undefined;
 
+  const postCount = extractPostCount(text);
+  const cpp = extractCommentsPerPost(text);
+  if (postCount && cpp) {
+    return postCount * cpp;
+  }
+
   // Pattern 1: e.g. "3000 comment" or "3000 تعليق" or "500 منشور"
-  const m1 = text.match(/(\d+)\s*(comment|comments|تعليق|تعليقات|بوست|منشور|منشورات|تغريدة|تغريدات|فيديو|مقاطع|سجل|سجلات|عينة|نتيجة)/i);
+  const m1 = text.match(/(\d+|[٠-٩]+)\s*(comment|comments|تعليق|تعليقات|بوست|منشور|منشورات|تغريدة|تغريدات|فيديو|مقاطع|سجل|سجلات|عينة|نتيجة)/i);
   if (m1) {
-    const val = parseInt(m1[1], 10);
+    const raw = m1[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+    const val = parseInt(raw, 10);
     if (val > 0) return val;
   }
 
   // Pattern 2: e.g. "اسحب 3000" or "جمع 500" or "حتى 1000"
-  const m2 = text.match(/(اسحب|سحب|جمع|هات|عايز|عاوز|محتاج|حتى)\s*(\d+)/i);
+  const m2 = text.match(/(اسحب|سحب|جمع|هات|عايز|عاوز|محتاج|حتى)\s*(\d+|[٠-٩]+)/i);
   if (m2) {
-    const val = parseInt(m2[2], 10);
+    const raw = m2[2].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+    const val = parseInt(raw, 10);
     if (val > 0) return val;
   }
 
-  // Pattern 3: any bare number > 10 that isn't a year (like 2026)
+  // Pattern 3: any bare number > 10 that isn't a year (like 2024..2027)
   const nums = text.match(/\b(\d+)\b/g);
   if (nums) {
     for (const n of nums) {
@@ -78,19 +178,6 @@ export function extractTargetVolume(text: string): number | undefined {
     }
   }
 
-  return undefined;
-}
-
-/**
- * Extract comments-per-post cap if explicitly mentioned.
- */
-export function extractCommentsPerPost(text: string): number | undefined {
-  if (!text) return undefined;
-  const m = text.match(/(\d+)\s*(تعليق لكل منشور|تعليقات لكل بوست|تعليق للبوست|تعليقات لكل منشور|comments? per post)/i);
-  if (m) {
-    const v = parseInt(m[1], 10);
-    if (v > 0) return v;
-  }
   return undefined;
 }
 
@@ -162,6 +249,11 @@ export function extractBriefFromCardAnswers(
         brief.notes = (brief.notes ? brief.notes + " | " : "") + `المصدر: ${valToUse}`;
       }
     }
+    // 4b. Post count
+    else if (qId.includes("post") || qText.includes("منشورات") || qText.includes("منشور")) {
+      const pc = extractPostCount(valToUse) || extractTargetVolume(valToUse);
+      if (pc) brief.postCount = pc;
+    }
     // 5. Date range
     else if (qId.includes("date") || qId.includes("time") || qText.includes("فترة") || qText.includes("تاريخ") || qText.includes("زمن")) {
       if (valToUse) brief.dateRange = valToUse;
@@ -181,6 +273,13 @@ export function extractBriefFromCardAnswers(
     } else if (valToUse) {
       brief.notes = (brief.notes ? brief.notes + " | " : "") + `${ans.question}: ${valToUse}`;
     }
+  }
+
+  if (brief.postCount && brief.commentsPerPost && (!brief.targetVolume || brief.targetVolume <= 0)) {
+    brief.targetVolume = brief.postCount * brief.commentsPerPost;
+  }
+  if (brief.topics.length > 0 && (!brief.keywords || brief.keywords.length === 0)) {
+    brief.keywords = inferRelatedKeywords(brief.topics.join(" "));
   }
 
   return brief;
@@ -205,7 +304,9 @@ export function extractBriefFromMessage(
   const brief: ResearchBrief = {
     platforms: [...currentBrief.platforms],
     topics: [...currentBrief.topics],
+    keywords: currentBrief.keywords ? [...currentBrief.keywords] : undefined,
     targetVolume: currentBrief.targetVolume,
+    postCount: currentBrief.postCount,
     commentsPerPost: currentBrief.commentsPerPost,
     dateRange: currentBrief.dateRange,
     language: currentBrief.language,
@@ -221,16 +322,22 @@ export function extractBriefFromMessage(
     }
   }
 
-  // 2. Volume
-  const vol = extractTargetVolume(userMessage);
-  if (vol !== undefined) {
-    brief.targetVolume = vol;
+  // 2. Post count & Comments per post
+  const postCount = extractPostCount(userMessage);
+  if (postCount !== undefined) {
+    brief.postCount = postCount;
   }
-
-  // 3. Comments per post
   const cpp = extractCommentsPerPost(userMessage);
   if (cpp !== undefined) {
     brief.commentsPerPost = cpp;
+  }
+
+  // 3. Volume
+  const vol = extractTargetVolume(userMessage);
+  if (vol !== undefined) {
+    brief.targetVolume = vol;
+  } else if (brief.postCount && brief.commentsPerPost) {
+    brief.targetVolume = brief.postCount * brief.commentsPerPost;
   }
 
   // 4. Date range
@@ -242,12 +349,13 @@ export function extractBriefFromMessage(
   // 5. Topics
   const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);
   if (topicMatch) {
-    const rawMatch = topicMatch[1].trim();
-    const cleaned = rawMatch
-      .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة|آخر شهر|آخر أسبوع|آخر ٣ شهور)\b/gi, "")
+    let rawMatch = topicMatch[1].trim();
+    rawMatch = rawMatch
+      .replace(/(?:خلال الفترة|خلال|من الفترة|بحد أقصى|بحد اقصى|عدد|آخر شهر|آخر أسبوع).*$/i, "")
+      .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة)\b/gi, "")
       .trim();
-    if (cleaned.length > 1 && !brief.topics.includes(cleaned)) {
-      brief.topics.push(cleaned);
+    if (rawMatch.length > 1 && !brief.topics.includes(rawMatch)) {
+      brief.topics.push(rawMatch);
     }
   }
 
@@ -255,6 +363,17 @@ export function extractBriefFromMessage(
   for (const c of chips) {
     if (!brief.topics.includes(c)) {
       brief.topics.push(c);
+    }
+  }
+
+  // 6. Infer 5 to 10 relevant Arabic keywords
+  const primaryTopic = brief.topics[0] || userMessage;
+  const inferred = inferRelatedKeywords(primaryTopic, userMessage);
+  if (!brief.keywords || brief.keywords.length === 0) {
+    brief.keywords = inferred;
+  } else {
+    for (const kw of inferred) {
+      if (!brief.keywords.includes(kw)) brief.keywords.push(kw);
     }
   }
 
@@ -267,7 +386,10 @@ export function extractBriefFromMessage(
 export function isBriefComplete(brief: ResearchBrief): boolean {
   const hasPlatform = brief.platforms.length > 0;
   const hasTopic = brief.topics.length > 0;
-  const hasVolume = typeof brief.targetVolume === "number" && brief.targetVolume > 0;
+  const hasVolume = Boolean(
+    (typeof brief.targetVolume === "number" && brief.targetVolume > 0) ||
+    (typeof brief.postCount === "number" && brief.postCount > 0 && typeof brief.commentsPerPost === "number" && brief.commentsPerPost > 0)
+  );
   return hasPlatform && hasTopic && hasVolume;
 }
 
@@ -290,14 +412,24 @@ export function formatBriefForSystemPrompt(brief: ResearchBrief): string {
     lines.push("- موضوع البحث: غير محدد بعد");
   }
 
-  if (brief.targetVolume !== undefined) {
-    lines.push(`- حجم البيانات المستهدف: حتى ${brief.targetVolume} سجل`);
-  } else {
-    lines.push("- حجم البيانات: غير محدد بعد");
+  if (brief.keywords && brief.keywords.length > 0) {
+    lines.push(`- الكلمات المفتاحية المقترحة: ${brief.keywords.join("، ")}`);
+  }
+
+  if (brief.postCount !== undefined) {
+    lines.push(`- عدد المنشورات المستهدف: حتى ${brief.postCount} منشور`);
   }
 
   if (brief.commentsPerPost !== undefined) {
     lines.push(`- سقف التعليقات لكل منشور: حتى ${brief.commentsPerPost} تعليق`);
+  }
+
+  if (brief.targetVolume !== undefined) {
+    lines.push(`- حجم البيانات الإجمالي المستهدف: حتى ${brief.targetVolume} سجل`);
+  } else if (brief.postCount && brief.commentsPerPost) {
+    lines.push(`- حجم البيانات الإجمالي المستهدف: حتى ${brief.postCount * brief.commentsPerPost} سجل`);
+  } else {
+    lines.push("- حجم البيانات: غير محدد بعد");
   }
 
   if (brief.dateRange) {

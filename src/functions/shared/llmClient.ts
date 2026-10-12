@@ -228,7 +228,9 @@ export const UpdateBriefSchema = z.object({
   type: z.literal("update_brief"),
   platforms: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.string()).optional()),
   topics: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.string()).optional()),
+  keywords: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.string()).optional()),
   targetVolume: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : val), z.number().int().positive().optional()),
+  postCount: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : val), z.number().int().positive().optional()),
   commentsPerPost: z.preprocess((val) => (typeof val === "string" ? parseInt(val, 10) : val), z.number().int().positive().optional()),
   dateRange: z.string().optional(),
   language: z.string().optional(),
@@ -423,7 +425,9 @@ export const ACTION_RESULT_JSON_SCHEMA = {
     },
     platforms: { type: "array", items: { type: "string" } },
     topics: { type: "array", items: { type: "string" } },
+    keywords: { type: "array", items: { type: "string" } },
     targetVolume: { type: "integer" },
+    postCount: { type: "integer" },
     commentsPerPost: { type: "integer" },
     dateRange: { type: "string" },
     language: { type: "string" },
@@ -1083,6 +1087,99 @@ export class LlmClient {
       };
     }
 
+    // B2b. Specific Wedding & Manqulat Request (Claude Decides: Complete plan directly)
+    const hasPresentCapabilities =
+      Array.isArray(options.sanitizedCapabilities) && options.sanitizedCapabilities.length > 0;
+    const isExactWeddingPlan =
+      hasPresentCapabilities &&
+      options.testScenario !== "phase_b_scenario_b" &&
+      (promptLower.includes("10 منشورات") ||
+        promptLower.includes("50 تعليق") ||
+        (promptLower.includes("المنقولات") && promptLower.includes("2026") && !promptLower.includes("ريلز")));
+    if (isExactWeddingPlan) {
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: "جمع 10 منشورات عامة و500 تعليق على فيسبوك حول قائمة المنقولات وتكاليف الزواج في مصر",
+          capabilities: [
+            {
+              stepId: "fb_posts_search",
+              capabilitySlug: "facebook-post-search",
+              endpointId: "facebook-post-search",
+              params: {
+                query: "قائمة المنقولات وتكاليف الزواج والمهر والشبكة",
+                dateFrom: "2026-01-01",
+                dateTo: "2026-09-30",
+              },
+              targetVolumeMin: 1,
+              targetVolumeMax: 10,
+              paginationStrategy: "offset",
+              volumeMode: "bounded",
+            },
+            {
+              stepId: "fb_post_comments",
+              capabilitySlug: "facebook-post-comments",
+              endpointId: "facebook-post-comments",
+              params: {
+                postUrl: "https://www.facebook.com/post/1",
+                includeReplies: true,
+              },
+              targetVolumeMin: 10,
+              targetVolumeMax: 500,
+              paginationStrategy: "cursor",
+              dependsOn: ["fb_posts_search"],
+              inputFrom: {
+                stepId: "fb_posts_search",
+                field: "postUrl",
+                paramKey: "postUrl",
+              },
+              fanOutCap: 50,
+              windowed: true,
+            },
+          ],
+          outputFormats: ["xlsx", "csv", "pdf"],
+          methodologyNotes:
+            "الكلمات المفتاحية المقترحة: قائمة المنقولات، المهر، الشبكة، مؤخر الصداق، تجهيز منزل الزوجية، تكاليف الزواج، أزمة الزواج في مصر. جمع المنشورات بالفترة المحددة بحد أقصى 50 تعليقاً لكل منشور.",
+        },
+        inputTokens: 600,
+        outputTokens: 120,
+        costUsd: (600 * 0.10 + 120 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    // B2c. Vague request mentioning platform only (e.g. "عايز بيانات فيسبوك", "عايز بيانات تيك توك")
+    const isVaguePlatformRequest =
+      !options.testScenario?.startsWith("phase_b_scenario_c") &&
+      (/^(عايز|عاوز|محتاج|أريد|اريد)\s+بيانات\s+(فيسبوك|تيك توك|انستغرام|تويتر|x)$/i.test(promptLower.trim()) ||
+        /^(عايز|عاوز|محتاج|أريد|اريد)\s+(فيسبوك|تيك توك|انستغرام|تويتر|x)\s+بيانات$/i.test(promptLower.trim()) ||
+        promptLower.trim() === "عايز بيانات فيسبوك" ||
+        promptLower.trim() === "عايز بيانات تيك توك");
+    if (isVaguePlatformRequest) {
+      return {
+        output: {
+          type: "ask_clarification",
+          reasonAr: "عشان أجهز لك خطة دقيقة، محتاج أعرف:",
+          questions: [
+            {
+              id: "code_topic",
+              text: "ما الموضوع أو الكلمات المفتاحية المطلوب البحث عنها؟",
+              question: "ما الموضوع أو الكلمات المفتاحية المطلوب البحث عنها؟",
+              type: "free",
+              options: [],
+              allowOther: true,
+            },
+          ],
+        },
+        inputTokens: 350,
+        outputTokens: 50,
+        costUsd: (350 * 0.10 + 50 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
     // B3. Deterministic Phase 2 Plan Proposal Handling
     const hasPhase2PlanInstruction = (options.messages || []).some(
       (m) => typeof m.content === "string" && (m.content.includes("propose_plan") && m.content.includes("خطة مسعرة")),
@@ -1158,14 +1255,6 @@ export class LlmClient {
               question: "ما حجم البيانات المطلوب جمعها؟",
               type: "single",
               options: ["حتى 500 سجل", "حتى 1000 سجل", "أكثر من 1000 سجل"],
-              allowOther: true,
-            },
-            {
-              id: "q_date",
-              text: "ما الفترة الزمنية المستهدفة؟",
-              question: "ما الفترة الزمنية المستهدفة؟",
-              type: "single",
-              options: ["آخر شهر", "آخر 3 شهور", "فترة مخصصة"],
               allowOther: true,
             },
           ],
