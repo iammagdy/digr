@@ -48,13 +48,8 @@ describe("Phase 5: Ready-to-Use Example Templates on Landing & Chat", () => {
     expect(customTemplates[0].approximatePoints).toBeGreaterThan(defaultTemplates[0].approximatePoints);
   });
 
-  it("renders أمثلة جاهزة and the price disclaimer on both the landing page and the chat assistant", () => {
-    const landingSource = readFileSync("src/app/page.tsx", "utf-8");
+  it("renders أمثلة جاهزة and the price disclaimer in the chat assistant (the V7 landing has no templates section)", () => {
     const chatSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf-8");
-
-    expect(landingSource).toContain("buildReadyExampleTemplates");
-    expect(landingSource).toContain("EXAMPLE_TEMPLATES_HEADING_AR");
-    expect(landingSource).toContain("EXAMPLE_PRICE_DISCLAIMER_AR");
 
     expect(chatSource).toContain("buildReadyExampleTemplates");
     expect(chatSource).toContain("EXAMPLE_TEMPLATES_HEADING_AR");

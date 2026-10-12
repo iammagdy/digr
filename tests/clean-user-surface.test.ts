@@ -6,7 +6,7 @@ import { LlmClient } from "../src/functions/shared/llmClient";
 
 describe("Task 4: Clean User Surface & Card Redesign", () => {
   it("1. Landing page contains no availability or pending preparation badges", () => {
-    const landing = readFileSync("src/app/page.tsx", "utf8");
+    const landing = ["src/app/page.tsx", "src/components/landing/Sections.tsx", "src/components/landing/HeroLens.tsx", "src/components/landing/data.ts"].map((f) => readFileSync(f, "utf8")).join("\n");
     expect(landing).not.toContain("قيد التجهيز");
     expect(landing).not.toContain("متاح الآن");
     expect(landing).not.toContain("طلب تفعيل");

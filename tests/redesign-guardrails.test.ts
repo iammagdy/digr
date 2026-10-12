@@ -16,6 +16,13 @@ import { join } from "node:path";
 
 const ROOT = process.cwd();
 
+/** Landing copy lives across the landing components (design V7). */
+function landingSrc(): string {
+  return ["src/app/page.tsx", "src/components/landing/Sections.tsx", "src/components/landing/HeroLens.tsx", "src/components/landing/data.ts"]
+    .map((f) => src(f))
+    .join("\n");
+}
+
 function src(relativePath: string): string {
   const full = join(ROOT, relativePath);
   if (!existsSync(full)) throw new Error(`missing source file: ${relativePath}`);
@@ -43,14 +50,15 @@ describe("no placeholder text as research parameters", () => {
 
 describe("no fabricated marketing claims", () => {
   it("landing page labels the demo as illustrative", () => {
-    const landing = src("src/app/page.tsx");
-    expect(landing).toContain("عرض توضيحي");
+    const landing = landingSrc();
+    expect(landing).toContain("مثال توضيحي");
   });
 
   it("landing page contains no invented customer counts or success rates", () => {
-    const landing = src("src/app/page.tsx");
+    const landing = landingSrc();
     expect(landing).not.toMatch(/\d+\s*عميل/);
-    expect(landing).not.toMatch(/\d+\s*%/);
+    // CSS percentages (masks, widths) are fine; marketing claims live in the copy module.
+    expect(src("src/components/landing/data.ts").replace(/translate[XY]?\([^)]*\)/g, "")).not.toMatch(/\d+\s*%/);
     expect(landing).not.toContain("ضمان التغطية");
     expect(landing).not.toMatch(/\+?\d{3,}\s*(مستخدم|باحث)/);
   });
@@ -65,7 +73,7 @@ describe("no internal identifiers in customer-facing code", () => {
   });
 
   it("landing pricing section shows no provider costs", () => {
-    const landing = src("src/app/page.tsx");
+    const landing = landingSrc();
     for (const word of FORBIDDEN) expect(landing).not.toContain(word);
   });
 });
