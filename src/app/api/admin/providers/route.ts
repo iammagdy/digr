@@ -3,6 +3,7 @@ import { Query } from "node-appwrite";
 import { getLlmStatusSnapshot } from "@/functions/shared/llmClient";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { LLM_KEY_ENV, LLM_MODEL_ENV, last4 } from "@/lib/server/providerEnv";
+import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
 
 export const dynamic = "force-dynamic";
 
@@ -61,4 +62,40 @@ export async function GET(req: NextRequest) {
       callsToday: tregCallsToday,
     },
   });
+}
+
+const FIELD_LABEL_KIND: Record<string, "key" | "toggle" | "setting"> = {
+  ANTHROPIC_API_KEY: "key", OPENAI_API_KEY: "key", TREG_TOKEN: "key", LLM_ENABLED: "toggle", TREG_LIVE: "toggle",
+};
+
+/**
+ * Updates provider variables (LLM_ENABLED / LLM_PROVIDER / model / API key / TREG_LIVE / TREG_TOKEN / TREG_BASE_URL).
+ * The change is written to the Appwrite Site and job functions, which are redeployed; the UI says it takes effect after a restart.
+ * Secrets are accepted here but only ever echoed back as the last 4 characters.
+ */
+export async function POST(req: NextRequest) {
+  const auth = await authenticateAdmin(req);
+  if (!auth.ok) return auth.response;
+  const body = await req.json().catch(() => ({}));
+  const updates: Array<{ key: EnvKey; value: string }> = Array.isArray(body?.updates) ? body.updates : [];
+  if (!updates.length || updates.length > 4) return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
+
+  for (const u of updates) {
+    const err = typeof u?.key === "string" && typeof u?.value === "string" ? validateEnvUpdate(u.key, u.value) : "طلب غير صالح";
+    if (err) return NextResponse.json({ error: err, key: u?.key }, { status: 400 });
+  }
+
+  const results = await applyEnvUpdates(auth.ctx.client, updates);
+
+  for (const u of updates) {
+    const kind = FIELD_LABEL_KIND[u.key] ?? "setting";
+    const label = kind === "key" ? "تغيير مفتاح" : kind === "toggle" ? "تشغيل/إيقاف" : "تغيير إعداد";
+    const before = !SECRET_KEYS.has(u.key) ? (process.env[u.key] ?? "—") : null;
+    const target = SECRET_KEYS.has(u.key)
+      ? `${u.key} · ينتهي بـ ${u.value.trim().slice(-4)}`
+      : `${u.key}: ${before} → ${u.value.trim()}`;
+    await auth.ctx.audit(kind, label, target, { targetType: "env", targetId: u.key });
+  }
+
+  return NextResponse.json({ success: results.some((r) => r.ok), results, needsRestart: true });
 }
