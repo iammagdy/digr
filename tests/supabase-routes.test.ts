@@ -185,7 +185,7 @@ describe("Supabase Route Handlers & Business Rules", () => {
       user_id: "user-1",
       status: "quoted",
       expires_at: new Date(Date.now() + 60000).toISOString(),
-      items: [{ endpointId: "test-ep", targetVolumeMin: 10, targetVolumeMax: 10 }],
+      items: [{ endpointId: "test-ep", unitPricePoints: 10, targetVolumeMin: 10, targetVolumeMax: 10 }],
       total_reserved_credits: 100,
     });
 
@@ -206,7 +206,7 @@ describe("Supabase Route Handlers & Business Rules", () => {
       user_id: "user-1",
       status: "quoted",
       expires_at: new Date(Date.now() + 60000).toISOString(),
-      items: [{ endpointId: "fb-comments", targetVolumeMin: 50, targetVolumeMax: 50 }],
+      items: [{ endpointId: "fb-comments", unitPricePoints: 1.2, targetVolumeMin: 50, targetVolumeMax: 50 }],
       total_reserved_credits: 60,
     });
 

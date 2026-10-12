@@ -127,10 +127,29 @@ export async function acceptQuoteSupabase(
     };
   }
 
+  // 7. Plan Items Validation: Single-item constraint & strict unit price check
+  if (items.length !== 1) {
+    return {
+      success: false,
+      statusCode: 400,
+      errorAr: "عروض الأسعار تدعم تنفيذ قدرة بحثية واحدة لكل طلب حالياً.",
+    };
+  }
+
+  const firstItem = items[0];
+  const unitPrice = (firstItem as any)?.unitPricePoints;
+  if (typeof unitPrice !== "number" || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+    return {
+      success: false,
+      statusCode: 400,
+      errorAr: "سعر الوحدة غير محدد أو غير صالح في بنود العرض.",
+    };
+  }
+
   const requiredPoints = Number(quoteDoc.total_reserved_credits);
   const jobId = `job_${crypto.randomBytes(12).toString("hex")}`;
 
-  // 7. Atomic Reserve Call via Postgres RPC (takes FOR UPDATE profile lock)
+  // 8. Atomic Reserve Call via Postgres RPC (takes FOR UPDATE profile lock)
   const reserveRes = await reserveCreditsAtomic(
     adminClient,
     userId,
@@ -155,14 +174,13 @@ export async function acceptQuoteSupabase(
     };
   }
 
-  // 8. Update Quote Document to 'accepted'
+  // 9. Update Quote Document to 'accepted'
   await adminClient
     .from("plans_quotes")
     .update({ status: "accepted" })
     .eq("id", quoteId);
 
-  // 9. Create Job row in 'jobs'
-  const firstItem = items[0] || { endpointId: "unknown", targetVolumeMin: 1, targetVolumeMax: 1 };
+  // 10. Create Job row in 'jobs' with exact unit_price from quote item
   await adminClient
     .from("jobs")
     .insert({
@@ -170,6 +188,7 @@ export async function acceptQuoteSupabase(
       user_id: userId,
       status: "queued",
       endpoint_id: firstItem.endpointId || firstItem.capabilitySlug || "default",
+      unit_price: unitPrice,
       target_volume_min: firstItem.targetVolumeMin || 1,
       target_volume_max: firstItem.targetVolumeMax || 1,
       reserved_credits: requiredPoints,

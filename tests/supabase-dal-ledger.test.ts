@@ -9,6 +9,8 @@ import {
   applyTopup,
 } from "../src/lib/supabase/ledger";
 import { createQuoteRecord } from "../src/lib/supabase/quotes";
+import { acceptQuoteSupabase } from "../src/lib/supabase/quoteAccept";
+import crypto from "crypto";
 
 
 describe("Supabase Ledger DAL & Invariants", () => {
@@ -196,4 +198,154 @@ describe("Supabase Ledger DAL & Invariants", () => {
     expect(quote.quote_hash).toBeDefined();
     expect(new Date(quote.expires_at).getTime()).toBeGreaterThan(Date.now());
   });
+
+  describe("acceptQuoteSupabase strict validations", () => {
+    let mockClient: any;
+    let quoteStore: Record<string, any>;
+    let jobsStore: any[];
+    let reservedCalls: any[];
+
+    beforeEach(() => {
+      quoteStore = {};
+      jobsStore = [];
+      reservedCalls = [];
+
+      mockClient = {
+        from: vi.fn((table: string) => {
+          if (table === "plans_quotes") {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn((col: string, val: string) => ({
+                  single: vi.fn(async () => {
+                    const found = quoteStore[val];
+                    return { data: found || null, error: found ? null : { message: "not found" } };
+                  }),
+                })),
+              })),
+              update: vi.fn((data: any) => ({
+                eq: vi.fn(async (col: string, val: string) => {
+                  if (quoteStore[val]) quoteStore[val] = { ...quoteStore[val], ...data };
+                  return { data: null, error: null };
+                }),
+              })),
+            };
+          }
+          if (table === "jobs") {
+            return {
+              select: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  in: vi.fn(async () => ({ count: 0, error: null })),
+                })),
+              })),
+              insert: vi.fn(async (job: any) => {
+                jobsStore.push(job);
+                return { data: job, error: null };
+              }),
+            };
+          }
+          if (table === "job_events") {
+            return {
+              insert: vi.fn(async () => ({ data: null, error: null })),
+            };
+          }
+          return {};
+        }),
+        rpc: vi.fn(async (fnName: string, params: any) => {
+          if (fnName === "reserve_credits_atomic") {
+            reservedCalls.push(params);
+            return { data: { success: true, balance: 100 }, error: null };
+          }
+          return { data: null, error: null };
+        }),
+      };
+    });
+
+    it("rejects and reserves NOTHING if unitPricePoints is missing from the quote item", async () => {
+      const quoteId = "quote-missing-price";
+      const items = [{ capabilitySlug: "tiktok-profile", targetVolumeMin: 1, targetVolumeMax: 10 }]; // No unitPricePoints!
+      const quoteHash = crypto.createHash("sha256").update(JSON.stringify({ items, outputFormats: ["xlsx"] })).digest("hex");
+
+      quoteStore[quoteId] = {
+        id: quoteId,
+        user_id: "user-1",
+        status: "quoted",
+        items,
+        total_reserved_credits: 20,
+        quote_hash: quoteHash,
+        output_formats: ["xlsx"],
+        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      };
+
+      const result = await acceptQuoteSupabase(mockClient, {
+        userId: "user-1",
+        quoteId,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.statusCode).toBe(400);
+      expect(result.errorAr).toContain("سعر الوحدة غير محدد");
+      expect(reservedCalls.length).toBe(0); // ZERO reservations!
+      expect(jobsStore.length).toBe(0); // ZERO jobs created!
+    });
+
+    it("rejects and reserves NOTHING if quote has multiple items (strictly limits to 1 item)", async () => {
+      const quoteId = "quote-multi-items";
+      const items = [
+        { capabilitySlug: "tiktok-profile", unitPricePoints: 2, targetVolumeMin: 1, targetVolumeMax: 10 },
+        { capabilitySlug: "facebook-comments", unitPricePoints: 3, targetVolumeMin: 1, targetVolumeMax: 20 },
+      ];
+      const quoteHash = crypto.createHash("sha256").update(JSON.stringify({ items, outputFormats: ["xlsx"] })).digest("hex");
+
+      quoteStore[quoteId] = {
+        id: quoteId,
+        user_id: "user-1",
+        status: "quoted",
+        items,
+        total_reserved_credits: 80,
+        quote_hash: quoteHash,
+        output_formats: ["xlsx"],
+        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      };
+
+      const result = await acceptQuoteSupabase(mockClient, {
+        userId: "user-1",
+        quoteId,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.statusCode).toBe(400);
+      expect(result.errorAr).toContain("قدرة بحثية واحدة لكل طلب");
+      expect(reservedCalls.length).toBe(0); // ZERO reservations!
+      expect(jobsStore.length).toBe(0);
+    });
+
+    it("accepts valid single-item quote with unitPricePoints and writes unit_price into jobs", async () => {
+      const quoteId = "quote-valid";
+      const items = [{ capabilitySlug: "tiktok-profile", unitPricePoints: 2.5, targetVolumeMin: 1, targetVolumeMax: 10 }];
+      const quoteHash = crypto.createHash("sha256").update(JSON.stringify({ items, outputFormats: ["xlsx"] })).digest("hex");
+
+      quoteStore[quoteId] = {
+        id: quoteId,
+        user_id: "user-1",
+        status: "quoted",
+        items,
+        total_reserved_credits: 25,
+        quote_hash: quoteHash,
+        output_formats: ["xlsx"],
+        expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      };
+
+      const result = await acceptQuoteSupabase(mockClient, {
+        userId: "user-1",
+        quoteId,
+      });
+
+      expect(result.success).toBe(true);
+      expect(reservedCalls.length).toBe(1);
+      expect(reservedCalls[0].p_amount).toBe(25);
+      expect(jobsStore.length).toBe(1);
+      expect(jobsStore[0].unit_price).toBe(2.5); // Exact unit price without buffer!
+    });
+  });
 });
+
