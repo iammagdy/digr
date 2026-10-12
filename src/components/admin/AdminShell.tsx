@@ -231,7 +231,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     {([7, 30, 90] as Range[]).map((r) => (
                       <button
                         key={r} type="button" onClick={() => setRange(r)} aria-pressed={range === r}
-                        className="min-h-11 cursor-pointer whitespace-nowrap rounded-[9px] border-0 px-2.5 text-xs font-semibold"
+                        className="min-h-11 min-w-11 cursor-pointer whitespace-nowrap rounded-[9px] border-0 px-2.5 text-xs font-semibold"
                         style={{ background: range === r ? "var(--sf)" : "transparent", color: range === r ? "var(--ink)" : "var(--mut)", boxShadow: range === r ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
                       >
                         {mobile ? `${toArabicDigits(r)}ي` : `${toArabicDigits(r)} ${r === 7 ? "أيام" : "يومًا"}`}
@@ -241,13 +241,13 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 )}
                 <button
                   type="button" onClick={openBell} aria-label="تنبيهات الإدارة" aria-expanded={bell}
-                  className="relative flex h-[42px] w-[42px] shrink-0 cursor-pointer items-center justify-center rounded-xl border border-ln text-ink"
+                  className="relative flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-ln text-ink"
                   style={{ background: bell ? "var(--sf2)" : "var(--sf)" }}
                 >
                   <AIcon d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8M10 20a2 2 0 0 0 4 0" size={17} />
                   {unread > 0 && <span className="absolute -left-[5px] -top-[5px] flex h-[19px] min-w-[19px] items-center justify-center rounded-full border-2 border-bg bg-gold px-[5px] text-[10px] font-bold text-white">{formatAr(unread)}</span>}
                 </button>
-                <button type="button" onClick={toggleTheme} aria-label="تبديل المظهر" className="flex h-[42px] w-[42px] shrink-0 cursor-pointer items-center justify-center rounded-xl border border-ln bg-sf text-mut">
+                <button type="button" onClick={toggleTheme} aria-label="تبديل المظهر" className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl border border-ln bg-sf text-mut">
                   <AIcon d={theme === "dark" ? ADMIN_IC.sun : ADMIN_IC.moon} size={16} />
                 </button>
               </div>

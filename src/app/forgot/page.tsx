@@ -37,13 +37,13 @@ export default function ForgotPage() {
           <input type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className={`${authInput} text-left`} />
           <button type="submit" disabled={busy} className={`${authPrimaryBtn} mt-1.5`}>إرسال رابط إعادة التعيين</button>
           {error && <AuthToast tone="bad">{error}</AuthToast>}
-          <Link href="/login" className="py-2.5 text-center text-sm text-mut">→ العودة لتسجيل الدخول</Link>
+          <Link href="/login" className="flex min-h-11 items-center justify-center text-sm text-mut">→ العودة لتسجيل الدخول</Link>
         </form>
       ) : (
         <div className="mt-7 flex flex-col gap-3.5" style={{ animation: "up .5s both" }}>
           <p className="m-0 rounded-[18px] bg-sf2 px-[18px] py-3.5 text-sm leading-[1.9] text-ink">إذا كان البريد مسجلًا لدينا، ستصلك رسالة خلال دقائق برابط صالح لمدة ساعة.</p>
           <Link href="/reset" className={`${authPrimaryBtn} min-h-[58px] text-[15px]`}>فتحت الرابط — تعيين كلمة مرور جديدة</Link>
-          <Link href="/login" className="py-2.5 text-center text-sm text-mut">→ العودة لتسجيل الدخول</Link>
+          <Link href="/login" className="flex min-h-11 items-center justify-center text-sm text-mut">→ العودة لتسجيل الدخول</Link>
         </div>
       )}
     </AuthLayout>

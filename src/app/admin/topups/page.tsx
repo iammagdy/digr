@@ -147,7 +147,7 @@ export default function AdminTopupsPage() {
           const checked = sel.includes(t.id);
           return (
             <div key={t.id} className="flex items-center gap-1">
-              <button type="button" role="checkbox" aria-checked={checked} aria-label="تحديد الطلب" onClick={() => setSel(checked ? sel.filter((x) => x !== t.id) : [...sel, t.id])} className="flex h-11 w-10 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent">
+              <button type="button" role="checkbox" aria-checked={checked} aria-label="تحديد الطلب" onClick={() => setSel(checked ? sel.filter((x) => x !== t.id) : [...sel, t.id])} className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center border-0 bg-transparent">
                 <span className="flex h-5 w-5 items-center justify-center rounded-md text-xs leading-none text-white" style={{ border: `1.5px solid ${checked ? "var(--gold)" : "var(--ln2)"}`, background: checked ? "var(--gold)" : "transparent" }}>{checked ? "✓" : ""}</span>
               </button>
               <button

@@ -18,7 +18,7 @@ export function GlassHeader() {
         >
           <span aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[inherit]" style={{ background: "linear-gradient(180deg,var(--pill-gloss),transparent 55%)" }} />
           <div className="relative flex items-center gap-3.5">
-            <Link href="/" aria-label="ديجر"><Wordmark height={28} className="min-[760px]:[&_img]:!h-8" /></Link>
+            <Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Wordmark height={28} className="min-[760px]:[&_img]:!h-8" /></Link>
             <span className="hidden h-[22px] w-px bg-ln2 min-[760px]:block" />
             <span className="hidden whitespace-nowrap text-sm font-light text-mut min-[760px]:block">بحثك يبدأ من هنا</span>
           </div>

@@ -19,7 +19,7 @@ const MONO = { fontFamily: "ui-monospace,monospace" } as const;
 
 function Switch({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
   return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={onClick} className="relative h-8 w-[54px] shrink-0 cursor-pointer rounded-full border-0 transition-colors duration-[250ms]" style={{ background: on ? "var(--ok)" : "var(--ln2)" }}>
+    <button type="button" role="switch" aria-checked={on} aria-label={label} onClick={onClick} className="hit relative h-8 w-[54px] shrink-0 cursor-pointer rounded-full border-0 transition-colors duration-[250ms]" style={{ background: on ? "var(--ok)" : "var(--ln2)" }}>
       <span className="absolute top-[3px] h-[26px] w-[26px] rounded-full bg-white" style={{ right: on ? 3 : 25, boxShadow: "0 1px 3px rgba(0,0,0,.3)", transition: "right .25s cubic-bezier(.2,.7,.2,1)" }} />
     </button>
   );

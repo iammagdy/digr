@@ -149,7 +149,7 @@ export default function SettingsPage() {
                 </span>
                 <button
                   type="button" role="switch" aria-checked={on} aria-label={label} onClick={() => togglePref(id)}
-                  className="relative h-[30px] w-[50px] shrink-0 cursor-pointer rounded-full border-0 transition-colors duration-[250ms]"
+                  className="hit relative h-[30px] w-[50px] shrink-0 cursor-pointer rounded-full border-0 transition-colors duration-[250ms]"
                   style={{ background: on ? "var(--ok)" : "var(--ln2)" }}
                 >
                   <span className="absolute top-[3px] h-6 w-6 rounded-full bg-white" style={{ right: on ? 3 : 23, boxShadow: "0 1px 3px rgba(0,0,0,.3)", transition: "right .25s cubic-bezier(.2,.7,.2,1)" }} />
@@ -163,7 +163,7 @@ export default function SettingsPage() {
           <h3 className="m-0 text-[15px] font-semibold text-ink">المظهر</h3>
           <div className="grid grid-cols-2 gap-1 rounded-[14px] bg-sf2 p-1">
             {([["light", "فاتح"], ["dark", "داكن"]] as const).map(([t, label]) => (
-              <button key={t} type="button" onClick={() => setTheme(t)} aria-pressed={theme === t} className="min-h-[42px] cursor-pointer rounded-[10px] border-0 text-[13px] text-ink" style={{ background: theme === t ? "var(--sf)" : "transparent" }}>{label}</button>
+              <button key={t} type="button" onClick={() => setTheme(t)} aria-pressed={theme === t} className="min-h-11 cursor-pointer rounded-[10px] border-0 text-[13px] text-ink" style={{ background: theme === t ? "var(--sf)" : "transparent" }}>{label}</button>
             ))}
           </div>
         </section>

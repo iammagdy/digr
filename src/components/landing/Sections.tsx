@@ -112,8 +112,8 @@ export function FinalCta() {
       <Link href="/register" className="mt-8 inline-flex min-h-14 items-center rounded-full bg-ac px-[34px] text-base text-onac">أنشئ حسابك</Link>
       <div className="mt-[72px] flex flex-wrap items-center justify-center gap-x-[18px] gap-y-1.5 text-xs font-light text-fnt">
         <span>© ٢٠٢٦ ديجر — بيانات عامة فقط · موافقة صريحة قبل أي جمع</span>
-        <Link href="/legal/terms" className="py-2 text-xs text-mut">الشروط والأحكام</Link>
-        <Link href="/legal/privacy" className="py-2 text-xs text-mut">سياسة الخصوصية</Link>
+        <Link href="/legal/terms" className="flex min-h-11 items-center text-xs text-mut">الشروط والأحكام</Link>
+        <Link href="/legal/privacy" className="flex min-h-11 items-center text-xs text-mut">سياسة الخصوصية</Link>
       </div>
     </section>
   );
