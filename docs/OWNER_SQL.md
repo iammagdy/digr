@@ -75,3 +75,24 @@ VALUES (
   'منحة رصيد افتتاحية'
 );
 ```
+
+---
+
+## 4. Public Pricing Configuration (Optional)
+
+> [!NOTE]
+> If this row is omitted from `settings_public`, the atomic function (`approve_topup_atomic`) automatically defaults to `0.1` EGP per credit (`creditValueEgp`).
+
+To explicitly set or customize the credit conversion rate:
+
+```sql
+INSERT INTO public.settings_public (key, value)
+VALUES ('pricing', '{"creditValueEgp": 0.10}'::jsonb)
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+```
+
+Verification query:
+```sql
+SELECT key, value FROM public.settings_public WHERE key = 'pricing';
+```
+
