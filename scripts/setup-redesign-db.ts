@@ -3,6 +3,7 @@
  *   npx tsx scripts/setup-redesign-db.ts
  *
  * - topups: senderName, senderPhone, rejectReason (+ status/created index)
+ * - profiles: deletionScheduledFor (30-day account deletion)
  * - settings_public: ipa, maxPendingTopups
  * - notifications (owner-readable, owner may set readAt)
  * - admin_audit_log (append-only, admin-readable)
@@ -35,6 +36,12 @@ async function ensureVarchar(tableId: string, key: string, size: number, require
 async function ensureInteger(tableId: string, key: string, required = false, def?: number) {
   if ((await columnKeys(tableId)).has(key)) return console.log(`✓ ${tableId}.${key} exists`);
   await tables.createIntegerColumn({ databaseId: DB, tableId, key, required, ...(def !== undefined ? { default: def } : {}) } as any);
+  console.log(`+ ${tableId}.${key}`);
+}
+
+async function ensureDatetime(tableId: string, key: string, required = false) {
+  if ((await columnKeys(tableId)).has(key)) return console.log(`✓ ${tableId}.${key} exists`);
+  await tables.createDatetimeColumn({ databaseId: DB, tableId, key, required } as any);
   console.log(`+ ${tableId}.${key}`);
 }
 
@@ -74,6 +81,10 @@ async function main() {
   // receiptFileId stays optional at the column level so historical rows remain valid;
   // submit-topup enforces it for every new request.
   await ensureIndex("topups", "status_created_idx", "key", ["status", "createdAt"]);
+
+  // ── profiles: account deletion grace period ─────────────
+  await ensureDatetime("profiles", "deletionScheduledFor");
+  await ensureIndex("profiles", "deletion_idx", "key", ["deletionScheduledFor"]);
 
   // ── settings_public ─────────────────────────────────────
   await ensureVarchar("settings_public", "ipa", 128);

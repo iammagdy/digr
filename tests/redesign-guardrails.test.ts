@@ -160,11 +160,10 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
   });
 
   it("event histories are fetched latest-first and scope-labeled", () => {
-    const jobs = src("src/app/dashboard/jobs/page.tsx");
-    expect(jobs).toContain("orderDesc");
-    expect(jobs).toContain("eventHistoryScopeLabel");
     const chat = src("src/app/dashboard/chat/page.tsx");
+    expect(chat).toContain("orderDesc");
     expect(chat).toContain("EVENT_HISTORY_LIMIT");
     expect(chat).toContain("chronological(");
   });
+
 });

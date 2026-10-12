@@ -851,6 +851,9 @@ export default function ChatWorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
+  sendRef.current = handleSendMessage;
+
   // Deep link from «طلباتي» / the wallet return: /dashboard/chat?c=<conversationId>
   const deepLinkHandled = useRef(false);
   useEffect(() => {
@@ -858,7 +861,12 @@ export default function ChatWorkspacePage() {
     const id = new URLSearchParams(window.location.search).get("c");
     if (!id || !/^[A-Za-z0-9_-]{1,36}$/.test(id)) return;
     deepLinkHandled.current = true;
-    void handleOpenConversation(id);
+    const retry = new URLSearchParams(window.location.search).get("retry") === "1";
+    void handleOpenConversation(id).then(() => {
+      // «إعادة المحاولة» from طلباتي: ask for a fresh quote on the same plan.
+      // (sendRef always points at the latest closure, which already knows the opened conversation id.)
+      if (retry) setTimeout(() => void sendRef.current("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ."), 350);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 

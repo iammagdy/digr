@@ -32,7 +32,7 @@ const PAGE_TITLES: Record<string, string> = {
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
-  return ((parts[0]?.[0] ?? "؟") + (parts[1]?.[0] ?? "")).trim();
+  return [parts[0]?.[0] ?? "؟", parts[1]?.[0]].filter(Boolean).join(" ");
 }
 
 const NOTIF_STYLE: Record<NotificationKind, { icon: string; color: string; tint: string }> = {

@@ -91,6 +91,45 @@
         "files.write"
       ],
       "timeout": 60
+    },
+    {
+      "$id": "request-account-deletion",
+      "name": "request-account-deletion",
+      "runtime": "node-22",
+      "entrypoint": "dist/index.js",
+      "commands": "npm install",
+      "path": "src/functions/request-account-deletion",
+      "events": [],
+      "execute": [
+        "users"
+      ],
+      "scopes": [
+        "users.read",
+        "users.write",
+        "rows.read",
+        "rows.write"
+      ],
+      "timeout": 15
+    },
+    {
+      "$id": "purge-deleted-accounts",
+      "name": "purge-deleted-accounts",
+      "runtime": "node-22",
+      "entrypoint": "dist/index.js",
+      "commands": "npm install",
+      "path": "src/functions/purge-deleted-accounts",
+      "events": [],
+      "execute": [],
+      "scopes": [
+        "users.read",
+        "users.write",
+        "rows.read",
+        "rows.write",
+        "files.read",
+        "files.write"
+      ],
+      "timeout": 60,
+      "schedule": "0 3 * * *"
     }
   ]
 }
