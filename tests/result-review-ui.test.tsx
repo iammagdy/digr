@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 describe("result review UI contracts (release branch)", () => {
   const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
   const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-  const sidebar = readFileSync("src/app/dashboard/chat/components/ChatSidebar.tsx", "utf8");
+  const sidebar = readFileSync("src/components/app/AppShell.tsx", "utf8");
   const quote = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
   const activity = readFileSync("src/app/dashboard/chat/components/ActivityTimeline.tsx", "utf8");
 
@@ -62,9 +62,7 @@ describe("result review UI contracts (release branch)", () => {
     expect(page).toContain("aria-controls=\"results-canvas\"");
     expect(page).toContain("min-h-11 min-w-11");
     expect(page).toContain("motion-reduce:animate-none");
-    expect(sidebar).toContain('aria-current={isActive ? "page" : undefined}');
-    expect(sidebar).toContain("لا توجد محادثات سابقة");
-    expect(sidebar).toContain("duration-200 ease-out motion-reduce:transition-none");
+    expect(sidebar).toContain('aria-current={n.active ? "page" : undefined}');
     expect(quote).toContain("focus-visible:outline-2");
     expect(quote).toContain("motion-safe:animate-spin motion-reduce:animate-none");
     expect(activity).toContain("aria-expanded={!collapsed}");

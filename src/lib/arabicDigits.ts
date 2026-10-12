@@ -17,3 +17,18 @@ export function formatAr(n: number, fractionDigits?: number): string {
   const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, "٬");
   return toArabicDigits(frac ? `${grouped}٫${frac}` : grouped);
 }
+
+/** «منذ ١٠ دقائق» style relative time, Arabic digits. */
+export function timeAgoAr(iso: string, now = Date.now()): string {
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return "";
+  const s = Math.max(0, Math.round((now - t) / 1000));
+  if (s < 60) return "الآن";
+  const m = Math.round(s / 60);
+  if (m < 60) return `منذ ${toArabicDigits(m)} ${m === 1 ? "دقيقة" : m === 2 ? "دقيقتين" : m <= 10 ? "دقائق" : "دقيقة"}`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `منذ ${toArabicDigits(h)} ${h === 1 ? "ساعة" : h === 2 ? "ساعتين" : h <= 10 ? "ساعات" : "ساعة"}`;
+  const d = Math.round(h / 24);
+  if (d === 1) return "أمس";
+  return new Date(iso).toLocaleDateString("ar-EG", { day: "numeric", month: "long" });
+}

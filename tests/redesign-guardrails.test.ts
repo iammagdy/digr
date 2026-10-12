@@ -113,8 +113,7 @@ describe("accessibility foundations", () => {
 
 describe("data-honesty corrections (PR #11 fixes)", () => {
   const BALANCE_FILES = [
-    "src/app/dashboard/page.tsx",
-    "src/app/dashboard/layout.tsx",
+    "src/hooks/useBalance.tsx",
     "src/app/dashboard/topup/page.tsx",
     "src/app/dashboard/chat/page.tsx",
   ];
@@ -135,11 +134,9 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
     }
   });
 
-  it("dashboard job total comes from the response total, not the page length", () => {
-    const page = src("src/app/dashboard/page.tsx");
-    expect(page).toContain("jobsRes.total");
-    expect(page).toContain("jobTotalFromResponse");
-    expect(page).not.toMatch(/إجمالي طلبات البحث[\s\S]{0,400}recentJobs\.length/);
+  it("the running-jobs badge comes from the response total, not the page length", () => {
+    const shell = src("src/components/app/AppShell.tsx");
+    expect(shell).toContain("setRunning(res.total)");
   });
 
   it("activity timeline never marks stages complete from assumptions", () => {

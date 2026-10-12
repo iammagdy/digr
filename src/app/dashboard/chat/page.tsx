@@ -13,7 +13,9 @@ import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 
 import OnboardingModal from "./components/OnboardingModal";
-import ChatSidebar, { ConversationItem } from "./components/ChatSidebar";
+import { useShell } from "@/components/app/AppShell";
+
+interface ConversationItem { $id: string; title: string; updatedAt: string }
 import ClarificationReply from "./components/ClarificationReply";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
@@ -69,7 +71,6 @@ export default function ChatWorkspacePage() {
   const [enabledCapabilitySlugs, setEnabledCapabilitySlugs] = useState<string[]>([]);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [requestedFeatures, setRequestedFeatures] = useState<Record<string, boolean>>({});
 
@@ -219,6 +220,19 @@ export default function ChatWorkspacePage() {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     messagesEndRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" });
   }, [messages, loading, activeJob, viewportHeight]);
+
+  // Shell integration: header title + «سؤال بحثي جديد» from the sidebar.
+  const shell = useShell();
+  useEffect(() => {
+    shell.setTitle(conversationTitle || "محادثة جديدة");
+  }, [shell, conversationTitle]);
+  const startNewChatRef = useRef<() => void>(() => {});
+  startNewChatRef.current = handleStartNewChat;
+  useEffect(() => {
+    const on = () => startNewChatRef.current();
+    window.addEventListener("digr:new-chat", on);
+    return () => window.removeEventListener("digr:new-chat", on);
+  }, []);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -886,10 +900,7 @@ export default function ChatWorkspacePage() {
   }
 
   return (
-    <div
-      className="flex h-dvh min-h-0 w-full bg-sand-50 text-ink-900 overflow-hidden font-sans"
-      style={viewportHeight ? { height: `${viewportHeight}px` } : undefined}
-    >
+    <div className="flex min-h-0 w-full flex-1 overflow-hidden bg-bg font-sans text-ink">
       {/* 1. Onboarding Modal */}
       <OnboardingModal
         isOpen={showOnboarding}
@@ -900,82 +911,23 @@ export default function ChatWorkspacePage() {
         onSkip={() => setShowOnboarding(false)}
       />
 
-      {/* 2. Left Sidebar (Collapsible) */}
-      <ChatSidebar
-        conversations={conversationId && conversationTitle && !conversationsList.some((item) => item.$id === conversationId)
-          ? [{ $id: conversationId, title: conversationTitle, updatedAt: new Date().toISOString() }, ...conversationsList]
-          : conversationsList}
-        activeId={conversationId}
-        onSelectConversation={(id) => void handleOpenConversation(id)}
-        onNewChat={handleStartNewChat}
-        isBusy={loading || conversationLoading}
-        userBalance={userBalance}
-        userPersona={userPersona}
-        onChangePersona={handleChangePersona}
-        isOpen={sidebarOpen}
-        onCloseMobile={() => setSidebarOpen(false)}
-      />
-
       {/* 3. Main Chat Column */}
-      <div className="flex-1 min-w-0 min-h-0 flex flex-col h-full overflow-hidden lg:border-s lg:border-sand-200">
-        {/* Top Header — research workspace identity */}
-        <header className="h-16 shrink-0 min-w-0 px-3 sm:px-6 bg-white/95 backdrop-blur-md border-b border-sand-200 flex items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="touch-target inline-flex items-center justify-center lg:hidden text-sand-600 hover:text-ink-900 rounded-xl hover:bg-sand-100"
-              aria-label="فتح قائمة المحادثات"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <span aria-hidden="true" className="hidden sm:flex h-9 w-9 items-center justify-center rounded-xl bg-pine-800 text-sm font-bold text-white shrink-0">دِ</span>
-            <div className="min-w-0">
-              <h1 className="text-sm sm:text-base font-bold text-ink-900 truncate">
-                المساعد البحثي
-              </h1>
-              <p className="hidden md:block text-xs text-sand-500">
-                صِف سؤالك — نخطط معًا قبل أي جمع
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            {/* Balance Badge */}
-            <Link
-              href="/dashboard/topup"
-              className="tnum min-h-11 inline-flex items-center gap-1.5 rounded-2xl border border-amber-points/30 bg-amber-points-bg px-3 py-1.5 text-xs sm:text-sm transition-colors hover:bg-amber-points-bg/70"
-              title="رصيد الحساب وشحن النقاط"
-            >
-              <span className="font-bold text-amber-points">
-                {balanceText(userBalance)}
-              </span>
-              <span className="font-semibold text-amber-points">نقطة</span>
-              <span aria-hidden="true" className="text-base font-bold leading-none text-amber-points">+</span>
-            </Link>
-
-            {/* Results Toggle (Desktop & Mobile) */}
-            <button
-              type="button"
-              onClick={() => setCanvasOpen(!canvasOpen)}
-              aria-expanded={canvasOpen}
-              aria-controls="results-canvas"
-              className={`min-h-11 inline-flex cursor-pointer items-center gap-1.5 rounded-2xl border px-3 py-1.5 text-xs sm:text-sm font-semibold transition-colors ${
-                canvasOpen
-                  ? "border-accent bg-accent text-white"
-                  : "border-sand-300 bg-white text-ink-800 hover:border-accent/40 hover:bg-accent-light/40"
-              }`}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              <span className="hidden sm:inline">لوحة النتائج</span>
-              <span className="sm:hidden">النتائج</span>
-            </button>
-          </div>
-        </header>
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Results toggle (the shell header owns identity, balance and notifications) */}
+        <div className="flex shrink-0 justify-end px-3 pt-2 sm:px-6">
+          <button
+            type="button"
+            onClick={() => setCanvasOpen(!canvasOpen)}
+            aria-expanded={canvasOpen}
+            aria-controls="results-canvas"
+            className={`inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border px-4 text-xs font-medium transition-colors sm:text-sm ${
+              canvasOpen ? "border-ac bg-ac text-onac" : "border-ln2 bg-sf text-ink hover:bg-sf2"
+            }`}
+          >
+            <span className="hidden sm:inline">لوحة النتائج</span>
+            <span className="sm:hidden">النتائج</span>
+          </button>
+        </div>
 
         {/* Messages Stream */}
         <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-6 space-y-4">
