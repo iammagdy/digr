@@ -6,13 +6,11 @@
 import https from "https";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
-const ANON_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
 
-if (!ANON_KEY) {
-  console.error("ERROR: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY must be provided via environment variable.");
+if (!SERVICE_KEY) {
+  console.error("ERROR: SUPABASE_SERVICE_ROLE_KEY must be provided via environment variable.");
   process.exit(1);
 }
 
@@ -33,8 +31,8 @@ function callReserveRpc(jobId: string, amount: number): Promise<any> {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          apikey: ANON_KEY,
-          Authorization: `Bearer ${ANON_KEY}`,
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
           "Content-Length": Buffer.byteLength(payload),
         },
       },
@@ -62,12 +60,15 @@ function callReserveRpc(jobId: string, amount: number): Promise<any> {
 async function main() {
   console.log("=== Launching 20 Real Parallel HTTP Requests to PostgREST RPC ===");
 
+  const runId = Date.now();
+  const sameJobId = `verify_parallel_same_${runId}`;
+
   const sameJobCalls = Array.from({ length: 10 }).map(() =>
-    callReserveRpc("verify_parallel_same", 25)
+    callReserveRpc(sameJobId, 25)
   );
 
   const diffJobCalls = Array.from({ length: 10 }).map((_, idx) =>
-    callReserveRpc(`verify_parallel_diff_${idx + 1}`, 15)
+    callReserveRpc(`verify_parallel_diff_${runId}_${idx + 1}`, 15)
   );
 
   const startTime = Date.now();

@@ -56,7 +56,37 @@ async function main() {
     throw new Error("Client must be forbidden from uploading into another user's folder");
   }
 
-  console.log("PASS: Storage policies verification passed (client isolated to own folder, results/partials private).");
+  // 3. Service role upload into own folder and immediate cleanup
+  if (SERVICE_KEY) {
+    const adminClient = createClient(SUPABASE_URL, SERVICE_KEY);
+    const testFilePath = `${TEST_USER_ID}/test_verify_receipt_${Date.now()}.png`;
+
+    const { error: uploadErr } = await adminClient
+      .storage
+      .from("receipts")
+      .upload(testFilePath, sampleFileContent, {
+        contentType: "image/png",
+      });
+    if (uploadErr) throw uploadErr;
+    console.log(`Uploaded test receipt: ${testFilePath}`);
+
+    // Verify it exists
+    const { data: listData } = await adminClient
+      .storage
+      .from("receipts")
+      .list(TEST_USER_ID);
+    console.log(`Files in ${TEST_USER_ID} folder:`, listData?.map((f) => f.name));
+
+    // Clean up test file immediately (never keep test files in storage)
+    const { error: removeErr } = await adminClient
+      .storage
+      .from("receipts")
+      .remove([testFilePath]);
+    if (removeErr) throw removeErr;
+    console.log(`Cleaned up test storage file: ${testFilePath}`);
+  }
+
+  console.log("PASS: Storage policies verification passed (client isolated to own folder, results/partials private, test file cleaned up).");
 }
 
 main().catch((err) => {

@@ -4,6 +4,7 @@
  * Strictly reads keys from environment variables. Zero hardcoded secrets.
  */
 import { createClient } from "@supabase/supabase-js";
+import crypto from "crypto";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -35,14 +36,19 @@ async function main() {
   const jobId = `job_live_${Date.now()}`;
   const testCredits = 3;
 
+  const items = [{ capabilitySlug: "tiktok-profile", targetVolumeMin: 1, targetVolumeMax: 1 }];
+  const outputFormats = ["xlsx", "csv"];
+  const quoteHash = crypto.createHash("sha256").update(JSON.stringify({ items, outputFormats })).digest("hex");
+
   // 2. Insert test quote
   const { error: quoteErr } = await supabase.from("plans_quotes").insert({
     id: quoteId,
     user_id: TEST_USER_ID,
+    quote_hash: quoteHash,
     status: "quoted",
     total_reserved_credits: testCredits,
-    items: [{ capabilitySlug: "tiktok-profile", targetVolumeMin: 1, targetVolumeMax: 1 }],
-    output_formats: ["xlsx", "csv"],
+    items,
+    output_formats: outputFormats,
     expires_at: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     created_at: new Date().toISOString(),
   });
