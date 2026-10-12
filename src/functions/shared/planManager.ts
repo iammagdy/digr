@@ -9,6 +9,7 @@ import {
 } from "./capabilityRegistry";
 import {
   calculateQuote,
+  calculateUnitPricePoints,
   generateQuoteExpiry,
   isQuoteExpired,
   DEFAULT_PRICING_SETTINGS,
@@ -498,6 +499,15 @@ export async function createAndSaveManagedQuote(
           (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
       ) || capabilities[0];
     primaryUnitCost = cap.unitCostUsd;
+    const unitPrice = calculateUnitPricePoints(primaryUnitCost, effectivePricing);
+    if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+      throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
+    }
+    // Set unit price on the item WITHOUT the 15% buffer
+    (it as any).unitPricePoints = unitPrice;
+    (it as any).unitCostUsd = primaryUnitCost;
+    (it as any).endpointId = it.endpointId || (cap as any).tregEndpointId || cap.slug;
+
     const itemQuote = calculateQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, effectivePricing);
     totalQuotedPoints += itemQuote.quotedPoints;
     totalVolumeMax += it.targetVolumeMax;
@@ -518,7 +528,7 @@ export async function createAndSaveManagedQuote(
     totalVolumeMax = plan.items.reduce((s, it) => s + it.targetVolumeMax, 0);
   }
 
-  // Recalculate affordability for the composite quote
+  // Recalculate affordability for the composite quote (quotedPoints includes 15% buffer)
   const quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, effectivePricing);
 
   const planHash = computePlanHash(plan.items, plan.outputFormats);
@@ -527,49 +537,72 @@ export async function createAndSaveManagedQuote(
   const nowIso = new Date().toISOString();
 
   // 2. Invalidate / supersede previous proposed quotes for this conversation
-  try {
-    const existingQuotes = await tables.listRows({
-      databaseId: "digr",
-      tableId: "plans_quotes",
-      queries: [
-        Query.equal("conversationId", conversationId),
-        Query.equal("status", "proposed"),
-      ],
+  if (tables && typeof tables.from === "function") {
+    try {
+      await tables
+        .from("plans_quotes")
+        .update({ status: "expired" })
+        .eq("user_id", userId)
+        .eq("status", "quoted");
+    } catch (err: any) {
+      console.warn("Could not supersede old quotes in Supabase:", err.message);
+    }
+    await tables.from("plans_quotes").insert({
+      id: quoteId,
+      user_id: userId,
+      quote_hash: planHash,
+      status: "quoted",
+      items: plan.items,
+      total_reserved_credits: quoteCalc.quotedPoints,
+      output_formats: plan.outputFormats || ["xlsx", "pdf", "csv"],
+      expires_at: expiresAt,
+      created_at: nowIso,
     });
-
-    for (const q of existingQuotes.rows) {
-      await tables.updateRow({
+  } else if (tables && typeof tables.createRow === "function") {
+    try {
+      const existingQuotes = await tables.listRows({
         databaseId: "digr",
         tableId: "plans_quotes",
-        rowId: q.$id,
-        data: {
-          status: "expired",
-        },
+        queries: [
+          Query.equal("conversationId", conversationId),
+          Query.equal("status", "proposed"),
+        ],
       });
-    }
-  } catch (err: any) {
-    console.warn("Could not supersede old quotes:", err.message);
-  }
 
-  // 3. Save new quote in plans_quotes table
-  await tables.createRow({
-    databaseId: "digr",
-    tableId: "plans_quotes",
-    rowId: quoteId,
-    data: {
-      conversationId,
-      userId,
-      status: "proposed",
-      summaryAr: plan.summaryAr,
-      itemsJson: JSON.stringify(serializeStoredPlan(plan)),
-      targetVolumeMax: totalVolumeMax,
-      unitPricePoints: quoteCalc.unitPricePoints,
-      quotedPoints: quoteCalc.quotedPoints,
-      settingsVersion: "v1.0",
-      expiresAt,
-      createdAt: nowIso,
-    },
-  });
+      for (const q of existingQuotes.rows) {
+        await tables.updateRow({
+          databaseId: "digr",
+          tableId: "plans_quotes",
+          rowId: q.$id,
+          data: {
+            status: "expired",
+          },
+        });
+      }
+    } catch (err: any) {
+      console.warn("Could not supersede old quotes:", err.message);
+    }
+
+    // 3. Save new quote in plans_quotes table
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "plans_quotes",
+      rowId: quoteId,
+      data: {
+        conversationId,
+        userId,
+        status: "proposed",
+        summaryAr: plan.summaryAr,
+        itemsJson: JSON.stringify(serializeStoredPlan(plan)),
+        targetVolumeMax: totalVolumeMax,
+        unitPricePoints: quoteCalc.unitPricePoints,
+        quotedPoints: quoteCalc.quotedPoints,
+        settingsVersion: "v1.0",
+        expiresAt,
+        createdAt: nowIso,
+      },
+    });
+  }
 
   return {
     quoteId,

@@ -12,6 +12,7 @@ import {
   formatStructuredClarificationAnswers,
   validateStructuredClarificationAnswers,
 } from "../../../functions/shared/clarification";
+import { createServerSideClient, createAdminClient } from "../../../lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +26,6 @@ export async function POST(req: NextRequest) {
       .setEndpoint(endpoint)
       .setProject(projectId)
       .setKey(apiKey);
-
-    const tables = new TablesDB(serverClient);
-    const chatHandler = new ChatHandler(tables);
 
     const body = await req.json().catch(() => ({}));
     const { conversationId } = body;
@@ -59,54 +57,67 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authenticate user strictly via verified Appwrite JWT or session cookie
-    // NEVER trust a userId passed in request body
-    const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-    const bodyJwt = typeof body.jwt === "string" ? body.jwt.trim() : null;
-    const effectiveJwt = bearerJwt || bodyJwt;
-
-    // Also support official Appwrite session cookie
-    const sessionCookie =
-      req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
-
-    if (!effectiveJwt && !sessionCookie) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "غير مصرح. يرجى تسجيل الدخول أولاً للوصول للمساعد الذكي.",
-        },
-        { status: 401 }
-      );
-    }
-
-    // Cryptographically verify session against Appwrite Cloud
-    const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (effectiveJwt) {
-      userClient.setJWT(effectiveJwt);
-    } else if (sessionCookie) {
-      userClient.setSession(sessionCookie);
-    }
-
-    let verifiedUserId: string;
+    // 1. Authenticate user: check Supabase session or verified Appwrite JWT/session cookie
+    let verifiedUserId: string | null = null;
     let emailVerified = false;
+    let isSupabaseSession = false;
+
+    // Check Supabase session first
     try {
-      const userAccount = new Account(userClient);
-      const userDoc = await userAccount.get();
-      verifiedUserId = userDoc.$id;
-      emailVerified = userDoc.emailVerification === true;
-    } catch (authErr: any) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "انتهت صلاحية جلسة تسجيل الدخول أو أنها غير صالحة. يرجى تسجيل الدخول مجدداً.",
-        },
-        { status: 401 }
-      );
+      const supabase = await createServerSideClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        verifiedUserId = user.id;
+        emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
+        isSupabaseSession = true;
+      }
+    } catch {}
+
+    // Fall back to Appwrite authentication if no Supabase session
+    if (!verifiedUserId) {
+      const authHeader = req.headers.get("authorization");
+      const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+      const bodyJwt = typeof body.jwt === "string" ? body.jwt.trim() : null;
+      const effectiveJwt = bearerJwt || bodyJwt;
+
+      const sessionCookie =
+        req.cookies.get(`a_session_${projectId}`)?.value ||
+        req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+
+      if (!effectiveJwt && !sessionCookie) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "غير مصرح. يرجى تسجيل الدخول أولاً للوصول للمساعد الذكي.",
+          },
+          { status: 401 }
+        );
+      }
+
+      const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
+      if (effectiveJwt) {
+        userClient.setJWT(effectiveJwt);
+      } else if (sessionCookie) {
+        userClient.setSession(sessionCookie);
+      }
+
+      try {
+        const userAccount = new Account(userClient);
+        const userDoc = await userAccount.get();
+        verifiedUserId = userDoc.$id;
+        emailVerified = userDoc.emailVerification === true;
+      } catch (authErr: any) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "انتهت صلاحية جلسة تسجيل الدخول أو أنها غير صالحة. يرجى تسجيل الدخول مجدداً.",
+          },
+          { status: 401 }
+        );
+      }
     }
 
-    // Research is blocked until the email is verified (WIRING §2); the client gate is only a convenience.
+    // Research is blocked until the email is verified
     if (!emailVerified) {
       return NextResponse.json({ success: false, error: "فعّل بريدك الإلكتروني أولًا لبدء البحث." }, { status: 403 });
     }
@@ -122,10 +133,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 2. Global daily spend cap (platform protection). If the server-only usage
-    // table is unavailable, fail closed instead of making an unmetered model call.
-    // Per-account daily budget is message-based (200 user messages/day, see
-    // checkUserRateLimits) — one unit per USER message, never per model call.
+    // Determine tables DAL: Supabase Admin client or Appwrite TablesDB
+    let tables: any;
+    if (isSupabaseSession && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        tables = createAdminClient();
+      } catch {
+        tables = new TablesDB(serverClient);
+      }
+    } else {
+      tables = new TablesDB(serverClient);
+    }
+
+    // 2. Global daily spend cap (platform protection)
     let spendCheck: RateLimitCheckResult;
     try {
       spendCheck = await checkGlobalDailySpendCap(tables);
@@ -146,7 +166,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Per-User Rate Limits Guard (messages per minute & per day)
+    // 3. Per-User Rate Limits Guard (messages per minute)
     const rateCheck = await checkUserRateLimits(tables, verifiedUserId);
     if (!rateCheck.allowed) {
       return NextResponse.json(
@@ -155,7 +175,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Delegate to ChatHandler (using Fake LLM or Real model with kill-switch)
+    // 4. Delegate to ChatHandler
+    const chatHandler = new ChatHandler(tables);
     const result = await chatHandler.handleUserMessage({
       userId: verifiedUserId,
       conversationId: conversationId || undefined,

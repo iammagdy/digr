@@ -461,8 +461,24 @@ export async function getConversationBrief(
     return { platforms: [], topics: [] };
   }
 
+  if (tables && typeof (tables as any).from === "function") {
+    try {
+      const { data } = await (tables as any)
+        .from("conversations")
+        .select("brief")
+        .eq("id", conversationId)
+        .maybeSingle();
+      if (data?.brief && typeof data.brief === "object") {
+        briefCache.set(conversationId, data.brief);
+        return data.brief;
+      }
+    } catch {
+      // Supabase read fallback
+    }
+  }
+
   try {
-    const notesRes = await tables.listRows({
+    const notesRes = await (tables as any).listRows({
       databaseId: "digr",
       tableId: "notes",
       queries: [Query.equal("conversationId", conversationId), Query.limit(1)],
@@ -487,7 +503,7 @@ export async function getConversationBrief(
  * Persist the brief for a conversation in memory and database.
  */
 export async function saveConversationBrief(
-  tables: TablesDB | null | undefined,
+  tables: any,
   conversationId: string,
   userId: string,
   brief: ResearchBrief,
@@ -495,6 +511,18 @@ export async function saveConversationBrief(
   briefCache.set(conversationId, { ...brief });
 
   if (!tables) return;
+
+  if (typeof tables.from === "function") {
+    try {
+      await tables
+        .from("conversations")
+        .update({ brief, updated_at: new Date().toISOString() })
+        .eq("id", conversationId);
+    } catch {
+      // Non-fatal
+    }
+    return;
+  }
 
   try {
     const serialized = JSON.stringify(brief);
