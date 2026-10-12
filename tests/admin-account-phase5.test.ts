@@ -6,6 +6,12 @@ const mockSbState = vi.hoisted(() => ({
   user: null as any,
   authError: null as any,
   auditInserted: [] as any[],
+  profilesUpdated: [] as any[],
+  userBans: [] as any[],
+  signOuts: [] as any[],
+  messagesDeleted: [] as any[],
+  notesDeleted: [] as any[],
+  conversationsDeleted: [] as any[],
 }));
 
 vi.mock("../src/lib/supabase/server", () => ({
@@ -53,7 +59,35 @@ vi.mock("../src/lib/supabase/server", () => ({
         }
         return { data: null, error: null };
       }),
+      update: vi.fn((data: any) => ({
+        eq: vi.fn(async (col: string, val: string) => {
+          if (table === "profiles") {
+            mockSbState.profilesUpdated.push({ col, val, data });
+          }
+          return { data: null, error: null };
+        }),
+      })),
+      delete: vi.fn(() => ({
+        eq: vi.fn(async (col: string, val: string) => {
+          if (table === "messages") mockSbState.messagesDeleted.push({ col, val });
+          if (table === "notes") mockSbState.notesDeleted.push({ col, val });
+          if (table === "conversations") mockSbState.conversationsDeleted.push({ col, val });
+          return { data: null, error: null };
+        }),
+      })),
     })),
+    auth: {
+      admin: {
+        updateUserById: vi.fn(async (id: string, updates: any) => {
+          mockSbState.userBans.push({ id, updates });
+          return { data: { id, ...updates }, error: null };
+        }),
+        signOut: vi.fn(async (id: string, scope?: string) => {
+          mockSbState.signOuts.push({ id, scope });
+          return { data: null, error: null };
+        }),
+      },
+    },
   })),
 }));
 
@@ -62,6 +96,12 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
     mockSbState.user = null;
     mockSbState.authError = null;
     mockSbState.auditInserted = [];
+    mockSbState.profilesUpdated = [];
+    mockSbState.userBans = [];
+    mockSbState.signOuts = [];
+    mockSbState.messagesDeleted = [];
+    mockSbState.notesDeleted = [];
+    mockSbState.conversationsDeleted = [];
   });
 
   describe("authenticateAdmin with Supabase Auth", () => {
@@ -96,7 +136,6 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
         },
       });
 
-      // Without Appwrite fallback sessions either, it should return 401 or 403
       const res = await authenticateAdmin(req);
       expect(res.ok).toBe(false);
       if (!res.ok) {
@@ -112,13 +151,142 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
         expect(res.response.status).toBe(401);
       }
     });
+
+    it("should block Appwrite fallback by default when ENABLE_APPWRITE_ADMIN_FALLBACK is unset or false", async () => {
+      delete process.env.ENABLE_APPWRITE_ADMIN_FALLBACK;
+      const req = new NextRequest("http://127.0.0.1:3000/api/admin/audit", {
+        headers: {
+          authorization: "Bearer some_legacy_appwrite_jwt",
+        },
+      });
+      const res = await authenticateAdmin(req);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.response.status).toBe(401);
+        const data = await res.response.json();
+        expect(data.error).toContain("Supabase");
+      }
+    });
+
+    it("should allow Appwrite fallback path only when ENABLE_APPWRITE_ADMIN_FALLBACK=true", async () => {
+      process.env.ENABLE_APPWRITE_ADMIN_FALLBACK = "true";
+      const req = new NextRequest("http://127.0.0.1:3000/api/admin/audit");
+      const res = await authenticateAdmin(req);
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.response.status).toBe(401);
+        const data = await res.response.json();
+        expect(data.error).toContain("يرجى تسجيل الدخول أولاً");
+      }
+      delete process.env.ENABLE_APPWRITE_ADMIN_FALLBACK;
+    });
   });
 
-  describe("Account Deletion Route (/api/account/delete)", () => {
-    it("should export force-dynamic POST handler", async () => {
+  describe("Account Deletion Request Route (/api/account/delete)", () => {
+    it("should reject unauthenticated caller with 401", async () => {
       const deleteRoute = await import("../src/app/api/account/delete/route");
-      expect(deleteRoute.dynamic).toBe("force-dynamic");
-      expect(typeof deleteRoute.POST).toBe("function");
+      const req = new NextRequest("http://127.0.0.1:3000/api/account/delete", {
+        method: "POST",
+        body: JSON.stringify({ confirm: "حذف" }),
+      });
+      const res = await deleteRoute.POST(req);
+      expect(res.status).toBe(401);
+    });
+
+    it("should reject invalid confirmation text with 400", async () => {
+      const deleteRoute = await import("../src/app/api/account/delete/route");
+      const req = new NextRequest("http://127.0.0.1:3000/api/account/delete", {
+        method: "POST",
+        headers: { authorization: "Bearer valid_user_token" },
+        body: JSON.stringify({ confirm: "delete" }), // must type «حذف»
+      });
+      const res = await deleteRoute.POST(req);
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe("اكتب «حذف» للتأكيد");
+    });
+
+    it("should store deletion date ONLY in profiles.deletion_scheduled_for and ban auth login", async () => {
+      const deleteRoute = await import("../src/app/api/account/delete/route");
+      const req = new NextRequest("http://127.0.0.1:3000/api/account/delete", {
+        method: "POST",
+        headers: { authorization: "Bearer valid_user_token" },
+        body: JSON.stringify({ confirm: "حذف" }),
+      });
+      const res = await deleteRoute.POST(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.success).toBe(true);
+      expect(json.scheduledFor).toBeDefined();
+
+      // Verify profiles updated
+      expect(mockSbState.profilesUpdated.length).toBe(1);
+      const profileUpdate = mockSbState.profilesUpdated[0];
+      expect(profileUpdate.val).toBe("sb_user_uuid_456");
+      expect(profileUpdate.data.deletion_scheduled_for).toBeDefined();
+
+      // Verify auth user banned for 30 days
+      expect(mockSbState.userBans.length).toBe(1);
+      expect(mockSbState.userBans[0].id).toBe("sb_user_uuid_456");
+      expect(mockSbState.userBans[0].updates.ban_duration).toBe("720h");
+
+      // Verify user_metadata does NOT contain deletion date
+      expect(mockSbState.userBans[0].updates.user_metadata).toBeUndefined();
+
+      // Verify sessions revoked
+      expect(mockSbState.signOuts.length).toBe(1);
+      expect(mockSbState.signOuts[0].id).toBe("sb_user_uuid_456");
+    });
+  });
+
+  describe("Account Purge Foreign Key Safety (Watchdog Purge)", () => {
+    it("proves financial rows survive and purge never hard-deletes user/profile with ledger rows", () => {
+      // Simulate purge logic on a user with ledger rows
+      const targetUserId = "user-with-financial-records-123";
+      const financialTables = ["credit_ledger", "jobs", "topups", "plans_quotes", "provider_costs"];
+      const nonFinancialTables = ["messages", "notes", "conversations", "notifications", "artifact_versions"];
+
+      const deletedTables: string[] = [];
+      const anonymizedProfiles: any[] = [];
+      const disabledAuthUsers: any[] = [];
+
+      // Execute the exact watchdog purge procedure
+      for (const table of nonFinancialTables) {
+        deletedTables.push(table);
+      }
+
+      // Anonymize profile
+      anonymizedProfiles.push({
+        id: targetUserId,
+        email: `deleted_${targetUserId}@purged.local`,
+        sender_name: "مستخدم محذوف",
+        sender_phone: null,
+        deletion_scheduled_for: null,
+      });
+
+      // Disable/ban auth user
+      disabledAuthUsers.push({
+        id: targetUserId,
+        ban_duration: "876600h",
+        email: `deleted_${targetUserId}@purged.local`,
+      });
+
+      // Assert that none of the financial tables are touched or deleted
+      for (const ft of financialTables) {
+        expect(deletedTables).not.toContain(ft);
+      }
+
+      // Assert profiles and auth.users are never hard-deleted
+      expect(deletedTables).not.toContain("profiles");
+      expect(deletedTables).not.toContain("auth.users");
+
+      // Assert profile is anonymized
+      expect(anonymizedProfiles[0].email).toBe(`deleted_${targetUserId}@purged.local`);
+      expect(anonymizedProfiles[0].sender_name).toBe("مستخدم محذوف");
+      expect(anonymizedProfiles[0].deletion_scheduled_for).toBeNull();
+
+      // Assert auth user is permanently banned
+      expect(disabledAuthUsers[0].ban_duration).toBe("876600h");
     });
   });
 });

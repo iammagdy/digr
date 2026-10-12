@@ -251,6 +251,32 @@ describe("Supabase Ledger DAL & Invariants", () => {
           return {};
         }),
         rpc: vi.fn(async (fnName: string, params: any) => {
+          if (fnName === "accept_quote_atomic") {
+            const q = quoteStore[params.p_quote_id];
+            if (!q) return { data: { success: false, error: "quote_not_found" }, error: null };
+            if (q.user_id !== params.p_user_id) return { data: { success: false, error: "quote_user_mismatch" }, error: null };
+            if (q.quote_hash !== params.p_expected_quote_hash) return { data: { success: false, error: "quote_hash_mismatch" }, error: null };
+            if (q.status !== "quoted") return { data: { success: false, error: "invalid_quote_status" }, error: null };
+            const items = q.items || [];
+            if (!items.length || items.length !== 1) return { data: { success: false, error: "single_item_quote_required" }, error: null };
+            const it = items[0];
+            if (typeof it.unitPricePoints !== "number" || it.unitPricePoints <= 0) {
+              return { data: { success: false, error: "missing_item_unit_price" }, error: null };
+            }
+            reservedCalls.push({ p_user_id: q.user_id, p_amount: q.total_reserved_credits });
+            q.status = "accepted";
+            const jId = `job_quote_${q.id}`;
+            jobsStore.push({ id: jId, user_id: q.user_id, status: "queued", unit_price: it.unitPricePoints });
+            return {
+              data: {
+                success: true,
+                job_id: jId,
+                quote_id: q.id,
+                reserved_credits: q.total_reserved_credits,
+              },
+              error: null,
+            };
+          }
           if (fnName === "reserve_credits_atomic") {
             reservedCalls.push(params);
             return { data: { success: true, balance: 100 }, error: null };

@@ -9,12 +9,23 @@ export async function POST(req: NextRequest) {
   try {
     // 1. Authenticate user strictly via Supabase Auth
     const supabase = await createServerSideClient();
-    const {
-      data: { user },
-      error: authErr,
-    } = await supabase.auth.getUser();
+    const authHeader = req.headers.get("authorization");
+    let user = null;
 
-    if (authErr || !user) {
+    if (authHeader?.startsWith("Bearer ")) {
+      const token = authHeader.substring(7).trim();
+      const { data, error } = await supabase.auth.getUser(token);
+      if (!error && data?.user) {
+        user = data.user;
+      }
+    } else {
+      const { data, error } = await supabase.auth.getUser();
+      if (!error && data?.user) {
+        user = data.user;
+      }
+    }
+
+    if (!user) {
       return NextResponse.json(
         { success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." },
         { status: 401 }
@@ -33,10 +44,14 @@ export async function POST(req: NextRequest) {
     const scheduledFor = new Date(Date.now() + GRACE_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const adminClient = createAdminClient();
 
-    // 3. Mark deletion_scheduled_for in public.profiles
+    // 3. Mark deletion_scheduled_for strictly in public.profiles (clients cannot edit this column)
+    // NOTE: We do NOT store deletion date in auth user_metadata because users can edit user_metadata!
     const { error: profileErr } = await adminClient
       .from("profiles")
-      .update({ deletion_scheduled_for: scheduledFor })
+      .update({
+        deletion_scheduled_for: scheduledFor,
+        updated_at: new Date().toISOString(),
+      })
       .eq("id", user.id);
 
     if (profileErr) {
@@ -47,13 +62,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Update auth user metadata
-    await adminClient.auth.admin.updateUserById(user.id, {
-      user_metadata: {
-        ...user.user_metadata,
-        deletion_scheduled_for: scheduledFor,
-      },
-    });
+    // 4. Revoke sessions and disable/ban user login immediately
+    try {
+      await adminClient.auth.admin.updateUserById(user.id, {
+        ban_duration: `${GRACE_DAYS * 24}h`,
+      });
+      await adminClient.auth.admin.signOut(user.id, "global");
+    } catch (authErr) {
+      console.warn("Failed to ban/signOut user during deletion request:", authErr);
+    }
 
     // 5. Audit log entry
     try {

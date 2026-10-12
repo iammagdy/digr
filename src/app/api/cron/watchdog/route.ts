@@ -67,29 +67,63 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 4. Daily purge of accounts past 30-day grace period (non-financial data only; credit_ledger, jobs, topups survive)
+    // 4. Daily purge of accounts past 30-day grace period
+    // Non-financial rows only; credit_ledger, jobs, topups, job_events, plans_quotes, provider_costs survive for legal audit trail.
+    // Rather than deleting profiles/auth.users (which fails on ON DELETE RESTRICT), ANONYMIZE profile and BAN auth user.
     let purgedAccountsCount = 0;
     try {
       const nowIso = new Date().toISOString();
-      const { data: expiredProfiles } = await adminClient
+      const { data: expiredProfiles, error: fetchExpiredErr } = await adminClient
         .from("profiles")
         .select("id")
         .not("deletion_scheduled_for", "is", null)
         .lte("deletion_scheduled_for", nowIso)
         .limit(10);
 
+      if (fetchExpiredErr) {
+        console.error("Watchdog failed to query expired profiles:", fetchExpiredErr);
+      }
+
       for (const prof of expiredProfiles || []) {
         const uId = prof.id;
-        await adminClient.from("messages").delete().eq("user_id", uId);
-        await adminClient.from("notes").delete().eq("user_id", uId);
-        await adminClient.from("conversations").delete().eq("user_id", uId);
-        await adminClient.from("notifications").delete().eq("user_id", uId);
-        await adminClient.from("artifact_versions").delete().eq("user_id", uId);
-        await adminClient.from("profiles").delete().eq("id", uId);
         try {
-          await adminClient.auth.admin.deleteUser(uId);
-        } catch {}
-        purgedAccountsCount++;
+          // A. Delete non-financial database records
+          await adminClient.from("messages").delete().eq("user_id", uId);
+          await adminClient.from("notes").delete().eq("user_id", uId);
+          await adminClient.from("conversations").delete().eq("user_id", uId);
+          await adminClient.from("notifications").delete().eq("user_id", uId);
+          await adminClient.from("artifact_versions").delete().eq("user_id", uId);
+
+          // B. Anonymize profile (never hard delete profiles to satisfy foreign keys)
+          await adminClient.from("profiles").update({
+            email: `deleted_${uId}@purged.local`,
+            sender_name: "مستخدم محذوف",
+            sender_phone: null,
+            deletion_scheduled_for: null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", uId);
+
+          // C. Disable / Ban auth user permanently (never delete auth.users to preserve financial FKs)
+          try {
+            await adminClient.auth.admin.updateUserById(uId, {
+              ban_duration: "876600h", // Permanent ban (~100 years)
+              email: `deleted_${uId}@purged.local`,
+              email_confirm: false,
+              user_metadata: {
+                banned: true,
+                purged: true,
+                name: "مستخدم محذوف",
+              },
+            });
+            await adminClient.auth.admin.signOut(uId, "global");
+          } catch (authBanErr) {
+            console.error(`Failed to ban purged auth user ${uId}:`, authBanErr);
+          }
+
+          purgedAccountsCount++;
+        } catch (singlePurgeErr) {
+          console.error(`Failed to purge non-financial data for ${uId}:`, singlePurgeErr);
+        }
       }
     } catch (purgeErr) {
       console.error("Watchdog purge step error:", purgeErr);

@@ -79,6 +79,31 @@ describe("Supabase Route Handlers & Business Rules", () => {
         return {};
       }),
       rpc: vi.fn(async (fnName: string, params: any) => {
+        if (fnName === "accept_quote_atomic") {
+          const q = mockQuotes.find((item) => item.id === params.p_quote_id);
+          if (!q) return { data: { success: false, error: "quote_not_found" }, error: null };
+          if (q.user_id !== params.p_user_id) return { data: { success: false, error: "quote_user_mismatch" }, error: null };
+          if (params.p_expected_quote_hash && q.quote_hash !== params.p_expected_quote_hash) {
+            return { data: { success: false, error: "quote_hash_mismatch" }, error: null };
+          }
+          if (q.status === "accepted") {
+            return { data: { success: true, already_accepted: true, quote_id: q.id, job_id: `job_quote_${q.id}`, reserved_credits: q.total_reserved_credits }, error: null };
+          }
+          if (q.status !== "quoted") return { data: { success: false, error: "invalid_quote_status" }, error: null };
+          if (new Date(q.expires_at).getTime() <= Date.now()) return { data: { success: false, error: "quote_expired" }, error: null };
+          const activeJobs = mockJobs.filter((j) => ["queued", "running"].includes(j.status) && j.user_id === params.p_user_id);
+          if (activeJobs.length >= 2) return { data: { success: false, error: "concurrency_limit_exceeded" }, error: null };
+          const currentBal = mockLedger
+            .filter((r) => r.user_id === params.p_user_id)
+            .reduce((sum, r) => sum + r.delta, 0);
+          if (currentBal < q.total_reserved_credits) return { data: { success: false, error: "insufficient_balance", balance: currentBal }, error: null };
+          q.status = "accepted";
+          const jId = `job_quote_${q.id}`;
+          mockJobs.push({ id: jId, user_id: q.user_id, status: "queued", reserved_credits: q.total_reserved_credits });
+          mockLedger.push({ id: `res_${jId}`, user_id: q.user_id, delta: -q.total_reserved_credits });
+          mockEvents.push({ job_id: jId, user_id: q.user_id, message: "accepted", event_type: "progress" });
+          return { data: { success: true, quote_id: q.id, job_id: jId, reserved_credits: q.total_reserved_credits }, error: null };
+        }
         if (fnName === "reserve_credits_atomic") {
           const currentBal = mockLedger
             .filter((r) => r.user_id === params.p_user_id)

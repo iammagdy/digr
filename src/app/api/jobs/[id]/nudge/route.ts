@@ -3,6 +3,8 @@ import { createServerSideClient } from "../../../../../lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
+const nudgeRateLimitCache = new Map<string, number>();
+
 function getWorkerBaseUrl(): string {
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL}`;
@@ -73,6 +75,18 @@ export async function POST(
         { status: 403 }
       );
     }
+
+    // 2b. Rate Limiting: max 1 nudge per 10 seconds per user/job
+    const cacheKey = `${user.id}_${jobId}`;
+    const nowTime = Date.now();
+    const lastNudge = nudgeRateLimitCache.get(cacheKey) || 0;
+    if (nowTime - lastNudge < 10_000) {
+      return NextResponse.json(
+        { success: false, error: "تم تنشيط المهمة مؤخراً. يرجى الانتظار بضع ثوانٍ قبل تكرار المحاولة." },
+        { status: 429 }
+      );
+    }
+    nudgeRateLimitCache.set(cacheKey, nowTime);
 
     // 3. Status guards
     if (job.status === "completed" || job.status === "failed") {

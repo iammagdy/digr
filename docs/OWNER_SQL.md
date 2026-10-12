@@ -242,3 +242,50 @@ Before production cutover, remove the temporary verification fixture function:
 ```sql
 DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);
 ```
+
+Verification:
+```sql
+SELECT proname FROM pg_proc WHERE proname = 'create_verify_fixture';
+-- Must return 0 rows
+```
+
+---
+
+## 6. Seed Data Insertion (Gate G2 - Only After Owner Approval)
+
+Once approved, execute the following transaction-wrapped SQL to populate baseline settings, capabilities, and templates:
+
+```sql
+BEGIN;
+
+-- 1. Public Settings
+INSERT INTO public.settings_public (key, value, updated_at) VALUES (
+  'pricing',
+  '{"creditValueEgp": 0.1, "safetyBuffer": 0.15, "minPoints": 1, "markup": 2.0, "usdToEgp": 53.0}'::jsonb,
+  now()
+) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+
+-- 2. Private Settings
+INSERT INTO public.settings_private (key, value, updated_at) VALUES (
+  'pricing',
+  '{"usdToEgp": 50.0, "markup": 1.3, "minMarginThreshold": 0.2, "providerDailySpendCapUsd": 0.8, "jobMaxPointsCap": 600}'::jsonb,
+  now()
+) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+
+-- 3. Capability Registry (Single Active Capability)
+INSERT INTO public.capability_registry (
+  slug, name_ar, name_en, category, endpoint_id, pricing_unit, unit_cost_usd, unit_price_credits, enabled, max_rows, pagination_type, params, params_schema
+) VALUES
+  ('tiktok-profile', 'استخراج ملف تيك توك الشخصي', 'TikTok User Profile', 'tiktok', 'tikhub.tiktok.user.profile', 'call', 0.001, 2, true, 1, 'none', '["username"]'::jsonb, '{"type":"object","properties":{"username":{"type":"string"}},"required":["username"]}'::jsonb)
+ON CONFLICT (slug) DO UPDATE SET
+  name_ar = EXCLUDED.name_ar,
+  unit_price_credits = EXCLUDED.unit_price_credits,
+  enabled = EXCLUDED.enabled;
+
+-- 4. Templates
+INSERT INTO public.templates (id, title_ar, prompt_ar, category, enabled) VALUES
+  ('tiktok-profile', 'ملف تيك توك الشخصي', 'استخراج بيانات الملف الشخصي لحساب تيك توك عام مع إحصائيات المتابعين والمشاهدات', 'social', true)
+ON CONFLICT (id) DO UPDATE SET title_ar = EXCLUDED.title_ar, prompt_ar = EXCLUDED.prompt_ar;
+
+COMMIT;
+```
