@@ -156,13 +156,13 @@ export default function DiscoveryCard({ questions, completedAnswers, disabled = 
               {normalizedQuestions.length > 1 ? "أجب عن الأسئلة التالية — أو تخطَّ ما يناسبك" : "أجب عن السؤال التالي — أو تخطَّه"}
             </p>
           </div>
-          {normalizedQuestions.length >= 2 && (
-            <span className="tnum shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-ink-800 ring-1 ring-sand-200" aria-live="polite" dir="ltr">
+          {normalizedQuestions.length > 1 && (
+            <span className="tnum shrink-0 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-ink-800 ring-1 ring-sand-200" aria-live="polite">
               <bdi dir="ltr">{formatNumber(answeredCount)} / {formatNumber(normalizedQuestions.length)}</bdi>
             </span>
           )}
         </div>
-        {normalizedQuestions.length >= 2 && (
+        {normalizedQuestions.length > 1 && (
           <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-sand-200" role="progressbar" aria-valuenow={answeredCount} aria-valuemin={0} aria-valuemax={normalizedQuestions.length} aria-label="تقدم الإجابات">
             <div className="h-full rounded-full bg-accent transition-[width] duration-300 motion-reduce:transition-none" style={{ width: `${normalizedQuestions.length ? (answeredCount / normalizedQuestions.length) * 100 : 0}%` }} />
           </div>

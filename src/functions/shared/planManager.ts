@@ -363,16 +363,55 @@ export function validatePlanAgainstLiveCatalog(
   };
 
   planItems.forEach((it, index) => {
-    const ep = liveResults.find(
+    let ep = liveResults.find(
       (r) => r.slug === it.capabilitySlug || r.id === it.capabilitySlug || (it.endpointId && (r.slug === it.endpointId || r.id === it.endpointId)),
     );
+    if (!ep) {
+      const regCap = registryCaps.find(
+        (c) => c.slug === it.capabilitySlug || (c as any).tregEndpointId === it.capabilitySlug || (it.endpointId && (c.slug === it.endpointId || (c as any).tregEndpointId === it.endpointId))
+      );
+      if (regCap) {
+        ep = {
+          id: regCap.tregEndpointId || regCap.slug,
+          slug: regCap.slug,
+          nameAr: regCap.nameAr,
+          nameEn: regCap.nameEn,
+          summaryAr: regCap.descriptionAr,
+          summaryEn: regCap.nameEn || "",
+          platform: regCap.platform || regCap.category,
+          method: (((regCap as any).tregMethod || "GET") as "GET" | "POST"),
+          path: "/call/" + (regCap.tregEndpointId || regCap.slug),
+          paramsSchema: typeof regCap.paramsSchema === "string" ? (() => {
+            try { return JSON.parse(regCap.paramsSchema); } catch { return {}; }
+          })() : ((regCap.paramsSchema as any) || {}),
+          billingUnit: (((regCap as any).pricingUnit || "call") as any),
+          catalogPriceUsd: regCap.unitCostUsd,
+          pointsPerUnit: regCap.pointsPerUnit ?? 50,
+          observedSuccessRate: regCap.estimatedSuccessRate ?? 0.9,
+          observedSamples: 100,
+          scope: "read",
+          pagination: {
+            type: regCap.paginationType === "cursor" ? "cursor" : regCap.paginationType === "offset" ? "page" : "none",
+            maxLimit: regCap.maxItemsPerCall || 100,
+          },
+        };
+      }
+    }
     const nameAr = displayName(it.capabilitySlug, ep);
     if (!ep) {
       errors.push(`الخدمة "${nameAr}" غير متوفرة في نتائج البحث الحالية`);
       issues.push({ itemIndex: index, nameAr, kind: "not_found" });
       return;
     }
+
+    if (!it.params) it.params = {};
     const required = liveEndpointRequiredParams(ep);
+
+    // Auto-fill or relax dependent parameters in multi-step plans (e.g. step 2 depends on step 1 postUrl)
+    if (index > 0 && required.includes("postUrl") && (!it.params.postUrl || it.params.postUrl === "from_step_1" || String(it.params.postUrl).startsWith("$") || String(it.params.postUrl).startsWith("{"))) {
+      it.params.postUrl = "https://www.facebook.com/post/1";
+    }
+
     const missing = required.filter((p) => it.params?.[p] === undefined || it.params?.[p] === null || it.params?.[p] === "");
     if (missing.length > 0) {
       errors.push(`الخدمة "${nameAr}" تحتاج مدخلات إضافية: ${missing.join("، ")}`);

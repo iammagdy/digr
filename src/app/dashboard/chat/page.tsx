@@ -316,7 +316,7 @@ export default function ChatWorkspacePage() {
     setPlusMenuOpen(false);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     try {
       let jwtToken: string | undefined = undefined;
@@ -370,7 +370,7 @@ export default function ChatWorkspacePage() {
       clearTimeout(timeoutId);
       const isTimeout = err.name === "AbortError";
       const errorContent = isTimeout
-        ? "استغرق المساعد وقتاً أطول من المتوقع (أكثر من 20 ثانية). يرجى الضغط على زر إعادة المحاولة."
+        ? "استغرق المساعد وقتاً أطول من المتوقع (أكثر من 35 ثانية). يرجى الضغط على زر إعادة المحاولة."
         : (err.message || "حدث خطأ غير متوقع في الاتصال. يرجى إعادة المحاولة.");
 
       setMessages((prev) => [
@@ -417,7 +417,7 @@ export default function ChatWorkspacePage() {
     }]);
     setLoading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 20000);
+    const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     try {
       let jwtToken: string | undefined;

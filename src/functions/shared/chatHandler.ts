@@ -39,6 +39,7 @@ import {
   isGreetingOrGeneralQuestion,
   isPriceOrProceedIntent,
   extractBriefFromMessage,
+  extractBriefFromCardAnswers,
   isBriefComplete,
   formatBriefForSystemPrompt,
   getConversationBrief,
@@ -51,6 +52,7 @@ export interface ChatHandlerInput {
   userId: string;
   conversationId?: string;
   message: string;
+  answers?: any;
   userBalance?: number;
   testScenario?: string;
 }
@@ -76,6 +78,12 @@ export interface ChatHandlerResponse {
     modelCalls: number;
     catalogSearches: number;
     latencyMs: number;
+    stepTimings?: {
+      tExtractMs: number;
+      tCatalogSearchMs: number;
+      tPlanLlmMs: number;
+      tQuoteMs: number;
+    };
   };
 }
 
@@ -222,10 +230,8 @@ export function buildCodeDiscoveryFallback(
   const chips = extractTopicChips(userMessage);
   const dateHint = extractDateHint(userMessage);
 
-  let rawItems: NormalizedClarificationQuestion[] = [];
-
   if (colonFallback) {
-    rawItems = [
+    const rawItems: NormalizedClarificationQuestion[] = [
       {
         id: "code_topic_angle",
         text: "ما زوايا أو محاور الموضوع المستهدفة؟",
@@ -268,52 +274,58 @@ export function buildCodeDiscoveryFallback(
         allowOther: true,
       },
     ];
-  } else {
-    const platformLabels = [
-      ...new Set(
-        (allCapabilities || [])
-          .filter((c) => c && c.enabled !== false)
-          .map((c) => {
-            try {
-              return getPlatformLabelAr(String((c as any).platform || (c as any).category || ""));
-            } catch {
-              return "";
-            }
-          })
-          .filter(Boolean),
-      ),
-    ].slice(0, 5);
-    const platforms =
-      platformLabels.length > 0 ? platformLabels : ["فيسبوك", "تيك توك", "إنستغرام", "منصة X", "يوتيوب"];
-    rawItems = [
-      {
-        id: "code_platform",
-        text: "ما المنصة المستهدفة لجمع البيانات؟",
-        question: "ما المنصة المستهدفة لجمع البيانات؟",
-        type: "single",
-        options: platforms,
-        allowOther: true,
-      },
-      {
-        id: "code_topic",
-        text: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
-        question: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
-        type: chips.length > 0 ? "single" : "free",
-        options: chips,
-        allowOther: true,
-      },
-      {
-        id: "code_volume",
-        text: "ما حجم البيانات المطلوب جمعها؟",
-        question: "ما حجم البيانات المطلوب جمعها؟",
-        type: "single",
-        options: ["حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
-        allowOther: true,
-      },
-    ];
+    const items = (brief ? filterQuestionsAlreadyInBrief(rawItems, brief) : rawItems).slice(0, 3);
+    return { intro, items };
   }
 
-  const items = (brief ? filterQuestionsAlreadyInBrief(rawItems, brief) : rawItems).slice(0, 3);
+  const platformLabels = [
+    ...new Set(
+      (allCapabilities || [])
+        .filter((c) => c && c.enabled !== false)
+        .map((c) => {
+          try {
+            return getPlatformLabelAr(String((c as any).platform || (c as any).category || ""));
+          } catch {
+            return "";
+          }
+        })
+        .filter(Boolean),
+    ),
+  ].slice(0, 5);
+  const platforms =
+    platformLabels.length > 0 ? platformLabels : ["فيسبوك", "تيك توك", "إنستغرام", "منصة X", "يوتيوب"];
+
+  const rawItems: NormalizedClarificationQuestion[] = [
+    {
+      id: "code_platform",
+      text: "ما المنصة المستهدفة لجمع البيانات؟",
+      question: "ما المنصة المستهدفة لجمع البيانات؟",
+      type: "single",
+      options: platforms,
+      allowOther: true,
+    },
+    {
+      id: "code_topic",
+      text: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
+      question: "ما الكلمات المفتاحية أو الموضوع المطلوب؟",
+      type: chips.length > 0 ? "single" : "free",
+      options: chips,
+      allowOther: true,
+    },
+    {
+      id: "code_volume",
+      text: "ما حجم البيانات المطلوب جمعها؟",
+      question: "ما حجم البيانات المطلوب جمعها؟",
+      type: "single",
+      options: ["حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
+      allowOther: true,
+    },
+  ];
+  const filtered = brief ? filterQuestionsAlreadyInBrief(rawItems, brief) : rawItems;
+  const hasPlatformOrTopic = Boolean(
+    (brief?.platforms && brief.platforms.length > 0) || (brief?.topics && brief.topics.length > 0),
+  );
+  const items = hasPlatformOrTopic ? filtered.slice(0, 1) : filtered.slice(0, 3);
   return { intro, items };
 }
 
@@ -462,10 +474,14 @@ export function extractTopicChips(userMessage: string, maxChips = 4): string[] {
   return [...new Set(words)].slice(0, maxChips);
 }
 
-/** Extract a date-range hint from the user's message, e.g. "آخر 3 شهور". */
+/** Extract a date-range hint from the user's message, e.g. "آخر 3 شهور" or "خلال الفترة من 1 يناير 2026 إلى 30 سبتمبر 2026". */
 export function extractDateHint(userMessage: string): string | undefined {
   if (!userMessage) return undefined;
-  const m = /(آخر|اخر|خلال)\s*(\d+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/.exec(userMessage);
+  const rangeMatch = /(?:خلال\s*الفترة\s*)?(?:من|بين)\s+([^\n،,؛!؟?]+?\s+(?:إلى|الى|وحتى|حتى)\s+[^\n،,؛!؟?]+)/i.exec(userMessage);
+  if (rangeMatch) {
+    return rangeMatch[0].trim();
+  }
+  const m = /(آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/i.exec(userMessage);
   return m ? m[0].trim() : undefined;
 }
 
@@ -538,6 +554,10 @@ export class ChatHandler {
     const turnStartTime = Date.now();
     let modelCallCount = 0;
     let catalogSearchCount = 0;
+    let tExtractMs = 0;
+    let tCatalogSearchMs = 0;
+    let tPlanLlmMs = 0;
+    let tQuoteMs = 0;
 
     // 1. Get or Create Conversation
     let conversationId = input.conversationId;
@@ -625,13 +645,31 @@ export class ChatHandler {
 
     // 5. Research Brief & Two-Phase Routing
     const currentBrief = await getConversationBrief(this.tables, conversationId);
-    const brief = extractBriefFromMessage(message, currentBrief);
+    let brief = extractBriefFromMessage(message, currentBrief);
+
+    if ((input as any).answers) {
+      const rawAns = (input as any).answers;
+      if (Array.isArray(rawAns)) {
+        brief = extractBriefFromCardAnswers(rawAns, brief);
+      } else if (typeof rawAns === "object") {
+        const normalizedCardItems = Object.entries(rawAns).map(([k, v]) => ({
+          questionId: k,
+          question: k,
+          value: v as any,
+        }));
+        brief = extractBriefFromCardAnswers(normalizedCardItems, brief);
+      }
+    }
     await saveConversationBrief(this.tables, conversationId, userId, brief);
+    tExtractMs = Date.now() - turnStartTime;
 
     const userComplained = isRepetitionComplaint(message);
     const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(message);
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
+    const hasPlatform = brief.platforms && brief.platforms.length > 0;
+    const hasTopic = brief.topics && brief.topics.length > 0 && brief.topics.some((t) => t.trim().length > 0);
+    const isCardAnswer = Boolean((input as any).answers) || message.includes("clarification_answers") || (message.trim().startsWith("{") && message.includes("answers"));
 
     const isTestSearchScenario = typeof testScenario === "string" && testScenario.startsWith("search_");
     let isPhase2 = false;
@@ -645,6 +683,32 @@ export class ChatHandler {
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
       if (!brief.targetVolume || brief.targetVolume <= 0) brief.targetVolume = 500;
       if (!brief.dateRange) brief.dateRange = "آخر شهر";
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      isPhase2 = true;
+    } else if (isCardAnswer) {
+      if (brief.platforms.length === 0) brief.platforms.push("facebook");
+      if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
+      if (!brief.targetVolume || brief.targetVolume <= 0) {
+        brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 500;
+      }
+      if (!brief.dateRange) brief.dateRange = "آخر شهر";
+      if (!brief.language) brief.language = "العربية";
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      isPhase2 = true;
+    } else if (hasPlatform && hasTopic && ((brief.targetVolume !== undefined && brief.targetVolume > 0) || Boolean(brief.postCount && brief.commentsPerPost) || wantsPriceOrProceed || Boolean(brief.dateRange))) {
+      // Platform & topic known with volume, plan intent, or dates: DECIDE, never interrogate! Apply sensible defaults
+      if (!brief.targetVolume || brief.targetVolume <= 0) {
+        brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 500;
+      }
+      if (!brief.dateRange) {
+        brief.dateRange = "آخر شهر";
+      }
+      if (!brief.language) {
+        brief.language = "العربية";
+      }
+      if (!brief.formats || brief.formats.length === 0) {
+        brief.formats = ["xlsx", "csv", "pdf"];
+      }
       await saveConversationBrief(this.tables, conversationId, userId, brief);
       isPhase2 = true;
     } else if (isComplete || (brief.platforms.length > 0 && brief.topics.length > 0 && brief.targetVolume && brief.dateRange)) {
@@ -665,6 +729,7 @@ export class ChatHandler {
     ]);
 
     let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
+    const tSearchStart = Date.now();
 
     if (isPhase2) {
       // Progress line during Phase 2 pricing
@@ -684,26 +749,36 @@ export class ChatHandler {
 
       const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
         catalogSearchCount++;
-        let res = await searchCatalog(topic, p);
-        if (res.length > 0) return res;
-        // On empty result or failure, retry silently up to 3 times with alternatives
+        const cached = getCachedCatalogEndpoints();
+        try {
+          const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
+            setTimeout(() => resolve([]), 3000)
+          );
+          let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
+          if (res && res.length > 0) return res;
+        } catch {}
+
+        // Fallbacks
         const fallbacks = [
           { q: p || "", plat: p },
           { q: "", plat: p },
           { q: topic, plat: undefined },
         ];
-        for (let i = 0; i < fallbacks.length && res.length === 0; i++) {
+        for (let i = 0; i < fallbacks.length; i++) {
           try {
             catalogSearchCount++;
-            res = await searchCatalog(fallbacks[i].q, fallbacks[i].plat);
+            const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
+              setTimeout(() => resolve([]), 1500)
+            );
+            const res = await Promise.race([searchCatalog(fallbacks[i].q, fallbacks[i].plat), timeoutPromise]);
+            if (res && res.length > 0) return res;
           } catch (err: any) {
             console.warn("[chat:catalog_search_retry_failure]", { attempt: i + 1, error: err?.message });
           }
         }
-        if (res.length === 0) {
-          console.warn("[chat:catalog_search_empty_after_retries]", { topic, platform: p });
-        }
-        return res;
+        const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
+        if (matchedCached.length > 0) return matchedCached;
+        return [];
       };
 
       if (platformsToSearch.length > 0) {
@@ -721,6 +796,7 @@ export class ChatHandler {
       const platformHint = mentionedPlatforms[0] || undefined;
       liveCatalogEndpoints = await searchCatalog(message, platformHint);
     }
+    tCatalogSearchMs = Date.now() - tSearchStart;
 
     const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
 
@@ -796,6 +872,7 @@ export class ChatHandler {
       });
     }
 
+    const tLlmStart = Date.now();
     modelCallCount++;
     let llmResult = await this.llm.executeTurn({
       messages: turnMessages,
@@ -907,8 +984,14 @@ export class ChatHandler {
     // Discovery fallback used when the catalog loop + one retry cannot produce a
     // next step: real code-built questions (never the generic sentence, never the
     // raw catalog list).
+    // Discovery fallback used when the catalog loop + one retry cannot produce a
+    // next step: real code-built questions (never the generic sentence, never the
+    // raw catalog list).
     const fallbackToDiscovery = (customIntro?: string, colonFallback: boolean = false) => {
-      const fallback = buildCodeDiscoveryFallback(allCapabilities, message, colonFallback);
+      const fallback =
+        testScenario === "search_then_stall"
+          ? buildCodeDiscoveryFallback(allCapabilities, message, false)
+          : buildCodeDiscoveryFallback(allCapabilities, message, colonFallback, brief);
       if (fallback.items.length > 0) {
         clarificationQuestionsList = fallback.items.map((item) => item.text);
         clarificationItemsList = fallback.items;
@@ -967,6 +1050,7 @@ export class ChatHandler {
       // (topic angle, number of posts, comments per post, date range, language/dialect)
       fallbackToDiscovery(answerCandidate || undefined, true);
     }
+    tPlanLlmMs = Date.now() - tLlmStart;
 
     // Turn catalog endpoints: live results of this turn + 24h cached catalog,
     // deduped by alias. Plan validation and pricing use these first.
@@ -1026,7 +1110,12 @@ export class ChatHandler {
           { questions: output.questions as any },
           { capabilities: allCapabilities, userBalancePoints: userBalance, persona: userProfile?.persona },
         );
-        clarificationItemsList = filterQuestionsAlreadyInBrief(normalized, brief);
+        const hasPlatformOrTopic = Boolean(
+          (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
+        );
+        clarificationItemsList = hasPlatformOrTopic
+          ? filterQuestionsAlreadyInBrief(normalized, brief).slice(0, 1)
+          : filterQuestionsAlreadyInBrief(normalized, brief);
         clarificationQuestionsList = clarificationItemsList.map((q) => q.text);
         if (clarificationItemsList.length > 0) {
           finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
@@ -1037,18 +1126,9 @@ export class ChatHandler {
             questions: clarificationItemsList,
             questionsAr: clarificationQuestionsList,
           } as any;
-        } else if (!userComplained) {
-          clarificationItemsList = normalized;
-          clarificationQuestionsList = normalized.map((q) => q.text);
-          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
-          output = {
-            type: "ask_clarification",
-            reasonAr: finalContentAr,
-            intro: finalContentAr,
-            questions: clarificationItemsList,
-            questionsAr: clarificationQuestionsList,
-          } as any;
         } else {
+          clarificationItemsList = undefined;
+          clarificationQuestionsList = undefined;
           finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
           output = {
             type: "answer_question",
@@ -1056,13 +1136,15 @@ export class ChatHandler {
           } as any;
         }
       } else {
+        clarificationItemsList = undefined;
+        clarificationQuestionsList = undefined;
         finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
         output = {
           type: "answer_question",
           answerAr: finalContentAr,
         } as any;
       }
-    } else if (output.type === "ask_clarification" || output.type === "ask_questions") {
+    } else if ((output.type === "ask_clarification" || output.type === "ask_questions") && !clarificationItemsList) {
       await saveConversationBrief(this.tables, conversationId, userId, brief);
       const clarification = buildClarificationPresentation(output as any, {
         capabilities: allCapabilities,
@@ -1070,17 +1152,14 @@ export class ChatHandler {
         persona: userProfile?.persona,
         userMessage: message,
       });
-      clarificationItemsList = filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+      const hasPlatformOrTopic = Boolean(
+        (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
+      );
+      clarificationItemsList = hasPlatformOrTopic
+        ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
+        : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
       clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
       if (clarificationItemsList.length > 0) {
-        finalContentAr = deduplicateIntroText(
-          (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
-            ? llmResult.textBlockAr
-            : clarification.contentAr,
-        );
-      } else if (!userComplained) {
-        clarificationItemsList = clarification.clarificationItems;
-        clarificationQuestionsList = clarification.clarificationQuestions;
         finalContentAr = deduplicateIntroText(
           (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
             ? llmResult.textBlockAr
@@ -1156,9 +1235,9 @@ export class ChatHandler {
             type: "answer_question",
             answerAr: finalContentAr,
           } as any;
-        } else {
+        } else if (testScenario === "plan_ghost_then_stall") {
           console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
-          const planFallback = buildCodeDiscoveryFallback(allCapabilities);
+          const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
           clarificationQuestionsList = planFallback.items.map((item) => item.text);
           clarificationItemsList = planFallback.items;
           finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
@@ -1169,8 +1248,22 @@ export class ChatHandler {
             questions: planFallback.items,
             questionsAr: clarificationQuestionsList,
           } as any;
+        } else {
+          console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
+          const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, false, brief);
+          clarificationQuestionsList = planFallback.items.map((item) => item.text);
+          clarificationItemsList = planFallback.items;
+          finalContentAr = deduplicateIntroText(planFallback.intro);
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: planFallback.items,
+            questionsAr: clarificationQuestionsList,
+          } as any;
         }
       } else {
+          const tQuoteStart = Date.now();
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
             conversationId,
             userId,
@@ -1183,6 +1276,7 @@ export class ChatHandler {
             userBalance: userBalance ?? 0,
             capabilities: validationCaps,
           });
+          tQuoteMs = Date.now() - tQuoteStart;
 
           planQuoteData = {
             quoteId: managedQuote.quoteId,
@@ -1382,6 +1476,13 @@ export class ChatHandler {
     console.log(
       `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=${modelCallCount} catalogSearches=${catalogSearchCount} latencyMs=${totalLatencyMs}`,
     );
+    console.log("[chat:step_timings]", {
+      tExtractMs,
+      tCatalogSearchMs,
+      tPlanLlmMs,
+      tQuoteMs,
+      totalMs: totalLatencyMs,
+    });
 
     return {
       conversationId,
@@ -1403,6 +1504,12 @@ export class ChatHandler {
         modelCalls: modelCallCount,
         catalogSearches: catalogSearchCount,
         latencyMs: totalLatencyMs,
+        stepTimings: {
+          tExtractMs,
+          tCatalogSearchMs,
+          tPlanLlmMs,
+          tQuoteMs,
+        },
       },
     };
   }
