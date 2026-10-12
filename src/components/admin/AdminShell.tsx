@@ -213,7 +213,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                     <span className="h-[1.6px] w-4 bg-current" /><span className="h-[1.6px] w-4 bg-current" />
                   </button>
                 )}
-                <div className="min-w-[140px] flex-1">
+                <div className={`flex-1 ${mobile ? "min-w-0" : "min-w-[140px]"}`}>
                   <p className="m-0 whitespace-nowrap text-[11px] text-fnt">لوحة الإدارة</p>
                   <h1 className="mb-0 mt-0.5 truncate font-semibold text-ink" style={{ fontSize: mobile ? 18 : 20 }}>{title}</h1>
                 </div>

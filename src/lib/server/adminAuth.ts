@@ -99,3 +99,25 @@ export async function listAllUsers(users: Users, queries: string[] = [], cap = 5
   }
   return out;
 }
+
+/** id → {name,email} for a set of users (20 parallel lookups at a time; unknown ids resolve to empty strings). */
+export async function userDirectory(users: Users, ids: string[]): Promise<Map<string, { name: string; email: string }>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  const out = new Map<string, { name: string; email: string }>();
+  for (let i = 0; i < unique.length; i += 20) {
+    await Promise.all(unique.slice(i, i + 20).map(async (id) => {
+      try { const u = await users.get({ userId: id }); out.set(id, { name: u.name || "", email: u.email || "" }); }
+      catch { out.set(id, { name: "", email: "" }); }
+    }));
+  }
+  return out;
+}
+
+/** Current EGP value of one point from settings_public (default 0.10). */
+export async function creditValueEgp(tables: TablesDB): Promise<number> {
+  try {
+    const row: any = await tables.getRow({ databaseId: "digr", tableId: "settings_public", rowId: "pricing" });
+    if (Number(row?.creditValueEgp) > 0) return Number(row.creditValueEgp);
+  } catch { /* default */ }
+  return 0.1;
+}
