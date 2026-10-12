@@ -36,26 +36,37 @@ If `total_rows` equals `test_user_rows` and the first query returns 0 rows, it i
 ```sql
 BEGIN;
 
--- 1. Pre-check guard within transaction: abort if any non-test user data exists
+-- 1. Prevent concurrent ledger writes under exclusive lock and verify test-only data
+LOCK TABLE public.credit_ledger IN ACCESS EXCLUSIVE MODE;
+
 DO $$
 BEGIN
   IF EXISTS (
     SELECT 1 FROM public.credit_ledger 
-    WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid
+    WHERE user_id NOT IN (
+      '00000000-0000-0000-0000-000000000001'::uuid,
+      '00000000-0000-0000-0000-000000000002'::uuid
+    )
   ) THEN
     RAISE EXCEPTION 'ABORT: Non-test user records exist in credit_ledger! Reset aborted.';
   END IF;
 
   IF EXISTS (
     SELECT 1 FROM public.jobs 
-    WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid
+    WHERE user_id NOT IN (
+      '00000000-0000-0000-0000-000000000001'::uuid,
+      '00000000-0000-0000-0000-000000000002'::uuid
+    )
   ) THEN
     RAISE EXCEPTION 'ABORT: Non-test user records exist in jobs! Reset aborted.';
   END IF;
 
   IF EXISTS (
     SELECT 1 FROM public.topups 
-    WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid
+    WHERE user_id NOT IN (
+      '00000000-0000-0000-0000-000000000001'::uuid,
+      '00000000-0000-0000-0000-000000000002'::uuid
+    )
   ) THEN
     RAISE EXCEPTION 'ABORT: Non-test user records exist in topups! Reset aborted.';
   END IF;
@@ -65,18 +76,89 @@ END $$;
 ALTER TABLE public.credit_ledger DISABLE TRIGGER trg_block_ledger_mutation;
 ALTER TABLE public.credit_ledger DISABLE TRIGGER trg_block_ledger_truncate;
 
--- 3. Child-first deletion of all test records (test user 00000000-0000-0000-0000-000000000001)
--- Delete dependent grandchild/child rows first to maintain foreign key integrity:
-DELETE FROM public.provider_costs WHERE job_id IN (
-  SELECT id FROM public.jobs WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid
+-- 3. Child-first deletion of all test records (test users 00000000-0000-0000-0000-000000000001 and 00000000-0000-0000-0000-000000000002)
+-- Delete job-dependent RESTRICT rows first:
+DELETE FROM public.provider_costs pc
+USING public.jobs j
+WHERE pc.job_id = j.id
+  AND j.user_id IN (
+    '00000000-0000-0000-0000-000000000001'::uuid,
+    '00000000-0000-0000-0000-000000000002'::uuid
+  );
+
+DELETE FROM public.artifact_versions av
+WHERE av.user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+) OR av.job_id IN (
+  SELECT j.id FROM public.jobs j
+  WHERE j.user_id IN (
+    '00000000-0000-0000-0000-000000000001'::uuid,
+    '00000000-0000-0000-0000-000000000002'::uuid
+  )
 );
-DELETE FROM public.job_events WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
-DELETE FROM public.credit_ledger WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
-DELETE FROM public.jobs WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
-DELETE FROM public.topups WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
-DELETE FROM public.plans_quotes WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
-DELETE FROM public.profiles WHERE id = '00000000-0000-0000-0000-000000000001'::uuid;
-DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-000000000001'::uuid;
+
+DELETE FROM public.job_events je
+WHERE je.user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+) OR je.job_id IN (
+  SELECT j.id FROM public.jobs j
+  WHERE j.user_id IN (
+    '00000000-0000-0000-0000-000000000001'::uuid,
+    '00000000-0000-0000-0000-000000000002'::uuid
+  )
+);
+
+-- Delete direct user RESTRICT references before auth.users:
+DELETE FROM public.credit_ledger 
+WHERE user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+DELETE FROM public.jobs 
+WHERE user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+DELETE FROM public.topups 
+WHERE user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+DELETE FROM public.plans_quotes 
+WHERE user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+DELETE FROM public.llm_usage 
+WHERE user_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+DELETE FROM public.admin_audit_log 
+WHERE actor_id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+DELETE FROM public.profiles 
+WHERE id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
+
+-- Delete auth.users last, after all foreign-key RESTRICT references are purged:
+DELETE FROM auth.users 
+WHERE id IN (
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  '00000000-0000-0000-0000-000000000002'::uuid
+);
 
 -- 4. IMMEDIATELY re-enable ledger immutability triggers
 ALTER TABLE public.credit_ledger ENABLE TRIGGER trg_block_ledger_mutation;
