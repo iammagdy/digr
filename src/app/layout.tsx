@@ -6,7 +6,7 @@ import "./globals.css";
 
 const vazirmatn = Vazirmatn({
   subsets: ["arabic", "latin"],
-  weight: ["300", "400", "500", "600"],
+  weight: ["200", "300", "400", "500", "600"],
   variable: "--font-vazirmatn",
   display: "swap",
 });
