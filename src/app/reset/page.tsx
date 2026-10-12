@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { account } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { AuthLayout, AuthToast, authInput, authPrimaryBtn } from "@/components/AuthLayout";
 
 /** Strength meter from the design: length ≥ 8, a letter, a digit, a symbol. */
@@ -13,7 +13,7 @@ function strength(pw: string) {
 
 export default function ResetPage() {
   const router = useRouter();
-  const [creds, setCreds] = useState<{ userId: string; secret: string } | null>(null);
+  const [creds, setCreds] = useState<{ ready: boolean } | null>(null);
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [busy, setBusy] = useState(false);
@@ -21,8 +21,30 @@ export default function ResetPage() {
 
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
-    const userId = q.get("userId"), secret = q.get("secret");
-    if (userId && secret) setCreds({ userId, secret });
+    const code = q.get("code");
+    const tokenHash = q.get("token_hash");
+    const userId = q.get("userId");
+    const secret = q.get("secret");
+
+    const supabase = createClient();
+
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (!error) setCreds({ ready: true });
+        else setCreds(null);
+      });
+    } else if (tokenHash) {
+      supabase.auth.verifyOtp({ token_hash: tokenHash, type: "recovery" }).then(({ error }) => {
+        if (!error) setCreds({ ready: true });
+        else setCreds(null);
+      });
+    } else if (userId && secret) {
+      setCreds({ ready: true });
+    } else {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) setCreds({ ready: true });
+      });
+    }
   }, []);
 
   const sc = strength(pw);
@@ -36,7 +58,9 @@ export default function ResetPage() {
     setBusy(true);
     setError("");
     try {
-      await account.updateRecovery(creds.userId, creds.secret, pw);
+      const supabase = createClient();
+      const { error: updateErr } = await supabase.auth.updateUser({ password: pw });
+      if (updateErr) throw updateErr;
       router.replace("/login?reset=1");
     } catch {
       setError("الرابط غير صالح أو منتهي الصلاحية. اطلب رابطًا جديدًا.");

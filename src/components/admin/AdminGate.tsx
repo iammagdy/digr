@@ -7,11 +7,11 @@ import { useUser } from "@/hooks/useUser";
 import { Spinner } from "@/components/ui";
 import { AdminShell } from "./AdminShell";
 
-/** Client-side UX gate. The real enforcement is server-side: layout.tsx and every /api/admin/* route check `labels: admin`. */
+/** Client-side UX gate. The real enforcement is server-side: layout.tsx and every /api/admin/* route check `role === 'admin'`. */
 export function AdminGate({ children }: { children: ReactNode }) {
   const { user, loading } = useUser();
   const router = useRouter();
-  const isAdmin = Array.isArray(user?.labels) && user!.labels.includes("admin");
+  const isAdmin = user?.app_metadata?.role === "admin" || (Array.isArray(user?.labels) && user.labels.includes("admin"));
 
   useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
 

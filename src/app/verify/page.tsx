@@ -3,7 +3,7 @@
 import { appBaseUrl } from "@/lib/site";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { account } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { AuthLayout, AuthToast, authPrimaryBtn } from "@/components/AuthLayout";
 
@@ -17,16 +17,28 @@ export default function VerifyPage() {
   const [busy, setBusy] = useState(false);
   const handled = useRef(false);
 
-  // Arriving from the email link: /verify?userId=…&secret=…
+  // Arriving from the email link: /verify?code=… or /verify?token_hash=… or /verify?userId=…&secret=…
   useEffect(() => {
     if (handled.current) return;
     const q = new URLSearchParams(window.location.search);
+    const code = q.get("code");
+    const tokenHash = q.get("token_hash");
+    const type = (q.get("type") as any) || "signup";
     const userId = q.get("userId"), secret = q.get("secret");
-    if (!userId || !secret) return;
+
+    if (!code && !tokenHash && (!userId || !secret)) return;
     handled.current = true;
+
     (async () => {
       try {
-        await account.updateVerification(userId, secret);
+        const supabase = createClient();
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+        } else if (tokenHash) {
+          const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+          if (error) throw error;
+        }
         const u = await refresh();
         setToast({ tone: "ok", text: "تم تأكيد بريدك بنجاح." });
         if (u) setTimeout(() => router.replace("/dashboard/chat"), 900);
@@ -48,15 +60,23 @@ export default function VerifyPage() {
   }, [wait]);
 
   const resend = useCallback(async () => {
-    if (wait > 0) return;
+    if (wait > 0 || !user?.email) return;
     try {
-      await account.createVerification(`${appBaseUrl()}/verify`);
+      const supabase = createClient();
+      const { error } = await supabase.auth.resend({
+        type: "signup",
+        email: user.email,
+        options: {
+          emailRedirectTo: `${appBaseUrl()}/verify`,
+        },
+      });
+      if (error) throw error;
       setToast({ tone: "ok", text: "أرسلنا رسالة تأكيد جديدة." });
     } catch {
       setToast({ tone: "bad", text: "تعذّر إرسال الرسالة الآن. حاول بعد قليل." });
     }
     setWait(RESEND_SECONDS);
-  }, [wait]);
+  }, [wait, user?.email]);
 
   const done = async () => {
     setBusy(true);

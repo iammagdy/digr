@@ -3,7 +3,7 @@
 import { appBaseUrl } from "@/lib/site";
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { account } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { AuthLayout, AuthToast, authInput, authPrimaryBtn } from "@/components/AuthLayout";
 
 export default function ForgotPage() {
@@ -18,10 +18,24 @@ export default function ForgotPage() {
     setError("");
     setBusy(true);
     try {
-      await account.createRecovery(email.trim(), `${appBaseUrl()}/reset`);
+      const supabase = createClient();
+      const { error: resetErr } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${appBaseUrl()}/reset`,
+      });
+      if (resetErr) {
+        if ((resetErr as any)?.status === 429 || (resetErr as any)?.code === "over_request_rate_limit") {
+          setError("محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.");
+          setBusy(false);
+          return;
+        }
+      }
     } catch (err) {
       // Same message whether or not the email exists — never reveal which addresses are registered.
-      if ((err as { code?: number })?.code === 429) { setError("محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا."); setBusy(false); return; }
+      if ((err as { code?: number; status?: number })?.code === 429 || (err as { status?: number })?.status === 429) {
+        setError("محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا.");
+        setBusy(false);
+        return;
+      }
     }
     setBusy(false);
     setSent(true);
