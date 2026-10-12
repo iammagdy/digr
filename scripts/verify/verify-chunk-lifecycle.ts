@@ -1,13 +1,16 @@
 /**
  * Live Verification Script: Chunk Lifecycle (complete_chunk & record_chunk_failure)
  * Usage: tsx scripts/verify/verify-chunk-lifecycle.ts
- * Strictly reads keys from environment variables. Zero hardcoded secrets.
+ * Uses service-role RPCs only; never writes protected table rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
+import { newVrunPrefix, requireSetupRows } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+const RUN_PREFIX = newVrunPrefix();
+const RESERVED_CREDITS = 20;
 
 if (!SERVICE_KEY) {
   console.error("ERROR: SUPABASE_SERVICE_ROLE_KEY must be provided via environment variable.");
@@ -20,129 +23,145 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 
 async function main() {
   console.log("=== Verifying Chunk Lifecycle (complete_chunk & record_chunk_failure) ===");
+  console.log("Run prefix:", RUN_PREFIX);
 
-  const jobId = `job_test_lifecycle_${Date.now()}`;
-  const reservedCredits = 20;
+  const jobId = `${RUN_PREFIX}lifecycle`;
+  const completedJobId = `${RUN_PREFIX}completed_guard`;
+  const [jobResult, completedResult] = await Promise.all([
+    supabase.from("jobs").select("id, user_id, status, step, reserved_credits").eq("id", jobId).maybeSingle(),
+    supabase.from("jobs").select("id, user_id, status, attempt_count").eq("id", completedJobId).maybeSingle(),
+  ]);
+  if (jobResult.error) throw jobResult.error;
+  if (completedResult.error) throw completedResult.error;
 
-  // 1. Prepare reservation in ledger
-  await supabase.from("credit_ledger").insert({
-    id: `res_${jobId}`,
-    user_id: TEST_USER_ID,
-    delta: -reservedCredits,
-    type: "reserve",
-    job_id: jobId,
-    note: "Lifecycle test hold",
-  });
-
-  // 2. Prepare running job at step 0 with active lease
-  await supabase.from("jobs").insert({
-    id: jobId,
-    user_id: TEST_USER_ID,
-    status: "running",
-    endpoint_id: "tiktok-profile",
-    step: 0,
-    attempt_count: 0,
-    unit_price: 1,
-    reserved_credits: reservedCredits,
-    target_volume_min: 10,
-    target_volume_max: 20,
-    delivered_units: 0,
-    lease_until: new Date(Date.now() + 60_000).toISOString(),
-  });
-
-  // 3. Complete chunk step 0
-  const { data: comp1, error: compErr1 } = await supabase.rpc("complete_chunk", {
-    p_job_id: jobId,
-    p_expected_step: 0,
-    p_new_cursor: "cursor_step_1",
-    p_new_delivered_units: 5,
-    p_cost_usd: 0.05,
-  });
-  if (compErr1) throw compErr1;
-  console.log("complete_chunk step 0 result:", comp1);
-
-  if (!comp1.success || comp1.step !== 1 || comp1.already_completed) {
-    throw new Error(`Unexpected complete_chunk result: ${JSON.stringify(comp1)}`);
-  }
-
-  // 4. Duplicate complete_chunk step 0 (retried chunk) must be idempotent
-  const { data: compDup, error: compDupErr } = await supabase.rpc("complete_chunk", {
-    p_job_id: jobId,
-    p_expected_step: 0,
-    p_new_cursor: "cursor_step_1",
-    p_new_delivered_units: 5,
-    p_cost_usd: 0.05,
-  });
-  if (compDupErr) throw compDupErr;
-  console.log("complete_chunk duplicate retry result:", compDup);
-
-  if (!compDup.success || !compDup.already_completed) {
-    throw new Error(`Expected already_completed: true on duplicate step completion: ${JSON.stringify(compDup)}`);
-  }
-
-  // 5. Test record_chunk_failure and backoff
-  for (let i = 1; i <= 5; i++) {
-    const { data: failRes, error: failErr } = await supabase.rpc("record_chunk_failure", {
-      p_job_id: jobId,
-      p_error_message: `Failure attempt ${i}`,
+  const missing = [];
+  if (!jobResult.data) {
+    missing.push({
+      table: "jobs",
+      purpose: "complete_chunk retry followed by five record_chunk_failure calls",
+      row: {
+        id: jobId,
+        user_id: TEST_USER_ID,
+        status: "running",
+        endpoint_id: "tiktok-profile",
+        step: 0,
+        attempt_count: 0,
+        unit_price: 1,
+        reserved_credits: RESERVED_CREDITS,
+        target_volume_min: 10,
+        target_volume_max: 20,
+        delivered_units: 0,
+        lease_until: null,
+      },
     });
-    if (failErr) throw failErr;
-    console.log(`record_chunk_failure attempt ${i}:`, failRes);
+  }
+  if (!completedResult.data) {
+    missing.push({
+      table: "jobs",
+      purpose: "record_chunk_failure completed-job no-change guard",
+      row: {
+        id: completedJobId,
+        user_id: TEST_USER_ID,
+        status: "completed",
+        endpoint_id: "tiktok-profile",
+        step: 2,
+        attempt_count: 0,
+        unit_price: 1,
+        reserved_credits: 10,
+        charged_credits: 5,
+        delivered_units: 5,
+        lease_until: null,
+      },
+    });
+  }
+  if (missing.length) requireSetupRows(missing);
 
-    if (i < 5) {
-      if (failRes.failed_permanently || failRes.attempt_count !== i) {
-        throw new Error(`Expected transient failure on attempt ${i}`);
-      }
-    } else {
-      // 5th attempt must mark permanently failed and release hold
-      if (!failRes.failed_permanently || !failRes.released) {
-        throw new Error(`Expected permanent failure and release on attempt 5`);
-      }
+  const job = jobResult.data!;
+  const completedJob = completedResult.data!;
+  if (job.user_id !== TEST_USER_ID || job.status !== "running" || job.step !== 0 || Number(job.reserved_credits) !== RESERVED_CREDITS) {
+    throw new Error(`Lifecycle fixture does not match the required running step-0 job: ${JSON.stringify(job)}`);
+  }
+  if (completedJob.user_id !== TEST_USER_ID || completedJob.status !== "completed" || completedJob.attempt_count !== 0) {
+    throw new Error(`Completed-job fixture does not match the required test row: ${JSON.stringify(completedJob)}`);
+  }
+
+  const { data: reserveResult, error: reserveErr } = await supabase.rpc("reserve_credits_atomic", {
+    p_user_id: TEST_USER_ID,
+    p_job_id: jobId,
+    p_amount: RESERVED_CREDITS,
+    p_note: "Approved RPC setup for chunk lifecycle verification",
+  });
+  if (reserveErr) throw reserveErr;
+  if (!reserveResult?.success) throw new Error(`Could not reserve through approved RPC: ${JSON.stringify(reserveResult)}`);
+
+  const completeArgs = {
+    p_job_id: jobId,
+    p_expected_step: 0,
+    p_new_cursor: "cursor_step_1",
+    p_new_delivered_units: 5,
+    p_cost_usd: 0.05,
+  };
+  const { data: firstComplete, error: firstCompleteErr } = await supabase.rpc("complete_chunk", completeArgs);
+  if (firstCompleteErr) throw firstCompleteErr;
+  if (!firstComplete.success || firstComplete.step !== 1 || firstComplete.already_completed) {
+    throw new Error(`Unexpected first complete_chunk result: ${JSON.stringify(firstComplete)}`);
+  }
+
+  const { data: completeRetry, error: completeRetryErr } = await supabase.rpc("complete_chunk", completeArgs);
+  if (completeRetryErr) throw completeRetryErr;
+  if (!completeRetry.success || !completeRetry.already_completed) {
+    throw new Error(`Expected complete_chunk retry to return already_completed: ${JSON.stringify(completeRetry)}`);
+  }
+
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    const { data: failureResult, error: failureErr } = await supabase.rpc("record_chunk_failure", {
+      p_job_id: jobId,
+      p_error_message: `Verification failure attempt ${attempt}`,
+    });
+    if (failureErr) throw failureErr;
+    if (attempt < 5 && (failureResult.failed_permanently || failureResult.attempt_count !== attempt)) {
+      throw new Error(`Expected transient failure on attempt ${attempt}: ${JSON.stringify(failureResult)}`);
+    }
+    if (attempt === 5 && (!failureResult.failed_permanently || !failureResult.released)) {
+      throw new Error(`Expected permanent failure and release on attempt 5: ${JSON.stringify(failureResult)}`);
     }
   }
 
-  // 6. Verify job status is failed and rel_ exists in ledger
-  const { data: finalJob } = await supabase.from("jobs").select("status").eq("id", jobId).single();
-  const { data: relRow } = await supabase.from("credit_ledger").select("id").eq("id", `rel_${jobId}`).single();
+  const [{ data: finalJob, error: finalJobErr }, { data: relRow, error: relErr }] = await Promise.all([
+    supabase.from("jobs").select("status").eq("id", jobId).single(),
+    supabase.from("credit_ledger").select("id").eq("id", `rel_${jobId}`).maybeSingle(),
+  ]);
+  if (finalJobErr) throw finalJobErr;
+  if (relErr) throw relErr;
+  if (finalJob?.status !== "failed" || !relRow) throw new Error("Expected failed job and rel_ ledger row after fifth failure");
 
-  if (finalJob?.status !== "failed" || !relRow) {
-    throw new Error(`Job must be failed and rel_ must exist in ledger`);
-  }
+  const { data: completedBefore, error: completedBeforeErr } = await supabase
+    .from("jobs")
+    .select("status, attempt_count, step, lease_until, error_message")
+    .eq("id", completedJobId)
+    .single();
+  if (completedBeforeErr) throw completedBeforeErr;
 
-  // 7. Explicit Check: record_chunk_failure on a COMPLETED job changes nothing
-  const completedJobId = `job_test_completed_${Date.now()}`;
-  await supabase.from("jobs").insert({
-    id: completedJobId,
-    user_id: TEST_USER_ID,
-    status: "completed",
-    endpoint_id: "tiktok-profile",
-    step: 2,
-    attempt_count: 0,
-    unit_price: 1,
-    reserved_credits: 10,
-    charged_credits: 5,
-    delivered_units: 5,
-    lease_until: null,
-  });
-
-  const { data: compFailRes, error: compFailErr } = await supabase.rpc("record_chunk_failure", {
+  const { data: completedFailure, error: completedFailureErr } = await supabase.rpc("record_chunk_failure", {
     p_job_id: completedJobId,
     p_error_message: "Failure on already completed job",
   });
-  if (compFailErr) throw compFailErr;
-  console.log("record_chunk_failure on completed job result:", compFailRes);
-
-  if (!compFailRes.success || !compFailRes.ignored || compFailRes.status !== "completed") {
-    throw new Error("Expected record_chunk_failure on completed job to be ignored without change");
+  if (completedFailureErr) throw completedFailureErr;
+  if (!completedFailure.success || !completedFailure.ignored || completedFailure.status !== "completed") {
+    throw new Error(`Expected completed job failure to be ignored: ${JSON.stringify(completedFailure)}`);
   }
 
-  // Verify job remains completed and attempt_count is still 0
-  const { data: stillCompletedJob } = await supabase.from("jobs").select("status, attempt_count").eq("id", completedJobId).single();
-  if (stillCompletedJob?.status !== "completed" || stillCompletedJob?.attempt_count !== 0) {
-    throw new Error(`Completed job was modified: ${JSON.stringify(stillCompletedJob)}`);
+  const { data: completedAfter, error: completedAfterErr } = await supabase
+    .from("jobs")
+    .select("status, attempt_count, step, lease_until, error_message")
+    .eq("id", completedJobId)
+    .single();
+  if (completedAfterErr) throw completedAfterErr;
+  if (JSON.stringify(completedBefore) !== JSON.stringify(completedAfter)) {
+    throw new Error(`record_chunk_failure changed the completed job: before=${JSON.stringify(completedBefore)}, after=${JSON.stringify(completedAfter)}`);
   }
 
-  console.log("PASS: Chunk lifecycle verification passed (idempotent step completion, exponential backoff, auto-release at 5th attempt).");
+  console.log("PASS: Chunk lifecycle verification passed (complete retry idempotency, failure release, completed-job no-change guard).");
 }
 
 main().catch((err) => {

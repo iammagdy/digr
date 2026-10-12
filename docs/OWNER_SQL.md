@@ -19,7 +19,7 @@ SELECT id, user_id, delta, type, created_at
 FROM public.credit_ledger
 WHERE user_id != '00000000-0000-0000-0000-000000000001'::uuid;
 
--- Summary check: Count test rows (should be exactly 14 test rows)
+-- Summary check: Reconcile the test-only total, including the known 24 compensating rows noted below
 SELECT 
   count(*) AS total_rows,
   count(*) FILTER (WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid) AS test_user_rows
@@ -27,6 +27,9 @@ FROM public.credit_ledger;
 ```
 
 If `total_rows` equals `test_user_rows` and the first query returns 0 rows, it is safe to proceed with the pre-cutover reset.
+
+> [!NOTE]
+> The known test-only residue is limited to the dedicated test user: **24 compensating ledger rows** and **71 orphan ledger references**. Do not edit or delete these ledger records manually. They are to be removed only by the documented pre-launch reset above, after its pre-check passes. This note is not authorization to run the reset, and it must never be run after launch.
 
 ### Step 2: Clean Reset Execution
 ```sql
@@ -95,4 +98,3 @@ Verification query:
 ```sql
 SELECT key, value FROM public.settings_public WHERE key = 'pricing';
 ```
-

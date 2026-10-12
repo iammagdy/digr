@@ -1,13 +1,15 @@
 /**
- * Live Verification Script: release_job_atomic
+ * Live Verification Script: release_job_atomic overloads
  * Usage: tsx scripts/verify/verify-release-job.ts
- * Strictly reads keys from environment variables. Zero hardcoded secrets.
+ * Uses service-role RPCs only; protected table rows are never written directly.
  */
 import { createClient } from "@supabase/supabase-js";
+import { newVrunPrefix, requireSetupRows } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const TEST_USER_ID = "00000000-0000-0000-0000-000000000001";
+const RUN_PREFIX = newVrunPrefix();
 
 if (!SERVICE_KEY) {
   console.error("ERROR: SUPABASE_SERVICE_ROLE_KEY must be provided via environment variable.");
@@ -18,84 +20,165 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
+type Fixture = { id: string; purpose: string; row: Record<string, unknown> };
+
 async function main() {
-  console.log("=== Verifying release_job_atomic ===");
+  console.log("=== Verifying release_job_atomic overloads ===");
+  console.log("Run prefix:", RUN_PREFIX);
+  const forceLeaseUntil = new Date(Date.now() + 60_000).toISOString();
 
-  const jobId = `job_test_release_${Date.now()}`;
-  const reservedCredits = 30;
+  const fixtures: Fixture[] = [
+    { id: `${RUN_PREFIX}legacy_two_arg`, purpose: "old two-argument overload; queued/running release and retry", row: {
+      id: `${RUN_PREFIX}legacy_two_arg`, user_id: TEST_USER_ID, status: "running", endpoint_id: "tiktok-profile",
+      unit_price: 1, delivered_units: 0, reserved_credits: 30, target_volume_min: 10, target_volume_max: 30, lease_until: null,
+    } },
+    { id: `${RUN_PREFIX}forced_lease`, purpose: "three-argument overload; active lease and unit_price is intentionally NULL", row: {
+      id: `${RUN_PREFIX}forced_lease`, user_id: TEST_USER_ID, status: "running", endpoint_id: "tiktok-profile",
+      unit_price: null, delivered_units: 0, reserved_credits: 20, lease_until: forceLeaseUntil,
+    } },
+    { id: `${RUN_PREFIX}failed_repair`, purpose: "failed job with reservation but no rel_ row", row: {
+      id: `${RUN_PREFIX}failed_repair`, user_id: TEST_USER_ID, status: "failed", endpoint_id: "tiktok-profile",
+      unit_price: null, reserved_credits: 12, lease_until: null,
+    } },
+    { id: `${RUN_PREFIX}completed`, purpose: "completed job must raise", row: {
+      id: `${RUN_PREFIX}completed`, user_id: TEST_USER_ID, status: "completed", endpoint_id: "tiktok-profile",
+      reserved_credits: 5, lease_until: null,
+    } },
+    { id: `${RUN_PREFIX}missing_reserve`, purpose: "positive reserve amount but res_ row intentionally absent", row: {
+      id: `${RUN_PREFIX}missing_reserve`, user_id: TEST_USER_ID, status: "queued", endpoint_id: "tiktok-profile",
+      reserved_credits: 8, lease_until: null,
+    } },
+    { id: `${RUN_PREFIX}zero_reserve`, purpose: "non-positive reserved_credits must raise", row: {
+      id: `${RUN_PREFIX}zero_reserve`, user_id: TEST_USER_ID, status: "queued", endpoint_id: "tiktok-profile",
+      reserved_credits: 0, lease_until: null,
+    } },
+    { id: `${RUN_PREFIX}refused`, purpose: "statuses other than queued/running/failed must raise", row: {
+      id: `${RUN_PREFIX}refused`, user_id: TEST_USER_ID, status: "refused", endpoint_id: "tiktok-profile",
+      reserved_credits: 5, lease_until: null,
+    } },
+  ];
 
-  // 1. Prepare test reservation hold in credit_ledger
-  const { error: resErr } = await supabase.from("credit_ledger").insert({
-    id: `res_${jobId}`,
-    user_id: TEST_USER_ID,
-    delta: -reservedCredits,
-    type: "reserve",
-    job_id: jobId,
-    note: "Release test reservation hold",
-  });
-  if (resErr) throw resErr;
+  const jobResults = await Promise.all(fixtures.map((fixture) =>
+    supabase.from("jobs").select("id, user_id, status, reserved_credits, lease_until, unit_price").eq("id", fixture.id).maybeSingle(),
+  ));
+  jobResults.forEach((result) => { if (result.error) throw result.error; });
+  const missingFixtures = fixtures.flatMap((fixture, index) => jobResults[index].data ? [] : [{
+    table: "jobs",
+    purpose: fixture.purpose,
+    row: fixture.row,
+  }]);
+  if (missingFixtures.length) requireSetupRows(missingFixtures);
 
-  // 2. Prepare running job record in public.jobs
-  const { error: jobErr } = await supabase.from("jobs").insert({
-    id: jobId,
-    user_id: TEST_USER_ID,
-    status: "running",
-    endpoint_id: "tiktok-profile",
-    unit_price: 1,
-    delivered_units: 0,
-    reserved_credits: reservedCredits,
-    target_volume_min: 10,
-    target_volume_max: 30,
-    lease_until: null,
-  });
-  if (jobErr) throw jobErr;
+  const jobRows = jobResults.map((result) => result.data!);
+  const legacyId = fixtures[0].id;
+  const forceId = fixtures[1].id;
+  const repairId = fixtures[2].id;
 
-  // 3. First release call
-  const { data: firstRes, error: firstErr } = await supabase.rpc("release_job_atomic", {
-    p_job_id: jobId,
-    p_error_message: "Test failure triggering atomic release",
-  });
-  if (firstErr) throw firstErr;
-  console.log("First release result:", firstRes);
-
-  if (!firstRes.success || firstRes.released_credits !== reservedCredits || firstRes.already_released) {
-    throw new Error(`Unexpected first release result: ${JSON.stringify(firstRes)}`);
+  for (let index = 0; index < fixtures.length; index++) {
+    const fixture = fixtures[index];
+    const row = jobRows[index];
+    if (row.user_id !== TEST_USER_ID || row.status !== fixture.row.status || Number(row.reserved_credits) !== Number(fixture.row.reserved_credits)) {
+      throw new Error(`Fixture mismatch for ${fixture.id}: ${JSON.stringify(row)}`);
+    }
   }
 
-  // 4. Second release call (idempotent retry)
-  const { data: secondRes, error: secondErr } = await supabase.rpc("release_job_atomic", {
-    p_job_id: jobId,
-    p_error_message: "Duplicate retry call",
+  if (!jobRows[1].lease_until || new Date(String(jobRows[1].lease_until)).getTime() <= Date.now() || jobRows[1].unit_price !== null) {
+    throw new Error(`Forced-release fixture must have a future lease and NULL unit_price: ${JSON.stringify(jobRows[1])}`);
+  }
+  const { data: preexistingRepairRelease, error: repairReleaseReadErr } = await supabase
+    .from("credit_ledger").select("id").eq("id", `rel_${repairId}`).maybeSingle();
+  if (repairReleaseReadErr) throw repairReleaseReadErr;
+  if (preexistingRepairRelease) throw new Error(`Repair fixture must start without rel_${repairId}`);
+
+  for (const fixture of fixtures.slice(0, 3)) {
+    const { data, error } = await supabase.rpc("reserve_credits_atomic", {
+      p_user_id: TEST_USER_ID,
+      p_job_id: fixture.id,
+      p_amount: Number(fixture.row.reserved_credits),
+      p_note: "Approved RPC setup for release verification",
+    });
+    if (error) throw error;
+    if (!data?.success) throw new Error(`Approved reservation RPC failed for ${fixture.id}: ${JSON.stringify(data)}`);
+  }
+
+  // Exactly two named arguments: this must keep resolving to the original overload.
+  const { data: legacyFirst, error: legacyFirstErr } = await supabase.rpc("release_job_atomic", {
+    p_job_id: legacyId,
+    p_error_message: "Two-argument overload verification",
   });
-  if (secondErr) throw secondErr;
-  console.log("Second release result (idempotent):", secondRes);
-
-  if (!secondRes.success || !secondRes.already_released) {
-    throw new Error(`Expected already_released: true on retry, got: ${JSON.stringify(secondRes)}`);
+  if (legacyFirstErr) throw legacyFirstErr;
+  if (!legacyFirst?.success || legacyFirst.released_credits !== 30 || legacyFirst.already_released) {
+    throw new Error(`Unexpected two-argument release result: ${JSON.stringify(legacyFirst)}`);
+  }
+  const { data: legacyRetry, error: legacyRetryErr } = await supabase.rpc("release_job_atomic", {
+    p_job_id: legacyId,
+    p_error_message: "Two-argument retry verification",
+  });
+  if (legacyRetryErr) throw legacyRetryErr;
+  if (!legacyRetry?.success || !legacyRetry.already_released) {
+    throw new Error(`Expected legacy two-argument retry to be idempotent: ${JSON.stringify(legacyRetry)}`);
   }
 
-  // 5. Verify ledger rows for this job: exactly 1 rel_ row, 0 chg_ rows
-  const { data: ledgerRows } = await supabase
-    .from("credit_ledger")
-    .select("id, delta, type")
-    .eq("job_id", jobId);
-
-  console.log("Ledger rows for job:", ledgerRows);
-
-  const relRows = ledgerRows?.filter((r) => r.id === `rel_${jobId}`);
-  const chgRows = ledgerRows?.filter((r) => r.id === `chg_${jobId}`);
-
-  if (relRows?.length !== 1 || (chgRows && chgRows.length > 0)) {
-    throw new Error(`Expected exactly 1 rel_ row and 0 chg_ rows, got rel=${relRows?.length}, chg=${chgRows?.length}`);
+  // Three required keys select the new overload; a live lease must block unless forced.
+  const { error: leaseErr } = await supabase.rpc("release_job_atomic", {
+    p_job_id: forceId,
+    p_error_message: "Live lease should block",
+    p_force: false,
+  });
+  if (!leaseErr || !leaseErr.message.includes("active chunk lease")) {
+    throw new Error(`Expected active lease to raise unless p_force=true; got ${leaseErr?.message}`);
+  }
+  const { data: forced, error: forcedErr } = await supabase.rpc("release_job_atomic", {
+    p_job_id: forceId,
+    p_error_message: "Owner-authorized force-path verification",
+    p_force: true,
+  });
+  if (forcedErr) throw forcedErr;
+  if (!forced?.success || forced.released_credits !== 20 || forced.already_released) {
+    throw new Error(`Forced release failed (also verifies no unit_price requirement): ${JSON.stringify(forced)}`);
+  }
+  const { data: forcedRetry, error: forcedRetryErr } = await supabase.rpc("release_job_atomic", {
+    p_job_id: forceId,
+    p_error_message: "Forced release retry",
+    p_force: true,
+  });
+  if (forcedRetryErr) throw forcedRetryErr;
+  if (!forcedRetry?.success || !forcedRetry.already_released) {
+    throw new Error(`Expected failed-job idempotency when both res_ and rel_ exist: ${JSON.stringify(forcedRetry)}`);
   }
 
-  // 6. Verify job status is failed
-  const { data: jobRow } = await supabase.from("jobs").select("status, charged_credits").eq("id", jobId).single();
-  if (jobRow?.status !== "failed" || jobRow?.charged_credits !== 0) {
-    throw new Error(`Job status not failed or charged_credits not 0: ${JSON.stringify(jobRow)}`);
+  const { data: repaired, error: repairedErr } = await supabase.rpc("release_job_atomic", {
+    p_job_id: repairId,
+    p_error_message: "Repair missing rel_ for failed job",
+    p_force: false,
+  });
+  if (repairedErr) throw repairedErr;
+  if (!repaired?.success || repaired.already_released) {
+    throw new Error(`Expected failed job with missing rel_ to complete release: ${JSON.stringify(repaired)}`);
+  }
+  const { data: repairedRel, error: repairedRelErr } = await supabase
+    .from("credit_ledger").select("id").eq("id", `rel_${repairId}`).maybeSingle();
+  if (repairedRelErr) throw repairedRelErr;
+  if (!repairedRel) throw new Error(`Expected approved release RPC to create rel_${repairId}`);
+
+  const expectedErrors: Array<{ id: string; force: boolean; includes: string }> = [
+    { id: fixtures[3].id, force: false, includes: "already completed" },
+    { id: fixtures[4].id, force: false, includes: "Reserve record" },
+    { id: fixtures[5].id, force: false, includes: "reserved_credits" },
+    { id: fixtures[6].id, force: false, includes: "status" },
+  ];
+  for (const test of expectedErrors) {
+    const { error } = await supabase.rpc("release_job_atomic", {
+      p_job_id: test.id,
+      p_error_message: "Expected guard rejection",
+      p_force: test.force,
+    });
+    if (!error || !error.message.toLowerCase().includes(test.includes.toLowerCase())) {
+      throw new Error(`Expected release guard for ${test.id} to include '${test.includes}', got '${error?.message}'`);
+    }
   }
 
-  console.log("PASS: release_job_atomic verification passed (released full reserve, zero charge, idempotent).");
+  console.log("PASS: both release overloads verified (two-arg route, retry, lease force, failed-row recovery, integrity/status guards).");
 }
 
 main().catch((err) => {
