@@ -12,6 +12,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
     "@tailwindcss/postcss": "^4.1.11",
     "appwrite": "^18.1.1",
     "arabic-persian-reshaper": "^1.0.1",
