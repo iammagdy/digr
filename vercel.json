@@ -1,0 +1,17 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "crons": [
+    {
+      "path": "/api/cron/watchdog",
+      "schedule": "0 0 * * *"
+    }
+  ],
+  "functions": {
+    "src/app/api/worker/chunk/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/cron/watchdog/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

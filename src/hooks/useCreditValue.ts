@@ -12,11 +12,13 @@ export function useCreditValue(): number {
     let alive = true;
     try {
       const supabase = createClient();
-      supabase
-        .from("settings_public")
-        .select("value")
-        .eq("key", "pricing")
-        .maybeSingle()
+      Promise.resolve(
+        supabase
+          .from("settings_public")
+          .select("value")
+          .eq("key", "pricing")
+          .maybeSingle()
+      )
         .then(({ data }) => {
           const v = Number(
             (data?.value as { creditValueEgp?: number; credit_value_egp?: number })?.creditValueEgp ??

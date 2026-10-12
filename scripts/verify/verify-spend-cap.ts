@@ -70,6 +70,7 @@ async function main() {
     p_daily_cap_usd: dailyCapUsd,
   });
   if (firstReserveErr) throw firstReserveErr;
+  console.log("First spend reserve result:", JSON.stringify(firstReserve, null, 2));
   if (!firstReserve?.allowed || !firstReserve.cost_id) {
     throw new Error(`Expected initial $0.50 estimate to be allowed: ${JSON.stringify(firstReserve)}`);
   }
@@ -90,6 +91,8 @@ async function main() {
     }),
   ]);
   for (const result of parallelResults) if (result.error) throw result.error;
+  console.log("Parallel spend reserve results:", JSON.stringify(parallelResults.map((r) => r.data), null, 2));
+
   const allowed = parallelResults.map((result) => result.data).filter((result) => result?.allowed && result.cost_id);
   const denied = parallelResults.map((result) => result.data).filter((result) => result?.allowed === false);
   if (allowed.length !== 1 || denied.length !== 1) {
@@ -103,6 +106,7 @@ async function main() {
     p_units: 45,
   });
   if (firstCommitErr) throw firstCommitErr;
+  console.log("First commit result:", JSON.stringify(firstCommit, null, 2));
   if (!firstCommit?.success || firstCommit.actual_cost !== 0.45) {
     throw new Error(`Unexpected first commit result: ${JSON.stringify(firstCommit)}`);
   }
@@ -113,6 +117,7 @@ async function main() {
     p_units: 15,
   });
   if (parallelCommitErr) throw parallelCommitErr;
+  console.log("Parallel winner commit result:", JSON.stringify(parallelCommit, null, 2));
   if (!parallelCommit?.success || parallelCommit.actual_cost !== 0.15) {
     throw new Error(`Unexpected parallel-winner commit result: ${JSON.stringify(parallelCommit)}`);
   }
@@ -123,6 +128,8 @@ async function main() {
     p_units: 45,
   });
   if (!duplicateCommitErr) throw new Error("Duplicate commit must be rejected");
+  console.log("Duplicate commit guard verified (rejected as expected):", duplicateCommitErr.message);
+
 
   console.log("PASS: Provider spend cap verification passed (parallel cap serialization, one winner, single commit).");
 }

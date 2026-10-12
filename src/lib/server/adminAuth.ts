@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Account, Client, Query, TablesDB, Users } from "node-appwrite";
-import { writeAudit, type AuditKind } from "@/functions/shared/auditLog";
+import { writeAudit, type AuditKind } from "../../functions/shared/auditLog";
 
 export const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
 export const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
@@ -36,8 +36,57 @@ export interface AdminContext {
   audit: (kind: AuditKind, label: string, target: string, extra?: { targetType?: string; targetId?: string }) => Promise<void>;
 }
 
-/** Resolves the caller from a JWT / session and requires `labels: admin`. Every /api/admin/* route starts here. */
+import { createServerSideClient, createAdminClient } from "../supabase/server";
+
 export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; ctx: AdminContext } | { ok: false; response: NextResponse }> {
+  // 1. Try Supabase Admin session / Bearer token first
+  try {
+    const supabase = await createServerSideClient();
+    const authHeader = req.headers.get("authorization");
+    const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+    let sbUser = null;
+    if (bearer) {
+      const { data } = await supabase.auth.getUser(bearer);
+      sbUser = data?.user;
+    } else {
+      const { data } = await supabase.auth.getUser();
+      sbUser = data?.user;
+    }
+
+    if (sbUser && sbUser.app_metadata?.role === "admin") {
+      const adminClient = createAdminClient();
+      const ip = clientIp(req);
+      const client = serverClient();
+      return {
+        ok: true,
+        ctx: {
+          adminId: sbUser.id,
+          adminName: sbUser.user_metadata?.name || sbUser.email || "مسؤول",
+          adminEmail: sbUser.email || "",
+          ip,
+          client,
+          tables: new TablesDB(client),
+          users: new Users(client),
+          audit: async (kind, label, target, extra) => {
+            try {
+              await adminClient.from("admin_audit_log").insert({
+                actor_id: sbUser.id,
+                action: kind,
+                target_type: extra?.targetType || "admin",
+                target_id: target,
+                details: { label, ip, ...extra },
+              });
+            } catch {
+              writeAudit(client, { actorId: sbUser.id, actorName: sbUser.user_metadata?.name || "مسؤول", kind, label, target, ip, ...extra }).catch(() => {});
+            }
+          },
+        },
+      };
+    }
+  } catch {
+    // Continue to Appwrite fallback
+  }
+
   const authHeader = req.headers.get("authorization");
   const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
   const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;

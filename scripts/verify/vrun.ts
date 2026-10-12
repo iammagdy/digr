@@ -37,3 +37,16 @@ export function requireSetupRows(requirements: SetupRequirement[]): never {
     ].join("\n"),
   );
 }
+
+export async function getTestUserBalance(
+  supabase: SupabaseClient,
+  userId: string = "00000000-0000-0000-0000-000000000001"
+): Promise<number> {
+  const { data, error } = await supabase
+    .from("credit_ledger")
+    .select("delta")
+    .eq("user_id", userId);
+  if (error) throw error;
+  return (data || []).reduce((acc: number, r: { delta: number | string }) => acc + Number(r.delta), 0);
+}
+

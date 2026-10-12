@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; never writes protected table rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, createVerifyFixtures } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures, getTestUserBalance } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,6 +24,8 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 async function main() {
   console.log("=== Verifying Chunk Lifecycle (complete_chunk & record_chunk_failure) ===");
   console.log("Run prefix:", RUN_PREFIX);
+  const balanceBefore = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance before verification:", balanceBefore);
 
   const jobId = `${RUN_PREFIX}lifecycle`;
   const completedJobId = `${RUN_PREFIX}completed_guard`;
@@ -100,12 +102,14 @@ async function main() {
   };
   const { data: firstComplete, error: firstCompleteErr } = await supabase.rpc("complete_chunk", completeArgs);
   if (firstCompleteErr) throw firstCompleteErr;
+  console.log("complete_chunk first result:", JSON.stringify(firstComplete, null, 2));
   if (!firstComplete.success || firstComplete.step !== 1 || firstComplete.already_completed) {
     throw new Error(`Unexpected first complete_chunk result: ${JSON.stringify(firstComplete)}`);
   }
 
   const { data: completeRetry, error: completeRetryErr } = await supabase.rpc("complete_chunk", completeArgs);
   if (completeRetryErr) throw completeRetryErr;
+  console.log("complete_chunk retry result:", JSON.stringify(completeRetry, null, 2));
   if (!completeRetry.success || !completeRetry.already_completed) {
     throw new Error(`Expected complete_chunk retry to return already_completed: ${JSON.stringify(completeRetry)}`);
   }
@@ -116,6 +120,7 @@ async function main() {
       p_error_message: `Verification failure attempt ${attempt}`,
     });
     if (failureErr) throw failureErr;
+    console.log(`record_chunk_failure attempt ${attempt} result:`, JSON.stringify(failureResult, null, 2));
     if (attempt < 5 && (failureResult.failed_permanently || failureResult.attempt_count !== attempt)) {
       throw new Error(`Expected transient failure on attempt ${attempt}: ${JSON.stringify(failureResult)}`);
     }
@@ -144,6 +149,7 @@ async function main() {
     p_error_message: "Failure on already completed job",
   });
   if (completedFailureErr) throw completedFailureErr;
+  console.log("record_chunk_failure completed job guard result:", JSON.stringify(completedFailure, null, 2));
   if (!completedFailure.success || !completedFailure.ignored || completedFailure.status !== "completed") {
     throw new Error(`Expected completed job failure to be ignored: ${JSON.stringify(completedFailure)}`);
   }
@@ -157,6 +163,10 @@ async function main() {
   if (JSON.stringify(completedBefore) !== JSON.stringify(completedAfter)) {
     throw new Error(`record_chunk_failure changed the completed job: before=${JSON.stringify(completedBefore)}, after=${JSON.stringify(completedAfter)}`);
   }
+
+  const balanceAfter = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance after verification:", balanceAfter);
+  console.log("Net balance delta:", balanceAfter - balanceBefore);
 
   console.log("PASS: Chunk lifecycle verification passed (complete retry idempotency, failure release, completed-job no-change guard).");
 }

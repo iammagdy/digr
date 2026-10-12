@@ -65,6 +65,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Trigger initial chunk execution (Hobby Design B)
+    if (process.env.CRON_SECRET) {
+      const baseUrl = process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : (process.env.NEXT_PUBLIC_SITE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
+      fetch(`${baseUrl}/api/worker/chunk`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.CRON_SECRET}`,
+        },
+        body: JSON.stringify({
+          jobId: acceptRes.jobId,
+          expectedStep: 0,
+        }),
+      }).catch((chunkErr) => {
+        console.error("Worker trigger on quote accept failed:", chunkErr);
+      });
+    }
+
     return NextResponse.json({
       success: true,
       jobId: acceptRes.jobId,

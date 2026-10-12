@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; protected table rows are never written directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, createVerifyFixtures } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures, getTestUserBalance } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -25,6 +25,8 @@ type Fixture = { id: string; purpose: string; row: Record<string, unknown> };
 async function main() {
   console.log("=== Verifying release_job_atomic overloads ===");
   console.log("Run prefix:", RUN_PREFIX);
+  const balanceBefore = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance before verification:", balanceBefore);
   const forceLeaseUntil = new Date(Date.now() + 60_000).toISOString();
 
   const fixtures: Fixture[] = [
@@ -107,6 +109,7 @@ async function main() {
     p_error_message: "Two-argument overload verification",
   });
   if (legacyFirstErr) throw legacyFirstErr;
+  console.log("Legacy two-argument release result:", JSON.stringify(legacyFirst, null, 2));
   if (!legacyFirst?.success || legacyFirst.released_credits !== 30 || legacyFirst.already_released) {
     throw new Error(`Unexpected two-argument release result: ${JSON.stringify(legacyFirst)}`);
   }
@@ -115,6 +118,7 @@ async function main() {
     p_error_message: "Two-argument retry verification",
   });
   if (legacyRetryErr) throw legacyRetryErr;
+  console.log("Legacy retry release result:", JSON.stringify(legacyRetry, null, 2));
   if (!legacyRetry?.success || !legacyRetry.already_released) {
     throw new Error(`Expected legacy two-argument retry to be idempotent: ${JSON.stringify(legacyRetry)}`);
   }
@@ -128,12 +132,15 @@ async function main() {
   if (!leaseErr || !leaseErr.message.includes("active chunk lease")) {
     throw new Error(`Expected active lease to raise unless p_force=true; got ${leaseErr?.message}`);
   }
+  console.log("Active lease guard verified (raised as expected):", leaseErr.message);
+
   const { data: forced, error: forcedErr } = await supabase.rpc("release_job_atomic", {
     p_job_id: forceId,
     p_error_message: "Owner-authorized force-path verification",
     p_force: true,
   });
   if (forcedErr) throw forcedErr;
+  console.log("Forced release result:", JSON.stringify(forced, null, 2));
   if (!forced?.success || forced.released_credits !== 20 || forced.already_released) {
     throw new Error(`Forced release failed (also verifies no unit_price requirement): ${JSON.stringify(forced)}`);
   }
@@ -143,6 +150,7 @@ async function main() {
     p_force: true,
   });
   if (forcedRetryErr) throw forcedRetryErr;
+  console.log("Forced retry release result:", JSON.stringify(forcedRetry, null, 2));
   if (!forcedRetry?.success || !forcedRetry.already_released) {
     throw new Error(`Expected failed-job idempotency when both res_ and rel_ exist: ${JSON.stringify(forcedRetry)}`);
   }
@@ -153,6 +161,7 @@ async function main() {
     p_force: false,
   });
   if (repairedErr) throw repairedErr;
+  console.log("Repaired release result:", JSON.stringify(repaired, null, 2));
   if (!repaired?.success || repaired.already_released) {
     throw new Error(`Expected failed job with missing rel_ to complete release: ${JSON.stringify(repaired)}`);
   }
@@ -176,7 +185,12 @@ async function main() {
     if (!error || !error.message.toLowerCase().includes(test.includes.toLowerCase())) {
       throw new Error(`Expected release guard for ${test.id} to include '${test.includes}', got '${error?.message}'`);
     }
+    console.log(`Guard verified for ${test.id} (raised as expected):`, error.message);
   }
+
+  const balanceAfter = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance after verification:", balanceAfter);
+  console.log("Net balance delta:", balanceAfter - balanceBefore);
 
   console.log("PASS: both release overloads verified (two-arg route, retry, lease force, failed-row recovery, integrity/status guards).");
 }

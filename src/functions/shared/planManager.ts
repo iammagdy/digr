@@ -537,9 +537,10 @@ export async function createAndSaveManagedQuote(
   const nowIso = new Date().toISOString();
 
   // 2. Invalidate / supersede previous proposed quotes for this conversation
-  if (tables && typeof tables.from === "function") {
+  const anyTables = tables as any;
+  if (anyTables && typeof anyTables.from === "function") {
     try {
-      await tables
+      await anyTables
         .from("plans_quotes")
         .update({ status: "expired" })
         .eq("user_id", userId)
@@ -547,7 +548,7 @@ export async function createAndSaveManagedQuote(
     } catch (err: any) {
       console.warn("Could not supersede old quotes in Supabase:", err.message);
     }
-    await tables.from("plans_quotes").insert({
+    await anyTables.from("plans_quotes").insert({
       id: quoteId,
       user_id: userId,
       quote_hash: planHash,

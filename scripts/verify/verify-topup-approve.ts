@@ -4,7 +4,7 @@
  * Uses approved service-role RPCs only; never writes protected rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, createVerifyFixtures } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures, getTestUserBalance } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -23,6 +23,8 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 async function main() {
   console.log("=== Verifying Top-Up Approval Idempotency ===");
   console.log("Run prefix:", RUN_PREFIX);
+  const balanceBefore = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance before verification:", balanceBefore);
 
   const topupId = `${RUN_PREFIX}topup`;
   const amountEgp = 50;
@@ -57,6 +59,7 @@ async function main() {
     p_confirmed_amount_egp: amountEgp,
   });
   if (firstErr) throw firstErr;
+  console.log("Topup first approval result:", JSON.stringify(firstResult, null, 2));
   if (!firstResult?.success || firstResult.already_approved) {
     throw new Error(`First approval should succeed without already_approved: ${JSON.stringify(firstResult)}`);
   }
@@ -66,6 +69,7 @@ async function main() {
     p_confirmed_amount_egp: amountEgp,
   });
   if (retryErr) throw retryErr;
+  console.log("Topup retry approval result:", JSON.stringify(retryResult, null, 2));
   if (!retryResult?.success || !retryResult.already_approved) {
     throw new Error(`Second approval should be idempotent: ${JSON.stringify(retryResult)}`);
   }
@@ -78,6 +82,10 @@ async function main() {
   if (!ledgerEntries || ledgerEntries.length !== 1) {
     throw new Error(`Expected one approved-RPC-created top-up ledger row, got ${ledgerEntries?.length}`);
   }
+
+  const balanceAfter = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance after verification:", balanceAfter);
+  console.log("Net balance delta:", balanceAfter - balanceBefore);
 
   console.log("PASS: Top-up approval idempotency verified (approved twice, credited once).");
 }

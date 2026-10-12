@@ -4,7 +4,7 @@
  * Uses approved service-role RPCs only; fixture rows are never written directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, createVerifyFixtures } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures, getTestUserBalance } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -23,6 +23,8 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 async function main() {
   console.log("=== Verifying 20 Parallel Reservation RPC Requests ===");
   console.log("Run prefix:", RUN_PREFIX);
+  const balanceBefore = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance before verification:", balanceBefore);
 
   const sameJobId = `${RUN_PREFIX}parallel_same`;
   const differentJobIds = Array.from({ length: 10 }, (_, index) => `${RUN_PREFIX}parallel_diff_${index + 1}`);
@@ -80,11 +82,22 @@ async function main() {
     const sameJobResults = results.slice(0, 10).map((result) => result.data);
     const winners = sameJobResults.filter((result) => result?.success && !result.already_reserved);
     const retries = sameJobResults.filter((result) => result?.success && result.already_reserved);
+    const allResults = results.map((result) => result.data);
+    const sameJobAlreadyReservedCount = retries.length;
+    const totalReservationsSucceeded = allResults.filter((r) => r?.success && !r?.already_reserved).length;
+    const totalInsufficientBalance = allResults.filter((r) => r?.error === "insufficient_balance").length;
+
+    console.log("Computed counts:");
+    console.log(`- Same-job already_reserved: ${sameJobAlreadyReservedCount}`);
+    console.log(`- Reservations succeeded: ${totalReservationsSucceeded}`);
+    console.log(`- Insufficient balance: ${totalInsufficientBalance}`);
+
     if (winners.length !== 1 || retries.length !== 9) {
       throw new Error(`Expected one same-job reservation and nine idempotent retries: ${JSON.stringify(sameJobResults)}`);
     }
   } finally {
     // Release any reservation that was created, including after an ambiguous RPC response.
+    let releasedCount = 0;
     const cleanupErrors: string[] = [];
     for (const fixture of fixtures) {
       try {
@@ -98,13 +111,19 @@ async function main() {
           });
           if (releaseErr) throw releaseErr;
           if (!releaseResult?.success) throw new Error(`Could not release verification reservation for ${fixture.id}: ${JSON.stringify(releaseResult)}`);
+          releasedCount++;
         }
       } catch (error) {
         cleanupErrors.push(`${fixture.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    console.log(`- Released count: ${releasedCount}`);
     if (cleanupErrors.length) throw new Error(`Reservation cleanup failures: ${cleanupErrors.join("; ")}`);
   }
+
+  const balanceAfter = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance after verification:", balanceAfter);
+  console.log("Net balance delta:", balanceAfter - balanceBefore);
 
   console.log("PASS: Reservation concurrency verified and created holds were released through the approved RPC.");
 }

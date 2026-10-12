@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; never writes protected table rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, createVerifyFixtures } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures, getTestUserBalance } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -23,6 +23,8 @@ const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
 async function main() {
   console.log("=== Verifying settle_job_atomic ===");
   console.log("Run prefix:", RUN_PREFIX);
+  const balanceBefore = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance before verification:", balanceBefore);
   const futureLeaseUntil = new Date(Date.now() + 60_000).toISOString();
 
   const fixtures = [
@@ -88,6 +90,7 @@ async function main() {
     p_points_cap: 600,
   });
   if (firstErr) throw firstErr;
+  console.log("Settlement first call result:", JSON.stringify(first, null, 2));
   if (!first?.success || first.charged_credits !== 16 || first.already_settled) {
     throw new Error(`Unexpected first settlement result: ${JSON.stringify(first)}`);
   }
@@ -97,6 +100,7 @@ async function main() {
     p_points_cap: 600,
   });
   if (secondErr) throw secondErr;
+  console.log("Settlement second call result:", JSON.stringify(second, null, 2));
   if (!second?.success || !second.already_settled) {
     throw new Error(`Expected settlement retry to be idempotent: ${JSON.stringify(second)}`);
   }
@@ -117,6 +121,7 @@ async function main() {
   if (!leaseErr || !leaseErr.message.includes("active chunk lease")) {
     throw new Error(`Expected settling with a live lease to raise, got ${leaseErr?.message}`);
   }
+  console.log("Active lease guard verified (raised as expected):", leaseErr.message);
 
   const { error: badPriceErr } = await supabase.rpc("settle_job_atomic", {
     p_job_id: fixtures[2].id,
@@ -125,6 +130,11 @@ async function main() {
   if (!badPriceErr || !badPriceErr.message.includes("invalid unit_price")) {
     throw new Error(`Expected invalid unit_price to raise, got ${badPriceErr?.message}`);
   }
+  console.log("Invalid unit price guard verified (raised as expected):", badPriceErr.message);
+
+  const balanceAfter = await getTestUserBalance(supabase, TEST_USER_ID);
+  console.log("Balance after verification:", balanceAfter);
+  console.log("Net balance delta:", balanceAfter - balanceBefore);
 
   console.log("PASS: settle_job_atomic verification passed (settle twice, active lease raises, bad unit_price raises).");
 }

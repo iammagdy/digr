@@ -74,6 +74,9 @@ async function main() {
   if (claim1.error) throw claim1.error;
   if (claim2.error) throw claim2.error;
 
+  console.log("Claim 1 result:", JSON.stringify(claim1.data, null, 2));
+  console.log("Claim 2 result:", JSON.stringify(claim2.data, null, 2));
+
   const wins = [claim1.data, claim2.data].filter((claim) => claim?.claimed === true);
   const losses = [claim1.data, claim2.data].filter(
     (claim) => claim?.claimed === false && claim?.error === "lease_active",
@@ -81,6 +84,9 @@ async function main() {
   if (wins.length !== 1 || losses.length !== 1) {
     throw new Error(`Expected one claim winner and one lease_active rejection, got wins=${wins.length}, losses=${losses.length}`);
   }
+  console.log("Claim winner payload:", JSON.stringify(wins[0], null, 2));
+  console.log("Claim loser payload (lease_active):", JSON.stringify(losses[0], null, 2));
+
 
   const { data: nullStepResult, error: nullStepErr } = await supabase.rpc("claim_job_chunk", {
     p_job_id: `${RUN_PREFIX}null_step_probe`,
