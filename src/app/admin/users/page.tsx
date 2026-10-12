@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { account } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
@@ -41,8 +41,11 @@ export default function AdminUsersPage() {
 
   const exportCsv = async () => {
     try {
-      const jwt = (await account.createJWT()).jwt;
-      const res = await fetch(`/api/admin/users?format=csv&filter=${filter}&q=${encodeURIComponent(applied)}`, { headers: { Authorization: `Bearer ${jwt}` } });
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) headers.Authorization = `Bearer ${session.access_token}`;
+      const res = await fetch(`/api/admin/users?format=csv&filter=${filter}&q=${encodeURIComponent(applied)}`, { headers });
       if (!res.ok) throw new Error();
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a"); a.href = url; a.download = "digr-users.csv"; document.body.appendChild(a); a.click();

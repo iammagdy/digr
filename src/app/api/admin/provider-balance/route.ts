@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Client as ServerClient, TablesDB, Client as UserClient, Account } from "node-appwrite";
 import { getProviderBalanceStatus } from "../../../../functions/shared/providerSpend";
+import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -71,12 +72,47 @@ function buildBrowserBootstrapHtml(endpoint: string, projectId: string): string 
 
 export async function GET(req: NextRequest) {
   try {
+    const authHeader = req.headers.get("authorization");
+    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+
+    // 1. Try Supabase Admin Auth first
+    try {
+      const supabase = await createServerSideClient();
+      const { data: sbData } = bearerJwt
+        ? await supabase.auth.getUser(bearerJwt)
+        : await supabase.auth.getUser();
+      const sbUser = sbData?.user;
+      if (sbUser) {
+        if (sbUser.app_metadata?.role !== "admin") {
+          return NextResponse.json(
+            { error: "ممنوع — هذه الواجهة مخصصة لمديري النظام فقط." },
+            { status: 403 },
+          );
+        }
+        const forceRefresh = req.nextUrl.searchParams.get("refresh") === "true";
+        let sbAdmin: any = null;
+        try {
+          sbAdmin = createAdminClient();
+        } catch {
+          sbAdmin = null;
+        }
+        const status = await getProviderBalanceStatus(sbAdmin, forceRefresh);
+        return NextResponse.json({
+          available_balance_usd: status.availableBalanceUsd,
+          today_spend_usd: status.todaySpendUsd,
+          today_cap_usd: status.todayCapUsd,
+          is_healthy: status.isHealthy,
+          cached_at: status.cachedAt,
+        });
+      }
+    } catch {
+      // Fall through if Supabase not configured in test env
+    }
+
     const endpoint = process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
     const projectId = process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
     const apiKey = process.env.APPWRITE_API_KEY || "";
 
-    const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
     const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
     const effectiveJwt = bearerJwt || cookieJwt;
 

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Client as UserClient, Account } from "node-appwrite";
 import { z } from "zod";
+import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import {
   EditPlanOperationSchema,
   applyPlanOperations,
@@ -9,18 +9,9 @@ import {
   PlanState,
 } from "@/functions/shared/planManager";
 import { getEnabledCapabilities } from "@/functions/shared/capabilityRegistry";
-import { calculateBalance } from "@/functions/shared/ledger";
+import { calculateBalance } from "@/lib/supabase/ledger";
 
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-const apiKey = process.env.APPWRITE_API_KEY!;
-
-const serverClient = new ServerClient()
-  .setEndpoint(endpoint)
-  .setProject(projectId)
-  .setKey(apiKey);
-
-const tables = new TablesDB(serverClient);
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,38 +25,30 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authenticate user strictly via JWT or session
+    // 1. Authenticate user strictly via Supabase JWT or session
+    const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
     const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
     const bodyJwt = typeof body.jwt === "string" ? body.jwt.trim() : null;
     const effectiveJwt = bearerJwt || bodyJwt;
 
-    const sessionCookie =
-      req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+    let user = null;
+    if (effectiveJwt) {
+      const { data } = await supabase.auth.getUser(effectiveJwt);
+      user = data?.user;
+    } else {
+      const { data } = await supabase.auth.getUser();
+      user = data?.user;
+    }
 
-    if (!effectiveJwt && !sessionCookie) {
+    if (!user) {
       return NextResponse.json(
         { success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." },
         { status: 401 }
       );
     }
 
-    const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (effectiveJwt) userClient.setJWT(effectiveJwt);
-    else if (sessionCookie) userClient.setSession(sessionCookie);
-
-    let verifiedUserId: string;
-    try {
-      const userAccount = new Account(userClient);
-      const userDoc = await userAccount.get();
-      verifiedUserId = userDoc.$id;
-    } catch {
-      return NextResponse.json(
-        { success: false, error: "انتهت صلاحية الجلسة. يرجى تسجيل الدخول مجدداً." },
-        { status: 401 }
-      );
-    }
+    const verifiedUserId = user.id;
 
     // 2. Validate operations with strict Zod schema
     const parsedOps = z.array(EditPlanOperationSchema).safeParse(operations);
@@ -76,14 +59,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 3. Fetch existing quote
-    const quoteDoc: any = await tables.getRow({
-      databaseId: "digr",
-      tableId: "plans_quotes",
-      rowId: quoteId,
-    });
+    const adminClient = createAdminClient();
 
-    if (quoteDoc.userId !== verifiedUserId) {
+    // 3. Fetch existing quote
+    const { data: quoteDoc, error: quoteErr } = await adminClient
+      .from("plans_quotes")
+      .select("*")
+      .eq("id", quoteId)
+      .single();
+
+    if (quoteErr || !quoteDoc) {
+      return NextResponse.json(
+        { success: false, error: "عرض السعر غير موجود." },
+        { status: 404 }
+      );
+    }
+
+    if (quoteDoc.user_id !== verifiedUserId) {
       return NextResponse.json(
         { success: false, error: "غير مصرح لك بتعديل هذا العرض." },
         { status: 403 }
@@ -98,17 +90,20 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Construct current plan state and apply operations
-    const currentItems = JSON.parse(quoteDoc.itemsJson || "[]");
+    const currentItems = Array.isArray(quoteDoc.items)
+      ? quoteDoc.items
+      : JSON.parse(quoteDoc.items_json || "[]");
+
     const currentPlan: PlanState = {
-      summaryAr: quoteDoc.summaryAr || "خطة استخراج بيانات",
+      summaryAr: quoteDoc.summary_ar || "خطة استخراج بيانات",
       items: currentItems,
-      outputFormats: ["xlsx", "pdf", "csv"],
+      outputFormats: quoteDoc.output_formats || ["xlsx", "pdf", "csv"],
     };
 
     const updatedPlan = applyPlanOperations(currentPlan, parsedOps.data);
 
     // 5. Validate updated plan against capability schemas
-    const capabilities = await getEnabledCapabilities(tables);
+    const capabilities = await getEnabledCapabilities(adminClient);
     const valResult = validatePlanAgainstSchemas(updatedPlan.items, capabilities);
     if (!valResult.valid) {
       return NextResponse.json(
@@ -118,9 +113,9 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Generate NEW quote (supersedes old quote and recalculates price)
-    const userBalance = await calculateBalance(tables, verifiedUserId);
-    const newQuote = await createAndSaveManagedQuote(tables, {
-      conversationId: quoteDoc.conversationId,
+    const userBalance = await calculateBalance(adminClient, verifiedUserId);
+    const newQuote = await createAndSaveManagedQuote(adminClient as any, {
+      conversationId: quoteDoc.conversation_id || "",
       userId: verifiedUserId,
       plan: updatedPlan,
       userBalance,

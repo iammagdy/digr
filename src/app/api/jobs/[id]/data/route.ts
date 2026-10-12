@@ -1,17 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Storage, Client as UserClient, Account } from "node-appwrite";
+import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-const apiKey = process.env.APPWRITE_API_KEY!;
-
-const serverClient = new ServerClient()
-  .setEndpoint(endpoint)
-  .setProject(projectId)
-  .setKey(apiKey);
-
-const tables = new TablesDB(serverClient);
-const storage = new Storage(serverClient);
+export const dynamic = "force-dynamic";
 
 export async function GET(
   req: NextRequest,
@@ -23,51 +13,67 @@ export async function GET(
       return NextResponse.json({ success: false, error: "معرف الطلب مطلوب" }, { status: 400 });
     }
 
-    // 1. Authenticate caller strictly via JWT or session cookie
+    // 1. Authenticate caller strictly via Supabase JWT or session cookie
+    const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-    const sessionCookie =
-      req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+    let user = null;
 
-    if (!bearerJwt && !sessionCookie) {
+    if (authHeader?.startsWith("Bearer ")) {
+      const bearerJwt = authHeader.substring(7).trim();
+      const { data } = await supabase.auth.getUser(bearerJwt);
+      user = data?.user;
+    } else {
+      const { data } = await supabase.auth.getUser();
+      user = data?.user;
+    }
+
+    if (!user) {
       return NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 });
     }
 
-    const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (bearerJwt) userClient.setJWT(bearerJwt);
-    else if (sessionCookie) userClient.setSession(sessionCookie);
-
-    let verifiedUserId: string;
-    try {
-      const userAccount = new Account(userClient);
-      const userDoc = await userAccount.get();
-      verifiedUserId = userDoc.$id;
-    } catch {
-      return NextResponse.json({ success: false, error: "انتهت صلاحية الجلسة." }, { status: 401 });
-    }
+    const verifiedUserId = user.id;
+    const adminClient = createAdminClient();
 
     // 2. Fetch Job Document
-    const jobDoc: any = await tables.getRow({
-      databaseId: "digr",
-      tableId: "jobs",
-      rowId: jobId,
-    });
+    const { data: jobDoc, error: jobErr } = await adminClient
+      .from("jobs")
+      .select("*")
+      .eq("id", jobId)
+      .single();
 
-    if (jobDoc.userId !== verifiedUserId) {
+    if (jobErr || !jobDoc) {
+      return NextResponse.json({ success: false, error: "الطلب غير موجود." }, { status: 404 });
+    }
+
+    const isAdmin = user.app_metadata?.role === "admin";
+    if (jobDoc.user_id !== verifiedUserId && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح بعرض هذا الطلب." }, { status: 403 });
     }
 
-    // 3. Read JSON result from server-only job_data bucket (with fallback to results for old jobs)
+    // 3. Read JSON result from private storage bucket
     try {
-      let jsonBuf: ArrayBuffer;
-      try {
-        jsonBuf = await storage.getFileDownload("job_data", `json_${jobId}`);
-      } catch {
-        jsonBuf = await storage.getFileDownload("results", `json_${jobId}`);
+      let jsonText = "";
+      const candidatePaths = [
+        `${verifiedUserId}/${jobId}/data.json`,
+        `${jobId}/data.json`,
+        `json_${jobId}`,
+      ];
+
+      for (const path of candidatePaths) {
+        const { data: blob, error: dlErr } = await adminClient.storage
+          .from("results")
+          .download(path);
+
+        if (!dlErr && blob) {
+          jsonText = await blob.text();
+          break;
+        }
       }
 
-      const jsonText = Buffer.from(jsonBuf).toString("utf-8");
+      if (!jsonText) {
+        throw new Error("Result file not found");
+      }
+
       const parsedData = JSON.parse(jsonText);
 
       // Cleaned customer-facing profile (strictly no provider structure or provider internal IDs)
@@ -105,18 +111,18 @@ export async function GET(
         success: true,
         jobId,
         status: jobDoc.status,
-        templateSlug: jobDoc.templateSlug,
+        templateSlug: jobDoc.template_slug || jobDoc.endpoint_id,
         metadata: {
           platform: "Digr Data Platform",
-          title: parsedData.metadata?.title || `بيانات ${jobDoc.templateSlug}`,
-          collectedAt: jobDoc.finishedAt || jobDoc.createdAt,
-          rowsCount: jobDoc.rowsCollected || cleanRows.length,
+          title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,
+          collectedAt: jobDoc.finished_at || jobDoc.created_at,
+          rowsCount: jobDoc.delivered_units || cleanRows.length,
           methodology: parsedData.metadata?.methodology || "",
         },
         profile: cleanProfile,
         rows: cleanRows,
-        chargedCredits: jobDoc.chargedCredits,
-        finishedAt: jobDoc.finishedAt,
+        chargedCredits: jobDoc.charged_credits,
+        finishedAt: jobDoc.finished_at,
       });
     } catch {
       // If JSON file doesn't exist yet (e.g. still running, failed, or older job)
@@ -124,8 +130,8 @@ export async function GET(
         success: true,
         jobId,
         status: jobDoc.status,
-        templateSlug: jobDoc.templateSlug,
-        errorAr: jobDoc.errorAr || null,
+        templateSlug: jobDoc.template_slug || jobDoc.endpoint_id,
+        errorAr: jobDoc.error_message || null,
         profile: null,
         rows: [],
       });

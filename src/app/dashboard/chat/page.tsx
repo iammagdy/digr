@@ -2,12 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { client, account, databases } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
-import { Storage, Query } from "appwrite";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
@@ -29,7 +28,26 @@ import Composer from "./components/Composer";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
-const storage = new Storage(client);
+const orderDesc = { ascending: false } as const;
+
+async function getAccessToken(): Promise<string | undefined> {
+  try {
+    const supabase = createClient();
+    const { data } = await supabase.auth.getSession();
+    return data?.session?.access_token;
+  } catch {
+    return undefined;
+  }
+}
+
+function mapJobEvents(rows: any[] | null | undefined): JobEvent[] {
+  return (rows || []).map((e: any) => ({
+    $id: e.id || e.$id || `ev_${Date.now()}`,
+    textAr: e.text_ar || e.textAr || "",
+    kind: e.kind || "info",
+    createdAt: e.created_at || e.createdAt || new Date().toISOString(),
+  }));
+}
 
 interface MessageItem {
   id: string;
@@ -101,14 +119,15 @@ export default function ChatWorkspacePage() {
     async function checkProfile() {
       if (!user) return;
       try {
-        const res = await databases.listDocuments("digr", "profiles", [
-          Query.equal("userId", user.$id),
-          Query.limit(1),
-        ]);
-        if (res.documents.length > 0) {
-          const prof: any = res.documents[0];
+        const supabase = createClient();
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", user.id)
+          .maybeSingle();
+        if (prof) {
           if (prof.persona) setUserPersona(getPersonaConfig(prof.persona).key);
-          if (prof.onboardingCompleted === false) {
+          if (prof.onboarding_completed === false) {
             setShowOnboarding(true);
           }
         }
@@ -129,16 +148,18 @@ export default function ChatWorkspacePage() {
   const loadConversations = useCallback(async () => {
     if (!user) return;
     try {
-      const res = await databases.listDocuments("digr", "conversations", [
-        Query.equal("userId", user.$id),
-        Query.orderDesc("updatedAt"),
-        Query.limit(20),
-      ]);
+      const supabase = createClient();
+      const { data: rows } = await supabase
+        .from("conversations")
+        .select("id, title, updated_at")
+        .eq("user_id", user.id)
+        .order("updated_at", orderDesc)
+        .limit(20);
       setConversationsList(
-        res.documents.map((d: any) => ({
-          $id: d.$id,
+        (rows || []).map((d: any) => ({
+          $id: d.id,
           title: d.title || "محادثة استخراج",
-          updatedAt: d.updatedAt,
+          updatedAt: d.updated_at || new Date().toISOString(),
         }))
       );
     } catch (err) {
@@ -216,29 +237,36 @@ export default function ChatWorkspacePage() {
 
     const interval = setInterval(async () => {
       try {
-        const jobDoc: any = await databases.getDocument("digr", "jobs", activeJob.jobId);
-        const eventsRes = await databases.listDocuments("digr", "job_events", [
-          Query.equal("jobId", activeJob.jobId),
-          Query.orderDesc("createdAt"),
-          Query.limit(EVENT_HISTORY_LIMIT),
+        const supabase = createClient();
+        const [jobRes, eventsRes] = await Promise.all([
+          supabase.from("jobs").select("*").eq("id", activeJob.jobId).maybeSingle(),
+          supabase
+            .from("job_events")
+            .select("*")
+            .eq("job_id", activeJob.jobId)
+            .order("created_at", orderDesc)
+            .limit(EVENT_HISTORY_LIMIT),
         ]);
+        const jobDoc: any = jobRes.data;
+        if (!jobDoc) return;
 
         setActiveJob((prev) => {
           if (!prev) return null;
           return {
             ...prev,
             status: jobDoc.status,
-            rowsCollected: jobDoc.rowsCollected || 0,
-            chargedCredits: jobDoc.chargedCredits,
-            reservedCredits: jobDoc.reservedCredits,
-            errorAr: jobDoc.errorAr,
+            rowsCollected: jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
+            chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
+            reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
+            errorAr: jobDoc.error_ar ?? jobDoc.errorAr,
             // Latest events first from the server, restored to reading order for display.
-            events: chronological(eventsRes.documents as unknown as JobEvent[]),
+            events: chronological(mapJobEvents(eventsRes.data)),
           };
         });
 
-        if ((jobDoc.status === "done" || jobDoc.status === "cancelled") && !loadedResultJobs.current.has(jobDoc.$id)) {
-          await loadJobResults(jobDoc.$id);
+        const jId = jobDoc.id || jobDoc.$id;
+        if ((jobDoc.status === "done" || jobDoc.status === "cancelled") && !loadedResultJobs.current.has(jId)) {
+          await loadJobResults(jId);
         }
       } catch (err) {
         console.warn("Polling job status error:", err);
@@ -270,11 +298,7 @@ export default function ChatWorkspacePage() {
     const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     try {
-      let jwtToken: string | undefined = undefined;
-      try {
-        const jwtRes = await account.createJWT();
-        jwtToken = jwtRes.jwt;
-      } catch {}
+      const jwtToken = await getAccessToken();
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
@@ -367,11 +391,7 @@ export default function ChatWorkspacePage() {
     const timeoutId = setTimeout(() => controller.abort(), 35000);
 
     try {
-      let jwtToken: string | undefined;
-      try {
-        const jwtRes = await account.createJWT();
-        jwtToken = jwtRes.jwt;
-      } catch {}
+      const jwtToken = await getAccessToken();
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
@@ -442,64 +462,86 @@ export default function ChatWorkspacePage() {
     loadedResultJobs.current.clear();
 
     try {
+      const supabase = createClient();
       if (!conversationsList.some((item) => item.$id === id)) {
-        const doc: any = await databases.getDocument("digr", "conversations", id);
-        if (doc.userId !== user.$id) throw new Error("forbidden");
+        const { data: doc, error: convErr } = await supabase
+          .from("conversations")
+          .select("*")
+          .eq("id", id)
+          .single();
+        if (convErr || !doc || doc.user_id !== user.id) throw new Error("forbidden");
         if (sequence === conversationLoadSequence.current) setConversationTitle(doc.title || "");
       }
       const documents: any[] = [];
       const pageSize = 100;
       let offset = 0;
       for (let page = 0; page < 50; page += 1) {
-        const response = await databases.listDocuments("digr", "messages", [
-          Query.equal("conversationId", id),
-          Query.equal("userId", user.$id),
-          Query.orderAsc("createdAt"),
-          Query.limit(pageSize),
-          Query.offset(offset),
-        ]);
+        const { data: pageRows, error: msgErr } = await supabase
+          .from("messages")
+          .select("*")
+          .eq("conversation_id", id)
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .range(offset, offset + pageSize - 1);
+        if (msgErr) throw msgErr;
         if (sequence !== conversationLoadSequence.current) return;
-        documents.push(...response.documents);
-        if (response.documents.length < pageSize) break;
+        const rows = pageRows || [];
+        documents.push(...rows);
+        if (rows.length < pageSize) break;
         offset += pageSize;
       }
 
       setMessages(documents
         .filter((document) => (document.role === "user" || document.role === "assistant") && document.status !== "thinking")
         .map((document) => ({
-          id: document.$id,
+          id: document.id || document.$id,
           role: document.role as "user" | "assistant",
           content: String(document.content || "").slice(0, 20000),
-          createdAt: String(document.createdAt || document.$createdAt || new Date().toISOString()),
+          createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
         })));
 
       // Restore the run (progress / files) of the conversation's accepted quote, if any.
-      const accepted = await databases.listDocuments("digr", "plans_quotes", [
-        Query.equal("conversationId", id),
-        Query.equal("status", "accepted"),
-        Query.orderDesc("createdAt"),
-        Query.limit(1),
-      ]);
-      const quote: any = accepted.documents[0];
-      if (quote?.jobId && sequence === conversationLoadSequence.current) {
-        const jobDoc: any = await databases.getDocument("digr", "jobs", quote.jobId);
-        const eventsRes = await databases.listDocuments("digr", "job_events", [
-          Query.equal("jobId", jobDoc.$id), Query.orderDesc("createdAt"), Query.limit(EVENT_HISTORY_LIMIT),
+      const { data: acceptedRows } = await supabase
+        .from("plans_quotes")
+        .select("*")
+        .eq("conversation_id", id)
+        .eq("status", "accepted")
+        .order("created_at", orderDesc)
+        .limit(1);
+      const quote: any = acceptedRows?.[0];
+      const quoteJobId = quote?.job_id || quote?.jobId;
+      if (quoteJobId && sequence === conversationLoadSequence.current) {
+        const [jobRes, eventsRes] = await Promise.all([
+          supabase.from("jobs").select("*").eq("id", quoteJobId).maybeSingle(),
+          supabase
+            .from("job_events")
+            .select("*")
+            .eq("job_id", quoteJobId)
+            .order("created_at", orderDesc)
+            .limit(EVENT_HISTORY_LIMIT),
         ]);
-        let items: any[] = [];
-        try { items = JSON.parse(quote.itemsJson || "[]"); } catch { /* keep empty */ }
-        setActiveJob({
-          jobId: jobDoc.$id,
-          status: jobDoc.status,
-          templateSlug: items[0]?.capabilitySlug || jobDoc.templateSlug || "tiktok-profile",
-          rowsCollected: jobDoc.rowsCollected || 0,
-          chargedCredits: jobDoc.chargedCredits,
-          reservedCredits: jobDoc.reservedCredits,
-          errorAr: jobDoc.errorAr,
-          requestedRows: quote.targetVolumeMax,
-          events: chronological(eventsRes.documents as unknown as JobEvent[]),
-        });
-        if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jobDoc.$id);
+        const jobDoc: any = jobRes.data;
+        if (jobDoc) {
+          let items: any[] = [];
+          try {
+            items = Array.isArray(quote.items_json)
+              ? quote.items_json
+              : JSON.parse(quote.items_json || quote.itemsJson || "[]");
+          } catch { /* keep empty */ }
+          const jId = jobDoc.id || jobDoc.$id;
+          setActiveJob({
+            jobId: jId,
+            status: jobDoc.status,
+            templateSlug: items[0]?.capabilitySlug || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
+            rowsCollected: jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
+            chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
+            reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
+            errorAr: jobDoc.error_ar ?? jobDoc.errorAr,
+            requestedRows: quote.target_volume_max ?? quote.targetVolumeMax,
+            events: chronological(mapJobEvents(eventsRes.data)),
+          });
+          if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
+        }
       }
     } catch {
       if (sequence === conversationLoadSequence.current) setConversationLoadError(true);
@@ -542,11 +584,7 @@ export default function ChatWorkspacePage() {
       operations.push({ action: "set_param", capabilitySlug: slug, key: "username", value: cleanVal });
     }
 
-    let jwtToken: string | undefined = undefined;
-    try {
-      const jwtRes = await account.createJWT();
-      jwtToken = jwtRes.jwt;
-    } catch {}
+    const jwtToken = await getAccessToken();
 
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
@@ -586,11 +624,7 @@ export default function ChatWorkspacePage() {
     setStartingQuoteId(quote.quoteId);
 
     try {
-      let jwtToken: string | undefined = undefined;
-      try {
-        const jwtRes = await account.createJWT();
-        jwtToken = jwtRes.jwt;
-      } catch {}
+      const jwtToken = await getAccessToken();
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
@@ -660,14 +694,23 @@ export default function ChatWorkspacePage() {
     setDownloadingKey(ext);
 
     try {
-      const fileId = activeJob.fileIds?.[ext] || `${ext}_${activeJob.jobId}`;
-      const downloadUrl = storage.getFileDownload("results", fileId).toString();
+      const jwtToken = await getAccessToken();
+      const headers: Record<string, string> = {};
+      if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
+      const res = await fetch(`/api/jobs/${activeJob.jobId}/download?format=${ext}`, { headers });
+      const payload = await res.json();
+      if (!res.ok || !payload?.success || !payload?.signedUrl) {
+        throw new Error(payload?.error || "الملف غير متاح للتحميل حالياً");
+      }
+      const fileRes = await fetch(payload.signedUrl);
+      if (!fileRes.ok) throw new Error(String(fileRes.status));
+      const blobUrl = URL.createObjectURL(await fileRes.blob());
       const link = document.createElement("a");
-      link.href = downloadUrl;
-      link.download = `digr_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
+      link.href = blobUrl;
+      link.download = payload.downloadFileName || `digr_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      setTimeout(() => { URL.revokeObjectURL(blobUrl); link.remove(); }, 250);
     } catch (err: any) {
       alert(`تعذر تحميل الملف: ${err.message}`);
     } finally {
@@ -679,8 +722,7 @@ export default function ChatWorkspacePage() {
     if (!activeJob?.jobId || artifactEditing || !user) return;
     setArtifactEditing(true);
     try {
-      let jwtToken: string | undefined;
-      try { jwtToken = (await account.createJWT()).jwt; } catch {}
+      const jwtToken = await getAccessToken();
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
       const response = await fetch(`/api/jobs/${activeJob.jobId}/artifacts`, {
@@ -746,11 +788,7 @@ export default function ChatWorkspacePage() {
   async function handleGenerateMethodology() {
     if (!activeJob?.jobId || !user) return;
     try {
-      let jwtToken: string | undefined;
-      try {
-        const jwtRes = await account.createJWT();
-        jwtToken = jwtRes.jwt;
-      } catch {}
+      const jwtToken = await getAccessToken();
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;

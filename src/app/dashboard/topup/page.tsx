@@ -2,15 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Query } from "appwrite";
-import { client, databases } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { Icon, UI } from "@/components/app/icons";
 import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
-import { CREDIT_LEDGER_COLLECTION, DATABASE_ID, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
+import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
@@ -64,26 +63,42 @@ export default function WalletPage() {
 
   /* public settings: IPA + pending cap (fall back to env / 3) */
   useEffect(() => {
-    databases.getDocument(DATABASE_ID, SETTINGS_PUBLIC_COLLECTION, "pricing")
-      .then((doc) => {
-        const d = doc as unknown as { ipa?: string; maxPendingTopups?: number };
-        if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
-        if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
-      })
-      .catch(() => {});
+    try {
+      const supabase = createClient();
+      Promise.resolve(
+        supabase.from(SETTINGS_PUBLIC_COLLECTION).select("value").eq("key", "pricing").maybeSingle()
+      )
+        .then(({ data }) => {
+          const d = (data?.value || {}) as { ipa?: string; maxPendingTopups?: number };
+          if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
+          if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
+        })
+        .catch(() => {});
+    } catch {}
   }, []);
 
   const loadLedger = useCallback(async () => {
     if (!user) return;
     try {
-      const rows: LedgerRow[] = [];
-      for (let offset = 0; ; offset += 100) {
-        const res = await databases.listDocuments(DATABASE_ID, CREDIT_LEDGER_COLLECTION, [
-          Query.equal("userId", user.$id), Query.orderDesc("createdAt"), Query.limit(100), Query.offset(offset),
-        ]);
-        rows.push(...(res.documents as unknown as LedgerRow[]));
-        if (res.documents.length < 100) break;
-      }
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from(CREDIT_LEDGER_COLLECTION)
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(500);
+      if (error) throw error;
+      const rows: LedgerRow[] = (data || []).map((r: any) => ({
+        $id: r.id,
+        id: r.id,
+        userId: r.user_id,
+        delta: Number(r.delta),
+        type: r.type,
+        jobId: r.job_id,
+        topupId: r.topup_id,
+        note: r.note || "",
+        createdAt: r.created_at,
+      }));
       setLedger(rows);
       setLedgerFailed(false);
     } catch {
@@ -94,10 +109,30 @@ export default function WalletPage() {
   const loadTopups = useCallback(async () => {
     if (!user) return;
     try {
-      const res = await databases.listDocuments(DATABASE_ID, TOPUPS_COLLECTION, [
-        Query.equal("userId", user.$id), Query.orderDesc("createdAt"), Query.limit(50),
-      ]);
-      setTopups(res.documents as unknown as TopupRecord[]);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from(TOPUPS_COLLECTION)
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      setTopups(
+        (data || []).map((r: any) => ({
+          $id: r.id,
+          id: r.id,
+          userId: r.user_id,
+          amountEgp: Number(r.amount_egp),
+          reference: r.reference,
+          senderName: r.sender_name || "",
+          senderPhone: r.sender_phone || "",
+          receiptFileId: r.receipt_file_id || null,
+          status: r.status,
+          rejectReason: r.reject_reason || null,
+          credits: r.credits ? Number(r.credits) : null,
+          createdAt: r.created_at,
+          reviewedAt: r.reviewed_at || null,
+        }))
+      );
     } catch { /* none yet */ }
   }, [user]);
 
@@ -107,22 +142,57 @@ export default function WalletPage() {
   useEffect(() => {
     if (!user) return;
     const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);
-    databases.listDocuments(DATABASE_ID, JOBS_COLLECTION, [
-      Query.equal("userId", user.$id), Query.equal("status", "done"), Query.greaterThanEqual("createdAt", start.toISOString()), Query.limit(100),
-    ]).then((res) => setMonthRows(res.documents.reduce((a, d) => a + ((d as unknown as { rowsCollected?: number }).rowsCollected || 0), 0))).catch(() => {});
+    try {
+      const supabase = createClient();
+      Promise.resolve(
+        supabase
+          .from(JOBS_COLLECTION)
+          .select("delivered_units")
+          .eq("user_id", user.id)
+          .in("status", ["completed", "done"])
+          .gte("created_at", start.toISOString())
+          .limit(100)
+      )
+        .then(({ data }) => setMonthRows((data || []).reduce((a, d: any) => a + (Number(d.delivered_units) || 0), 0)))
+        .catch(() => {});
+    } catch {}
   }, [user, ledger.length]);
 
   /* live status of topup requests (approve / reject by the admin) */
   useEffect(() => {
     if (!user) return;
     try {
-      return client.subscribe(`databases.${DATABASE_ID}.collections.${TOPUPS_COLLECTION}.documents`, (e) => {
-        const doc = e.payload as unknown as TopupRecord;
-        if (doc.userId !== user.$id) return;
-        setTopups((prev) => (prev.some((t) => t.$id === doc.$id) ? prev.map((t) => (t.$id === doc.$id ? doc : t)) : [doc, ...prev]));
-        setSubmitted((cur) => (cur && cur.$id === doc.$id ? doc : cur));
-        if (doc.status === "approved") { void refreshBalance(); void loadLedger(); }
-      });
+      const supabase = createClient();
+      const channel = supabase
+        .channel(`topups-${user.id}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: TOPUPS_COLLECTION, filter: `user_id=eq.${user.id}` },
+          (payload) => {
+            const r = payload.new as any;
+            if (!r || !r.id) return;
+            const doc: TopupRecord = {
+              $id: r.id,
+              id: r.id,
+              userId: r.user_id,
+              amountEgp: Number(r.amount_egp),
+              reference: r.reference,
+              senderName: r.sender_name || "",
+              senderPhone: r.sender_phone || "",
+              receiptFileId: r.receipt_file_id || null,
+              status: r.status,
+              rejectReason: r.reject_reason || null,
+              credits: r.credits ? Number(r.credits) : null,
+              createdAt: r.created_at,
+              reviewedAt: r.reviewed_at || null,
+            };
+            setTopups((prev) => (prev.some((t) => t.$id === doc.$id) ? prev.map((t) => (t.$id === doc.$id ? doc : t)) : [doc, ...prev]));
+            setSubmitted((cur) => (cur && cur.$id === doc.$id ? doc : cur));
+            if (doc.status === "approved") { void refreshBalance(); void loadLedger(); }
+          }
+        )
+        .subscribe();
+      return () => { void supabase.removeChannel(channel); };
     } catch { return; }
   }, [user, refreshBalance, loadLedger]);
 

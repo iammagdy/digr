@@ -2,12 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Query } from "appwrite";
-import { account, databases } from "@/lib/appwrite";
 import { useUser } from "@/hooks/useUser";
+import { createClient } from "@/lib/supabase/client";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
-import { DATABASE_ID, JOBS_COLLECTION } from "@/lib/constants";
+import { JOBS_COLLECTION } from "@/lib/constants";
 
 interface JobDoc {
   $id: string;
@@ -69,17 +68,59 @@ export default function RequestsPage() {
   const load = useCallback(async () => {
     if (!user) return;
     try {
+      const supabase = createClient();
       const [jobsRes, quotesRes, convRes] = await Promise.all([
-        databases.listDocuments(DATABASE_ID, JOBS_COLLECTION, [Query.equal("userId", user.$id), Query.orderDesc("createdAt"), Query.limit(100)]),
-        databases.listDocuments(DATABASE_ID, "plans_quotes", [Query.equal("userId", user.$id), Query.equal("status", "accepted"), Query.orderDesc("createdAt"), Query.limit(100)]),
-        databases.listDocuments(DATABASE_ID, "conversations", [Query.equal("userId", user.$id), Query.orderDesc("updatedAt"), Query.limit(100)]),
+        supabase
+          .from(JOBS_COLLECTION)
+          .select("*")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(100),
+        supabase
+          .from("plans_quotes")
+          .select("job_id, conversation_id, target_volume_max, summary_ar")
+          .eq("user_id", user.id)
+          .eq("status", "accepted")
+          .order("created_at", { ascending: false })
+          .limit(100),
+        supabase
+          .from("conversations")
+          .select("id, title")
+          .eq("user_id", user.id)
+          .order("updated_at", { ascending: false })
+          .limit(100),
       ]);
-      setJobs(jobsRes.documents as unknown as JobDoc[]);
+      if (jobsRes.error) throw jobsRes.error;
+      const mappedJobs: JobDoc[] = (jobsRes.data || []).map((r: any) => ({
+        $id: r.id,
+        templateSlug: r.template_slug || r.templateSlug || "",
+        params: typeof r.params === "string" ? r.params : JSON.stringify(r.params || {}),
+        status: r.status,
+        reservedCredits: r.reserved_credits ?? r.reservedCredits ?? 0,
+        chargedCredits: r.charged_credits ?? r.chargedCredits ?? undefined,
+        rowsCollected: r.rows_collected ?? r.rowsCollected ?? undefined,
+        errorAr: r.error_ar ?? r.errorAr ?? undefined,
+        createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+      }));
+      setJobs(mappedJobs);
+
       const qMap: Record<string, QuoteInfo> = {};
-      for (const q of quotesRes.documents as any[]) if (q.jobId) qMap[q.jobId] = { conversationId: q.conversationId, targetVolumeMax: q.targetVolumeMax, summaryAr: q.summaryAr };
+      for (const q of (quotesRes.data || []) as any[]) {
+        const jId = q.job_id || q.jobId;
+        if (jId) {
+          qMap[jId] = {
+            conversationId: q.conversation_id || q.conversationId,
+            targetVolumeMax: q.target_volume_max ?? q.targetVolumeMax ?? 0,
+            summaryAr: q.summary_ar || q.summaryAr,
+          };
+        }
+      }
       setQuotes(qMap);
+
       const tMap: Record<string, string> = {};
-      for (const c of convRes.documents as any[]) tMap[c.$id] = c.title;
+      for (const c of (convRes.data || []) as any[]) {
+        tMap[c.id || c.$id] = c.title;
+      }
       setTitles(tMap);
       setFailed(false);
     } catch {
@@ -109,22 +150,24 @@ export default function RequestsPage() {
     setDl(key);
     setDlError("");
     try {
-      // Latest artifact version if the user edited the result; otherwise the original file.
-      let fileId = `${ext}_${job.$id}`;
-      try {
-        const info = await (await fetch(`/api/jobs/${job.$id}/data`)).json();
-        if (info?.success && info.fileIds?.[ext]) fileId = info.fileIds[ext];
-      } catch { /* default id */ }
-      const jwt = (await account.createJWT()).jwt;
-      const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-      const res = await fetch(`${endpoint}/storage/buckets/results/files/${fileId}/download`, {
-        headers: { "X-Appwrite-Project": process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482", "X-Appwrite-JWT": jwt },
-      });
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers: Record<string, string> = {};
+      if (session?.access_token) {
+        headers["Authorization"] = `Bearer ${session.access_token}`;
+      }
+      const res = await fetch(`/api/jobs/${job.$id}/download?format=${ext}`, { headers });
       if (!res.ok) throw new Error(String(res.status));
-      const url = URL.createObjectURL(await res.blob());
+      const payload = await res.json();
+      if (!payload?.success || !payload?.signedUrl) throw new Error("no_signed_url");
+      const fileRes = await fetch(payload.signedUrl);
+      if (!fileRes.ok) throw new Error(String(fileRes.status));
+      const url = URL.createObjectURL(await fileRes.blob());
       const a = document.createElement("a");
-      a.href = url; a.download = `digr_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
-      document.body.appendChild(a); a.click();
+      a.href = url;
+      a.download = payload.downloadFileName || `digr_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
       setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 250);
     } catch {
       setDlError("تعذّر تحميل الملف. يرجى إعادة المحاولة. (التحميل متاح لمدة ٩٠ يومًا)");

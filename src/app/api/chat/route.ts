@@ -62,10 +62,19 @@ export async function POST(req: NextRequest) {
     let emailVerified = false;
     let isSupabaseSession = false;
 
-    // Check Supabase session first
+    // Check Supabase session or bearer token first
     try {
       const supabase = await createServerSideClient();
-      const { data: { user } } = await supabase.auth.getUser();
+      const authHeader = req.headers.get("authorization");
+      const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+      let user = null;
+      if (bearer) {
+        const { data } = await supabase.auth.getUser(bearer);
+        user = data?.user;
+      } else {
+        const { data } = await supabase.auth.getUser();
+        user = data?.user;
+      }
       if (user) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);

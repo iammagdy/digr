@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Client as ServerClient, TablesDB, Client as UserClient, Account, Query } from "node-appwrite";
 import { getLlmStatusSnapshot } from "../../../../functions/shared/llmClient";
+import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -71,12 +72,58 @@ function buildBrowserBootstrapHtml(endpoint: string, projectId: string): string 
 
 export async function GET(req: NextRequest) {
   try {
+    const authHeader = req.headers.get("authorization");
+    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+
+    // 1. Try Supabase Admin Auth first
+    try {
+      const supabase = await createServerSideClient();
+      const { data: sbData } = bearerJwt
+        ? await supabase.auth.getUser(bearerJwt)
+        : await supabase.auth.getUser();
+      const sbUser = sbData?.user;
+      if (sbUser) {
+        if (sbUser.app_metadata?.role !== "admin") {
+          return NextResponse.json(
+            { error: "ممنوع — هذه الواجهة مخصصة لمديري النظام فقط." },
+            { status: 403 },
+          );
+        }
+        let lastUsageTimestamp: string | null = null;
+        try {
+          const adminClient = createAdminClient();
+          const { data: usageRows } = await adminClient
+            .from("llm_usage")
+            .select("created_at")
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (usageRows && usageRows.length > 0) {
+            lastUsageTimestamp = usageRows[0].created_at || null;
+          }
+        } catch {
+          lastUsageTimestamp = null;
+        }
+        const snapshot = getLlmStatusSnapshot(lastUsageTimestamp);
+        return NextResponse.json({
+          provider: snapshot.provider,
+          llm_enabled: snapshot.llm_enabled,
+          key_present: snapshot.key_present,
+          model: snapshot.model,
+          reasoning_effort: snapshot.reasoning_effort,
+          reasoning_effort_status: snapshot.reasoning_effort_status,
+          last_llm_usage_timestamp: snapshot.last_llm_usage_timestamp,
+          last_fallback_reason: snapshot.last_fallback_reason,
+          last_fallback_detail: snapshot.last_fallback_detail,
+        });
+      }
+    } catch {
+      // Fall through if Supabase not configured in test env
+    }
+
     const endpoint = process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
     const projectId = process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
     const apiKey = process.env.APPWRITE_API_KEY || "";
 
-    const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
     const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
     const effectiveJwt = bearerJwt || cookieJwt;
 

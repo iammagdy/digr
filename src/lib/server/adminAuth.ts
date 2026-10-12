@@ -38,6 +38,195 @@ export interface AdminContext {
 
 import { createServerSideClient, createAdminClient } from "../supabase/server";
 
+function toSnakeCaseKey(key: string, tableId?: string): string {
+  if (tableId === "provider_costs" && key === "at") return "created_at";
+  if (key === "registration" || key === "createdAt" || key === "$createdAt") return "created_at";
+  if (key === "accessedAt" || key === "updatedAt" || key === "$updatedAt") return "updated_at";
+  if (key === "$id") {
+    return tableId === "settings_public" || tableId === "settings_private" ? "key" : "id";
+  }
+  return key.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`);
+}
+
+function toCamelCaseKey(key: string): string {
+  return key.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+}
+
+function mapRowFromSupabase(row: any, tableId?: string): any {
+  if (!row || typeof row !== "object") return row;
+  const out: Record<string, any> = { ...row };
+  for (const [k, v] of Object.entries(row)) {
+    out[toCamelCaseKey(k)] = v;
+  }
+  out.$id = row.id ?? row.key ?? row.$id;
+  out.createdAt = row.created_at ?? row.createdAt;
+  out.updatedAt = row.updated_at ?? row.updatedAt;
+
+  if (tableId === "provider_costs") {
+    out.at = row.created_at ?? row.at;
+    out.costEgp = Number(row.cost_egp ?? row.costEgp ?? 0);
+    out.costUsd = Number(row.cost_usd ?? row.costUsd ?? 0);
+  }
+  if (tableId === "topups") {
+    out.amountEgp = Number(row.amount_egp ?? row.amountEgp ?? 0);
+    out.confirmedAmountEgp =
+      row.confirmed_amount_egp != null
+        ? Number(row.confirmed_amount_egp)
+        : (row.confirmedAmountEgp ?? null);
+  }
+  if (tableId === "settings_public") {
+    out.creditValueEgp = Number(row.credit_value_egp ?? row.creditValueEgp ?? 0.1);
+  }
+  if (tableId === "admin_audit_log") {
+    const details = typeof row.details === "object" && row.details ? row.details : {};
+    out.actorId = row.actor_id ?? row.actorId ?? "";
+    out.ip = details.ip ?? row.ip ?? "";
+    out.meta =
+      row.meta ??
+      JSON.stringify({
+        who: details.actorName || row.actor_id || "مسؤول",
+        label: details.label || row.action || "",
+        target: row.target_id || details.target || "",
+      });
+  }
+  return out;
+}
+
+function mapDataToSupabase(data: Record<string, any>, tableId?: string): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(data || {})) {
+    if (k === "$id") continue;
+    out[toSnakeCaseKey(k, tableId)] = v;
+  }
+  return out;
+}
+
+function createSupabaseTablesAdapter(adminClient: any): any {
+  return {
+    async listRows({ tableId, queries = [] }: { databaseId?: string; tableId: string; queries?: string[] }) {
+      let qb = adminClient.from(tableId).select("*", { count: "exact" });
+      let limitVal = 100;
+      let offsetVal = 0;
+
+      for (const qStr of queries) {
+        try {
+          const q = JSON.parse(qStr);
+          const col = q.attribute ? toSnakeCaseKey(q.attribute, tableId) : "";
+          const vals = Array.isArray(q.values) ? q.values : [];
+          if (q.method === "equal" && col) {
+            if (vals.length === 1) qb = qb.eq(col, vals[0]);
+            else if (vals.length > 1) qb = qb.in(col, vals);
+          } else if (q.method === "greaterThanEqual" && col && vals.length) {
+            qb = qb.gte(col, vals[0]);
+          } else if (q.method === "lessThanEqual" && col && vals.length) {
+            qb = qb.lte(col, vals[0]);
+          } else if (q.method === "orderDesc" && col) {
+            qb = qb.order(col, { ascending: false });
+          } else if (q.method === "orderAsc" && col) {
+            qb = qb.order(col, { ascending: true });
+          } else if (q.method === "limit" && vals.length) {
+            limitVal = Math.max(1, Number(vals[0]) || 100);
+          } else if (q.method === "offset" && vals.length) {
+            offsetVal = Math.max(0, Number(vals[0]) || 0);
+          }
+        } catch {
+          // ignore malformed query string
+        }
+      }
+
+      qb = qb.range(offsetVal, offsetVal + limitVal - 1);
+      const { data, count, error } = await qb;
+      if (error) throw error;
+      const rows = (data || []).map((r: any) => mapRowFromSupabase(r, tableId));
+      return { rows, total: count ?? rows.length };
+    },
+    async getRow({ tableId, rowId }: { databaseId?: string; tableId: string; rowId: string }) {
+      const pk = tableId === "settings_public" || tableId === "settings_private" ? "key" : "id";
+      const { data, error } = await adminClient.from(tableId).select("*").eq(pk, rowId).single();
+      if (error || !data) throw error || new Error("not_found");
+      return mapRowFromSupabase(data, tableId);
+    },
+    async createRow({ tableId, rowId, data }: { databaseId?: string; tableId: string; rowId: string; data: Record<string, any> }) {
+      const pk = tableId === "settings_public" || tableId === "settings_private" ? "key" : "id";
+      const payload = { [pk]: rowId, ...mapDataToSupabase(data, tableId) };
+      const { data: created, error } = await adminClient.from(tableId).insert(payload).select("*").single();
+      if (error) throw error;
+      return mapRowFromSupabase(created, tableId);
+    },
+    async updateRow({ tableId, rowId, data }: { databaseId?: string; tableId: string; rowId: string; data: Record<string, any> }) {
+      const pk = tableId === "settings_public" || tableId === "settings_private" ? "key" : "id";
+      const payload = mapDataToSupabase(data, tableId);
+      const { data: updated, error } = await adminClient.from(tableId).update(payload).eq(pk, rowId).select("*").single();
+      if (error) throw error;
+      return mapRowFromSupabase(updated, tableId);
+    },
+  };
+}
+
+function mapProfileToAdminUser(p: any): any {
+  return {
+    $id: p.id,
+    id: p.id,
+    name: p.name || "",
+    email: p.email || "",
+    registration: p.created_at || new Date().toISOString(),
+    accessedAt: p.updated_at || p.created_at || null,
+    emailVerification: true,
+    status: !p.deletion_scheduled_for,
+    labels: [],
+  };
+}
+
+function createSupabaseUsersAdapter(adminClient: any): any {
+  return {
+    async list({ queries = [], search }: { queries?: string[]; search?: string } = {}) {
+      let qb = adminClient.from("profiles").select("*", { count: "exact" });
+      let limitVal = 100;
+      let offsetVal = 0;
+
+      for (const qStr of queries) {
+        try {
+          const q = JSON.parse(qStr);
+          if (q.attribute === "labels") continue;
+          const col = q.attribute ? toSnakeCaseKey(q.attribute, "profiles") : "";
+          const vals = Array.isArray(q.values) ? q.values : [];
+          if (q.method === "equal" && col && vals.length === 1) {
+            qb = qb.eq(col, vals[0]);
+          } else if (q.method === "greaterThanEqual" && col && vals.length) {
+            qb = qb.gte(col, vals[0]);
+          } else if (q.method === "orderDesc" && col) {
+            qb = qb.order(col, { ascending: false });
+          } else if (q.method === "orderAsc" && col) {
+            qb = qb.order(col, { ascending: true });
+          } else if (q.method === "limit" && vals.length) {
+            limitVal = Math.max(1, Number(vals[0]) || 100);
+          } else if (q.method === "offset" && vals.length) {
+            offsetVal = Math.max(0, Number(vals[0]) || 0);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (search && search.trim()) {
+        const s = search.trim().replace(/[,%]/g, "");
+        if (s) qb = qb.or(`name.ilike.%${s}%,email.ilike.%${s}%`);
+      }
+
+      qb = qb.range(offsetVal, offsetVal + limitVal - 1);
+      const { data, count, error } = await qb;
+      if (error) return { users: [], total: 0 };
+      const users = (data || []).map(mapProfileToAdminUser);
+      return { users, total: count ?? users.length };
+    },
+    async get({ userId }: { userId: string }) {
+      const { data, error } = await adminClient.from("profiles").select("*").eq("id", userId).single();
+      if (error || !data) throw error || new Error("user_not_found");
+      return mapProfileToAdminUser(data);
+    },
+  };
+}
+
 export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; ctx: AdminContext } | { ok: false; response: NextResponse }> {
   // 1. Try Supabase Admin session / Bearer token first
   try {
@@ -66,8 +255,8 @@ export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; c
             adminEmail: sbUser.email || "",
             ip,
             client,
-            tables: new TablesDB(client),
-            users: new Users(client),
+            tables: createSupabaseTablesAdapter(adminClient),
+            users: createSupabaseUsersAdapter(adminClient),
             audit: async (kind, label, target, extra) => {
               try {
                 await adminClient.from("admin_audit_log").insert({
@@ -75,7 +264,7 @@ export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; c
                   action: kind,
                   target_type: extra?.targetType || "admin",
                   target_id: target,
-                  details: { label, ip, ...extra },
+                  details: { actorName: sbUser.user_metadata?.name || "مسؤول", label, target, ip, ...extra },
                 });
               } catch {
                 writeAudit(client, { actorId: sbUser.id, actorName: sbUser.user_metadata?.name || "مسؤول", kind, label, target, ip, ...extra }).catch(() => {});

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Client as UserClient, Account } from "node-appwrite";
 import { runSmokeTests } from "../../../../functions/shared/smokeTest";
+import { createServerSideClient } from "../../../../lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +24,35 @@ interface AuthenticatedAdmin {
 }
 
 async function authenticateAdmin(req: NextRequest): Promise<{ ok: boolean; admin?: AuthenticatedAdmin; errorResponse?: NextResponse }> {
+  const authHeader = req.headers.get("authorization");
+  const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+
+  // 1. Try Supabase Admin Auth first
+  try {
+    const supabase = await createServerSideClient();
+    const { data: sbData } = bearerJwt
+      ? await supabase.auth.getUser(bearerJwt)
+      : await supabase.auth.getUser();
+    const sbUser = sbData?.user;
+    if (sbUser) {
+      if (sbUser.app_metadata?.role !== "admin") {
+        return {
+          ok: false,
+          errorResponse: NextResponse.json(
+            { auth_ok: false, error: "ممنوع — هذا الفحص مخصص لمديري النظام فقط." },
+            { status: 403 }
+          ),
+        };
+      }
+      return { ok: true, admin: { userId: sbUser.id } };
+    }
+  } catch {
+    // Fall through if Supabase not configured in test env
+  }
+
   const endpoint = process.env.APPWRITE_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
   const projectId = process.env.APPWRITE_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
 
-  const authHeader = req.headers.get("authorization");
-  const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
   const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
   const effectiveJwt = bearerJwt || cookieJwt;
 

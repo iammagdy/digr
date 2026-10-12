@@ -411,18 +411,35 @@ export const APPROVED_CAPABILITY_CATALOG: Capability[] = buildApprovedCatalog();
  * merging any status overrides from the database table when available.
  */
 export async function getCatalogCapabilities(
-  tables?: TablesDB,
+  tables?: TablesDB | any,
   settings: RegistryPricingSettings = getRegistryPricingSettings()
 ): Promise<Capability[]> {
   const baseCatalog = buildApprovedCatalog(settings);
   if (!tables) return baseCatalog;
 
   try {
-    const res = await tables.listRows({
-      databaseId: "digr",
-      tableId: "capability_registry",
-    });
-    const dbRows = (res?.rows || []) as unknown as Capability[];
+    let dbRows: Capability[] = [];
+    if (typeof tables.from === "function") {
+      const { data } = await tables.from("capability_registry").select("*");
+      dbRows = (data || []).map((r: any) => ({
+        ...r,
+        slug: r.slug,
+        unitCostUsd: Number(r.unit_cost_usd ?? r.unitCostUsd ?? 0.0012),
+        nameAr: r.name_ar,
+        descriptionAr: r.description_ar,
+        tregEndpointId: r.endpoint_id,
+        pricingUnit: r.pricing_unit,
+        maxRows: r.max_rows,
+        paginationType: r.pagination_type,
+        enabled: Boolean(r.enabled),
+      }));
+    } else if (typeof tables.listRows === "function") {
+      const res = await tables.listRows({
+        databaseId: "digr",
+        tableId: "capability_registry",
+      });
+      dbRows = (res?.rows || []) as unknown as Capability[];
+    }
     if (dbRows.length === 0) return baseCatalog;
 
     const merged = new Map<string, Capability>();
@@ -463,32 +480,73 @@ export async function getCatalogCapabilities(
  * Fetch all enabled (verified) capabilities from the server-only capability_registry table,
  * falling back to verified entries in APPROVED_CAPABILITY_CATALOG if the table is empty.
  */
-export async function getEnabledCapabilities(tables: TablesDB): Promise<Capability[]> {
-  const res = await tables.listRows({
-    databaseId: "digr",
-    tableId: "capability_registry",
-  });
-  const rows = (res.rows as unknown as Capability[]).filter((c) => c.enabled);
-  if (rows.length > 0) {
-    const settings = getRegistryPricingSettings();
-    return rows.map((c) => {
-      const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
-      const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.0012;
-      return {
-        ...(seed || {}),
-        ...c,
-        id: c.id || c.slug,
-        platform: (c.platform || c.category || seed?.platform || "tiktok") as CapabilityPlatform,
-        status: c.status || "verified",
-        unit: c.unit || seed?.unit || "profile",
-        estimatedCostUsdPerUnit: costUsd,
-        pointsPerUnit: computeRegistryPointsPerUnit(costUsd, settings),
-        maxItemsPerCall: c.maxItemsPerCall ?? seed?.maxItemsPerCall ?? c.maxRows ?? 1,
-        estimatedSuccessRate: c.estimatedSuccessRate ?? seed?.estimatedSuccessRate ?? 0.95,
-        verificationNote: c.verificationNote || VERIFICATION_NOTE,
-        enabled: true,
-      };
+export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<Capability[]> {
+  if (tables && typeof tables.from === "function") {
+    try {
+      const { data } = await tables.from("capability_registry").select("*").eq("enabled", true);
+      if (data && data.length > 0) {
+        const settings = getRegistryPricingSettings();
+        return data.map((c: any) => {
+          const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
+          const costUsd = Number(c.unit_cost_usd ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.0012);
+          return {
+            ...(seed || {}),
+            slug: c.slug,
+            nameAr: c.name_ar || seed?.nameAr || "",
+            nameEn: c.name_en || seed?.nameEn || "",
+            descriptionAr: c.description_ar || seed?.descriptionAr || "",
+            tregEndpointId: c.endpoint_id || seed?.tregEndpointId || c.slug,
+            endpointId: c.endpoint_id || seed?.tregEndpointId || c.slug,
+            id: c.slug,
+            category: (c.category || seed?.category || "tiktok") as CapabilityPlatform,
+            platform: (c.category || seed?.platform || "tiktok") as CapabilityPlatform,
+            status: "verified" as CapabilityStatus,
+            unit: (c.pricing_unit || seed?.unit || "call") as CapabilityUnit,
+            pricingUnit: (c.pricing_unit || seed?.pricingUnit || "call") as "call" | "item" | "page",
+            tregMethod: (c.tregMethod || seed?.tregMethod || "GET") as "GET" | "POST",
+            unitCostUsd: costUsd,
+            estimatedCostUsdPerUnit: costUsd,
+            pointsPerUnit: Number(c.unit_price_credits ?? computeRegistryPointsPerUnit(costUsd, settings)),
+            maxItemsPerCall: Number(c.max_rows ?? seed?.maxItemsPerCall ?? 1),
+            maxRows: Number(c.max_rows ?? seed?.maxRows ?? 1),
+            paginationType: (c.pagination_type || seed?.paginationType || "none") as "cursor" | "offset" | "none",
+            estimatedSuccessRate: 0.95,
+            verificationNote: VERIFICATION_NOTE,
+            paramsSchema: c.params_schema ? (typeof c.params_schema === "string" ? c.params_schema : JSON.stringify(c.params_schema)) : (seed?.paramsSchema || "{}"),
+            enabled: true,
+          };
+        });
+      }
+    } catch {
+      // fallback
+    }
+  } else if (tables && typeof tables.listRows === "function") {
+    const res = await tables.listRows({
+      databaseId: "digr",
+      tableId: "capability_registry",
     });
+    const rows = (res.rows as unknown as Capability[]).filter((c) => c.enabled);
+    if (rows.length > 0) {
+      const settings = getRegistryPricingSettings();
+      return rows.map((c) => {
+        const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
+        const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.0012;
+        return {
+          ...(seed || {}),
+          ...c,
+          id: c.id || c.slug,
+          platform: (c.platform || c.category || seed?.platform || "tiktok") as CapabilityPlatform,
+          status: c.status || "verified",
+          unit: c.unit || seed?.unit || "profile",
+          estimatedCostUsdPerUnit: costUsd,
+          pointsPerUnit: computeRegistryPointsPerUnit(costUsd, settings),
+          maxItemsPerCall: c.maxItemsPerCall ?? seed?.maxItemsPerCall ?? c.maxRows ?? 1,
+          estimatedSuccessRate: c.estimatedSuccessRate ?? seed?.estimatedSuccessRate ?? 0.95,
+          verificationNote: c.verificationNote || VERIFICATION_NOTE,
+          enabled: true,
+        };
+      });
+    }
   }
   return buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled);
 }

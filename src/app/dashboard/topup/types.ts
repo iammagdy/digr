@@ -1,5 +1,6 @@
 export interface TopupRecord {
   $id: string;
+  id?: string;
   userId?: string;
   amountEgp: number;
   confirmedAmountEgp?: number | null;
@@ -16,6 +17,8 @@ export interface TopupRecord {
 
 export interface LedgerRow {
   $id: string;
+  id?: string;
+  userId?: string;
   type: "topup" | "reserve" | "release" | "charge" | "promo" | "adjust";
   delta: number;
   jobId?: string | null;

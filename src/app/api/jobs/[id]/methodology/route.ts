@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Storage, Client as UserClient, Account } from "node-appwrite";
-import { reserveCredits, completeJobWithRelFirst, getBalance } from "../../../../../functions/shared/ledger";
+import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-const apiKey = process.env.APPWRITE_API_KEY!;
-
-const serverClient = new ServerClient()
-  .setEndpoint(endpoint)
-  .setProject(projectId)
-  .setKey(apiKey);
-
-const tables = new TablesDB(serverClient);
-const storage = new Storage(serverClient);
+export const dynamic = "force-dynamic";
 
 const METHODOLOGY_DEFAULT_POINTS = 10;
 
@@ -26,43 +15,55 @@ export async function POST(
       return NextResponse.json({ success: false, error: "معرف الطلب مطلوب" }, { status: 400 });
     }
 
-    // 1. Authenticate caller strictly via JWT or session cookie
+    // 1. Authenticate caller strictly via Supabase JWT or session
+    const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-    const sessionCookie =
-      req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+    let user = null;
 
-    if (!bearerJwt && !sessionCookie) {
+    if (authHeader?.startsWith("Bearer ")) {
+      const bearerJwt = authHeader.substring(7).trim();
+      const { data } = await supabase.auth.getUser(bearerJwt);
+      user = data?.user;
+    } else {
+      const { data } = await supabase.auth.getUser();
+      user = data?.user;
+    }
+
+    if (!user) {
       return NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 });
     }
 
-    const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (bearerJwt) userClient.setJWT(bearerJwt);
-    else if (sessionCookie) userClient.setSession(sessionCookie);
-
-    let verifiedUserId: string;
-    try {
-      const userAccount = new Account(userClient);
-      const userDoc = await userAccount.get();
-      verifiedUserId = userDoc.$id;
-    } catch {
-      return NextResponse.json({ success: false, error: "انتهت صلاحية الجلسة." }, { status: 401 });
-    }
+    const verifiedUserId = user.id;
+    const adminClient = createAdminClient();
 
     // 2. Fetch Job Document & verify ownership
-    const jobDoc: any = await tables.getRow({
-      databaseId: "digr",
-      tableId: "jobs",
-      rowId: jobId,
-    });
+    const { data: jobDoc, error: jobErr } = await adminClient
+      .from("jobs")
+      .select("*")
+      .eq("id", jobId)
+      .single();
 
-    if (jobDoc.userId !== verifiedUserId) {
+    if (jobErr || !jobDoc) {
+      return NextResponse.json({ success: false, error: "الطلب غير موجود." }, { status: 404 });
+    }
+
+    const isAdmin = user.app_metadata?.role === "admin";
+    if (jobDoc.user_id !== verifiedUserId && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا الطلب." }, { status: 403 });
     }
 
     // 3. Verify points balance before charging
-    const currentBalance = await getBalance(tables, verifiedUserId);
+    const { data: ledgerRows, error: ledgerErr } = await adminClient
+      .from("credit_ledger")
+      .select("delta")
+      .eq("user_id", verifiedUserId);
+
+    if (ledgerErr) {
+      throw ledgerErr;
+    }
+
+    const currentBalance = (ledgerRows || []).reduce((sum, r) => sum + (Number(r.delta) || 0), 0);
+
     if (currentBalance < METHODOLOGY_DEFAULT_POINTS) {
       return NextResponse.json(
         {
@@ -73,51 +74,88 @@ export async function POST(
       );
     }
 
-    // 4. Ledger Flow: Reserve then Charge deterministic points
-    const methJobKey = `meth_${jobId}`;
-    try {
-      await reserveCredits(tables, verifiedUserId, methJobKey, METHODOLOGY_DEFAULT_POINTS, "حجز نقاط صياغة المنهجية");
-      await completeJobWithRelFirst(tables, verifiedUserId, methJobKey, METHODOLOGY_DEFAULT_POINTS, METHODOLOGY_DEFAULT_POINTS, "خصم تكلفة صياغة المنهجية");
-    } catch (ledgerErr: any) {
-      return NextResponse.json(
-        { success: false, error: "تعذر حجز وتسوية نقاط المنهجية: " + ledgerErr.message },
-        { status: 400 }
-      );
+    // 4. Ledger Flow: Deterministic Reserve then Release-First Charge
+    const methResId = `res_meth_${jobId}`;
+    const methRelId = `rel_meth_${jobId}`;
+    const methChgId = `chg_meth_${jobId}`;
+
+    const { data: existingMeth } = await adminClient
+      .from("credit_ledger")
+      .select("id")
+      .eq("id", methChgId)
+      .maybeSingle();
+
+    if (!existingMeth) {
+      // Write reserve (-10)
+      await adminClient.from("credit_ledger").insert({
+        id: methResId,
+        user_id: verifiedUserId,
+        delta: -METHODOLOGY_DEFAULT_POINTS,
+        type: "reserve",
+        note: "حجز نقاط صياغة المنهجية",
+      });
+
+      // Write release (+10)
+      await adminClient.from("credit_ledger").insert({
+        id: methRelId,
+        user_id: verifiedUserId,
+        delta: METHODOLOGY_DEFAULT_POINTS,
+        type: "release",
+        note: "استرداد حجز نقاط المنهجية",
+      });
+
+      // Write charge (-10)
+      await adminClient.from("credit_ledger").insert({
+        id: methChgId,
+        user_id: verifiedUserId,
+        delta: -METHODOLOGY_DEFAULT_POINTS,
+        type: "charge",
+        note: "خصم تكلفة صياغة المنهجية الأكاديمية",
+      });
     }
 
-    // 5. Read real run facts from server-only storage
+    // 5. Read real run facts from server storage
     let profileData: any = null;
-    let rowsCount = jobDoc.rowsCollected || 1;
+    let rowsCount = jobDoc.delivered_units || 1;
+
     try {
-      let jsonBuf: ArrayBuffer;
-      try {
-        jsonBuf = await storage.getFileDownload("job_data", `json_${jobId}`);
-      } catch {
-        jsonBuf = await storage.getFileDownload("results", `json_${jobId}`);
-      }
-      const jsonText = Buffer.from(jsonBuf).toString("utf-8");
-      const parsed = JSON.parse(jsonText);
-      profileData = parsed.profile || null;
-      if (Array.isArray(parsed.rows) && parsed.rows.length > 0) {
-        rowsCount = parsed.rows.length;
+      const candidatePaths = [
+        `${verifiedUserId}/${jobId}/data.json`,
+        `${jobId}/data.json`,
+        `json_${jobId}`,
+      ];
+
+      for (const path of candidatePaths) {
+        const { data: blob, error: dlErr } = await adminClient.storage
+          .from("results")
+          .download(path);
+
+        if (!dlErr && blob) {
+          const parsed = JSON.parse(await blob.text());
+          profileData = parsed.profile || null;
+          if (Array.isArray(parsed.rows) && parsed.rows.length > 0) {
+            rowsCount = parsed.rows.length;
+          }
+          break;
+        }
       }
     } catch {
-      // Fallback to job document params if file read fails
+      // Fallback
     }
 
     const facts = {
       platform: "TikTok",
-      account: profileData?.uniqueId ? `@${profileData.uniqueId}` : profileData?.username || `@${jobDoc.templateSlug || "account"}`,
+      account: profileData?.uniqueId ? `@${profileData.uniqueId}` : profileData?.username || `@${jobDoc.template_slug || "account"}`,
       displayName: profileData?.nickname || profileData?.displayName || "",
       verifiedStatus: profileData?.verified ? "موثق رسمياً" : "غير موثق",
       followers: Number(profileData?.followerCount ?? profileData?.followers ?? 0),
       likes: Number(profileData?.heartCount ?? profileData?.likes ?? 0),
       videosCount: Number(profileData?.videoCount ?? profileData?.videosCount ?? 0),
-      date: (jobDoc.finishedAt || jobDoc.createdAt || new Date().toISOString()).split("T")[0],
+      date: (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0],
       recordsCount: rowsCount,
     };
 
-    // 6. Strict Academic Methodology text: derived ONLY from run facts, zero outside numbers
+    // 6. Strict Academic Methodology text
     const methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
 1. مصدر البيانات وأصلها (Data Provenance):
@@ -134,7 +172,9 @@ export async function POST(
 - سلامة المؤشرات: نُقلت الأرقام كما هي معلنة دون أي معالجة أو تقريب أو ترجيح إحصائي اصطناعي.
 - حدود العينة: هذه البيانات مستخلصة لحساب فردي محدد وتصلح لأغراض دراسة الحالة (Case Study) والتحليل المقارن، ولا تمثل عينة احتمالية عشوائية لعموم مستخدمي المنصة.`;
 
-    const remainingBalance = await getBalance(tables, verifiedUserId);
+    const remainingBalance = existingMeth
+      ? currentBalance
+      : currentBalance - METHODOLOGY_DEFAULT_POINTS;
 
     return NextResponse.json({
       success: true,
