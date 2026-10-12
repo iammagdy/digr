@@ -1,5 +1,6 @@
 "use client";
 
+import { appBaseUrl } from "@/lib/site";
 import {
   createContext,
   useContext,
@@ -87,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Email must be verified before top-ups / research (see /verify). A failed send
     // is not fatal: the verify screen has a resend button.
     try {
-      await account.createVerification(`${window.location.origin}/verify`);
+      await account.createVerification(`${appBaseUrl()}/verify`);
     } catch { /* resend available on /verify */ }
   };
 

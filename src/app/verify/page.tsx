@@ -1,5 +1,6 @@
 "use client";
 
+import { appBaseUrl } from "@/lib/site";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { account } from "@/lib/appwrite";
@@ -49,7 +50,7 @@ export default function VerifyPage() {
   const resend = useCallback(async () => {
     if (wait > 0) return;
     try {
-      await account.createVerification(`${window.location.origin}/verify`);
+      await account.createVerification(`${appBaseUrl()}/verify`);
       setToast({ tone: "ok", text: "أرسلنا رسالة تأكيد جديدة." });
     } catch {
       setToast({ tone: "bad", text: "تعذّر إرسال الرسالة الآن. حاول بعد قليل." });

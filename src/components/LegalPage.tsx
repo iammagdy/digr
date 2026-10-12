@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Wordmark } from "@/components/Brand";
 import type { LegalSection } from "@/lib/legalText";
+import { SUPPORT_EMAIL } from "@/lib/site";
 
 /** Design «الشروط والأحكام» / «سياسة الخصوصية» (public, same layout for both). */
 export default function LegalPage({ tab, title, sections }: { tab: "terms" | "privacy"; title: string; sections: LegalSection[] }) {
@@ -37,7 +38,7 @@ export default function LegalPage({ tab, title, sections }: { tab: "terms" | "pr
             <p className="mb-0 mt-2 text-[15px] font-light leading-[2] text-ink2 [text-wrap:pretty]">{p}</p>
           </section>
         ))}
-        <p className="m-0 text-[13px] text-mut">للتواصل: <span dir="ltr">support@digr.app</span></p>
+        <p className="m-0 text-[13px] text-mut">للتواصل: <span dir="ltr">{SUPPORT_EMAIL}</span></p>
       </div>
     </main>
   );

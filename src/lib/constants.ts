@@ -1,5 +1,7 @@
 /** Appwrite resource IDs — centralised so nothing is scattered across the codebase */
 
+import { SUPPORT_EMAIL } from "@/lib/site";
+
 export const DATABASE_ID = "digr";
 
 // Collections (public)
@@ -26,5 +28,5 @@ export const RECEIPTS_BUCKET = "receipts";
 export const PARTIALS_BUCKET = "partials";
 
 // Help links in the app sidebar. Overridable per deployment; default to the support mailbox.
-export const SUPPORT_URL = process.env.NEXT_PUBLIC_SUPPORT_URL || "mailto:support@digr.app";
+export const SUPPORT_URL = process.env.NEXT_PUBLIC_SUPPORT_URL || `mailto:${SUPPORT_EMAIL}`;
 export const HELP_CENTER_URL = process.env.NEXT_PUBLIC_HELP_URL || SUPPORT_URL;

@@ -1,5 +1,6 @@
 "use client";
 
+import { appBaseUrl } from "@/lib/site";
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { account } from "@/lib/appwrite";
@@ -17,7 +18,7 @@ export default function ForgotPage() {
     setError("");
     setBusy(true);
     try {
-      await account.createRecovery(email.trim(), `${window.location.origin}/reset`);
+      await account.createRecovery(email.trim(), `${appBaseUrl()}/reset`);
     } catch (err) {
       // Same message whether or not the email exists — never reveal which addresses are registered.
       if ((err as { code?: number })?.code === 429) { setError("محاولات كثيرة. انتظر قليلًا ثم حاول مجددًا."); setBusy(false); return; }
