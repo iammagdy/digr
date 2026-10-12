@@ -11,7 +11,7 @@ This document contains manual SQL operations that must be executed strictly by t
 > Executing this after launch will destroy production financial audit records and violate ledger immutability invariants.
 
 ### Step 1: Pre-Check Query (Run First)
-Execute this query to confirm that **100% of rows** in `credit_ledger` belong strictly to the dedicated test user (`00000000-0000-0000-0000-000000000001`):
+Execute this query to confirm that all rows in `credit_ledger` belong strictly to the dedicated test user (`00000000-0000-0000-0000-000000000001`):
 
 ```sql
 -- Verification: Must return 0 rows before proceeding with reset
@@ -31,14 +31,22 @@ If `total_rows` equals `test_user_rows` and the first query returns 0 rows, it i
 > [!NOTE]
 > The known test-only residue is limited to the dedicated test user: **24 compensating ledger rows** and **71 orphan ledger references**. Do not edit or delete these ledger records manually. They are to be removed only by the documented pre-launch reset above, after its pre-check passes. This note is not authorization to run the reset, and it must never be run after launch.
 
-### Step 2: Clean Reset Execution
+### Step 2: Clean Reset Execution (Child-First Order)
 ```sql
 -- 1. Temporarily disable ledger immutability triggers
 ALTER TABLE public.credit_ledger DISABLE TRIGGER trg_block_ledger_mutation;
 ALTER TABLE public.credit_ledger DISABLE TRIGGER trg_block_ledger_truncate;
 
--- 2. Truncate ledger and clean test user records
+-- 2. Child-first deletion of all test records (test user 00000000-0000-0000-0000-000000000001)
+-- Delete dependent grandchild/child rows first to maintain foreign key integrity:
+DELETE FROM public.provider_costs WHERE job_id IN (
+  SELECT id FROM public.jobs WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid
+);
+DELETE FROM public.job_events WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
 TRUNCATE TABLE public.credit_ledger;
+DELETE FROM public.jobs WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
+DELETE FROM public.topups WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
+DELETE FROM public.plans_quotes WHERE user_id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM public.profiles WHERE id = '00000000-0000-0000-0000-000000000001'::uuid;
 DELETE FROM auth.users WHERE id = '00000000-0000-0000-0000-000000000001'::uuid;
 
@@ -97,4 +105,14 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 Verification query:
 ```sql
 SELECT key, value FROM public.settings_public WHERE key = 'pricing';
+```
+
+---
+
+## 5. Remove Temporary Test Fixture RPC (Pre-Launch Step)
+
+Before production cutover, remove the temporary verification fixture function:
+
+```sql
+DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);
 ```

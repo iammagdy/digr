@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; never writes protected table rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -40,16 +40,16 @@ async function main() {
     } },
   ];
 
+  await createVerifyFixtures(supabase, fixtures.map((f) => ({
+    table: "jobs",
+    purpose: f.purpose,
+    row: f.row,
+  })));
+
   const results = await Promise.all(fixtures.map((fixture) =>
-    supabase.from("jobs").select("id, user_id, status, unit_price, delivered_units, reserved_credits, lease_until").eq("id", fixture.id).maybeSingle(),
+    supabase.from("jobs").select("id, user_id, status, unit_price, delivered_units, reserved_credits, lease_until").eq("id", fixture.id).single(),
   ));
   results.forEach((result) => { if (result.error) throw result.error; });
-  const missing = fixtures.flatMap((fixture, index) => results[index].data ? [] : [{
-    table: "jobs",
-    purpose: fixture.purpose,
-    row: fixture.row,
-  }]);
-  if (missing.length) requireSetupRows(missing);
 
   for (let index = 0; index < fixtures.length; index++) {
     const row = results[index].data!;

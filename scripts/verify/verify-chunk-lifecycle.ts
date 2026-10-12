@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; never writes protected table rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -27,16 +27,9 @@ async function main() {
 
   const jobId = `${RUN_PREFIX}lifecycle`;
   const completedJobId = `${RUN_PREFIX}completed_guard`;
-  const [jobResult, completedResult] = await Promise.all([
-    supabase.from("jobs").select("id, user_id, status, step, reserved_credits").eq("id", jobId).maybeSingle(),
-    supabase.from("jobs").select("id, user_id, status, attempt_count").eq("id", completedJobId).maybeSingle(),
-  ]);
-  if (jobResult.error) throw jobResult.error;
-  if (completedResult.error) throw completedResult.error;
 
-  const missing = [];
-  if (!jobResult.data) {
-    missing.push({
+  await createVerifyFixtures(supabase, [
+    {
       table: "jobs",
       purpose: "complete_chunk retry followed by five record_chunk_failure calls",
       row: {
@@ -53,10 +46,8 @@ async function main() {
         delivered_units: 0,
         lease_until: null,
       },
-    });
-  }
-  if (!completedResult.data) {
-    missing.push({
+    },
+    {
       table: "jobs",
       purpose: "record_chunk_failure completed-job no-change guard",
       row: {
@@ -72,9 +63,15 @@ async function main() {
         delivered_units: 5,
         lease_until: null,
       },
-    });
-  }
-  if (missing.length) requireSetupRows(missing);
+    },
+  ]);
+
+  const [jobResult, completedResult] = await Promise.all([
+    supabase.from("jobs").select("id, user_id, status, step, reserved_credits").eq("id", jobId).single(),
+    supabase.from("jobs").select("id, user_id, status, attempt_count").eq("id", completedJobId).single(),
+  ]);
+  if (jobResult.error) throw jobResult.error;
+  if (completedResult.error) throw completedResult.error;
 
   const job = jobResult.data!;
   const completedJob = completedResult.data!;

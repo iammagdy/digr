@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; never writes protected table rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -25,33 +25,31 @@ async function main() {
   console.log("Run prefix:", RUN_PREFIX);
 
   const jobId = `${RUN_PREFIX}claim_parallel`;
+  await createVerifyFixtures(supabase, [{
+    table: "jobs",
+    purpose: "two parallel claim_job_chunk calls",
+    row: {
+      id: jobId,
+      user_id: TEST_USER_ID,
+      status: "queued",
+      endpoint_id: "tiktok-profile",
+      step: 0,
+      attempt_count: 0,
+      unit_price: 1,
+      reserved_credits: 10,
+      target_volume_min: 5,
+      target_volume_max: 10,
+      next_attempt_at: new Date().toISOString(),
+      lease_until: null,
+    },
+  }]);
+
   const { data: fixture, error: fixtureErr } = await supabase
     .from("jobs")
     .select("id, user_id, status, step, attempt_count, lease_until, next_attempt_at")
     .eq("id", jobId)
-    .maybeSingle();
+    .single();
   if (fixtureErr) throw fixtureErr;
-
-  if (!fixture) {
-    requireSetupRows([{
-      table: "jobs",
-      purpose: "two parallel claim_job_chunk calls",
-      row: {
-        id: jobId,
-        user_id: TEST_USER_ID,
-        status: "queued",
-        endpoint_id: "tiktok-profile",
-        step: 0,
-        attempt_count: 0,
-        unit_price: 1,
-        reserved_credits: 10,
-        target_volume_min: 5,
-        target_volume_max: 10,
-        next_attempt_at: new Date().toISOString(),
-        lease_until: null,
-      },
-    }]);
-  }
 
   if (fixture.user_id !== TEST_USER_ID || fixture.status !== "queued" || fixture.step !== 0) {
     throw new Error(`Fixture must be the test user's queued step-0 job: ${JSON.stringify(fixture)}`);

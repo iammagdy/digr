@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 export function newVrunPrefix(): string {
   return `vrun_${Date.now()}_${randomUUID()}_`;
@@ -9,6 +10,21 @@ export type SetupRequirement = {
   purpose: string;
   row: Record<string, unknown>;
 };
+
+export async function createVerifyFixtures(
+  supabase: SupabaseClient,
+  requirements: SetupRequirement[]
+): Promise<void> {
+  for (const req of requirements) {
+    const { error } = await supabase.rpc("create_verify_fixture", {
+      p_table: req.table,
+      p_row: req.row,
+    });
+    if (error) {
+      throw new Error(`Failed to create verify fixture for ${req.table} (${req.purpose}): ${error.message}`);
+    }
+  }
+}
 
 export function requireSetupRows(requirements: SetupRequirement[]): never {
   throw new Error(

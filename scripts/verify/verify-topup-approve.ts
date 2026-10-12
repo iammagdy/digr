@@ -4,7 +4,7 @@
  * Uses approved service-role RPCs only; never writes protected rows directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -26,29 +26,28 @@ async function main() {
 
   const topupId = `${RUN_PREFIX}topup`;
   const amountEgp = 50;
+
+  await createVerifyFixtures(supabase, [{
+    table: "topups",
+    purpose: "pending top-up approval idempotency; no approved RPC creates pending top-ups",
+    row: {
+      id: topupId,
+      user_id: TEST_USER_ID,
+      amount_egp: amountEgp,
+      reference: `${RUN_PREFIX}reference`,
+      sender_name: "Verification test user",
+      sender_phone: "01000000000",
+      receipt_file_id: `${RUN_PREFIX}receipt.png`,
+      status: "pending",
+    },
+  }]);
+
   const { data: topup, error: topupErr } = await supabase
     .from("topups")
     .select("id, user_id, amount_egp, status")
     .eq("id", topupId)
-    .maybeSingle();
+    .single();
   if (topupErr) throw topupErr;
-
-  if (!topup) {
-    requireSetupRows([{
-      table: "topups",
-      purpose: "pending top-up approval idempotency; no approved RPC creates pending top-ups",
-      row: {
-        id: topupId,
-        user_id: TEST_USER_ID,
-        amount_egp: amountEgp,
-        reference: `${RUN_PREFIX}reference`,
-        sender_name: "Verification test user",
-        sender_phone: "01000000000",
-        receipt_file_id: `${RUN_PREFIX}receipt.png`,
-        status: "pending",
-      },
-    }]);
-  }
   if (topup.user_id !== TEST_USER_ID || topup.status !== "pending" || Number(topup.amount_egp) !== amountEgp) {
     throw new Error(`Top-up fixture must be the expected test user's pending row: ${JSON.stringify(topup)}`);
   }

@@ -4,7 +4,7 @@
  * Uses approved service-role RPCs only; fixture rows are never written directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -31,23 +31,23 @@ async function main() {
     ...differentJobIds.map((id) => ({ id, amount: 15 })),
   ];
 
-  const fixtureResults = await Promise.all(fixtures.map((fixture) =>
-    supabase.from("jobs").select("id, user_id, status, reserved_credits").eq("id", fixture.id).maybeSingle(),
-  ));
-  fixtureResults.forEach((result) => { if (result.error) throw result.error; });
-  const missing = fixtures.flatMap((fixture, index) => fixtureResults[index].data ? [] : [{
+  await createVerifyFixtures(supabase, fixtures.map((f) => ({
     table: "jobs",
-    purpose: `reservation concurrency fixture (reserved_credits=${fixture.amount})`,
+    purpose: `reservation concurrency fixture (reserved_credits=${f.amount})`,
     row: {
-      id: fixture.id,
+      id: f.id,
       user_id: TEST_USER_ID,
       status: "queued",
       endpoint_id: "tiktok-profile",
-      reserved_credits: fixture.amount,
+      reserved_credits: f.amount,
       lease_until: null,
     },
-  }]);
-  if (missing.length) requireSetupRows(missing);
+  })));
+
+  const fixtureResults = await Promise.all(fixtures.map((fixture) =>
+    supabase.from("jobs").select("id, user_id, status, reserved_credits").eq("id", fixture.id).single(),
+  ));
+  fixtureResults.forEach((result) => { if (result.error) throw result.error; });
 
   for (let index = 0; index < fixtures.length; index++) {
     const row = fixtureResults[index].data!;

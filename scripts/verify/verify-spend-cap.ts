@@ -4,7 +4,7 @@
  * Mutations use approved service-role RPCs only; no direct provider_costs writes.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,6 +12,12 @@ const RUN_PREFIX = newVrunPrefix();
 
 if (!SERVICE_KEY) {
   console.error("ERROR: SUPABASE_SERVICE_ROLE_KEY must be provided via environment variable.");
+  process.exit(1);
+}
+
+if (!process.argv.includes("--i-know-this-uses-budget")) {
+  console.error("BLOCKED: verify-spend-cap reserves and commits real provider budget ($0.60 total).");
+  console.error("To run this check, pass the explicit flag: --i-know-this-uses-budget");
   process.exit(1);
 }
 
@@ -29,16 +35,17 @@ async function main() {
     id,
     row: { id, user_id: "00000000-0000-0000-0000-000000000001", status: "queued", endpoint_id: "tiktok-profile" },
   }));
-  const jobResults = await Promise.all(jobFixtures.map((fixture) =>
-    supabase.from("jobs").select("id, user_id, status").eq("id", fixture.id).maybeSingle(),
-  ));
-  jobResults.forEach((result) => { if (result.error) throw result.error; });
-  const missingJobs = jobFixtures.flatMap((fixture, index) => jobResults[index].data ? [] : [{
+
+  await createVerifyFixtures(supabase, jobFixtures.map((f) => ({
     table: "jobs",
     purpose: "provider_costs.job_id foreign-key fixture for spend-cap RPC",
-    row: fixture.row,
-  }]);
-  if (missingJobs.length) requireSetupRows(missingJobs);
+    row: f.row,
+  })));
+
+  const jobResults = await Promise.all(jobFixtures.map((fixture) =>
+    supabase.from("jobs").select("id, user_id, status").eq("id", fixture.id).single(),
+  ));
+  jobResults.forEach((result) => { if (result.error) throw result.error; });
   jobResults.forEach((result, index) => {
     const row = result.data!;
     if (row.user_id !== jobFixtures[index].row.user_id || row.status !== "queued") {

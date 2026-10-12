@@ -4,7 +4,7 @@
  * Uses service-role RPCs only; protected table rows are never written directly.
  */
 import { createClient } from "@supabase/supabase-js";
-import { newVrunPrefix, requireSetupRows } from "./vrun";
+import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -58,16 +58,16 @@ async function main() {
     } },
   ];
 
+  await createVerifyFixtures(supabase, fixtures.map((f) => ({
+    table: "jobs",
+    purpose: f.purpose,
+    row: f.row,
+  })));
+
   const jobResults = await Promise.all(fixtures.map((fixture) =>
-    supabase.from("jobs").select("id, user_id, status, reserved_credits, lease_until, unit_price").eq("id", fixture.id).maybeSingle(),
+    supabase.from("jobs").select("id, user_id, status, reserved_credits, lease_until, unit_price").eq("id", fixture.id).single(),
   ));
   jobResults.forEach((result) => { if (result.error) throw result.error; });
-  const missingFixtures = fixtures.flatMap((fixture, index) => jobResults[index].data ? [] : [{
-    table: "jobs",
-    purpose: fixture.purpose,
-    row: fixture.row,
-  }]);
-  if (missingFixtures.length) requireSetupRows(missingFixtures);
 
   const jobRows = jobResults.map((result) => result.data!);
   const legacyId = fixtures[0].id;
