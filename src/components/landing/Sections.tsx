@@ -62,7 +62,7 @@ export function Calculator() {
         <Reveal as="p" kind="scale" delay={120} className="mb-0 mt-6 font-extralight leading-none text-ink" style={{ fontSize: "clamp(64px,13cqi,150px)" }}>
           {formatAr(pts)}<span className="text-xl text-mut" style={{ marginInlineStart: 10 }}>نقطة</span>
         </Reveal>
-        <p className="mb-0 mt-3 text-[15px] font-light text-mut">≈ {formatAr(pts * 0.1, 2)} ج.م مقابل {formatAr(vol)} سجل</p>
+        <p className="mb-0 mt-3 text-[15px] font-light text-mut">≈ {formatAr(Number((pts * 0.1).toFixed(2)))} ج.م مقابل {formatAr(vol)} سجل</p>
         <input
           className="r6 mt-9"
           type="range" min={100} max={1000} step={50} value={vol}
