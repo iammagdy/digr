@@ -143,9 +143,11 @@ describe("Phase 3: Chat, Plans & Rate Limits Integration", () => {
       };
 
       // Unit cost: 0.001 USD. With 55 EGP/USD, markup 10.0, point value 0.1 EGP:
-      // unitPricePoints = (0.001 * 55 * 10.0) / 0.1 = 5.5 points/unit
-      const expectedUnitPrice = calculateUnitPricePoints(0.001, DEFAULT_PRICING_SETTINGS);
-      expect(expectedUnitPrice).toBeCloseTo(5.5, 2);
+      // raw unitPricePoints = (0.001 * 55 * 10.0) / 0.1 = 5.5 -> ceil = 6 points/unit
+      const rawUnitPrice = calculateUnitPricePoints(0.001, DEFAULT_PRICING_SETTINGS);
+      expect(rawUnitPrice).toBeCloseTo(5.5, 2);
+      const expectedUnitPrice = Math.ceil(rawUnitPrice);
+      expect(expectedUnitPrice).toBe(6);
 
       const quoteResult = await createAndSaveManagedQuote(mockSupabase as any, {
         conversationId: "conv-single-item",
@@ -159,11 +161,11 @@ describe("Phase 3: Chat, Plans & Rate Limits Integration", () => {
       expect(quoteResult.quoteId).toBeDefined();
       expect(quoteResult.items).toHaveLength(1);
 
-      // Item has unitPricePoints explicitly attached WITHOUT 15% buffer
+      // Item has unitPricePoints explicitly attached WITHOUT 15% buffer (6 points)
       const item = quoteResult.items[0] as any;
       expect(item.unitPricePoints).toBe(expectedUnitPrice);
 
-      // Total quoted points has 15% buffer: ceil(10 * 1.06 * 1.15) = ceil(12.19) = 13 points
+      // Total quoted points has 15% buffer: ceil(10 * 6 * 1.15) = ceil(69) = 69 points
       const rawPoints = 10 * expectedUnitPrice;
       const expectedQuoted = Math.ceil(rawPoints * 1.15);
       expect(quoteResult.quotedPoints).toBe(expectedQuoted);

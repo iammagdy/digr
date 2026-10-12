@@ -33,7 +33,10 @@ export async function POST(req: NextRequest) {
     process.env.PROVIDER_MOCK === "true"
   );
 
-  if (isMockRequested && process.env.NODE_ENV === "production") {
+  if (
+    isMockRequested &&
+    (process.env.NODE_ENV === "production" || process.env.ENABLE_MOCK_PROVIDER !== "true")
+  ) {
     return NextResponse.json(
       {
         success: false,
@@ -122,7 +125,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Reserve Provider Spend Check ($0.80 daily cap)
-    const providerSlug = endpointId || "provider";
+    const providerSlug = useMockProvider ? "treg" : (endpointId || "provider");
     const estimatedCostUsd = useMockProvider
       ? (body?.mockEstimatedCostUsd ?? 0.005)
       : (process.env.TREG_LIVE === "true" ? 0.01 : 0);
@@ -157,8 +160,12 @@ export async function POST(req: NextRequest) {
     }
 
     // 6. Bounded chunk execution (process up to 10 units per chunk)
+    const maxBatchPerChunk =
+      useMockProvider && typeof body?.mockBatchSize === "number" && body.mockBatchSize > 0
+        ? Math.min(10, Math.floor(body.mockBatchSize))
+        : 10;
     const remainingUnits = Math.max(0, targetMax - currentDelivered);
-    const chunkBatchSize = Math.min(10, Math.max(1, remainingUnits));
+    const chunkBatchSize = Math.min(maxBatchPerChunk, Math.max(1, remainingUnits));
     const newDeliveredUnits = currentDelivered + chunkBatchSize;
     const isDone = newDeliveredUnits >= targetMax;
     const nextCursor = isDone ? "completed" : `step_${currentStep + 1}_cursor`;
@@ -209,22 +216,31 @@ export async function POST(req: NextRequest) {
 
     // 8. If finished, settle job and notify customer
     if (isDone) {
-      const resultFileId = `results/${jobId}/data.json`;
-      const finalResultData = {
-        jobId,
-        deliveredUnits: newDeliveredUnits,
-        status: "completed",
-        completedAt: new Date().toISOString(),
-      };
+      const resultFileId = `${userId}/${jobId}/data.csv`;
+      const completedAtIso = new Date().toISOString();
+      const csvContent = `job_id,delivered_units,status,completed_at\n${jobId},${newDeliveredUnits},completed,${completedAtIso}\n`;
 
       try {
+        const resultPayload = Buffer.from(csvContent, "utf-8");
         await adminClient.storage
           .from("results")
-          .upload(
-            `${jobId}/data.json`,
-            Buffer.from(JSON.stringify(finalResultData)),
-            { contentType: "application/json", upsert: true }
-          );
+          .upload(resultFileId, resultPayload, {
+            contentType: "text/csv",
+            upsert: true,
+          });
+        await adminClient.storage
+          .from("results")
+          .upload(`${jobId}/data.csv`, resultPayload, {
+            contentType: "text/csv",
+            upsert: true,
+          });
+        const partialPaths = Array.from(
+          { length: currentStep + 1 },
+          (_, idx) => `${jobId}/step_${idx}.json`
+        );
+        if (partialPaths.length > 0 && typeof adminClient.storage.from("partials").remove === "function") {
+          await adminClient.storage.from("partials").remove(partialPaths);
+        }
       } catch {
         // Results storage upload
       }
@@ -242,15 +258,17 @@ export async function POST(req: NextRequest) {
 
       // Emit notification to user
       if (userId) {
-        await adminClient.from("notifications").insert({
-          id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          user_id: userId,
-          title: "اكتمل طلب استخراج البيانات بنجاح",
-          body: `تم استخراج ${newDeliveredUnits} عنصر بنجاح. يمكنك الآن مراجعة وتحميل النتائج.`,
-          link: `/dashboard/jobs`,
-          read: false,
-          created_at: new Date().toISOString(),
-        });
+        try {
+          await adminClient.from("notifications").insert({
+            id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            user_id: userId,
+            title: "اكتمل طلب استخراج البيانات بنجاح",
+            body: `تم استخراج ${newDeliveredUnits} عنصر بنجاح. يمكنك الآن مراجعة وتحميل النتائج.`,
+            link: `/dashboard/jobs`,
+            read: false,
+            created_at: new Date().toISOString(),
+          });
+        } catch {}
       }
 
       return NextResponse.json({
@@ -258,12 +276,13 @@ export async function POST(req: NextRequest) {
         done: true,
         jobId,
         deliveredUnits: newDeliveredUnits,
+        spendCostId,
         settle: settleData,
       });
     }
 
     // 9. If not finished, trigger next chunk server-side (Hobby Design B self-chain)
-    if (process.env.CRON_SECRET) {
+    if (process.env.CRON_SECRET && (!useMockProvider || !body?.disableSelfChain)) {
       const nextUrl = `${getWorkerBaseUrl()}/api/worker/chunk`;
       fetch(nextUrl, {
         method: "POST",
@@ -287,15 +306,35 @@ export async function POST(req: NextRequest) {
       step: currentStep + 1,
       deliveredUnits: newDeliveredUnits,
       targetMax,
+      spendCostId,
     });
   } catch (err: any) {
     console.error("Worker chunk execution failed:", err);
     if (jobId) {
       try {
-        await adminClient.rpc("record_chunk_failure", {
-          p_job_id: jobId,
-          p_error_message: err.message || "فشل غير متوقع أثناء معالجة الجزء.",
-        });
+        const attemptsToRecord =
+          isMockRequested &&
+          process.env.NODE_ENV !== "production" &&
+          process.env.ENABLE_MOCK_PROVIDER === "true" &&
+          body?.exhaustRetries === true
+            ? 5
+            : 1;
+        let lastFailureData: any = null;
+        for (let i = 0; i < attemptsToRecord; i++) {
+          const { data: failData } = await adminClient.rpc("record_chunk_failure", {
+            p_job_id: jobId,
+            p_error_message: err.message || "فشل غير متوقع أثناء معالجة الجزء.",
+          });
+          lastFailureData = failData;
+        }
+        return NextResponse.json(
+          {
+            success: false,
+            error: err.message || "فشل تنفيذ الجزء.",
+            failure: lastFailureData,
+          },
+          { status: 500 }
+        );
       } catch {}
     }
     return NextResponse.json(

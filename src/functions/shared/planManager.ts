@@ -10,6 +10,8 @@ import {
 import {
   calculateQuote,
   calculateUnitPricePoints,
+  calculateCapabilityUnitPricePoints,
+  calculateCapabilityQuote,
   generateQuoteExpiry,
   isQuoteExpired,
   DEFAULT_PRICING_SETTINGS,
@@ -480,8 +482,8 @@ export async function createAndSaveManagedQuote(
     usdToEgp: regSettings.usdToEgp,
     markup: regSettings.markup,
     creditValueEgp: regSettings.pointValueEgp,
-    safetyBuffer: 0.15,
-    minPoints: regSettings.minimumOrderPoints,
+    safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
+    minPoints: DEFAULT_PRICING_SETTINGS.minPoints,
   };
 
   // 1. Calculate pricing for all plan items
@@ -499,7 +501,7 @@ export async function createAndSaveManagedQuote(
           (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
       ) || capabilities[0];
     primaryUnitCost = cap.unitCostUsd;
-    const unitPrice = calculateUnitPricePoints(primaryUnitCost, effectivePricing);
+    const unitPrice = calculateCapabilityUnitPricePoints(primaryUnitCost, effectivePricing);
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
@@ -508,7 +510,7 @@ export async function createAndSaveManagedQuote(
     (it as any).unitCostUsd = primaryUnitCost;
     (it as any).endpointId = it.endpointId || (cap as any).tregEndpointId || cap.slug;
 
-    const itemQuote = calculateQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, effectivePricing);
+    const itemQuote = calculateCapabilityQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, effectivePricing);
     totalQuotedPoints += itemQuote.quotedPoints;
     totalVolumeMax += it.targetVolumeMax;
     effectiveUnitPrice = itemQuote.unitPricePoints;
@@ -529,7 +531,7 @@ export async function createAndSaveManagedQuote(
   }
 
   // Recalculate affordability for the composite quote (quotedPoints includes 15% buffer)
-  const quoteCalc = calculateQuote(totalVolumeMax, primaryUnitCost, userBalance, effectivePricing);
+  const quoteCalc = calculateCapabilityQuote(totalVolumeMax, primaryUnitCost, userBalance, effectivePricing);
 
   const planHash = computePlanHash(plan.items, plan.outputFormats);
   const quoteId = ID.unique();

@@ -2,10 +2,10 @@ import { ID, TablesDB } from "node-appwrite";
 
 let cachedRate: { value: number; at: number } | null = null;
 
-/** USD → EGP from the private settings row (falls back to USD_TO_EGP / 50). Cached for 10 minutes. */
+/** USD → EGP from the private settings row (falls back to USD_TO_EGP / 55). Cached for 10 minutes. */
 async function usdToEgp(tables: TablesDB): Promise<number> {
   if (cachedRate && Date.now() - cachedRate.at < 600000) return cachedRate.value;
-  let rate = Number(process.env.USD_TO_EGP) || 50;
+  let rate = Number(process.env.USD_TO_EGP) || 55;
   try {
     const row: any = await tables.getRow({ databaseId: "digr", tableId: "settings", rowId: "pricing" });
     if (Number(row?.usdToEgp) > 0) rate = Number(row.usdToEgp);

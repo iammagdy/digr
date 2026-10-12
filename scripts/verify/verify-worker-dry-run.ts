@@ -1,43 +1,32 @@
 /**
- * Dedicated Verification Script: Worker Dry-Run Flow (verify-worker-dry-run.ts)
- * 
- * Exercises the end-to-end worker execution lifecycle against Test User 2:
- * (00000000-0000-0000-0000-000000000002)
+ * Dedicated Verification Script: Real /api/worker/chunk Route Handler Dry-Run (verify-worker-dry-run.ts)
  *
- * Success Path:
- * 1. Create quote fixture via create_verify_fixture
- * 2. Accept quote via accept_quote_atomic
- * 3. Step 0 chunk claim via claim_job_chunk
- * 4. Provider spend reservation via reserve_provider_spend_atomic
- * 5. Mock provider call (zero real external network requests)
- * 6. Provider spend commit via commit_provider_spend
- * 7. Save partial artifact to Supabase Storage (partials bucket)
- * 8. Complete step 0 chunk via complete_chunk
- * 9. Step 1 chunk claim via claim_job_chunk
- * 10. Provider spend reservation & commit
- * 11. Complete step 1 chunk via complete_chunk
- * 12. Settle job via settle_job_atomic (delivers 10 units, charges 20 points, releases 3 points)
- * 13. Upload final result artifact to Storage (results bucket)
- * 14. Clean up partial files from Storage
+ * Exercises the actual Next.js route handler POST /api/worker/chunk against the live Supabase DB
+ * using Test User 2 (00000000-0000-0000-0000-000000000002) with an injected fake provider
+ * (enabled ONLY when NODE_ENV !== 'production' AND ENABLE_MOCK_PROVIDER === 'true').
  *
- * Failure Path:
- * 1. Create second quote fixture
- * 2. Accept quote via accept_quote_atomic
- * 3. Step 0 chunk claim
- * 4. Record chunk failure 5 times via record_chunk_failure
- * 5. Verify terminal failure (status=failed, attempt_count=5) and 100% refund release via rel_ row
- *
- * Prints:
- * - Starting/ending balances for Test User 2
- * - provider_costs entries created
- * - Storage operations and verifications
- * - Detailed row inventory before and after
+ * Verifies:
+ * 0. Production & flag guard on POST /api/worker/chunk (403 when NODE_ENV=production or ENABLE_MOCK_PROVIDER!='true')
+ * 1. 2-Chunk Success Path via POST /api/worker/chunk:
+ *    - Create quote fixture via create_verify_fixture & accept via accept_quote_atomic (reserves 23 pts)
+ *    - Call POST /api/worker/chunk (step 0, mockBatchSize=5): claims step 0, reserves/commits provider spend,
+ *      writes partial step_0.json to storage, completes step 0 (delivered_units=5, done=false)
+ *    - Call POST /api/worker/chunk (step 1, mockBatchSize=5): claims step 1, reserves/commits provider spend,
+ *      completes step 1 (delivered_units=10, done=true), uploads final result to results bucket,
+ *      removes partials from partials bucket, and settles via settle_job_atomic (charges 20 pts, refunds 3 pts)
+ * 2. Provider-Error Path via POST /api/worker/chunk:
+ *    - Create second quote fixture & accept via accept_quote_atomic (reserves 23 pts)
+ *    - Call POST /api/worker/chunk (step 0, simulateProviderError=true, exhaustRetries=true):
+ *      claims step 0, simulates provider error, records 5 failures via record_chunk_failure,
+ *      and atomically releases full 23 reserved points with 0 charge
  *
  * Usage: npx tsx --env-file=.env.local scripts/verify/verify-worker-dry-run.ts
  */
 import { createClient } from "@supabase/supabase-js";
+import { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { newVrunPrefix, createVerifyFixtures } from "./vrun";
+import { POST as workerChunkPost } from "../../src/app/api/worker/chunk/route";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -47,6 +36,11 @@ const RUN_PREFIX = newVrunPrefix();
 if (!SERVICE_KEY) {
   console.error("ERROR: SUPABASE_SERVICE_ROLE_KEY must be provided via environment variable.");
   process.exit(1);
+}
+
+// Ensure an ephemeral in-process CRON_SECRET is set if not already present in env (never printed)
+if (!process.env.CRON_SECRET) {
+  process.env.CRON_SECRET = "ephemeral_verify_cron_secret_do_not_print";
 }
 
 const supabase = createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -100,12 +94,49 @@ function computeQuoteHash(items: any[], outputFormats: string[] = ["xlsx", "csv"
   return crypto.createHash("sha256").update(canonical).digest("hex");
 }
 
+function buildWorkerRequest(payload: Record<string, any>): NextRequest {
+  return new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${process.env.CRON_SECRET}`,
+      "x-mock-provider": "true",
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 async function main() {
   console.log("================================================================================");
-  console.log("         DIGER WORKER DRY-RUN VERIFICATION (verify-worker-dry-run.ts)          ");
+  console.log("   DIGER REAL /api/worker/chunk ROUTE DRY-RUN (verify-worker-dry-run.ts)        ");
   console.log("================================================================================");
   console.log("Run Prefix:", RUN_PREFIX);
   console.log("Target User ID:", TEST_USER_ID);
+
+  // 0. Verify Production & Flag Guard on the Real Route Handler
+  console.log("\n[0] Verifying Production & Explicit Flag Guards on POST /api/worker/chunk...");
+  const prevNodeEnv = process.env.NODE_ENV;
+  const prevEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+
+  process.env.NODE_ENV = "production";
+  process.env.ENABLE_MOCK_PROVIDER = "true";
+  const prodGuardRes = await workerChunkPost(buildWorkerRequest({ jobId: "guard_check", mockProvider: true }));
+  console.log(`- Guard when NODE_ENV=production: HTTP ${prodGuardRes.status}`);
+  if (prodGuardRes.status !== 403) {
+    throw new Error(`Expected 403 when NODE_ENV=production, got ${prodGuardRes.status}`);
+  }
+
+  process.env.NODE_ENV = "test";
+  delete process.env.ENABLE_MOCK_PROVIDER;
+  const flagGuardRes = await workerChunkPost(buildWorkerRequest({ jobId: "guard_check", mockProvider: true }));
+  console.log(`- Guard when ENABLE_MOCK_PROVIDER is unset: HTTP ${flagGuardRes.status}`);
+  if (flagGuardRes.status !== 403) {
+    throw new Error(`Expected 403 when ENABLE_MOCK_PROVIDER is unset, got ${flagGuardRes.status}`);
+  }
+
+  // Enable test mode + explicit mock provider flag for the dry run
+  process.env.NODE_ENV = "test";
+  process.env.ENABLE_MOCK_PROVIDER = "true";
 
   // 1. Initial State Inventory
   const balanceBefore = await getUserBalance(TEST_USER_ID);
@@ -114,7 +145,6 @@ async function main() {
   console.log(`- Test User 2 Starting Balance: ${balanceBefore} points`);
   console.log("- Table Row Counts Before:", JSON.stringify(countsBefore, null, 2));
 
-  // Check today's UTC provider spend
   const utcDayStart = new Date();
   utcDayStart.setUTCHours(0, 0, 0, 0);
   const { data: todayCosts } = await supabase
@@ -125,13 +155,12 @@ async function main() {
   console.log(`- Current UTC Day Provider Spend: $${currentDailySpend.toFixed(4)} / $0.80`);
 
   const createdCostIds: number[] = [];
-  const createdStorageFiles: { bucket: string; path: string }[] = [];
 
   // ===========================================================================
-  // SECTION A: SUCCESS PATH (Two-step multi-chunk execution + settlement)
+  // SECTION A: 2-CHUNK SUCCESS PATH THROUGH POST /api/worker/chunk
   // ===========================================================================
   console.log("\n--------------------------------------------------------------------------------");
-  console.log("SECTION A: SUCCESS PATH (Multi-Chunk Worker Lifecycle -> Settle)");
+  console.log("SECTION A: 2-CHUNK SUCCESS PATH VIA POST /api/worker/chunk");
   console.log("--------------------------------------------------------------------------------");
 
   const successQuoteId = `${RUN_PREFIX}quote_success`;
@@ -146,11 +175,10 @@ async function main() {
   const successReserved = 23; // 10 * 2 = 20 + 15% buffer = 23
   const successExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-  // A.1: Create Quote Fixture
   console.log("\n[A.1] Creating Fixture Quote:", successQuoteId);
   await createVerifyFixtures(supabase, [{
     table: "plans_quotes",
-    purpose: "success path worker dry-run",
+    purpose: "success path worker route dry-run",
     row: {
       id: successQuoteId,
       user_id: TEST_USER_ID,
@@ -163,7 +191,6 @@ async function main() {
     },
   }]);
 
-  // A.2: Accept Quote via accept_quote_atomic
   console.log("[A.2] Calling accept_quote_atomic...");
   const { data: acceptRes, error: acceptErr } = await supabase.rpc("accept_quote_atomic", {
     p_quote_id: successQuoteId,
@@ -183,222 +210,78 @@ async function main() {
     throw new Error(`Balance reservation mismatch: expected -${successReserved}, got -${balanceBefore - balanceAfterAccept}`);
   }
 
-  // A.3: Claim Step 0 Chunk
-  console.log("\n[A.3] Claiming Step 0 Chunk via claim_job_chunk...");
-  const { data: claim0, error: claim0Err } = await supabase.rpc("claim_job_chunk", {
-    p_job_id: successJobId,
-    p_expected_step: 0,
-    p_lease_seconds: 60,
-  });
-  if (claim0Err) throw claim0Err;
-  if (!claim0?.claimed) {
-    throw new Error(`claim_job_chunk step 0 failed: ${JSON.stringify(claim0)}`);
+  // A.3: Invoke POST /api/worker/chunk for Chunk 0 (processes 5 of 10 units)
+  console.log("\n[A.3] Invoking POST /api/worker/chunk (Step 0, mockBatchSize=5)...");
+  const chunk0HttpRes = await workerChunkPost(
+    buildWorkerRequest({
+      jobId: successJobId,
+      expectedStep: 0,
+      mockProvider: true,
+      mockBatchSize: 5,
+      mockEstimatedCostUsd: 0.005,
+      disableSelfChain: true,
+    })
+  );
+  const chunk0Json = await chunk0HttpRes.json();
+  console.log(`- Chunk 0 HTTP ${chunk0HttpRes.status}:`, JSON.stringify(chunk0Json));
+  if (chunk0HttpRes.status !== 200 || !chunk0Json.success || chunk0Json.done !== false || chunk0Json.deliveredUnits !== 5) {
+    throw new Error(`Chunk 0 route execution failed: ${JSON.stringify(chunk0Json)}`);
   }
-  console.log("- Step 0 Claimed successfully. Status is now 'running'.");
+  if (chunk0Json.spendCostId) createdCostIds.push(chunk0Json.spendCostId);
 
-  // A.4: Reserve Provider Spend (Chunk 0)
-  console.log("[A.4] Reserving Provider Spend ($0.005) for Step 0...");
-  const { data: spendRes0, error: spendErr0 } = await supabase.rpc("reserve_provider_spend_atomic", {
-    p_job_id: successJobId,
-    p_provider: "treg",
-    p_estimated_cost_usd: 0.005,
-    p_daily_cap_usd: 0.80,
-  });
-  if (spendErr0) throw spendErr0;
-  if (!spendRes0?.allowed || !spendRes0.cost_id) {
-    throw new Error(`reserve_provider_spend_atomic step 0 failed: ${JSON.stringify(spendRes0)}`);
-  }
-  const costId0 = spendRes0.cost_id;
-  createdCostIds.push(costId0);
-  console.log(`- Provider spend reserved. Cost ID = ${costId0}`);
-
-  // A.5: Mock Provider API Execution (Chunk 0)
-  console.log("[A.5] Simulating Mock Provider API Execution: fetched 5 items.");
-  const mockChunk0Data = [
-    { id: 1, handle: "diger_test_user", text: "sample post 1" },
-    { id: 2, handle: "diger_test_user", text: "sample post 2" },
-    { id: 3, handle: "diger_test_user", text: "sample post 3" },
-    { id: 4, handle: "diger_test_user", text: "sample post 4" },
-    { id: 5, handle: "diger_test_user", text: "sample post 5" },
-  ];
-
-  // A.6: Commit Provider Spend (Chunk 0)
-  console.log("[A.6] Committing Provider Spend for Step 0...");
-  const { data: commitRes0, error: commitErr0 } = await supabase.rpc("commit_provider_spend", {
-    p_cost_id: costId0,
-    p_actual_cost_usd: 0.004,
-    p_units: 5,
-  });
-  if (commitErr0) throw commitErr0;
-  if (!commitRes0?.success) {
-    throw new Error(`commit_provider_spend step 0 failed: ${JSON.stringify(commitRes0)}`);
-  }
-  console.log("- Provider spend committed: $0.004 for 5 units.");
-
-  // A.7: Save Partial Artifact to Storage (partials bucket)
-  console.log("[A.7] Uploading Partial Artifact to Storage (bucket: partials)...");
-  const partial0Path = `${successJobId}/partial_step_0.json`;
-  const { error: uploadPart0Err } = await supabase.storage
-    .from("partials")
-    .upload(partial0Path, JSON.stringify(mockChunk0Data), {
-      contentType: "application/json",
-      upsert: true,
-    });
-  if (uploadPart0Err) throw uploadPart0Err;
-  createdStorageFiles.push({ bucket: "partials", path: partial0Path });
-  console.log(`- Partial uploaded: ${partial0Path}`);
-
-  // A.8: Complete Step 0 Chunk via complete_chunk
-  console.log("[A.8] Completing Step 0 via complete_chunk...");
-  const { data: comp0, error: comp0Err } = await supabase.rpc("complete_chunk", {
-    p_job_id: successJobId,
-    p_expected_step: 0,
-    p_new_cursor: "cursor_after_step_0",
-    p_new_delivered_units: 5,
-    p_cost_usd: 0.004,
-  });
-  if (comp0Err) throw comp0Err;
-  if (!comp0?.success || comp0.step !== 1 || comp0.delivered_units !== 5) {
-    throw new Error(`complete_chunk step 0 failed: ${JSON.stringify(comp0)}`);
-  }
-  console.log("- Step 0 completed. Advanced to step 1, delivered_units = 5.");
-
-  // A.9: Claim Step 1 Chunk
-  console.log("\n[A.9] Claiming Step 1 Chunk via claim_job_chunk...");
-  const { data: claim1, error: claim1Err } = await supabase.rpc("claim_job_chunk", {
-    p_job_id: successJobId,
-    p_expected_step: 1,
-    p_lease_seconds: 60,
-  });
-  if (claim1Err) throw claim1Err;
-  if (!claim1?.claimed) {
-    throw new Error(`claim_job_chunk step 1 failed: ${JSON.stringify(claim1)}`);
-  }
-  console.log("- Step 1 Claimed successfully.");
-
-  // A.10: Reserve & Commit Provider Spend (Chunk 1)
-  console.log("[A.10] Reserving and Committing Provider Spend for Step 1...");
-  const { data: spendRes1, error: spendErr1 } = await supabase.rpc("reserve_provider_spend_atomic", {
-    p_job_id: successJobId,
-    p_provider: "treg",
-    p_estimated_cost_usd: 0.005,
-    p_daily_cap_usd: 0.80,
-  });
-  if (spendErr1) throw spendErr1;
-  const costId1 = spendRes1.cost_id;
-  createdCostIds.push(costId1);
-
-  const mockChunk1Data = [
-    { id: 6, handle: "diger_test_user", text: "sample post 6" },
-    { id: 7, handle: "diger_test_user", text: "sample post 7" },
-    { id: 8, handle: "diger_test_user", text: "sample post 8" },
-    { id: 9, handle: "diger_test_user", text: "sample post 9" },
-    { id: 10, handle: "diger_test_user", text: "sample post 10" },
-  ];
-
-  const { error: commitErr1 } = await supabase.rpc("commit_provider_spend", {
-    p_cost_id: costId1,
-    p_actual_cost_usd: 0.004,
-    p_units: 5,
-  });
-  if (commitErr1) throw commitErr1;
-
-  // Upload partial 1
-  const partial1Path = `${successJobId}/partial_step_1.json`;
-  const { error: uploadPart1Err } = await supabase.storage
-    .from("partials")
-    .upload(partial1Path, JSON.stringify(mockChunk1Data), {
-      contentType: "application/json",
-      upsert: true,
-    });
-  if (uploadPart1Err) throw uploadPart1Err;
-  createdStorageFiles.push({ bucket: "partials", path: partial1Path });
-
-  // Complete Step 1
-  console.log("[A.11] Completing Step 1 (delivered_units = 10)...");
-  const { data: comp1, error: comp1Err } = await supabase.rpc("complete_chunk", {
-    p_job_id: successJobId,
-    p_expected_step: 1,
-    p_new_cursor: "cursor_final",
-    p_new_delivered_units: 10,
-    p_cost_usd: 0.004,
-  });
-  if (comp1Err) throw comp1Err;
-  if (!comp1?.success || comp1.delivered_units !== 10) {
-    throw new Error(`complete_chunk step 1 failed: ${JSON.stringify(comp1)}`);
-  }
-  console.log("- Step 1 completed. Total delivered units = 10.");
-
-  // A.12: Settle Job via settle_job_atomic
-  console.log("\n[A.12] Settling Job via settle_job_atomic...");
-  const resultFilePath = `${TEST_USER_ID}/${successJobId}/result.csv`;
-  const { data: settleRes, error: settleErr } = await supabase.rpc("settle_job_atomic", {
-    p_job_id: successJobId,
-    p_points_cap: 600,
-    p_result_file_id: resultFilePath,
-  });
-  if (settleErr) throw settleErr;
-  console.log("- Settle Result:", JSON.stringify(settleRes));
-  if (!settleRes?.success || settleRes.charged_credits !== 20 || settleRes.reserved_credits !== 23) {
-    throw new Error(`settle_job_atomic math mismatch: expected charge 20, reserved 23; got ${JSON.stringify(settleRes)}`);
+  // Verify partial object exists in 'partials' bucket after Step 0
+  const { data: partialsAfterStep0 } = await supabase.storage.from("partials").list(successJobId);
+  console.log(`- Storage 'partials/${successJobId}' after Step 0:`, (partialsAfterStep0 || []).map((f) => f.name));
+  if (!(partialsAfterStep0 || []).some((f) => f.name === "step_0.json")) {
+    throw new Error(`Expected step_0.json in partials/${successJobId}`);
   }
 
-  // Verify settlement ledger rows: rel_ (refund excess buffer) and chg_ (debit actual delivered)
+  // A.4: Invoke POST /api/worker/chunk for Chunk 1 (processes remaining 5 units -> total 10 -> settles)
+  console.log("\n[A.4] Invoking POST /api/worker/chunk (Step 1, mockBatchSize=5 -> Settlement)...");
+  const chunk1HttpRes = await workerChunkPost(
+    buildWorkerRequest({
+      jobId: successJobId,
+      expectedStep: 1,
+      mockProvider: true,
+      mockBatchSize: 5,
+      mockEstimatedCostUsd: 0.005,
+      disableSelfChain: true,
+    })
+  );
+  const chunk1Json = await chunk1HttpRes.json();
+  console.log(`- Chunk 1 HTTP ${chunk1HttpRes.status}:`, JSON.stringify(chunk1Json));
+  if (chunk1HttpRes.status !== 200 || !chunk1Json.success || chunk1Json.done !== true || chunk1Json.deliveredUnits !== 10) {
+    throw new Error(`Chunk 1 route execution failed: ${JSON.stringify(chunk1Json)}`);
+  }
+  if (chunk1Json.spendCostId) createdCostIds.push(chunk1Json.spendCostId);
+
+  // Verify settlement ledger rows (rel_ +23, chg_ -20)
   const { data: settleLedgerRows, error: settleLedgerErr } = await supabase
     .from("credit_ledger")
     .select("id, delta, type")
     .eq("job_id", successJobId);
   if (settleLedgerErr) throw settleLedgerErr;
-  console.log("- Settlement Ledger Rows (Release-First semantics):", JSON.stringify(settleLedgerRows));
-  const relSuccess = (settleLedgerRows || []).find(r => r.id === `rel_${successJobId}`);
-  const chgSuccess = (settleLedgerRows || []).find(r => r.id === `chg_${successJobId}`);
+  console.log("- Settlement Ledger Rows:", JSON.stringify(settleLedgerRows));
+  const relSuccess = (settleLedgerRows || []).find((r) => r.id === `rel_${successJobId}`);
+  const chgSuccess = (settleLedgerRows || []).find((r) => r.id === `chg_${successJobId}`);
   if (!relSuccess || Number(relSuccess.delta) !== successReserved) {
-    throw new Error(`Missing or invalid rel_${successJobId} row: expected +${successReserved}, got ${JSON.stringify(relSuccess)}`);
+    throw new Error(`Missing or invalid rel_${successJobId}: ${JSON.stringify(relSuccess)}`);
   }
   if (!chgSuccess || Number(chgSuccess.delta) !== -20) {
-    throw new Error(`Missing or invalid chg_${successJobId} row: expected -20, got ${JSON.stringify(chgSuccess)}`);
+    throw new Error(`Missing or invalid chg_${successJobId}: ${JSON.stringify(chgSuccess)}`);
   }
 
-
-  // A.13: Upload Final Results File to Storage (results bucket)
-  console.log("[A.13] Uploading Final Results File (bucket: results)...");
-  const csvContent = "id,handle,text\n" + [...mockChunk0Data, ...mockChunk1Data].map(r => `${r.id},${r.handle},${r.text}`).join("\n");
-  const { error: resultUploadErr } = await supabase.storage
-    .from("results")
-    .upload(resultFilePath, csvContent, {
-      contentType: "text/csv",
-      upsert: true,
-    });
-  if (resultUploadErr) throw resultUploadErr;
-  createdStorageFiles.push({ bucket: "results", path: resultFilePath });
-  console.log(`- Final result uploaded: ${resultFilePath}`);
-
-  // A.14: Clean up partials from storage
-  console.log("[A.14] Cleaning up partial files from Storage...");
-  const { error: removePartErr } = await supabase.storage
-    .from("partials")
-    .remove([partial0Path, partial1Path]);
-  if (removePartErr) throw removePartErr;
-  console.log("- Partials removed from Storage.");
-
-  // Verify Success DB State
   const balanceAfterSuccess = await getUserBalance(TEST_USER_ID);
-  console.log(`- User 2 balance after settlement: ${balanceAfterSuccess} points (net job cost = ${balanceBefore - balanceAfterSuccess} points)`);
+  console.log(`- User 2 balance after 2-chunk settlement: ${balanceAfterSuccess} points (net cost = ${balanceBefore - balanceAfterSuccess} points)`);
   if (balanceBefore - balanceAfterSuccess !== 20) {
     throw new Error(`Net balance deduction mismatch: expected 20, got ${balanceBefore - balanceAfterSuccess}`);
   }
 
-  const { data: jobSuccessRow } = await supabase.from("jobs").select("*").eq("id", successJobId).single();
-  if (jobSuccessRow?.status !== "completed" || jobSuccessRow?.charged_credits !== 20 || jobSuccessRow?.delivered_units !== 10) {
-    throw new Error(`Job final row verification failed: ${JSON.stringify(jobSuccessRow)}`);
-  }
-  console.log("PASS: Success path executed cleanly with exact math (23 reserved, 20 charged, 3 refunded, 10 units delivered).");
-
   // ===========================================================================
-  // SECTION B: FAILURE PATH (5 retries -> auto-release -> 100% refund)
+  // SECTION B: PROVIDER-ERROR PATH THROUGH POST /api/worker/chunk
   // ===========================================================================
   console.log("\n--------------------------------------------------------------------------------");
-  console.log("SECTION B: FAILURE PATH (5 Retries via record_chunk_failure -> Full Refund)");
+  console.log("SECTION B: PROVIDER-ERROR PATH VIA POST /api/worker/chunk (-> Full Refund)");
   console.log("--------------------------------------------------------------------------------");
 
   const failQuoteId = `${RUN_PREFIX}quote_fail`;
@@ -413,11 +296,10 @@ async function main() {
   const failReserved = 23;
   const failExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-  // B.1: Create & Accept Failing Quote
   console.log("\n[B.1] Creating and Accepting Second Quote Fixture:", failQuoteId);
   await createVerifyFixtures(supabase, [{
     table: "plans_quotes",
-    purpose: "failure path worker dry-run",
+    purpose: "provider-error path worker route dry-run",
     row: {
       id: failQuoteId,
       user_id: TEST_USER_ID,
@@ -437,28 +319,28 @@ async function main() {
   });
   if (failAcceptErr) throw failAcceptErr;
   const failJobId = failAcceptRes.job_id;
-  console.log(`- Failing Job Created: ID = ${failJobId}, Reserved = ${failAcceptRes.reserved_credits} points`);
+  const balanceDuringFailReserve = await getUserBalance(TEST_USER_ID);
+  console.log(`- Failing Job Created: ID = ${failJobId}, Reserved = ${failAcceptRes.reserved_credits} points, Balance = ${balanceDuringFailReserve}`);
 
-  // B.2: Claim step 0 to start running
-  await supabase.rpc("claim_job_chunk", {
-    p_job_id: failJobId,
-    p_expected_step: 0,
-    p_lease_seconds: 60,
-  });
-
-  // B.3: Trigger 5 consecutive chunk failures
-  console.log("[B.3] Triggering 5 consecutive record_chunk_failure calls...");
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    const { data: failRes, error: failErr } = await supabase.rpc("record_chunk_failure", {
-      p_job_id: failJobId,
-      p_error_message: `Simulated upstream provider timeout on attempt ${attempt}`,
-    });
-    if (failErr) throw failErr;
-    console.log(`  Attempt ${attempt}/5:`, JSON.stringify(failRes));
+  // B.2: Call POST /api/worker/chunk with simulateProviderError=true & exhaustRetries=true
+  console.log("[B.2] Invoking POST /api/worker/chunk with simulateProviderError=true & exhaustRetries=true...");
+  const failHttpRes = await workerChunkPost(
+    buildWorkerRequest({
+      jobId: failJobId,
+      expectedStep: 0,
+      mockProvider: true,
+      simulateProviderError: true,
+      exhaustRetries: true,
+      disableSelfChain: true,
+    })
+  );
+  const failJson = await failHttpRes.json();
+  console.log(`- Error Route Response HTTP ${failHttpRes.status}:`, JSON.stringify(failJson));
+  if (failHttpRes.status !== 500 || failJson.success !== false || !failJson.failure?.released) {
+    throw new Error(`Expected 500 with terminal release on provider error, got: ${JSON.stringify(failJson)}`);
   }
 
-  // B.4: Verify Terminal State & Balance Restoration
-  console.log("\n[B.4] Verifying Terminal Failure State & Full Refund...");
+  // B.3: Verify Terminal State & Full Reserve Release
   const { data: failedJobRow } = await supabase.from("jobs").select("*").eq("id", failJobId).single();
   console.log("- Failed Job Row:", JSON.stringify({
     status: failedJobRow.status,
@@ -466,34 +348,32 @@ async function main() {
     charged_credits: failedJobRow.charged_credits,
     reserved_credits: failedJobRow.reserved_credits,
     error_message: failedJobRow.error_message,
-  }, null, 2));
-
+  }));
   if (failedJobRow.status !== "failed" || failedJobRow.attempt_count !== 5 || failedJobRow.charged_credits !== 0) {
     throw new Error(`Failed job row invariant violated: ${JSON.stringify(failedJobRow)}`);
   }
 
   const { data: relRow } = await supabase
     .from("credit_ledger")
-    .select("*")
+    .select("id, delta, type")
     .eq("id", `rel_${failJobId}`)
     .single();
   if (!relRow || Number(relRow.delta) !== failReserved) {
     throw new Error(`Refund ledger row rel_${failJobId} missing or mismatch: ${JSON.stringify(relRow)}`);
   }
-  console.log(`- Refund Ledger Row verified: rel_${failJobId} (+${relRow.delta} points)`);
+  console.log(`- Refund Ledger Row verified: ${relRow.id} (+${relRow.delta} points)`);
 
   const balanceAfterFail = await getUserBalance(TEST_USER_ID);
   console.log(`- User 2 Balance after full refund: ${balanceAfterFail} points (net deduction from both runs = ${balanceBefore - balanceAfterFail} points)`);
   if (balanceAfterFail !== balanceAfterSuccess) {
     throw new Error(`Balance was not fully refunded for failed job: expected ${balanceAfterSuccess}, got ${balanceAfterFail}`);
   }
-  console.log("PASS: Failure path cleanly refunded 100% of reserved points with 0 charge.");
 
   // ===========================================================================
   // SECTION C: INVENTORY & RECONCILIATION SUMMARY
   // ===========================================================================
   console.log("\n--------------------------------------------------------------------------------");
-  console.log("SECTION C: FINAL RECONCILIATION & ROW INVENTORY");
+  console.log("SECTION C: FINAL RECONCILIATION, PROVIDER_COSTS & STORAGE OBJECTS");
   console.log("--------------------------------------------------------------------------------");
   const countsAfter = await getTableRowCounts();
 
@@ -503,21 +383,35 @@ async function main() {
     console.log(`  - ${table.padEnd(16)}: Before = ${String(countsBefore[table]).padStart(4)}, After = ${String(countsAfter[table]).padStart(4)}, Delta = +${diff}`);
   }
 
-  console.log(`\nProvider Costs Created in This Run: IDs [${createdCostIds.join(", ")}]`);
+  console.log(`\nProvider Costs Created by Route Handler: IDs [${createdCostIds.join(", ")}]`);
   const { data: runCosts } = await supabase
     .from("provider_costs")
-    .select("id, job_id, cost_usd, units, is_estimate")
+    .select("id, job_id, provider, cost_usd, units, is_estimate")
     .in("id", createdCostIds);
   console.log(JSON.stringify(runCosts, null, 2));
 
   console.log("\nStorage Verification:");
-  const { data: finalResultsList } = await supabase.storage.from("results").list(`${TEST_USER_ID}/${successJobId}`);
-  console.log(`- Results folder contents (${TEST_USER_ID}/${successJobId}):`, (finalResultsList || []).map(f => f.name));
+  const { data: finalUserResultsList } = await supabase.storage.from("results").list(`${TEST_USER_ID}/${successJobId}`);
+  const userResultFiles = (finalUserResultsList || []).map((f) => f.name);
+  console.log(`- Results folder (${TEST_USER_ID}/${successJobId}):`, userResultFiles);
+  if (!userResultFiles.includes("data.csv")) {
+    throw new Error(`Expected data.csv in results/${TEST_USER_ID}/${successJobId}`);
+  }
+  const { data: finalJobResultsList } = await supabase.storage.from("results").list(successJobId);
+  console.log(`- Results folder (${successJobId}):`, (finalJobResultsList || []).map((f) => f.name));
   const { data: finalPartialsList } = await supabase.storage.from("partials").list(successJobId);
-  console.log(`- Partials folder contents (${successJobId}) after cleanup:`, (finalPartialsList || []).map(f => f.name));
+  const remainingPartials = (finalPartialsList || []).map((f) => f.name);
+  console.log(`- Partials folder (${successJobId}) after cleanup:`, remainingPartials);
+  if (remainingPartials.length !== 0) {
+    throw new Error(`Expected partials/${successJobId} to be empty after settlement cleanup, found ${JSON.stringify(remainingPartials)}`);
+  }
+
+  process.env.NODE_ENV = prevNodeEnv;
+  if (prevEnableMock === undefined) delete process.env.ENABLE_MOCK_PROVIDER;
+  else process.env.ENABLE_MOCK_PROVIDER = prevEnableMock;
 
   console.log("\n================================================================================");
-  console.log(`PASS: WORKER DRY-RUN VERIFIED (Net points spent: ${balanceBefore - balanceAfterFail} for 1 completed job)`);
+  console.log(`PASS: REAL /api/worker/chunk ROUTE VERIFIED (Start=${balanceBefore}, End=${balanceAfterFail}, Net=-${balanceBefore - balanceAfterFail})`);
   console.log("================================================================================");
 }
 

@@ -309,10 +309,12 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
   });
 
   describe("Mock Provider Production Injection Guard & Route Execution", () => {
-    it("strictly rejects fake provider injection when NODE_ENV is production with 403", async () => {
+    it("strictly rejects fake provider injection when NODE_ENV is production OR ENABLE_MOCK_PROVIDER is not true with 403", async () => {
       const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       try {
         process.env.NODE_ENV = "production";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
         const workerRoute = await import("../src/app/api/worker/chunk/route");
         const req = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
           method: "POST",
@@ -327,8 +329,23 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(res.status).toBe(403);
         const json = await res.json();
         expect(json.error).toContain("حقن المزود الوهمي محظور في بيئة الإنتاج");
+
+        // Also reject when NODE_ENV !== production if ENABLE_MOCK_PROVIDER !== "true"
+        process.env.NODE_ENV = "test";
+        delete process.env.ENABLE_MOCK_PROVIDER;
+        const reqNoFlag = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer super-secret-cron-key-12345",
+            "x-mock-provider": "true",
+          },
+          body: JSON.stringify({ jobId: "job_test_123", mockProvider: true }),
+        });
+        const resNoFlag = await workerRoute.POST(reqNoFlag);
+        expect(resNoFlag.status).toBe(403);
       } finally {
         process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
 

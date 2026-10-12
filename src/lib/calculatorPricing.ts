@@ -1,5 +1,5 @@
 import {
-  calculateQuote,
+  calculateCapabilityQuote,
   calculateFinalSettlement,
   DEFAULT_PRICING_SETTINGS,
   type PricingSettings,
@@ -65,7 +65,7 @@ export function getPublicCalculatorOptions(
 
 /**
  * Computes the exact reservation, final charge, and refund using the SAME
- * pricing functions (calculateQuote + calculateFinalSettlement) as the quote writer.
+ * pricing functions (calculateCapabilityQuote + calculateFinalSettlement) as the quote writer.
  */
 export function computePublicCalculatorQuote(
   capabilitySlug: string,
@@ -80,7 +80,7 @@ export function computePublicCalculatorQuote(
   const cap =
     capabilities.find((c) => c.slug === capabilitySlug) || capabilities[0];
 
-  const quote = calculateQuote(
+  const quote = calculateCapabilityQuote(
     safeTarget,
     cap.unitCostUsd,
     Number.MAX_SAFE_INTEGER,

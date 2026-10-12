@@ -7,16 +7,18 @@ This document details the mandatory pre-launch checklist, verification leftovers
 ## 1. Pre-Cutover Verification Leftovers Reconciled
 
 During automated live verification on Supabase project `pfinlfaqwnytesedchik`, test operations ran strictly against two isolated test users:
-- **Test User 1 UUID:** `00000000-0000-0000-0000-000000000001` (balance: 1,917 points, 169 ledger rows)
-- **Test User 2 UUID:** `00000000-0000-0000-0000-000000000002` (balance: 440 points, 18 ledger rows)
+- **Test User 1 UUID:** `00000000-0000-0000-0000-000000000001` (balance: `1,917` points / `191.70` EGP, `169` ledger rows)
+- **Test User 2 UUID:** `00000000-0000-0000-0000-000000000002` (balance: `400` points / `40.00` EGP, `28` ledger rows)
 - **Fixture Key Prefixes:** `vrun_<timestamp>_<uuid>_`
 
 ### Expected Leftovers
-- **Jobs Table:** Temporary test rows created under the `vrun_` prefix.
+- **Jobs Table:** `73` test rows created under the `vrun_` / `job_quote_` prefixes.
+- **Job Events Table:** `11` test event rows.
+- **Plans Quotes Table:** `19` test quote rows.
 - **Topups Table:** Test top-up records created under the `vrun_` prefix.
-- **Credit Ledger:** Test reservation (`res_`), release (`rel_`), charge (`chg_`), and top-up (`top_`) rows (187 total rows across test users 1 & 2).
-- **Provider Costs:** Test verification spend rows logged under test jobs (`$0.6160` USD committed out of `$0.80` daily cap).
-- **Storage:** Test objects uploaded during verification in private buckets `receipts` and `results`.
+- **Credit Ledger:** Test reservation (`res_`), release (`rel_`), charge (`chg_`), and top-up (`top_`) rows (`197` total rows across Test Users 1 & 2).
+- **Provider Costs:** `12` test verification spend rows logged under test jobs (`$0.6400` USD committed out of `$0.80` daily cap; `$0.1600` USD remaining).
+- **Storage:** Test objects uploaded during verification in private buckets `receipts` and `results` (`partials` cleaned up automatically on job completion).
 
 > [!IMPORTANT]
 > Do NOT manually delete or modify ledger rows during development. All test ledger entries are protected by database immutability triggers (`trg_credit_ledger_immutable`) and are reconciled and purged only when the owner executes the child-first pre-launch reset in [OWNER_SQL.md](file:///d:/Digr/docs/OWNER_SQL.md) (Stop Gate G4).
@@ -26,14 +28,17 @@ During automated live verification on Supabase project `pfinlfaqwnytesedchik`, t
 ## 2. Seed Configuration Applied (Phase B Verified)
 
 Seed data has been applied via migration `20261012200628_seed_initial_configuration.sql` and verified live:
-- **`settings_public` (1 row, key = `pricing`):**
-  - `usdToEgp = 55.0` fixed, `markup = 10.0` applied once, `creditValueEgp = 0.10` (`5,500` points per `1.00 USD` of provider cost), `safetyBuffer = 0.15` (on reserve only), `minPoints = 1`, `maxJobPoints = 600`.
-- **`settings_private` (1 row, key = `provider_limits`):**
-  - `providerDailySpendCapUsd = 0.80`, `jobMaxPointsCap = 600`.
-- **`capability_registry` (12 rows):**
-  - Only `tiktok-profile` is `enabled = true` (`unit_cost_usd = 0.0010`, `6 points` / `0.60 EGP`). All other 11 capabilities are seeded with `enabled = false` until individually verified.
-- **`templates` (6 rows):**
-  - Arabic research starter templates seeded.
+- **`settings_public` (`1` row, `key = 'pricing'`):**
+  - `value`: `{"markup": 10, "usdToEgp": 55, "minPoints": 1, "safetyBuffer": 0.15, "creditValueEgp": 0.1}`
+  - Read by `public.approve_topup_atomic` (`(value->>'creditValueEgp')::numeric`) and `src/hooks/useCreditValue.ts`.
+- **`settings_private` (`1` row, `key = 'pricing'`):**
+  - `value`: `{"markup": 10, "usdToEgp": 55, "jobMaxPointsCap": 600, "minMarginThreshold": 0.2, "providerDailySpendCapUsd": 0.8}`
+  - Read/updated by `/api/admin/settings` (`src/lib/server/adminAuth.ts`). Runtime code also enforces `usdToEgp = 55`, `markup = 10`, `minPoints = 1`, `safetyBuffer = 0.15` in `src/functions/shared/quotes.ts` & `src/functions/shared/capabilityRegistry.ts`, and `PROVIDER_DAILY_SPEND_CAP_USD = 0.80` & `JOB_MAX_POINTS_CAP = 600` in `src/functions/shared/providerSpend.ts` and the atomic RPCs.
+- **`capability_registry` (`12` rows):**
+  - Columns populated by migration: `slug, name_ar, description_ar, endpoint_id, unit_price_credits, enabled`.
+  - Only `tiktok-profile` is `enabled = true` (`unit_price_credits = 6` points / `0.60 EGP`, `0.001` USD provider cost with `10x` markup applied once). All other `11` capabilities are seeded with `enabled = false` until individually verified.
+- **`templates` (`1` row):**
+  - `tpl-tiktok-profile` seeded with `enabled = true`.
 
 ---
 
@@ -53,21 +58,29 @@ SELECT proname FROM pg_proc WHERE proname = 'create_verify_fixture';
 
 ---
 
-## 4. Owner Admin Role Assignment (Supabase SQL Editor)
+## 4. Owner Admin Account Creation & Role Assignment
 
-After registering your owner account on Diger, assign the `admin` role in the **Supabase SQL Editor**:
-```sql
-UPDATE auth.users
-SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"role": "admin"}'::jsonb
-WHERE email = 'YOUR_OWNER_EMAIL@example.com';
-```
-Verify that the admin role is reflected:
-```sql
-SELECT id, email, raw_app_meta_data->>'role' AS role
-FROM auth.users
-WHERE email = 'YOUR_OWNER_EMAIL@example.com';
--- Role must be 'admin'
-```
+Follow these exact steps to create and promote the owner admin account:
+
+1. **Create the Owner Account:**
+   - Either sign up normally on `/register` using your owner email address and confirm the email link, **OR** open **Supabase Dashboard -> Authentication -> Users -> Add user -> Create new user** (enter your owner email, strong password, and check **Auto Confirm User**).
+   - A `public.profiles` row is created automatically by the `on_auth_user_created` database trigger (`handle_new_user()`).
+2. **Promote the Account to Admin (Supabase SQL Editor):**
+   - Open **Supabase Dashboard -> SQL Editor** and run (replacing `YOUR_OWNER_EMAIL@example.com` with your real email):
+   ```sql
+   UPDATE auth.users
+   SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"role": "admin"}'::jsonb
+   WHERE email = 'YOUR_OWNER_EMAIL@example.com';
+   ```
+3. **Verify Role in Database:**
+   ```sql
+   SELECT id, email, raw_app_meta_data->>'role' AS role
+   FROM auth.users
+   WHERE email = 'YOUR_OWNER_EMAIL@example.com';
+   -- Must return role = 'admin'
+   ```
+4. **Refresh Session:**
+   - Sign out of Diger and sign back in at `/login` so your session JWT refreshes and carries `app_metadata.role = "admin"`, unlocking `/admin` and `/api/admin/*`.
 
 ---
 
@@ -83,13 +96,10 @@ Configure the following settings in the **Supabase Dashboard** (`Authentication`
 ### B. Site URL & Redirect URLs
 1. Open **Authentication** -> **URL Configuration**.
 2. **Site URL:** `https://diger.tech`
-3. **Redirect URLs:**
-   - `https://diger.tech/auth/callback`
-   - `https://diger.tech/verify`
-   - `https://diger.tech/reset`
-   - `https://diger.tech/dashboard/**`
-   - `http://localhost:3000/auth/callback`
-   - `http://localhost:3000/verify`
+3. **Redirect URLs** (scoped strictly to `diger.tech` and the owner's Vercel project — **do NOT** use a global `https://*.vercel.app/**` wildcard):
+   - `https://diger.tech/**`
+   - `https://*-magdys-projects.vercel.app/**` (replace `magdys-projects` with your exact Vercel team/account slug if different)
+   - `http://localhost:3000/**` (optional, for local development only)
 
 ### C. Custom SMTP Configuration (Resend)
 1. Open **Authentication** -> **SMTP Settings**.
@@ -146,28 +156,35 @@ The repository includes `vercel.json` tailored for the **Vercel Hobby** plan:
 
 Set the following environment variables in **Vercel Project Settings -> Environment Variables** (Production & Preview):
 
-| Variable Name | Client Exposed? | Required Value / Purpose |
-| :--- | :---: | :--- |
-| `NEXT_PUBLIC_SITE_URL` | Yes | `https://diger.tech` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Yes | `https://pfinlfaqwnytesedchik.supabase.co` |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase public `anon` key |
-| `NEXT_PUBLIC_INSTAPAY_HANDLE` | Yes | Owner Instapay IPA address |
-| `SUPABASE_SERVICE_ROLE_KEY` | **NO** | Supabase `service_role` secret key (server-only) |
-| `CRON_SECRET` | **NO** | Strong random secret (32+ hex chars) for `/api/cron/watchdog` and `/api/worker/chunk` |
-| `TREG_TOKEN` | **NO** | Live provider API token (`treg_...`) |
-| `TREG_LIVE` | **NO** | `true` in production when ready for live provider calls |
-| `TREG_BASE_URL` | **NO** | `https://treg.to` |
-| `LLM_ENABLED` | **NO** | `true` |
-| `LLM_PROVIDER` | **NO** | `anthropic` |
-| `ANTHROPIC_API_KEY` | **NO** | Anthropic server API key (`sk-ant-...`) |
-| `ANTHROPIC_MODEL` | **NO** | `claude-haiku-4-5` |
-| `RESEND_API_KEY` | **NO** | Resend API key (`re_...`) for email notifications |
-| `PROVIDER_DAILY_SPEND_CAP_USD` | **NO** | `0.80` (hard UTC daily cap) |
-| `JOB_MAX_POINTS_CAP` | **NO** | `600` (hard per-job points cap) |
-| `ENABLE_APPWRITE_ADMIN_FALLBACK` | **NO** | `false` |
+### A. Required Environment Variables (Owner Must Add in Vercel)
+
+| Variable Name | Stage | Client Exposed? | Required Value / Purpose |
+| :--- | :---: | :---: | :--- |
+| `NEXT_PUBLIC_SUPABASE_URL` | Build + Runtime | Yes | `https://pfinlfaqwnytesedchik.supabase.co` |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Build + Runtime | Yes | Supabase public publishable / anon key (code also accepts `NEXT_PUBLIC_SUPABASE_ANON_KEY`) |
+| `SUPABASE_SERVICE_ROLE_KEY` | Runtime | **NO** | Supabase `service_role` secret key (server-only) |
+| `CRON_SECRET` | Runtime | **NO** | Strong random secret (32+ hex chars) for `/api/cron/watchdog` and `/api/worker/chunk` |
+| `ANTHROPIC_API_KEY` | Runtime | **NO** | Anthropic server API key (`sk-ant-...`) |
+| `TREG_TOKEN` | Runtime | **NO** | Live provider API token (`treg_...`) |
+| `TREG_LIVE` | Runtime | **NO** | Set to `true` when ready for live provider calls (`false` until live preview) |
+
+### B. Optional Environment Variables (Safe Code Defaults Exist)
+
+| Variable Name | Stage | Client Exposed? | Default in Code / Purpose |
+| :--- | :---: | :---: | :--- |
+| `NEXT_PUBLIC_SITE_URL` | Build + Runtime | Yes | Defaults to `https://diger.tech` in `src/lib/site.ts`, and worker/nudge routes check `VERCEL_URL` first |
+| `NEXT_PUBLIC_INSTAPAY_HANDLE` | Build + Runtime | Yes | Fallback IPA handle when `settings_public` row has no `ipa` field |
+| `TREG_BASE_URL` | Runtime | **NO** | Defaults to `https://treg.to` |
+| `LLM_ENABLED` | Runtime | **NO** | Defaults to `true` unless set to `"false"` |
+| `LLM_PROVIDER` | Runtime | **NO** | Defaults to `"anthropic"` |
+| `ANTHROPIC_MODEL` | Runtime | **NO** | Defaults to `"claude-haiku-4-5"` |
+| `PROVIDER_DAILY_SPEND_CAP_USD` | Runtime | **NO** | Defaults to `0.80` (hard UTC daily cap) |
+| `JOB_MAX_POINTS_CAP` | Runtime | **NO** | Defaults to `600` (hard per-job points cap) |
 
 > [!CAUTION]
-> Do **NOT** set `NEXT_PUBLIC_APPWRITE_ENDPOINT`, `NEXT_PUBLIC_APPWRITE_PROJECT_ID`, or `APPWRITE_API_KEY` in Vercel. Run `npm run build` (which automatically executes `scripts/check-client-bundle-secrets.ts`) to verify zero secrets leak into `.next/static`.
+> - Do **NOT** add `SCRAPECREATORS_API_KEY` (not read anywhere in the codebase; `TREG_TOKEN` is the provider token) or `INSTAPAY_HANDLE` (the code reads `NEXT_PUBLIC_INSTAPAY_HANDLE`).
+> - Do **NOT** set `ENABLE_MOCK_PROVIDER` in Vercel (test-only flag; blocked in production when `NODE_ENV=production`).
+> - Do **NOT** set `NEXT_PUBLIC_APPWRITE_ENDPOINT`, `NEXT_PUBLIC_APPWRITE_PROJECT_ID`, or `APPWRITE_API_KEY` in Vercel. Run `npm run build` (which automatically executes `scripts/check-client-bundle-secrets.ts`) to verify zero secrets leak into `.next/static`.
 
 ---
 
@@ -181,4 +198,4 @@ Set the following environment variables in **Vercel Project Settings -> Environm
    - Connect the GitHub repository to Vercel and deploy `main` with the environment variables in Section 7.
    - Point `diger.tech` DNS (`A` record -> `76.76.21.21`, `CNAME` `www` -> `cname.vercel-dns.com`) to Vercel and verify SSL certificate issuance.
 3. **Gate G5 (Tiny Live Preview Job):**
-   - Run the single-unit preview check (`tiktok-profile`, 1 unit = 6 points reserved, 5 points charged, 1 point refunded) only after explicit owner approval.
+   - Run the single-unit preview check (`tiktok-profile`, 1 unit = 7 points reserved, 6 points charged, 1 point refunded) only after explicit owner approval.

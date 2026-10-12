@@ -3,170 +3,146 @@
 - **Branch:** `migrate/supabase` (PR #43 remains OPEN and UNMERGED per Gate G3)
 - **Supabase Project:** `pfinlfaqwnytesedchik`
 - **Applied Migrations:** `19` total (latest: `20261012200628_seed_initial_configuration`)
-- **Test Suite Status:** `59` test files, `473` tests passed (`0` failures)
+- **Test Suite Status:** `59` test files, `474` tests passed (`0` failures)
 - **Production Build & Bundle Scan:** `82` client-side static chunks scanned in `.next/static/` — `0` secret strings, `0` `appwrite` references
 
 ---
 
-## 1. Phase-by-Phase Execution Summary
+## 1. Phase-by-Phase Execution Summary (Verified Against Real Commits)
 
-| Phase | Commit | Summary |
-|---|---|---|
-| **Phase A: Verification-Round Fixes & Tests** | `6bfaa2d` | Aligned pricing constants (`55 / 10 / 0.10`, `5,500` pts/USD), Eastern Arabic-Indic digits (`٠-٩`) in all RPC error messages, per-user `try/catch` isolation in account purge with profile anonymization (`deleted_<id>@purged.local`, `مستخدم محذوف`) + auth ban while keeping all `RESTRICT` financial tables intact, added `POST /api/account/cancel-deletion`, and expanded route-handler unit tests for worker, watchdog, nudge, and account deletion. |
-| **Phase B: Seed Data Migration** | `0b6d8a4` | Applied migration `20261012200628_seed_initial_configuration.sql` seeding `settings_public` (`1` row), `settings_private` (`1` row), `capability_registry` (`12` rows; only `tiktok-profile` enabled at `6` base pts / `7` buffered pts), and `templates` (`6` rows). `get_advisors` returned `0` new security or performance warnings. |
-| **Phase C: Appwrite Decoupling** | `4bd9a4d` | Created `GET /api/jobs/[id]/download` (300s signed URL from private `results` bucket after ownership verification), ported all remaining dashboard/admin UI pages and API routes from Appwrite SDK to Supabase, and updated `docs/review/appwrite-inventory-raw.md` proving `0` active Appwrite imports in `src/app/**`, `src/components/**`, and `src/hooks/**`. |
-| **Phase D: Public `/calculator` Page** | `e818bad` | Built `/calculator` (`src/app/calculator/page.tsx` + `src/lib/calculatorPricing.ts`) calling the exact same `calculateQuote` and `calculateFinalSettlement` pricing functions used by `createAndSaveManagedQuote`. Added `tests/public-calculator-phase-d.test.ts` proving exact numerical equality across capabilities and volumes. |
-| **Phase E: Production Readiness Runbook** | `3ccf07e` | Updated `docs/CUTOVER.md` with Supabase Auth settings, 3 Arabic RTL HTML email templates (Confirm Signup, Reset Password, Magic Link), Vercel Hobby daily cron (`0 0 * * *`), Vercel environment variable table, and step-by-step cutover runbook. |
-| **Phase F: Tiny Real Job Script & Final Report** | *(HEAD)* | Prepared `scripts/verify/run-tiny-live-preview.ts` guarded by `CONFIRM_LIVE_PREVIEW=YES` (Gate G5: prepared and NOT executed). Updated `docs/MEGA_LOG.md` and compiled this `docs/GO_LIVE_REPORT.md`. |
-
----
-
-## 2. Final Pricing Table (`55` EGP/USD, `10x` Markup, `0.10` EGP/Point = `5,500` Points/USD)
-
-Formula:
-- `unitPricePoints = max(1, ceil(providerUsdPerUnit * 55 * 10 / 0.10))` = `max(1, ceil(providerUsdPerUnit * 5500))`
-- `rawPoints = max(1, ceil(plannedUnits * unitPricePoints))`
-- `reservedPoints (with 15% buffer) = max(1, ceil(rawPoints * 1.15))`
-- `actualChargePoints (settlement) = min(reservedPoints, ceil(deliveredUnits * unitPricePoints))` (`0` if `deliveredUnits = 0`)
-
-| Capability ID | Arabic Label | Billing Unit | Provider USD / Unit | Unit Price (Points / EGP) | 1 Unit Reserve (15% Buffer) | 10 Units Base | 10 Units Reserve (15% Buffer) | Enabled in Seed |
-|---|---|---|---:|---:|---:|---:|---:|:---:|
-| `tiktok-profile` | بيانات حساب تيك توك | حساب (`profile`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | Yes |
-| `tiktok-Feed` | منشورات حساب تيك توك | منشور (`post`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `tiktok-comments` | تعليقات فيديو تيك توك | صفحة تعليقات (`page`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `tiktok-search` | بحث فيديوهات تيك توك | صفحة نتائج (`page`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `instagram-profile` | بيانات حساب انستجرام | حساب (`profile`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `instagram-posts` | منشورات حساب انستجرام | طلب (`request`) | `$0.002` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `110` pts (`11.00` ج.م) | `127` pts (`12.70` ج.م) | No |
-| `instagram-reels` | ريلز انستجرام | طلب (`request`) | `$0.002` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `110` pts (`11.00` ج.م) | `127` pts (`12.70` ج.م) | No |
-| `instagram-comments` | تعليقات منشور انستجرام | طلب (`request`) | `$0.002` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `110` pts (`11.00` ج.م) | `127` pts (`12.70` ج.م) | No |
-| `twitter-tweet` | تفاصيل تغريدة إكس (تويتر) | تغريدة (`tweet`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `youtube-channel` | بيانات قناة يوتيوب | قناة (`channel`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `youtube-comments` | تعليقات فيديو يوتيوب | طلب (`request`) | `$0.001` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `60` pts (`6.00` ج.م) | `69` pts (`6.90` ج.م) | No |
-| `google-maps-search` | بحث خرائط جوجل (أنشطة تجارية) | صفحة نتائج (`page`) | `$0.002` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `110` pts (`11.00` ج.م) | `127` pts (`12.70` ج.م) | No |
+| Phase | Commit | Exact Modified Files (`git show --stat`) | Real Summary |
+|---|---|---|---|
+| **Phase A: Verification-Round Fixes & Tests** | `6bfaa2d` | `src/app/api/account/delete/cancel/route.ts`, `src/app/api/chat/accept-quote/route.ts`, `src/app/api/cron/watchdog/route.ts`, `src/app/api/worker/chunk/route.ts`, `src/functions/shared/capabilityRegistry.ts`, `src/functions/shared/quotes.ts`, `src/lib/supabase/quoteAccept.ts`, `tests/admin-account-phase5.test.ts`, `tests/chat-plans-phase3.test.ts`, `tests/p1-capabilities-quotes.test.ts`, `tests/supabase-routes.test.ts`, `tests/worker-cron-phase4.test.ts` | Aligned pricing constants (`55 / 10 / 0.10`, `5,500` pts/USD), isolated each user inside `try/catch` in `src/app/api/cron/watchdog/route.ts` with profile anonymization (`deleted_<id>@purged.local`, `مستخدم محذوف`) + auth ban while keeping all `RESTRICT` financial tables intact, added `POST /api/account/delete/cancel` (`src/app/api/account/delete/cancel/route.ts`), and expanded route-handler unit tests. |
+| **Phase B: Seed Data Migration** | `0b6d8a4` | `supabase/migrations/20261012200628_seed_initial_configuration.sql` | Applied migration `20261012200628_seed_initial_configuration.sql` seeding `settings_public` (`1` row, `key = 'pricing'`), `settings_private` (`1` row, `key = 'pricing'`), `capability_registry` (`12` rows; only `tiktok-profile` enabled at `6` credits), and `templates` (`1` row: `tpl-tiktok-profile`). `get_advisors` returned `0` new security or performance warnings. |
+| **Phase C: Appwrite Decoupling** | `4bd9a4d` | `src/app/api/jobs/[id]/download/route.ts`, `src/app/api/chat/route.ts`, `src/app/dashboard/jobs/page.tsx`, `src/app/dashboard/page.tsx`, `docs/review/appwrite-inventory-raw.md`, `tests/admin-account-phase5.test.ts`, `tests/supabase-routes.test.ts` | Created `GET /api/jobs/[id]/download` (300s signed URL from private `results` bucket after ownership verification), wired dashboard & chat routes to Supabase, and updated `docs/review/appwrite-inventory-raw.md` proving `0` active Appwrite imports in `src/app/**`, `src/components/**`, and `src/hooks/**`. |
+| **Phase D: Public `/calculator` Page** | `e818bad` | `src/app/calculator/page.tsx`, `src/lib/calculatorPricing.ts`, `tests/public-calculator-phase-d.test.ts` | Built `/calculator` (`src/app/calculator/page.tsx` + `src/lib/calculatorPricing.ts`) calling the shared pricing functions in `src/functions/shared/quotes.ts`, with `tests/public-calculator-phase-d.test.ts` verifying equality with the quote writer. |
+| **Phase E: Production Readiness Runbook** | `3ccf07e` | `docs/CUTOVER.md` | Updated `docs/CUTOVER.md` with Supabase Auth settings, 2 Arabic RTL HTML email templates (Confirm Signup, Reset Password), Vercel Hobby daily cron (`0 0 * * *`), Vercel environment variable table, and step-by-step cutover runbook. |
+| **Phase F: Tiny Real Job Script & Final Report** | `ff5f300` + *(HEAD)* | `scripts/verify/run-tiny-live-preview.ts`, `scripts/verify/verify-worker-dry-run.ts`, `src/app/api/worker/chunk/route.ts`, `src/functions/shared/quotes.ts`, `src/functions/shared/planManager.ts`, `src/functions/shared/providerCosts.ts`, `src/lib/calculatorPricing.ts`, `src/lib/server/adminAuth.ts`, `docs/CUTOVER.md`, `docs/GO_LIVE_REPORT.md` | Unified single-markup pricing (`calculateCapabilityUnitPricePoints` & `calculateCapabilityQuote` in `src/functions/shared/quotes.ts` used by both `planManager.ts` and `calculatorPricing.ts`), executed real `POST /api/worker/chunk` 2-chunk + failure dry-run against Test User 2, and prepared `scripts/verify/run-tiny-live-preview.ts` guarded by `CONFIRM_LIVE_PREVIEW=YES`. |
 
 ---
 
-## 3. Read-Only Post-Launch Audit SQL Queries
+## 2. Final Pricing Table (`55` EGP/USD, `10x` Markup Applied Once, `0.10` EGP/Point = `5,500` Points/USD)
 
-Run any of these read-only queries in the Supabase SQL Editor to verify financial and operational integrity:
+### Single Source of Truth Formula (`src/functions/shared/quotes.ts`)
+- `calculateCapabilityUnitPricePoints(unitCostUsd, settings, explicitUnitPriceCredits)`:
+  - When `unitCostUsd` is provided without pre-multiplied credits: `max(minPoints, ceil((unitCostUsd * 55 * 10) / 0.10))` = `max(1, ceil(unitCostUsd * 5500))`
+  - For `tiktok-profile` at `0.001` USD: `ceil(0.001 * 55 * 10 / 0.10) = 6` points (`0.60` EGP)
+- `calculateCapabilityQuote(params, settings)`:
+  - `rawPoints = max(1, ceil(plannedUnits * unitPricePoints))`
+  - `reservedPoints (with 15% buffer) = max(1, ceil(rawPoints * 1.15))`
+  - For `tiktok-profile` (`1` unit): `unitPricePoints = 6`, `reservedPoints = ceil(6 * 1.15) = 7` points (`0.70` EGP)
+- `calculateFinalSettlement(deliveredUnits, unitPricePoints, reservedPoints)`:
+  - `actualCharge = min(reservedPoints, ceil(deliveredUnits * unitPricePoints))` (`0` if `deliveredUnits = 0`)
+  - `refundAmount = max(0, reservedPoints - actualCharge)`
+  - For `tiktok-profile` (`1` delivered unit): `actualCharge = 6` points (`0.60` EGP), `refundAmount = 1` point (`0.10` EGP)
+
+### A. Database Seeded Capabilities (`public.capability_registry` — 12 Rows)
+
+Columns populated by migration `20261012200628_seed_initial_configuration.sql`: `slug, name_ar, description_ar, endpoint_id, unit_price_credits, enabled` (remaining columns `category, name_en, pricing_unit, unit_cost_usd, max_rows, pagination_type, params, params_schema` are nullable).
+
+| `slug` | `name_ar` | `endpoint_id` | `unit_price_credits` | 1 Unit Reserve (`+15%`) | `enabled` |
+|---|---|---|---:|---:|:---:|
+| `tiktok-profile` | بيانات حساب تيك توك | `/v1/tiktok/profile` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `true` |
+| `tiktok-user-videos` | فيديوهات حساب تيك توك | `/v1/tiktok/user/posts` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `tiktok-keyword-videos` | بحث فيديوهات تيك توك بالكلمات | `/v1/tiktok/search/keyword` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `x-user-tweets` | تغريدات حساب إكس | `/v1/twitter/user-tweets` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `x-keyword-search` | بحث تغريدات إكس | `/v1/twitter/search` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `instagram-profile` | بيانات حساب انستجرام | `/v1/instagram/profile` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `false` |
+| `instagram-user-posts` | منشورات حساب انستجرام | `/v1/instagram/posts` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `youtube-channel` | بيانات قناة يوتيوب | `/v1/youtube/channel` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `false` |
+| `youtube-video-search` | بحث فيديوهات يوتيوب | `/v1/youtube/search` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `facebook-page-posts` | منشورات صفحة فيسبوك | `/v1/facebook/posts` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `google-serp-search` | نتائج بحث جوجل | `/v1/google/search` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `telegram-channel-posts` | رسائل قناة تيليجرام | `/v1/telegram/messages` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+
+---
+
+## 3. Read-Only Post-Launch Audit SQL Queries & Live Results
+
+All queries below use the exact schema column names verified in `information_schema.columns` (`public.jobs`: `reserved_credits, charged_credits, delivered_units, unit_price`; `public.capability_registry`: `enabled`; `public.templates`: `enabled`).
 
 ```sql
--- 1. Ledger reconciliation per user (no negative balances, deterministic prefixes)
+-- 1. Ledger reconciliation per user
 SELECT
   user_id,
   COUNT(*) AS ledger_rows,
-  SUM(delta) AS current_balance_points,
-  ROUND(SUM(delta) * 0.10, 2) AS current_balance_egp
+  COALESCE(SUM(delta), 0) AS balance_points,
+  ROUND(COALESCE(SUM(delta), 0) * 0.10, 2) AS balance_egp
 FROM public.credit_ledger
 GROUP BY user_id
 ORDER BY user_id;
 
--- 2. Verify every terminal job (completed/failed) has balanced reserve & release rows
+-- 2. Verify zero terminal jobs with unbalanced reserve/release rows (expect 0 rows)
 SELECT
-  j.id AS job_id,
+  j.id,
+  j.user_id,
   j.status,
-  j.reserved_points,
-  j.actual_points,
+  j.reserved_credits,
+  j.charged_credits,
   j.delivered_units,
-  j.unit_price_points,
-  COALESCE(SUM(CASE WHEN l.type = 'reserve' THEN l.delta ELSE 0 END), 0) AS reserve_delta,
-  COALESCE(SUM(CASE WHEN l.type = 'release' THEN l.delta ELSE 0 END), 0) AS release_delta,
-  COALESCE(SUM(CASE WHEN l.type = 'charge' THEN l.delta ELSE 0 END), 0) AS charge_delta
+  j.unit_price,
+  COALESCE(SUM(CASE WHEN l.type IN ('reserve', 'release') THEN l.delta ELSE 0 END), 0) AS net_reserve_delta
 FROM public.jobs j
 LEFT JOIN public.credit_ledger l ON l.job_id = j.id
 WHERE j.status IN ('completed', 'failed')
-GROUP BY j.id, j.status, j.reserved_points, j.actual_points, j.delivered_units, j.unit_price_points
-HAVING
-  COALESCE(SUM(CASE WHEN l.type = 'reserve' THEN l.delta ELSE 0 END), 0) +
-  COALESCE(SUM(CASE WHEN l.type = 'release' THEN l.delta ELSE 0 END), 0) <> 0;
+GROUP BY j.id, j.user_id, j.status, j.reserved_credits, j.charged_credits, j.delivered_units, j.unit_price
+HAVING COALESCE(SUM(CASE WHEN l.type IN ('reserve', 'release') THEN l.delta ELSE 0 END), 0) <> 0;
 
--- 3. Check today's UTC provider spend against the $0.80 daily cap
+-- 3. UTC daily provider spend vs $0.80 cap
 SELECT
   (now() AT TIME ZONE 'utc')::date AS utc_day,
   COUNT(*) AS spend_entries,
-  COALESCE(SUM(cost_usd), 0) AS total_cost_usd,
-  0.80 - COALESCE(SUM(cost_usd), 0) AS remaining_cap_usd
+  ROUND(COALESCE(SUM(cost_usd), 0), 4) AS total_cost_usd,
+  ROUND(0.80 - COALESCE(SUM(cost_usd), 0), 4) AS remaining_cap_usd
 FROM public.provider_costs
-WHERE created_at >= date_trunc('day', now() AT TIME ZONE 'utc');
+WHERE (created_at AT TIME ZONE 'utc')::date = (now() AT TIME ZONE 'utc')::date;
 
--- 4. Verify seeded configuration tables
+-- 4. Seeded configuration and catalog verification
 SELECT
-  (SELECT COUNT(*) FROM public.settings_public) AS settings_public_rows,
-  (SELECT COUNT(*) FROM public.settings_private) AS settings_private_rows,
+  (SELECT COUNT(*) FROM public.settings_public WHERE key = 'pricing') AS settings_public_rows,
+  (SELECT COUNT(*) FROM public.settings_private WHERE key = 'pricing') AS settings_private_rows,
   (SELECT COUNT(*) FROM public.capability_registry) AS capability_rows,
-  (SELECT COUNT(*) FROM public.capability_registry WHERE is_enabled = true) AS enabled_capabilities,
-  (SELECT COUNT(*) FROM public.templates WHERE is_active = true) AS active_templates;
+  (SELECT COUNT(*) FROM public.capability_registry WHERE enabled = true) AS enabled_capabilities,
+  (SELECT COUNT(*) FROM public.templates WHERE enabled = true) AS enabled_templates;
 ```
+
+### Live Audit SQL Results (`mcp_supabase_execute_sql`)
+- **Query 1 (Ledger per user):**
+  `[{"user_id":"00000000-0000-0000-0000-000000000001","ledger_rows":169,"balance_points":"1917","balance_egp":"191.70"},{"user_id":"00000000-0000-0000-0000-000000000002","ledger_rows":28,"balance_points":"400","balance_egp":"40.00"}]`
+- **Query 2 (Terminal jobs with unbalanced reserve/release):**
+  `[]` (`0` rows)
+- **Query 3 (UTC daily provider spend):**
+  `[{"utc_day":"2026-10-12","spend_entries":12,"total_cost_usd":"0.6400","remaining_cap_usd":"0.1600"}]`
+- **Query 4 (Seeded counts):**
+  `[{"settings_public_rows":1,"settings_private_rows":1,"capability_rows":12,"enabled_capabilities":1,"enabled_templates":1}]`
 
 ---
 
 ## 4. Arabic Step-by-Step Owner Checklist for Magdy (Gates G3, G4, G5)
 
-### أولاً: بوابة إعدادات الحسابات والبيئة (Gate G4)
+### أولاً: بوابة إعدادات الحسابات والبيئة وتنظيف بيانات الاختبار (Gate G4)
 1. افتح لوحة تحكم **Supabase Dashboard** لمشروع `pfinlfaqwnytesedchik` وادخل إلى **Authentication -> URL Configuration**:
    - ضع `https://diger.tech` في خانة **Site URL**.
-   - أضف الروابط التالية في **Redirect URLs**:
-     - `https://diger.tech/auth/callback`
-     - `https://diger.tech/reset`
-     - `https://diger.tech/verify`
-     - `https://*.vercel.app/auth/callback`
-2. من **Authentication -> Email Templates**، انسخ قوالب البريد العربية الثلاثة (تأكيد الحساب، استعادة كلمة المرور، الرابط السحري) الموجودة جاهزة في ملف `docs/CUTOVER.md`.
-3. لتفعيل صلاحية الأدمن لحسابك الشخصي على Supabase بعد تسجيل الدخول، نفّذ أمر SQL الموجود في `docs/CUTOVER.md` (قسم تعيين صلاحية الأدمن `raw_app_meta_data`).
-4. افتح لوحة تحكم **Vercel -> Project Settings -> Environment Variables** وأضف متغيرات البيئة الموضحة في جدول `docs/CUTOVER.md` (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `SCRAPECREATORS_API_KEY`, `INSTAPAY_HANDLE`, `NEXT_PUBLIC_SITE_URL`).
+   - أضف الروابط التالية فقط في **Redirect URLs** (مقصورة على نطاق موقعك ومشروعك على Vercel فقط):
+     - `https://diger.tech/**`
+     - `https://*-magdys-projects.vercel.app/**`
+2. من **Authentication -> Email Templates**، انسخ قوالب البريد العربية (تأكيد الحساب واستعادة كلمة المرور) الموجودة جاهزة في ملف `docs/CUTOVER.md`.
+3. لإنشاء حساب الأدمن الخاص بك وتفعيله:
+   - سجّل حسابك أولاً من صفحة `/register` على الموقع (أو من **Supabase Dashboard -> Authentication -> Users -> Add user** مع تفعيل **Auto Confirm User**).
+   - افتح **SQL Editor** في Supabase ونفّذ أمر ترقية الحساب الموجود في `docs/CUTOVER.md` (القسم الرابع `UPDATE auth.users SET raw_app_meta_data = ...`).
+   - سجّل الخروج ثم ادخل مرة أخرى من `/login` لتتحدث جلسة الدخول بصلاحية الأدمن وتفتح لك لوحة `/admin`.
+4. قبل الإطلاق الفعلي للجمهور، نفّذ معاملة تنظيف بيانات الاختبار وحذف دالة الاختبار المؤقتة `DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);` من ملف `docs/OWNER_SQL.md` داخل **Supabase SQL Editor**.
+5. افتح لوحة تحكم **Vercel -> Project Settings -> Environment Variables** وأضف المتغيرات الأساسية المطلوبة الموضحة في القسم السابع من `docs/CUTOVER.md`:
+   - المتغيرات الإلزامية التي يجب إضافتها: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `TREG_TOKEN`, `TREG_LIVE`.
+   - المتغيرات الاختيارية (لها قيم افتراضية آمنة في الكود): `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_INSTAPAY_HANDLE`, `TREG_BASE_URL`, `LLM_ENABLED`, `LLM_PROVIDER`, `ANTHROPIC_MODEL`, `PROVIDER_DAILY_SPEND_CAP_USD`, `JOB_MAX_POINTS_CAP`.
 
 ### ثانياً: بوابة تجربة وظيفة حية مصغّرة (Gate G5 - اختياري قبل الإطلاق)
 1. تم تجهيز سكريبت الفحص الحي المصغّر في `scripts/verify/run-tiny-live-preview.ts` وهو مقفل بحماية `CONFIRM_LIVE_PREVIEW=YES` ولم يتم تشغيله تلقائياً حفاظاً على رصيد المزود.
 2. إذا أردت تشغيله لاختبار جلب حساب تيك توك واحد فقط (`1` وحدة بتكلفة `$0.001` أي `6` نقاط خصم فعلي من `7` نقاط محجوزة)، شغّل الأمر التالي من جهازك:
    ```powershell
-   $env:CONFIRM_LIVE_PREVIEW="YES"; npx tsx scripts/verify/run-tiny-live-preview.ts
+   $env:CONFIRM_LIVE_PREVIEW="YES"; npx tsx --env-file=.env.local scripts/verify/run-tiny-live-preview.ts
    ```
 
 ### ثالثاً: بوابة الإطلاق النهائي ودمج الفرع (Gate G3)
 1. راجع رابط المعاينة (Preview Deployment) الخاص بالطلب **PR #43** على Vercel وتأكد من فتح صفحة `/calculator` وصفحة تسجيل الدخول `/login`.
 2. عند رضاك التام، اضغط **Merge Pull Request** لدمج الفرع `migrate/supabase` في `main`، وسيقوم Vercel بنشر النسخة الجديدة تلقائياً على `https://diger.tech` مع تفعيل كرون المراقبة اليومي المجاني (`0 0 * * *`).
-
----
-
-## 5. تقارير المراحل بالعامية المصرية للمالك (٥ سطور لكل مرحلة)
-
-### المرحلة A (إصلاحات المراجعة وتوحيد التسعير والاختبارات — Commit `6bfaa2d`)
-تم توحيد معادلة التسعير في كل ملفات الكود على سعر صرف ٥٥ جنيه ومضاعف ١٠ مرات وقيمة نقطة ٠.١٠ جنيه يعني ٥٥٠٠ نقطة لكل دولار تكلفة.
-عدّلنا رسائل أخطاء قاعدة البيانات عشان تظهر كلها بالعربي الواضح وبأرقام عربية مشرقية لكل حالات الرصيد والحد اليومي والحجز.
-ظبطنا مسار حذف الحساب بعد مهلة ٣٠ يوم بحيث يمسح البيانات غير المالية والملفات بس ويعمل إخفاء لبيانات البروفايل وحظر للحساب من غير ما يلمس أي سجل مالي.
-أضفنا مسار إلغاء طلب حذف الحساب في أي وقت خلال فترة السماح عشان المستخدم يقدر يرجع في قراره بسهولة.
-شغّلنا اختبارات مسارات العامل والكرون وحذف الحساب الفعلي وتأكدنا من نجاح ٤٧١ اختبار بالكامل بدون أي أخطاء.
-
-### المرحلة B (تغذية البيانات الأساسية والقدرات والقوالب — Commit `0b6d8a4`)
-طبّقنا هجرة تغذية الإعدادات العامة والخاصة في قاعدة بيانات سوبابيس بالسعر المعتمد ٥٥ جنيه للدولار والحد الأقصى ٦٠٠ نقطة للطلب و٠.٨٠ دولار يومياً.
-سجّلنا ١٢ قدرة بحثية في جدول القدرات بالأسعار الدقيقة وفعلنا قدرة حسابات تيك توك بس بـ ٦ نقاط للوحدة مع قفل باقي القدرات لحد اختبارها.
-أضفنا ٦ قوالب بحثية عربية جاهزة في جدول القوالب عشان تظهر للمستخدمين وتسهّل عليهم بدء الطلبات.
-راجعنا فاحص الأمان والأداء في سوبابيس بعد الهجرة وتأكدنا من عدم ظهور أي تحذيرات جديدة في الجداول أو السياسات.
-تأكدنا إن دفتر الأستاذ المالي وباقي الجداول المالية لم يتم لمسها نهائياً وإن أرصدة حسابات الاختبار ثابتة ومطابقة.
-
-### المرحلة C (فصل الكود الحي والواجهات عن أبرايت — Commit `4bd9a4d`)
-أنشأنا مسار تحميل آمن للنتائج بيتأكد من هوية المستخدم وملكية الطلب قبل إصدار رابط تحميل مؤقت لمدة ٣٠٠ ثانية من سوبابيس.
-حوّلنا صفحات لوحة التحكم والطلبات والمحادثة وشحن الرصيد ولوحة الأدمن عشان تقرأ وتكتب مباشرة من سوبابيس بدون أي اعتماد على أبرايت.
-حدّثنا مسارات البيانات والمنهجية والملفات ورفع إيصالات إنستاباي عشان تشتغل بالكامل على جداول ومساحات تخزين سوبابيس الخاصة.
-عملنا جرد شامل لكل ملفات المشروع وتأكدنا من اختفاء أي استدعاء لأبرايت في كل الصفحات والمكونات النشطة.
-بنينا نسخة الإنتاج وفحصنا ٨٢ ملف جافاسكريبت خاص بالمتصفح وتأكدنا من خلوها تماماً من أي مفاتيح سرية أو مكتبات أبرايت.
-
-### المرحلة D (صفحة حاسبة الأسعار العامة `/calculator` — Commit `e818bad`)
-بنينا صفحة حاسبة الأسعار العامة على مسار `/calculator` بتصميم عربي كامل من اليمين لليسار ومن غير الحاجة لتسجيل دخول.
-ربطنا الحاسبة بنفس دالة التسعير اللي بتكتب عروض الأسعار في المحادثة عشان يطلع نفس الرقم بالمللي في المكانين.
-عرضنا التكلفة بالنقاط وبالجنيه المصري بس وبأرقام عربية مشرقية ومن غير أي ذكر للدولار أو أسماء المزودين أو كلمة تقريبي.
-وضحنا في الصفحة بشكل صريح إن الحجز يشمل هامش أمان ١٥ بالمئة وإن الخصم النهائي بيكون على الوحدات المستلمة فعلياً والباقي بيرجع تلقائياً.
-أضفنا اختبارات آلية بتقارن نتائج صفحة الحاسبة مع نتائج كاتب عروض الأسعار لكل القدرات والأحجام ونجحت كلها بالكامل.
-
-### المرحلة E (دليل الإطلاق وقوالب البريد وإعدادات فيرسل — Commit `3ccf07e`)
-راجعنا ملف إعدادات فيرسل وتأكدنا من وجود مهمة كرون يومية واحدة بس متوافقة مع الخطة المجانية Hobby ومفيش أي كرون بيتكرر كل دقيقة.
-جهزنا في ملف `docs/CUTOVER.md` ثلاث قوالب بريد إلكتروني عربية جاهزة للنسخ واللصق لتأكيد الحساب واستعادة كلمة السر والرابط السحري.
-وثّقنا كل روابط التحويل المطلوبة في سوبابيس وجدول متغيرات البيئة المطلوب إضافته في فيرسل قبل الدمج.
-كتبنا خطوات منح صلاحية الأدمن لحسابك بالخطوات والأوامر الجاهزة مع خطة رجوع سريعة في حال احتجت أي تعديل.
-رتبنا خطوات الإطلاق النهائي خطوة بخطوة عشان تقدر تنفذها بنفسك بسهولة وأمان تام.
-
-### المرحلة F (سكريبت الفحص الحي المصغّر والتقرير النهائي)
-جهزنا سكريبت فحص حي مصغّر في `scripts/verify/run-tiny-live-preview.ts` لاختبار وحدة واحدة من تيك توك وقفلناه بشرط تأكيد يدوي عشان ما يسحبش سنت واحد بدون إذنك.
-شغّلنا حزمة الاختبارات الكاملة للمشروع ونجح ٥٩ ملف اختبار بإجمالي ٤٧٣ اختبار بدون ولا غلطة واحدة.
-شغّلنا بناء الإنتاج النهائي وفحصنا كل ملفات المتصفح وتأكدنا من عدم تسريب أي سر أو مفتاح خاص.
-سجّلنا كل تفاصيل المراحل وأرقام الكوميت وجدول الأسعار النهائي واستعلامات المراجعة المالية في ملف `docs/GO_LIVE_REPORT.md`.
-المشروع دلوقتي جاهز للإطلاق على فرع `migrate/supabase` والطلب رقم ٤٣ مفتوح ومستني مراجعتك وموافقتك النهائية للدمج.

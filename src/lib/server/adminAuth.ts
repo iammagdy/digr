@@ -74,8 +74,13 @@ function mapRowFromSupabase(row: any, tableId?: string): any {
         ? Number(row.confirmed_amount_egp)
         : (row.confirmedAmountEgp ?? null);
   }
-  if (tableId === "settings_public") {
-    out.creditValueEgp = Number(row.credit_value_egp ?? row.creditValueEgp ?? 0.1);
+  if (tableId === "settings_public" || tableId === "settings_private") {
+    if (row.value && typeof row.value === "object") {
+      Object.assign(out, row.value);
+    }
+    if (tableId === "settings_public") {
+      out.creditValueEgp = Number(out.creditValueEgp ?? row.credit_value_egp ?? row.creditValueEgp ?? 0.1);
+    }
   }
   if (tableId === "admin_audit_log") {
     const details = typeof row.details === "object" && row.details ? row.details : {};
@@ -93,6 +98,14 @@ function mapRowFromSupabase(row: any, tableId?: string): any {
 }
 
 function mapDataToSupabase(data: Record<string, any>, tableId?: string): Record<string, any> {
+  if (tableId === "settings_public" || tableId === "settings_private") {
+    const cleanValue: Record<string, any> = {};
+    for (const [k, v] of Object.entries(data || {})) {
+      if (k === "$id" || k === "key" || k === "updated_at" || k === "updatedAt") continue;
+      cleanValue[k] = v;
+    }
+    return { value: cleanValue, updated_at: new Date().toISOString() };
+  }
   const out: Record<string, any> = {};
   for (const [k, v] of Object.entries(data || {})) {
     if (k === "$id") continue;
@@ -155,7 +168,12 @@ function createSupabaseTablesAdapter(adminClient: any): any {
     },
     async updateRow({ tableId, rowId, data }: { databaseId?: string; tableId: string; rowId: string; data: Record<string, any> }) {
       const pk = tableId === "settings_public" || tableId === "settings_private" ? "key" : "id";
-      const payload = mapDataToSupabase(data, tableId);
+      let payload = mapDataToSupabase(data, tableId);
+      if (tableId === "settings_public" || tableId === "settings_private") {
+        const { data: existing } = await adminClient.from(tableId).select("value").eq(pk, rowId).maybeSingle();
+        const prevValue = existing?.value && typeof existing.value === "object" ? existing.value : {};
+        payload = { value: { ...prevValue, ...payload.value }, updated_at: payload.updated_at };
+      }
       const { data: updated, error } = await adminClient.from(tableId).update(payload).eq(pk, rowId).select("*").single();
       if (error) throw error;
       return mapRowFromSupabase(updated, tableId);
