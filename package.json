@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.11",
+    "@vercel/analytics": "^2.0.1",
     "appwrite": "^18.1.1",
     "arabic-persian-reshaper": "^1.0.1",
     "bidi-js": "^1.1.0",
