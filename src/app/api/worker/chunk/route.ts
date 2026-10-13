@@ -248,6 +248,65 @@ async function resolveJobExecutionSpec(
   };
 }
 
+interface ReleaseConfirmation {
+  confirmed: boolean;
+  data: any;
+  diagnostic: string | null;
+}
+
+async function executeReleaseConfirmation(
+  adminClient: any,
+  jobId: string,
+  reason: string
+): Promise<ReleaseConfirmation> {
+  try {
+    const { data: relData, error: relErr } = await adminClient.rpc("release_job_atomic", {
+      p_job_id: jobId,
+      p_error_message: reason,
+      p_force: true,
+    });
+    if (!relErr && Boolean(relData?.success === true || relData?.already_released === true)) {
+      return { confirmed: true, data: relData, diagnostic: null };
+    }
+    const diagnostic =
+      (typeof relErr?.message === "string" && relErr.message) ||
+      (typeof relData?.error === "string" && relData.error) ||
+      (relData && typeof relData === "object" && JSON.stringify(relData)) ||
+      "release_rpc_failed";
+    return {
+      confirmed: false,
+      data: relData || null,
+      diagnostic,
+    };
+  } catch (rpcEx: any) {
+    return {
+      confirmed: false,
+      data: null,
+      diagnostic: rpcEx?.message || "release_exception",
+    };
+  }
+}
+
+function buildReleaseFailedResponse(
+  jobId: string,
+  diagnostic: string | null,
+  extra: Record<string, any> = {}
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      released: false,
+      chargedCredits: 0,
+      deliveredUnits: 0,
+      jobId,
+      error: "تعذر تحرير الرصيد المحجوز للمهمة.",
+      diagnostic: diagnostic || "release_failed",
+      ...extra,
+    },
+    { status: 500 }
+  );
+}
+
 export async function POST(req: NextRequest) {
   // 1. Authenticate with CRON_SECRET (timing-safe)
   if (!verifyCronSecret(req)) {
@@ -361,25 +420,10 @@ export async function POST(req: NextRequest) {
     if (!useMockProvider && !isLiveProviderReady) {
       const releaseReason =
         "محرك استخراج البيانات المباشر غير مفعل حالياً؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-      const { data: releaseData, error: releaseErr } = await adminClient.rpc(
-        "release_job_atomic",
-        {
-          p_job_id: jobId,
-          p_error_message: releaseReason,
-          p_force: true,
-        }
-      );
+      const rel = await executeReleaseConfirmation(adminClient, jobId, releaseReason);
 
-      if (releaseErr) {
-        return NextResponse.json(
-          {
-            success: false,
-            released: false,
-            jobId,
-            error: "تعذر تحرير الرصيد المحجوز للمهمة المتوقفة.",
-          },
-          { status: 500 }
-        );
+      if (!rel.confirmed) {
+        return buildReleaseFailedResponse(jobId, rel.diagnostic);
       }
 
       return NextResponse.json(
@@ -390,7 +434,7 @@ export async function POST(req: NextRequest) {
           deliveredUnits: 0,
           jobId,
           error: releaseReason,
-          release: releaseData,
+          release: rel.data,
         },
         { status: 503 }
       );
@@ -438,19 +482,20 @@ export async function POST(req: NextRequest) {
         p_job_id: jobId,
         p_error_message: capErrorMsg,
       });
-      const { data: capReleaseData } = await adminClient.rpc("release_job_atomic", {
-        p_job_id: jobId,
-        p_error_message: capErrorMsg,
-        p_force: true,
-      });
+      const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
+      if (!rel.confirmed) {
+        return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
+      }
+
       return NextResponse.json(
         {
           success: false,
           released: true,
           chargedCredits: 0,
           capExceeded: true,
+          jobId,
           error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
-          release: capReleaseData,
+          release: rel.data,
         },
         { status: 429 }
       );
@@ -525,11 +570,11 @@ export async function POST(req: NextRequest) {
     if (isDone && newDeliveredUnits === 0) {
       const emptyErrorAr =
         "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-      const { data: emptyReleaseData } = await adminClient.rpc("release_job_atomic", {
-        p_job_id: jobId,
-        p_error_message: emptyErrorAr,
-        p_force: true,
-      });
+      const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
+      if (!rel.confirmed) {
+        return buildReleaseFailedResponse(jobId, rel.diagnostic);
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -538,7 +583,7 @@ export async function POST(req: NextRequest) {
           deliveredUnits: 0,
           jobId,
           error: emptyErrorAr,
-          release: emptyReleaseData,
+          release: rel.data,
         },
         { status: 422 }
       );
@@ -584,14 +629,56 @@ export async function POST(req: NextRequest) {
       p_cost_usd: actualCostUsd,
     });
 
-    if (completeErr) {
-      throw completeErr;
+    if (
+      completeErr ||
+      !compData ||
+      compData.success !== true ||
+      typeof compData.delivered_units !== "number" ||
+      compData.delivered_units < 0
+    ) {
+      throw new Error(
+        completeErr?.message ||
+          "استجابة غير صالحة من complete_chunk: تعذر التحقق من تسجيل الوحدات المنجزة في قاعدة البيانات."
+      );
     }
 
-    const recordedDeliveredUnits =
-      typeof compData?.delivered_units === "number"
-        ? compData.delivered_units
-        : newDeliveredUnits;
+    const recordedDeliveredUnits: number = compData.delivered_units;
+
+    if (compData.already_completed) {
+      console.warn(
+        `[worker:chunk_already_completed] jobId=${jobId} step=${currentStep} currentDbStep=${compData.current_step}`
+      );
+      if (!isDone) {
+        return NextResponse.json({
+          success: true,
+          done: false,
+          alreadyCompleted: true,
+          jobId,
+          step: compData.current_step ?? currentStep + 1,
+          deliveredUnits: recordedDeliveredUnits,
+          targetMax,
+          spendCostId,
+        });
+      }
+
+      // If isDone and chunk was already completed, check if job was already settled
+      const { data: currentJobCheck } = await adminClient
+        .from("jobs")
+        .select("status, charged_credits, delivered_units")
+        .eq("id", jobId)
+        .maybeSingle();
+
+      if (currentJobCheck?.status === "completed") {
+        return NextResponse.json({
+          success: true,
+          done: true,
+          alreadySettled: true,
+          jobId,
+          deliveredUnits: currentJobCheck.delivered_units ?? recordedDeliveredUnits,
+          spendCostId,
+        });
+      }
+    }
 
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
     if (isDone) {
@@ -631,11 +718,11 @@ export async function POST(req: NextRequest) {
           console.error(
             `[worker:assembly_failed] step=${s} reason=${stepCorrupt ? "corrupted_step_file" : "missing_step_file"}`
           );
-          const { data: relPartialFail } = await adminClient.rpc("release_job_atomic", {
-            p_job_id: jobId,
-            p_error_message: partialCorruptMsg,
-            p_force: true,
-          });
+          const rel = await executeReleaseConfirmation(adminClient, jobId, partialCorruptMsg);
+          if (!rel.confirmed) {
+            return buildReleaseFailedResponse(jobId, rel.diagnostic);
+          }
+
           return NextResponse.json(
             {
               success: false,
@@ -644,7 +731,7 @@ export async function POST(req: NextRequest) {
               deliveredUnits: 0,
               jobId,
               error: partialCorruptMsg,
-              release: relPartialFail,
+              release: rel.data,
             },
             { status: 500 }
           );
@@ -662,11 +749,11 @@ export async function POST(req: NextRequest) {
         console.error(
           `[worker:assembly_failed] reason=row_count_mismatch collected=${collectedRows.length} expected=${recordedDeliveredUnits}`
         );
-        const { data: relMismatch } = await adminClient.rpc("release_job_atomic", {
-          p_job_id: jobId,
-          p_error_message: mismatchMsg,
-          p_force: true,
-        });
+        const rel = await executeReleaseConfirmation(adminClient, jobId, mismatchMsg);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        }
+
         return NextResponse.json(
           {
             success: false,
@@ -675,7 +762,7 @@ export async function POST(req: NextRequest) {
             deliveredUnits: 0,
             jobId,
             error: mismatchMsg,
-            release: relMismatch,
+            release: rel.data,
           },
           { status: 500 }
         );
@@ -776,11 +863,11 @@ export async function POST(req: NextRequest) {
         );
         const uploadFailReason =
           "تعذر حفظ ملفات النتائج النهائية؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-        const { data: relUploadFail } = await adminClient.rpc("release_job_atomic", {
-          p_job_id: jobId,
-          p_error_message: uploadFailReason,
-          p_force: true,
-        });
+        const rel = await executeReleaseConfirmation(adminClient, jobId, uploadFailReason);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        }
+
         return NextResponse.json(
           {
             success: false,
@@ -789,7 +876,7 @@ export async function POST(req: NextRequest) {
             deliveredUnits: 0,
             jobId,
             error: uploadFailReason,
-            release: relUploadFail,
+            release: rel.data,
           },
           { status: 500 }
         );
@@ -825,11 +912,11 @@ export async function POST(req: NextRequest) {
         );
         const avFailReason =
           "تعذر تسجيل نسخة المستندات النهائية؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-        const { data: relAvFail } = await adminClient.rpc("release_job_atomic", {
-          p_job_id: jobId,
-          p_error_message: avFailReason,
-          p_force: true,
-        });
+        const rel = await executeReleaseConfirmation(adminClient, jobId, avFailReason);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        }
+
         return NextResponse.json(
           {
             success: false,
@@ -838,7 +925,7 @@ export async function POST(req: NextRequest) {
             deliveredUnits: 0,
             jobId,
             error: avFailReason,
-            release: relAvFail,
+            release: rel.data,
           },
           { status: 500 }
         );
@@ -968,29 +1055,39 @@ export async function POST(req: NextRequest) {
         }
 
         // Release full reserve with zero charge on unrecoverable chunk failure if not already released
+        let releaseConfirmed = Boolean(lastFailureData?.released);
         let releaseResult = lastFailureData;
-        if (!lastFailureData?.released && body?.retryOnly !== true) {
-          const { data: relData } = await adminClient.rpc("release_job_atomic", {
-            p_job_id: jobId,
-            p_error_message: errorMsg,
-            p_force: true,
-          });
-          if (relData) {
+        let releaseDiagnostic: string | null = null;
+
+        if (!releaseConfirmed && body?.retryOnly !== true) {
+          const rel = await executeReleaseConfirmation(adminClient, jobId, errorMsg);
+          if (rel.confirmed) {
+            releaseConfirmed = true;
             releaseResult = {
               ...(lastFailureData || {}),
               released: true,
-              release: relData,
+              release: rel.data,
             };
+          } else {
+            releaseConfirmed = false;
+            releaseDiagnostic = rel.diagnostic;
           }
         }
+
+        const safeArabicError = releaseConfirmed
+          ? errorMsg
+          : "تعذر تحرير الرصيد المحجوز للمهمة.";
 
         return NextResponse.json(
           {
             success: false,
-            released: Boolean(releaseResult?.released),
+            released: releaseConfirmed,
             chargedCredits: 0,
-            error: errorMsg,
+            deliveredUnits: 0,
+            jobId,
+            error: safeArabicError,
             failure: releaseResult,
+            ...(releaseDiagnostic ? { diagnostic: releaseDiagnostic } : {}),
           },
           { status: 500 }
         );
@@ -1002,7 +1099,15 @@ export async function POST(req: NextRequest) {
       }
     }
     return NextResponse.json(
-      { success: false, error: errorMsg },
+      {
+        success: false,
+        released: false,
+        chargedCredits: 0,
+        deliveredUnits: 0,
+        jobId: jobId || undefined,
+        error: "تعذر تحرير الرصيد المحجوز للمهمة.",
+        diagnostic: "outer_catch_unhandled",
+      },
       { status: 500 }
     );
   }
