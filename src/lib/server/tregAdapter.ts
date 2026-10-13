@@ -49,14 +49,17 @@ export function getInjectedProviderAdapter(): ProviderAdapterFn | null {
   return injectedTestAdapter;
 }
 
-async function executeTregCallWithRetry(
+export async function executeTregCallWithRetry(
   options: TregCallOptions,
   maxRetries: number = 3
 ): Promise<TregCallResult> {
+  // First real TikTok profile test requires exactly ONE outbound provider attempt maximum
+  const isSingleAttemptEndpoint = options.endpointId === "tikhub.tiktok.user.profile";
+  const effectiveMaxRetries = isSingleAttemptEndpoint ? 0 : maxRetries;
   let attempt = 0;
   let lastResult: TregCallResult | null = null;
 
-  while (attempt <= maxRetries) {
+  while (attempt <= effectiveMaxRetries) {
     lastResult = await executeTregCall(options);
     if (lastResult.ok) {
       return lastResult;
@@ -68,7 +71,7 @@ async function executeTregCallWithRetry(
       lastResult.error === "network_failure" ||
       lastResult.error === "rate_limit";
 
-    if (!isRetryable || attempt === maxRetries) {
+    if (!isRetryable || attempt === effectiveMaxRetries) {
       return lastResult;
     }
 
@@ -119,16 +122,24 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     pageParams.limit = input.pageSize;
   }
 
-  const callResult = await executeTregCallWithRetry({
-    endpointId: input.endpointId,
-    method: input.method,
-    params: pageParams,
-    userId: input.userId,
-    jobId: input.jobId,
-    stepId: `step_${input.step}`,
-    page,
-    routeMaxCostUsd: "0.05",
-  });
+  const isSingleAttemptCap =
+    input.endpointId === "tikhub.tiktok.user.profile" ||
+    input.capabilitySlug === "tiktok-profile";
+  const retries = isSingleAttemptCap ? 0 : 3;
+
+  const callResult = await executeTregCallWithRetry(
+    {
+      endpointId: input.endpointId,
+      method: input.method,
+      params: pageParams,
+      userId: input.userId,
+      jobId: input.jobId,
+      stepId: `step_${input.step}`,
+      page,
+      routeMaxCostUsd: "0.05",
+    },
+    retries
+  );
 
   const costMicro = Math.max(0, Number(callResult.costMicro) || 0);
   const costUsd = Number((costMicro / 1_000_000).toFixed(6));

@@ -263,7 +263,7 @@ describe("Supabase Route Handlers & Business Rules", () => {
 
   it("acceptQuoteSupabase binds quote hash with outputFormats and rejects tampering", async () => {
     const { computePlanHash } = await import("../src/functions/shared/planManager");
-    const items = [{ capabilitySlug: "fb-comments", targetVolumeMin: 10, targetVolumeMax: 10 }];
+    const items = [{ capabilitySlug: "fb-comments", params: {}, targetVolumeMin: 10, targetVolumeMax: 10 }];
     
     // Hash changes when output formats differ
     const hashA = computePlanHash(items, ["csv", "xlsx"]);

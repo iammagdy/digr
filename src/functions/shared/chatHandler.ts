@@ -984,12 +984,12 @@ export class ChatHandler {
         const compactSummary = buildCompactCatalogSummary(liveCatalogEndpoints.length > 0 ? liveCatalogEndpoints : getCachedCatalogEndpoints());
         turnMessages.push({
           role: "system",
-          content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
+          content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية — المرحلة الثانية (Phase 2)]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
         });
       } else if (!isGreeting && !isGeneralQuestion && !isTestSearchScenario) {
         turnMessages.push({
           role: "system",
-          content: `${formatBriefForSystemPrompt(brief)}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]:\n- لا تبحث في الكتالوج ولا تقترح خطة مسعرة في هذه المرحلة.\n- افهم قصد المستخدم، واطرح حتى ٣ أسئلة متابعة ذكية كحد أقصى (لا تكرر أي سؤال تمت الإجابة عنه سابقاً).\n- احفظ واستكمل متطلبات البحث عبر استدعاء أداة update_brief (المنصات، الكلمات المفتاحية، حجم البيانات، النطاق الزمني، إلخ).`,
+          content: `${formatBriefForSystemPrompt(brief)}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]: استوعب هدف البحث بدقة كخبير استشاري. إذا كان الطلب يتطلب أدوات جمع بيانات عامة، استدعِ search_catalog لاكتشاف الأدوات المناسبة من الكتالوج المفتوح، أو اطرح أسئلة توضيحية ذكية ومحددة لاستكمال متطلبات البحث عبر update_brief أو ask_clarification.`,
         });
       }
 

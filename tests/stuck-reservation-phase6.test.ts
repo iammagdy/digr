@@ -173,7 +173,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
       });
 
       expect(responses[1].body.alreadyReleased).toBe(true);
-      const releaseRows = Array.from(memTables.ledgerMap.values()).filter((r) => r.type === "release");
+      const releaseRows = Array.from(memTables.ledgerMap.values()).filter((r: any) => r.type === "release");
       expect(releaseRows).toHaveLength(1);
     } finally {
       process.env.TREG_LIVE = prevTregLive;
@@ -212,7 +212,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
     // Second watchdog run must not release a second time
     const secondRun = await runJobWatchdog(memTables as any, 30);
     expect(secondRun.recoveredCount).toBe(0);
-    const releaseRows = Array.from(memTables.ledgerMap.values()).filter((r) => r.type === "release");
+    const releaseRows = Array.from(memTables.ledgerMap.values()).filter((r: any) => r.type === "release");
     expect(releaseRows).toHaveLength(1);
   });
 
@@ -283,7 +283,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
     expect(watchdogRes.recoveredCount).toBe(0);
     expect(watchdogRes.skippedIds).toContain("job_already_released");
 
-    const releaseRows = Array.from(memTables.ledgerMap.values()).filter((r) => r.type === "release");
+    const releaseRows = Array.from(memTables.ledgerMap.values()).filter((r: any) => r.type === "release");
     expect(releaseRows).toHaveLength(1);
   });
 
