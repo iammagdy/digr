@@ -92,6 +92,11 @@ export default async ({ req, res, log, error }: any) => {
         title: "تم اعتماد شحن رصيدك",
         body: `أُضيف ${toArabicDigits(credits)} نقطة إلى محفظتك (${egp(effectiveAmount)}).`,
         link: "/dashboard/topup",
+        emailVars: {
+          ConfirmedAmountEgp: toArabicDigits(effectiveAmount),
+          Credits: toArabicDigits(credits),
+          Reference: topup.reference,
+        },
       }, log);
       await writeAudit(client, {
         actorId: callerId, actorName: caller.name || "مسؤول", kind: "approve", label: "اعتماد شحن",
@@ -121,6 +126,11 @@ export default async ({ req, res, log, error }: any) => {
         title: "تم رفض طلب شحن",
         body: `السبب: ${rejectReason}`,
         link: "/dashboard/topup",
+        emailVars: {
+          AmountEgp: toArabicDigits(topup.amountEgp),
+          Reference: topup.reference,
+          RejectReason: rejectReason,
+        },
       }, log);
       await writeAudit(client, {
         actorId: callerId, actorName: caller.name || "مسؤول", kind: "reject", label: "رفض شحن",

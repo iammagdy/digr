@@ -37,7 +37,8 @@
         "rows.read",
         "rows.write",
         "files.read",
-        "files.write"
+        "files.write",
+        "messages.write"
       ],
       "timeout": 15
     },
