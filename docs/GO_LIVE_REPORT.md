@@ -3,8 +3,8 @@
 - **Branch:** `migrate/supabase` (PR #43 remains OPEN and UNMERGED per Gate G3)
 - **Supabase Project:** `pfinlfaqwnytesedchik`
 - **Applied Migrations:** `19` total (latest: `20261012200628_seed_initial_configuration`)
-- **Test Suite Status:** `59` test files, `474` tests passed (`0` failures)
-- **Production Build & Bundle Scan:** `82` client-side static chunks scanned in `.next/static/` — `0` secret strings, `0` `appwrite` references
+- **Test Suite Status:** `59` test files, `484` tests passed (`0` failures)
+- **Production Build & Bundle Scan:** Client-side static chunks scanned in `.next/static/` — `0` secret strings, `0` `appwrite` references
 
 ---
 
@@ -12,12 +12,12 @@
 
 | Phase | Commit | Exact Modified Files (`git show --stat`) | Real Summary |
 |---|---|---|---|
-| **Phase A: Verification-Round Fixes & Tests** | `6bfaa2d` | `src/app/api/account/delete/cancel/route.ts`, `src/app/api/chat/accept-quote/route.ts`, `src/app/api/cron/watchdog/route.ts`, `src/app/api/worker/chunk/route.ts`, `src/functions/shared/capabilityRegistry.ts`, `src/functions/shared/quotes.ts`, `src/lib/supabase/quoteAccept.ts`, `tests/admin-account-phase5.test.ts`, `tests/chat-plans-phase3.test.ts`, `tests/p1-capabilities-quotes.test.ts`, `tests/supabase-routes.test.ts`, `tests/worker-cron-phase4.test.ts` | Aligned pricing constants (`55 / 10 / 0.10`, `5,500` pts/USD), isolated each user inside `try/catch` in `src/app/api/cron/watchdog/route.ts` with profile anonymization (`deleted_<id>@purged.local`, `مستخدم محذوف`) + auth ban while keeping all `RESTRICT` financial tables intact, added `POST /api/account/delete/cancel` (`src/app/api/account/delete/cancel/route.ts`), and expanded route-handler unit tests. |
-| **Phase B: Seed Data Migration** | `0b6d8a4` | `supabase/migrations/20261012200628_seed_initial_configuration.sql` | Applied migration `20261012200628_seed_initial_configuration.sql` seeding `settings_public` (`1` row, `key = 'pricing'`), `settings_private` (`1` row, `key = 'pricing'`), `capability_registry` (`12` rows; only `tiktok-profile` enabled at `6` credits), and `templates` (`1` row: `tpl-tiktok-profile`). `get_advisors` returned `0` new security or performance warnings. |
+| **Phase A: Verification-Round Fixes & Tests** | `6bfaa2d` | `src/app/api/account/delete/cancel/route.ts`, `src/app/api/chat/accept-quote/route.ts`, `src/app/api/cron/watchdog/route.ts`, `src/app/api/worker/chunk/route.ts`, `src/functions/shared/capabilityRegistry.ts`, `src/functions/shared/quotes.ts`, `src/lib/supabase/quoteAccept.ts`, `tests/admin-account-phase5.test.ts`, `tests/chat-plans-phase3.test.ts`, `tests/p1-capabilities-quotes.test.ts`, `tests/supabase-routes.test.ts`, `tests/worker-cron-phase4.test.ts` | Aligned pricing constants (`55 / 10 / 0.10`, `5,500` pts/USD), isolated each user inside `try/catch` in `src/app/api/cron/watchdog/route.ts` with profile anonymization (`deleted_<id>@purged.local`, `مستخدم محذوف`) + auth ban while keeping all `RESTRICT` financial tables intact, added `POST /api/account/delete/cancel`, and expanded route-handler unit tests. |
+| **Phase B: Seed Data Migration** | `0b6d8a4` | `supabase/migrations/20261012200628_seed_initial_configuration.sql` | Applied migration `20261012200628_seed_initial_configuration.sql` seeding `settings_public` (`1` row, `key = 'pricing'`), `settings_private` (`1` row, `key = 'pricing'`), `capability_registry` (`12` rows; only `tiktok-profile` enabled at `6` credits), and `templates` (`6` rows; `1` enabled: `tiktok-profile`). `get_advisors` returned `0` new security or performance warnings. |
 | **Phase C: Appwrite Decoupling** | `4bd9a4d` | `src/app/api/jobs/[id]/download/route.ts`, `src/app/api/chat/route.ts`, `src/app/dashboard/jobs/page.tsx`, `src/app/dashboard/page.tsx`, `docs/review/appwrite-inventory-raw.md`, `tests/admin-account-phase5.test.ts`, `tests/supabase-routes.test.ts` | Created `GET /api/jobs/[id]/download` (300s signed URL from private `results` bucket after ownership verification), wired dashboard & chat routes to Supabase, and updated `docs/review/appwrite-inventory-raw.md` proving `0` active Appwrite imports in `src/app/**`, `src/components/**`, and `src/hooks/**`. |
 | **Phase D: Public `/calculator` Page** | `e818bad` | `src/app/calculator/page.tsx`, `src/lib/calculatorPricing.ts`, `tests/public-calculator-phase-d.test.ts` | Built `/calculator` (`src/app/calculator/page.tsx` + `src/lib/calculatorPricing.ts`) calling the shared pricing functions in `src/functions/shared/quotes.ts`, with `tests/public-calculator-phase-d.test.ts` verifying equality with the quote writer. |
 | **Phase E: Production Readiness Runbook** | `3ccf07e` | `docs/CUTOVER.md` | Updated `docs/CUTOVER.md` with Supabase Auth settings, 2 Arabic RTL HTML email templates (Confirm Signup, Reset Password), Vercel Hobby daily cron (`0 0 * * *`), Vercel environment variable table, and step-by-step cutover runbook. |
-| **Phase F: Tiny Real Job Script & Final Report** | `ff5f300` + *(HEAD)* | `scripts/verify/run-tiny-live-preview.ts`, `scripts/verify/verify-worker-dry-run.ts`, `src/app/api/worker/chunk/route.ts`, `src/functions/shared/quotes.ts`, `src/functions/shared/planManager.ts`, `src/functions/shared/providerCosts.ts`, `src/lib/calculatorPricing.ts`, `src/lib/server/adminAuth.ts`, `docs/CUTOVER.md`, `docs/GO_LIVE_REPORT.md` | Unified single-markup pricing (`calculateCapabilityUnitPricePoints` & `calculateCapabilityQuote` in `src/functions/shared/quotes.ts` used by both `planManager.ts` and `calculatorPricing.ts`), executed real `POST /api/worker/chunk` 2-chunk + failure dry-run against Test User 2, and prepared `scripts/verify/run-tiny-live-preview.ts` guarded by `CONFIRM_LIVE_PREVIEW=YES`. |
+| **Phase F & Handoff Fixes: Worker Port, Chat Supabase DAL, UI & Evidence** | `31b2540`, `a8136c8`, `086cc7e`, `346f6ab` | `src/app/api/worker/chunk/route.ts`, `src/lib/worker/artifactBuilders.ts`, `src/app/api/chat/route.ts`, `src/functions/shared/chatHandler.ts`, `src/functions/shared/llmClient.ts`, `src/app/page.tsx`, `src/components/landing/GlassHeader.tsx`, `src/components/landing/Sections.tsx`, `src/components/app/AppShell.tsx`, `src/app/login/page.tsx`, `src/app/register/page.tsx`, `src/app/admin/layout.tsx`, `scripts/verify/verify-worker-dry-run.ts` | Ported real chunked worker execution + CSV/XLSX/PDF artifact generation + `artifact_versions` & `notifications` inserts into `/api/worker/chunk`, ported `ChatHandler` to support Supabase client (`sb.from`) with `[chat:request_failed] requestId=... step=... reason=...` diagnostics, fixed landing session & `/calculator` navigation, and verified 2-chunk settlement + refund dry-run. |
 
 ---
 
@@ -36,24 +36,22 @@
   - `refundAmount = max(0, reservedPoints - actualCharge)`
   - For `tiktok-profile` (`1` delivered unit): `actualCharge = 6` points (`0.60` EGP), `refundAmount = 1` point (`0.10` EGP)
 
-### A. Database Seeded Capabilities (`public.capability_registry` — 12 Rows)
-
-Columns populated by migration `20261012200628_seed_initial_configuration.sql`: `slug, name_ar, description_ar, endpoint_id, unit_price_credits, enabled` (remaining columns `category, name_en, pricing_unit, unit_cost_usd, max_rows, pagination_type, params, params_schema` are nullable).
+### A. Database Seeded Capabilities (`public.capability_registry` — 12 Rows Applied in `20261012200628_seed_initial_configuration.sql`)
 
 | `slug` | `name_ar` | `endpoint_id` | `unit_price_credits` | 1 Unit Reserve (`+15%`) | `enabled` |
 |---|---|---|---:|---:|:---:|
-| `tiktok-profile` | بيانات حساب تيك توك | `/v1/tiktok/profile` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `true` |
-| `tiktok-user-videos` | فيديوهات حساب تيك توك | `/v1/tiktok/user/posts` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `tiktok-keyword-videos` | بحث فيديوهات تيك توك بالكلمات | `/v1/tiktok/search/keyword` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `x-user-tweets` | تغريدات حساب إكس | `/v1/twitter/user-tweets` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `x-keyword-search` | بحث تغريدات إكس | `/v1/twitter/search` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `instagram-profile` | بيانات حساب انستجرام | `/v1/instagram/profile` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `false` |
-| `instagram-user-posts` | منشورات حساب انستجرام | `/v1/instagram/posts` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `youtube-channel` | بيانات قناة يوتيوب | `/v1/youtube/channel` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `false` |
-| `youtube-video-search` | بحث فيديوهات يوتيوب | `/v1/youtube/search` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `facebook-page-posts` | منشورات صفحة فيسبوك | `/v1/facebook/posts` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `google-serp-search` | نتائج بحث جوجل | `/v1/google/search` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
-| `telegram-channel-posts` | رسائل قناة تيليجرام | `/v1/telegram/messages` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `tiktok-profile` | استخراج ملف تيك توك الشخصي | `tikhub.tiktok.user.profile` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `true` |
+| `tiktok-user-videos` | مقاطع فيديو مستخدم تيك توك | `tikhub.tiktok.user.posts` | `2` pts (`0.20` ج.م) | `3` pts (`0.30` ج.م) | `false` |
+| `tiktok-keyword-videos` | بحث مقاطع تيك توك بالكلمات الدلالية | `tikhub.tiktok.search.video` | `2` pts (`0.20` ج.م) | `3` pts (`0.30` ج.م) | `false` |
+| `x-user-tweets` | تغريدات مستخدم منصة X | `twitter.user.tweets` | `2` pts (`0.20` ج.م) | `3` pts (`0.30` ج.م) | `false` |
+| `x-keyword-search` | بحث منشورات منصة X (تويتر) | `twitter.search.tweets` | `2` pts (`0.20` ج.م) | `3` pts (`0.30` ج.م) | `false` |
+| `instagram-profile` | ملف إنستغرام الشخصي | `instagram.user.profile` | `7` pts (`0.70` ج.م) | `9` pts (`0.90` ج.م) | `false` |
+| `instagram-user-posts` | منشورات مستخدم إنستغرام | `instagram.user.posts` | `3` pts (`0.30` ج.م) | `4` pts (`0.40` ج.م) | `false` |
+| `youtube-channel` | بيانات قناة يوتيوب | `youtube.channel.details` | `6` pts (`0.60` ج.م) | `7` pts (`0.70` ج.م) | `false` |
+| `youtube-video-search` | بحث مقاطع يوتيوب | `youtube.search.video` | `3` pts (`0.30` ج.م) | `4` pts (`0.40` ج.م) | `false` |
+| `facebook-page-posts` | منشورات صفحة فيسبوك | `facebook.page.posts` | `3` pts (`0.30` ج.م) | `4` pts (`0.40` ج.م) | `false` |
+| `google-serp-search` | نتائج بحث جوجل (SERP) | `google.serp.organic` | `11` pts (`1.10` ج.م) | `13` pts (`1.30` ج.م) | `false` |
+| `telegram-channel-posts` | رسائل قناة تيليجرام | `telegram.channel.messages` | `2` pts (`0.20` ج.م) | `3` pts (`0.30` ج.م) | `false` |
 
 ---
 
@@ -108,11 +106,11 @@ SELECT
 
 ### Live Audit SQL Results (`mcp_supabase_execute_sql`)
 - **Query 1 (Ledger per user):**
-  `[{"user_id":"00000000-0000-0000-0000-000000000001","ledger_rows":169,"balance_points":"1917","balance_egp":"191.70"},{"user_id":"00000000-0000-0000-0000-000000000002","ledger_rows":28,"balance_points":"400","balance_egp":"40.00"}]`
+  `[{"user_id":"00000000-0000-0000-0000-000000000001","ledger_rows":169,"balance_points":"1917","balance_egp":"191.70"},{"user_id":"00000000-0000-0000-0000-000000000002","ledger_rows":33,"balance_points":"380","balance_egp":"38.00"}]`
 - **Query 2 (Terminal jobs with unbalanced reserve/release):**
   `[]` (`0` rows)
-- **Query 3 (UTC daily provider spend):**
-  `[{"utc_day":"2026-10-12","spend_entries":12,"total_cost_usd":"0.6400","remaining_cap_usd":"0.1600"}]`
+- **Query 3 (UTC daily provider spend on 2026-10-13):**
+  `[{"utc_day":"2026-10-13","spend_entries":3,"total_cost_usd":"0.0100","remaining_cap_usd":"0.7900"}]`
 - **Query 4 (Seeded counts):**
   `[{"settings_public_rows":1,"settings_private_rows":1,"capability_rows":12,"enabled_capabilities":1,"enabled_templates":1}]`
 
@@ -125,15 +123,19 @@ SELECT
    - ضع `https://diger.tech` في خانة **Site URL**.
    - أضف الروابط التالية فقط في **Redirect URLs** (مقصورة على نطاق موقعك ومشروعك على Vercel فقط):
      - `https://diger.tech/**`
-     - `https://*-magdys-projects.vercel.app/**`
+     - `https://*-iam-magdy.vercel.app/**`
 2. من **Authentication -> Email Templates**، انسخ قوالب البريد العربية (تأكيد الحساب واستعادة كلمة المرور) الموجودة جاهزة في ملف `docs/CUTOVER.md`.
 3. لإنشاء حساب الأدمن الخاص بك وتفعيله:
    - سجّل حسابك أولاً من صفحة `/register` على الموقع (أو من **Supabase Dashboard -> Authentication -> Users -> Add user** مع تفعيل **Auto Confirm User**).
    - افتح **SQL Editor** في Supabase ونفّذ أمر ترقية الحساب الموجود في `docs/CUTOVER.md` (القسم الرابع `UPDATE auth.users SET raw_app_meta_data = ...`).
    - سجّل الخروج ثم ادخل مرة أخرى من `/login` لتتحدث جلسة الدخول بصلاحية الأدمن وتفتح لك لوحة `/admin`.
-4. قبل الإطلاق الفعلي للجمهور، نفّذ معاملة تنظيف بيانات الاختبار وحذف دالة الاختبار المؤقتة `DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);` من ملف `docs/OWNER_SQL.md` داخل **Supabase SQL Editor**.
-5. افتح لوحة تحكم **Vercel -> Project Settings -> Environment Variables** وأضف المتغيرات الأساسية المطلوبة الموضحة في القسم السابع من `docs/CUTOVER.md`:
-   - المتغيرات الإلزامية التي يجب إضافتها: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `TREG_TOKEN`, `TREG_LIVE`.
+4. لتحديد عنوان إنستاباي (`ipa@instapay`) الخاص باستقبال التحويلات:
+   - يقرأ الكود (`src/app/dashboard/topup/page.tsx`) العنوان أولاً من جدول `public.settings_public` (`key = 'pricing'`, الحقل `value.ipa`)، ويمكنك تعديله مباشرة من لوحة الإدارة (`/admin/settings`) أو عبر أمر SQL في `docs/CUTOVER.md`، كما يقرأ الكود المتغير الاحتياطي `NEXT_PUBLIC_INSTAPAY_HANDLE` من Vercel إذا لم يكن الحقل مسجلاً في قاعدة البيانات.
+5. لحماية رصيد Anthropic الشهري بجانب السقف اليومي المدمج في الكود (`$2.00` يومياً للنماذج و`$0.80` يومياً لمزود البيانات):
+   - افتح `https://console.anthropic.com/settings/limits` وحدد سقف الإنفاق الشهري (**Monthly spend limit**) بالقيمة التي تناسبك (مثلاً `$15` أو `$20` شهرياً).
+6. قبل الإطلاق الفعلي للجمهور، نفّذ معاملة تنظيف بيانات الاختبار وحذف دالة الاختبار المؤقتة `DROP FUNCTION IF EXISTS public.create_verify_fixture(TEXT, JSONB);` من ملف `docs/OWNER_SQL.md` داخل **Supabase SQL Editor**.
+7. افتح لوحة تحكم **Vercel -> Project Settings -> Environment Variables** وتأكد من وجود المتغيرات الأساسية المطلوبة الموضحة في القسم السابع من `docs/CUTOVER.md`:
+   - المتغيرات الإلزامية (`7` متغيرات): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`, `ANTHROPIC_API_KEY`, `TREG_TOKEN`, وعند الجاهزية للتشغيل الفعلي أضف `TREG_LIVE=true`.
    - المتغيرات الاختيارية (لها قيم افتراضية آمنة في الكود): `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_INSTAPAY_HANDLE`, `TREG_BASE_URL`, `LLM_ENABLED`, `LLM_PROVIDER`, `ANTHROPIC_MODEL`, `PROVIDER_DAILY_SPEND_CAP_USD`, `JOB_MAX_POINTS_CAP`.
 
 ### ثانياً: بوابة تجربة وظيفة حية مصغّرة (Gate G5 - اختياري قبل الإطلاق)
@@ -144,5 +146,6 @@ SELECT
    ```
 
 ### ثالثاً: بوابة الإطلاق النهائي ودمج الفرع (Gate G3)
-1. راجع رابط المعاينة (Preview Deployment) الخاص بالطلب **PR #43** على Vercel وتأكد من فتح صفحة `/calculator` وصفحة تسجيل الدخول `/login`.
+1. راجع رابط المعاينة (Preview Deployment) الخاص بالطلب **PR #43** على Vercel وتأكد من فتح صفحة `/calculator` وصفحة تسجيل الدخول `/login` والمحادثة.
 2. عند رضاك التام، اضغط **Merge Pull Request** لدمج الفرع `migrate/supabase` في `main`، وسيقوم Vercel بنشر النسخة الجديدة تلقائياً على `https://diger.tech` مع تفعيل كرون المراقبة اليومي المجاني (`0 0 * * *`).
+

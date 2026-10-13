@@ -72,7 +72,7 @@ export function runBundleSecretCheck(): { passed: boolean; violations: string[] 
     return { passed: false, violations };
   }
 
-  console.log("✅ Zero client bundle secrets detected. All client JS files are 100% clean.\n");
+  console.log("✅ Zero client bundle secrets detected. All client JS files are fully clean.\n");
   return { passed: true, violations: [] };
 }
 
