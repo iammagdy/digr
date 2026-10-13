@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
 
     // 5. Audit log entry
     try {
-      await adminClient.from("admin_audit_log").insert({
+      const auditRes = await adminClient.from("admin_audit_log").insert({
         actor_id: user.id,
         action: "account_delete_requested",
         target_type: "user",
@@ -84,7 +84,20 @@ export async function POST(req: NextRequest) {
           ip: req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown",
         },
       });
-    } catch {}
+      if (auditRes?.error) {
+        console.error(
+          `[account_delete:audit_insert_failed] reason=db_error code=${
+            auditRes.error.code || "unknown"
+          }`
+        );
+      }
+    } catch (auditErr: any) {
+      console.error(
+        `[account_delete:audit_insert_failed] reason=exception code=${
+          auditErr?.code || "unknown"
+        }`
+      );
+    }
 
     return NextResponse.json({
       success: true,

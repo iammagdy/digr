@@ -50,23 +50,26 @@ export async function GET(
       return NextResponse.json({ success: false, error: "غير مصرح بعرض هذا الطلب." }, { status: 403 });
     }
 
-    // 3. Read JSON result from private storage bucket
+    // 3. Read JSON result from private storage bucket (results or partials)
     try {
       let jsonText = "";
       const candidatePaths = [
+        `${jobDoc.user_id}/${jobId}/data.json`,
         `${verifiedUserId}/${jobId}/data.json`,
         `${jobId}/data.json`,
         `json_${jobId}`,
       ];
 
-      for (const path of candidatePaths) {
-        const { data: blob, error: dlErr } = await adminClient.storage
-          .from("results")
-          .download(path);
-
-        if (!dlErr && blob) {
-          jsonText = await blob.text();
-          break;
+      for (const bucketName of ["results", "partials"]) {
+        if (jsonText) break;
+        const bucket = adminClient.storage?.from?.(bucketName);
+        if (!bucket || typeof bucket.download !== "function") continue;
+        for (const path of candidatePaths) {
+          const { data: blob, error: dlErr } = await bucket.download(path);
+          if (!dlErr && blob) {
+            jsonText = await blob.text();
+            break;
+          }
         }
       }
 

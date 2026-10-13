@@ -52,15 +52,30 @@ export async function GET(req: NextRequest) {
 
         // Notify user if newly released
         if (job.user_id && !releaseData.already_released) {
-          await adminClient.from("notifications").insert({
-            id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            user_id: job.user_id,
-            title: "إلغاء واسترجاع طلب متوقف",
-            body: "تم إلغاء المهمة تلقائياً لعدم الاستجابة لأكثر من 30 دقيقة، واسترجاع كامل الرصيد المحجوز إلى محفظتك دون أي خصم.",
-            link: "/dashboard/jobs",
-            read: false,
-            created_at: new Date().toISOString(),
-          });
+          try {
+            const notifRes = await adminClient.from("notifications").insert({
+              id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              user_id: job.user_id,
+              title: "إلغاء واسترجاع طلب متوقف",
+              body: "تم إلغاء المهمة تلقائياً لعدم الاستجابة لأكثر من 30 دقيقة، واسترجاع كامل الرصيد المحجوز إلى محفظتك دون أي خصم.",
+              link: "/dashboard/jobs",
+              read: false,
+              created_at: new Date().toISOString(),
+            });
+            if (notifRes?.error) {
+              console.error(
+                `[watchdog:notification_insert_failed] reason=db_error code=${
+                  notifRes.error.code || "unknown"
+                }`
+              );
+            }
+          } catch (notifErr: any) {
+            console.error(
+              `[watchdog:notification_insert_failed] reason=exception code=${
+                notifErr?.code || "unknown"
+              }`
+            );
+          }
         }
       } else {
         console.error(`Watchdog failed to release job ${job.id}:`, relErr);
@@ -92,6 +107,8 @@ export async function GET(req: NextRequest) {
           await adminClient.from("notes").delete().eq("user_id", uId);
           await adminClient.from("conversations").delete().eq("user_id", uId);
           await adminClient.from("notifications").delete().eq("user_id", uId);
+          await adminClient.from("artifact_versions").delete().eq("user_id", uId);
+          await adminClient.from("capability_requests").delete().eq("user_id", uId);
           // B. Delete user's results-bucket storage files (keep receipts intact for financial audit)
           try {
             const { data: userFiles } = await adminClient.storage.from("results").list(uId);

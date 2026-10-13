@@ -64,6 +64,10 @@ export async function GET(
 
     // 4. Candidate file paths in results storage bucket
     const candidatePaths = [
+      `${job.user_id}/${jobId}/result.${format}`,
+      `${user.id}/${jobId}/result.${format}`,
+      `${jobId}/result.${format}`,
+      `${job.user_id}/${jobId}/data.${format}`,
       `${user.id}/${jobId}/data.${format}`,
       `${user.id}/${jobId}/${format}_${jobId}.${format}`,
       `${jobId}/data.${format}`,

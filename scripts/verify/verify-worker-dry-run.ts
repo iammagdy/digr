@@ -27,6 +27,7 @@ import { NextRequest } from "next/server";
 import crypto from "node:crypto";
 import { newVrunPrefix, createVerifyFixtures } from "./vrun";
 import { POST as workerChunkPost } from "../../src/app/api/worker/chunk/route";
+import { setProviderAdapterForTesting } from "../../src/lib/server/tregAdapter";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://pfinlfaqwnytesedchik.supabase.co";
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -210,8 +211,38 @@ async function main() {
     throw new Error(`Balance reservation mismatch: expected -${successReserved}, got -${balanceBefore - balanceAfterAccept}`);
   }
 
+  // Inject fake provider adapter for 2-chunk pagination (5 rows on step 0, 5 rows on step 1)
+  setProviderAdapterForTesting(async (input) => {
+    const startIdx = input.step * 5;
+    const rows = Array.from({ length: 5 }, (_, idx) => {
+      const n = startIdx + idx + 1;
+      return {
+        id: `tt_id_${n}`,
+        uniqueId: `diger_creator_${n}`,
+        nickname: `صانع محتوى ${n}`,
+        signature: `حساب عام للاختبار رقم ${n}`,
+        verified: n % 2 === 0,
+        followerCount: 10000 + n * 100,
+        followingCount: 150 + n,
+        heartCount: 250000 + n * 1000,
+        videoCount: 40 + n,
+        bioLink: `https://diger.tech/u/${n}`,
+      };
+    });
+    return {
+      ok: true,
+      httpStatus: 200,
+      rows,
+      rawProfile: rows[0],
+      nextCursor: input.step === 0 ? "cursor_step_1" : null,
+      costUsd: 0.005,
+      costMicro: 5000,
+      tregCallId: `fake_treg_${input.jobId}_step_${input.step}`,
+    };
+  });
+
   // A.3: Invoke POST /api/worker/chunk for Chunk 0 (processes 5 of 10 units)
-  console.log("\n[A.3] Invoking POST /api/worker/chunk (Step 0, mockBatchSize=5)...");
+  console.log("\n[A.3] Invoking POST /api/worker/chunk (Step 0, injected adapter -> 5 rows)...");
   const chunk0HttpRes = await workerChunkPost(
     buildWorkerRequest({
       jobId: successJobId,
@@ -237,7 +268,7 @@ async function main() {
   }
 
   // A.4: Invoke POST /api/worker/chunk for Chunk 1 (processes remaining 5 units -> total 10 -> settles)
-  console.log("\n[A.4] Invoking POST /api/worker/chunk (Step 1, mockBatchSize=5 -> Settlement)...");
+  console.log("\n[A.4] Invoking POST /api/worker/chunk (Step 1, injected adapter -> 5 rows -> Settlement)...");
   const chunk1HttpRes = await workerChunkPost(
     buildWorkerRequest({
       jobId: successJobId,
@@ -322,14 +353,28 @@ async function main() {
   const balanceDuringFailReserve = await getUserBalance(TEST_USER_ID);
   console.log(`- Failing Job Created: ID = ${failJobId}, Reserved = ${failAcceptRes.reserved_credits} points, Balance = ${balanceDuringFailReserve}`);
 
+  // Inject failing provider adapter for Section B
+  setProviderAdapterForTesting(async (input) => ({
+    ok: false,
+    httpStatus: 502,
+    rows: [],
+    nextCursor: null,
+    costUsd: 0,
+    costMicro: 0,
+    tregCallId: `fake_treg_fail_${input.jobId}`,
+    errorCode: "simulated_provider_error",
+    errorMessageAr: "خطأ محاكى من مزود البيانات لاختبار الاسترداد الكامل.",
+  }));
+
   // B.2: Call POST /api/worker/chunk with simulateProviderError=true & exhaustRetries=true
-  console.log("[B.2] Invoking POST /api/worker/chunk with simulateProviderError=true & exhaustRetries=true...");
+  console.log("[B.2] Invoking POST /api/worker/chunk with injected failing adapter & exhaustRetries=true...");
   const failHttpRes = await workerChunkPost(
     buildWorkerRequest({
       jobId: failJobId,
       expectedStep: 0,
       mockProvider: true,
       simulateProviderError: true,
+      mockEstimatedCostUsd: 0.001,
       exhaustRetries: true,
       disableSelfChain: true,
     })
@@ -390,22 +435,50 @@ async function main() {
     .in("id", createdCostIds);
   console.log(JSON.stringify(runCosts, null, 2));
 
-  console.log("\nStorage Verification:");
+  console.log("\nStorage & Artifact Verification:");
   const { data: finalUserResultsList } = await supabase.storage.from("results").list(`${TEST_USER_ID}/${successJobId}`);
   const userResultFiles = (finalUserResultsList || []).map((f) => f.name);
   console.log(`- Results folder (${TEST_USER_ID}/${successJobId}):`, userResultFiles);
-  if (!userResultFiles.includes("data.csv")) {
-    throw new Error(`Expected data.csv in results/${TEST_USER_ID}/${successJobId}`);
-  }
-  const { data: finalJobResultsList } = await supabase.storage.from("results").list(successJobId);
-  console.log(`- Results folder (${successJobId}):`, (finalJobResultsList || []).map((f) => f.name));
-  const { data: finalPartialsList } = await supabase.storage.from("partials").list(successJobId);
-  const remainingPartials = (finalPartialsList || []).map((f) => f.name);
-  console.log(`- Partials folder (${successJobId}) after cleanup:`, remainingPartials);
-  if (remainingPartials.length !== 0) {
-    throw new Error(`Expected partials/${successJobId} to be empty after settlement cleanup, found ${JSON.stringify(remainingPartials)}`);
+  if (!userResultFiles.includes("result.csv") || !userResultFiles.includes("result.xlsx") || !userResultFiles.includes("result.pdf")) {
+    throw new Error(`Expected result.csv, result.xlsx, result.pdf in results/${TEST_USER_ID}/${successJobId}, got ${JSON.stringify(userResultFiles)}`);
   }
 
+  const { data: csvBlob, error: csvDlErr } = await supabase.storage
+    .from("results")
+    .download(`${TEST_USER_ID}/${successJobId}/result.csv`);
+  if (csvDlErr || !csvBlob) {
+    throw new Error(`Failed to download result.csv: ${csvDlErr?.message || "missing_blob"}`);
+  }
+  const csvText = (await csvBlob.text()).replace(/^\uFEFF/, "").trimEnd();
+  const csvLines = csvText.split(/\r?\n/);
+  const dataRowCount = csvLines.length - 1;
+  console.log(`- Downloaded result.csv line count: ${csvLines.length} total lines (1 header + ${dataRowCount} data rows)`);
+  console.log("- Downloaded result.csv first rows:");
+  csvLines.slice(0, 4).forEach((line, idx) => {
+    console.log(`    [${idx === 0 ? "HEADER" : `ROW ${idx}`}] ${line}`);
+  });
+  if (dataRowCount !== 10) {
+    throw new Error(`Expected result.csv data row count to equal delivered_units (10), got ${dataRowCount}`);
+  }
+
+  const { data: avRow, error: avErr } = await supabase
+    .from("artifact_versions")
+    .select("*")
+    .eq("job_id", successJobId)
+    .single();
+  if (avErr || !avRow) {
+    throw new Error(`Missing artifact_versions row for ${successJobId}: ${avErr?.message}`);
+  }
+  console.log("- Artifact Version Row:", JSON.stringify(avRow));
+
+  const { data: finalPartialsList } = await supabase.storage.from("partials").list(successJobId);
+  const remainingPartials = (finalPartialsList || []).map((f) => f.name).filter((n) => n.startsWith("step_"));
+  console.log(`- Partials step files (${successJobId}) after cleanup:`, remainingPartials);
+  if (remainingPartials.length !== 0) {
+    throw new Error(`Expected step_*.json in partials/${successJobId} to be empty after settlement cleanup, found ${JSON.stringify(remainingPartials)}`);
+  }
+
+  setProviderAdapterForTesting(null);
   process.env.NODE_ENV = prevNodeEnv;
   if (prevEnableMock === undefined) delete process.env.ENABLE_MOCK_PROVIDER;
   else process.env.ENABLE_MOCK_PROVIDER = prevEnableMock;

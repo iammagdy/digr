@@ -2,17 +2,21 @@ import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import * as path from "path";
 import * as fs from "fs";
-import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
 
 function getRegularFontBuffer(): Buffer {
   if (!cachedRegularBuffer) {
+    const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
     const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
-    if (fs.existsSync(diskPath)) {
+    if (fs.existsSync(cwdPath)) {
+      cachedRegularBuffer = fs.readFileSync(cwdPath);
+    } else if (fs.existsSync(diskPath)) {
       cachedRegularBuffer = fs.readFileSync(diskPath);
     } else {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { fontRegularBase64 } = require("./embeddedFonts");
       cachedRegularBuffer = Buffer.from(fontRegularBase64, "base64");
     }
   }
@@ -21,10 +25,15 @@ function getRegularFontBuffer(): Buffer {
 
 function getBoldFontBuffer(): Buffer {
   if (!cachedBoldBuffer) {
+    const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
     const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
-    if (fs.existsSync(diskPath)) {
+    if (fs.existsSync(cwdPath)) {
+      cachedBoldBuffer = fs.readFileSync(cwdPath);
+    } else if (fs.existsSync(diskPath)) {
       cachedBoldBuffer = fs.readFileSync(diskPath);
     } else {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { fontBoldBase64 } = require("./embeddedFonts");
       cachedBoldBuffer = Buffer.from(fontBoldBase64, "base64");
     }
   }
@@ -539,7 +548,7 @@ export function generateCsvReport(payload: any): Buffer {
   const dateStr = metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
 
   const escapeCsv = (val: any) => {
-    const s = String(val ?? "").replace(/"/g, '""');
+    const s = String(val ?? "").replace(/\r?\n/g, " ").replace(/"/g, '""');
     return `"${s}"`;
   };
 
