@@ -73,6 +73,7 @@ function mapRowFromSupabase(row: any, tableId?: string): any {
       row.confirmed_amount_egp != null
         ? Number(row.confirmed_amount_egp)
         : (row.confirmedAmountEgp ?? null);
+    out.reviewedAt = row.reviewed_at ?? row.reviewedAt ?? null;
   }
   if (tableId === "settings_public" || tableId === "settings_private") {
     if (row.value && typeof row.value === "object") {
@@ -125,6 +126,11 @@ function createSupabaseTablesAdapter(adminClient: any): any {
         try {
           const q = JSON.parse(qStr);
           const col = q.attribute ? toSnakeCaseKey(q.attribute, tableId) : "";
+          if (tableId === "topups" && col === "reviewed_at") {
+            // public.topups does not have reviewed_at column in tracked Supabase schema.
+            // Drop filter/order on reviewed_at defensively to avoid PostgreSQL error 42703.
+            continue;
+          }
           const vals = Array.isArray(q.values) ? q.values : [];
           if (q.method === "equal" && col) {
             if (vals.length === 1) qb = qb.eq(col, vals[0]);
@@ -393,3 +399,54 @@ export async function creditValueEgp(tables: TablesDB): Promise<number> {
   } catch { /* default */ }
   return 0.1;
 }
+
+export interface TopupApprovalInfo {
+  reviewedAt: string;
+  credits: number;
+}
+
+/**
+ * Derives true topup approval records (reviewedAt timestamp and granted credits)
+ * directly from the append-only credit_ledger (read-only query).
+ * Each approved topup creates an immutable row with id 'top_<topupId>' and type 'topup'.
+ */
+export async function getTopupApprovalMap(tables: TablesDB): Promise<Map<string, TopupApprovalInfo>> {
+  const ledgerRows = await listAll(tables, "credit_ledger", [Query.equal("type", "topup")], 10000).catch(() => []);
+  const map = new Map<string, TopupApprovalInfo>();
+  for (const row of ledgerRows) {
+    const rawId =
+      row.topupId ||
+      (typeof row.$id === "string" && row.$id.startsWith("top_") ? row.$id.slice(4) : null) ||
+      (typeof row.id === "string" && row.id.startsWith("top_") ? row.id.slice(4) : null);
+    if (rawId) {
+      map.set(rawId, {
+        reviewedAt: row.createdAt || row.created_at,
+        credits: Number(row.delta) || 0,
+      });
+    }
+  }
+  return map;
+}
+
+/**
+ * Enriches topup rows with approval data from credit_ledger without inventing timestamps.
+ * If no corresponding ledger entry exists, reviewedAt is left null.
+ */
+export function enrichTopupsWithApprovals<T extends Record<string, any>>(
+  topups: T[],
+  approvalMap: Map<string, TopupApprovalInfo>
+): T[] {
+  for (const t of topups) {
+    const raw = t as any;
+    const id = raw.$id || raw.id;
+    const app = id ? approvalMap.get(id) : undefined;
+    if (app) {
+      raw.reviewedAt = raw.reviewedAt || app.reviewedAt;
+      raw.credits = raw.credits ?? app.credits;
+    } else if (!raw.reviewedAt) {
+      raw.reviewedAt = null;
+    }
+  }
+  return topups;
+}
+
