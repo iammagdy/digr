@@ -29,7 +29,20 @@ export function buildSystemPrompt(context: SystemPromptContext): string {
   const today = context.todayDate || new Date().toISOString().split("T")[0];
   const balance = context.userBalancePoints ?? 0;
 
-  const catalogCapabilities = context.sanitizedCapabilities || [];
+  const catalogCapabilities = (context.sanitizedCapabilities || []).map((c: any) => {
+    const {
+      tregEndpointId,
+      endpointId,
+      unitCostUsd,
+      estimatedCostUsdPerUnit,
+      verificationNote,
+      endpointSource,
+      costBasis,
+      priceStatus,
+      ...safe
+    } = c;
+    return safe;
+  });
 
   return `You are "مساعد Digr" (System Prompt v5), an Arabic-first research data consultant inside a chat product.
 People come to you to collect PUBLIC data from the internet and receive clean, documented files. You are not a generic chatbot: you design and manage data-collection jobs.

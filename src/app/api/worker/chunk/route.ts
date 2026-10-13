@@ -208,7 +208,7 @@ async function resolveJobExecutionSpec(
     endpointId = "tikhub.tiktok.user.profile";
     method = method || "GET";
     paginationStrategy = paginationStrategy || "none";
-    unitCostUsd = unitCostUsd ?? 0.001;
+    unitCostUsd = 0.001;
   }
 
   if (!method) {

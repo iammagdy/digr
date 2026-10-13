@@ -111,22 +111,22 @@ const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
     category: "tiktok",
     status: "verified",
     unit: "profile",
-    estimatedCostUsdPerUnit: 0.0012,
+    estimatedCostUsdPerUnit: 0.001,
     maxItemsPerCall: 1,
     estimatedSuccessRate: 0.95,
     verificationNote: VERIFICATION_NOTE,
-    nameAr: "استخراج ملف حساب تيك توك العام",
-    nameEn: "TikTok Public Profile",
-    descriptionAr: "استخراج بيانات وإحصائيات حساب تيك توك عام (@username)",
+    nameAr: "استخراج ملف تيك توك الشخصي",
+    nameEn: "TikTok User Profile",
+    descriptionAr: "استخراج الإحصائيات الشاملة والنبذة التعريفية وحالة التوثيق لحساب تيك توك عام",
     paramsSchema: JSON.stringify({
       type: "object",
-      properties: { username: { type: "string", maximum: 60 } },
+      properties: { username: { type: "string", description: "اسم المستخدم بدون @" } },
       required: ["username"],
     }),
-    tregEndpointId: "internal-tiktok-profile",
+    tregEndpointId: "tikhub.tiktok.user.profile",
     tregMethod: "GET",
     pricingUnit: "call",
-    unitCostUsd: 0.0012,
+    unitCostUsd: 0.001,
     maxRows: 1,
     paginationType: "none",
     enabled: true,
@@ -424,7 +424,7 @@ export async function getCatalogCapabilities(
       dbRows = (data || []).map((r: any) => ({
         ...r,
         slug: r.slug,
-        unitCostUsd: Number(r.unit_cost_usd ?? r.unitCostUsd ?? 0.0012),
+        unitCostUsd: Number(r.unit_cost_usd ?? r.unitCostUsd ?? 0.001),
         nameAr: r.name_ar,
         descriptionAr: r.description_ar,
         tregEndpointId: r.endpoint_id,
@@ -452,7 +452,7 @@ export async function getCatalogCapabilities(
         row.estimatedCostUsdPerUnit ??
         row.unitCostUsd ??
         existing?.estimatedCostUsdPerUnit ??
-        0.0012;
+        0.001;
       const status: CapabilityStatus =
         row.status || (row.enabled ? "verified" : existing?.status || "pending_verification");
       merged.set(row.slug, {
@@ -488,7 +488,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
         const settings = getRegistryPricingSettings();
         return data.map((c: any) => {
           const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
-          const costUsd = Number(c.unit_cost_usd ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.0012);
+          const costUsd = Number(c.unit_cost_usd ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.001);
           return {
             ...(seed || {}),
             slug: c.slug,
@@ -530,7 +530,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
       const settings = getRegistryPricingSettings();
       return rows.map((c) => {
         const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
-        const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.0012;
+        const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.001;
         return {
           ...(seed || {}),
           ...c,
@@ -564,7 +564,7 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
     } catch {
       parsedSchema = {};
     }
-    const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? 0.0012;
+    const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? 0.001;
     const status: CapabilityStatus = c.status || (c.enabled ? "verified" : "pending_verification");
     return {
       id: c.id || c.slug,

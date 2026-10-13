@@ -66,8 +66,13 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
       minimumOrderPoints: 50,
     });
     const tiktokCustom = customCatalog.find((c) => c.id === "tiktok-profile")!;
-    // 0.0012 * 50 * 10 / 0.10 = 6 points
-    expect(tiktokCustom.pointsPerUnit).toBe(6);
+    // 0.001 * 50 * 10 / 0.10 = 5 points (with custom override)
+    expect(tiktokCustom.pointsPerUnit).toBe(5);
+
+    // Default settings: 0.001 * 55 * 10 / 0.10 = 5.5 -> ceil = 6 points
+    const defaultCatalog = buildApprovedCatalog();
+    const tiktokDefault = defaultCatalog.find((c) => c.id === "tiktok-profile")!;
+    expect(tiktokDefault.pointsPerUnit).toBe(6);
   });
 
   it("gives the LLM capabilities from the registry with status while leaking zero provider names or endpoint IDs", () => {
