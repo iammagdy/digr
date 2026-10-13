@@ -19,13 +19,13 @@ const markazi = Markazi_Text({
   display: "swap",
 });
 
-const TITLE = "Digr — بيانات عامة جاهزة للتحليل";
+const TITLE = "Diger — بيانات عامة جاهزة للتحليل";
 const DESCRIPTION =
   "منصة عربية ذكية لاستخراج مجموعات البيانات العامة وتجهيزها للتحليل في ملفات Excel و PDF مع دليل المتغيرات ومنهجية الجمع.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: TITLE, template: "%s — Digr" },
+  title: { default: TITLE, template: "%s — Diger" },
   description: DESCRIPTION,
   applicationName: SITE_NAME,
   alternates: { canonical: "/" },
@@ -39,7 +39,14 @@ export const metadata: Metadata = {
     images: [{ url: "/og-image.png", width: 1200, height: 630, alt: "ديجر — ماذا تريد أن تعرف؟" }],
   },
   twitter: { card: "summary_large_image", title: TITLE, description: DESCRIPTION, images: ["/og-image.png"] },
-  icons: { icon: "/favicon.svg", apple: "/brand/digr-app-icon.svg" },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon.svg", type: "image/svg+xml" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
+  manifest: "/site.webmanifest",
 };
 
 export const viewport: Viewport = {

@@ -36,8 +36,8 @@ export function buildSampleProfilePdf(profile: any, metadata: any): Promise<Buff
       size: "A4",
       margins: { top: 28, bottom: 28, left: 35, right: 35 },
       info: {
-        Title: `تقرير Digr - ${profile.uniqueId || "tiktok"}`,
-        Author: "Digr",
+        Title: `تقرير Diger - ${profile.uniqueId || "tiktok"}`,
+        Author: "Diger",
         Subject: "Social Profile Report",
       },
     });
@@ -60,7 +60,7 @@ export function buildSampleProfilePdf(profile: any, metadata: any): Promise<Buff
     doc.rect(35, 28, contentWidth, 54).fill("#0F172A");
 
     doc.font("ArabicBold").fontSize(15).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl("منصة Digr لاستخراج البيانات العامة"), 50, 36, {
+    doc.text(formatArabicRtl("منصة Diger لاستخراج البيانات العامة"), 50, 36, {
       width: contentWidth - 30,
       align: "right",
       wordSpacing: 3.5,
@@ -221,7 +221,7 @@ export function buildSampleProfilePdf(profile: any, metadata: any): Promise<Buff
 
     // 6. Footer
     doc.font("ArabicRegular").fontSize(7.5).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Digr • جميع الحقوق محفوظة"), 35, 792, {
+    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Diger • جميع الحقوق محفوظة"), 35, 792, {
       width: contentWidth,
       align: "center",
       wordSpacing: 3,

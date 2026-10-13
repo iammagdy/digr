@@ -53,7 +53,7 @@ async function authenticateAdmin(req: NextRequest): Promise<{ ok: boolean; admin
   const endpoint = process.env.APPWRITE_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
   const projectId = process.env.APPWRITE_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
 
-  const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
+    const cookieJwt = (req.cookies.get("diger_jwt") ?? req.cookies.get("digr_jwt"))?.value?.trim() || null;
   const effectiveJwt = bearerJwt || cookieJwt;
 
   const sessionCookie =

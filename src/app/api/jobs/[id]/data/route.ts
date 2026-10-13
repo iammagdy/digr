@@ -116,7 +116,7 @@ export async function GET(
         status: jobDoc.status,
         templateSlug: jobDoc.template_slug || jobDoc.endpoint_id,
         metadata: {
-          platform: "Digr Data Platform",
+          platform: "Diger Data Platform",
           title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,
           collectedAt: jobDoc.finished_at || jobDoc.created_at,
           rowsCount: jobDoc.delivered_units || cleanRows.length,

@@ -165,7 +165,7 @@ export default function RequestsPage() {
       const url = URL.createObjectURL(await fileRes.blob());
       const a = document.createElement("a");
       a.href = url;
-      a.download = payload.downloadFileName || `digr_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
+      a.download = payload.downloadFileName || `diger_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
       document.body.appendChild(a);
       a.click();
       setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 250);

@@ -110,7 +110,7 @@ export function sanitizePersonaContextText(value: unknown, maxLength = 256): str
     .replace(/\s+/g, " ")
     .trim();
   if (!text || PROFILE_INJECTION_PATTERNS.some((pattern) => pattern.test(text))) return "";
-  text = text.replace(/\b(?:openai|chatgpt|gpt[-\s]?[3456][\w.-]*|treg|tikhub|serpapi)\b/gi, "منصة Digr");
+  text = text.replace(/\b(?:openai|chatgpt|gpt[-\s]?[3456][\w.-]*|treg|tikhub|serpapi)\b/gi, "منصة Diger");
   return text.slice(0, Math.max(0, maxLength)).trim();
 }
 

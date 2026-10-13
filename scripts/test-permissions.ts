@@ -63,9 +63,9 @@ async function record(
 async function runTests() {
   console.log("🔒 Starting Comprehensive A/B User Isolation & Permission Verification...\n");
 
-  const emailA = `test-user-a-${Date.now()}@digr.test`;
-  const emailB = `test-user-b-${Date.now()}@digr.test`;
-  const emailAdmin = `test-admin-${Date.now()}@digr.test`;
+  const emailA = `test-user-a-${Date.now()}@diger.test`;
+  const emailB = `test-user-b-${Date.now()}@diger.test`;
+  const emailAdmin = `test-admin-${Date.now()}@diger.test`;
   const password = "TestPassword123!";
 
   console.log("1. Creating test actors (User A, User B, Admin)...");

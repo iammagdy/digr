@@ -33,7 +33,7 @@ async function main() {
   const tables = new TablesDB(serverClient);
 
   const timestamp = Date.now();
-  const testEmail = `tester_b2_${timestamp}@digr.test`;
+  const testEmail = `tester_b2_${timestamp}@diger.test`;
   const testPassword = `Pass_${timestamp}!Secret`;
   let testUserId = "";
   let ledgerRowId = "";

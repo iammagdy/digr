@@ -169,12 +169,12 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
   });
 
   describe("4. White-Label Scrubbing", () => {
-    it("replaces anthropic and claude references with منصة Digr", () => {
+    it("replaces anthropic and claude references with منصة Diger", () => {
       const text = "Powered by Anthropic Claude 3.5 Haiku models for analysis";
       const scrubbed = scrubWhiteLabelText(text);
       expect(scrubbed).not.toContain("Anthropic");
       expect(scrubbed).not.toContain("Claude");
-      expect(scrubbed).toContain("منصة Digr");
+      expect(scrubbed).toContain("منصة Diger");
     });
   });
 

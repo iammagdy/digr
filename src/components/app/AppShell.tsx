@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Wordmark } from "@/components/Brand";
+import { Logo } from "@/components/Brand";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { useOnline } from "@/hooks/useOnline";
@@ -112,7 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const newQuestion = useCallback(() => {
     setDrawer(false);
-    if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("digr:new-chat"));
+    if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:new-chat"));
     else router.push("/dashboard/chat");
   }, [pathname, router]);
 
@@ -176,7 +176,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             }}
           >
             <div className="flex min-h-16 items-center justify-between gap-2 px-4">
-              <Link href="/dashboard/chat" aria-label="ديجر"><Wordmark height={26} /></Link>
+              <Link href="/dashboard/chat" aria-label="ديجر"><Logo height={26} /></Link>
               {mobile && (
                 <button type="button" onClick={() => setDrawer(false)} aria-label="إغلاق القائمة" className="h-11 w-11 cursor-pointer rounded-full border-0 bg-transparent text-xl text-mut">×</button>
               )}

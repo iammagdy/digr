@@ -14,7 +14,7 @@ export default function EmptyChat({ firstName, zeroBalance, onStart }: { firstNa
   return (
     <div className="mx-auto flex min-h-full max-w-[620px] flex-col justify-center gap-[22px] py-6" style={{ animation: "up .6s both" }}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/brand/digr-app-icon.svg" alt="" className="block h-10 w-10 rounded-xl" />
+      <img src="/brand/diger-app-icon.svg" alt="" className="block h-10 w-10 rounded-xl" />
       <div>
         <h2 className="m-0 font-display font-medium leading-[1.2] text-ink" style={{ fontSize: "clamp(26px,4cqi,34px)" }}>
           أهلًا {firstName}، بماذا نبدأ؟

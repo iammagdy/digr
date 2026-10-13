@@ -19,7 +19,7 @@ const users = new Users(client);
 async function main() {
   console.log("🚀 Testing ChatHandler End-to-End Flow...\n");
 
-  const email = `chat_test_${Date.now()}@digr.test`;
+  const email = `chat_test_${Date.now()}@diger.test`;
   const user = await users.create(ID.unique(), email, undefined, "Password123!Secure", "Chat Tester");
   console.log(`Created test user: ${user.email} (${user.$id})`);
 

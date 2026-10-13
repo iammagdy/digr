@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { Wordmark } from "@/components/Brand";
+import { Logo } from "@/components/Brand";
 import { useUser } from "@/hooks/useUser";
 import { useTheme } from "@/lib/theme";
 import { adminFetch } from "@/lib/adminApi";
@@ -44,8 +44,8 @@ export const useAdmin = () => {
   return c;
 };
 
-const RANGE_KEY = "digr:admin:range";
-const SEEN_KEY = "digr:admin:alertsSeen";
+const RANGE_KEY = "diger:admin:range";
+const SEEN_KEY = "diger:admin:alertsSeen";
 
 function useIsMobile(bp = 900) {
   const [m, setM] = useState(false);
@@ -104,8 +104,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   // One «تسجيل دخول» audit entry per browser session.
   useEffect(() => {
     try {
-      if (sessionStorage.getItem("digr:admin:logged")) return;
-      sessionStorage.setItem("digr:admin:logged", "1");
+      if (sessionStorage.getItem("diger:admin:logged")) return;
+      sessionStorage.setItem("diger:admin:logged", "1");
     } catch { /* ignore */ }
     adminFetch("/api/admin/audit", { method: "POST" }).catch(() => {});
   }, []);
@@ -200,7 +200,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           {!mobile && (
             <aside className="flex h-full min-h-0 w-[252px] shrink-0 flex-col gap-0.5 overflow-hidden border-ln bg-sf px-3.5 py-5" style={{ borderInlineEnd: "1px solid var(--ln)" }}>
               <div className="flex items-center gap-2.5 px-2 pb-[22px]">
-                <Wordmark height={28} />
+                <Logo height={28} />
                 <span className="rounded-full px-[9px] py-0.5 text-[11px] font-semibold text-goldT" style={{ background: tint("var(--gold)", 16) }}>إدارة</span>
               </div>
               <nav aria-label="الإدارة" className="-mx-1.5 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5">
@@ -294,7 +294,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <div onClick={() => setDrawer(false)} className="fixed inset-0 z-[60]" style={{ background: "rgba(8,10,10,.45)", animation: "fade .2s both" }} />
             <aside className="fixed bottom-0 right-0 top-0 z-[61] flex flex-col gap-0.5 bg-sf px-3.5 py-[18px]" style={{ width: "min(86%,320px)", animation: "drawer .35s cubic-bezier(.2,.7,.2,1) both" }}>
               <div className="flex items-center justify-between px-1.5 pb-4">
-                <Wordmark height={26} />
+                <Logo height={26} />
                 <button type="button" onClick={() => setDrawer(false)} aria-label="إغلاق" className="h-11 w-11 cursor-pointer border-0 bg-transparent text-xl text-mut">×</button>
               </div>
               {navItems.map((n) => <NavButton key={n.id} n={n} big />)}

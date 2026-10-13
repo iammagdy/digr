@@ -32,7 +32,7 @@ async function capture() {
   const users = new Users(serverClient);
   const tables = new TablesDB(serverClient);
 
-  const testEmail = `researcher_${Date.now()}@digr.test`;
+  const testEmail = `researcher_${Date.now()}@diger.test`;
   const testPassword = `Pass_${Date.now()}!Secret`;
   let testUserId = "";
 

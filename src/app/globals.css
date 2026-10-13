@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /* ───────────────────────────────────────────────────────────────
-   Digr V7 «سكون+عدسة» design tokens.
+   Diger V7 «سكون+عدسة» design tokens.
    Single source of truth: CSS variables on [data-theme]. Components never
    hardcode colors; Tailwind utilities (bg-bg, text-ink, border-ln …) read these.
    ─────────────────────────────────────────────────────────────── */
@@ -52,7 +52,7 @@
   color-scheme: dark;
 }
 
-/* Admin area uses its own surface values (design: Digr Admin). */
+/* Admin area uses its own surface values (design: Diger Admin). */
 [data-theme="light"] [data-area="admin"],
 [data-theme="light"][data-area="admin"] {
   --bg: #f6f4ef;

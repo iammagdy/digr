@@ -159,7 +159,7 @@ export async function POST(
     const methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
 1. مصدر البيانات وأصلها (Data Provenance):
-تم جمع بيانات هذه الدراسة بصورة آلية ومباشرة عبر منصة Digr من المصدر العلني المتاح على منصة ${facts.platform} للحساب (${facts.account})${facts.displayName ? ` - [${facts.displayName}]` : ""}، وحالة التوثيق (${facts.verifiedStatus}).
+تم جمع بيانات هذه الدراسة بصورة آلية ومباشرة عبر منصة Diger من المصدر العلني المتاح على منصة ${facts.platform} للحساب (${facts.account})${facts.displayName ? ` - [${facts.displayName}]` : ""}، وحالة التوثيق (${facts.verifiedStatus}).
 
 2. النطاق الزمني والتغطية (Temporal Bounds & Coverage):
 أُجريت عملية الاستخراج بتاريخ ${facts.date}. وتمثل المؤشرات الرقمية لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للحساب في تاريخ الجمع:

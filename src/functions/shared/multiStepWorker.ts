@@ -253,12 +253,12 @@ export function generateMethodologyText(payload: any): string {
   const meta = payload.metadata || {};
   const dateStr = meta.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const rowsCount = payload.rows?.length || (payload.profile ? 1 : 0);
-  const template = meta.template || meta.platform || "Digr Data Extraction";
+  const template = meta.template || meta.platform || "Diger Data Extraction";
   const jobId = meta.jobId || "N/A";
 
   return [
     "============================================================",
-    "             منصة Digr لاستخراج البيانات العامة             ",
+    "             منصة Diger لاستخراج البيانات العامة             ",
     "               وثيقة المنهجية وإخلاء المسؤولية             ",
     "============================================================",
     "",
@@ -277,7 +277,7 @@ export function generateMethodologyText(payload: any): string {
     "• لا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.",
     "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية.",
     "",
-    "تم الإنشاء آلياً عبر منصة Digr • جميع الحقوق محفوظة.",
+    "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
     "============================================================",
   ].join("\n");
 }
@@ -883,8 +883,8 @@ export async function executeMultiStepJob(
   const dateStr = new Date().toISOString().slice(0, 10);
   const finalPayload: any = {
     metadata: {
-      platform: "Digr Data Platform",
-      company: "Digr",
+      platform: "Diger Data Platform",
+      company: "Diger",
       title: `نتائج استخراج ${templateSlug}`,
       template: templateSlug,
       jobId,
@@ -925,7 +925,7 @@ export async function executeMultiStepJob(
         storage.createFile(
           "results",
           xlsxFileId,
-          new File([new Uint8Array(xlsxBuf)], `digr_${templateSlug}_${jobId}.xlsx`, {
+          new File([new Uint8Array(xlsxBuf)], `diger_${templateSlug}_${jobId}.xlsx`, {
             type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           }),
           permissions
@@ -933,7 +933,7 @@ export async function executeMultiStepJob(
         storage.createFile(
           "results",
           pdfFileId,
-          new File([new Uint8Array(pdfBuf)], `digr_${templateSlug}_${jobId}.pdf`, {
+          new File([new Uint8Array(pdfBuf)], `diger_${templateSlug}_${jobId}.pdf`, {
             type: "application/pdf",
           }),
           permissions
@@ -941,7 +941,7 @@ export async function executeMultiStepJob(
         storage.createFile(
           "results",
           csvFileId,
-          new File([new Uint8Array(csvBuf)], `digr_${templateSlug}_${jobId}.csv`, {
+          new File([new Uint8Array(csvBuf)], `diger_${templateSlug}_${jobId}.csv`, {
             type: "text/csv; charset=utf-8",
           }),
           permissions
@@ -957,7 +957,7 @@ export async function executeMultiStepJob(
         storage.createFile(
           "job_data",
           jsonFileId,
-          new File([new Uint8Array(Buffer.from(JSON.stringify(finalPayload, null, 2)))], `digr_${templateSlug}_${jobId}.json`, {
+          new File([new Uint8Array(Buffer.from(JSON.stringify(finalPayload, null, 2)))], `diger_${templateSlug}_${jobId}.json`, {
             type: "application/json",
           }),
           []

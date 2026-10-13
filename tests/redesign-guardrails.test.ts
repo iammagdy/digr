@@ -1,6 +1,6 @@
 /**
  * Redesign guardrails — static honesty and trust-boundary checks for the
- * Digr complete-UI-redesign branch.
+ * Diger complete-UI-redesign branch.
  *
  * These tests read source files (no DOM rendering, no new dependencies) and
  * verify the non-negotiable product rules:

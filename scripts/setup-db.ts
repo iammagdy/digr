@@ -28,7 +28,7 @@ async function ensureDatabase() {
     console.log(`✓ Database '${DATABASE_ID}' already exists.`);
   } catch (err: any) {
     if (err.code === 404) {
-      await tables.create({ databaseId: DATABASE_ID, name: "Digr" });
+      await tables.create({ databaseId: DATABASE_ID, name: "Diger" });
       console.log(`✓ Database '${DATABASE_ID}' created.`);
     } else {
       throw err;
@@ -145,7 +145,7 @@ async function ensureRow(tableId: string, rowId: string, data: any) {
 }
 
 async function setup() {
-  console.log("🚀 Setting up Digr database & storage via TablesDB in Appwrite Cloud...\n");
+  console.log("🚀 Setting up Diger database & storage via TablesDB in Appwrite Cloud...\n");
   await ensureDatabase();
 
   // Tier 1: Public Tables (Read: Users, rowSecurity: false)

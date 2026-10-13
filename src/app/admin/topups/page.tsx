@@ -80,7 +80,7 @@ export default function AdminTopupsPage() {
 
   const exportRows = () => {
     const rows = topups.filter((t) => (sel.length ? sel.includes(t.id) : list.some((l) => l.id === t.id)));
-    downloadCsv("digr-topups.csv", [
+    downloadCsv("diger-topups.csv", [
       ["المعرّف", "اسم المحوِّل", "الموبايل", "الرقم المرجعي", "البريد", "المبلغ (ج.م)", "الحالة", "سبب الرفض", "تاريخ الطلب"],
       ...rows.map((t) => [t.id, t.senderName, t.senderPhone, t.reference, t.accEmail, t.amountEgp, badgeFor(t.status).label, t.rejectReason ?? "", t.createdAt]),
     ]);

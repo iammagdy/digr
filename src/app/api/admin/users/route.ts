@@ -86,7 +86,7 @@ export async function GET(req: NextRequest) {
     const body = [["الاسم", "البريد", "تاريخ التسجيل", "آخر دخول", "إجمالي الشحن (ج.م)", "آخر شحن"], ...enriched.map((u) => [u.name, u.email, u.registration, u.lastLogin, u.totalTopupsEgp, u.lastTopupAt])]
       .map((r) => r.map(esc).join(",")).join("\r\n");
     await auth.ctx.audit("setting", "تصدير المستخدمين", `تصدير ${enriched.length} مستخدم إلى CSV`, { targetType: "users" });
-    return new NextResponse("﻿" + body, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="digr-users.csv"' } });
+    return new NextResponse("﻿" + body, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": 'attachment; filename="diger-users.csv"' } });
   }
 
   return NextResponse.json({

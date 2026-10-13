@@ -60,7 +60,7 @@ async function record(
 }
 
 async function getOrCreateTestUser(emailPrefix: string, labels: string[] = []) {
-  const email = `${emailPrefix}_p1_${Date.now()}@digr.test`;
+  const email = `${emailPrefix}_p1_${Date.now()}@diger.test`;
   const password = "Password123!Secure";
   const user = await serverUsers.create(ID.unique(), email, undefined, password, emailPrefix);
   if (labels.length > 0) {

@@ -24,7 +24,7 @@ function buildBrowserBootstrapHtml(endpoint: string, projectId: string): string 
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>حالة المساعد الذكي — Digr</title>
+  <title>حالة المساعد الذكي — Diger</title>
   <style>
     body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #faf8f5; color: #1c1917; padding: 24px; direction: ltr; }
     pre { background: #ffffff; border: 1px solid #e7e2da; border-radius: 12px; padding: 16px; overflow-x: auto; font-size: 14px; line-height: 1.6; }
@@ -51,7 +51,7 @@ function buildBrowserBootstrapHtml(endpoint: string, projectId: string): string 
           const data = await jwtRes.json();
           if (data && data.jwt) {
             jwt = data.jwt;
-            document.cookie = "digr_jwt=" + encodeURIComponent(jwt) + "; Path=/; Max-Age=840; SameSite=Lax";
+            document.cookie = "diger_jwt=" + encodeURIComponent(jwt) + "; Path=/; Max-Age=840; SameSite=Lax";
           }
         }
       } catch (e) {}
@@ -124,7 +124,7 @@ export async function GET(req: NextRequest) {
     const projectId = process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
     const apiKey = process.env.APPWRITE_API_KEY || "";
 
-    const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
+    const cookieJwt = (req.cookies.get("diger_jwt") ?? req.cookies.get("digr_jwt"))?.value?.trim() || null;
     const effectiveJwt = bearerJwt || cookieJwt;
 
     const sessionCookie =

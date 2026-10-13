@@ -144,7 +144,7 @@ export default function TopupForm({
 
       <div className="flex items-center justify-between gap-2.5 rounded-[20px] bg-sf2 px-[18px] py-3.5">
         <div className="min-w-0">
-          <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي (IPA) · منصة Digr</p>
+          <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي (IPA) · منصة Diger</p>
           <p className="mb-0 mt-1 truncate text-base text-ink" dir="ltr">{ipa ?? "—"}</p>
         </div>
         <button type="button" onClick={copy} disabled={!ipa} className="min-h-11 shrink-0 cursor-pointer rounded-full border-0 bg-sf px-4 text-[13px] text-ink disabled:opacity-50">

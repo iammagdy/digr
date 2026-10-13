@@ -48,7 +48,7 @@ export default function AdminUsersPage() {
       const res = await fetch(`/api/admin/users?format=csv&filter=${filter}&q=${encodeURIComponent(applied)}`, { headers });
       if (!res.ok) throw new Error();
       const url = URL.createObjectURL(await res.blob());
-      const a = document.createElement("a"); a.href = url; a.download = "digr-users.csv"; document.body.appendChild(a); a.click();
+      const a = document.createElement("a"); a.href = url; a.download = "diger-users.csv"; document.body.appendChild(a); a.click();
       setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 250);
       toast("تم تصدير المستخدمين إلى CSV");
     } catch { toast("تعذّر تصدير الملف"); }
