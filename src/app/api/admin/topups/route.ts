@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Query } from "node-appwrite";
-import { authenticateAdmin, listAll } from "@/lib/server/adminAuth";
+import { authenticateAdmin, enrichTopupsWithApprovals, getTopupApprovalMap, listAll } from "../../../../lib/server/adminAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +10,11 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return auth.response;
   const { tables, users } = auth.ctx;
 
-  const rows = await listAll(tables, "topups", [Query.orderDesc("createdAt")], 1000);
+  const [rowsRaw, topupApprovalMap] = await Promise.all([
+    listAll(tables, "topups", [Query.orderDesc("createdAt")], 1000),
+    getTopupApprovalMap(tables),
+  ]);
+  const rows = enrichTopupsWithApprovals(rowsRaw, topupApprovalMap);
 
   const ids = [...new Set(rows.map((r) => r.userId))];
   const info = new Map<string, { name: string; email: string }>();

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Query } from "node-appwrite";
-import { authenticateAdmin, listAll, listAllUsers } from "@/lib/server/adminAuth";
-import { DAY_MS } from "@/lib/server/adminStats";
-import { ledgerBalance } from "@/lib/server/userStats";
+import { authenticateAdmin, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers } from "../../../../lib/server/adminAuth";
+import { DAY_MS } from "../../../../lib/server/adminStats";
+import { ledgerBalance } from "../../../../lib/server/userStats";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +25,11 @@ export async function GET(req: NextRequest) {
   const week = new Date(now - 7 * DAY_MS).toISOString();
   const month = new Date(now - 30 * DAY_MS).toISOString();
 
-  const approved = await listAll(tables, "topups", [Query.equal("status", "approved")], 5000);
+  const [approvedRaw, topupApprovalMap] = await Promise.all([
+    listAll(tables, "topups", [Query.equal("status", "approved")], 5000),
+    getTopupApprovalMap(tables),
+  ]);
+  const approved = enrichTopupsWithApprovals(approvedRaw, topupApprovalMap);
   const perUser = new Map<string, { total: number; last: string }>();
   for (const t of approved) {
     const e = perUser.get(t.userId) ?? { total: 0, last: "" };
