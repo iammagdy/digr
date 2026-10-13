@@ -40,8 +40,8 @@ function createMockRes() {
 async function runE2ETest() {
   console.log("🔄 Starting End-to-End Top-up Flow & Tamper-Resistance Verification...\n");
 
-  const emailUser = `e2e-user-${Date.now()}@digr.test`;
-  const emailAdmin = `e2e-admin-${Date.now()}@digr.test`;
+  const emailUser = `e2e-user-${Date.now()}@diger.test`;
+  const emailAdmin = `e2e-admin-${Date.now()}@diger.test`;
   const password = "E2EPassword123!";
 
   console.log("Step 1: Registering User and Admin...");

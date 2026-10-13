@@ -4,11 +4,11 @@ export type LogoVariant = "color" | "white" | "mono-black" | "mono-white";
 export type LogoLang = "ar" | "en";
 
 export const WORDMARKS = {
-  ar: { file: "digr-wordmark", alt: "ديجر", aspect: 156 / 72 },
+  ar: { file: "diger-wordmark", alt: "ديجر", aspect: 156 / 72 },
   en: { file: "diger-en-wordmark", alt: "Diger", aspect: 220 / 64 },
 } as const;
 
-export const MARK_SRC = { color: "/brand/digr-mark.svg", white: "/brand/digr-mark-white.svg" } as const;
+export const MARK_SRC = { color: "/brand/diger-mark.svg", white: "/brand/diger-mark-white.svg" } as const;
 
 export function logoSrc(lang: LogoLang, variant: LogoVariant) {
   return `/brand/${WORDMARKS[lang].file}${variant === "color" ? "" : `-${variant}`}.svg`;

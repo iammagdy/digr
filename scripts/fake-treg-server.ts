@@ -92,7 +92,7 @@ export function startFakeTregServer(port: number = 4040): Promise<FakeTregServer
             uniqueId: usernameParam,
             nickname: `TikTok Creator (${usernameParam})`,
             avatarLarger: `https://p16-sign.tiktokcdn.com/${usernameParam}_avatar.jpeg`,
-            signature: "Digital content creator • Exploring data scraping with Digr",
+            signature: "Digital content creator • Exploring data scraping with Diger",
             verified: true,
             secUid: "MS4wLjABAAAAk39f_1...",
             region: "EG",

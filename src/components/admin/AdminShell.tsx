@@ -44,8 +44,8 @@ export const useAdmin = () => {
   return c;
 };
 
-const RANGE_KEY = "digr:admin:range";
-const SEEN_KEY = "digr:admin:alertsSeen";
+const RANGE_KEY = "diger:admin:range";
+const SEEN_KEY = "diger:admin:alertsSeen";
 
 function useIsMobile(bp = 900) {
   const [m, setM] = useState(false);
@@ -104,8 +104,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
   // One «تسجيل دخول» audit entry per browser session.
   useEffect(() => {
     try {
-      if (sessionStorage.getItem("digr:admin:logged")) return;
-      sessionStorage.setItem("digr:admin:logged", "1");
+      if (sessionStorage.getItem("diger:admin:logged")) return;
+      sessionStorage.setItem("diger:admin:logged", "1");
     } catch { /* ignore */ }
     adminFetch("/api/admin/audit", { method: "POST" }).catch(() => {});
   }, []);

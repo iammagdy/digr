@@ -236,9 +236,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     };
     const permissions = filePermission(auth.userId);
     const generated: Array<{ ext: "xlsx" | "pdf" | "csv"; buffer: Buffer; name: string; type: string }> = [];
-    if (formats.includes("xlsx")) generated.push({ ext: "xlsx", buffer: await generateExcelReport(edited), name: `digr_${job.templateSlug}_${jobId}_v${versionNum}.xlsx`, type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    if (formats.includes("pdf")) generated.push({ ext: "pdf", buffer: await generatePdfReport(edited), name: `digr_${job.templateSlug}_${jobId}_v${versionNum}.pdf`, type: "application/pdf" });
-    if (formats.includes("csv")) generated.push({ ext: "csv", buffer: generateCsvReport(edited), name: `digr_${job.templateSlug}_${jobId}_v${versionNum}.csv`, type: "text/csv; charset=utf-8" });
+    if (formats.includes("xlsx")) generated.push({ ext: "xlsx", buffer: await generateExcelReport(edited), name: `diger_${job.templateSlug}_${jobId}_v${versionNum}.xlsx`, type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    if (formats.includes("pdf")) generated.push({ ext: "pdf", buffer: await generatePdfReport(edited), name: `diger_${job.templateSlug}_${jobId}_v${versionNum}.pdf`, type: "application/pdf" });
+    if (formats.includes("csv")) generated.push({ ext: "csv", buffer: generateCsvReport(edited), name: `diger_${job.templateSlug}_${jobId}_v${versionNum}.csv`, type: "text/csv; charset=utf-8" });
 
     for (const output of generated) {
       const fileId = ID.unique();

@@ -45,7 +45,7 @@ describe("Phase A: Storage Permissions & White-Label Isolation Suite", () => {
     // Raw internal payload stored on server
     const rawInternalData = {
       metadata: {
-        platform: "Digr Data Platform",
+        platform: "Diger Data Platform",
         title: "نتائج استخراج ملف تيك توك الشخصي (MeGz)",
         methodology: "بيانات عامة",
       },

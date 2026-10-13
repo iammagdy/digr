@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
  */
 export default async function AdminLayout({ children }: { children: ReactNode }) {
   const jar = await cookies();
-  const jwt = jar.get("digr_jwt")?.value;
+  const jwt = (jar.get("diger_jwt") ?? jar.get("digr_jwt"))?.value;
   const session = jar.get(`a_session_${PROJECT_ID}`)?.value || jar.get(`a_session_${PROJECT_ID}_legacy`)?.value;
 
   if (jwt || session) {

@@ -28,7 +28,7 @@ async function authenticateAdmin(req: NextRequest): Promise<{ ok: boolean; admin
 
   const authHeader = req.headers.get("authorization");
   const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-  const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
+  const cookieJwt = (req.cookies.get("diger_jwt") ?? req.cookies.get("digr_jwt"))?.value?.trim() || null;
   const effectiveJwt = bearerJwt || cookieJwt;
 
   const sessionCookie =

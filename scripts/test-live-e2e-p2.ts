@@ -53,7 +53,7 @@ async function runLiveE2eTest() {
     stepResults.push({ step: "Fake TREG Server", status: "PASS", details: `Running on port 4040` });
 
     // Step 2: Create live test user
-    const testEmail = `e2e_p2_${Date.now()}@digr.test`;
+    const testEmail = `e2e_p2_${Date.now()}@diger.test`;
     const testPassword = `Pass_${Date.now()}!Secret`;
     const userDoc = await users.create(ID.unique(), testEmail, undefined, testPassword, "E2E Test User");
     testUserId = userDoc.$id;

@@ -91,14 +91,14 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
 
     const openAiClient = new LlmClient({ provider: "openai", isLive: true });
     await openAiClient.executeTurn({
-      messages: [{ role: "user", content: "ما هي Digr؟" }],
+      messages: [{ role: "user", content: "ما هي Diger؟" }],
       sanitizedCapabilities: sanitized,
       userBalancePoints: 250,
     });
 
     const anthropicClient = new LlmClient({ provider: "anthropic", isLive: true });
     await anthropicClient.executeTurn({
-      messages: [{ role: "user", content: "ما هي Digr؟" }],
+      messages: [{ role: "user", content: "ما هي Diger؟" }],
       sanitizedCapabilities: sanitized,
       userBalancePoints: 250,
     });

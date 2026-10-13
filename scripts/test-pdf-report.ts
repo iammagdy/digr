@@ -33,10 +33,10 @@ export function generatePdfReport(data: any): Promise<Buffer> {
       size: "A4",
       margins: { top: 30, bottom: 30, left: 35, right: 35 },
       info: {
-        Title: "تقرير استخراج بيانات Digr",
-        Author: "Digr",
+        Title: "تقرير استخراج بيانات Diger",
+        Author: "Diger",
         Subject: "Data Report",
-        Creator: "Digr Data Platform",
+        Creator: "Diger Data Platform",
       },
     });
 
@@ -62,7 +62,7 @@ export function generatePdfReport(data: any): Promise<Buffer> {
     doc.rect(35, 30, contentWidth, 58).fill("#0F172A"); // Dark slate
 
     doc.font("ArabicBold").fontSize(17).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl("منصة Digr لاستخراج البيانات العامة"), 50, 40, {
+    doc.text(formatArabicRtl("منصة Diger لاستخراج البيانات العامة"), 50, 40, {
       width: contentWidth - 30,
       align: "right",
     });
@@ -194,7 +194,7 @@ export function generatePdfReport(data: any): Promise<Buffer> {
 
     // 6. Footer (Pinned strictly inside the single page)
     doc.font("ArabicRegular").fontSize(7.5).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Digr • جميع الحقوق محفوظة"), 35, 790, {
+    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Diger • جميع الحقوق محفوظة"), 35, 790, {
       width: contentWidth,
       align: "center",
     });
@@ -206,7 +206,7 @@ export function generatePdfReport(data: any): Promise<Buffer> {
 if (require.main === module) {
   const sampleData = {
     metadata: {
-      platform: "Digr Data Platform",
+      platform: "Diger Data Platform",
       collectedAt: "2026-10-10T08:10:36.747Z",
       jobId: "6ac9f2f600106f35ff46",
     },

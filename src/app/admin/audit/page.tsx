@@ -29,7 +29,7 @@ export default function AuditPage() {
   useEffect(() => { void load(); }, [load]);
 
   const exportAudit = () => {
-    downloadCsv("digr-audit-log.csv", [["الوقت", "المسؤول", "الإجراء", "التفاصيل", "IP"], ...entries.map((e) => [e.createdAt, e.who, e.label, e.target, e.ip])]);
+    downloadCsv("diger-audit-log.csv", [["الوقت", "المسؤول", "الإجراء", "التفاصيل", "IP"], ...entries.map((e) => [e.createdAt, e.who, e.label, e.target, e.ip])]);
     toast("تم تصدير السجل إلى CSV");
   };
 

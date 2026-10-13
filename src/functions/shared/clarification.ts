@@ -121,7 +121,7 @@ export function sanitizeClarificationText(value: unknown, maxLength: number): st
     .replace(/\s+/g, " ")
     .trim();
   for (const pattern of PROVIDER_OR_INTERNAL_WORDS) {
-    text = text.replace(pattern, "منصة Digr");
+    text = text.replace(pattern, "منصة Diger");
   }
   return text.slice(0, maxLength).trim();
 }

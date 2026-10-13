@@ -165,8 +165,8 @@ export default function ChatWorkspacePage() {
   startNewChatRef.current = handleStartNewChat;
   useEffect(() => {
     const on = () => startNewChatRef.current();
-    window.addEventListener("digr:new-chat", on);
-    return () => window.removeEventListener("digr:new-chat", on);
+    window.addEventListener("diger:new-chat", on);
+    return () => window.removeEventListener("diger:new-chat", on);
   }, []);
 
   useEffect(() => {
@@ -664,7 +664,7 @@ export default function ChatWorkspacePage() {
       const downloadUrl = storage.getFileDownload("results", fileId).toString();
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.download = `digr_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
+      link.download = `diger_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

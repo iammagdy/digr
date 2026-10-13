@@ -19,13 +19,13 @@ const markazi = Markazi_Text({
   display: "swap",
 });
 
-const TITLE = "Digr — بيانات عامة جاهزة للتحليل";
+const TITLE = "Diger — بيانات عامة جاهزة للتحليل";
 const DESCRIPTION =
   "منصة عربية ذكية لاستخراج مجموعات البيانات العامة وتجهيزها للتحليل في ملفات Excel و PDF مع دليل المتغيرات ومنهجية الجمع.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: TITLE, template: "%s — Digr" },
+  title: { default: TITLE, template: "%s — Diger" },
   description: DESCRIPTION,
   applicationName: SITE_NAME,
   alternates: { canonical: "/" },

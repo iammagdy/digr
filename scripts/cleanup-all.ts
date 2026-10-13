@@ -7,7 +7,7 @@ const hasConfirm = process.argv.includes("--confirm");
 
 if (!hasConfirm) {
   console.error("🛑 SAFETY GUARD ACTIVATED:");
-  console.error("This script will only delete accounts ending strictly in '@digr.test' and their associated data.");
+  console.error("This script will only delete accounts ending strictly in '@diger.test' (or the legacy '@digr.test') and their associated data.");
   console.error("Real accounts (including magdy.saber@outlook.com) and their data are strictly protected.");
   console.error("To proceed, you must explicitly pass the --confirm flag:");
   console.error("  npx tsx scripts/cleanup-all.ts --confirm\n");
@@ -19,28 +19,32 @@ const c = new Client()
   .setProject(process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
   .setKey(process.env.APPWRITE_API_KEY!);
 
+// Test accounts use @diger.test; @digr.test is the pre-rebrand domain and is still cleaned.
+const TEST_EMAIL_DOMAINS = ["@diger.test", "@digr.test"];
+const isTestEmail = (email: string) => TEST_EMAIL_DOMAINS.some((d) => email.toLowerCase().endsWith(d));
+
 const u = new Users(c);
 const t = new TablesDB(c);
 const s = new Storage(c);
 
 async function cleanSafe() {
-  console.log("🛡️ Starting SAFE cleanup for test accounts ending strictly in '@digr.test'...\n");
+  console.log("🛡️ Starting SAFE cleanup for test accounts ending strictly in '@diger.test' (or the legacy '@digr.test')...\n");
 
   const userList = await u.list();
   const realUserIds = new Set<string>();
 
   for (const user of userList.users) {
-    if (!user.email.toLowerCase().endsWith("@digr.test")) {
+    if (!isTestEmail(user.email)) {
       realUserIds.add(user.$id);
       console.log(`  🔒 Protected Real User: ${user.$id} (${user.email})`);
     }
   }
 
   const testUsers = userList.users.filter((user) =>
-    user.email.toLowerCase().endsWith("@digr.test")
+    isTestEmail(user.email)
   );
 
-  console.log(`\nFound ${testUsers.length} test accounts (@digr.test) to clean.`);
+  console.log(`\nFound ${testUsers.length} test accounts (@diger.test / @digr.test) to clean.`);
 
   for (const testUser of testUsers) {
     const userId = testUser.$id;

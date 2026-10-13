@@ -22,7 +22,7 @@ doc.registerFont("ArabicBold", "src/assets/fonts/IBMPlexSansArabic-Bold.ttf");
 const stream = fs.createWriteStream("test_reshaped_render.pdf");
 doc.pipe(stream);
 
-doc.font("ArabicBold").fontSize(18).text(formatArabicRtl("منصة Digr لاستخراج البيانات العامة"), 50, 50, { align: "right" });
+doc.font("ArabicBold").fontSize(18).text(formatArabicRtl("منصة Diger لاستخراج البيانات العامة"), 50, 50, { align: "right" });
 doc.font("ArabicRegular").fontSize(12).text(formatArabicRtl("ملخص استخراج البيانات (1 سجل)"), 50, 90, { align: "right" });
 doc.font("ArabicRegular").fontSize(12).text(formatArabicRtl("عينة من السجلات المستخرجة :"), 50, 120, { align: "right" });
 doc.font("ArabicRegular").fontSize(12).text(formatArabicRtl("ملاحظة منهجية : هذه البيانات عامة ومتاحة علناً."), 50, 150, { align: "right" });

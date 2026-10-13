@@ -95,7 +95,7 @@ describe("chat discovery clarification UI", () => {
     }]);
     expect(clean[0].text).toBe("ما المصدر؟");
     expect(clean[0].options.join(" ")).not.toMatch(/<[^>]*>|https?:\/\//i);
-    expect(clean[0].options.join(" ")).toContain("منصة Digr");
+    expect(clean[0].options.join(" ")).toContain("منصة Diger");
   });
 
   it("keeps the fake clarification response deterministic and capped", async () => {

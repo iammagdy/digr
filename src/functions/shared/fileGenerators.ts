@@ -87,8 +87,8 @@ export function formatArabicRtl(text: string): string {
  */
 export async function generateExcelReport(payload: any): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = "Digr";
-  wb.title = "Digr Data Platform Export";
+  wb.creator = "Diger";
+  wb.title = "Diger Data Platform Export";
 
   const profile = payload.profile || {};
   const metadata = payload.metadata || {};
@@ -98,7 +98,7 @@ export async function generateExcelReport(payload: any): Promise<Buffer> {
   const wsData = wb.addWorksheet("البيانات", { views: [{ rightToLeft: true }] });
 
   // Title Banner Rows
-  const titleRow = wsData.addRow(["منصة Digr لاستخراج البيانات العامة"]);
+  const titleRow = wsData.addRow(["منصة Diger لاستخراج البيانات العامة"]);
   titleRow.font = { name: "Arial", size: 14, bold: true, color: { argb: "FF0F172A" } };
 
   const totalRowsCount = payload.rows?.length || (payload.profile ? 1 : 0);
@@ -253,10 +253,10 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       size: "A4",
       margins: { top: 30, bottom: 30, left: 35, right: 35 },
       info: {
-        Title: "تقرير استخراج بيانات Digr",
-        Author: "Digr",
+        Title: "تقرير استخراج بيانات Diger",
+        Author: "Diger",
         Subject: "Data Report",
-        Creator: "Digr Data Platform",
+        Creator: "Diger Data Platform",
       },
     });
 
@@ -273,7 +273,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     const metadata = payload.metadata || {};
     const dateStr = metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
     const isTabular = Boolean(payload.rows && Array.isArray(payload.rows) && !payload.profile);
-    const titleText = isTabular ? (payload.metadata?.title || "تقرير استخراج البيانات") : "منصة Digr لاستخراج البيانات العامة";
+    const titleText = isTabular ? (payload.metadata?.title || "تقرير استخراج البيانات") : "منصة Diger لاستخراج البيانات العامة";
     const subTitleText = isTabular
       ? `إجمالي السجلات: ${payload.rows.length} • تاريخ الاستخراج: ${dateStr}`
       : `تقرير ملف تيك توك الشخصي • تاريخ الاستخراج: ${dateStr}`;
@@ -359,7 +359,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
       // Footer
       doc.font("ArabicRegular").fontSize(7.5).fillColor("#94A3B8");
-      doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Digr • جميع الحقوق محفوظة"), 35, 792, {
+      doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Diger • جميع الحقوق محفوظة"), 35, 792, {
         width: contentWidth,
         align: "center",
         wordSpacing: 3,
@@ -520,7 +520,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     // 6. Footer (Strictly single page)
     doc.font("ArabicRegular").fontSize(7.5).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Digr • جميع الحقوق محفوظة"), 35, 792, {
+    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Diger • جميع الحقوق محفوظة"), 35, 792, {
       width: contentWidth,
       align: "center",
       wordSpacing: 3,

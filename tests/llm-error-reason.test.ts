@@ -153,11 +153,11 @@ describe("LLM Error Reason Codes & Browser-Accessible Admin Status", () => {
       labels: ["admin"],
     } as any);
 
-    // 1. Authenticated via digr_jwt cookie (set by browser AuthProvider)
+    // 1. Authenticated via diger_jwt cookie (set by browser AuthProvider)
     const cookieReq = new NextRequest("http://localhost:3000/api/admin/llm-status", {
       method: "GET",
       headers: {
-        Cookie: "digr_jwt=valid_browser_jwt_cookie",
+        Cookie: "diger_jwt=valid_browser_jwt_cookie",
         Accept: "text/html,application/xhtml+xml",
       },
     });

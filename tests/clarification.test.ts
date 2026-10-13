@@ -84,7 +84,7 @@ describe("strict discovery clarification", () => {
         allowOther: true,
       }],
     }, { capabilities: [] });
-    expect(topic[0].options).toEqual(["Powered by منصة Digr", "خيار صالح"]);
+    expect(topic[0].options).toEqual(["Powered by منصة Diger", "خيار صالح"]);
     expect(topic[0].options.join(" ")).not.toMatch(/<[^>]*>|https?:\/\//i);
     expect(sanitizeClarificationText("<b>موضوع</b> https://example.invalid/a", 120)).toBe("موضوع");
   });

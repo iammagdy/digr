@@ -16,7 +16,7 @@ function sourceFiles(dir: string): string[] {
 
 describe("brand logo", () => {
   it("defaults to the Arabic color wordmark with a dark-mode white swap", () => {
-    expect(logoImages("ar", "color").map((i) => i.src)).toEqual(["/brand/digr-wordmark.svg", "/brand/digr-wordmark-white.svg"]);
+    expect(logoImages("ar", "color").map((i) => i.src)).toEqual(["/brand/diger-wordmark.svg", "/brand/diger-wordmark-white.svg"]);
     expect(WORDMARKS.ar.alt).toBe("ديجر");
     expect(readFileSync(join(ROOT, "src/components/Brand.tsx"), "utf-8")).toMatch(/lang = "ar"/);
   });

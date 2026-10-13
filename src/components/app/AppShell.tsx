@@ -109,7 +109,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const newQuestion = useCallback(() => {
     setDrawer(false);
-    if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("digr:new-chat"));
+    if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:new-chat"));
     else router.push("/dashboard/chat");
   }, [pathname, router]);
 
