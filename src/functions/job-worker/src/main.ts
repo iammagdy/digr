@@ -2,6 +2,7 @@ import { Client, TablesDB, Storage } from "node-appwrite";
 import { z } from "zod";
 import { releaseReservation } from "../../shared/ledger";
 import { notifyJobOutcome } from "../../shared/notify";
+import { APPROVED_CAPABILITY_CATALOG } from "../../shared/capabilityRegistry";
 import {
   runJobWatchdog,
   reportStuckJobsReadOnly,
@@ -101,7 +102,14 @@ export default async ({ req, res, log, error }: any) => {
 
     log(`[job-worker] Job ${jobId} finished with status: ${execResult.status} (deliveredUnits=${execResult.deliveredUnits}, charged=${execResult.chargedCredits})`);
 
-    await notifyJobOutcome(client, job.userId, execResult as any, log);
+    // Branded email needs the job's display title (registry nameAr) + the requested volume.
+    const jobTitle =
+      APPROVED_CAPABILITY_CATALOG.find((c) => c.slug === job.templateSlug)?.nameAr || job.templateSlug;
+    await notifyJobOutcome(client, job.userId, {
+      ...(execResult as any),
+      jobTitle,
+      requestedUnits: targetVolumeMax,
+    }, log);
 
     return res.json(execResult, 200);
   } catch (err: any) {
