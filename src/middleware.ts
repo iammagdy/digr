@@ -39,6 +39,13 @@ export async function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
+  if (user && (pathname === "/login" || pathname === "/register")) {
+    const isEmailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
+    const destUrl = request.nextUrl.clone();
+    destUrl.pathname = isEmailVerified ? "/dashboard/chat" : "/verify";
+    return NextResponse.redirect(destUrl);
+  }
+
   const isDashboard = pathname.startsWith("/dashboard");
   const isAdmin = pathname.startsWith("/admin");
 

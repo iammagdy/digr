@@ -13,7 +13,11 @@ export function AdminGate({ children }: { children: ReactNode }) {
   const router = useRouter();
   const isAdmin = user?.app_metadata?.role === "admin" || (Array.isArray(user?.labels) && user.labels.includes("admin"));
 
-  useEffect(() => { if (!loading && !user) router.replace("/login"); }, [loading, user, router]);
+  useEffect(() => {
+    if (loading) return;
+    if (!user) router.replace("/login");
+    else if (!isAdmin) router.replace("/dashboard/chat");
+  }, [loading, user, isAdmin, router]);
 
   if (loading || !user) {
     return <div className="flex min-h-dvh items-center justify-center bg-bg"><Spinner label="جاري التحقق من الصلاحيات" /></div>;

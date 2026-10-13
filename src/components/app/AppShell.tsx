@@ -137,6 +137,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
+    { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
     { id: "notifs", label: "الإشعارات", icon: UI.bell, badge: notifs.unread, active: notifsOpen, onClick: () => { setNotifsOpen((v) => !v); setDrawer(false); setAcctOpen(false); } },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ];

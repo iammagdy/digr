@@ -164,5 +164,108 @@ describe("Phase 2: Auth, Account & Middleware Guardrails", () => {
       const res = await middleware(req);
       expect(res.status).toBe(200);
     });
+
+    it("redirects already-authenticated user away from /login and /register without flashing form", async () => {
+      mockAuthState.user = {
+        id: "signed-in-user",
+        email: "user@example.com",
+        email_confirmed_at: new Date().toISOString(),
+        user_metadata: {},
+        app_metadata: { role: "user" },
+      };
+
+      const { middleware } = await import("../src/middleware");
+      const loginReq = new NextRequest("http://localhost:3000/login", {
+        headers: { Accept: "text/html" },
+      });
+      const loginRes = await middleware(loginReq);
+      expect(loginRes.status).toBe(307);
+      expect(loginRes.headers.get("location")).toContain("/dashboard/chat");
+
+      const regReq = new NextRequest("http://localhost:3000/register", {
+        headers: { Accept: "text/html" },
+      });
+      const regRes = await middleware(regReq);
+      expect(regRes.status).toBe(307);
+      expect(regRes.headers.get("location")).toContain("/dashboard/chat");
+    });
+  });
+
+  describe("Step E: /admin Server Layout, Landing Session & /calculator Links", () => {
+    it("AdminLayout redirects non-admin to /dashboard/chat and passes admin with app_metadata.role = 'admin'", async () => {
+      const redirectCalls: string[] = [];
+      vi.doMock("next/navigation", () => ({
+        redirect: (url: string) => {
+          redirectCalls.push(url);
+          throw new Error(`NEXT_REDIRECT:${url}`);
+        },
+        useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+        usePathname: () => "/admin",
+      }));
+      vi.doMock("@/components/admin/AdminGate", () => ({
+        AdminGate: ({ children }: any) => children,
+      }));
+      vi.doMock("@/lib/supabase/server", () => ({
+        createServerSideClient: async () => ({
+          auth: {
+            getUser: async () => ({
+              data: { user: mockAuthState.user },
+              error: null,
+            }),
+          },
+        }),
+      }));
+
+      const { default: AdminLayout } = await import("../src/app/admin/layout");
+
+      // 1. Non-admin user is redirected to /dashboard/chat (not swallowed by catch)
+      mockAuthState.user = {
+        id: "non-admin-1",
+        email: "member@diger.tech",
+        email_confirmed_at: new Date().toISOString(),
+        app_metadata: { role: "user" },
+      };
+      await expect(AdminLayout({ children: "admin-content" as any })).rejects.toThrow(
+        "NEXT_REDIRECT:/dashboard/chat",
+      );
+      expect(redirectCalls).toContain("/dashboard/chat");
+
+      // 2. Admin user with app_metadata.role = 'admin' passes without redirect
+      redirectCalls.length = 0;
+      mockAuthState.user = {
+        id: "admin-1",
+        email: "admin@diger.tech",
+        email_confirmed_at: new Date().toISOString(),
+        app_metadata: { role: "admin" },
+      };
+      const rendered = await AdminLayout({ children: "admin-content" as any });
+      expect(redirectCalls).toHaveLength(0);
+      expect(rendered).toBeTruthy();
+    });
+
+    it("links /calculator from landing header, landing footer, and dashboard sidebar, and prevents login/register flash", () => {
+      const landingPage = readFileSync("src/app/page.tsx", "utf8");
+      const glassHeader = readFileSync("src/components/landing/GlassHeader.tsx", "utf8");
+      const sections = readFileSync("src/components/landing/Sections.tsx", "utf8");
+      const appShell = readFileSync("src/components/app/AppShell.tsx", "utf8");
+      const loginPage = readFileSync("src/app/login/page.tsx", "utf8");
+      const registerPage = readFileSync("src/app/register/page.tsx", "utf8");
+
+      // Landing page reads Supabase session on server and passes initialSignedIn
+      expect(landingPage).toContain("createServerSideClient");
+      expect(landingPage).toContain("initialSignedIn");
+      expect(glassHeader).toContain('href="/dashboard/chat"');
+      expect(glassHeader).toContain("لوحة التحكم");
+
+      // /calculator linked in landing header, landing footer, and dashboard sidebar
+      expect(glassHeader).toContain('href="/calculator"');
+      expect(sections).toContain('href="/calculator"');
+      expect(appShell).toContain('href: "/calculator"');
+
+      // /login and /register never flash form when authLoading or user is truthy
+      expect(loginPage).toContain("if (authLoading || user)");
+      expect(registerPage).toContain("if (authLoading || user)");
+    });
   });
 });
+
