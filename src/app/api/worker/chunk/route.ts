@@ -15,12 +15,13 @@ import {
 } from "../../../../functions/shared/providerSpend";
 import { generateMethodologyText } from "../../../../functions/shared/multiStepWorker";
 import { artifactVersionRowId } from "../../../../functions/shared/artifactVersions";
+import { getInMemoryPartialStepFallback } from "../../../../lib/server/tregAdapter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
 
 // Fallback in-memory partial step store used ONLY when unit-test mock storage omits .download()
-const inMemoryPartialStepFallback = new Map<string, any>();
+const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
 function getWorkerBaseUrl(): string {
   if (process.env.VERCEL_URL) {
@@ -247,6 +248,65 @@ async function resolveJobExecutionSpec(
   };
 }
 
+interface ReleaseConfirmation {
+  confirmed: boolean;
+  data: any;
+  diagnostic: string | null;
+}
+
+async function executeReleaseConfirmation(
+  adminClient: any,
+  jobId: string,
+  reason: string
+): Promise<ReleaseConfirmation> {
+  try {
+    const { data: relData, error: relErr } = await adminClient.rpc("release_job_atomic", {
+      p_job_id: jobId,
+      p_error_message: reason,
+      p_force: true,
+    });
+    if (!relErr && Boolean(relData?.success === true || relData?.already_released === true)) {
+      return { confirmed: true, data: relData, diagnostic: null };
+    }
+    const diagnostic =
+      (typeof relErr?.message === "string" && relErr.message) ||
+      (typeof relData?.error === "string" && relData.error) ||
+      (relData && typeof relData === "object" && JSON.stringify(relData)) ||
+      "release_rpc_failed";
+    return {
+      confirmed: false,
+      data: relData || null,
+      diagnostic,
+    };
+  } catch (rpcEx: any) {
+    return {
+      confirmed: false,
+      data: null,
+      diagnostic: rpcEx?.message || "release_exception",
+    };
+  }
+}
+
+function buildReleaseFailedResponse(
+  jobId: string,
+  diagnostic: string | null,
+  extra: Record<string, any> = {}
+) {
+  return NextResponse.json(
+    {
+      success: false,
+      released: false,
+      chargedCredits: 0,
+      deliveredUnits: 0,
+      jobId,
+      error: "تعذر تحرير الرصيد المحجوز للمهمة.",
+      diagnostic: diagnostic || "release_failed",
+      ...extra,
+    },
+    { status: 500 }
+  );
+}
+
 export async function POST(req: NextRequest) {
   // 1. Authenticate with CRON_SECRET (timing-safe)
   if (!verifyCronSecret(req)) {
@@ -360,25 +420,10 @@ export async function POST(req: NextRequest) {
     if (!useMockProvider && !isLiveProviderReady) {
       const releaseReason =
         "محرك استخراج البيانات المباشر غير مفعل حالياً؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-      const { data: releaseData, error: releaseErr } = await adminClient.rpc(
-        "release_job_atomic",
-        {
-          p_job_id: jobId,
-          p_error_message: releaseReason,
-          p_force: true,
-        }
-      );
+      const rel = await executeReleaseConfirmation(adminClient, jobId, releaseReason);
 
-      if (releaseErr) {
-        return NextResponse.json(
-          {
-            success: false,
-            released: false,
-            jobId,
-            error: "تعذر تحرير الرصيد المحجوز للمهمة المتوقفة.",
-          },
-          { status: 500 }
-        );
+      if (!rel.confirmed) {
+        return buildReleaseFailedResponse(jobId, rel.diagnostic);
       }
 
       return NextResponse.json(
@@ -389,7 +434,7 @@ export async function POST(req: NextRequest) {
           deliveredUnits: 0,
           jobId,
           error: releaseReason,
-          release: releaseData,
+          release: rel.data,
         },
         { status: 503 }
       );
@@ -437,19 +482,20 @@ export async function POST(req: NextRequest) {
         p_job_id: jobId,
         p_error_message: capErrorMsg,
       });
-      const { data: capReleaseData } = await adminClient.rpc("release_job_atomic", {
-        p_job_id: jobId,
-        p_error_message: capErrorMsg,
-        p_force: true,
-      });
+      const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
+      if (!rel.confirmed) {
+        return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
+      }
+
       return NextResponse.json(
         {
           success: false,
           released: true,
           chargedCredits: 0,
           capExceeded: true,
+          jobId,
           error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
-          release: capReleaseData,
+          release: rel.data,
         },
         { status: 429 }
       );
@@ -524,11 +570,11 @@ export async function POST(req: NextRequest) {
     if (isDone && newDeliveredUnits === 0) {
       const emptyErrorAr =
         "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-      const { data: emptyReleaseData } = await adminClient.rpc("release_job_atomic", {
-        p_job_id: jobId,
-        p_error_message: emptyErrorAr,
-        p_force: true,
-      });
+      const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
+      if (!rel.confirmed) {
+        return buildReleaseFailedResponse(jobId, rel.diagnostic);
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -537,7 +583,7 @@ export async function POST(req: NextRequest) {
           deliveredUnits: 0,
           jobId,
           error: emptyErrorAr,
-          release: emptyReleaseData,
+          release: rel.data,
         },
         { status: 422 }
       );
@@ -575,7 +621,7 @@ export async function POST(req: NextRequest) {
 
     // 11. Complete chunk atomically with real cursor and real delivered count
     const nextCursorValue = isDone ? "completed" : String(adapterResult.nextCursor);
-    const { error: completeErr } = await adminClient.rpc("complete_chunk", {
+    const { data: compData, error: completeErr } = await adminClient.rpc("complete_chunk", {
       p_job_id: jobId,
       p_expected_step: currentStep,
       p_new_cursor: nextCursorValue,
@@ -583,8 +629,55 @@ export async function POST(req: NextRequest) {
       p_cost_usd: actualCostUsd,
     });
 
-    if (completeErr) {
-      throw completeErr;
+    if (
+      completeErr ||
+      !compData ||
+      compData.success !== true ||
+      typeof compData.delivered_units !== "number" ||
+      compData.delivered_units < 0
+    ) {
+      throw new Error(
+        completeErr?.message ||
+          "استجابة غير صالحة من complete_chunk: تعذر التحقق من تسجيل الوحدات المنجزة في قاعدة البيانات."
+      );
+    }
+
+    const recordedDeliveredUnits: number = compData.delivered_units;
+
+    if (compData.already_completed) {
+      console.warn(
+        `[worker:chunk_already_completed] jobId=${jobId} step=${currentStep} currentDbStep=${compData.current_step}`
+      );
+      if (!isDone) {
+        return NextResponse.json({
+          success: true,
+          done: false,
+          alreadyCompleted: true,
+          jobId,
+          step: compData.current_step ?? currentStep + 1,
+          deliveredUnits: recordedDeliveredUnits,
+          targetMax,
+          spendCostId,
+        });
+      }
+
+      // If isDone and chunk was already completed, check if job was already settled
+      const { data: currentJobCheck } = await adminClient
+        .from("jobs")
+        .select("status, charged_credits, delivered_units")
+        .eq("id", jobId)
+        .maybeSingle();
+
+      if (currentJobCheck?.status === "completed") {
+        return NextResponse.json({
+          success: true,
+          done: true,
+          alreadySettled: true,
+          jobId,
+          deliveredUnits: currentJobCheck.delivered_units ?? recordedDeliveredUnits,
+          spendCostId,
+        });
+      }
     }
 
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
@@ -596,41 +689,71 @@ export async function POST(req: NextRequest) {
       for (let s = 0; s <= currentStep; s++) {
         const stepKey = `${jobId}/step_${s}.json`;
         let stepObj: any = null;
+        let stepCorrupt = false;
 
         if (typeof partialsBucket.download === "function") {
           const { data: blob, error: dlErr } = await partialsBucket.download(stepKey);
           if (!dlErr && blob) {
             try {
-              stepObj = JSON.parse(await blob.text());
+              const text = typeof blob.text === "function" ? await blob.text() : String(blob);
+              stepObj = JSON.parse(text);
             } catch {
+              stepCorrupt = true;
               stepObj = null;
             }
+          } else {
+            stepObj = null;
           }
-        }
-
-        if (!stepObj && inMemoryPartialStepFallback.has(stepKey)) {
+        } else if (inMemoryPartialStepFallback.has(stepKey)) {
           stepObj = inMemoryPartialStepFallback.get(stepKey);
         }
 
-        if (stepObj) {
-          if (Array.isArray(stepObj.rows)) {
-            collectedRows.push(...stepObj.rows);
+        if (stepObj && (typeof stepObj !== "object" || !Array.isArray(stepObj.rows))) {
+          stepCorrupt = true;
+          stepObj = null;
+        }
+
+        if (!stepObj) {
+          const partialCorruptMsg = `تعذر قراءة بيانات الدفعة المرحلية (${s}) للمهمة؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`;
+          console.error(
+            `[worker:assembly_failed] step=${s} reason=${stepCorrupt ? "corrupted_step_file" : "missing_step_file"}`
+          );
+          const rel = await executeReleaseConfirmation(adminClient, jobId, partialCorruptMsg);
+          if (!rel.confirmed) {
+            return buildReleaseFailedResponse(jobId, rel.diagnostic);
           }
-          if (!firstRawProfile && stepObj.rawProfile) {
-            firstRawProfile = stepObj.rawProfile;
-          }
+
+          return NextResponse.json(
+            {
+              success: false,
+              released: true,
+              chargedCredits: 0,
+              deliveredUnits: 0,
+              jobId,
+              error: partialCorruptMsg,
+              release: rel.data,
+            },
+            { status: 500 }
+          );
+        }
+
+        collectedRows.push(...stepObj.rows);
+        if (!firstRawProfile && stepObj.rawProfile) {
+          firstRawProfile = stepObj.rawProfile;
         }
       }
 
-      const finalRows = collectedRows.slice(0, targetMax);
-      if (finalRows.length === 0) {
-        const noRowsMsg =
-          "تعذر تجميع السجلات النهائية للطلب؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-        const { data: relEmpty } = await adminClient.rpc("release_job_atomic", {
-          p_job_id: jobId,
-          p_error_message: noRowsMsg,
-          p_force: true,
-        });
+      // Strict reconciliation: generated data row count must strictly match recorded delivered units
+      if (collectedRows.length !== recordedDeliveredUnits || collectedRows.length === 0) {
+        const mismatchMsg = `عدم تطابق في عدد السجلات المجمعة (${collectedRows.length}) مع الوحدات المسجلة (${recordedDeliveredUnits})؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`;
+        console.error(
+          `[worker:assembly_failed] reason=row_count_mismatch collected=${collectedRows.length} expected=${recordedDeliveredUnits}`
+        );
+        const rel = await executeReleaseConfirmation(adminClient, jobId, mismatchMsg);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        }
+
         return NextResponse.json(
           {
             success: false,
@@ -638,12 +761,14 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: noRowsMsg,
-            release: relEmpty,
+            error: mismatchMsg,
+            release: rel.data,
           },
           { status: 500 }
         );
       }
+
+      const finalRows = collectedRows;
 
       const completedAtIso = new Date().toISOString();
       const dateStr = completedAtIso.slice(0, 10);
@@ -705,21 +830,32 @@ export async function POST(req: NextRequest) {
         }
 
         // Save JSON & methodology text in partials bucket for /api/jobs/[id]/data & /methodology
-        await partialsBucket.upload(
-          `${userId}/${jobId}/data.json`,
-          Buffer.from(JSON.stringify(finalPayload), "utf-8"),
-          { contentType: "application/json", upsert: true }
-        );
-        await partialsBucket.upload(
-          `${jobId}/data.json`,
-          Buffer.from(JSON.stringify(finalPayload), "utf-8"),
-          { contentType: "application/json", upsert: true }
-        );
-        await partialsBucket.upload(
-          `${userId}/${jobId}/methodology.txt`,
-          Buffer.from(methodologyText, "utf-8"),
-          { contentType: "text/plain; charset=utf-8", upsert: true }
-        );
+        const [dataJsonUp1, dataJsonUp2, methUp] = await Promise.all([
+          partialsBucket.upload(
+            `${userId}/${jobId}/data.json`,
+            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            { contentType: "application/json", upsert: true }
+          ),
+          partialsBucket.upload(
+            `${jobId}/data.json`,
+            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            { contentType: "application/json", upsert: true }
+          ),
+          partialsBucket.upload(
+            `${userId}/${jobId}/methodology.txt`,
+            Buffer.from(methodologyText, "utf-8"),
+            { contentType: "text/plain; charset=utf-8", upsert: true }
+          ),
+        ]);
+
+        if (dataJsonUp1?.error || dataJsonUp2?.error || methUp?.error) {
+          throw new Error(
+            dataJsonUp1?.error?.message ||
+              dataJsonUp2?.error?.message ||
+              methUp?.error?.message ||
+              "partials_artifact_upload_error"
+          );
+        }
       } catch (uploadErr: any) {
         console.error(
           "[worker:results_upload_failed] reason=storage_upload_error",
@@ -727,11 +863,11 @@ export async function POST(req: NextRequest) {
         );
         const uploadFailReason =
           "تعذر حفظ ملفات النتائج النهائية؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-        const { data: relUploadFail } = await adminClient.rpc("release_job_atomic", {
-          p_job_id: jobId,
-          p_error_message: uploadFailReason,
-          p_force: true,
-        });
+        const rel = await executeReleaseConfirmation(adminClient, jobId, uploadFailReason);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        }
+
         return NextResponse.json(
           {
             success: false,
@@ -740,30 +876,13 @@ export async function POST(req: NextRequest) {
             deliveredUnits: 0,
             jobId,
             error: uploadFailReason,
-            release: relUploadFail,
+            release: rel.data,
           },
           { status: 500 }
         );
       }
 
-      // Clean up temporary step files from partials
-      try {
-        const partialPaths = Array.from({ length: currentStep + 1 }, (_, idx) => {
-          const k = `${jobId}/step_${idx}.json`;
-          inMemoryPartialStepFallback.delete(k);
-          return k;
-        });
-        if (
-          partialPaths.length > 0 &&
-          typeof adminClient.storage.from("partials").remove === "function"
-        ) {
-          await adminClient.storage.from("partials").remove(partialPaths);
-        }
-      } catch {
-        // Non-blocking partial step cleanup
-      }
-
-      // Write artifact_versions BEFORE settle_job_atomic
+      // Write artifact_versions BEFORE settle_job_atomic (strictly required before settlement)
       try {
         const versionId = artifactVersionRowId(jobId, 1);
         const avTable = adminClient.from("artifact_versions");
@@ -782,17 +901,33 @@ export async function POST(req: NextRequest) {
             ? await avTable.upsert(versionRow)
             : await avTable.insert(versionRow);
         if (avRes?.error) {
-          console.error(
-            `[worker:artifact_versions_write_failed] reason=db_error code=${
-              avRes.error.code || "unknown"
-            }`
+          throw new Error(
+            `artifact_versions_db_error: ${avRes.error.message || avRes.error.code || "unknown"}`
           );
         }
       } catch (avErr: any) {
         console.error(
-          `[worker:artifact_versions_write_failed] reason=exception code=${
-            avErr?.code || "unknown"
-          }`
+          `[worker:artifact_versions_write_failed] reason=db_error`,
+          avErr?.message || ""
+        );
+        const avFailReason =
+          "تعذر تسجيل نسخة المستندات النهائية؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+        const rel = await executeReleaseConfirmation(adminClient, jobId, avFailReason);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        }
+
+        return NextResponse.json(
+          {
+            success: false,
+            released: true,
+            chargedCredits: 0,
+            deliveredUnits: 0,
+            jobId,
+            error: avFailReason,
+            release: rel.data,
+          },
+          { status: 500 }
         );
       }
 
@@ -807,7 +942,24 @@ export async function POST(req: NextRequest) {
         throw settleErr;
       }
 
-      // Emit notification to user with exact notifications columns (id, user_id, title, body, read, link, created_at)
+      // Clean up temporary step files from partials only after successful settlement
+      try {
+        const partialPaths = Array.from({ length: currentStep + 1 }, (_, idx) => {
+          const k = `${jobId}/step_${idx}.json`;
+          inMemoryPartialStepFallback.delete(k);
+          return k;
+        });
+        if (
+          partialPaths.length > 0 &&
+          typeof adminClient.storage.from("partials").remove === "function"
+        ) {
+          await adminClient.storage.from("partials").remove(partialPaths);
+        }
+      } catch {
+        // Non-blocking partial step cleanup
+      }
+
+      // Emit notification to user matching tracked migrations schema: (id, user_id, title, body, read, link, created_at)
       if (userId) {
         try {
           const notifRes = await adminClient.from("notifications").insert({
@@ -903,29 +1055,39 @@ export async function POST(req: NextRequest) {
         }
 
         // Release full reserve with zero charge on unrecoverable chunk failure if not already released
+        let releaseConfirmed = Boolean(lastFailureData?.released);
         let releaseResult = lastFailureData;
-        if (!lastFailureData?.released && body?.retryOnly !== true) {
-          const { data: relData } = await adminClient.rpc("release_job_atomic", {
-            p_job_id: jobId,
-            p_error_message: errorMsg,
-            p_force: true,
-          });
-          if (relData) {
+        let releaseDiagnostic: string | null = null;
+
+        if (!releaseConfirmed && body?.retryOnly !== true) {
+          const rel = await executeReleaseConfirmation(adminClient, jobId, errorMsg);
+          if (rel.confirmed) {
+            releaseConfirmed = true;
             releaseResult = {
               ...(lastFailureData || {}),
               released: true,
-              release: relData,
+              release: rel.data,
             };
+          } else {
+            releaseConfirmed = false;
+            releaseDiagnostic = rel.diagnostic;
           }
         }
+
+        const safeArabicError = releaseConfirmed
+          ? errorMsg
+          : "تعذر تحرير الرصيد المحجوز للمهمة.";
 
         return NextResponse.json(
           {
             success: false,
-            released: Boolean(releaseResult?.released),
+            released: releaseConfirmed,
             chargedCredits: 0,
-            error: errorMsg,
+            deliveredUnits: 0,
+            jobId,
+            error: safeArabicError,
             failure: releaseResult,
+            ...(releaseDiagnostic ? { diagnostic: releaseDiagnostic } : {}),
           },
           { status: 500 }
         );
@@ -937,7 +1099,15 @@ export async function POST(req: NextRequest) {
       }
     }
     return NextResponse.json(
-      { success: false, error: errorMsg },
+      {
+        success: false,
+        released: false,
+        chargedCredits: 0,
+        deliveredUnits: 0,
+        jobId: jobId || undefined,
+        error: "تعذر تحرير الرصيد المحجوز للمهمة.",
+        diagnostic: "outer_catch_unhandled",
+      },
       { status: 500 }
     );
   }

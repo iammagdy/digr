@@ -18,7 +18,15 @@ const mockWorkerDb = vi.hoisted(() => ({
   uploadedBodies: new Map<string, Buffer>(),
   failResultsUpload: false,
   failPartialsUpload: false,
+  failArtifactVersions: false,
+  failPartialsDownload: false,
+  corruptPartialsData: false,
+  mismatchDeliveredUnits: false,
   denyDailyCap: false,
+  failReleaseJobAtomic: false,
+  releaseJobAtomicError: null as any,
+  completeChunkOverride: null as any,
+  jobStatusOverride: null as string | null,
   step: 0,
   currentCursor: null as string | null,
   deliveredUnits: 0,
@@ -74,6 +82,14 @@ vi.mock("../src/lib/supabase/server", () => ({
         };
       }
       if (rpcName === "release_job_atomic") {
+        if (mockWorkerDb.failReleaseJobAtomic) {
+          return {
+            data: null,
+            error: mockWorkerDb.releaseJobAtomicError || {
+              message: "simulated_release_job_atomic_rpc_failure",
+            },
+          };
+        }
         mockWorkerDb.releasedJobs.push(args);
         return {
           data: {
@@ -96,10 +112,21 @@ vi.mock("../src/lib/supabase/server", () => ({
         return { data: { success: true }, error: null };
       }
       if (rpcName === "complete_chunk") {
+        if (mockWorkerDb.completeChunkOverride !== null) {
+          return mockWorkerDb.completeChunkOverride;
+        }
         mockWorkerDb.step += 1;
         mockWorkerDb.currentCursor = args.p_new_cursor;
-        mockWorkerDb.deliveredUnits = args.p_new_delivered_units;
-        return { data: { success: true }, error: null };
+        mockWorkerDb.deliveredUnits = mockWorkerDb.mismatchDeliveredUnits
+          ? args.p_new_delivered_units + 5
+          : args.p_new_delivered_units;
+        return {
+          data: {
+            success: true,
+            delivered_units: mockWorkerDb.deliveredUnits,
+          },
+          error: null,
+        };
       }
       if (rpcName === "settle_job_atomic") {
         mockWorkerDb.settled = true;
@@ -139,6 +166,15 @@ vi.mock("../src/lib/supabase/server", () => ({
           return { data: { path: storagePath }, error: null };
         }),
         download: vi.fn(async (storagePath: string) => {
+          if (bucket === "partials" && mockWorkerDb.failPartialsDownload) {
+            return { data: null, error: { message: "simulated_partials_download_failure" } };
+          }
+          if (bucket === "partials" && mockWorkerDb.corruptPartialsData) {
+            return {
+              data: new Blob([new Uint8Array(Buffer.from("invalid-corrupt-json", "utf-8"))]),
+              error: null,
+            };
+          }
           const buf = mockWorkerDb.uploadedBodies.get(`${bucket}:${storagePath}`);
           if (!buf) return { data: null, error: { message: "not_found" } };
           return {
@@ -155,17 +191,38 @@ vi.mock("../src/lib/supabase/server", () => ({
       })),
     },
     from: vi.fn((table: string) => ({
+      select: vi.fn(() => ({
+        eq: vi.fn((col: string, val: string) => ({
+          maybeSingle: vi.fn(async () => {
+            return {
+              data: {
+                id: val,
+                status: mockWorkerDb.jobStatusOverride || "running",
+                charged_credits: 0,
+                delivered_units: mockWorkerDb.deliveredUnits,
+              },
+              error: null,
+            };
+          }),
+        })),
+      })),
       insert: vi.fn(async (row: any) => {
         if (table === "notifications") {
           mockWorkerDb.notifications.push(row);
         }
         if (table === "artifact_versions") {
+          if (mockWorkerDb.failArtifactVersions) {
+            return { data: null, error: { message: "simulated_artifact_versions_error", code: "PGRST_ERROR" } };
+          }
           mockWorkerDb.artifactVersions.push(row);
         }
         return { data: row, error: null };
       }),
       upsert: vi.fn(async (row: any) => {
         if (table === "artifact_versions") {
+          if (mockWorkerDb.failArtifactVersions) {
+            return { data: null, error: { message: "simulated_artifact_versions_error", code: "PGRST_ERROR" } };
+          }
           mockWorkerDb.artifactVersions.push(row);
         }
         return { data: row, error: null };
@@ -1009,6 +1066,429 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       } finally {
         mockWorkerDb.failPartialsUpload = false;
         mockWorkerDb.failResultsUpload = false;
+        setProviderAdapterForTesting(null);
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("integrity: artifact_versions write failure releases full reserve with zero charge and never settles", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "av_row_1", uniqueId: "u_av_1" }],
+          nextCursor: null,
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_av_test",
+        }));
+
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 1;
+        mockWorkerDb.failPartialsUpload = false;
+        mockWorkerDb.failResultsUpload = false;
+        mockWorkerDb.failArtifactVersions = true;
+        mockWorkerDb.settled = false;
+        mockWorkerDb.releasedJobs = [];
+
+        const res = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_av_fail", expectedStep: 0 }),
+          })
+        );
+
+        expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.success).toBe(false);
+        expect(json.released).toBe(true);
+        expect(json.chargedCredits).toBe(0);
+        expect(json.deliveredUnits).toBe(0);
+        expect(json.error).toContain("تعذر تسجيل نسخة المستندات النهائية");
+        expect(mockWorkerDb.settled).toBe(false);
+        expect(mockWorkerDb.releasedJobs).toHaveLength(1);
+        expect(mockWorkerDb.releasedJobs[0].p_job_id).toBe("job_av_fail");
+        expect(mockWorkerDb.releasedJobs[0].p_force).toBe(true);
+      } finally {
+        mockWorkerDb.failArtifactVersions = false;
+        setProviderAdapterForTesting(null);
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("integrity: missing or corrupted partial data releases full reserve with zero charge and never settles", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } = await import("../src/lib/server/tregAdapter");
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "corrupt_row_1", uniqueId: "u_corrupt_1" }],
+          nextCursor: null,
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_corrupt_test",
+        }));
+
+        // 1. Missing step file (download fails and not in fallback)
+        clearInMemoryPartialStepFallbackForTesting();
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 1;
+        mockWorkerDb.failPartialsDownload = true;
+        mockWorkerDb.corruptPartialsData = false;
+        mockWorkerDb.settled = false;
+        mockWorkerDb.releasedJobs = [];
+
+        const resMissing = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_missing_step", expectedStep: 0 }),
+          })
+        );
+
+        expect(resMissing.status).toBe(500);
+        const jsonMissing = await resMissing.json();
+        expect(jsonMissing.released).toBe(true);
+        expect(jsonMissing.chargedCredits).toBe(0);
+        expect(jsonMissing.deliveredUnits).toBe(0);
+        expect(jsonMissing.error).toContain("تعذر قراءة بيانات الدفعة المرحلية");
+        expect(mockWorkerDb.settled).toBe(false);
+        expect(mockWorkerDb.releasedJobs).toHaveLength(1);
+        expect(mockWorkerDb.releasedJobs[0].p_force).toBe(true);
+
+        // 2. Corrupted step file (download returns non-JSON or invalid rows)
+        clearInMemoryPartialStepFallbackForTesting();
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 1;
+        mockWorkerDb.failPartialsDownload = false;
+        mockWorkerDb.corruptPartialsData = true;
+        mockWorkerDb.settled = false;
+        mockWorkerDb.releasedJobs = [];
+
+        const resCorrupt = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_corrupt_step", expectedStep: 0 }),
+          })
+        );
+
+        expect(resCorrupt.status).toBe(500);
+        const jsonCorrupt = await resCorrupt.json();
+        expect(jsonCorrupt.released).toBe(true);
+        expect(jsonCorrupt.chargedCredits).toBe(0);
+        expect(jsonCorrupt.deliveredUnits).toBe(0);
+        expect(jsonCorrupt.error).toContain("تعذر قراءة بيانات الدفعة المرحلية");
+        expect(mockWorkerDb.settled).toBe(false);
+        expect(mockWorkerDb.releasedJobs).toHaveLength(1);
+        expect(mockWorkerDb.releasedJobs[0].p_force).toBe(true);
+      } finally {
+        mockWorkerDb.failPartialsDownload = false;
+        mockWorkerDb.corruptPartialsData = false;
+        clearInMemoryPartialStepFallbackForTesting();
+        setProviderAdapterForTesting(null);
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("integrity: delivered units row count mismatch releases full reserve with zero charge and never settles", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } = await import("../src/lib/server/tregAdapter");
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "mismatch_row_1", uniqueId: "u_mismatch_1" }],
+          nextCursor: null,
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_mismatch_test",
+        }));
+
+        clearInMemoryPartialStepFallbackForTesting();
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 1;
+        mockWorkerDb.mismatchDeliveredUnits = true; // injects +5 mismatch in complete_chunk
+        mockWorkerDb.settled = false;
+        mockWorkerDb.releasedJobs = [];
+
+        const res = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_mismatch_count", expectedStep: 0 }),
+          })
+        );
+
+        expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.success).toBe(false);
+        expect(json.released).toBe(true);
+        expect(json.chargedCredits).toBe(0);
+        expect(json.deliveredUnits).toBe(0);
+        expect(json.error).toContain("عدم تطابق في عدد السجلات المجمعة");
+        expect(mockWorkerDb.settled).toBe(false);
+        expect(mockWorkerDb.releasedJobs).toHaveLength(1);
+        expect(mockWorkerDb.releasedJobs[0].p_job_id).toBe("job_mismatch_count");
+        expect(mockWorkerDb.releasedJobs[0].p_force).toBe(true);
+      } finally {
+        mockWorkerDb.mismatchDeliveredUnits = false;
+        clearInMemoryPartialStepFallbackForTesting();
+        setProviderAdapterForTesting(null);
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("integrity: release_job_atomic failure returns released: false with safe Arabic error and zero charge", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } =
+        await import("../src/lib/server/tregAdapter");
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "rel_fail_row", uniqueId: "u_rel_fail" }],
+          nextCursor: null,
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_rel_fail_test",
+        }));
+
+        clearInMemoryPartialStepFallbackForTesting();
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 1;
+        mockWorkerDb.failResultsUpload = true; // causes failure branch
+        mockWorkerDb.failReleaseJobAtomic = true; // release RPC fails!
+        mockWorkerDb.releaseJobAtomicError = { message: "release_database_timeout" };
+        mockWorkerDb.settled = false;
+        mockWorkerDb.releasedJobs = [];
+
+        const res = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_release_rpc_failed", expectedStep: 0 }),
+          })
+        );
+
+        expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.success).toBe(false);
+        expect(json.released).toBe(false);
+        expect(json.chargedCredits).toBe(0);
+        expect(json.deliveredUnits).toBe(0);
+        expect(json.error).toBe("تعذر تحرير الرصيد المحجوز للمهمة.");
+        expect(json.diagnostic).toBe("release_database_timeout");
+        expect(mockWorkerDb.settled).toBe(false);
+      } finally {
+        mockWorkerDb.failResultsUpload = false;
+        mockWorkerDb.failReleaseJobAtomic = false;
+        mockWorkerDb.releaseJobAtomicError = null;
+        clearInMemoryPartialStepFallbackForTesting();
+        setProviderAdapterForTesting(null);
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("integrity: complete_chunk missing or malformed delivered_units response aborts execution with zero charge", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } =
+        await import("../src/lib/server/tregAdapter");
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "comp_malformed_1", uniqueId: "u_comp_1" }],
+          nextCursor: null,
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_comp_malformed_test",
+        }));
+
+        clearInMemoryPartialStepFallbackForTesting();
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 1;
+        mockWorkerDb.settled = false;
+        mockWorkerDb.releasedJobs = [];
+        // complete_chunk returns missing delivered_units
+        mockWorkerDb.completeChunkOverride = {
+          data: { success: true }, // missing delivered_units!
+          error: null,
+        };
+
+        const res = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_comp_missing_units", expectedStep: 0 }),
+          })
+        );
+
+        expect(res.status).toBe(500);
+        const json = await res.json();
+        expect(json.success).toBe(false);
+        expect(json.chargedCredits).toBe(0);
+        expect(mockWorkerDb.settled).toBe(false); // NEVER settled without verified delivered_units
+
+        // When complete_chunk returns database error
+        mockWorkerDb.completeChunkOverride = {
+          data: null,
+          error: { message: "complete_chunk_db_constraint_violation" },
+        };
+        const resErr = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_comp_db_err", expectedStep: 0 }),
+          })
+        );
+        expect(resErr.status).toBe(500);
+        const jsonErr = await resErr.json();
+        expect(jsonErr.success).toBe(false);
+        expect(jsonErr.chargedCredits).toBe(0);
+        expect(mockWorkerDb.settled).toBe(false);
+      } finally {
+        mockWorkerDb.completeChunkOverride = null;
+        clearInMemoryPartialStepFallbackForTesting();
+        setProviderAdapterForTesting(null);
+        process.env.NODE_ENV = originalNodeEnv;
+        process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+      }
+    });
+
+    it("integrity: safely handles complete_chunk already_completed without duplicate settlement", async () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } =
+        await import("../src/lib/server/tregAdapter");
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      try {
+        process.env.NODE_ENV = "test";
+        process.env.ENABLE_MOCK_PROVIDER = "true";
+
+        // Case A: intermediate step returns already_completed
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "row_idempotent", uniqueId: "u_idemp" }],
+          nextCursor: "next_cursor_page_2",
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_idemp_test",
+        }));
+
+        clearInMemoryPartialStepFallbackForTesting();
+        mockWorkerDb.step = 0;
+        mockWorkerDb.deliveredUnits = 0;
+        mockWorkerDb.targetVolumeMax = 10;
+        mockWorkerDb.settled = false;
+        mockWorkerDb.completeChunkOverride = {
+          data: {
+            success: true,
+            already_completed: true,
+            current_step: 1,
+            delivered_units: 5,
+          },
+          error: null,
+        };
+
+        const resInter = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_already_comp_inter", expectedStep: 0 }),
+          })
+        );
+
+        expect(resInter.status).toBe(200);
+        const jsonInter = await resInter.json();
+        expect(jsonInter.success).toBe(true);
+        expect(jsonInter.done).toBe(false);
+        expect(jsonInter.alreadyCompleted).toBe(true);
+        expect(jsonInter.deliveredUnits).toBe(5);
+        expect(mockWorkerDb.settled).toBe(false);
+
+        // Case B: terminal step returns already_completed and job status in DB is completed
+        setProviderAdapterForTesting(async () => ({
+          ok: true,
+          httpStatus: 200,
+          rows: [{ id: "row_idemp_done", uniqueId: "u_idemp_done" }],
+          nextCursor: null,
+          costUsd: 0.001,
+          costMicro: 1000,
+          tregCallId: "treg_idemp_done_test",
+        }));
+
+        mockWorkerDb.jobStatusOverride = "completed";
+        mockWorkerDb.deliveredUnits = 10;
+        mockWorkerDb.completeChunkOverride = {
+          data: {
+            success: true,
+            already_completed: true,
+            current_step: 2,
+            delivered_units: 10,
+          },
+          error: null,
+        };
+
+        const resTerm = await workerRoute.POST(
+          new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+            method: "POST",
+            headers: { authorization: "Bearer super-secret-cron-key-12345" },
+            body: JSON.stringify({ jobId: "job_already_comp_term", expectedStep: 1 }),
+          })
+        );
+
+        expect(resTerm.status).toBe(200);
+        const jsonTerm = await resTerm.json();
+        expect(jsonTerm.success).toBe(true);
+        expect(jsonTerm.done).toBe(true);
+        expect(jsonTerm.alreadySettled).toBe(true);
+        expect(jsonTerm.deliveredUnits).toBe(10);
+      } finally {
+        mockWorkerDb.completeChunkOverride = null;
+        mockWorkerDb.jobStatusOverride = null;
+        clearInMemoryPartialStepFallbackForTesting();
         setProviderAdapterForTesting(null);
         process.env.NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
