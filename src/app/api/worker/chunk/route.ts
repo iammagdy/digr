@@ -119,6 +119,46 @@ export async function POST(req: NextRequest) {
       process.env.ENABLE_MOCK_PROVIDER === "true"
     );
 
+    // A1 Safety Guard: until the real provider executor is wired and enabled, the non-mock path
+    // must NEVER advance delivered_units or settle fake data; release full reserve with zero charge.
+    if (!useMockProvider) {
+      const releaseReason =
+        "محرك استخراج البيانات المباشر غير مفعل حالياً؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+      const { data: releaseData, error: releaseErr } = await adminClient.rpc(
+        "release_job_atomic",
+        {
+          p_job_id: jobId,
+          p_error_message: releaseReason,
+          p_force: true,
+        }
+      );
+
+      if (releaseErr) {
+        return NextResponse.json(
+          {
+            success: false,
+            released: false,
+            jobId,
+            error: "تعذر تحرير الرصيد المحجوز للمهمة المتوقفة.",
+          },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          success: false,
+          released: true,
+          chargedCredits: 0,
+          deliveredUnits: 0,
+          jobId,
+          error: releaseReason,
+          release: releaseData,
+        },
+        { status: 503 }
+      );
+    }
+
     // If simulating provider error during test runs
     if (useMockProvider && body?.simulateProviderError) {
       throw new Error("خطأ محاكى من مزود البيانات لاختبار إعادة المحاولة.");

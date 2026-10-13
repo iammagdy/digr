@@ -11,6 +11,7 @@ const mockNudgeDb = vi.hoisted(() => ({
 
 const mockWorkerDb = vi.hoisted(() => ({
   recordedFailures: [] as any[],
+  releasedJobs: [] as any[],
   step: 0,
   deliveredUnits: 0,
   targetVolumeMax: 20,
@@ -58,6 +59,18 @@ vi.mock("../src/lib/supabase/server", () => ({
             target_volume_min: 1,
             endpoint_id: "tiktok-profile",
             unit_price: 2,
+          },
+          error: null,
+        };
+      }
+      if (rpcName === "release_job_atomic") {
+        mockWorkerDb.releasedJobs.push(args);
+        return {
+          data: {
+            success: true,
+            job_id: args.p_job_id,
+            released_credits: 46,
+            charged_credits: 0,
           },
           error: null,
         };
@@ -443,6 +456,42 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         process.env.NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
+    });
+
+    it("A1 Safety Guard: non-mock path never advances delivered_units or settles; releases job via release_job_atomic with zero charge", async () => {
+      mockWorkerDb.step = 0;
+      mockWorkerDb.deliveredUnits = 0;
+      mockWorkerDb.settled = false;
+      mockWorkerDb.releasedJobs = [];
+
+      const workerRoute = await import("../src/app/api/worker/chunk/route");
+      const reqNonMock = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer super-secret-cron-key-12345",
+        },
+        body: JSON.stringify({
+          jobId: "job_non_mock_safety_1",
+          expectedStep: 0,
+        }),
+      });
+
+      const res = await workerRoute.POST(reqNonMock);
+      expect(res.status).toBe(503);
+      const json = await res.json();
+      expect(json.success).toBe(false);
+      expect(json.released).toBe(true);
+      expect(json.chargedCredits).toBe(0);
+      expect(json.deliveredUnits).toBe(0);
+      expect(json.error).toContain("استرداد كامل الرصيد المحجوز دون أي خصم");
+      expect(mockWorkerDb.deliveredUnits).toBe(0);
+      expect(mockWorkerDb.settled).toBe(false);
+      expect(mockWorkerDb.releasedJobs).toHaveLength(1);
+      expect(mockWorkerDb.releasedJobs[0]).toEqual({
+        p_job_id: "job_non_mock_safety_1",
+        p_error_message: expect.stringContaining("استرداد كامل الرصيد المحجوز دون أي خصم"),
+        p_force: true,
+      });
     });
   });
 });

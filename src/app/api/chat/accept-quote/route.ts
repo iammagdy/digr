@@ -50,6 +50,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // A1 Safety Guard: Do not silently accept a quote and start fake work when live provider is disabled
+    const isLiveProviderReady =
+      process.env.TREG_LIVE === "true" && Boolean(process.env.TREG_TOKEN?.trim());
+    const isTestMockAllowed =
+      process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true";
+
+    if (!isLiveProviderReady && !isTestMockAllowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "محرك استخراج البيانات المباشر غير مفعل حالياً؛ لم يتم حجز أو خصم أي نقاط من رصيدك.",
+        },
+        { status: 503 }
+      );
+    }
+
     // 2. Accept Quote & Reserve Credits atomically via Service Role
     const adminClient = createAdminClient();
     const acceptRes = await acceptQuoteSupabase(adminClient, {

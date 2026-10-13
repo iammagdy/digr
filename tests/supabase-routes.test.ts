@@ -424,6 +424,42 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
     const data = await res.json();
     expect(data.error).toBe("فعّل بريدك الإلكتروني أولًا لبدء البحث.");
   });
+
+  it("A1 Safety Guard: refuses to silently reserve credits or start fake work when TREG_LIVE is disabled", async () => {
+    const { POST } = await import("../src/app/api/chat/accept-quote/route");
+    const { NextRequest } = await import("next/server");
+
+    const prevLive = process.env.TREG_LIVE;
+    const prevMock = process.env.ENABLE_MOCK_PROVIDER;
+    try {
+      delete process.env.TREG_LIVE;
+      delete process.env.ENABLE_MOCK_PROVIDER;
+
+      authMockState.user = {
+        id: "user-verified-1",
+        email: "verified@example.com",
+        email_confirmed_at: "2026-10-12T00:00:00Z",
+        user_metadata: { email_verified: true },
+      };
+      authMockState.authError = null;
+
+      const req = new NextRequest("http://localhost:3000/api/chat/accept-quote", {
+        method: "POST",
+        body: JSON.stringify({ quoteId: "q-1" }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.success).toBe(false);
+      expect(data.error).toContain("لم يتم حجز أو خصم أي نقاط");
+    } finally {
+      if (prevLive === undefined) delete process.env.TREG_LIVE;
+      else process.env.TREG_LIVE = prevLive;
+      if (prevMock === undefined) delete process.env.ENABLE_MOCK_PROVIDER;
+      else process.env.ENABLE_MOCK_PROVIDER = prevMock;
+    }
+  });
 });
 
 describe("Top-up Approval Atomic Logic (approves twice, credits once)", () => {
