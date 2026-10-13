@@ -1189,7 +1189,10 @@ export class LlmClient {
 
     // B3. Deterministic Phase 2 Plan Proposal Handling
     const hasPhase2PlanInstruction = (options.messages || []).some(
-      (m) => typeof m.content === "string" && (m.content.includes("propose_plan") && m.content.includes("خطة مسعرة")),
+      (m) =>
+        typeof m.content === "string" &&
+        (m.content.includes("المرحلة الثانية") || m.content.includes("متطلبات البحث مكتملة")) &&
+        m.content.includes("propose_plan"),
     );
     if (hasPhase2PlanInstruction || options.testScenario === "phase2_plan") {
       const matchedCap = (options.sanitizedCapabilities || []).find((c: any) =>
@@ -1248,7 +1251,11 @@ export class LlmClient {
 
     // B4. Deterministic Phase 1 Understanding Handling
     const hasPhase1Instruction = (options.messages || []).some(
-      (m) => typeof m.content === "string" && m.content.includes("مرحلة الاستيعاب (Phase 1)"),
+      (m) =>
+        typeof m.content === "string" &&
+        (m.content.includes("مرحلة الاستيعاب") ||
+          m.content.includes("Phase 1") ||
+          m.content.includes("استوعب هدف البحث")),
     );
     if (hasPhase1Instruction || options.testScenario === "phase1_understanding") {
       return {

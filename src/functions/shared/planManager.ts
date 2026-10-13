@@ -91,6 +91,9 @@ export interface PlanItem {
   targetVolumeMax: number;
   paginationStrategy?: "cursor" | "offset" | "page" | "none";
   stepId?: string;
+  unitCostUsd?: number;
+  unitPricePoints?: number;
+  pricingUnit?: "call" | "item" | "page";
 }
 
 export interface ExecutionOptions {
@@ -328,7 +331,7 @@ export interface LiveCatalogIssue {
   itemIndex: number;
   /** Arabic display name for user-facing text — never an internal slug. */
   nameAr: string;
-  kind: "not_found" | "missing_params" | "over_limit";
+  kind: "not_found" | "missing_params" | "over_limit" | "missing_cost" | "private_scope";
   missingParams?: string[];
 }
 
@@ -404,6 +407,18 @@ export function validatePlanAgainstLiveCatalog(
     if (!ep) {
       errors.push(`الخدمة "${nameAr}" غير متوفرة في نتائج البحث الحالية`);
       issues.push({ itemIndex: index, nameAr, kind: "not_found" });
+      return;
+    }
+
+    if (!ep.catalogPriceUsd || ep.catalogPriceUsd <= 0 || !ep.pointsPerUnit || ep.pointsPerUnit <= 0) {
+      errors.push(`الخدمة "${nameAr}" لا تملك تكلفة معتمدة وموثقة في الكتالوج ولا يمكن تنفيذها`);
+      issues.push({ itemIndex: index, nameAr, kind: "missing_cost" });
+      return;
+    }
+
+    if (ep.scope === "own_account") {
+      errors.push(`الخدمة "${nameAr}" مخصصة للبيانات الخاصة فقط ولا تدعم البحث العام`);
+      issues.push({ itemIndex: index, nameAr, kind: "private_scope" });
       return;
     }
 

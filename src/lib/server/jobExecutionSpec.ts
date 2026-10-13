@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { searchCatalog } from "../../functions/shared/catalogClient";
+import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 
 export interface ResolvedJobExecutionSpec {
@@ -63,6 +63,16 @@ export async function resolveJobExecutionSpec(
             ) {
               paginationStrategy = firstItem.paginationStrategy;
             }
+            if (typeof firstItem.unitCostUsd === "number" && firstItem.unitCostUsd > 0) {
+              unitCostUsd = Number(firstItem.unitCostUsd);
+            }
+            if (
+              firstItem.pricingUnit === "call" ||
+              firstItem.pricingUnit === "item" ||
+              firstItem.pricingUnit === "page"
+            ) {
+              pricingUnit = firstItem.pricingUnit;
+            }
           }
         }
       }
@@ -102,6 +112,26 @@ export async function resolveJobExecutionSpec(
     }
   } catch {
     // Fallback to APPROVED_CAPABILITY_CATALOG
+  }
+
+  // 2b. Match in live TREG catalog via getEndpointDetails
+  try {
+    const details = await getEndpointDetails(endpointId || capabilitySlug);
+    if (details) {
+      if (!endpointId || endpointId === capabilitySlug) {
+        endpointId = details.id || endpointId;
+      }
+      method = method || details.method;
+      paginationStrategy = paginationStrategy || details.pagination?.type;
+      if (details.billingUnit === "call" || details.billingUnit === "item" || details.billingUnit === "page") {
+        pricingUnit = details.billingUnit;
+      }
+      if (unitCostUsd === undefined && details.catalogPriceUsd > 0) {
+        unitCostUsd = details.catalogPriceUsd;
+      }
+    }
+  } catch {
+    // Continue
   }
 
   // 3. Match APPROVED_CAPABILITY_CATALOG

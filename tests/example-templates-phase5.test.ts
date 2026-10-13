@@ -33,7 +33,7 @@ describe("Phase 5: Ready-to-Use Example Templates on Landing & Chat", () => {
     for (const tpl of defaultTemplates) {
       const expectedPoints = tpl.steps.reduce((sum, step) => {
         const cap = defaultCatalog.get(step.capabilityId)!;
-        return sum + cap.pointsPerUnit * step.estimatedUnits;
+        return sum + (cap.pointsPerUnit || 0) * step.estimatedUnits;
       }, 0);
       expect(tpl.approximatePoints).toBe(expectedPoints);
     }

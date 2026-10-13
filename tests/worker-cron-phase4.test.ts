@@ -442,7 +442,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalNodeEnv = process.env.NODE_ENV;
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       try {
-        process.env.NODE_ENV = "production";
+        (process.env as any).NODE_ENV = "production";
         process.env.ENABLE_MOCK_PROVIDER = "true";
         const workerRoute = await import("../src/app/api/worker/chunk/route");
         const req = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
@@ -460,7 +460,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(json.error).toContain("حقن المزود الوهمي محظور في بيئة الإنتاج");
 
         // Also reject when NODE_ENV !== production if ENABLE_MOCK_PROVIDER !== "true"
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         delete process.env.ENABLE_MOCK_PROVIDER;
         const reqNoFlag = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
           method: "POST",
@@ -473,7 +473,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         const resNoFlag = await workerRoute.POST(reqNoFlag);
         expect(resNoFlag.status).toBe(403);
       } finally {
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -482,7 +482,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalNodeEnv = process.env.NODE_ENV;
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         mockWorkerDb.step = 0;
@@ -534,7 +534,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(mockWorkerDb.notifications.length).toBe(1);
         expect(mockWorkerDb.notifications[0].title).toContain("اكتمل طلب استخراج البيانات بنجاح");
       } finally {
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -543,7 +543,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalNodeEnv = process.env.NODE_ENV;
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
         mockWorkerDb.recordedFailures = [];
 
@@ -569,7 +569,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(mockWorkerDb.recordedFailures.length).toBeGreaterThan(0);
         expect(mockWorkerDb.recordedFailures[0].p_job_id).toBe("job_fail_test");
       } finally {
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -615,7 +615,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         mockWorkerDb.step = 0;
@@ -788,7 +788,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(jsonCap.settle?.released_credits).toBe(0);
       } finally {
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -798,7 +798,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         mockWorkerDb.step = 0;
@@ -842,7 +842,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         });
       } finally {
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -852,7 +852,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         mockWorkerDb.step = 0;
@@ -935,7 +935,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         });
       } finally {
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -946,7 +946,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
       let adapterCalled = false;
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         mockWorkerDb.step = 0;
@@ -991,7 +991,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       } finally {
         mockWorkerDb.denyDailyCap = false;
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1001,7 +1001,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         setProviderAdapterForTesting(async () => ({
@@ -1067,7 +1067,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         mockWorkerDb.failPartialsUpload = false;
         mockWorkerDb.failResultsUpload = false;
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1078,7 +1078,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
       const workerRoute = await import("../src/app/api/worker/chunk/route");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         setProviderAdapterForTesting(async () => ({
@@ -1122,7 +1122,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       } finally {
         mockWorkerDb.failArtifactVersions = false;
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1133,7 +1133,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } = await import("../src/lib/server/tregAdapter");
       const workerRoute = await import("../src/app/api/worker/chunk/route");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         setProviderAdapterForTesting(async () => ({
@@ -1206,7 +1206,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         mockWorkerDb.corruptPartialsData = false;
         clearInMemoryPartialStepFallbackForTesting();
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1217,7 +1217,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       const { setProviderAdapterForTesting, clearInMemoryPartialStepFallbackForTesting } = await import("../src/lib/server/tregAdapter");
       const workerRoute = await import("../src/app/api/worker/chunk/route");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         setProviderAdapterForTesting(async () => ({
@@ -1261,7 +1261,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         mockWorkerDb.mismatchDeliveredUnits = false;
         clearInMemoryPartialStepFallbackForTesting();
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1273,7 +1273,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         await import("../src/lib/server/tregAdapter");
       const workerRoute = await import("../src/app/api/worker/chunk/route");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         setProviderAdapterForTesting(async () => ({
@@ -1319,7 +1319,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         mockWorkerDb.releaseJobAtomicError = null;
         clearInMemoryPartialStepFallbackForTesting();
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1331,7 +1331,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         await import("../src/lib/server/tregAdapter");
       const workerRoute = await import("../src/app/api/worker/chunk/route");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         setProviderAdapterForTesting(async () => ({
@@ -1391,7 +1391,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         mockWorkerDb.completeChunkOverride = null;
         clearInMemoryPartialStepFallbackForTesting();
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });
@@ -1403,7 +1403,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         await import("../src/lib/server/tregAdapter");
       const workerRoute = await import("../src/app/api/worker/chunk/route");
       try {
-        process.env.NODE_ENV = "test";
+        (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         // Case A: intermediate step returns already_completed
@@ -1490,7 +1490,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         mockWorkerDb.jobStatusOverride = null;
         clearInMemoryPartialStepFallbackForTesting();
         setProviderAdapterForTesting(null);
-        process.env.NODE_ENV = originalNodeEnv;
+        (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
       }
     });

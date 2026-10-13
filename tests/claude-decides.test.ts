@@ -242,11 +242,11 @@ describe("fix/claude-decides: Claude decides, keyword inference & question pruni
     });
 
     expect(res.turnStats).toBeDefined();
-    expect(res.turnStats.stepTimings).toBeDefined();
-    expect(typeof res.turnStats.stepTimings.tExtractMs).toBe("number");
-    expect(typeof res.turnStats.stepTimings.tCatalogSearchMs).toBe("number");
-    expect(typeof res.turnStats.stepTimings.tPlanLlmMs).toBe("number");
-    expect(typeof res.turnStats.stepTimings.tQuoteMs).toBe("number");
-    expect(res.turnStats.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(res.turnStats?.stepTimings).toBeDefined();
+    expect(typeof res.turnStats?.stepTimings?.tExtractMs).toBe("number");
+    expect(typeof res.turnStats?.stepTimings?.tCatalogSearchMs).toBe("number");
+    expect(typeof res.turnStats?.stepTimings?.tPlanLlmMs).toBe("number");
+    expect(typeof res.turnStats?.stepTimings?.tQuoteMs).toBe("number");
+    expect(res.turnStats?.latencyMs).toBeGreaterThanOrEqual(0);
   });
 });
