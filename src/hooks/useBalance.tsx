@@ -47,9 +47,9 @@ export function BalanceProvider({ children }: { children: ReactNode }) {
   // Pages dispatch this after anything that moves points (approve quote, top-up, refund).
   useEffect(() => {
     const on = () => void refresh();
-    window.addEventListener("digr:balance-changed", on);
+    window.addEventListener("diger:balance-changed", on);
     window.addEventListener("focus", on);
-    return () => { window.removeEventListener("digr:balance-changed", on); window.removeEventListener("focus", on); };
+    return () => { window.removeEventListener("diger:balance-changed", on); window.removeEventListener("focus", on); };
   }, [refresh]);
 
   const value = useMemo(() => ({ balance, refresh }), [balance, refresh]);

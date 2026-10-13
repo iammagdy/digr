@@ -123,7 +123,7 @@ export default function RequestsPage() {
       if (!res.ok) throw new Error(String(res.status));
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
-      a.href = url; a.download = `digr_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
+      a.href = url; a.download = `diger_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
       document.body.appendChild(a); a.click();
       setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 250);
     } catch {

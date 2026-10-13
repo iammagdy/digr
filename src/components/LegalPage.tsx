@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Wordmark } from "@/components/Brand";
+import { Logo } from "@/components/Brand";
 import type { LegalSection } from "@/lib/legalText";
 import { SUPPORT_EMAIL } from "@/lib/site";
 
@@ -19,7 +19,7 @@ export default function LegalPage({ tab, title, sections }: { tab: "terms" | "pr
       <div className="mx-auto flex max-w-[760px] flex-col gap-[18px]">
         <div className="flex items-center justify-between gap-2.5">
           <button type="button" onClick={back} className="min-h-11 cursor-pointer rounded-full border-0 bg-sf2 px-4 text-[13px] text-ink">→ رجوع</button>
-          <div className="flex items-center gap-1"><Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Wordmark height={26} /></Link></div>
+          <div className="flex items-center gap-1"><Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Logo height={26} /></Link></div>
         </div>
         <nav className="grid grid-cols-2 gap-1 rounded-full bg-sf2 p-1" aria-label="الوثائق القانونية">
           <Link href="/legal/terms" aria-current={tab === "terms" ? "page" : undefined} className={tabCls(tab === "terms")}>الشروط والأحكام</Link>

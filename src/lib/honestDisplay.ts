@@ -1,5 +1,5 @@
 /**
- * Honest display rules for the Digr redesign.
+ * Honest display rules for the Diger redesign.
  *
  * Pure, dependency-free helpers encoding the data-honesty invariants:
  *  - a failed balance request never presents as a zero balance
@@ -256,7 +256,7 @@ export function methodologyMessageText(
 /* Instapay Configuration & Safety Checks                             */
 /* ------------------------------------------------------------------ */
 
-const PLACEHOLDER_HANDLES = new Set(["digr@instapay", "placeholder", "your_handle", "example@instapay"]);
+const PLACEHOLDER_HANDLES = new Set(["diger@instapay", "digr@instapay", "placeholder", "your_handle", "example@instapay"]);
 const PLACEHOLDER_PHONES = new Set(["01000000000", "010xxxxxxxx", "placeholder", "00000000000", "1234567890"]);
 
 /**

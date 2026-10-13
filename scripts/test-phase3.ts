@@ -71,9 +71,9 @@ async function runPhase3Tests() {
   console.log("═══════════════════════════════════════════════════════════════\n");
 
   const timestamp = Date.now();
-  const emailUserA = `p3-user-a-${timestamp}@digr.test`;
-  const emailUserB = `p3-user-b-${timestamp}@digr.test`;
-  const emailAdmin = `p3-admin-${timestamp}@digr.test`;
+  const emailUserA = `p3-user-a-${timestamp}@diger.test`;
+  const emailUserB = `p3-user-b-${timestamp}@diger.test`;
+  const emailAdmin = `p3-admin-${timestamp}@diger.test`;
   const password = "Phase3SecurePassword123!";
 
   let userAId = "";

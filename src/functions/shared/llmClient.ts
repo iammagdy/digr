@@ -357,7 +357,7 @@ const FORBIDDEN_WORDS = [
 export function scrubWhiteLabelText(text: string): string {
   let cleaned = text;
   for (const regex of FORBIDDEN_WORDS) {
-    cleaned = cleaned.replace(regex, "منصة Digr");
+    cleaned = cleaned.replace(regex, "منصة Diger");
   }
   return cleaned;
 }
@@ -1071,8 +1071,8 @@ export class LlmClient {
     const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(lastUserMsg);
     if (isGreeting || isGeneralQuestion) {
       const answerText = isGreeting
-        ? "أهلاً بك! أنا مساعد Digr لجمع وتوثيق البيانات العامة من المنصات الرقمية. كيف يمكنني مساعدتك في بحثك اليوم؟"
-        : "أنا مساعد Digr المتخصص في تصميم وتنفيذ مهام جمع وتوثيق البيانات العامة من شبكات التواصل والمنصات الرقمية وتسليمها بملفات Excel وCSV وPDF موثقة. كيف تحب نبدأ؟";
+        ? "أهلاً بك! أنا مساعد Diger لجمع وتوثيق البيانات العامة من المنصات الرقمية. كيف يمكنني مساعدتك في بحثك اليوم؟"
+        : "أنا مساعد Diger المتخصص في تصميم وتنفيذ مهام جمع وتوثيق البيانات العامة من شبكات التواصل والمنصات الرقمية وتسليمها بملفات Excel وCSV وPDF موثقة. كيف تحب نبدأ؟";
       return {
         output: {
           type: "answer_question",
@@ -1273,11 +1273,13 @@ export class LlmClient {
       promptLower.includes("طريقة الشحن") ||
       promptLower.includes("إنستاباي") ||
       promptLower.includes("instapay") ||
+      promptLower.includes("ما هي diger") ||
       promptLower.includes("ما هي digr") ||
+      promptLower.includes("ما هي ديجر") ||
       promptLower.includes("ما هي الملفات") ||
       promptLower.includes("كم يستغرق")
     ) {
-      let answerText = "تتيح لك منصة Digr استخراج البيانات العامة وتوثيقها بملفات Excel وCSV وPDF موثقة بمنهجية كاملة.";
+      let answerText = "تتيح لك منصة Diger استخراج البيانات العامة وتوثيقها بملفات Excel وCSV وPDF موثقة بمنهجية كاملة.";
       if (promptLower.includes("شحن") || promptLower.includes("إنستاباي") || promptLower.includes("instapay")) {
         answerText = "يتم شحن الرصيد عبر إنستاباي (Instapay) من صفحة الرصيد. بعد التحويل ترفع إيصال المعاملة ويتم اعتماد النقاط فورياً لحسابك.";
       } else if (promptLower.includes("ملفات")) {
@@ -2134,7 +2136,7 @@ export class LlmClient {
           tools: [
             {
               name: "actionResult",
-              description: "Structured output response from the assistant adhering to Digr system protocols",
+              description: "Structured output response from the assistant adhering to Diger system protocols",
               input_schema: ACTION_RESULT_JSON_SCHEMA,
             },
           ],

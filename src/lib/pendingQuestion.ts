@@ -1,4 +1,4 @@
-export const PENDING_QUESTION_KEY = "digr:pendingQuestion";
+export const PENDING_QUESTION_KEY = "diger:pendingQuestion";
 
 /* sessionStorage is the source of truth; localStorage mirrors it so the question
    survives the email-verification link opening in a new tab. */

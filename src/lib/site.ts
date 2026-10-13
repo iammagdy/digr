@@ -1,7 +1,7 @@
 /** Canonical public origin. Set NEXT_PUBLIC_SITE_URL on the production Site; it falls back to the main domain. */
 export const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://diger.tech").replace(/\/+$/, "");
 export const SITE_HOST = new URL(SITE_URL).hostname;
-export const SITE_NAME = "Digr";
+export const SITE_NAME = "Diger";
 export const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "support@diger.tech";
 
 /**

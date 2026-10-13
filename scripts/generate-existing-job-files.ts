@@ -65,19 +65,19 @@ async function main() {
   const filesToUpload = [
     {
       id: xlsxFileId,
-      name: `digr_${job.templateSlug}_${TARGET_JOB_ID}.xlsx`,
+      name: `diger_${job.templateSlug}_${TARGET_JOB_ID}.xlsx`,
       buffer: xlsxBuffer,
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     },
     {
       id: pdfFileId,
-      name: `digr_${job.templateSlug}_${TARGET_JOB_ID}.pdf`,
+      name: `diger_${job.templateSlug}_${TARGET_JOB_ID}.pdf`,
       buffer: pdfBuffer,
       type: "application/pdf",
     },
     {
       id: csvFileId,
-      name: `digr_${job.templateSlug}_${TARGET_JOB_ID}.csv`,
+      name: `diger_${job.templateSlug}_${TARGET_JOB_ID}.csv`,
       buffer: csvBuffer,
       type: "text/csv; charset=utf-8",
     },

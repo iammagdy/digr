@@ -39,8 +39,8 @@ async function main() {
 
   const finalPayload = {
     metadata: {
-      platform: "Digr Data Platform",
-      company: "Digr",
+      platform: "Diger Data Platform",
+      company: "Diger",
       title: `نتائج استخراج ملف تيك توك الشخصي (${profileData.nickname})`,
       template: "tiktok-profile",
       jobId,
@@ -68,7 +68,7 @@ async function main() {
   await storage.createFile(
     "results",
     pdfFileId,
-    new File([new Uint8Array(pdfBuf)], `digr_tiktok-profile_${jobId}.pdf`, { type: "application/pdf" }),
+    new File([new Uint8Array(pdfBuf)], `diger_tiktok-profile_${jobId}.pdf`, { type: "application/pdf" }),
     permissions
   );
   console.log(`✓ Uploaded updated ${pdfFileId} to Storage results bucket!`);

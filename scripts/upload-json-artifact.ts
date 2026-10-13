@@ -37,8 +37,8 @@ async function main() {
 
   const finalPayload = {
     metadata: {
-      platform: "Digr Data Platform",
-      company: "Digr",
+      platform: "Diger Data Platform",
+      company: "Diger",
       title: `نتائج استخراج ملف تيك توك الشخصي (${profileData.nickname})`,
       template: "tiktok-profile",
       jobId,
@@ -70,7 +70,7 @@ async function main() {
 
   const uploadFile = new File(
     [new Uint8Array(Buffer.from(JSON.stringify(finalPayload, null, 2)))],
-    `digr_tiktok-profile_${jobId}.json`,
+    `diger_tiktok-profile_${jobId}.json`,
     { type: "application/json" }
   );
 

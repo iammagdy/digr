@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
-import { Wordmark } from "@/components/Brand";
+import { Logo } from "@/components/Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { readPendingQuestion } from "@/lib/pendingQuestion";
 
@@ -32,7 +32,7 @@ export function AuthLayout({
   return (
     <main className="flex min-h-dvh flex-col items-center bg-bg px-5 pb-10 pt-7 text-ink2">
       <div className="flex w-full max-w-[440px] items-center justify-between">
-        <Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Wordmark height={30} /></Link>
+        <Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Logo height={30} /></Link>
         <ThemeToggle className="!text-mut" />
       </div>
       <div className="flex w-full max-w-[440px] flex-1 flex-col justify-center py-12">

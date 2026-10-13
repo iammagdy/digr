@@ -1,6 +1,6 @@
-# Digr Platform Handoff Document
+# Diger Platform Handoff Document
 
-This document summarizes the current architecture, deployed state, pending items, and non-negotiable operational invariants for the Digr project.
+This document summarizes the current architecture, deployed state, pending items, and non-negotiable operational invariants for the Diger project.
 
 ---
 

@@ -69,9 +69,9 @@ async function runPhase25Tests() {
   console.log("═══════════════════════════════════════════════════════════════\n");
 
   const timestamp = Date.now();
-  const emailUserA = `p25-user-a-${timestamp}@digr.test`;
-  const emailUserB = `p25-user-b-${timestamp}@digr.test`;
-  const emailAdmin = `p25-admin-${timestamp}@digr.test`;
+  const emailUserA = `p25-user-a-${timestamp}@diger.test`;
+  const emailUserB = `p25-user-b-${timestamp}@diger.test`;
+  const emailAdmin = `p25-admin-${timestamp}@diger.test`;
   const password = "Phase25SecurePassword123!";
 
   let userAId = "";

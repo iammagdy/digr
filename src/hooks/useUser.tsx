@@ -48,14 +48,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const { jwt } = await account.createJWT();
       if (jwt) {
-        document.cookie = `digr_jwt=${encodeURIComponent(jwt)}; Path=/; Max-Age=840; SameSite=Lax`;
+        document.cookie = `diger_jwt=${encodeURIComponent(jwt)}; Path=/; Max-Age=840; SameSite=Lax`;
       }
     } catch {}
   }, []);
 
   const clearBrowserAuthCookies = useCallback(() => {
     if (typeof document === "undefined") return;
-    document.cookie = "digr_jwt=; Path=/; Max-Age=0; SameSite=Lax";
+    document.cookie = "diger_jwt=; Path=/; Max-Age=0; SameSite=Lax";
+    document.cookie = "digr_jwt=; Path=/; Max-Age=0; SameSite=Lax"; // legacy name, pre-rebrand
   }, []);
 
   const getUser = useCallback(async () => {

@@ -40,7 +40,7 @@ export interface AdminContext {
 export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; ctx: AdminContext } | { ok: false; response: NextResponse }> {
   const authHeader = req.headers.get("authorization");
   const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-  const cookieJwt = req.cookies.get("digr_jwt")?.value?.trim() || null;
+  const cookieJwt = (req.cookies.get("diger_jwt") ?? req.cookies.get("digr_jwt"))?.value?.trim() || null;
   const jwt = bearer || cookieJwt;
   const session =
     req.cookies.get(`a_session_${PROJECT_ID}`)?.value ||

@@ -220,6 +220,7 @@ describe("instapay placeholder guardrail", () => {
 
   it("returns false if handle or phone matches placeholder strings", () => {
     expect(isInstapayAvailable("digr@instapay", "01000000000")).toBe(false);
+    expect(isInstapayAvailable("diger@instapay", "01000000000")).toBe(false);
     expect(isInstapayAvailable("placeholder", "01012345678")).toBe(false);
     expect(isInstapayAvailable("real@instapay", "010xxxxxxxx")).toBe(false);
     expect(isInstapayAvailable("example@instapay", "1234567890")).toBe(false);
