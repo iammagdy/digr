@@ -59,6 +59,19 @@
 
 ---
 
+## الهوية البصرية (Brand)
+
+- ملفات اللوجو الرسمية في `public/brand/`، والـ favicon والأيقونات و`site.webmanifest` في جذر `public/`. لا تُعاد رسمها ولا يتغير لونها ولا تُكتب بخط.
+- استخدم `<Logo />` و`<LogoMark />` من `src/components/Brand.tsx` بدل أي `<img>` مباشر للوجو.
+- `<Logo />` يعرض اللوجو العربي «ديجر» افتراضيًا (`lang="ar"`)، ويبدّل للنسخة البيضاء تلقائيًا في الوضع الداكن.
+- الألوان: حبر `#0E3B43`، ذهبي العدسة `#C8963E` (للعدسة واللمسات الصغيرة فقط)، داكن `#0A2A30`، ورقي `#F3F1EA`.
+
+> English logo (`lang="en"`) is ready for when the English version of Diger launches. Do not use it until then. When i18n is added, derive `lang` from the active locale.
+
+ملفات اللوجو الإنجليزي (`public/brand/diger-en-wordmark*`) غير مستخدمة في الواجهة حاليًا عن قصد، فلا تحذفها أثناء تنظيف الملفات غير المستخدمة.
+
+---
+
 ## التشغيل المحلي (Local Development)
 
 1. تثبيت الحزم:
