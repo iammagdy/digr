@@ -48,6 +48,22 @@ key never goes to the client.
 Missing vars render as `""` — no raw `{{ .Var }}` token ever reaches a customer.
 Values are HTML-escaped in the body; the subject is plain text.
 
+
+## Welcome trigger (DB trigger, not an API call)
+
+`welcome` is NOT sent from an API route. It fires from a Postgres trigger on
+`auth.users` when `email_confirmed_at` goes from NULL -> set (covers email-link
+confirmation and OAuth signup):
+
+- Migration: `supabase/migrations/20261013170000_welcome_email_on_confirm.sql`
+  (pg_net -> this function; silent no-op if the Vault secret is missing,
+  never breaks auth).
+- One-time owner step in the SQL Editor (never paste the key in chat):
+  `select vault.create_secret('<SERVICE_ROLE_KEY>', 'send-email-service-role-key');`
+
+The other five templates are sent from API routes via this function (see the
+trigger table above).
+
 ## Notes
 
 - Sender is fixed: `Diger <noreply@diger.tech>` (domain verified on Resend).
