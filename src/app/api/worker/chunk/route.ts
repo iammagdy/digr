@@ -280,7 +280,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  let jobId: string | undefined = body?.jobId;
+  let jobId: string = typeof body?.jobId === "string" ? body.jobId : "";
   let expectedStep: number | undefined = body?.expectedStep;
   const adminClient = createAdminClient();
 
@@ -305,7 +305,7 @@ export async function POST(req: NextRequest) {
           claimed: false,
         });
       }
-      jobId = nextJob.id;
+      jobId = String(nextJob.id || "");
       expectedStep = nextJob.step ?? 0;
     }
 
