@@ -290,3 +290,13 @@ export function createBuiltInMockAdapter(bodyOptions: {
     };
   };
 }
+
+const inMemoryPartialStepFallback = new Map<string, any>();
+
+export function getInMemoryPartialStepFallback(): Map<string, any> {
+  return inMemoryPartialStepFallback;
+}
+
+export function clearInMemoryPartialStepFallbackForTesting(): void {
+  inMemoryPartialStepFallback.clear();
+}

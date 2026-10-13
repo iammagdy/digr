@@ -15,12 +15,13 @@ import {
 } from "../../../../functions/shared/providerSpend";
 import { generateMethodologyText } from "../../../../functions/shared/multiStepWorker";
 import { artifactVersionRowId } from "../../../../functions/shared/artifactVersions";
+import { getInMemoryPartialStepFallback } from "../../../../lib/server/tregAdapter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
 
 // Fallback in-memory partial step store used ONLY when unit-test mock storage omits .download()
-const inMemoryPartialStepFallback = new Map<string, any>();
+const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
 function getWorkerBaseUrl(): string {
   if (process.env.VERCEL_URL) {
@@ -575,7 +576,7 @@ export async function POST(req: NextRequest) {
 
     // 11. Complete chunk atomically with real cursor and real delivered count
     const nextCursorValue = isDone ? "completed" : String(adapterResult.nextCursor);
-    const { error: completeErr } = await adminClient.rpc("complete_chunk", {
+    const { data: compData, error: completeErr } = await adminClient.rpc("complete_chunk", {
       p_job_id: jobId,
       p_expected_step: currentStep,
       p_new_cursor: nextCursorValue,
@@ -587,6 +588,11 @@ export async function POST(req: NextRequest) {
       throw completeErr;
     }
 
+    const recordedDeliveredUnits =
+      typeof compData?.delivered_units === "number"
+        ? compData.delivered_units
+        : newDeliveredUnits;
+
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
     if (isDone) {
       const collectedRows: Record<string, any>[] = [];
@@ -596,39 +602,69 @@ export async function POST(req: NextRequest) {
       for (let s = 0; s <= currentStep; s++) {
         const stepKey = `${jobId}/step_${s}.json`;
         let stepObj: any = null;
+        let stepCorrupt = false;
 
         if (typeof partialsBucket.download === "function") {
           const { data: blob, error: dlErr } = await partialsBucket.download(stepKey);
           if (!dlErr && blob) {
             try {
-              stepObj = JSON.parse(await blob.text());
+              const text = typeof blob.text === "function" ? await blob.text() : String(blob);
+              stepObj = JSON.parse(text);
             } catch {
+              stepCorrupt = true;
               stepObj = null;
             }
+          } else {
+            stepObj = null;
           }
-        }
-
-        if (!stepObj && inMemoryPartialStepFallback.has(stepKey)) {
+        } else if (inMemoryPartialStepFallback.has(stepKey)) {
           stepObj = inMemoryPartialStepFallback.get(stepKey);
         }
 
-        if (stepObj) {
-          if (Array.isArray(stepObj.rows)) {
-            collectedRows.push(...stepObj.rows);
-          }
-          if (!firstRawProfile && stepObj.rawProfile) {
-            firstRawProfile = stepObj.rawProfile;
-          }
+        if (stepObj && (typeof stepObj !== "object" || !Array.isArray(stepObj.rows))) {
+          stepCorrupt = true;
+          stepObj = null;
+        }
+
+        if (!stepObj) {
+          const partialCorruptMsg = `تعذر قراءة بيانات الدفعة المرحلية (${s}) للمهمة؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`;
+          console.error(
+            `[worker:assembly_failed] step=${s} reason=${stepCorrupt ? "corrupted_step_file" : "missing_step_file"}`
+          );
+          const { data: relPartialFail } = await adminClient.rpc("release_job_atomic", {
+            p_job_id: jobId,
+            p_error_message: partialCorruptMsg,
+            p_force: true,
+          });
+          return NextResponse.json(
+            {
+              success: false,
+              released: true,
+              chargedCredits: 0,
+              deliveredUnits: 0,
+              jobId,
+              error: partialCorruptMsg,
+              release: relPartialFail,
+            },
+            { status: 500 }
+          );
+        }
+
+        collectedRows.push(...stepObj.rows);
+        if (!firstRawProfile && stepObj.rawProfile) {
+          firstRawProfile = stepObj.rawProfile;
         }
       }
 
-      const finalRows = collectedRows.slice(0, targetMax);
-      if (finalRows.length === 0) {
-        const noRowsMsg =
-          "تعذر تجميع السجلات النهائية للطلب؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-        const { data: relEmpty } = await adminClient.rpc("release_job_atomic", {
+      // Strict reconciliation: generated data row count must strictly match recorded delivered units
+      if (collectedRows.length !== recordedDeliveredUnits || collectedRows.length === 0) {
+        const mismatchMsg = `عدم تطابق في عدد السجلات المجمعة (${collectedRows.length}) مع الوحدات المسجلة (${recordedDeliveredUnits})؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`;
+        console.error(
+          `[worker:assembly_failed] reason=row_count_mismatch collected=${collectedRows.length} expected=${recordedDeliveredUnits}`
+        );
+        const { data: relMismatch } = await adminClient.rpc("release_job_atomic", {
           p_job_id: jobId,
-          p_error_message: noRowsMsg,
+          p_error_message: mismatchMsg,
           p_force: true,
         });
         return NextResponse.json(
@@ -638,12 +674,14 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             deliveredUnits: 0,
             jobId,
-            error: noRowsMsg,
-            release: relEmpty,
+            error: mismatchMsg,
+            release: relMismatch,
           },
           { status: 500 }
         );
       }
+
+      const finalRows = collectedRows;
 
       const completedAtIso = new Date().toISOString();
       const dateStr = completedAtIso.slice(0, 10);
@@ -705,21 +743,32 @@ export async function POST(req: NextRequest) {
         }
 
         // Save JSON & methodology text in partials bucket for /api/jobs/[id]/data & /methodology
-        await partialsBucket.upload(
-          `${userId}/${jobId}/data.json`,
-          Buffer.from(JSON.stringify(finalPayload), "utf-8"),
-          { contentType: "application/json", upsert: true }
-        );
-        await partialsBucket.upload(
-          `${jobId}/data.json`,
-          Buffer.from(JSON.stringify(finalPayload), "utf-8"),
-          { contentType: "application/json", upsert: true }
-        );
-        await partialsBucket.upload(
-          `${userId}/${jobId}/methodology.txt`,
-          Buffer.from(methodologyText, "utf-8"),
-          { contentType: "text/plain; charset=utf-8", upsert: true }
-        );
+        const [dataJsonUp1, dataJsonUp2, methUp] = await Promise.all([
+          partialsBucket.upload(
+            `${userId}/${jobId}/data.json`,
+            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            { contentType: "application/json", upsert: true }
+          ),
+          partialsBucket.upload(
+            `${jobId}/data.json`,
+            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            { contentType: "application/json", upsert: true }
+          ),
+          partialsBucket.upload(
+            `${userId}/${jobId}/methodology.txt`,
+            Buffer.from(methodologyText, "utf-8"),
+            { contentType: "text/plain; charset=utf-8", upsert: true }
+          ),
+        ]);
+
+        if (dataJsonUp1?.error || dataJsonUp2?.error || methUp?.error) {
+          throw new Error(
+            dataJsonUp1?.error?.message ||
+              dataJsonUp2?.error?.message ||
+              methUp?.error?.message ||
+              "partials_artifact_upload_error"
+          );
+        }
       } catch (uploadErr: any) {
         console.error(
           "[worker:results_upload_failed] reason=storage_upload_error",
@@ -746,24 +795,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Clean up temporary step files from partials
-      try {
-        const partialPaths = Array.from({ length: currentStep + 1 }, (_, idx) => {
-          const k = `${jobId}/step_${idx}.json`;
-          inMemoryPartialStepFallback.delete(k);
-          return k;
-        });
-        if (
-          partialPaths.length > 0 &&
-          typeof adminClient.storage.from("partials").remove === "function"
-        ) {
-          await adminClient.storage.from("partials").remove(partialPaths);
-        }
-      } catch {
-        // Non-blocking partial step cleanup
-      }
-
-      // Write artifact_versions BEFORE settle_job_atomic
+      // Write artifact_versions BEFORE settle_job_atomic (strictly required before settlement)
       try {
         const versionId = artifactVersionRowId(jobId, 1);
         const avTable = adminClient.from("artifact_versions");
@@ -782,17 +814,33 @@ export async function POST(req: NextRequest) {
             ? await avTable.upsert(versionRow)
             : await avTable.insert(versionRow);
         if (avRes?.error) {
-          console.error(
-            `[worker:artifact_versions_write_failed] reason=db_error code=${
-              avRes.error.code || "unknown"
-            }`
+          throw new Error(
+            `artifact_versions_db_error: ${avRes.error.message || avRes.error.code || "unknown"}`
           );
         }
       } catch (avErr: any) {
         console.error(
-          `[worker:artifact_versions_write_failed] reason=exception code=${
-            avErr?.code || "unknown"
-          }`
+          `[worker:artifact_versions_write_failed] reason=db_error`,
+          avErr?.message || ""
+        );
+        const avFailReason =
+          "تعذر تسجيل نسخة المستندات النهائية؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+        const { data: relAvFail } = await adminClient.rpc("release_job_atomic", {
+          p_job_id: jobId,
+          p_error_message: avFailReason,
+          p_force: true,
+        });
+        return NextResponse.json(
+          {
+            success: false,
+            released: true,
+            chargedCredits: 0,
+            deliveredUnits: 0,
+            jobId,
+            error: avFailReason,
+            release: relAvFail,
+          },
+          { status: 500 }
         );
       }
 
@@ -807,7 +855,24 @@ export async function POST(req: NextRequest) {
         throw settleErr;
       }
 
-      // Emit notification to user with exact notifications columns (id, user_id, title, body, read, link, created_at)
+      // Clean up temporary step files from partials only after successful settlement
+      try {
+        const partialPaths = Array.from({ length: currentStep + 1 }, (_, idx) => {
+          const k = `${jobId}/step_${idx}.json`;
+          inMemoryPartialStepFallback.delete(k);
+          return k;
+        });
+        if (
+          partialPaths.length > 0 &&
+          typeof adminClient.storage.from("partials").remove === "function"
+        ) {
+          await adminClient.storage.from("partials").remove(partialPaths);
+        }
+      } catch {
+        // Non-blocking partial step cleanup
+      }
+
+      // Emit notification to user matching tracked migrations schema: (id, user_id, title, body, read, link, created_at)
       if (userId) {
         try {
           const notifRes = await adminClient.from("notifications").insert({
