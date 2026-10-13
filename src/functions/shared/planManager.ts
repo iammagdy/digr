@@ -94,6 +94,9 @@ export interface PlanItem {
   unitCostUsd?: number;
   unitPricePoints?: number;
   pricingUnit?: "call" | "item" | "page";
+  itemReservation?: number;
+  reservedPoints?: number;
+  rawPoints?: number;
 }
 
 export interface ExecutionOptions {
@@ -501,57 +504,151 @@ export async function createAndSaveManagedQuote(
     minPoints: DEFAULT_PRICING_SETTINGS.minPoints,
   };
 
-  // 1. Calculate pricing for all plan items
+  // 1. Calculate pricing for all plan items independently
   let totalQuotedPoints = 0;
   let totalVolumeMax = 0;
+  let totalRawPoints = 0;
   let effectiveUnitPrice = 0;
-  let primaryUnitCost = 0.001;
 
   for (const it of plan.items) {
-    const cap =
-      capabilities.find(
-        (c) =>
-          c.slug === it.capabilitySlug ||
-          c.tregEndpointId === it.capabilitySlug ||
-          (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
-      ) || capabilities[0];
-    primaryUnitCost = cap.unitCostUsd;
-    const unitPrice = calculateCapabilityUnitPricePoints(primaryUnitCost, effectivePricing);
+    // Match capability strictly; NEVER substitute capabilities[0]
+    const cap = capabilities.find(
+      (c) =>
+        c.slug === it.capabilitySlug ||
+        c.tregEndpointId === it.capabilitySlug ||
+        c.id === it.capabilitySlug ||
+        (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId || c.id === it.endpointId))
+    );
+
+    if (!cap) {
+      throw new Error(`الخدمة المطلوبة "${it.capabilitySlug || it.endpointId || "غير محددة"}" غير معتمدة أو غير موجودة في الكتالوج.`);
+    }
+
+    const itemUnitCostUsd =
+      typeof cap.unitCostUsd === "number" && cap.unitCostUsd > 0
+        ? cap.unitCostUsd
+        : typeof it.unitCostUsd === "number" && it.unitCostUsd > 0
+        ? it.unitCostUsd
+        : 0;
+
+    if (!Number.isFinite(itemUnitCostUsd) || itemUnitCostUsd <= 0) {
+      throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
+    }
+
+    const unitPrice = calculateCapabilityUnitPricePoints(itemUnitCostUsd, effectivePricing);
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
-    // Set unit price on the item WITHOUT the 15% buffer
-    (it as any).unitPricePoints = unitPrice;
-    (it as any).unitCostUsd = primaryUnitCost;
-    (it as any).endpointId = it.endpointId || (cap as any).tregEndpointId || cap.slug;
 
-    const itemQuote = calculateCapabilityQuote(it.targetVolumeMax, cap.unitCostUsd, userBalance, effectivePricing);
-    totalQuotedPoints += itemQuote.quotedPoints;
-    totalVolumeMax += it.targetVolumeMax;
-    effectiveUnitPrice = itemQuote.unitPricePoints;
+    const itemVolume = Math.max(1, it.targetVolumeMax || 1);
+    const itemRawPoints = itemVolume * unitPrice;
+    const itemReservation = Math.max(1, Math.ceil(itemRawPoints * (1 + effectivePricing.safetyBuffer)));
+
+    // Retain all required fields on the item
+    it.capabilitySlug = cap.slug || it.capabilitySlug;
+    it.endpointId = it.endpointId || cap.tregEndpointId || cap.id || cap.slug;
+    it.unitCostUsd = itemUnitCostUsd;
+    it.unitPricePoints = unitPrice;
+    it.targetVolumeMax = itemVolume;
+    it.rawPoints = itemRawPoints;
+    it.itemReservation = itemReservation;
+    it.reservedPoints = itemReservation;
+    if (cap.pricingUnit) {
+      it.pricingUnit = cap.pricingUnit;
+    }
+
+    totalRawPoints += itemRawPoints;
+    totalQuotedPoints += itemReservation;
+    totalVolumeMax += itemVolume;
+    effectiveUnitPrice = unitPrice;
   }
 
-  // 1b. Check provider capacity (10% safety margin)
+  // 1b. Check provider capacity (10% safety margin) across all items
   let capacityConstrained = false;
-  const capacityCheck = await checkPlanProviderCapacity(totalVolumeMax, primaryUnitCost, tables);
+  const totalEstimatedUsd = plan.items.reduce(
+    (sum, it) => sum + it.targetVolumeMax * (it.unitCostUsd || 0.001),
+    0
+  );
+  const capacityCheck = await checkPlanProviderCapacity(1, totalEstimatedUsd, tables);
 
-  if (capacityCheck.downscaled && capacityCheck.maxSafeVolume < totalVolumeMax) {
-    const maxAllowedUnits = Math.max(1, capacityCheck.maxSafeVolume);
+  if (capacityCheck.downscaled && capacityCheck.safeBudgetUsd < totalEstimatedUsd) {
     capacityConstrained = true;
-    const scale = maxAllowedUnits / totalVolumeMax;
+    const scale = totalEstimatedUsd > 0 ? capacityCheck.safeBudgetUsd / totalEstimatedUsd : 1;
     for (const it of plan.items) {
       it.targetVolumeMax = Math.max(1, Math.floor(it.targetVolumeMax * scale));
     }
-    totalVolumeMax = plan.items.reduce((s, it) => s + it.targetVolumeMax, 0);
+
+    // Recalculate all item quotes and totals after capacity downscaling
+    totalRawPoints = 0;
+    totalQuotedPoints = 0;
+    totalVolumeMax = 0;
+    for (const it of plan.items) {
+      const itemRawPoints = it.targetVolumeMax * (it.unitPricePoints || 1);
+      const itemReservation = Math.max(1, Math.ceil(itemRawPoints * (1 + effectivePricing.safetyBuffer)));
+      it.rawPoints = itemRawPoints;
+      it.itemReservation = itemReservation;
+      it.reservedPoints = itemReservation;
+      totalRawPoints += itemRawPoints;
+      totalQuotedPoints += itemReservation;
+      totalVolumeMax += it.targetVolumeMax;
+    }
   }
 
-  // Recalculate affordability for the composite quote (quotedPoints includes 15% buffer)
-  const quoteCalc = calculateCapabilityQuote(totalVolumeMax, primaryUnitCost, userBalance, effectivePricing);
+  // 1c. Affordability and downscale offer
+  const isAffordable = userBalance >= totalQuotedPoints;
+  let downscaledOffer: ManagedQuoteResult["downscaledOffer"] = undefined;
 
-  const planHash = computePlanHash(plan.items, plan.outputFormats);
+  if (!isAffordable && userBalance >= effectivePricing.minPoints) {
+    if (plan.items.length === 1) {
+      // Single-item exact formula preserving existing behavior
+      const singleItem = plan.items[0];
+      const unitPricePoints = singleItem.unitPricePoints || 1;
+      const costPerUnitWithBuffer = unitPricePoints * (1 + effectivePricing.safetyBuffer);
+      const maxAffordableUnits = Math.max(1, Math.floor(userBalance / costPerUnitWithBuffer));
+      const affordableQuotedPoints = Math.max(
+        effectivePricing.minPoints,
+        Math.ceil(maxAffordableUnits * costPerUnitWithBuffer)
+      );
+      if (maxAffordableUnits < singleItem.targetVolumeMax) {
+        downscaledOffer = {
+          maxAffordableUnits,
+          affordableQuotedPoints,
+          rawCostPoints: maxAffordableUnits * unitPricePoints,
+        };
+      }
+    } else {
+      // Composite multi-item plan downscale offer
+      const scale = totalQuotedPoints > 0 ? userBalance / totalQuotedPoints : 1;
+      let scaledUnitsTotal = 0;
+      let scaledPointsTotal = 0;
+      let scaledRawTotal = 0;
+
+      for (const it of plan.items) {
+        const affordableUnits = Math.max(1, Math.floor(it.targetVolumeMax * scale));
+        const itemUnitPrice = it.unitPricePoints || 1;
+        const itemRaw = affordableUnits * itemUnitPrice;
+        const itemRes = Math.max(1, Math.ceil(itemRaw * (1 + effectivePricing.safetyBuffer)));
+        scaledUnitsTotal += affordableUnits;
+        scaledPointsTotal += itemRes;
+        scaledRawTotal += itemRaw;
+      }
+
+      if (scaledUnitsTotal < totalVolumeMax && scaledPointsTotal <= userBalance) {
+        downscaledOffer = {
+          maxAffordableUnits: scaledUnitsTotal,
+          affordableQuotedPoints: scaledPointsTotal,
+          rawCostPoints: scaledRawTotal,
+        };
+      }
+    }
+  }
+
+  // Final plan hash computed on final items and formats
+  const planHash = computePlanHash(plan.items, plan.outputFormats || ["xlsx", "pdf", "csv"]);
   const quoteId = ID.unique();
   const expiresAt = generateQuoteExpiry(30); // 30 minutes expiry
   const nowIso = new Date().toISOString();
+  const quoteUnitPricePoints = plan.items[0]?.unitPricePoints || effectiveUnitPrice;
 
   // 2. Invalidate / supersede previous proposed quotes for this conversation
   const anyTables = tables as any;
@@ -571,7 +668,7 @@ export async function createAndSaveManagedQuote(
       quote_hash: planHash,
       status: "quoted",
       items: plan.items,
-      total_reserved_credits: quoteCalc.quotedPoints,
+      total_reserved_credits: totalQuotedPoints,
       output_formats: plan.outputFormats || ["xlsx", "pdf", "csv"],
       expires_at: expiresAt,
       created_at: nowIso,
@@ -613,8 +710,8 @@ export async function createAndSaveManagedQuote(
         summaryAr: plan.summaryAr,
         itemsJson: JSON.stringify(serializeStoredPlan(plan)),
         targetVolumeMax: totalVolumeMax,
-        unitPricePoints: quoteCalc.unitPricePoints,
-        quotedPoints: quoteCalc.quotedPoints,
+        unitPricePoints: quoteUnitPricePoints,
+        quotedPoints: totalQuotedPoints,
         settingsVersion: "v1.0",
         expiresAt,
         createdAt: nowIso,
@@ -628,12 +725,12 @@ export async function createAndSaveManagedQuote(
     planHash,
     summaryAr: plan.summaryAr,
     items: plan.items,
-    outputFormats: plan.outputFormats,
+    outputFormats: plan.outputFormats || ["xlsx", "pdf", "csv"],
     targetVolumeMax: totalVolumeMax,
-    unitPricePoints: quoteCalc.unitPricePoints,
-    quotedPoints: quoteCalc.quotedPoints,
-    isAffordable: quoteCalc.isAffordable,
-    downscaledOffer: quoteCalc.downscaledOffer,
+    unitPricePoints: quoteUnitPricePoints,
+    quotedPoints: totalQuotedPoints,
+    isAffordable,
+    downscaledOffer,
     capacityConstrained,
     userBalance,
     expiresAt,

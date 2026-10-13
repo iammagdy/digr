@@ -56,11 +56,11 @@ export async function acceptQuote(
   }
 
   // 2. Authorization check: Quote belongs to the verified user
-  if (quoteDoc.userId !== userId) {
+  if (!quoteDoc || quoteDoc.userId !== userId) {
     return {
       success: false,
-      statusCode: 403,
-      errorAr: "غير مصرح لك باعتماد هذا العرض.",
+      statusCode: !quoteDoc ? 404 : 403,
+      errorAr: !quoteDoc ? "عرض السعر غير موجود أو تم حذفه." : "غير مصرح لك باعتماد هذا العرض.",
     };
   }
 
@@ -108,6 +108,17 @@ export async function acceptQuote(
       success: false,
       statusCode: 400,
       errorAr: "تغيرت تفاصيل الخطة بعد إصدار العرض. يرجى إعادة طلب عرض سعر.",
+    };
+  }
+
+  // 5b. Multi-capability execution safety guard:
+  // The worker execution queue currently processes a single capability per job (single endpoint_id and step counter).
+  // Block execution BEFORE reservation until multi-step worker execution is genuinely supported.
+  if (items.length > 1) {
+    return {
+      success: false,
+      statusCode: 400,
+      errorAr: "عروض الأسعار تدعم تنفيذ قدرة بحثية واحدة لكل طلب حالياً.",
     };
   }
 
