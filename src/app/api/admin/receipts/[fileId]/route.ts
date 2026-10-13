@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Storage } from "node-appwrite";
+
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { createAdminClient } from "../../../../../lib/supabase/server";
 import { RECEIPTS_BUCKET } from "@/lib/constants";
@@ -41,24 +41,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ file
         },
       });
     }
-  } catch {
-    // Fallback if needed
-  }
-
-  const storage = new Storage(auth.ctx.client);
-  try {
-    const [meta, bytes] = await Promise.all([
-      storage.getFile({ bucketId: RECEIPTS_BUCKET, fileId: decoded }),
-      storage.getFileView({ bucketId: RECEIPTS_BUCKET, fileId: decoded }),
-    ]);
-    return new NextResponse(new Uint8Array(bytes as ArrayBuffer), {
-      headers: {
-        "Content-Type": meta.mimeType || "application/octet-stream",
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-        "Content-Disposition": `inline; filename="${meta.name.replace(/[^\w.-]/g, "_")}"`,
-      },
-    });
+    return NextResponse.json({ error: "الإيصال غير موجود" }, { status: 404 });
   } catch {
     return NextResponse.json({ error: "الإيصال غير موجود" }, { status: 404 });
   }

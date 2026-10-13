@@ -48,40 +48,93 @@ async function redeploy(svc: Functions | Sites, kind: "function" | "site", id: s
   else await (svc as Sites).createDuplicateDeployment({ siteId: id, deploymentId: active });
 }
 
-/**
- * Writes the variables to the Site and the job functions, then redeploys them so the change takes effect.
- * Requires an API key with functions.write + sites.write and APPWRITE_SITE_ID. Values are never logged or returned.
- */
-export async function applyEnvUpdates(client: Client, updates: Array<{ key: EnvKey; value: string }>): Promise<EnvResult[]> {
-  const functions = new Functions(client);
-  const sites = new Sites(client);
+export async function applyEnvUpdates(
+  client?: Client | null,
+  updates?: Array<{ key: EnvKey; value: string }>,
+  tables?: any
+): Promise<EnvResult[]> {
+  const safeUpdates = Array.isArray(updates) ? updates : [];
   const results: EnvResult[] = [];
-  const siteId = process.env.APPWRITE_SITE_ID;
 
-  const isLlm = (k: string) => k.startsWith("LLM_") || k.startsWith("ANTHROPIC_") || k.startsWith("OPENAI_");
-  const targets: Array<{ kind: "site" | "function"; id: string }> = [];
-  if (siteId) targets.push({ kind: "site", id: siteId });
-  for (const f of new Set(updates.flatMap((u) => FUNCTIONS_FOR[isLlm(u.key) ? "llm" : "treg"]))) targets.push({ kind: "function", id: f });
-
-  if (!siteId) results.push({ target: "site", ok: false, message: "APPWRITE_SITE_ID غير مضبوط — لم يُحدَّث موقع Next" });
-
-  for (const t of targets) {
-    try {
-      const svc = t.kind === "site" ? sites : functions;
-      for (const u of updates) {
-        // Functions only need the variables that concern them.
-        if (t.kind === "function" && isLlm(u.key) && !FUNCTIONS_FOR.llm.includes(t.id)) continue;
-        await upsertVariable(svc, t.kind, t.id, u.key, u.value.trim(), SECRET_KEYS.has(u.key));
-      }
-      try {
-        await redeploy(svc, t.kind, t.id);
-        results.push({ target: `${t.kind}:${t.id}`, ok: true, message: "تم الحفظ وإعادة النشر" });
-      } catch {
-        results.push({ target: `${t.kind}:${t.id}`, ok: true, message: "تم الحفظ — أعد نشر الدالة يدويًا ليسري التغيير" });
-      }
-    } catch (e: any) {
-      results.push({ target: `${t.kind}:${t.id}`, ok: false, message: e?.type === "general_unauthorized_scope" ? "المفتاح يفتقد صلاحية functions.write / sites.write" : "تعذّر تحديث المتغيرات" });
+  // 1. Always apply in-memory to process.env immediately
+  for (const u of safeUpdates) {
+    if (u?.key && typeof u.value === "string") {
+      process.env[u.key] = u.value.trim();
     }
   }
+
+  // 2. Persist to Supabase settings_private if tables/DB client is present
+  if (tables && typeof tables.from === "function") {
+    try {
+      const updatesMap: Record<string, string> = {};
+      for (const u of safeUpdates) {
+        if (u?.key && typeof u.value === "string") {
+          updatesMap[u.key] = u.value.trim();
+        }
+      }
+      const { data: existing } = await tables
+        .from("settings_private")
+        .select("value")
+        .eq("key", "providers")
+        .maybeSingle();
+
+      const existingVal = existing?.value && typeof existing.value === "object" ? existing.value : {};
+      const merged = { ...existingVal, ...updatesMap };
+
+      await tables.from("settings_private").upsert({
+        key: "providers",
+        value: merged,
+        updated_at: new Date().toISOString(),
+      });
+      results.push({ target: "supabase:settings_private", ok: true, message: "تم حفظ الإعدادات في Supabase" });
+    } catch {
+      results.push({ target: "supabase:settings_private", ok: false, message: "تعذر الحفظ في جدول الإعدادات" });
+    }
+  }
+
+  // 3. Optional legacy Appwrite Sites / Functions sync if client and siteId are configured
+  if (client && process.env.APPWRITE_SITE_ID && process.env.APPWRITE_API_KEY) {
+    try {
+      const functions = new Functions(client);
+      const sites = new Sites(client);
+      const siteId = process.env.APPWRITE_SITE_ID;
+
+      const isLlm = (k: string) => k.startsWith("LLM_") || k.startsWith("ANTHROPIC_") || k.startsWith("OPENAI_");
+      const targets: Array<{ kind: "site" | "function"; id: string }> = [];
+      if (siteId) targets.push({ kind: "site", id: siteId });
+      for (const f of new Set(safeUpdates.flatMap((u) => FUNCTIONS_FOR[isLlm(u.key) ? "llm" : "treg"]))) {
+        targets.push({ kind: "function", id: f });
+      }
+
+      for (const t of targets) {
+        try {
+          const svc = t.kind === "site" ? sites : functions;
+          for (const u of safeUpdates) {
+            if (t.kind === "function" && isLlm(u.key) && !FUNCTIONS_FOR.llm.includes(t.id)) continue;
+            await upsertVariable(svc, t.kind, t.id, u.key, u.value.trim(), SECRET_KEYS.has(u.key));
+          }
+          try {
+            await redeploy(svc, t.kind, t.id);
+            results.push({ target: `${t.kind}:${t.id}`, ok: true, message: "تم الحفظ وإعادة النشر" });
+          } catch {
+            results.push({ target: `${t.kind}:${t.id}`, ok: true, message: "تم الحفظ — أعد نشر الدالة يدويًا ليسري التغيير" });
+          }
+        } catch (e: any) {
+          results.push({
+            target: `${t.kind}:${t.id}`,
+            ok: false,
+            message: e?.type === "general_unauthorized_scope" ? "المفتاح يفتقد صلاحية functions.write / sites.write" : "تعذّر تحديث المتغيرات",
+          });
+        }
+      }
+    } catch {
+      // Non-fatal if Appwrite is unavailable
+    }
+  }
+
+  if (results.length === 0) {
+    results.push({ target: "runtime", ok: true, message: "تم حفظ الإعدادات في بيئة التشغيل" });
+  }
+
   return results;
 }

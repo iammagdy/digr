@@ -91,13 +91,70 @@ export async function GET(
     }
 
     if (!signedUrl) {
-      // If result file is not yet generated or found in candidates, check if raw json exists
-      const { data: jsonSigned } = await adminClient.storage
-        .from("results")
-        .createSignedUrl(`${jobId}/data.json`, 300, { download: downloadFileName });
+      // On-demand generation from data.json if specific format is missing
+      let jsonText = "";
+      const jsonCandidatePaths = [
+        `${job.user_id}/${jobId}/data.json`,
+        `${user.id}/${jobId}/data.json`,
+        `${jobId}/data.json`,
+        `json_${jobId}`,
+      ];
 
-      if (jsonSigned?.signedUrl) {
-        signedUrl = jsonSigned.signedUrl;
+      for (const bucketName of ["results", "partials"]) {
+        if (jsonText) break;
+        const bucket = adminClient.storage?.from?.(bucketName);
+        if (!bucket || typeof bucket.download !== "function") continue;
+        for (const p of jsonCandidatePaths) {
+          const { data: blob, error: dlErr } = await bucket.download(p);
+          if (!dlErr && blob) {
+            jsonText = await blob.text();
+            break;
+          }
+        }
+      }
+
+      if (jsonText) {
+        try {
+          const parsed = JSON.parse(jsonText);
+          const { generateExcelReport, generateCsvReport, generatePdfReport } = await import(
+            "@/functions/shared/fileGenerators"
+          );
+
+          let fileBuf: Buffer | null = null;
+          let mimeType = "application/octet-stream";
+
+          if (format === "xlsx") {
+            fileBuf = await generateExcelReport(parsed);
+            mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+          } else if (format === "csv") {
+            fileBuf = generateCsvReport(parsed);
+            mimeType = "text/csv";
+          } else if (format === "pdf") {
+            fileBuf = await generatePdfReport(parsed);
+            mimeType = "application/pdf";
+          } else if (format === "json") {
+            fileBuf = Buffer.from(JSON.stringify(parsed, null, 2), "utf-8");
+            mimeType = "application/json";
+          }
+
+          if (fileBuf) {
+            const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
+            await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
+              contentType: mimeType,
+              upsert: true,
+            });
+
+            const { data: newlySigned } = await adminClient.storage
+              .from("results")
+              .createSignedUrl(uploadPath, 300, { download: downloadFileName });
+
+            if (newlySigned?.signedUrl) {
+              signedUrl = newlySigned.signedUrl;
+            }
+          }
+        } catch (genErr) {
+          console.error("On-demand file generation error:", genErr);
+        }
       }
     }
 

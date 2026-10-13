@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -78,37 +79,11 @@ export async function GET(
       }
 
       const parsedData = JSON.parse(jsonText);
-
-      // Cleaned customer-facing profile (strictly no provider structure or provider internal IDs)
-      const cleanProfile = parsedData.profile ? {
-        username: parsedData.profile.uniqueId ? `@${parsedData.profile.uniqueId}` : parsedData.profile.username,
-        displayName: parsedData.profile.nickname || parsedData.profile.displayName || "",
-        bio: parsedData.profile.signature || parsedData.profile.bio || "",
-        verified: Boolean(parsedData.profile.verified),
-        followers: Number(parsedData.profile.followerCount ?? parsedData.profile.followers ?? 0),
-        following: Number(parsedData.profile.followingCount ?? parsedData.profile.following ?? 0),
-        likes: Number(parsedData.profile.heartCount ?? parsedData.profile.likes ?? 0),
-        videosCount: Number(parsedData.profile.videoCount ?? parsedData.profile.videosCount ?? 0),
-        bioLink: parsedData.profile.bioLink || "",
-        profileUrl: parsedData.profile.profileUrl || "",
-        collectedDate: parsedData.profile.collectedDate || "",
-      } : null;
-
-      // Cleaned rows (customer-facing attributes only)
-      const cleanRows = Array.isArray(parsedData.rows) ? parsedData.rows.map((r: any, idx: number) => ({
-        id: `rec_${idx + 1}`,
-        username: r.username,
-        displayName: r.displayName,
-        bio: r.bio,
-        verified: r.verified,
-        followers: r.followers,
-        following: r.following,
-        likes: r.likes,
-        videosCount: r.videosCount,
-        bioLink: r.bioLink,
-        profileUrl: r.profileUrl,
-        collectedDate: r.collectedDate,
-      })) : [];
+      const normalized = normalizeDataset(parsedData, {
+        platform: jobDoc.platform || undefined,
+        title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,
+        jobId,
+      });
 
       return NextResponse.json({
         success: true,
@@ -116,14 +91,18 @@ export async function GET(
         status: jobDoc.status,
         templateSlug: jobDoc.template_slug || jobDoc.endpoint_id,
         metadata: {
-          platform: "Diger Data Platform",
-          title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,
-          collectedAt: jobDoc.finished_at || jobDoc.created_at,
-          rowsCount: jobDoc.delivered_units || cleanRows.length,
-          methodology: parsedData.metadata?.methodology || "",
+          platform: normalized.metadata.platform,
+          title: normalized.metadata.title,
+          collectedAt: jobDoc.finished_at || jobDoc.created_at || normalized.metadata.collectedAt,
+          rowsCount: jobDoc.delivered_units || normalized.rows.length,
+          methodology: normalized.metadata.methodology,
+          entityType: normalized.metadata.entityType,
         },
-        profile: cleanProfile,
-        rows: cleanRows,
+        profile: normalized.profile,
+        rows: normalized.rows,
+        columns: normalized.columns,
+        codebook: normalized.codebook,
+        kpis: normalized.kpis,
         chargedCredits: jobDoc.charged_credits,
         finishedAt: jobDoc.finished_at,
       });

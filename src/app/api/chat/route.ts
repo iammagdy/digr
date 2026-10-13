@@ -17,6 +17,9 @@ import { createServerSideClient, createAdminClient } from "../../../lib/supabase
 
 export const dynamic = "force-dynamic";
 
+const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+
 function toSafeReasonCode(err: unknown): string {
   if (!err || typeof err !== "object") return "internal_error";
   const anyErr = err as Record<string, unknown>;
@@ -36,15 +39,6 @@ export async function POST(req: NextRequest) {
   const requestId = `req_${crypto.randomUUID()}`;
   let currentStep = "parse_request";
   try {
-    const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-    const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-    const apiKey = process.env.APPWRITE_API_KEY || "";
-
-    const serverClient = new ServerClient()
-      .setEndpoint(endpoint)
-      .setProject(projectId)
-      .setKey(apiKey);
-
     const body = await req.json().catch(() => ({}));
     const { conversationId } = body;
     const structuredAnswers = body.clarificationAnswers === undefined
@@ -167,12 +161,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Determine tables DAL: Supabase Admin client or Appwrite TablesDB
+    // Determine tables DAL: Supabase Admin client or legacy Appwrite TablesDB
     currentStep = "init_db_client";
     let tables: any;
     if (isSupabaseSession) {
       tables = createAdminClient();
     } else {
+      const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+      const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+      const apiKey = process.env.APPWRITE_API_KEY || "";
+      const serverClient = new ServerClient().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
       tables = new TablesDB(serverClient);
     }
 

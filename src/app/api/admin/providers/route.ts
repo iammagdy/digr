@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     if (err) return NextResponse.json({ error: err, key: u?.key }, { status: 400 });
   }
 
-  const results = await applyEnvUpdates(auth.ctx.client, updates);
+  const results = await applyEnvUpdates(auth.ctx.client, updates, auth.ctx.tables);
 
   for (const u of updates) {
     const kind = FIELD_LABEL_KIND[u.key] ?? "setting";

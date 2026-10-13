@@ -6,6 +6,7 @@ import {
   generateExcelReport,
   generatePdfReport,
   generateCsvReport,
+  generateMethodologyText as buildMethodologyDoc,
 } from "./fileGenerators";
 import { executeTregCall, TregCallOptions, TregCallResult } from "./tregClient";
 import { parseStoredPlan } from "./planManager";
@@ -250,36 +251,7 @@ export function extractAndFlattenRows(rawResponse: any): Array<Record<string, an
  * Builds white-label methodology facts document (.txt).
  */
 export function generateMethodologyText(payload: any): string {
-  const meta = payload.metadata || {};
-  const dateStr = meta.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const rowsCount = payload.rows?.length || (payload.profile ? 1 : 0);
-  const template = meta.template || meta.platform || "Diger Data Extraction";
-  const jobId = meta.jobId || "N/A";
-
-  return [
-    "============================================================",
-    "             منصة Diger لاستخراج البيانات العامة             ",
-    "               وثيقة المنهجية وإخلاء المسؤولية             ",
-    "============================================================",
-    "",
-    `معرّف الطلب (Job ID): ${jobId}`,
-    `تاريخ الجمع: ${dateStr}`,
-    `المصدر / المنصة: ${template}`,
-    `إجمالي السجلات المستخرجة: ${rowsCount}`,
-    "",
-    "------------------------------------------------------------",
-    "الملاحظات المنهجية ومعايير الجمع:",
-    "------------------------------------------------------------",
-    meta.methodology || `تم استخراج هذه البيانات آلياً من المصدر الرسمي العام بتاريخ ${dateStr}.`,
-    "",
-    "إخلاء المسؤولية العلمية والإحصائية:",
-    "• هذه البيانات عامة ومتاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
-    "• لا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.",
-    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية.",
-    "",
-    "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
-    "============================================================",
-  ].join("\n");
+  return buildMethodologyDoc(payload);
 }
 
 async function executeTregCallWithRetry(
