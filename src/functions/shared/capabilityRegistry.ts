@@ -421,18 +421,27 @@ export async function getCatalogCapabilities(
     let dbRows: Capability[] = [];
     if (typeof tables.from === "function") {
       const { data } = await tables.from("capability_registry").select("*");
-      dbRows = (data || []).map((r: any) => ({
-        ...r,
-        slug: r.slug,
-        unitCostUsd: Number(r.unit_cost_usd ?? r.unitCostUsd ?? 0.001),
-        nameAr: r.name_ar,
-        descriptionAr: r.description_ar,
-        tregEndpointId: r.endpoint_id,
-        pricingUnit: r.pricing_unit,
-        maxRows: r.max_rows,
-        paginationType: r.pagination_type,
-        enabled: Boolean(r.enabled),
-      }));
+      dbRows = (data || []).map((r: any) => {
+        const seed = baseCatalog.find((s) => s.slug === r.slug);
+        const resolvedCost = Number(
+          r.unit_cost_usd ??
+          r.unitCostUsd ??
+          seed?.unitCostUsd ??
+          (r.slug === "tiktok-profile" ? 0.001 : 0)
+        );
+        return {
+          ...r,
+          slug: r.slug,
+          unitCostUsd: resolvedCost,
+          nameAr: r.name_ar,
+          descriptionAr: r.description_ar,
+          tregEndpointId: r.endpoint_id,
+          pricingUnit: r.pricing_unit,
+          maxRows: r.max_rows,
+          paginationType: r.pagination_type,
+          enabled: Boolean(r.enabled),
+        };
+      });
     } else if (typeof tables.listRows === "function") {
       const res = await tables.listRows({
         databaseId: "digr",
@@ -448,13 +457,16 @@ export async function getCatalogCapabilities(
     }
     for (const row of dbRows) {
       const existing = merged.get(row.slug);
-      const costUsd =
-        row.estimatedCostUsdPerUnit ??
+      const costUsd = Number(
         row.unitCostUsd ??
+        row.estimatedCostUsdPerUnit ??
         existing?.estimatedCostUsdPerUnit ??
-        0.001;
+        existing?.unitCostUsd ??
+        (row.slug === "tiktok-profile" ? 0.001 : 0)
+      );
+      const isValidCost = Number.isFinite(costUsd) && costUsd > 0;
       const status: CapabilityStatus =
-        row.status || (row.enabled ? "verified" : existing?.status || "pending_verification");
+        row.status || (row.enabled && isValidCost ? "verified" : existing?.status || "pending_verification");
       merged.set(row.slug, {
         ...(existing || {}),
         ...row,
@@ -462,12 +474,12 @@ export async function getCatalogCapabilities(
         platform: (row.platform || row.category || existing?.platform || "tiktok") as CapabilityPlatform,
         status,
         unit: row.unit || existing?.unit || "profile",
-        estimatedCostUsdPerUnit: costUsd,
-        pointsPerUnit: computeRegistryPointsPerUnit(costUsd, settings),
+        estimatedCostUsdPerUnit: isValidCost ? costUsd : 0,
+        pointsPerUnit: isValidCost ? computeRegistryPointsPerUnit(costUsd, settings) : 0,
         maxItemsPerCall: row.maxItemsPerCall ?? existing?.maxItemsPerCall ?? row.maxRows ?? 1,
         estimatedSuccessRate: row.estimatedSuccessRate ?? existing?.estimatedSuccessRate ?? 0.9,
         verificationNote: row.verificationNote || existing?.verificationNote || VERIFICATION_NOTE,
-        enabled: status === "verified" || Boolean(row.enabled),
+        enabled: isValidCost && (status === "verified" || Boolean(row.enabled)),
       });
     }
     return Array.from(merged.values());
@@ -486,17 +498,26 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
       const { data } = await tables.from("capability_registry").select("*").eq("enabled", true);
       if (data && data.length > 0) {
         const settings = getRegistryPricingSettings();
-        return data.map((c: any) => {
+        const validCapabilities: Capability[] = [];
+        for (const c of data) {
           const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
-          const costUsd = Number(c.unit_cost_usd ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.001);
-          return {
+          const costUsd = Number(
+            c.unit_cost_usd ??
+            c.unitCostUsd ??
+            seed?.unitCostUsd ??
+            seed?.estimatedCostUsdPerUnit ??
+            (c.slug === "tiktok-profile" ? 0.001 : 0)
+          );
+          if (!Number.isFinite(costUsd) || costUsd <= 0) {
+            continue; // Fail closed: missing or unverified costs cannot be enabled
+          }
+          validCapabilities.push({
             ...(seed || {}),
             slug: c.slug,
             nameAr: c.name_ar || seed?.nameAr || "",
             nameEn: c.name_en || seed?.nameEn || "",
             descriptionAr: c.description_ar || seed?.descriptionAr || "",
             tregEndpointId: c.endpoint_id || seed?.tregEndpointId || c.slug,
-            endpointId: c.endpoint_id || seed?.tregEndpointId || c.slug,
             id: c.slug,
             category: (c.category || seed?.category || "tiktok") as CapabilityPlatform,
             platform: (c.category || seed?.platform || "tiktok") as CapabilityPlatform,
@@ -514,8 +535,9 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
             verificationNote: VERIFICATION_NOTE,
             paramsSchema: c.params_schema ? (typeof c.params_schema === "string" ? c.params_schema : JSON.stringify(c.params_schema)) : (seed?.paramsSchema || "{}"),
             enabled: true,
-          };
-        });
+          });
+        }
+        return validCapabilities;
       }
     } catch {
       // fallback
@@ -528,10 +550,19 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
     const rows = (res.rows as unknown as Capability[]).filter((c) => c.enabled);
     if (rows.length > 0) {
       const settings = getRegistryPricingSettings();
-      return rows.map((c) => {
+      const validCapabilities: Capability[] = [];
+      for (const c of rows) {
         const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
-        const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? seed?.unitCostUsd ?? 0.001;
-        return {
+        const costUsd = Number(
+          c.estimatedCostUsdPerUnit ??
+          c.unitCostUsd ??
+          seed?.unitCostUsd ??
+          (c.slug === "tiktok-profile" ? 0.001 : 0)
+        );
+        if (!Number.isFinite(costUsd) || costUsd <= 0) {
+          continue; // Fail closed
+        }
+        validCapabilities.push({
           ...(seed || {}),
           ...c,
           id: c.id || c.slug,
@@ -544,8 +575,9 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
           estimatedSuccessRate: c.estimatedSuccessRate ?? seed?.estimatedSuccessRate ?? 0.95,
           verificationNote: c.verificationNote || VERIFICATION_NOTE,
           enabled: true,
-        };
-      });
+        });
+      }
+      return validCapabilities;
     }
   }
   return buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled);
@@ -564,8 +596,15 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
     } catch {
       parsedSchema = {};
     }
-    const costUsd = c.estimatedCostUsdPerUnit ?? c.unitCostUsd ?? 0.001;
-    const status: CapabilityStatus = c.status || (c.enabled ? "verified" : "pending_verification");
+    const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug || s.id === c.id);
+    const costUsd = Number(
+      c.estimatedCostUsdPerUnit ??
+      c.unitCostUsd ??
+      seed?.unitCostUsd ??
+      (c.slug === "tiktok-profile" ? 0.001 : 0)
+    );
+    const isValidCost = Number.isFinite(costUsd) && costUsd > 0;
+    const status: CapabilityStatus = c.status || (c.enabled && isValidCost ? "verified" : "pending_verification");
     return {
       id: c.id || c.slug,
       slug: c.slug,
@@ -573,7 +612,7 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
       category: c.category,
       status,
       unit: c.unit || "profile",
-      pointsPerUnit: c.pointsPerUnit ?? computeRegistryPointsPerUnit(costUsd, settings),
+      pointsPerUnit: isValidCost ? (c.pointsPerUnit ?? computeRegistryPointsPerUnit(costUsd, settings)) : 0,
       maxItemsPerCall: c.maxItemsPerCall ?? c.maxRows,
       estimatedSuccessRate: c.estimatedSuccessRate ?? 0.9,
       nameAr: c.nameAr,
