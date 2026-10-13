@@ -607,9 +607,16 @@ export function setLastLlmFallbackDetail(detail: string | null): void {
 }
 
 export function resolveRuntimeProvider(override?: LlmProviderType): LlmProviderType {
-  const raw = (override || process.env.LLM_PROVIDER || "fake").trim().toLowerCase();
+  const raw = (override || process.env.LLM_PROVIDER || "").trim().toLowerCase();
   if (raw === "anthropic" || raw === "openai" || raw === "fake") {
     return raw;
+  }
+  if (
+    process.env.VITEST !== "true" &&
+    process.env.ANTHROPIC_API_KEY &&
+    process.env.ANTHROPIC_API_KEY.trim().length > 0
+  ) {
+    return "anthropic";
   }
   return "fake";
 }

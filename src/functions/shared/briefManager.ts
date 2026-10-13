@@ -475,6 +475,7 @@ export async function getConversationBrief(
     } catch {
       // Supabase read fallback
     }
+    return { platforms: [], topics: [] };
   }
 
   try {

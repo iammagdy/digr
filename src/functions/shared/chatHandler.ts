@@ -541,10 +541,10 @@ export function buildClarificationPresentation(
 }
 
 export class ChatHandler {
-  private tables: TablesDB;
+  private tables: TablesDB | any;
   private llm: LlmClient;
 
-  constructor(tables: TablesDB) {
+  constructor(tables: TablesDB | any) {
     this.tables = tables;
     this.llm = new LlmClient();
   }
@@ -559,94 +559,172 @@ export class ChatHandler {
     let tCatalogSearchMs = 0;
     let tPlanLlmMs = 0;
     let tQuoteMs = 0;
+    const sb =
+      this.tables && typeof (this.tables as any).from === "function"
+        ? (this.tables as any)
+        : null;
+    let currentStep = "conversation_init";
 
-    // 1. Get or Create Conversation
-    let conversationId = input.conversationId;
-    let totalConvTokens = 0;
-
-    if (!conversationId) {
-      conversationId = ID.unique();
-      await this.tables.createRow({
-        databaseId: "digr",
-        tableId: "conversations",
-        rowId: conversationId,
-        data: {
-          userId,
-          title: message.slice(0, 50) || "محادثة جديدة",
-          status: "active",
-          totalTokens: 0,
-          costUsd: 0.0,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        },
-      });
-    } else {
-      try {
-        const conv: any = await this.tables.getRow({
-          databaseId: "digr",
-          tableId: "conversations",
-          rowId: conversationId,
-        });
-        totalConvTokens = conv.totalTokens || 0;
-      } catch {
-        // Conversation not found, create new ID
-        conversationId = ID.unique();
-      }
-    }
-
-    // 2. Fetch User Points Balance from Ledger
-    let userBalance = input.userBalance;
-    if (userBalance === undefined) {
-      userBalance = await getBalance(this.tables, userId);
-    }
-
-    // 2b. Fetch User Profile for Dynamic Persona Context
-    let userProfile: any = undefined;
     try {
-      userProfile = await this.tables.getRow({
-        databaseId: "digr",
-        tableId: "profiles",
-        rowId: userId,
-      });
-    } catch {
-      // Profile not found or not created yet
-    }
+      // 1. Get or Create Conversation
+      let conversationId = input.conversationId;
+      let totalConvTokens = 0;
 
-    // 3. Save User Message in DB
-    const userMsgId = ID.unique();
-    await this.tables.createRow({
-      databaseId: "digr",
-      tableId: "messages",
-      rowId: userMsgId,
-      data: {
-        conversationId,
-        userId,
-        role: "user",
-        content: message,
-        status: "ready",
-        createdAt: nowIso,
-      },
-    });
+      if (!conversationId) {
+        conversationId = ID.unique();
+        if (sb) {
+          const { error: convCreateErr } = await sb.from("conversations").insert({
+            id: conversationId,
+            user_id: userId,
+            title: message.slice(0, 50) || "محادثة جديدة",
+            status: "active",
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+          if (convCreateErr) throw convCreateErr;
+        } else {
+          await this.tables.createRow({
+            databaseId: "digr",
+            tableId: "conversations",
+            rowId: conversationId,
+            data: {
+              userId,
+              title: message.slice(0, 50) || "محادثة جديدة",
+              status: "active",
+              totalTokens: 0,
+              costUsd: 0.0,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            },
+          });
+        }
+      } else if (sb) {
+        try {
+          const { data: conv } = await sb
+            .from("conversations")
+            .select("id, status, brief")
+            .eq("id", conversationId)
+            .maybeSingle();
+          if (!conv) {
+            conversationId = ID.unique();
+            const { error: convCreateErr } = await sb.from("conversations").insert({
+              id: conversationId,
+              user_id: userId,
+              title: message.slice(0, 50) || "محادثة جديدة",
+              status: "active",
+              created_at: nowIso,
+              updated_at: nowIso,
+            });
+            if (convCreateErr) throw convCreateErr;
+          }
+        } catch (convErr) {
+          throw convErr;
+        }
+      } else {
+        try {
+          const conv: any = await this.tables.getRow({
+            databaseId: "digr",
+            tableId: "conversations",
+            rowId: conversationId,
+          });
+          totalConvTokens = conv.totalTokens || 0;
+        } catch {
+          // Conversation not found, create new ID
+          conversationId = ID.unique();
+        }
+      }
 
-    // 4. Create Thinking Assistant Placeholder (for Progressive Realtime Streaming)
-    const assistantMsgId = ID.unique();
-    await this.tables.createRow({
-      databaseId: "digr",
-      tableId: "messages",
-      rowId: assistantMsgId,
-      data: {
-        conversationId,
-        userId,
-        role: "assistant",
-        content: "جاري التفكير وتحليل طلبك...",
-        status: "thinking",
-        createdAt: new Date().toISOString(),
-      },
-    });
+      // 2. Fetch User Points Balance from Ledger
+      currentStep = "balance_fetch";
+      let userBalance = input.userBalance;
+      if (userBalance === undefined) {
+        userBalance = await getBalance(this.tables, userId);
+      }
 
-    // 5. Research Brief & Two-Phase Routing
-    const currentBrief = await getConversationBrief(this.tables, conversationId);
-    let brief = extractBriefFromMessage(message, currentBrief);
+      // 2b. Fetch User Profile for Dynamic Persona Context
+      currentStep = "profile_fetch";
+      let userProfile: any = undefined;
+      try {
+        if (sb) {
+          const { data: prof } = await sb
+            .from("profiles")
+            .select("*")
+            .eq("id", userId)
+            .maybeSingle();
+          userProfile = prof || undefined;
+        } else {
+          userProfile = await this.tables.getRow({
+            databaseId: "digr",
+            tableId: "profiles",
+            rowId: userId,
+          });
+        }
+      } catch {
+        // Profile not found or not created yet
+      }
+
+      // 3. Save User Message in DB
+      currentStep = "user_message_insert";
+      const userMsgId = ID.unique();
+      if (sb) {
+        const { error: userMsgErr } = await sb.from("messages").insert({
+          id: userMsgId,
+          conversation_id: conversationId,
+          user_id: userId,
+          role: "user",
+          content_ar: message,
+          created_at: nowIso,
+        });
+        if (userMsgErr) throw userMsgErr;
+      } else {
+        await this.tables.createRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: userMsgId,
+          data: {
+            conversationId,
+            userId,
+            role: "user",
+            content: message,
+            status: "ready",
+            createdAt: nowIso,
+          },
+        });
+      }
+
+      // 4. Create Thinking Assistant Placeholder (for Progressive Realtime Streaming)
+      currentStep = "assistant_placeholder_insert";
+      const assistantMsgId = ID.unique();
+      if (sb) {
+        const { error: asstPlaceholderErr } = await sb.from("messages").insert({
+          id: assistantMsgId,
+          conversation_id: conversationId,
+          user_id: userId,
+          role: "assistant",
+          content_ar: "جاري التفكير وتحليل طلبك...",
+          created_at: new Date().toISOString(),
+        });
+        if (asstPlaceholderErr) throw asstPlaceholderErr;
+      } else {
+        await this.tables.createRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: assistantMsgId,
+          data: {
+            conversationId,
+            userId,
+            role: "assistant",
+            content: "جاري التفكير وتحليل طلبك...",
+            status: "thinking",
+            createdAt: new Date().toISOString(),
+          },
+        });
+      }
+
+      // 5. Research Brief & Two-Phase Routing
+      currentStep = "brief_resolution";
+      const currentBrief = await getConversationBrief(this.tables, conversationId);
+      let brief = extractBriefFromMessage(message, currentBrief);
 
     if ((input as any).answers) {
       const rawAns = (input as any).answers;
@@ -724,193 +802,202 @@ export class ChatHandler {
       isPhase2 = true;
     }
 
-    const [capabilities, catalogCapabilities] = await Promise.all([
-      getEnabledCapabilities(this.tables),
-      getCatalogCapabilities(this.tables),
-    ]);
+      currentStep = "capabilities_load";
+      const [capabilities, catalogCapabilities] = await Promise.all([
+        getEnabledCapabilities(this.tables),
+        getCatalogCapabilities(this.tables),
+      ]);
 
-    let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
-    const tSearchStart = Date.now();
+      let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
+      const tSearchStart = Date.now();
 
-    if (isPhase2) {
-      // Progress line during Phase 2 pricing
-      await this.tables.updateRow({
-        databaseId: "digr",
-        tableId: "messages",
-        rowId: assistantMsgId,
-        data: {
-          content: "أبحث وأحسب السعر...",
-          status: "thinking",
-        },
-      });
-
-      // Server-side: run catalog search once per platform in brief (24h cache)
-      const platformsToSearch = brief.platforms.length > 0 ? brief.platforms : detectMentionedPlatforms(message);
-      const searchTopic = brief.topics.length > 0 ? brief.topics.join(" ") : message;
-
-      const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
-        catalogSearchCount++;
-        const cached = getCachedCatalogEndpoints();
-        try {
-          const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-            setTimeout(() => resolve([]), 3000)
-          );
-          let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
-          if (res && res.length > 0) return res;
-        } catch {}
-
-        // Fallbacks
-        const fallbacks = [
-          { q: p || "", plat: p },
-          { q: "", plat: p },
-          { q: topic, plat: undefined },
-        ];
-        for (let i = 0; i < fallbacks.length; i++) {
-          try {
-            catalogSearchCount++;
-            const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-              setTimeout(() => resolve([]), 1500)
-            );
-            const res = await Promise.race([searchCatalog(fallbacks[i].q, fallbacks[i].plat), timeoutPromise]);
-            if (res && res.length > 0) return res;
-          } catch (err: any) {
-            console.warn("[chat:catalog_search_retry_failure]", { attempt: i + 1, error: err?.message });
-          }
+      if (isPhase2) {
+        currentStep = "catalog_search";
+        // Progress line during Phase 2 pricing
+        if (sb) {
+          await sb
+            .from("messages")
+            .update({ content_ar: "أبحث وأحسب السعر..." })
+            .eq("id", assistantMsgId);
+        } else {
+          await this.tables.updateRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: assistantMsgId,
+            data: {
+              content: "أبحث وأحسب السعر...",
+              status: "thinking",
+            },
+          });
         }
-        const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
-        if (matchedCached.length > 0) return matchedCached;
-        return [];
-      };
 
-      if (platformsToSearch.length > 0) {
-        for (const p of platformsToSearch) {
-          const res = await runCatalogSearchWithRetries(searchTopic, p);
+        // Server-side: run catalog search once per platform in brief (24h cache)
+        const platformsToSearch = brief.platforms.length > 0 ? brief.platforms : detectMentionedPlatforms(message);
+        const searchTopic = brief.topics.length > 0 ? brief.topics.join(" ") : message;
+
+        const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
+          catalogSearchCount++;
+          const cached = getCachedCatalogEndpoints();
+          try {
+            const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
+              setTimeout(() => resolve([]), 3000)
+            );
+            let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
+            if (res && res.length > 0) return res;
+          } catch {}
+
+          // Fallbacks
+          const fallbacks = [
+            { q: p || "", plat: p },
+            { q: "", plat: p },
+            { q: topic, plat: undefined },
+          ];
+          for (let i = 0; i < fallbacks.length; i++) {
+            try {
+              catalogSearchCount++;
+              const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
+                setTimeout(() => resolve([]), 1500)
+              );
+              const res = await Promise.race([searchCatalog(fallbacks[i].q, fallbacks[i].plat), timeoutPromise]);
+              if (res && res.length > 0) return res;
+            } catch (err: any) {
+              console.warn("[chat:catalog_search_retry_failure]", { attempt: i + 1, error: err?.message });
+            }
+          }
+          const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
+          if (matchedCached.length > 0) return matchedCached;
+          return [];
+        };
+
+        if (platformsToSearch.length > 0) {
+          for (const p of platformsToSearch) {
+            const res = await runCatalogSearchWithRetries(searchTopic, p);
+            liveCatalogEndpoints.push(...res);
+          }
+        } else {
+          const res = await runCatalogSearchWithRetries(searchTopic, undefined);
           liveCatalogEndpoints.push(...res);
         }
+      } else if (isTestSearchScenario) {
+        currentStep = "catalog_search";
+        catalogSearchCount++;
+        const mentionedPlatforms = detectMentionedPlatforms(message);
+        const platformHint = mentionedPlatforms[0] || undefined;
+        liveCatalogEndpoints = await searchCatalog(message, platformHint);
+      }
+      tCatalogSearchMs = Date.now() - tSearchStart;
+
+      const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
+
+      const allCapabilities = [...dynamicCapabilities, ...capabilities];
+      const allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
+      const sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
+
+      // 6. Fetch previous messages for context
+      currentStep = "message_history";
+      let messagesContext: Array<{ role: "user" | "assistant" | "system"; content: string }> = [];
+      if (sb) {
+        const { data: rows, error: histErr } = await sb
+          .from("messages")
+          .select("id, role, content_ar, created_at")
+          .eq("conversation_id", conversationId)
+          .order("created_at", { ascending: true })
+          .limit(10);
+        if (histErr) throw histErr;
+        messagesContext = (rows || [])
+          .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
+          .map((r: any) => ({
+            role: r.role as "user" | "assistant" | "system",
+            content: r.content_ar || "",
+          }));
       } else {
-        const res = await runCatalogSearchWithRetries(searchTopic, undefined);
-        liveCatalogEndpoints.push(...res);
-      }
-    } else if (isTestSearchScenario) {
-      catalogSearchCount++;
-      const mentionedPlatforms = detectMentionedPlatforms(message);
-      const platformHint = mentionedPlatforms[0] || undefined;
-      liveCatalogEndpoints = await searchCatalog(message, platformHint);
-    }
-    tCatalogSearchMs = Date.now() - tSearchStart;
-
-    const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
-
-    const allCapabilities = [...dynamicCapabilities, ...capabilities];
-    const allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
-    const sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
-
-    // 6. Fetch previous messages for context
-    const historyRes = await this.tables.listRows({
-      databaseId: "digr",
-      tableId: "messages",
-      queries: [
-        Query.equal("conversationId", conversationId),
-        Query.orderAsc("createdAt"),
-        Query.limit(10),
-      ],
-    });
-
-    const messagesContext = historyRes.rows
-      .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
-      .map((r: any) => ({
-        role: r.role as "user" | "assistant" | "system",
-        content: r.content,
-      }));
-
-    // 7. Execute LLM Turn
-    let parsedPurposes: string[] = [];
-    if (userProfile?.purposes) {
-      try {
-        parsedPurposes = typeof userProfile.purposes === "string" ? JSON.parse(userProfile.purposes) : userProfile.purposes;
-      } catch {
-        parsedPurposes = [String(userProfile.purposes)];
-      }
-    }
-
-    // 6b. Context-bloat guard: when the accumulated context reaches the budget,
-    // summarize older turns instead of blocking the user. The DB counter keeps
-    // growing as a cumulative stat; the model only sees the compacted history.
-    let effectiveConvTokens = totalConvTokens;
-    let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
-    if (totalConvTokens >= CONTEXT_TOKEN_LIMIT) {
-      let planSummary: string | undefined;
-      try {
-        const quoteRes = await this.tables.listRows({
+        const historyRes = await this.tables.listRows({
           databaseId: "digr",
-          tableId: "plans_quotes",
+          tableId: "messages",
           queries: [
             Query.equal("conversationId", conversationId),
-            Query.equal("status", "proposed"),
-            Query.orderDesc("createdAt"),
-            Query.limit(1),
+            Query.orderAsc("createdAt"),
+            Query.limit(10),
           ],
         });
-        const q: any = quoteRes.rows?.[0];
-        if (q) planSummary = `${q.summaryAr || "خطة مقترحة"} — ${q.quotedPoints ?? "?"} نقطة`;
-      } catch {
-        // plans_quotes unavailable: summarize without plan state
+
+        messagesContext = historyRes.rows
+          .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
+          .map((r: any) => ({
+            role: r.role as "user" | "assistant" | "system",
+            content: r.content,
+          }));
       }
-      turnMessages = summarizeConversationHistory(messagesContext, planSummary);
-      effectiveConvTokens = estimateTokens(turnMessages.map((m) => m.content).join("\n"));
-    }
 
-    if (isPhase2) {
-      const compactSummary = buildCompactCatalogSummary(liveCatalogEndpoints.length > 0 ? liveCatalogEndpoints : getCachedCatalogEndpoints());
-      turnMessages.push({
-        role: "system",
-        content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
-      });
-    } else if (!isGreeting && !isGeneralQuestion && !isTestSearchScenario) {
-      turnMessages.push({
-        role: "system",
-        content: `${formatBriefForSystemPrompt(brief)}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]:\n- لا تبحث في الكتالوج ولا تقترح خطة مسعرة في هذه المرحلة.\n- افهم قصد المستخدم، واطرح حتى ٣ أسئلة متابعة ذكية كحد أقصى (لا تكرر أي سؤال تمت الإجابة عنه سابقاً).\n- احفظ واستكمل متطلبات البحث عبر استدعاء أداة update_brief (المنصات، الكلمات المفتاحية، حجم البيانات، النطاق الزمني، إلخ).`,
-      });
-    }
+      // 7. Execute LLM Turn
+      let parsedPurposes: string[] = [];
+      if (userProfile?.purposes) {
+        try {
+          parsedPurposes = typeof userProfile.purposes === "string" ? JSON.parse(userProfile.purposes) : userProfile.purposes;
+        } catch {
+          parsedPurposes = [String(userProfile.purposes)];
+        }
+      }
 
-    const tLlmStart = Date.now();
-    modelCallCount++;
-    let llmResult = await this.llm.executeTurn({
-      messages: turnMessages,
-      sanitizedCapabilities: sanitizedCaps,
-      userProfile: userProfile
-        ? {
-            persona: userProfile.persona,
-            purposes: parsedPurposes,
-            topic: userProfile.topic,
+      // 6b. Context-bloat guard: when the accumulated context reaches the budget,
+      // summarize older turns instead of blocking the user. The DB counter keeps
+      // growing as a cumulative stat; the model only sees the compacted history.
+      let effectiveConvTokens = totalConvTokens;
+      let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
+      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT) {
+        let planSummary: string | undefined;
+        try {
+          if (sb) {
+            const { data: q } = await sb
+              .from("plans_quotes")
+              .select("items, total_reserved_credits")
+              .eq("user_id", userId)
+              .eq("status", "quoted")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (q) {
+              planSummary = `خطة مقترحة — ${q.total_reserved_credits ?? "?"} نقطة`;
+            }
+          } else {
+            const quoteRes = await this.tables.listRows({
+              databaseId: "digr",
+              tableId: "plans_quotes",
+              queries: [
+                Query.equal("conversationId", conversationId),
+                Query.equal("status", "proposed"),
+                Query.orderDesc("createdAt"),
+                Query.limit(1),
+              ],
+            });
+            const q: any = quoteRes.rows?.[0];
+            if (q) planSummary = `${q.summaryAr || "خطة مقترحة"} — ${q.quotedPoints ?? "?"} نقطة`;
           }
-        : undefined,
-      todayDate: new Date().toISOString().split("T")[0],
-      userBalancePoints: userBalance,
-      conversationId,
-      userId,
-      totalConversationTokens: effectiveConvTokens,
-      testScenario,
-    });
+        } catch {
+          // plans_quotes unavailable: summarize without plan state
+        }
+        turnMessages = summarizeConversationHistory(messagesContext, planSummary);
+        effectiveConvTokens = estimateTokens(turnMessages.map((m) => m.content).join("\n"));
+      }
 
-    let output: typeof llmResult.output = llmResult.output;
+      if (isPhase2) {
+        const compactSummary = buildCompactCatalogSummary(liveCatalogEndpoints.length > 0 ? liveCatalogEndpoints : getCachedCatalogEndpoints());
+        turnMessages.push({
+          role: "system",
+          content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
+        });
+      } else if (!isGreeting && !isGeneralQuestion && !isTestSearchScenario) {
+        turnMessages.push({
+          role: "system",
+          content: `${formatBriefForSystemPrompt(brief)}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]:\n- لا تبحث في الكتالوج ولا تقترح خطة مسعرة في هذه المرحلة.\n- افهم قصد المستخدم، واطرح حتى ٣ أسئلة متابعة ذكية كحد أقصى (لا تكرر أي سؤال تمت الإجابة عنه سابقاً).\n- احفظ واستكمل متطلبات البحث عبر استدعاء أداة update_brief (المنصات، الكلمات المفتاحية، حجم البيانات، النطاق الزمني، إلخ).`,
+        });
+      }
 
-    // 7b. Internal catalog-search loop: search_catalog is never a final answer.
-    // The results go back to the model (in-memory only, never persisted) so it
-    // can continue with ask_questions / propose_plan / plain text. Raw catalog
-    // results — tool names and bare per-tool point prices — are never shown
-    // to the user as a list; prices appear only inside a priced plan.
-    const MAX_CATALOG_ITERATIONS = 4;
-    let catalogIterations = 0;
-    const loopMessages = [...turnMessages];
-    // Every catalog search of this turn (pre-search + loop iterations), keyed by
-    // the same alias the model received. This — plus the 24h cache — is what
-    // plan validation accepts, not the hardcoded registry.
-    const turnSearchResults: CatalogEndpointSummary[] = [...liveCatalogEndpoints];
-    const repeatTurn = async () => {
+      currentStep = "llm_turn";
+      const tLlmStart = Date.now();
       modelCallCount++;
-      llmResult = await this.llm.executeTurn({
-        messages: loopMessages,
+      let llmResult = await this.llm.executeTurn({
+        messages: turnMessages,
         sanitizedCapabilities: sanitizedCaps,
         userProfile: userProfile
           ? {
@@ -926,207 +1013,245 @@ export class ChatHandler {
         totalConversationTokens: effectiveConvTokens,
         testScenario,
       });
-      output = llmResult.output;
-    };
-    while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
-      catalogIterations++;
-      catalogSearchCount++;
-      let searchRes = await searchCatalog(output.query, output.platform);
-      if (searchRes.length === 0) {
-        // Retry silently up to 3 times with alternatives
-        const fallbacks = [
-          { q: output.platform || "", p: output.platform },
-          { q: "", p: output.platform },
-          { q: output.query, p: undefined },
-        ];
-        for (let i = 0; i < fallbacks.length && searchRes.length === 0; i++) {
-          try {
-            catalogSearchCount++;
-            searchRes = await searchCatalog(fallbacks[i].q, fallbacks[i].p);
-          } catch (err: any) {
-            console.warn("[chat:catalog_tool_retry_failure]", { attempt: i + 1, error: err?.message });
+
+      let output: typeof llmResult.output = llmResult.output;
+
+      // 7b. Internal catalog-search loop: search_catalog is never a final answer.
+      // The results go back to the model (in-memory only, never persisted) so it
+      // can continue with ask_questions / propose_plan / plain text. Raw catalog
+      // results — tool names and bare per-tool point prices — are never shown
+      // to the user as a list; prices appear only inside a priced plan.
+      const MAX_CATALOG_ITERATIONS = 4;
+      let catalogIterations = 0;
+      const loopMessages = [...turnMessages];
+      // Every catalog search of this turn (pre-search + loop iterations), keyed by
+      // the same alias the model received. This — plus the 24h cache — is what
+      // plan validation accepts, not the hardcoded registry.
+      const turnSearchResults: CatalogEndpointSummary[] = [...liveCatalogEndpoints];
+      const repeatTurn = async () => {
+        modelCallCount++;
+        llmResult = await this.llm.executeTurn({
+          messages: loopMessages,
+          sanitizedCapabilities: sanitizedCaps,
+          userProfile: userProfile
+            ? {
+                persona: userProfile.persona,
+                purposes: parsedPurposes,
+                topic: userProfile.topic,
+              }
+            : undefined,
+          todayDate: new Date().toISOString().split("T")[0],
+          userBalancePoints: userBalance,
+          conversationId,
+          userId,
+          totalConversationTokens: effectiveConvTokens,
+          testScenario,
+        });
+        output = llmResult.output;
+      };
+      while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
+        catalogIterations++;
+        catalogSearchCount++;
+        let searchRes = await searchCatalog(output.query, output.platform);
+        if (searchRes.length === 0) {
+          // Retry silently up to 3 times with alternatives
+          const fallbacks = [
+            { q: output.platform || "", p: output.platform },
+            { q: "", p: output.platform },
+            { q: output.query, p: undefined },
+          ];
+          for (let i = 0; i < fallbacks.length && searchRes.length === 0; i++) {
+            try {
+              catalogSearchCount++;
+              searchRes = await searchCatalog(fallbacks[i].q, fallbacks[i].p);
+            } catch (err: any) {
+              console.warn("[chat:catalog_tool_retry_failure]", { attempt: i + 1, error: err?.message });
+            }
+          }
+          if (searchRes.length === 0) {
+            console.warn("[chat:catalog_tool_empty_after_retries]", { query: output.query, platform: output.platform });
           }
         }
-        if (searchRes.length === 0) {
-          console.warn("[chat:catalog_tool_empty_after_retries]", { query: output.query, platform: output.platform });
-        }
+        turnSearchResults.push(...searchRes);
+        // Compact internal result (top 5, minimal fields, ~2.5k token cap).
+        // Never persisted, never user-visible.
+        loopMessages.push({ role: "system", content: buildCompactCatalogSummary(searchRes) } as const);
+        await repeatTurn();
       }
-      turnSearchResults.push(...searchRes);
-      // Compact internal result (top 5, minimal fields, ~2.5k token cap).
-      // Never persisted, never user-visible.
-      loopMessages.push({ role: "system", content: buildCompactCatalogSummary(searchRes) } as const);
-      await repeatTurn();
-    }
 
-    // 7c. One retry when the model stalled after a catalog search (empty text or
-    // no next step): give it an explicit instruction before giving up.
-    const didSearch = catalogIterations > 0;
-    const isProductiveTerminal = (o: typeof output): boolean => {
-      if (o.type === "ask_clarification" || o.type === "ask_questions" || o.type === "propose_plan") return true;
-      if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim().length > 0;
-      return o.type === "refuse" || o.type === "suggest_alternative" || o.type === "edit_plan" || o.type === "write_note";
-    };
-    if (didSearch && !isProductiveTerminal(output)) {
-      loopMessages.push(
-        {
-          role: "system",
-          content:
-            "[تعليمات داخلية — الخطوة التالية المطلوبة]: بناءً على نتائج بحث الكتالوج أعلاه، استدعِ الآن ask_questions لطرح أسئلة استكشافية أو propose_plan لاقتراح خطة مسعرة. لا تعرض نتائج الكتالوج للمستخدم كنص.",
-        } as const,
-      );
-      await repeatTurn();
-    }
-
-    let finalContentAr = "";
-    let planQuoteData: any = undefined;
-    let clarificationQuestionsList: string[] | undefined = undefined;
-    let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
-
-    // Discovery fallback used when the catalog loop + one retry cannot produce a
-    // next step: real code-built questions (never the generic sentence, never the
-    // raw catalog list).
-    // Discovery fallback used when the catalog loop + one retry cannot produce a
-    // next step: real code-built questions (never the generic sentence, never the
-    // raw catalog list).
-    const fallbackToDiscovery = (customIntro?: string, colonFallback: boolean = false) => {
-      const fallback =
-        testScenario === "search_then_stall"
-          ? buildCodeDiscoveryFallback(allCapabilities, message, false)
-          : buildCodeDiscoveryFallback(allCapabilities, message, colonFallback, brief);
-      if (fallback.items.length > 0) {
-        clarificationQuestionsList = fallback.items.map((item) => item.text);
-        clarificationItemsList = fallback.items;
-        finalContentAr = deduplicateIntroText(customIntro || fallback.intro);
-        output = {
-          type: "ask_clarification",
-          reasonAr: finalContentAr,
-          intro: finalContentAr,
-          questions: fallback.items,
-          questionsAr: clarificationQuestionsList,
-        } as any;
-      } else {
-        clarificationQuestionsList = undefined;
-        clarificationItemsList = undefined;
-        finalContentAr = deduplicateIntroText(customIntro || "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.");
-        output = {
-          type: "answer_question",
-          answerAr: finalContentAr,
-        } as any;
-      }
-    };
-
-    // 7d. Check if reply ended with a colon without a tool call (cut-off reply guard)
-    const getEffectiveAnswerText = (o: typeof output): string => {
-      if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim();
-      return (llmResult.textBlockAr || "").trim();
-    };
-    const hasActiveTool = (o: typeof output): boolean => {
-      return (
-        o.type === "ask_clarification" ||
-        o.type === "ask_questions" ||
-        o.type === "propose_plan" ||
-        o.type === "edit_plan" ||
-        o.type === "edit_artifact" ||
-        o.type === "suggest_alternative" ||
-        o.type === "refuse"
-      );
-    };
-
-    let answerCandidate = getEffectiveAnswerText(output);
-    const isEndingColon = (t: string) => /[:：](\s*)$/.test(t);
-
-    if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
-      // Retry once inside the turn
-      loopMessages.push({
-        role: "system",
-        content:
-          "[تعليمات داخلية — أكمل الرد]: انتهى الرد بنقطتين (:) دون استدعاء أي أداة. استدعِ الآن ask_questions لطرح أسئلة استكشافية محددة أو propose_plan لاقتراح الخطة المسعرة. لا تترك الرد منتهياً بنقطتين دون بطاقة.",
-      } as const);
-      await repeatTurn();
-      answerCandidate = getEffectiveAnswerText(output);
-    }
-
-    if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
-      // Still ending with colon and no tool call came: build discovery card in code
-      // (topic angle, number of posts, comments per post, date range, language/dialect)
-      fallbackToDiscovery(answerCandidate || undefined, true);
-    }
-    tPlanLlmMs = Date.now() - tLlmStart;
-
-    // Turn catalog endpoints: live results of this turn + 24h cached catalog,
-    // deduped by alias. Plan validation and pricing use these first.
-    const turnEndpoints: CatalogEndpointSummary[] = (() => {
-      const seen = new Set<string>();
-      const out: CatalogEndpointSummary[] = [];
-      for (const ep of [...turnSearchResults, ...getCachedCatalogEndpoints()]) {
-        const key = ep.slug || ep.id;
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        out.push(ep);
-      }
-      return out;
-    })();
-    const turnCapabilities = turnEndpoints.map(catalogEndpointToCapability);
-    const validationCaps: Capability[] = (() => {
-      const seen = new Set<string>();
-      const out: Capability[] = [];
-      for (const c of [...turnCapabilities, ...allCapabilities]) {
-        const key = c.slug || c.id;
-        if (!key || seen.has(key)) continue;
-        seen.add(key);
-        out.push(c);
-      }
-      return out;
-    })();
-
-    // 8. Process Output Actions
-    const stalledAnswerText =
-      output.type === "answer_question" ? (((output as any).answerAr || "") as string).trim() : "";
-    if (output.type === "search_catalog" || (output.type === "answer_question" && !stalledAnswerText)) {
-      // The model stalled even after the catalog loop + one explicit retry.
-      // Fall back to code-built discovery questions — never the raw catalog list.
-      fallbackToDiscovery();
-    } else if (output.type === "update_brief") {
-      if (output.platforms && output.platforms.length > 0) {
-        for (const p of output.platforms) {
-          if (!brief.platforms.includes(p)) brief.platforms.push(p);
-        }
-      }
-      if (output.topics && output.topics.length > 0) {
-        for (const t of output.topics) {
-          if (!brief.topics.includes(t)) brief.topics.push(t);
-        }
-      }
-      if (output.targetVolume) brief.targetVolume = output.targetVolume;
-      if (output.commentsPerPost) brief.commentsPerPost = output.commentsPerPost;
-      if (output.dateRange) brief.dateRange = output.dateRange;
-      if (output.language) brief.language = output.language;
-      if (output.formats) brief.formats = output.formats;
-      if (output.notes) brief.notes = output.notes;
-
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
-
-      if (output.questions && output.questions.length > 0) {
-        const normalized = normalizeClarificationQuestions(
-          { questions: output.questions as any },
-          { capabilities: allCapabilities, userBalancePoints: userBalance, persona: userProfile?.persona },
+      // 7c. One retry when the model stalled after a catalog search (empty text or
+      // no next step): give it an explicit instruction before giving up.
+      const didSearch = catalogIterations > 0;
+      const isProductiveTerminal = (o: typeof output): boolean => {
+        if (o.type === "ask_clarification" || o.type === "ask_questions" || o.type === "propose_plan") return true;
+        if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim().length > 0;
+        return o.type === "refuse" || o.type === "suggest_alternative" || o.type === "edit_plan" || o.type === "write_note";
+      };
+      if (didSearch && !isProductiveTerminal(output)) {
+        loopMessages.push(
+          {
+            role: "system",
+            content:
+              "[تعليمات داخلية — الخطوة التالية المطلوبة]: بناءً على نتائج بحث الكتالوج أعلاه، استدعِ الآن ask_questions لطرح أسئلة استكشافية أو propose_plan لاقتراح خطة مسعرة. لا تعرض نتائج الكتالوج للمستخدم كنص.",
+          } as const,
         );
-        const hasPlatformOrTopic = Boolean(
-          (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
-        );
-        clarificationItemsList = hasPlatformOrTopic
-          ? filterQuestionsAlreadyInBrief(normalized, brief).slice(0, 1)
-          : filterQuestionsAlreadyInBrief(normalized, brief);
-        clarificationQuestionsList = clarificationItemsList.map((q) => q.text);
-        if (clarificationItemsList.length > 0) {
-          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+        await repeatTurn();
+      }
+
+      let finalContentAr = "";
+      let planQuoteData: any = undefined;
+      let clarificationQuestionsList: string[] | undefined = undefined;
+      let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
+
+      // Discovery fallback used when the catalog loop + one retry cannot produce a
+      // next step: real code-built questions (never the generic sentence, never the
+      // raw catalog list).
+      const fallbackToDiscovery = (customIntro?: string, colonFallback: boolean = false) => {
+        const fallback =
+          testScenario === "search_then_stall"
+            ? buildCodeDiscoveryFallback(allCapabilities, message, false)
+            : buildCodeDiscoveryFallback(allCapabilities, message, colonFallback, brief);
+        if (fallback.items.length > 0) {
+          clarificationQuestionsList = fallback.items.map((item) => item.text);
+          clarificationItemsList = fallback.items;
+          finalContentAr = deduplicateIntroText(customIntro || fallback.intro);
           output = {
             type: "ask_clarification",
             reasonAr: finalContentAr,
             intro: finalContentAr,
-            questions: clarificationItemsList,
+            questions: fallback.items,
             questionsAr: clarificationQuestionsList,
           } as any;
+        } else {
+          clarificationQuestionsList = undefined;
+          clarificationItemsList = undefined;
+          finalContentAr = deduplicateIntroText(customIntro || "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.");
+          output = {
+            type: "answer_question",
+            answerAr: finalContentAr,
+          } as any;
+        }
+      };
+
+      // 7d. Check if reply ended with a colon without a tool call (cut-off reply guard)
+      const getEffectiveAnswerText = (o: typeof output): string => {
+        if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim();
+        return (llmResult.textBlockAr || "").trim();
+      };
+      const hasActiveTool = (o: typeof output): boolean => {
+        return (
+          o.type === "ask_clarification" ||
+          o.type === "ask_questions" ||
+          o.type === "propose_plan" ||
+          o.type === "edit_plan" ||
+          o.type === "edit_artifact" ||
+          o.type === "suggest_alternative" ||
+          o.type === "refuse"
+        );
+      };
+
+      let answerCandidate = getEffectiveAnswerText(output);
+      const isEndingColon = (t: string) => /[:：](\s*)$/.test(t);
+
+      if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
+        // Retry once inside the turn
+        loopMessages.push({
+          role: "system",
+          content:
+            "[تعليمات داخلية — أكمل الرد]: انتهى الرد بنقطتين (:) دون استدعاء أي أداة. استدعِ الآن ask_questions لطرح أسئلة استكشافية محددة أو propose_plan لاقتراح الخطة المسعرة. لا تترك الرد منتهياً بنقطتين دون بطاقة.",
+        } as const);
+        await repeatTurn();
+        answerCandidate = getEffectiveAnswerText(output);
+      }
+
+      if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
+        // Still ending with colon and no tool call came: build discovery card in code
+        fallbackToDiscovery(answerCandidate || undefined, true);
+      }
+      tPlanLlmMs = Date.now() - tLlmStart;
+
+      // Turn catalog endpoints: live results of this turn + 24h cached catalog,
+      // deduped by alias. Plan validation and pricing use these first.
+      const turnEndpoints: CatalogEndpointSummary[] = (() => {
+        const seen = new Set<string>();
+        const out: CatalogEndpointSummary[] = [];
+        for (const ep of [...turnSearchResults, ...getCachedCatalogEndpoints()]) {
+          const key = ep.slug || ep.id;
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          out.push(ep);
+        }
+        return out;
+      })();
+      const turnCapabilities = turnEndpoints.map(catalogEndpointToCapability);
+      const validationCaps: Capability[] = (() => {
+        const seen = new Set<string>();
+        const out: Capability[] = [];
+        for (const c of [...turnCapabilities, ...allCapabilities]) {
+          const key = c.slug || c.id;
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          out.push(c);
+        }
+        return out;
+      })();
+
+      // 8. Process Output Actions
+      currentStep = "output_action";
+      const stalledAnswerText =
+        output.type === "answer_question" ? (((output as any).answerAr || "") as string).trim() : "";
+      if (output.type === "search_catalog" || (output.type === "answer_question" && !stalledAnswerText)) {
+        fallbackToDiscovery();
+      } else if (output.type === "update_brief") {
+        if (output.platforms && output.platforms.length > 0) {
+          for (const p of output.platforms) {
+            if (!brief.platforms.includes(p)) brief.platforms.push(p);
+          }
+        }
+        if (output.topics && output.topics.length > 0) {
+          for (const t of output.topics) {
+            if (!brief.topics.includes(t)) brief.topics.push(t);
+          }
+        }
+        if (output.targetVolume) brief.targetVolume = output.targetVolume;
+        if (output.commentsPerPost) brief.commentsPerPost = output.commentsPerPost;
+        if (output.dateRange) brief.dateRange = output.dateRange;
+        if (output.language) brief.language = output.language;
+        if (output.formats) brief.formats = output.formats;
+        if (output.notes) brief.notes = output.notes;
+
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+
+        if (output.questions && output.questions.length > 0) {
+          const normalized = normalizeClarificationQuestions(
+            { questions: output.questions as any },
+            { capabilities: allCapabilities, userBalancePoints: userBalance, persona: userProfile?.persona },
+          );
+          const hasPlatformOrTopic = Boolean(
+            (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
+          );
+          clarificationItemsList = hasPlatformOrTopic
+            ? filterQuestionsAlreadyInBrief(normalized, brief).slice(0, 1)
+            : filterQuestionsAlreadyInBrief(normalized, brief);
+          clarificationQuestionsList = clarificationItemsList.map((q) => q.text);
+          if (clarificationItemsList.length > 0) {
+            finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+            output = {
+              type: "ask_clarification",
+              reasonAr: finalContentAr,
+              intro: finalContentAr,
+              questions: clarificationItemsList,
+              questionsAr: clarificationQuestionsList,
+            } as any;
+          } else {
+            clarificationItemsList = undefined;
+            clarificationQuestionsList = undefined;
+            finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
+            output = {
+              type: "answer_question",
+              answerAr: finalContentAr,
+            } as any;
+          }
         } else {
           clarificationItemsList = undefined;
           clarificationQuestionsList = undefined;
@@ -1136,134 +1261,126 @@ export class ChatHandler {
             answerAr: finalContentAr,
           } as any;
         }
-      } else {
-        clarificationItemsList = undefined;
-        clarificationQuestionsList = undefined;
-        finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
-        output = {
-          type: "answer_question",
-          answerAr: finalContentAr,
-        } as any;
-      }
-    } else if ((output.type === "ask_clarification" || output.type === "ask_questions") && !clarificationItemsList) {
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
-      const clarification = buildClarificationPresentation(output as any, {
-        capabilities: allCapabilities,
-        userBalancePoints: userBalance,
-        persona: userProfile?.persona,
-        userMessage: message,
-      });
-      const hasPlatformOrTopic = Boolean(
-        (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
-      );
-      clarificationItemsList = hasPlatformOrTopic
-        ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
-        : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
-      clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
-      if (clarificationItemsList.length > 0) {
-        finalContentAr = deduplicateIntroText(
-          (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
-            ? llmResult.textBlockAr
-            : clarification.contentAr,
+      } else if ((output.type === "ask_clarification" || output.type === "ask_questions") && !clarificationItemsList) {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const clarification = buildClarificationPresentation(output as any, {
+          capabilities: allCapabilities,
+          userBalancePoints: userBalance,
+          persona: userProfile?.persona,
+          userMessage: message,
+        });
+        const hasPlatformOrTopic = Boolean(
+          (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
         );
-      } else {
-        clarificationItemsList = undefined;
-        clarificationQuestionsList = undefined;
-        finalContentAr = "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.";
-        output = {
-          type: "answer_question",
-          answerAr: finalContentAr,
-        } as any;
-      }
-    } else if (output.type === "answer_question") {
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
-      finalContentAr = output.answerAr;
-    } else if (output.type === "write_note") {
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
-      finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
-    } else if (output.type === "propose_plan") {
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
-      const mapPlanItems = (out: any) =>
-        ((out as any).capabilities || (out as any).steps || []).map((c: any) => ({
-          stepId: c.stepId,
-          capabilitySlug: c.capabilitySlug || c.endpointId,
-          endpointId: c.endpointId || c.capabilitySlug,
-          paginationStrategy: c.paginationStrategy,
-          params: c.params,
-          targetVolumeMin: c.targetVolumeMin || 1,
-          targetVolumeMax: c.targetVolumeMax,
-        }));
-
-      let planOutput: any = output;
-      let planItems = mapPlanItems(planOutput);
-
-      // Deterministic check: platform mentioned by user must match platform in proposed plan
-      let platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
-      let planValidation = platformCheck.valid
-        ? validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities)
-        : { valid: false, errors: [] as string[], issues: [] as LiveCatalogIssue[] };
-
-      let planRetries = 0;
-      while (platformCheck.valid && !planValidation.valid && planRetries < 3) {
-        planRetries++;
-        console.warn("[chat:plan_fix_retry]", { attempt: planRetries, errors: planValidation.errors });
-        loopMessages.push(
-          { role: "system", content: buildPlanFixPrompt(planValidation, turnEndpoints) } as const,
-        );
-        await repeatTurn();
-        if (output.type === "propose_plan") {
-          planOutput = output;
-          planItems = mapPlanItems(planOutput);
-          platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
-          if (platformCheck.valid) {
-            planValidation = validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities);
-          }
+        clarificationItemsList = hasPlatformOrTopic
+          ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
+          : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+        clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+        if (clarificationItemsList.length > 0) {
+          finalContentAr = deduplicateIntroText(
+            (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0)
+              ? llmResult.textBlockAr
+              : clarification.contentAr,
+          );
         } else {
-          planOutput = null;
-          planValidation = { valid: false, errors: ["no-plan"], issues: [] as LiveCatalogIssue[] };
-        }
-      }
-
-      if (!platformCheck.valid) {
-        const closest = getClosestVerifiedCapability(capabilities);
-        console.warn("[chat:platform_check_invalid]", { message, planItems });
-        finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
-      } else if (!planValidation.valid || !planOutput) {
-        if (userComplained) {
-          const matchedPlatform = brief.platforms[0] || "facebook";
-          finalContentAr = `أقوم بمراجعة وتعديل خطة جمع البيانات لمنصة ${getPlatformLabelAr(matchedPlatform)} حسب طلبك (${brief.topics.join("، ")}).`;
+          clarificationItemsList = undefined;
+          clarificationQuestionsList = undefined;
+          finalContentAr = "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.";
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
           } as any;
-        } else if (testScenario === "plan_ghost_then_stall") {
-          console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
-          const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
-          clarificationQuestionsList = planFallback.items.map((item) => item.text);
-          clarificationItemsList = planFallback.items;
-          finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
-          output = {
-            type: "ask_clarification",
-            reasonAr: finalContentAr,
-            intro: finalContentAr,
-            questions: planFallback.items,
-            questionsAr: clarificationQuestionsList,
-          } as any;
-        } else {
-          console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
-          const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, false, brief);
-          clarificationQuestionsList = planFallback.items.map((item) => item.text);
-          clarificationItemsList = planFallback.items;
-          finalContentAr = deduplicateIntroText(planFallback.intro);
-          output = {
-            type: "ask_clarification",
-            reasonAr: finalContentAr,
-            intro: finalContentAr,
-            questions: planFallback.items,
-            questionsAr: clarificationQuestionsList,
-          } as any;
         }
-      } else {
+      } else if (output.type === "answer_question") {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        finalContentAr = output.answerAr;
+      } else if (output.type === "write_note") {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
+      } else if (output.type === "propose_plan") {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const mapPlanItems = (out: any) =>
+          ((out as any).capabilities || (out as any).steps || []).map((c: any) => ({
+            stepId: c.stepId,
+            capabilitySlug: c.capabilitySlug || c.endpointId,
+            endpointId: c.endpointId || c.capabilitySlug,
+            paginationStrategy: c.paginationStrategy,
+            params: c.params,
+            targetVolumeMin: c.targetVolumeMin || 1,
+            targetVolumeMax: c.targetVolumeMax,
+          }));
+
+        let planOutput: any = output;
+        let planItems = mapPlanItems(planOutput);
+
+        // Deterministic check: platform mentioned by user must match platform in proposed plan
+        let platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
+        let planValidation = platformCheck.valid
+          ? validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities)
+          : { valid: false, errors: [] as string[], issues: [] as LiveCatalogIssue[] };
+
+        let planRetries = 0;
+        while (platformCheck.valid && !planValidation.valid && planRetries < 3) {
+          planRetries++;
+          console.warn("[chat:plan_fix_retry]", { attempt: planRetries, errors: planValidation.errors });
+          loopMessages.push(
+            { role: "system", content: buildPlanFixPrompt(planValidation, turnEndpoints) } as const,
+          );
+          await repeatTurn();
+          if (output.type === "propose_plan") {
+            planOutput = output;
+            planItems = mapPlanItems(planOutput);
+            platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
+            if (platformCheck.valid) {
+              planValidation = validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities);
+            }
+          } else {
+            planOutput = null;
+            planValidation = { valid: false, errors: ["no-plan"], issues: [] as LiveCatalogIssue[] };
+          }
+        }
+
+        if (!platformCheck.valid) {
+          const closest = getClosestVerifiedCapability(capabilities);
+          console.warn("[chat:platform_check_invalid]", { message, planItems });
+          finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+        } else if (!planValidation.valid || !planOutput) {
+          if (userComplained) {
+            const matchedPlatform = brief.platforms[0] || "facebook";
+            finalContentAr = `أقوم بمراجعة وتعديل خطة جمع البيانات لمنصة ${getPlatformLabelAr(matchedPlatform)} حسب طلبك (${brief.topics.join("، ")}).`;
+            output = {
+              type: "answer_question",
+              answerAr: finalContentAr,
+            } as any;
+          } else if (testScenario === "plan_ghost_then_stall") {
+            console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
+            const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
+            clarificationQuestionsList = planFallback.items.map((item) => item.text);
+            clarificationItemsList = planFallback.items;
+            finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
+            output = {
+              type: "ask_clarification",
+              reasonAr: finalContentAr,
+              intro: finalContentAr,
+              questions: planFallback.items,
+              questionsAr: clarificationQuestionsList,
+            } as any;
+          } else {
+            console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
+            const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, false, brief);
+            clarificationQuestionsList = planFallback.items.map((item) => item.text);
+            clarificationItemsList = planFallback.items;
+            finalContentAr = deduplicateIntroText(planFallback.intro);
+            output = {
+              type: "ask_clarification",
+              reasonAr: finalContentAr,
+              intro: finalContentAr,
+              questions: planFallback.items,
+              questionsAr: clarificationQuestionsList,
+            } as any;
+          }
+        } else {
+          currentStep = "quote_save";
           const tQuoteStart = Date.now();
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
             conversationId,
@@ -1310,213 +1427,286 @@ export class ChatHandler {
             ? `${llmResult.textBlockAr}\n\n${planSummaryText}`
             : planSummaryText;
         }
-    } else if (output.type === "edit_plan") {
-      let activeQuote: any = null;
-      try {
-        const quoteRes = await this.tables.listRows({
-          databaseId: "digr",
-          tableId: "plans_quotes",
-          queries: [
-            Query.equal("conversationId", conversationId),
-            Query.equal("status", "proposed"),
-            Query.orderDesc("createdAt"),
-            Query.limit(1),
-          ],
-        });
-        if (quoteRes.rows.length > 0) {
-          activeQuote = quoteRes.rows[0];
-        }
-      } catch (err) {
-        console.warn("Error finding active quote for edit:", err);
-      }
-
-      if (!activeQuote) {
-        finalContentAr = "لا توجد خطة معلقة حالياً لتعديلها. يرجى وصف بيانات الاستخراج المطلوبة لنعد لك خطة جديدة.";
-      } else {
+      } else if (output.type === "edit_plan") {
+        let activeQuote: any = null;
         try {
-          const currentItems = typeof activeQuote.itemsJson === "string"
-            ? JSON.parse(activeQuote.itemsJson)
-            : activeQuote.itemsJson;
-
-          const currentPlan: PlanState = {
-            summaryAr: activeQuote.summaryAr,
-            items: currentItems,
-            outputFormats: ["xlsx", "pdf", "csv"],
-          };
-
-          const updatedPlan = applyPlanOperations(currentPlan, output.operations);
-          const validation = validatePlanAgainstSchemas(updatedPlan.items, capabilities);
-          if (!validation.valid) {
-            finalContentAr = `تعذر تطبيق التعديل المطلوب: ${validation.errors.join(", ")}`;
-          } else {
-            const managedQuote = await createAndSaveManagedQuote(this.tables, {
-              conversationId,
-              userId,
-              plan: updatedPlan,
-              userBalance: userBalance ?? 0,
-              capabilities: allCapabilities,
-            });
-
-            planQuoteData = {
-              quoteId: managedQuote.quoteId,
-              planHash: managedQuote.planHash,
-              summaryAr: managedQuote.summaryAr,
-              items: managedQuote.items,
-              targetVolumeMax: managedQuote.targetVolumeMax,
-              unitPricePoints: managedQuote.unitPricePoints,
-              quotedPoints: managedQuote.quotedPoints,
-              isAffordable: managedQuote.isAffordable,
-              userBalance,
-              downscaledOffer: managedQuote.downscaledOffer,
-              capacityConstrained: managedQuote.capacityConstrained,
-              outputFormats: managedQuote.outputFormats,
-              expiresAt: managedQuote.expiresAt,
-            };
-
-            finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المحدثة: ${managedQuote.quotedPoints} نقطة`;
-            if (managedQuote.capacityConstrained) {
-              finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+          if (sb) {
+            const { data: q } = await sb
+              .from("plans_quotes")
+              .select("*")
+              .eq("user_id", userId)
+              .eq("status", "quoted")
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            if (q) {
+              activeQuote = {
+                ...q,
+                summaryAr: q.summary_ar || "خطة استخراج بيانات",
+                itemsJson: q.items,
+              };
             }
-            if (!managedQuote.isAffordable) {
-              finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
-              if (managedQuote.downscaledOffer) {
-                finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
-              }
+          } else {
+            const quoteRes = await this.tables.listRows({
+              databaseId: "digr",
+              tableId: "plans_quotes",
+              queries: [
+                Query.equal("conversationId", conversationId),
+                Query.equal("status", "proposed"),
+                Query.orderDesc("createdAt"),
+                Query.limit(1),
+              ],
+            });
+            if (quoteRes.rows.length > 0) {
+              activeQuote = quoteRes.rows[0];
             }
           }
-        } catch (editErr: any) {
-          finalContentAr = `تعذر تطبيق التعديل: ${editErr.message || "خطأ في مدخلات التعديل"}`;
+        } catch (err) {
+          console.warn("Error finding active quote for edit:", err);
         }
-      }
-    } else if (output.type === "suggest_alternative") {
-      // Ensure we never name a different platform than the one the user asked for
-      const mentioned = detectMentionedPlatforms(message);
-      if (mentioned.length > 0) {
-        const expectedLabel = getPlatformLabelAr(mentioned[0]);
-        const mentionedOutputPlatforms = detectMentionedPlatforms(output.unsupportedService);
-        if (mentionedOutputPlatforms.length > 0 && !mentionedOutputPlatforms.includes(mentioned[0])) {
-          output.unsupportedService = expectedLabel;
+
+        if (!activeQuote) {
+          finalContentAr = "لا توجد خطة معلقة حالياً لتعديلها. يرجى وصف بيانات الاستخراج المطلوبة لنعد لك خطة جديدة.";
+        } else {
+          try {
+            const currentItems = typeof activeQuote.itemsJson === "string"
+              ? JSON.parse(activeQuote.itemsJson)
+              : activeQuote.itemsJson;
+
+            const currentPlan: PlanState = {
+              summaryAr: activeQuote.summaryAr,
+              items: currentItems,
+              outputFormats: ["xlsx", "pdf", "csv"],
+            };
+
+            const updatedPlan = applyPlanOperations(currentPlan, output.operations);
+            const validation = validatePlanAgainstSchemas(updatedPlan.items, capabilities);
+            if (!validation.valid) {
+              finalContentAr = `تعذر تطبيق التعديل المطلوب: ${validation.errors.join(", ")}`;
+            } else {
+              currentStep = "quote_save";
+              const managedQuote = await createAndSaveManagedQuote(this.tables, {
+                conversationId,
+                userId,
+                plan: updatedPlan,
+                userBalance: userBalance ?? 0,
+                capabilities: allCapabilities,
+              });
+
+              planQuoteData = {
+                quoteId: managedQuote.quoteId,
+                planHash: managedQuote.planHash,
+                summaryAr: managedQuote.summaryAr,
+                items: managedQuote.items,
+                targetVolumeMax: managedQuote.targetVolumeMax,
+                unitPricePoints: managedQuote.unitPricePoints,
+                quotedPoints: managedQuote.quotedPoints,
+                isAffordable: managedQuote.isAffordable,
+                userBalance,
+                downscaledOffer: managedQuote.downscaledOffer,
+                capacityConstrained: managedQuote.capacityConstrained,
+                outputFormats: managedQuote.outputFormats,
+                expiresAt: managedQuote.expiresAt,
+              };
+
+              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المحدثة: ${managedQuote.quotedPoints} نقطة`;
+              if (managedQuote.capacityConstrained) {
+                finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+              }
+              if (!managedQuote.isAffordable) {
+                finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
+                if (managedQuote.downscaledOffer) {
+                  finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+                }
+              }
+            }
+          } catch (editErr: any) {
+            finalContentAr = `تعذر تطبيق التعديل: ${editErr.message || "خطأ في مدخلات التعديل"}`;
+          }
         }
+      } else if (output.type === "suggest_alternative") {
+        // Ensure we never name a different platform than the one the user asked for
+        const mentioned = detectMentionedPlatforms(message);
+        if (mentioned.length > 0) {
+          const expectedLabel = getPlatformLabelAr(mentioned[0]);
+          const mentionedOutputPlatforms = detectMentionedPlatforms(output.unsupportedService);
+          if (mentionedOutputPlatforms.length > 0 && !mentionedOutputPlatforms.includes(mentioned[0])) {
+            output.unsupportedService = expectedLabel;
+          }
+        }
+        const closest = getClosestVerifiedCapability(capabilities);
+        console.warn("[chat:suggest_alternative]", {
+          unsupportedService: output.unsupportedService,
+          explanationAr: output.explanationAr,
+        });
+        finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+
+        // Log request in capability_requests table
+        if (sb) {
+          await sb.from("capability_requests").insert({
+            id: ID.unique(),
+            user_id: userId,
+            query: `${output.unsupportedService || ""}: ${message}`,
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          await this.tables.createRow({
+            databaseId: "digr",
+            tableId: "capability_requests",
+            rowId: ID.unique(),
+            data: {
+              userId,
+              queryAr: message,
+              platform: output.unsupportedService,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
+      } else if (output.type === "refuse") {
+        finalContentAr = output.reasonAr;
+      } else if (output.type === "edit_artifact") {
+        finalContentAr = `تم تطبيق التعديل التحريري المطلق: ${output.reasonAr}`;
       }
-      const closest = getClosestVerifiedCapability(capabilities);
-      console.warn("[chat:suggest_alternative]", {
-        unsupportedService: output.unsupportedService,
-        explanationAr: output.explanationAr,
-      });
-      finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
 
-      // Log request in capability_requests table
-      await this.tables.createRow({
-        databaseId: "digr",
-        tableId: "capability_requests",
-        rowId: ID.unique(),
-        data: {
-          userId,
-          queryAr: message,
-          platform: output.unsupportedService,
-          createdAt: new Date().toISOString(),
-        },
+      // 9. Update Assistant Message to 'ready'
+      currentStep = "assistant_message_save";
+      finalContentAr = deduplicateIntroText(finalContentAr);
+      if (sb) {
+        const { error: msgUpdateErr } = await sb
+          .from("messages")
+          .update({
+            content_ar: finalContentAr,
+            clarification_items: clarificationItemsList ?? null,
+            plan: planQuoteData ? { items: planQuoteData.items, summaryAr: planQuoteData.summaryAr } : null,
+            quote: planQuoteData ?? null,
+          })
+          .eq("id", assistantMsgId);
+        if (msgUpdateErr) throw msgUpdateErr;
+      } else {
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: assistantMsgId,
+          data: {
+            content: finalContentAr,
+            status: "ready",
+            promptVersion: llmResult.promptVersion || "2.0.0",
+            ...(planQuoteData ? { planQuoteId: planQuoteData.quoteId } : {}),
+          },
+        });
+      }
+
+      // 10. Record Token Usage & Stats in llm_usage (Server-only).
+      // Logging must never block the reply: failures are swallowed.
+      currentStep = "usage_log";
+      try {
+        if (sb) {
+          await sb.from("llm_usage").insert({
+            user_id: userId,
+            tokens_in: llmResult.inputTokens || 0,
+            tokens_out: llmResult.outputTokens || 0,
+            model: llmResult.model,
+            latency_ms: Math.max(0, Date.now() - tLlmStart),
+            reason: output.type,
+            cost_usd: Number((llmResult.costUsd || 0).toFixed(6)),
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          await this.tables.createRow({
+            databaseId: "digr",
+            tableId: "llm_usage",
+            rowId: ID.unique(),
+            data: {
+              conversationId,
+              userId,
+              messageId: assistantMsgId,
+              model: llmResult.model,
+              inputTokens: llmResult.inputTokens,
+              outputTokens: llmResult.outputTokens,
+              costUsd: Number(llmResult.costUsd.toFixed(6)),
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
+      } catch (usageErr) {
+        console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
+      }
+      await logProviderCost(this.tables, {
+        provider: "llm",
+        units: (llmResult.inputTokens || 0) + (llmResult.outputTokens || 0),
+        costUsd: llmResult.costUsd || 0,
       });
-    } else if (output.type === "refuse") {
-      finalContentAr = output.reasonAr;
-    } else if (output.type === "edit_artifact") {
-      finalContentAr = `تم تطبيق التعديل التحريري المطلق: ${output.reasonAr}`;
+
+      // 11. Update Conversation Stats
+      currentStep = "conversation_update";
+      const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;
+      if (sb) {
+        const { error: convUpdateErr } = await sb
+          .from("conversations")
+          .update({
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", conversationId);
+        if (convUpdateErr) throw convUpdateErr;
+      } else {
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "conversations",
+          rowId: conversationId,
+          data: {
+            totalTokens: newTotalTokens,
+            costUsd: Number(llmResult.costUsd.toFixed(6)),
+            updatedAt: new Date().toISOString(),
+          },
+        });
+      }
+
+      const totalLatencyMs = Date.now() - turnStartTime;
+      console.log(
+        `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=${modelCallCount} catalogSearches=${catalogSearchCount} latencyMs=${totalLatencyMs}`,
+      );
+      console.log("[chat:step_timings]", {
+        tExtractMs,
+        tCatalogSearchMs,
+        tPlanLlmMs,
+        tQuoteMs,
+        totalMs: totalLatencyMs,
+      });
+
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: finalContentAr,
+        outputType: output.type,
+        planQuote: planQuoteData,
+        clarificationQuestions: clarificationQuestionsList,
+        clarificationItems: clarificationItemsList,
+        suggestedAlternative: output.type === "suggest_alternative" ? output : undefined,
+        refusalReason: output.type === "refuse" ? output.reasonAr : undefined,
+        tokensUsed: {
+          input: llmResult.inputTokens,
+          output: llmResult.outputTokens,
+          costUsd: llmResult.costUsd,
+        },
+        turnStats: {
+          modelCalls: modelCallCount,
+          catalogSearches: catalogSearchCount,
+          latencyMs: totalLatencyMs,
+          stepTimings: {
+            tExtractMs,
+            tCatalogSearchMs,
+            tPlanLlmMs,
+            tQuoteMs,
+          },
+        },
+      };
+    } catch (err: any) {
+      if (err && typeof err === "object" && !err.chatStep) {
+        err.chatStep = currentStep;
+      }
+      throw err;
     }
-
-    // 9. Update Assistant Message to 'ready' (Progressive streaming event triggers via Appwrite Realtime)
-    finalContentAr = deduplicateIntroText(finalContentAr);
-    await this.tables.updateRow({
-      databaseId: "digr",
-      tableId: "messages",
-      rowId: assistantMsgId,
-      data: {
-        content: finalContentAr,
-        status: "ready",
-        promptVersion: llmResult.promptVersion || "2.0.0",
-        ...(planQuoteData ? { planQuoteId: planQuoteData.quoteId } : {}),
-      },
-    });
-
-    // 10. Record Token Usage & Stats in llm_usage (Server-only).
-    // Linked to the assistant message id for per-message cost pricing.
-    // Logging must never block the reply: failures are swallowed.
-    try {
-      await this.tables.createRow({
-        databaseId: "digr",
-        tableId: "llm_usage",
-        rowId: ID.unique(),
-        data: {
-          conversationId,
-          userId,
-          messageId: assistantMsgId,
-          model: llmResult.model,
-          inputTokens: llmResult.inputTokens,
-          outputTokens: llmResult.outputTokens,
-          costUsd: Number(llmResult.costUsd.toFixed(6)),
-          createdAt: new Date().toISOString(),
-        },
-      });
-    } catch (usageErr) {
-      console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
-    }
-    await logProviderCost(this.tables, {
-      provider: "llm",
-      units: (llmResult.inputTokens || 0) + (llmResult.outputTokens || 0),
-      costUsd: llmResult.costUsd || 0,
-    });
-
-    // 11. Update Conversation Stats
-    const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;
-    await this.tables.updateRow({
-      databaseId: "digr",
-      tableId: "conversations",
-      rowId: conversationId,
-      data: {
-        totalTokens: newTotalTokens,
-        costUsd: Number(llmResult.costUsd.toFixed(6)),
-        updatedAt: new Date().toISOString(),
-      },
-    });
-
-    const totalLatencyMs = Date.now() - turnStartTime;
-    console.log(
-      `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=${modelCallCount} catalogSearches=${catalogSearchCount} latencyMs=${totalLatencyMs}`,
-    );
-    console.log("[chat:step_timings]", {
-      tExtractMs,
-      tCatalogSearchMs,
-      tPlanLlmMs,
-      tQuoteMs,
-      totalMs: totalLatencyMs,
-    });
-
-    return {
-      conversationId,
-      messageId: assistantMsgId,
-      role: "assistant",
-      contentAr: finalContentAr,
-      outputType: output.type,
-      planQuote: planQuoteData,
-      clarificationQuestions: clarificationQuestionsList,
-      clarificationItems: clarificationItemsList,
-      suggestedAlternative: output.type === "suggest_alternative" ? output : undefined,
-      refusalReason: output.type === "refuse" ? output.reasonAr : undefined,
-      tokensUsed: {
-        input: llmResult.inputTokens,
-        output: llmResult.outputTokens,
-        costUsd: llmResult.costUsd,
-      },
-      turnStats: {
-        modelCalls: modelCallCount,
-        catalogSearches: catalogSearchCount,
-        latencyMs: totalLatencyMs,
-        stepTimings: {
-          tExtractMs,
-          tCatalogSearchMs,
-          tPlanLlmMs,
-          tQuoteMs,
-        },
-      },
-    };
   }
 }
+

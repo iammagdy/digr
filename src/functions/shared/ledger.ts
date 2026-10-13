@@ -7,7 +7,18 @@ export const CREDIT_LEDGER_TABLE = "credit_ledger";
  * Paginates through all ledger entries for a user and calculates the true balance.
  * Appwrite default limit is 25, max is 100.
  */
-export async function calculateBalance(tables: TablesDB, userId: string): Promise<number> {
+export async function calculateBalance(tables: TablesDB | any, userId: string): Promise<number> {
+  if (tables && typeof tables.from === "function") {
+    const { data, error } = await tables
+      .from(CREDIT_LEDGER_TABLE)
+      .select("delta")
+      .eq("user_id", userId);
+    if (error) {
+      throw error;
+    }
+    return (data || []).reduce((sum: number, row: any) => sum + Number(row.delta || 0), 0);
+  }
+
   let total = 0;
   let offset = 0;
   const limit = 100;

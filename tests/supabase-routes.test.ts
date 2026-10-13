@@ -4,6 +4,7 @@ import { acceptQuoteSupabase } from "../src/lib/supabase/quoteAccept";
 const authMockState = vi.hoisted(() => ({
   user: null as any,
   authError: null as any,
+  adminClient: null as any,
 }));
 
 vi.mock("../src/lib/supabase/server", () => ({
@@ -15,7 +16,7 @@ vi.mock("../src/lib/supabase/server", () => ({
       })),
     },
   })),
-  createAdminClient: vi.fn(() => ({})),
+  createAdminClient: vi.fn(() => authMockState.adminClient || {}),
 }));
 
 describe("Supabase Route Handlers & Business Rules", () => {
@@ -534,6 +535,231 @@ describe("Top-up Approval Atomic Logic (approves twice, credits once)", () => {
     expect(matchingLedger[0].delta).toBe(1000);
   });
 });
+
+describe("Step D: POST /api/chat on Preview with Supabase Admin Client & Structured Error Logging", () => {
+  it("succeeds end-to-end when only the 6 production/preview env vars are set and createAdminClient returns a pure Supabase (.from) client", async () => {
+    const { POST } = await import("../src/app/api/chat/route");
+    const { NextRequest } = await import("next/server");
+
+    const conversationsTable: any[] = [];
+    const messagesTable: any[] = [];
+    const llmUsageTable: any[] = [];
+    const providerCostsTable: any[] = [];
+
+    const pureSupabaseClient = {
+      from: vi.fn((table: string) => {
+        if (table === "llm_usage") {
+          return {
+            select: vi.fn(() => ({
+              gte: vi.fn(async () => ({ data: llmUsageTable, error: null })),
+            })),
+            insert: vi.fn(async (row: any) => {
+              llmUsageTable.push(row);
+              return { data: row, error: null };
+            }),
+          };
+        }
+        if (table === "messages") {
+          return {
+            select: vi.fn((_cols?: string, opts?: any) => {
+              if (opts?.head) {
+                return {
+                  eq: vi.fn(() => ({
+                    eq: vi.fn(() => ({
+                      gte: vi.fn(async () => ({ count: 0, error: null })),
+                    })),
+                  })),
+                };
+              }
+              return {
+                eq: vi.fn((_col: string, convId: string) => ({
+                  order: vi.fn(() => ({
+                    limit: vi.fn(async () => ({
+                      data: messagesTable.filter((m) => m.conversation_id === convId),
+                      error: null,
+                    })),
+                  })),
+                })),
+              };
+            }),
+            insert: vi.fn(async (row: any) => {
+              messagesTable.push({ ...row });
+              return { data: row, error: null };
+            }),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(async (_col: string, id: string) => {
+                const target = messagesTable.find((m) => m.id === id);
+                if (target) Object.assign(target, patch);
+                return { data: target, error: null };
+              }),
+            })),
+          };
+        }
+        if (table === "conversations") {
+          return {
+            insert: vi.fn(async (row: any) => {
+              conversationsTable.push({ ...row });
+              return { data: row, error: null };
+            }),
+            select: vi.fn(() => ({
+              eq: vi.fn((_col: string, id: string) => ({
+                maybeSingle: vi.fn(async () => ({
+                  data: conversationsTable.find((c) => c.id === id) || null,
+                  error: null,
+                })),
+              })),
+            })),
+            update: vi.fn((patch: any) => ({
+              eq: vi.fn(async (_col: string, id: string) => {
+                const target = conversationsTable.find((c) => c.id === id);
+                if (target) Object.assign(target, patch);
+                return { data: target, error: null };
+              }),
+            })),
+          };
+        }
+        if (table === "credit_ledger") {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(async () => ({ data: [{ delta: 250 }], error: null })),
+            })),
+          };
+        }
+        if (table === "profiles") {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                maybeSingle: vi.fn(async () => ({
+                  data: { id: "user-preview-1", name: "مستخدم تجريبي" },
+                  error: null,
+                })),
+              })),
+            })),
+          };
+        }
+        if (table === "capability_registry") {
+          return {
+            select: vi.fn(() => {
+              const chain: any = Promise.resolve({ data: [], error: null });
+              chain.eq = vi.fn(async () => ({ data: [], error: null }));
+              return chain;
+            }),
+          };
+        }
+        if (table === "provider_costs") {
+          return {
+            select: vi.fn(() => ({
+              gte: vi.fn(async () => ({ data: providerCostsTable, error: null })),
+            })),
+            insert: vi.fn(async (row: any) => {
+              providerCostsTable.push(row);
+              return { data: row, error: null };
+            }),
+          };
+        }
+        return {
+          select: vi.fn(async () => ({ data: [], error: null })),
+          insert: vi.fn(async () => ({ data: null, error: null })),
+          update: vi.fn(() => ({ eq: vi.fn(async () => ({ data: null, error: null })) })),
+        };
+      }),
+    };
+
+    authMockState.user = {
+      id: "user-preview-1",
+      email: "preview@diger.tech",
+      email_confirmed_at: "2026-10-13T00:00:00Z",
+      user_metadata: { email_verified: true },
+    };
+    authMockState.authError = null;
+    authMockState.adminClient = pureSupabaseClient;
+
+    const req = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ message: "أهلاً، ما هي خدمات ديجر؟" }),
+    });
+
+    const res = await POST(req);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.requestId).toMatch(/^req_/);
+    expect(typeof body.contentAr).toBe("string");
+    expect(body.contentAr.length).toBeGreaterThan(0);
+    expect(conversationsTable.length).toBe(1);
+    expect(messagesTable.length).toBe(2);
+  });
+
+  it("logs [chat:request_failed] with requestId, step, and safe reason code when a DB step fails", async () => {
+    const { POST } = await import("../src/app/api/chat/route");
+    const { NextRequest } = await import("next/server");
+
+    const failingSupabaseClient = {
+      from: vi.fn((table: string) => {
+        if (table === "llm_usage") {
+          return {
+            select: vi.fn(() => ({
+              gte: vi.fn(async () => ({ data: [], error: null })),
+            })),
+          };
+        }
+        if (table === "messages") {
+          return {
+            select: vi.fn(() => ({
+              eq: vi.fn(() => ({
+                eq: vi.fn(() => ({
+                  gte: vi.fn(async () => ({ count: 0, error: null })),
+                })),
+              })),
+            })),
+          };
+        }
+        if (table === "conversations") {
+          return {
+            insert: vi.fn(async () => ({
+              data: null,
+              error: { code: "23503", message: "foreign key violation on user_id" },
+            })),
+          };
+        }
+        return {};
+      }),
+    };
+
+    authMockState.user = {
+      id: "user-preview-err",
+      email: "preview-err@diger.tech",
+      email_confirmed_at: "2026-10-13T00:00:00Z",
+      user_metadata: { email_verified: true },
+    };
+    authMockState.authError = null;
+    authMockState.adminClient = failingSupabaseClient;
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const req = new NextRequest("http://localhost:3000/api/chat", {
+        method: "POST",
+        body: JSON.stringify({ message: "اختبار خطأ" }),
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(500);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.requestId).toMatch(/^req_/);
+      expect(body.step).toBe("conversation_init");
+      expect(body.reason).toBe("23503");
+      expect(body.error).toBe("حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.");
+      expect(errSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/^\[chat:request_failed\] requestId=req_[0-9a-f-]+ step=conversation_init reason=23503$/),
+      );
+    } finally {
+      errSpy.mockRestore();
+      authMockState.adminClient = null;
+    }
+  });
+});
+
 
 
 
