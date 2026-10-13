@@ -705,6 +705,7 @@ export default function ChatWorkspacePage() {
       const fileRes = await fetch(payload.signedUrl);
       if (!fileRes.ok) throw new Error(String(fileRes.status));
       const blobUrl = URL.createObjectURL(await fileRes.blob());
+      const link = document.createElement("a");
       link.href = blobUrl;
       link.download = payload.downloadFileName || `diger_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
       document.body.appendChild(link);
