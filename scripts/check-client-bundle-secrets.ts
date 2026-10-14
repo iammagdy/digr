@@ -18,6 +18,8 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   { name: "Server Anthropic Key Leaked", regex: /process\.env\.ANTHROPIC_API_KEY/g },
   { name: "Server-only Variable Leaked", regex: /process\.env\.APPWRITE_API_KEY/g },
   { name: "Server TREG Token Leaked", regex: /process\.env\.TREG_TOKEN/g },
+  { name: "Supabase Service Role Key Leaked", regex: /process\.env\.SUPABASE_SERVICE_ROLE_KEY/g },
+  { name: "Cron Secret Leaked", regex: /process\.env\.CRON_SECRET/g },
 ];
 
 function getAllFiles(dir: string): string[] {
@@ -70,7 +72,7 @@ export function runBundleSecretCheck(): { passed: boolean; violations: string[] 
     return { passed: false, violations };
   }
 
-  console.log("✅ Zero client bundle secrets detected. All client JS files are 100% clean.\n");
+  console.log("✅ Zero client bundle secrets detected. All client JS files are fully clean.\n");
   return { passed: true, violations: [] };
 }
 

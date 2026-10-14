@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ID, Messaging } from "node-appwrite";
 import { z } from "zod";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { renderEmailTemplate, type PlatformEmailTemplateId } from "@/functions/shared/emailTemplates";
+import { sendPlatformEmail } from "@/lib/server/sendPlatformEmail";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +24,13 @@ const testEmailSchema = z.object({
 /**
  * Admin-only: send one branded platform email template to an existing user (by userId).
  * Used to verify the logo + template rendering in a real inbox before/after deploy.
- * Appwrite Messaging delivers to the user's registered email; there is no arbitrary
- * recipient address here by design.
+ * Supabase Edge Function (Resend) delivers to the user's registered email; there is no
+ * arbitrary recipient address here by design.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
-  const { users, client } = auth.ctx;
+  const { users } = auth.ctx;
 
   let body: unknown;
   try {
@@ -54,14 +54,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "المستخدم ليس لديه بريد إلكتروني مسجّل" }, { status: 400 });
   }
 
-  const { subject, html } = renderEmailTemplate(template, { Name: target.name || "مستخدم", ...vars });
-  await new Messaging(client).createEmail({
-    messageId: ID.unique(),
-    subject,
-    content: html,
-    users: [userId],
-    html: true,
-  });
+  const { subject } = renderEmailTemplate(template, { Name: target.name || "مستخدم", ...vars });
+  await sendPlatformEmail(template, target.email, { Name: target.name || "مستخدم", ...(vars ?? {}) });
 
   return NextResponse.json({ success: true, template, to: target.email, subject });
 }

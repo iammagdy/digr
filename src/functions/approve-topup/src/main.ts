@@ -1,4 +1,4 @@
-import { Client, TablesDB, Users } from "node-appwrite";
+import { Client, TablesDB, Users } from "../../shared/dbCompat";
 import { applyTopup } from "../../shared/ledger";
 import { notifyUser } from "../../shared/notify";
 import { writeAudit } from "../../shared/auditLog";

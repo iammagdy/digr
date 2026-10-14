@@ -6,7 +6,7 @@ const db = vi.hoisted(() => ({
   ledgerRows: [] as any[],
 }));
 
-vi.mock("node-appwrite", () => {
+const createMockSdk = vi.hoisted(() => () => {
   class MockClient { setEndpoint() { return this; } setProject() { return this; } setKey() { return this; } }
   class Users {
     async get() { return { name: "أحمد محمد علي", email: "a@example.com", prefs: {} }; }
@@ -31,6 +31,9 @@ vi.mock("node-appwrite", () => {
     },
   };
 });
+
+vi.mock("node-appwrite", createMockSdk);
+vi.mock("../src/functions/shared/dbCompat", createMockSdk);
 
 import { renderEmailTemplate, formatArabicDate } from "../src/functions/shared/emailTemplates";
 import { notifyUser, notifyJobOutcome } from "../src/functions/shared/notify";

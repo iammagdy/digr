@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
 
@@ -13,6 +13,13 @@ export interface ResearchBrief {
   language?: string;
   formats?: string[];
   notes?: string;
+  exclusionFile?: {
+    name: string;
+    baselineRowCount: number;
+    companyNames?: string[];
+    corporateDomains?: string[];
+    normalizedEntities?: Array<{ name: string; domain?: string; crNumber?: string }>;
+  };
 }
 
 const briefCache = new Map<string, ResearchBrief>();
@@ -30,9 +37,9 @@ export function isGreetingOrGeneralQuestion(text: string): {
 } {
   const trimmed = text.trim();
   const greetingPattern =
-    /^(هاي|ازيك|ازيك؟|مرحبا|مرحباً|أهلاً|اهلا|صباح الخير|مساء الخير|سلام عليكم|السلام عليكم|هلا|hello|hi)[\s!.؟?]*$/i;
+    /^(هاي|ازيك|ازيك يا فندم|مرحبا|مرحباً|أهلاً|أهلا|اهلا|صباح الخير|مساء الخير|سلام عليكم|السلام عليكم|هلا|hello|hi)[\s!.؟?]*$/i;
   const generalQuestionPattern =
-    /(انت بتعمل ايه|بتعمل ايه|بتساعد في ايه|ازاي بتشتغل|ما وظيفتك|ما هي خدماتك|كيف تعمل|ماذا تقدم|من انت|عرفني بنفسك)/i;
+    /(انت بتعمل ايه|أنت بتعمل ايه|بتعمل ايه|بتساعد في ايه|ازاي بتشتغل|ما وظيفتك|ما هي خدماتك|كيف تعمل|كيف تعمل المنصة|ماذا تفعل|ماذا تقدم|من انت|من أنت|عرفني بنفسك|هل يمكنك مساعدتي)/i;
 
   return {
     isGreeting: greetingPattern.test(trimmed),
@@ -453,6 +460,7 @@ export function formatBriefForSystemPrompt(brief: ResearchBrief): string {
 export async function getConversationBrief(
   tables: TablesDB | null | undefined,
   conversationId: string,
+  userId?: string,
 ): Promise<ResearchBrief> {
   const cached = briefCache.get(conversationId);
   if (cached) return { ...cached };
@@ -461,8 +469,30 @@ export async function getConversationBrief(
     return { platforms: [], topics: [] };
   }
 
+  if (tables && typeof (tables as any).from === "function") {
+    try {
+      const { data } = await (tables as any)
+        .from("conversations")
+        .select("brief, user_id")
+        .eq("id", conversationId)
+        .maybeSingle();
+
+      if (data && userId && data.user_id && data.user_id !== userId) {
+        return { platforms: [], topics: [] };
+      }
+
+      if (data?.brief && typeof data.brief === "object") {
+        briefCache.set(conversationId, data.brief);
+        return data.brief;
+      }
+    } catch {
+      // Supabase read fallback
+    }
+    return { platforms: [], topics: [] };
+  }
+
   try {
-    const notesRes = await tables.listRows({
+    const notesRes = await (tables as any).listRows({
       databaseId: "digr",
       tableId: "notes",
       queries: [Query.equal("conversationId", conversationId), Query.limit(1)],
@@ -487,7 +517,7 @@ export async function getConversationBrief(
  * Persist the brief for a conversation in memory and database.
  */
 export async function saveConversationBrief(
-  tables: TablesDB | null | undefined,
+  tables: any,
   conversationId: string,
   userId: string,
   brief: ResearchBrief,
@@ -495,6 +525,22 @@ export async function saveConversationBrief(
   briefCache.set(conversationId, { ...brief });
 
   if (!tables) return;
+
+  if (typeof tables.from === "function") {
+    try {
+      const q = tables
+        .from("conversations")
+        .update({ brief, updated_at: new Date().toISOString() })
+        .eq("id", conversationId);
+      if (userId) {
+        q.eq("user_id", userId);
+      }
+      await q;
+    } catch {
+      // Non-fatal
+    }
+    return;
+  }
 
   try {
     const serialized = JSON.stringify(brief);

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const calls = vi.hoisted(() => ({ prefs: [] as any[], status: [] as any[], sessions: [] as any[], rows: [] as any[] }));
 
-vi.mock("node-appwrite", () => {
+const createMockAccountDeletionSdk = vi.hoisted(() => () => {
   class MockClient { setEndpoint() { return this; } setProject() { return this; } setKey() { return this; } }
   class Users {
     async get() { return { prefs: { notif: { news: true } } }; }
@@ -16,6 +16,9 @@ vi.mock("node-appwrite", () => {
   }
   return { Client: MockClient, Users, TablesDB, Query: { equal: () => "eq", limit: () => "lim" } };
 });
+
+vi.mock("node-appwrite", createMockAccountDeletionSdk);
+vi.mock("../src/functions/shared/dbCompat", createMockAccountDeletionSdk);
 
 import handler from "../src/functions/request-account-deletion/src/main";
 

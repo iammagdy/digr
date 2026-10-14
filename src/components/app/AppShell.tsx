@@ -3,15 +3,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Query } from "appwrite";
 import { Logo } from "@/components/Brand";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { useOnline } from "@/hooks/useOnline";
 import { useNotifications, type NotificationKind } from "@/hooks/useNotifications";
 import { useTheme } from "@/lib/theme";
-import { databases } from "@/lib/appwrite";
-import { DATABASE_ID, HELP_CENTER_URL, JOBS_COLLECTION, SUPPORT_URL } from "@/lib/constants";
+import { createClient } from "@/lib/supabase/client";
+import { HELP_CENTER_URL, SUPPORT_URL } from "@/lib/constants";
 import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
 import { Icon, UI } from "./icons";
@@ -72,7 +71,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [running, setRunning] = useState(0);
   const acctRef = useRef<HTMLDivElement>(null);
 
-  const isAdmin = Array.isArray(user?.labels) && user.labels.includes("admin");
+  const isAdmin = user?.app_metadata?.role === "admin" || (Array.isArray(user?.labels) && user.labels.includes("admin"));
   const isChat = pathname === "/dashboard/chat";
 
   /* close overlays on navigation */
@@ -96,9 +95,13 @@ export function AppShell({ children }: { children: ReactNode }) {
     let alive = true;
     const load = async () => {
       try {
-        const res = await databases.listDocuments(DATABASE_ID, JOBS_COLLECTION, [
-          Query.equal("userId", user.$id), Query.equal("status", "running"), Query.limit(1),
-        ]);
+        const supabase = createClient();
+        const { count } = await supabase
+          .from("jobs")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id)
+          .eq("status", "running");
+        const res = { total: count || 0 };
         if (alive) setRunning(res.total);
       } catch { if (alive) setRunning(0); }
     };
@@ -134,6 +137,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
+    { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
     { id: "notifs", label: "الإشعارات", icon: UI.bell, badge: notifs.unread, active: notifsOpen, onClick: () => { setNotifsOpen((v) => !v); setDrawer(false); setAcctOpen(false); } },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ];

@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 
 export interface RateLimitConfig {
   /** Per-account burst protection: max USER messages per minute. No daily quota. */
@@ -46,26 +46,48 @@ function spendCapResult(): RateLimitCheckResult {
 /**
  * Per-account burst protection only: max USER messages per minute. There is no
  * daily quota — internal model calls and tool iterations never count.
+ * Supports Supabase client and query compatibility layer.
  */
 export async function checkUserRateLimits(
-  tables: TablesDB,
+  tables: any,
   userId: string,
   config: RateLimitConfig = DEFAULT_RATE_LIMITS,
 ): Promise<RateLimitCheckResult> {
   const oneMinuteAgo = new Date(Date.now() - 60_000).toISOString();
   const burstLimit = configuredCap("CHAT_MESSAGES_PER_MINUTE", config.messagesPerMinute);
 
-  const minuteRes = await tables.listRows({
-    databaseId: "digr",
-    tableId: "messages",
-    queries: [
-      Query.equal("userId", userId),
-      Query.equal("role", "user"),
-      Query.greaterThanEqual("createdAt", oneMinuteAgo),
-      Query.limit(burstLimit + 1),
-    ],
-  });
-  if (minuteRes.total >= burstLimit) {
+  let totalCount = 0;
+
+  if (tables && typeof tables.from === "function") {
+    // Supabase client: uses idx_messages_rate_limit index on (user_id, role, created_at DESC)
+    const { count, error } = await tables
+      .from("messages")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("role", "user")
+      .gte("created_at", oneMinuteAgo);
+
+    if (error) {
+      console.warn("[rate_limit:check_failed]", error.message);
+      return { allowed: true };
+    }
+    totalCount = count || 0;
+  } else if (tables && typeof tables.listRows === "function") {
+    // Appwrite TablesDB
+    const minuteRes = await tables.listRows({
+      databaseId: "digr",
+      tableId: "messages",
+      queries: [
+        Query.equal("userId", userId),
+        Query.equal("role", "user"),
+        Query.greaterThanEqual("createdAt", oneMinuteAgo),
+        Query.limit(burstLimit + 1),
+      ],
+    });
+    totalCount = minuteRes.total;
+  }
+
+  if (totalCount >= burstLimit) {
     return {
       allowed: false,
       statusCode: 429,
@@ -117,13 +139,36 @@ async function sumDailyUsageCost(tables: TablesDB, userId?: string): Promise<num
   return totalCostUsd;
 }
 
-/** Check platform-wide global daily LLM spend cap. */
+/**
+ * Check platform-wide global daily LLM spend cap.
+ * Supports both Supabase client and Appwrite TablesDB.
+ */
 export async function checkGlobalDailySpendCap(
-  tables: TablesDB,
+  tables: any,
   config: RateLimitConfig = DEFAULT_RATE_LIMITS,
 ): Promise<RateLimitCheckResult> {
   const cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", config.globalDailySpendCapUsd);
-  const totalCostUsd = await sumDailyUsageCost(tables);
+  let totalCostUsd = 0;
+
+  if (tables && typeof tables.from === "function") {
+    // Supabase client: uses idx_llm_usage_created_at index
+    const { data, error } = await tables
+      .from("llm_usage")
+      .select("cost_usd")
+      .gte("created_at", utcStartOfDay());
+
+    if (error) {
+      throw error;
+    }
+    for (const r of data || []) {
+      const cost = Number(r.cost_usd);
+      if (Number.isFinite(cost) && cost > 0) totalCostUsd += cost;
+    }
+  } else if (tables && typeof tables.listRows === "function") {
+    // Appwrite TablesDB
+    totalCostUsd = await sumDailyUsageCost(tables);
+  }
+
   return totalCostUsd >= cap ? spendCapResult() : { allowed: true };
 }
 

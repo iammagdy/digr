@@ -1,17 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Client as UserClient, Account, Query } from "node-appwrite";
 import { z } from "zod";
+import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-const apiKey = process.env.APPWRITE_API_KEY!;
-
-const serverClient = new ServerClient()
-  .setEndpoint(endpoint)
-  .setProject(projectId)
-  .setKey(apiKey);
-
-const tables = new TablesDB(serverClient);
+export const dynamic = "force-dynamic";
 
 const OnboardingSchema = z.object({
   persona: z.enum(["student", "researcher", "statistician", "marketer", "other"]),
@@ -33,76 +24,64 @@ export async function POST(req: NextRequest) {
 
     const { persona, purposes, topic } = parseResult.data;
 
-    // 1. Authenticate caller strictly via JWT or session
+    // 1. Authenticate caller strictly via Supabase JWT or session
+    const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-    const sessionCookie =
-      req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+    let user = null;
 
-    if (!bearerJwt && !sessionCookie) {
+    if (authHeader?.startsWith("Bearer ")) {
+      const bearerJwt = authHeader.substring(7).trim();
+      const { data } = await supabase.auth.getUser(bearerJwt);
+      user = data?.user;
+    } else {
+      const { data } = await supabase.auth.getUser();
+      user = data?.user;
+    }
+
+    if (!user) {
       return NextResponse.json(
         { success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." },
         { status: 401 }
       );
     }
 
-    const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (bearerJwt) userClient.setJWT(bearerJwt);
-    else if (sessionCookie) userClient.setSession(sessionCookie);
+    const adminClient = createAdminClient();
 
-    let verifiedUserId: string;
-    try {
-      const userAccount = new Account(userClient);
-      const userDoc = await userAccount.get();
-      verifiedUserId = userDoc.$id;
-    } catch {
-      return NextResponse.json(
-        { success: false, error: "انتهت صلاحية الجلسة. يرجى تسجيل الدخول مجدداً." },
-        { status: 401 }
-      );
-    }
+    // 2. Update user metadata in Supabase Auth
+    const updatedMetadata = {
+      ...(user.user_metadata || {}),
+      persona,
+      purposes,
+      topic: topic || "",
+      onboardingCompleted: true,
+    };
 
-    // 2. Fetch User Profile
-    const profileRes = await tables.listRows({
-      databaseId: "digr",
-      tableId: "profiles",
-      queries: [Query.equal("userId", verifiedUserId), Query.limit(1)],
+    const { error: updateAuthErr } = await adminClient.auth.admin.updateUserById(user.id, {
+      user_metadata: updatedMetadata,
     });
 
-    if (profileRes.rows.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "الملف الشخصي غير موجود." },
-        { status: 404 }
-      );
+    if (updateAuthErr) {
+      throw updateAuthErr;
     }
 
-    const profileDoc = profileRes.rows[0];
-
-    // 3. Update Profile with Onboarding Data
-    const updated = await tables.updateRow({
-      databaseId: "digr",
-      tableId: "profiles",
-      rowId: profileDoc.$id,
-      data: {
-        persona,
-        purposes: JSON.stringify(purposes),
-        topic: topic || "",
-        onboardingCompleted: true,
-      },
-    });
+    // 3. Update profiles table if matching columns exist
+    await adminClient
+      .from("profiles")
+      .update({
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", user.id);
 
     return NextResponse.json({
       success: true,
       profile: {
-        userId: verifiedUserId,
-        displayName: (updated as any).displayName,
-        persona: (updated as any).persona,
+        userId: user.id,
+        displayName: user.user_metadata?.name || user.email?.split("@")[0] || "",
+        persona,
         purposes,
-        topic: (updated as any).topic,
+        topic: topic || "",
         onboardingCompleted: true,
       },
-      messageAr: "تم حفظ تفضيلاتك بنجاح!",
     });
   } catch (err: any) {
     console.error("Onboarding API error:", err);

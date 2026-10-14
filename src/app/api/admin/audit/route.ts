@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin } from "@/lib/server/adminAuth";
+import { authenticateAdmin, Query } from "@/lib/server/adminAuth";
 
 export const dynamic = "force-dynamic";
 

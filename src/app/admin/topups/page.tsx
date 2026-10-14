@@ -1,16 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Functions } from "appwrite";
-import { account, client } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { adminFetch, downloadCsv } from "@/lib/adminApi";
 import { formatAr, normalizeDigits } from "@/lib/arabicDigits";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { KV, Sheet, SheetHandle } from "@/components/admin/Sheet";
 import { EGP, badgeFor, dateTimeAr, initials, tint } from "@/components/admin/format";
-
-const functions = new Functions(client);
 
 interface AdminTopup {
   id: string; userId: string; accName: string; accEmail: string; senderName: string; senderPhone: string; amountEgp: number;
@@ -33,8 +30,10 @@ function useReceiptUrl(fileId: string | null) {
     let alive = true, obj = "";
     (async () => {
       try {
-        const jwt = (await account.createJWT()).jwt;
-        const res = await fetch(`/api/admin/receipts/${fileId}`, { headers: { Authorization: `Bearer ${jwt}` } });
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        const jwt = session?.access_token || "";
+        const res = await fetch(`/api/admin/receipts/${encodeURIComponent(fileId)}`, { headers: jwt ? { Authorization: `Bearer ${jwt}` } : {} });
         if (!res.ok) throw new Error(String(res.status));
         obj = URL.createObjectURL(await res.blob());
         if (alive) setUrl(obj);
@@ -208,8 +207,10 @@ function TopupSheet({ t, creditValue, onClose, onReviewed, toast }: {
   };
 
   const call = async (body: Record<string, unknown>) => {
-    const exec = await functions.createExecution("approve-topup", JSON.stringify({ topupId: t.id, ...body }), false);
-    const res = JSON.parse(exec.responseBody || "{}");
+    const res = await adminFetch<{ success: boolean; credits?: number; error?: string }>("/api/admin/topups/approve", {
+      method: "POST",
+      body: JSON.stringify({ topupId: t.id, ...body }),
+    });
     if (!res.success) throw new Error(res.error || "تعذّر تنفيذ الإجراء");
     return res;
   };
@@ -220,7 +221,8 @@ function TopupSheet({ t, creditValue, onClose, onReviewed, toast }: {
     setBusy(true);
     try {
       const res = await call({ action: "approve", confirmedAmountEgp: num });
-      onReviewed(t.id, { status: "approved", credits: res.credits, confirmedAmountEgp: num, reviewedAt: new Date().toISOString() }, `تم اعتماد الطلب وإضافة ${formatAr(res.credits)} نقطة للمستخدم بنجاح ✓`, true);
+      const credits = res.credits ?? 0;
+      onReviewed(t.id, { status: "approved", credits, confirmedAmountEgp: num, reviewedAt: new Date().toISOString() }, `تم اعتماد الطلب وإضافة ${formatAr(credits)} نقطة للمستخدم بنجاح ✓`, true);
     } catch (e) { toast(e instanceof Error ? e.message : "تعذّر الاعتماد"); setBusy(false); }
   };
 

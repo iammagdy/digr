@@ -67,6 +67,7 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
           },
         ],
         outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "ملاحظات المنهجية",
       },
       inputTokens: 100,
       outputTokens: 50,

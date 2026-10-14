@@ -51,6 +51,77 @@ export function sanitizeTregDetail(rawMsg: string, knownSecret?: string): string
   return sanitized.trim().slice(0, 300);
 }
 
+export const SENSITIVE_INTERNAL_CONTROL_KEYS: ReadonlySet<string> = new Set([
+  "exclusionrules",
+  "exclusionfile",
+  "exclusionbaseline",
+  "companynames",
+  "corporatedomains",
+  "normalizedentities",
+  "brandfingerprints",
+  "baselinerowcount",
+  "baselinerecords",
+  "filename",
+  "audittrail",
+  "deduplicationaudit",
+  "testscenario",
+  "contextdata",
+  "stepresults",
+  "targetrequested",
+  "deliverableformats",
+]);
+
+/**
+ * Strictly serializes parameters intended for external data providers.
+ * Strips internal control metadata, exclusion lists, and baseline entities.
+ */
+export function serializeProviderParams(
+  rawParams: Record<string, any>,
+  allowedParamKeys?: string[]
+): Record<string, any> {
+  const allowedSet =
+    allowedParamKeys && allowedParamKeys.length > 0
+      ? new Set(allowedParamKeys.map((k) => k.toLowerCase()))
+      : null;
+
+  const clean: Record<string, any> = {};
+
+  for (const [key, val] of Object.entries(rawParams || {})) {
+    const lowerKey = key.toLowerCase();
+
+    // 1. Strictly block any known internal research control keys
+    if (
+      SENSITIVE_INTERNAL_CONTROL_KEYS.has(lowerKey) ||
+      lowerKey.startsWith("internal_") ||
+      lowerKey.startsWith("_")
+    ) {
+      continue;
+    }
+
+    // 2. If allowed param keys from schema are provided, ensure key is either in allowed schema or standard pagination keys
+    const STANDARD_PAGINATION_KEYS = new Set([
+      "cursor",
+      "next_cursor",
+      "offset",
+      "limit",
+      "page",
+      "per_page",
+    ]);
+    if (allowedSet && !allowedSet.has(lowerKey) && !STANDARD_PAGINATION_KEYS.has(lowerKey)) {
+      continue;
+    }
+
+    // 3. Skip undefined, null, or empty string values
+    if (val === undefined || val === null || val === "") {
+      continue;
+    }
+
+    clean[key] = val;
+  }
+
+  return clean;
+}
+
 /**
  * Client for executing upstream TREG API calls matching https://treg.to/integrate.md & https://treg.to/llms.txt:
  * - URL: https://treg.to/call/<endpoint-id>
@@ -73,8 +144,8 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     process.env.TREG_API_KEY ||
     "";
 
-  // Clean and map params (e.g. username -> uniqueId for tikhub TikTok profile)
-  const cleanParams: Record<string, any> = { ...(options.params || {}) };
+  // Clean and map params (strictly strip internal control metadata)
+  const cleanParams: Record<string, any> = serializeProviderParams(options.params || {});
   if (options.endpointId === "tikhub.tiktok.user.profile") {
     if (cleanParams.username && !cleanParams.uniqueId) {
       cleanParams.uniqueId = cleanParams.username;

@@ -1,8 +1,7 @@
-import { Query, TablesDB } from "node-appwrite";
-import { listAll } from "./adminAuth";
+import { Query, listAll } from "./adminAuth";
 
 /** Available points = sum of ledger deltas (holds are negative entries). */
-export async function ledgerBalance(tables: TablesDB, userId: string): Promise<number> {
+export async function ledgerBalance(tables: any, userId: string): Promise<number> {
   const rows = await listAll(tables, "credit_ledger", [Query.equal("userId", userId)], 5000);
   return rows.reduce((a, r) => a + (r.delta || 0), 0);
 }

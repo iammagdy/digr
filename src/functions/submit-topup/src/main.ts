@@ -1,4 +1,4 @@
-import { Client, TablesDB, Storage, Users, Query, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Storage, Users, Query, Permission, Role, ID } from "../../shared/dbCompat";
 import { z } from "zod";
 import { EG_MOBILE_RE, isThreePartName, normalizeDigits, normalizePhone, normalizeSenderName, toArabicDigits } from "../../../lib/arabicDigits";
 import { notifyUser } from "../../shared/notify";

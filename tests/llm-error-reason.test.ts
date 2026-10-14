@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { Account, TablesDB } from "node-appwrite";
 import {
   LlmClient,
   getLlmStatusSnapshot,
@@ -8,6 +7,46 @@ import {
 } from "../src/functions/shared/llmClient";
 import { GET as getLlmStatus } from "../src/app/api/admin/llm-status/route";
 import { POST as postChat } from "../src/app/api/chat/route";
+
+const mockSbAuth = vi.hoisted(() => ({
+  user: {
+    id: "admin_test",
+    email: "admin@diger.tech",
+    email_confirmed_at: "2026-10-12T00:00:00Z",
+    app_metadata: { role: "admin" },
+  } as any,
+  spendCapExceeded: false,
+}));
+
+vi.mock("../src/lib/supabase/server", () => ({
+  createServerSideClient: vi.fn(async () => ({
+    auth: {
+      getUser: vi.fn(async () => ({
+        data: { user: mockSbAuth.user },
+        error: null,
+      })),
+    },
+  })),
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn((table: string) => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          single: vi.fn(async () => ({ data: null, error: null })),
+          maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+        })),
+        order: vi.fn(() => ({
+          limit: vi.fn(async () => ({ data: [], error: null })),
+        })),
+        gte: vi.fn(async () => {
+          if ((table === "provider_costs" || table === "llm_usage") && mockSbAuth.spendCapExceeded) {
+            return { data: [{ cost_usd: 5.0, costUsd: 5.0, at: new Date().toISOString(), created_at: new Date().toISOString() }], error: null };
+          }
+          return { data: [], error: null };
+        }),
+      })),
+    })),
+  })),
+}));
 
 describe("LLM Error Reason Codes & Browser-Accessible Admin Status", () => {
   const originalEnv = process.env;
@@ -115,17 +154,7 @@ describe("LLM Error Reason Codes & Browser-Accessible Admin Status", () => {
     process.env.LLM_ENABLED = "true";
     process.env.ANTHROPIC_API_KEY = "sk-ant-mock-secret";
     process.env.LLM_DAILY_SPEND_CAP_USD = "0.01";
-
-    vi.spyOn(Account.prototype, "get").mockResolvedValue({
-      $id: "user_1",
-      labels: [],
-      emailVerification: true,
-    } as any);
-
-    vi.spyOn(TablesDB.prototype, "listRows").mockResolvedValue({
-      total: 1,
-      rows: [{ costUsd: 0.05, createdAt: new Date().toISOString() }],
-    } as any);
+    mockSbAuth.spendCapExceeded = true;
 
     const req = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",
@@ -147,17 +176,13 @@ describe("LLM Error Reason Codes & Browser-Accessible Admin Status", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-secret-never-leak";
     process.env.ANTHROPIC_MODEL = "claude-haiku-5-5";
     setLastLlmFallbackReason("http_404_model");
+    mockSbAuth.user = { id: "admin_browser", email: "admin@diger.tech", app_metadata: { role: "admin" } };
 
-    vi.spyOn(Account.prototype, "get").mockResolvedValue({
-      $id: "admin_browser",
-      labels: ["admin"],
-    } as any);
-
-    // 1. Authenticated via diger_jwt cookie (set by browser AuthProvider)
+    // 1. Authenticated via admin session / Bearer
     const cookieReq = new NextRequest("http://localhost:3000/api/admin/llm-status", {
       method: "GET",
       headers: {
-        Cookie: "diger_jwt=valid_browser_jwt_cookie",
+        Authorization: "Bearer valid_admin_jwt",
         Accept: "text/html,application/xhtml+xml",
       },
     });

@@ -3,12 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Functions } from "appwrite";
-import { account, client } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useTheme } from "@/lib/theme";
-
-const functions = new Functions(client);
 
 const NOTIF_PREFS: Array<[id: "topup" | "done" | "refund" | "news", label: string, sub: string]> = [
   ["topup", "اعتماد أو رفض الشحن", "بريد إلكتروني + إشعار داخل التطبيق"],
@@ -56,7 +53,9 @@ export default function SettingsPage() {
     const n = name.trim();
     if (n.length < 2) return setNameMsg({ ok: false, text: "اكتب اسمك (حرفان على الأقل)." });
     try {
-      await account.updateName(n);
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({ data: { name: n, full_name: n } });
+      if (error) throw error;
       await refresh();
       setNameMsg({ ok: true, text: "تم حفظ الاسم." });
     } catch {
@@ -68,11 +67,13 @@ export default function SettingsPage() {
     if (!oldPw) return setPwMsg({ ok: false, text: "اكتب كلمة المرور الحالية." });
     if (newPw.length < 8) return setPwMsg({ ok: false, text: "كلمة المرور الجديدة يجب ألا تقل عن 8 خانات." });
     try {
-      await account.updatePassword(newPw, oldPw);
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({ password: newPw });
+      if (error) throw error;
       setOldPw(""); setNewPw("");
       setPwMsg({ ok: true, text: "تم تغيير كلمة المرور." });
     } catch (e) {
-      const code = (e as { code?: number }).code;
+      const code = (e as { code?: number | string; status?: number }).status;
       setPwMsg({ ok: false, text: code === 401 ? "كلمة المرور الحالية غير صحيحة." : "تعذّر تغيير كلمة المرور. حاول مرة أخرى." });
     }
   }
@@ -81,8 +82,9 @@ export default function SettingsPage() {
     const next = { ...prefs, [id]: !prefs[id] };
     setPrefs(next);
     try {
-      // updatePrefs replaces the whole object, so carry the other keys along.
-      await account.updatePrefs({ ...(user!.prefs || {}), notif: next });
+      const supabase = createClient();
+      const { error } = await supabase.auth.updateUser({ data: { prefs: { ...(user!.prefs || {}), notif: next } } });
+      if (error) throw error;
       await refresh();
     } catch {
       setPrefs(prefs);
@@ -94,9 +96,13 @@ export default function SettingsPage() {
     setDelBusy(true);
     setDelErr("");
     try {
-      const exec = await functions.createExecution("request-account-deletion", JSON.stringify({ confirm: delTxt.trim() }), false);
-      const res = JSON.parse(exec.responseBody || "{}");
-      if (!res.success) throw new Error(res.error || "تعذّر تنفيذ طلب حذف الحساب.");
+      const res = await fetch("/api/account/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: delTxt.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || "تعذّر تنفيذ طلب حذف الحساب.");
       await logout().catch(() => {});
       router.replace("/");
     } catch (e) {

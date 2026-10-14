@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
+import { authenticateAdmin, Query } from "@/lib/server/adminAuth";
 import { getLlmStatusSnapshot } from "@/functions/shared/llmClient";
-import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { LLM_KEY_ENV, LLM_MODEL_ENV, last4 } from "@/lib/server/providerEnv";
 import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
 
@@ -70,7 +69,6 @@ const FIELD_LABEL_KIND: Record<string, "key" | "toggle" | "setting"> = {
 
 /**
  * Updates provider variables (LLM_ENABLED / LLM_PROVIDER / model / API key / TREG_LIVE / TREG_TOKEN / TREG_BASE_URL).
- * The change is written to the Appwrite Site and job functions, which are redeployed; the UI says it takes effect after a restart.
  * Secrets are accepted here but only ever echoed back as the last 4 characters.
  */
 export async function POST(req: NextRequest) {
@@ -85,7 +83,7 @@ export async function POST(req: NextRequest) {
     if (err) return NextResponse.json({ error: err, key: u?.key }, { status: 400 });
   }
 
-  const results = await applyEnvUpdates(auth.ctx.client, updates);
+  const results = await applyEnvUpdates(null, updates, auth.ctx.tables);
 
   for (const u of updates) {
     const kind = FIELD_LABEL_KIND[u.key] ?? "setting";

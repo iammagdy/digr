@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, creditValueEgp, listAll, listAllUsers, userDirectory } from "@/lib/server/adminAuth";
-import { agoSince } from "@/lib/server/agoSince";
-import { bucketDays, DAY_MS, margin, netProfit, pctChange, refundPointsByJob, splitPeriods } from "@/lib/server/adminStats";
+import { authenticateAdmin, creditValueEgp, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers, userDirectory, Query } from "../../../../lib/server/adminAuth";
+import { agoSince } from "../../../../lib/server/agoSince";
+import { bucketDays, DAY_MS, margin, netProfit, pctChange, refundPointsByJob, splitPeriods } from "../../../../lib/server/adminStats";
 
 export const dynamic = "force-dynamic";
 
@@ -19,17 +18,20 @@ export async function GET(req: NextRequest) {
   const since = new Date(now - range * 2 * DAY_MS).toISOString();
   const windowStart = new Date(now - range * DAY_MS).toISOString();
 
-  const [creditValue, approved, costs, jobs, ledger, convs, newUsersAll, activeNow, usersTotal] = await Promise.all([
+  const [creditValue, approvedRaw, costs, jobs, ledger, topupApprovalMap, convs, newUsersAll, activeNow, usersTotal] = await Promise.all([
     creditValueEgp(tables),
-    listAll(tables, "topups", [Query.equal("status", "approved"), Query.orderDesc("reviewedAt")], 5000),
+    listAll(tables, "topups", [Query.equal("status", "approved"), Query.orderDesc("createdAt")], 5000),
     listAll(tables, "provider_costs", [Query.greaterThanEqual("at", since)], 20000).catch(() => []),
     listAll(tables, "jobs", [Query.greaterThanEqual("createdAt", since)], 20000),
     listAll(tables, "credit_ledger", [Query.greaterThanEqual("createdAt", since), Query.equal("type", ["release", "charge"])], 20000),
+    getTopupApprovalMap(tables),
     listAll(tables, "conversations", [Query.greaterThanEqual("createdAt", windowStart)], 20000),
     listAllUsers(users, [Query.greaterThanEqual("registration", since)], 20000),
     users.list({ queries: [Query.greaterThanEqual("accessedAt", windowStart), Query.limit(1)] }),
     users.list({ queries: [Query.limit(1)] }),
   ]);
+
+  const approved = enrichTopupsWithApprovals(approvedRaw, topupApprovalMap);
 
   const approvedInWindow = approved.filter((t) => t.reviewedAt && new Date(t.reviewedAt).getTime() >= now - range * 2 * DAY_MS);
   const rev = splitPeriods(bucketDays(approvedInWindow, range, now, (t) => t.reviewedAt, topupAmount), range);
@@ -69,6 +71,7 @@ export async function GET(req: NextRequest) {
     tables.listRows({ databaseId: "digr", tableId: "topups", queries: [Query.orderDesc("createdAt"), Query.limit(6)] }),
     users.list({ queries: [Query.orderDesc("registration"), Query.limit(6)] }),
   ]);
+  enrichTopupsWithApprovals(recentTopups.rows as any[], topupApprovalMap);
   const recentJobs = [...jobs].filter((j) => j.status === "done" || j.status === "running").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
   const dir = await userDirectory(users, [...top.map(([id]) => id), ...recentTopups.rows.map((t: any) => t.userId), ...recentJobs.map((j) => j.userId)]);
   const nm = (id: string) => dir.get(id)?.name || "مستخدم";

@@ -9,93 +9,130 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
-import { account } from "@/lib/appwrite";
-import { type Models } from "appwrite";
+import { createClient } from "@/lib/supabase/client";
+import type { User } from "@supabase/supabase-js";
+
+export interface AppUser {
+  id: string;
+  $id: string; // compatibility alias
+  email: string;
+  name: string;
+  emailVerification: boolean;
+  labels: string[];
+  app_metadata: Record<string, any>;
+  user_metadata: Record<string, any>;
+  prefs?: Record<string, any>;
+  rawUser: User;
+}
 
 interface AuthContextType {
-  user: Models.User<Models.Preferences> | null;
+  user: AppUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<Models.User<Models.Preferences> | null>;
+  login: (email: string, password: string) => Promise<AppUser | null>;
   register: (email: string, password: string, name: string) => Promise<void>;
   /** Re-read the account (e.g. after email verification) and update the context. */
-  refresh: () => Promise<Models.User<Models.Preferences> | null>;
+  refresh: () => Promise<AppUser | null>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
+function mapSupabaseUser(u: User | null): AppUser | null {
+  if (!u) return null;
+  const isVerified = !!(u.email_confirmed_at || u.user_metadata?.email_verified);
+  const isAdmin = u.app_metadata?.role === "admin";
+  const name =
+    u.user_metadata?.name ||
+    u.user_metadata?.full_name ||
+    u.email?.split("@")[0] ||
+    "";
+
+  return {
+    id: u.id,
+    $id: u.id,
+    email: u.email || "",
+    name,
+    emailVerification: isVerified,
+    labels: isAdmin ? ["admin"] : [],
+    app_metadata: u.app_metadata || {},
+    user_metadata: u.user_metadata || {},
+    prefs: u.user_metadata?.prefs || {},
+    rawUser: u,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<Models.User<Models.Preferences> | null>(
-    null,
-  );
+  const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const syncBrowserAuthCookies = useCallback(async () => {
-    if (typeof document === "undefined") return;
-    try {
-      const fallbackRaw = window.localStorage?.getItem("cookieFallback");
-      if (fallbackRaw) {
-        const parsed = JSON.parse(fallbackRaw);
-        if (parsed && typeof parsed === "object") {
-          for (const [k, v] of Object.entries(parsed)) {
-            if (k.startsWith("a_session_") && typeof v === "string" && v) {
-              document.cookie = `${k}=${encodeURIComponent(v)}; Path=/; SameSite=Lax`;
-            }
-          }
-        }
-      }
-    } catch {}
-    try {
-      const { jwt } = await account.createJWT();
-      if (jwt) {
-        document.cookie = `diger_jwt=${encodeURIComponent(jwt)}; Path=/; Max-Age=840; SameSite=Lax`;
-      }
-    } catch {}
-  }, []);
-
-  const clearBrowserAuthCookies = useCallback(() => {
-    if (typeof document === "undefined") return;
-    document.cookie = "diger_jwt=; Path=/; Max-Age=0; SameSite=Lax";
-    document.cookie = "digr_jwt=; Path=/; Max-Age=0; SameSite=Lax"; // legacy name, pre-rebrand
-  }, []);
 
   const getUser = useCallback(async () => {
     try {
-      const session = await account.get();
-      setUser(session);
-      await syncBrowserAuthCookies();
-      return session;
+      const supabase = createClient();
+      const { data: { user: su }, error } = await supabase.auth.getUser();
+      if (error || !su) {
+        setUser(null);
+        return null;
+      }
+      const mapped = mapSupabaseUser(su);
+      setUser(mapped);
+      return mapped;
     } catch {
       setUser(null);
-      clearBrowserAuthCookies();
       return null;
     } finally {
       setLoading(false);
     }
-  }, [syncBrowserAuthCookies, clearBrowserAuthCookies]);
+  }, []);
 
   useEffect(() => {
+    const supabase = createClient();
     getUser();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setUser(mapSupabaseUser(session.user));
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, [getUser]);
 
   const login = async (email: string, password: string) => {
-    await account.createEmailPasswordSession(email, password);
-    return getUser();
+    const supabase = createClient();
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    if (error) throw error;
+    const mapped = mapSupabaseUser(data.user);
+    setUser(mapped);
+    return mapped;
   };
 
   const register = async (email: string, password: string, name: string) => {
-    await account.create("unique()", email, password, name);
-    await login(email, password);
-    // Email must be verified before top-ups / research (see /verify). A failed send
-    // is not fatal: the verify screen has a resend button.
-    try {
-      await account.createVerification(`${appBaseUrl()}/verify`);
-    } catch { /* resend available on /verify */ }
+    const supabase = createClient();
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { name, full_name: name },
+        emailRedirectTo: `${appBaseUrl()}/verify`,
+      },
+    });
+    if (error) throw error;
+    const mapped = mapSupabaseUser(data.user);
+    setUser(mapped);
   };
 
   const logout = async () => {
-    await account.deleteSession("current");
-    clearBrowserAuthCookies();
+    const supabase = createClient();
+    await supabase.auth.signOut();
     setUser(null);
   };
 

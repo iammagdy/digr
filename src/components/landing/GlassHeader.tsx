@@ -3,8 +3,13 @@
 import Link from "next/link";
 import { Logo } from "@/components/Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useUser } from "@/hooks/useUser";
 
-export function GlassHeader() {
+export function GlassHeader({ initialSignedIn }: { initialSignedIn?: boolean } = {}) {
+  const { user, loading } = useUser();
+  const signedIn = loading ? Boolean(initialSignedIn) : Boolean(user);
+  const resolving = loading && initialSignedIn === undefined;
+
   return (
     <header className="sticky top-0 z-30 h-0 overflow-visible">
       <div className="px-3 py-2.5 min-[760px]:px-5 min-[760px]:py-3.5">
@@ -24,11 +29,19 @@ export function GlassHeader() {
           </div>
           <div className="relative flex items-center gap-1">
             <ThemeToggle className="!text-mut" />
-            <Link href="/login" className="flex h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2">دخول</Link>
-            <Link href="/register" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">حساب جديد</Link>
+            <Link href="/calculator" className="flex h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2">حاسبة التكلفة</Link>
+            {resolving ? null : signedIn ? (
+              <Link href="/dashboard/chat" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">لوحة التحكم</Link>
+            ) : (
+              <>
+                <Link href="/login" className="flex h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2">دخول</Link>
+                <Link href="/register" className="relative flex h-11 items-center whitespace-nowrap rounded-full bg-ac px-[18px] text-sm text-onac">حساب جديد</Link>
+              </>
+            )}
           </div>
         </div>
       </div>
     </header>
   );
 }
+

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, listAll } from "@/lib/server/adminAuth";
+import { authenticateAdmin, listAll, Query } from "@/lib/server/adminAuth";
 import { ledgerBalance, summarizeTopups } from "@/lib/server/userStats";
 
 export const dynamic = "force-dynamic";

@@ -1,4 +1,4 @@
-import { Client, TablesDB, Storage } from "node-appwrite";
+import { Client, TablesDB, Storage } from "../../shared/dbCompat";
 import { z } from "zod";
 import { releaseReservation } from "../../shared/ledger";
 import { notifyJobOutcome } from "../../shared/notify";

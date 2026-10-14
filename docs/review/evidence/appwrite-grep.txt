@@ -1,0 +1,125 @@
+src/app/api/admin/alerts/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/audit/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/finance/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/jobs/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/llm-status/route.ts:2:import { Client as ServerClient, TablesDB, Client as UserClient, Account, Query } from "node-appwrite";
+src/app/api/admin/llm-status/route.ts:43:        const jwtHeaders = { "X-Appwrite-Project": projectId, "Content-Type": "application/json" };
+src/app/api/admin/llm-status/route.ts:123:    const endpoint = process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+src/app/api/admin/llm-status/route.ts:124:    const projectId = process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+src/app/api/admin/llm-status/route.ts:125:    const apiKey = process.env.APPWRITE_API_KEY || "";
+src/app/api/admin/provider-balance/route.ts:2:import { Client as ServerClient, TablesDB, Client as UserClient, Account } from "node-appwrite";
+src/app/api/admin/provider-balance/route.ts:43:        const jwtHeaders = { "X-Appwrite-Project": projectId, "Content-Type": "application/json" };
+src/app/api/admin/provider-balance/route.ts:112:    const endpoint = process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+src/app/api/admin/provider-balance/route.ts:113:    const projectId = process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+src/app/api/admin/provider-balance/route.ts:114:    const apiKey = process.env.APPWRITE_API_KEY || "";
+src/app/api/admin/providers/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/providers/route.ts:73: * The change is written to the Appwrite Site and job functions, which are redeployed; the UI says it takes effect after a restart.
+src/app/api/admin/receipts/[fileId]/route.ts:2:import { Storage } from "node-appwrite";
+src/app/api/admin/settings/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/smoke/route.ts:2:import { Client as UserClient, Account } from "node-appwrite";
+src/app/api/admin/smoke/route.ts:53:  const endpoint = process.env.APPWRITE_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+src/app/api/admin/smoke/route.ts:54:  const projectId = process.env.APPWRITE_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+src/app/api/admin/stats/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/topups/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/users/[id]/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/admin/users/route.ts:2:import { Query } from "node-appwrite";
+src/app/api/chat/route.ts:3:import { Client as ServerClient, TablesDB, Client as UserClient, Account } from "node-appwrite";
+src/app/api/chat/route.ts:39:    const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+src/app/api/chat/route.ts:40:    const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+src/app/api/chat/route.ts:41:    const apiKey = process.env.APPWRITE_API_KEY || "";
+src/app/api/chat/route.ts:78:    // 1. Authenticate user: check Supabase session or verified Appwrite JWT/session cookie
+src/app/api/chat/route.ts:104:    // Fall back to Appwrite authentication if no Supabase session
+src/app/api/chat/route.ts:170:    // Determine tables DAL: Supabase Admin client or Appwrite TablesDB
+src/functions/approve-topup/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/approve-topup/src/main.ts:1:import { Client, TablesDB, Users } from "node-appwrite";
+src/functions/approve-topup/src/main.ts:20:  const callerId = req.headers?.["x-appwrite-user-id"];
+src/functions/approve-topup/src/main.ts:26:    req.headers?.["x-appwrite-key"] ||
+src/functions/approve-topup/src/main.ts:27:    process.env.APPWRITE_FUNCTION_API_KEY ||
+src/functions/approve-topup/src/main.ts:28:    process.env.APPWRITE_API_KEY;
+src/functions/approve-topup/src/main.ts:31:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/approve-topup/src/main.ts:32:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/functions/create-job/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/create-job/src/main.ts:1:import { Client, TablesDB, Functions, Query, Permission, Role, ID } from "node-appwrite";
+src/functions/create-job/src/main.ts:16:  const callerId = req.headers?.["x-appwrite-user-id"];
+src/functions/create-job/src/main.ts:22:    req.headers?.["x-appwrite-key"] ||
+src/functions/create-job/src/main.ts:23:    process.env.APPWRITE_FUNCTION_API_KEY ||
+src/functions/create-job/src/main.ts:24:    process.env.APPWRITE_API_KEY;
+src/functions/create-job/src/main.ts:27:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/create-job/src/main.ts:28:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/functions/job-worker/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/job-worker/src/main.ts:1:import { Client, TablesDB, Storage } from "node-appwrite";
+src/functions/job-worker/src/main.ts:17:    req.headers?.["x-appwrite-key"] ||
+src/functions/job-worker/src/main.ts:18:    process.env.APPWRITE_FUNCTION_API_KEY ||
+src/functions/job-worker/src/main.ts:19:    process.env.APPWRITE_API_KEY;
+src/functions/job-worker/src/main.ts:22:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/job-worker/src/main.ts:23:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/functions/job-worker/src/main.ts:31:    const triggerType = req.headers?.["x-appwrite-trigger"];
+src/functions/job-worker/src/main.ts:40:    // Scheduled watchdog mode: runs every 10 minutes via Appwrite schedule trigger or explicit {"mode":"watchdog"}
+src/functions/on-user-create/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/on-user-create/src/main.ts:1:import { Client, TablesDB, Permission, Role } from "node-appwrite";
+src/functions/on-user-create/src/main.ts:6:    req.headers?.["x-appwrite-key"] ||
+src/functions/on-user-create/src/main.ts:7:    process.env.APPWRITE_FUNCTION_API_KEY ||
+src/functions/on-user-create/src/main.ts:8:    process.env.APPWRITE_API_KEY;
+src/functions/on-user-create/src/main.ts:11:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/on-user-create/src/main.ts:12:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/functions/on-user-create/src/main.ts:18:    // Appwrite user-create event payload
+src/functions/on-user-create/src/main.ts:20:    const userId = eventData.$id || req.headers["x-appwrite-user-id"];
+src/functions/on-user-create/src/main.ts:29:    if (String(req.headers?.["x-appwrite-event"] || "").includes(".verification.")) {
+src/functions/purge-deleted-accounts/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/purge-deleted-accounts/src/main.ts:1:import { Client, TablesDB, Storage, Users, Query } from "node-appwrite";
+src/functions/purge-deleted-accounts/src/main.ts:26:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/purge-deleted-accounts/src/main.ts:27:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/functions/purge-deleted-accounts/src/main.ts:28:    .setKey(process.env.APPWRITE_FUNCTION_API_KEY || process.env.APPWRITE_API_KEY!);
+src/functions/request-account-deletion/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/request-account-deletion/src/main.ts:1:import { Client, TablesDB, Users, Query } from "node-appwrite";
+src/functions/request-account-deletion/src/main.ts:10:  const callerId = req.headers?.["x-appwrite-user-id"];
+src/functions/request-account-deletion/src/main.ts:13:  const apiKey = req.headers?.["x-appwrite-key"] || process.env.APPWRITE_FUNCTION_API_KEY || process.env.APPWRITE_API_KEY;
+src/functions/request-account-deletion/src/main.ts:15:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/request-account-deletion/src/main.ts:16:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/functions/shared/artifactVersions.ts:1:import { Query, TablesDB } from "node-appwrite";
+src/functions/shared/auditLog.ts:1:import { ID, Permission, Role, TablesDB } from "node-appwrite";
+src/functions/shared/briefManager.ts:1:import { TablesDB, Query } from "node-appwrite";
+src/functions/shared/capabilityRegistry.ts:1:import { TablesDB } from "node-appwrite";
+src/functions/shared/chatHandler.ts:2:import { TablesDB, ID, Query } from "node-appwrite";
+src/functions/shared/ledger.ts:1:import { TablesDB, Query, Permission, Role } from "node-appwrite";
+src/functions/shared/ledger.ts:8: * Appwrite default limit is 25, max is 100.
+src/functions/shared/multiStepWorker.ts:2:import { TablesDB, Storage, Permission, Role, ID, Query } from "node-appwrite";
+src/functions/shared/multiStepWorker.ts:1209:      "1. افتح لوحة تحكم Appwrite -> Databases -> digr -> جدول jobs وحدد معرّف الطلب العالق (jobId).",
+src/functions/shared/notify.ts:1:import { ID, Messaging, Permission, Role, TablesDB, Users } from "node-appwrite";
+src/functions/shared/notify.ts:24: * preferences allow it, sends the same event by email through Appwrite Messaging.
+src/functions/shared/planManager.ts:3:import { TablesDB, ID, Query } from "node-appwrite";
+src/functions/shared/providerCosts.ts:1:import { ID, TablesDB } from "node-appwrite";
+src/functions/shared/providerSpend.ts:1:import { TablesDB, Query } from "node-appwrite";
+src/functions/shared/quoteAccept.ts:1:import { TablesDB, ID, Query, Permission, Role } from "node-appwrite";
+src/functions/shared/rateLimits.ts:1:import { TablesDB, Query } from "node-appwrite";
+src/functions/shared/rateLimits.ts:49: * Supports both Supabase client and Appwrite TablesDB.
+src/functions/shared/rateLimits.ts:76:    // Appwrite TablesDB
+src/functions/shared/rateLimits.ts:144: * Supports both Supabase client and Appwrite TablesDB.
+src/functions/shared/rateLimits.ts:168:    // Appwrite TablesDB
+src/functions/submit-topup/package.json:6:    "node-appwrite": "^29.2.0"
+src/functions/submit-topup/src/main.ts:1:import { Client, TablesDB, Storage, Users, Query, Permission, Role, ID } from "node-appwrite";
+src/functions/submit-topup/src/main.ts:33:  const callerId = req.headers?.["x-appwrite-user-id"];
+src/functions/submit-topup/src/main.ts:39:    req.headers?.["x-appwrite-key"] ||
+src/functions/submit-topup/src/main.ts:40:    process.env.APPWRITE_FUNCTION_API_KEY ||
+src/functions/submit-topup/src/main.ts:41:    process.env.APPWRITE_API_KEY;
+src/functions/submit-topup/src/main.ts:44:    .setEndpoint(process.env.APPWRITE_FUNCTION_API_ENDPOINT || process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT!)
+src/functions/submit-topup/src/main.ts:45:    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID || process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID!)
+src/lib/appwrite.ts:1:import { Client, Account, Databases } from "appwrite";
+src/lib/appwrite.ts:3:const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+src/lib/appwrite.ts:4:const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+src/lib/constants.ts:1:/** Appwrite resource IDs — centralised so nothing is scattered across the codebase */
+src/lib/honestDisplay.ts:122: * Extract the authoritative total from an Appwrite listDocuments-style response.
+src/lib/server/adminAuth.ts:2:import { Account, Client, Query, TablesDB, Users } from "node-appwrite";
+src/lib/server/adminAuth.ts:5:export const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
+src/lib/server/adminAuth.ts:6:export const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+src/lib/server/adminAuth.ts:9:  return new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID).setKey(process.env.APPWRITE_API_KEY || "");
+src/lib/server/adminAuth.ts:304:  // Appwrite fallback guard: disabled by default unless explicitly enabled via ENABLE_APPWRITE_ADMIN_FALLBACK=true
+src/lib/server/adminAuth.ts:305:  const allowAppwriteFallback = process.env.ENABLE_APPWRITE_ADMIN_FALLBACK === "true";
+src/lib/server/adminAuth.ts:306:  if (!allowAppwriteFallback) {
+src/lib/server/envAdmin.ts:1:import { Client, Functions, Sites } from "node-appwrite";
+src/lib/server/envAdmin.ts:11:/** Where each variable must live: the Next app (Appwrite Site) reads LLM_*; job functions read TREG_*. */
+src/lib/server/envAdmin.ts:53: * Requires an API key with functions.write + sites.write and APPWRITE_SITE_ID. Values are never logged or returned.
+src/lib/server/envAdmin.ts:59:  const siteId = process.env.APPWRITE_SITE_ID;
+src/lib/server/envAdmin.ts:66:  if (!siteId) results.push({ target: "site", ok: false, message: "APPWRITE_SITE_ID غير مضبوط — لم يُحدَّث موقع Next" });
+src/lib/server/userStats.ts:1:import { Query, TablesDB } from "node-appwrite";
+src/lib/site.ts:8: * Origin used inside e-mailed links (verification, password recovery). Appwrite only accepts hosts that are

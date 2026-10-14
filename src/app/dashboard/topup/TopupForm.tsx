@@ -1,17 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Functions, ID, Permission, Role, Storage } from "appwrite";
-import { client, databases } from "@/lib/appwrite";
+import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { EG_MOBILE_RE, formatAr, isThreePartName, normalizeDigits, normalizePhone, normalizeSenderName } from "@/lib/arabicDigits";
 import { compressReceipt } from "@/lib/receiptImage";
-import { DATABASE_ID, RECEIPTS_BUCKET, TOPUPS_COLLECTION } from "@/lib/constants";
 import { TOPUP_PRESETS_EGP } from "@/lib/pricing";
 import type { TopupRecord } from "./types";
 
-const storage = new Storage(client);
-const functions = new Functions(client);
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 const ALLOWED = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
 
@@ -76,17 +72,49 @@ export default function TopupForm({
     setSending(true);
     setErr("");
     try {
-      const uploaded = await storage.createFile(RECEIPTS_BUCKET, ID.unique(), file, [Permission.read(Role.user(user.$id))]);
-      const execution = await functions.createExecution(
-        "submit-topup",
-        JSON.stringify({ amountEgp: amount, reference, senderName: name, senderPhone: phone, receiptFileId: uploaded.$id }),
-        false,
-      );
-      const res = JSON.parse(execution.responseBody || "{}");
-      if (!res.success) throw new Error(res.error || "فشل إرسال طلب الشحن");
-      const doc = await databases.getDocument(DATABASE_ID, TOPUPS_COLLECTION, res.topupId);
+      const supabase = createClient();
+      const ext = file.name.split(".").pop() || "png";
+      const receiptFileId = `${user.id}/${Date.now()}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from("receipts")
+        .upload(receiptFileId, file, { contentType: file.type, upsert: true });
+
+      if (uploadErr) throw new Error("تعذر رفع إيصال التحويل: " + uploadErr.message);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch("/api/topup/submit", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({
+          amountEgp: amount,
+          reference,
+          senderName: name,
+          senderPhone: phone,
+          receiptFileId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "فشل إرسال طلب الشحن");
+
+      const doc: TopupRecord = {
+        $id: data.topupId,
+        id: data.topupId,
+        amountEgp: amount,
+        reference,
+        senderName: name,
+        senderPhone: phone,
+        receiptFileId,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+        reviewedAt: null,
+        rejectReason: null,
+        credits: null,
+      };
       setRef(""); setSName(""); setSPhone(""); setFile(null);
-      onSubmitted(doc as unknown as TopupRecord);
+      onSubmitted(doc);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "حدث خطأ أثناء إرسال طلب الشحن");
     } finally {

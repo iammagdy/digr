@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, creditValueEgp, listAll } from "@/lib/server/adminAuth";
-import { DAY_MS, lastMonths, margin, monthKey, monthLabelAr, refundPointsByJob } from "@/lib/server/adminStats";
+import { authenticateAdmin, creditValueEgp, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, Query } from "../../../../lib/server/adminAuth";
+import { DAY_MS, lastMonths, margin, monthKey, monthLabelAr, refundPointsByJob } from "../../../../lib/server/adminStats";
 
 export const dynamic = "force-dynamic";
 
@@ -26,12 +25,15 @@ export async function GET(req: NextRequest) {
   const months = lastMonths(6);
   const horizon = new Date(new Date(now).getFullYear(), new Date(now).getMonth() - 5, 1).toISOString();
 
-  const [value, approved, costs, ledger] = await Promise.all([
+  const [value, approvedRaw, costs, ledger, topupApprovalMap] = await Promise.all([
     creditValueEgp(tables),
-    listAll(tables, "topups", [Query.equal("status", "approved"), Query.greaterThanEqual("reviewedAt", horizon)], 5000),
+    listAll(tables, "topups", [Query.equal("status", "approved")], 5000),
     listAll(tables, "provider_costs", [Query.greaterThanEqual("at", horizon)], 50000).catch(() => []),
     listAll(tables, "credit_ledger", [Query.greaterThanEqual("createdAt", horizon), Query.equal("type", ["release", "charge"])], 50000),
+    getTopupApprovalMap(tables),
   ]);
+
+  const approved = enrichTopupsWithApprovals(approvedRaw, topupApprovalMap);
 
   const refunds = refundPointsByJob(ledger as any);
   const monthly = months.map((key, i) => {

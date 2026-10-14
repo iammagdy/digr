@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 export const DEFAULT_JOB_POINTS_CAP = 600;
@@ -46,11 +46,30 @@ export function getConfiguredProviderCreditUsd(): number {
   return Number.isFinite(envVal) && envVal >= 0 ? envVal : DEFAULT_PROVIDER_CREDIT_USD;
 }
 
-export async function getDailyProviderSpendUsd(tables?: TablesDB | null): Promise<number> {
+export async function getDailyProviderSpendUsd(tables?: TablesDB | any | null): Promise<number> {
   checkAndResetDay();
 
   if (!tables) {
     return memoryDailySpendMicro / 1_000_000;
+  }
+
+  if (typeof tables.from === "function") {
+    try {
+      const todayStart = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z";
+      const { data } = await tables
+        .from("provider_costs")
+        .select("cost_usd")
+        .eq("provider", "treg")
+        .gte("created_at", todayStart);
+      let dbCostUsd = 0;
+      for (const row of data || []) {
+        const c = Number(row.cost_usd) || 0;
+        if (c > 0) dbCostUsd += c;
+      }
+      return Math.max(dbCostUsd, memoryDailySpendMicro / 1_000_000);
+    } catch {
+      return memoryDailySpendMicro / 1_000_000;
+    }
   }
 
   try {
@@ -77,9 +96,26 @@ export async function getDailyProviderSpendUsd(tables?: TablesDB | null): Promis
   }
 }
 
-export async function getTotalProviderSpendUsd(tables?: TablesDB | null): Promise<number> {
+export async function getTotalProviderSpendUsd(tables?: TablesDB | any | null): Promise<number> {
   if (!tables) {
     return memoryTotalSpendMicro / 1_000_000;
+  }
+
+  if (typeof tables.from === "function") {
+    try {
+      const { data } = await tables
+        .from("provider_costs")
+        .select("cost_usd")
+        .eq("provider", "treg");
+      let dbCostUsd = 0;
+      for (const row of data || []) {
+        const c = Number(row.cost_usd) || 0;
+        if (c > 0) dbCostUsd += c;
+      }
+      return Math.max(dbCostUsd, memoryTotalSpendMicro / 1_000_000);
+    } catch {
+      return memoryTotalSpendMicro / 1_000_000;
+    }
   }
 
   try {

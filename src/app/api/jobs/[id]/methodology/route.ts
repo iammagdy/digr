@@ -1,18 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Storage, Client as UserClient, Account } from "node-appwrite";
-import { reserveCredits, completeJobWithRelFirst, getBalance } from "../../../../../functions/shared/ledger";
+import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { normalizeDataset, detectPlatform } from "@/lib/server/normalizationPipeline";
 
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-const apiKey = process.env.APPWRITE_API_KEY!;
-
-const serverClient = new ServerClient()
-  .setEndpoint(endpoint)
-  .setProject(projectId)
-  .setKey(apiKey);
-
-const tables = new TablesDB(serverClient);
-const storage = new Storage(serverClient);
+export const dynamic = "force-dynamic";
 
 const METHODOLOGY_DEFAULT_POINTS = 10;
 
@@ -26,99 +16,128 @@ export async function POST(
       return NextResponse.json({ success: false, error: "معرف الطلب مطلوب" }, { status: 400 });
     }
 
-    // 1. Authenticate caller strictly via JWT or session cookie
+    // 1. Authenticate caller strictly via Supabase JWT or session
+    const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
-    const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-    const sessionCookie =
-      req.cookies.get(`a_session_${projectId}`)?.value ||
-      req.cookies.get(`a_session_${projectId}_legacy`)?.value;
+    let user = null;
 
-    if (!bearerJwt && !sessionCookie) {
+    if (authHeader?.startsWith("Bearer ")) {
+      const bearerJwt = authHeader.substring(7).trim();
+      const { data } = await supabase.auth.getUser(bearerJwt);
+      user = data?.user;
+    } else {
+      const { data } = await supabase.auth.getUser();
+      user = data?.user;
+    }
+
+    if (!user) {
       return NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 });
     }
 
-    const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-    if (bearerJwt) userClient.setJWT(bearerJwt);
-    else if (sessionCookie) userClient.setSession(sessionCookie);
-
-    let verifiedUserId: string;
-    try {
-      const userAccount = new Account(userClient);
-      const userDoc = await userAccount.get();
-      verifiedUserId = userDoc.$id;
-    } catch {
-      return NextResponse.json({ success: false, error: "انتهت صلاحية الجلسة." }, { status: 401 });
-    }
+    const verifiedUserId = user.id;
+    const adminClient = createAdminClient();
 
     // 2. Fetch Job Document & verify ownership
-    const jobDoc: any = await tables.getRow({
-      databaseId: "digr",
-      tableId: "jobs",
-      rowId: jobId,
-    });
+    const { data: jobDoc, error: jobErr } = await adminClient
+      .from("jobs")
+      .select("*")
+      .eq("id", jobId)
+      .single();
 
-    if (jobDoc.userId !== verifiedUserId) {
+    if (jobErr || !jobDoc) {
+      return NextResponse.json({ success: false, error: "الطلب غير موجود." }, { status: 404 });
+    }
+
+    const isAdmin = user.app_metadata?.role === "admin";
+    if (jobDoc.user_id !== verifiedUserId && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا الطلب." }, { status: 403 });
     }
 
-    // 3. Verify points balance before charging
-    const currentBalance = await getBalance(tables, verifiedUserId);
-    if (currentBalance < METHODOLOGY_DEFAULT_POINTS) {
+    // 3. Ledger Flow Check: Check if methodology was already purchased
+    const methChgId = `chg_meth_${jobId}`;
+    const { data: existingMeth } = await adminClient
+      .from("credit_ledger")
+      .select("id")
+      .eq("id", methChgId)
+      .maybeSingle();
+
+    if (!existingMeth) {
+      // BLOCKER 3: Direct independent ledger inserts (res_meth_, rel_meth_, chg_meth_) are forbidden.
+      // On-demand methodology purchase requires atomic RPC (purchase_methodology_atomic)
+      // which is pending owner approval.
       return NextResponse.json(
         {
           success: false,
-          error: `الرصيد غير كافٍ. يلزم ${METHODOLOGY_DEFAULT_POINTS} نقاط لصياغة المنهجية الأكاديمية (رصيدك الحالي: ${currentBalance} نقطة).`,
+          blocked: true,
+          error: "خاصية شراء صياغة المنهجية عند الطلب معلقة بانتظار اعتماد التخصيص المالي الذري (purchase_methodology_atomic).",
+          reason: "methodology_charging_pending_owner_approval",
         },
-        { status: 400 }
+        { status: 409 }
       );
     }
 
-    // 4. Ledger Flow: Reserve then Charge deterministic points
-    const methJobKey = `meth_${jobId}`;
-    try {
-      await reserveCredits(tables, verifiedUserId, methJobKey, METHODOLOGY_DEFAULT_POINTS, "حجز نقاط صياغة المنهجية");
-      await completeJobWithRelFirst(tables, verifiedUserId, methJobKey, METHODOLOGY_DEFAULT_POINTS, METHODOLOGY_DEFAULT_POINTS, "خصم تكلفة صياغة المنهجية");
-    } catch (ledgerErr: any) {
-      return NextResponse.json(
-        { success: false, error: "تعذر حجز وتسوية نقاط المنهجية: " + ledgerErr.message },
-        { status: 400 }
-      );
-    }
+    const { data: ledgerRows } = await adminClient
+      .from("credit_ledger")
+      .select("delta")
+      .eq("user_id", verifiedUserId);
 
-    // 5. Read real run facts from server-only storage
-    let profileData: any = null;
-    let rowsCount = jobDoc.rowsCollected || 1;
+    const currentBalance = (ledgerRows || []).reduce((sum, r) => sum + (Number(r.delta) || 0), 0);
+
+    // 5. Read real run facts from server storage
+    let rawParsed: any = null;
+
     try {
-      let jsonBuf: ArrayBuffer;
-      try {
-        jsonBuf = await storage.getFileDownload("job_data", `json_${jobId}`);
-      } catch {
-        jsonBuf = await storage.getFileDownload("results", `json_${jobId}`);
-      }
-      const jsonText = Buffer.from(jsonBuf).toString("utf-8");
-      const parsed = JSON.parse(jsonText);
-      profileData = parsed.profile || null;
-      if (Array.isArray(parsed.rows) && parsed.rows.length > 0) {
-        rowsCount = parsed.rows.length;
+      const candidatePaths = [
+        `${verifiedUserId}/${jobId}/data.json`,
+        `${jobDoc.user_id}/${jobId}/data.json`,
+        `${jobId}/data.json`,
+        `json_${jobId}`,
+      ];
+
+      for (const bucketName of ["results", "partials"]) {
+        if (rawParsed) break;
+        const bucket = adminClient.storage?.from?.(bucketName);
+        if (!bucket || typeof bucket.download !== "function") continue;
+        for (const path of candidatePaths) {
+          const { data: blob, error: dlErr } = await bucket.download(path);
+          if (!dlErr && blob) {
+            rawParsed = JSON.parse(await blob.text());
+            break;
+          }
+        }
       }
     } catch {
-      // Fallback to job document params if file read fails
+      // Fallback
     }
 
-    const facts = {
-      platform: "TikTok",
-      account: profileData?.uniqueId ? `@${profileData.uniqueId}` : profileData?.username || `@${jobDoc.templateSlug || "account"}`,
-      displayName: profileData?.nickname || profileData?.displayName || "",
-      verifiedStatus: profileData?.verified ? "موثق رسمياً" : "غير موثق",
-      followers: Number(profileData?.followerCount ?? profileData?.followers ?? 0),
-      likes: Number(profileData?.heartCount ?? profileData?.likes ?? 0),
-      videosCount: Number(profileData?.videoCount ?? profileData?.videosCount ?? 0),
-      date: (jobDoc.finishedAt || jobDoc.createdAt || new Date().toISOString()).split("T")[0],
-      recordsCount: rowsCount,
-    };
+    const normalized = normalizeDataset(rawParsed || { profile: null, rows: [] }, {
+      platform: jobDoc.platform || undefined,
+      title: jobDoc.template_slug || jobDoc.endpoint_id,
+      jobId,
+    });
 
-    // 6. Strict Academic Methodology text: derived ONLY from run facts, zero outside numbers
-    const methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
+    const isProfileMode = Boolean(
+      normalized.profile &&
+      (normalized.metadata.entityType === "profile" || normalized.rows.length <= 1)
+    );
+
+    let methodologyStatement = "";
+
+    if (isProfileMode) {
+      const p = normalized.profile!;
+      const facts = {
+        platform: normalized.metadata.platform || "TikTok",
+        account: p.username || `@${jobDoc.template_slug || "account"}`,
+        displayName: p.display_name || "",
+        verifiedStatus: p.verified ? "موثق رسمياً" : "غير موثق",
+        followers: Number(p.followers_count || 0),
+        likes: Number(p.likes_count || 0),
+        videosCount: Number(p.posts_count || 0),
+        date: (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0],
+        recordsCount: normalized.rows.length || 1,
+      };
+
+      methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
 1. مصدر البيانات وأصلها (Data Provenance):
 تم جمع بيانات هذه الدراسة بصورة آلية ومباشرة عبر منصة Diger من المصدر العلني المتاح على منصة ${facts.platform} للحساب (${facts.account})${facts.displayName ? ` - [${facts.displayName}]` : ""}، وحالة التوثيق (${facts.verifiedStatus}).
@@ -133,14 +152,40 @@ export async function POST(
 3. النزاهة المنهجية ومحددات التحليل (Integrity & Methodological Constraints):
 - سلامة المؤشرات: نُقلت الأرقام كما هي معلنة دون أي معالجة أو تقريب أو ترجيح إحصائي اصطناعي.
 - حدود العينة: هذه البيانات مستخلصة لحساب فردي محدد وتصلح لأغراض دراسة الحالة (Case Study) والتحليل المقارن، ولا تمثل عينة احتمالية عشوائية لعموم مستخدمي المنصة.`;
+    } else {
+      const k = normalized.kpis;
+      const dateStr = (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0];
+      const timeRange = k.earliestDate && k.latestDate ? `من ${k.earliestDate} إلى ${k.latestDate}` : `بتاريخ ${dateStr}`;
 
-    const remainingBalance = await getBalance(tables, verifiedUserId);
+      methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
+1. أصل ومصدر البيانات (Data Provenance & Collection Strategy):
+تم استخراج بيانات هذه الدراسة بصورة مؤتمتة ومطابقة للأصول المنهجية عبر منصة Diger للبيانات العامة، استناداً إلى واجهات البيانات العامة المتاحة لمنصة ${normalized.metadata.platform}.
+- موضوع / نطاق البحث: ${normalized.metadata.title}
+- نوع الكيانات المستخرجة: ${normalized.metadata.entityType === "posts" ? "منشورات وتغريدات عامة" : normalized.metadata.entityType === "comments" ? "سلاسل تعليقات وردود تفاعلية" : "سجلات بيانات عامة"}
+- إجمالي السجلات المستخلصة بعد تدقيق التكرار: ${k.totalRecords} سجل
+- السجلات المكررة التي تم استبعادها آلياً: ${k.duplicatesRemoved} سجل
+
+2. النطاق الزمني ومؤشرات التفاعل المرصودة (Temporal Bounds & Engagement Metrics):
+تم حصر البيانات للفترة الزمنية (${timeRange})، وتلخص المؤشرات الإجمالية التالية التفاعل العام المرصود:
+- إجمالي المشاهدات المسجلة: ${k.totalViews.toLocaleString("en-US")}
+- إجمالي الإعجابات والتفاعلات: ${k.totalLikes.toLocaleString("en-US")}
+- إجمالي إعادة النشر والمشاركات: ${k.totalShares.toLocaleString("en-US")}
+- إجمالي الردود والتعليقات: ${k.totalComments.toLocaleString("en-US")}
+- نسبة اكتمال الحقول الخالية من القيم المفقودة: ${k.dataCompletenessPct}%
+
+3. النزاهة المنهجية ومحددات التحليل (Methodological Integrity & Limitations):
+- نقل المؤشرات: جرى نقل النصوص والمقاييس الرقمية بدقة دون أي تحوير أو ترجيح إحصائي أو توليد اصطناعي.
+- طبيعة العينة: تمثل هذه البيانات عينة رصدية عامة محددة بضوابط ومعايير الاستعلام المعتمدة، ولا تشكل بالضرورة عينة احتمالية عشوائية تمثيلية لكافة مجتمع المنصة.
+- أخلاقيات البحث: اقتصر الجمع على المحتوى المنشور علناً دون الالتفاف على أي قيود خصوصية.`;
+    }
+
+    const remainingBalance = currentBalance;
     return NextResponse.json({
       success: true,
       jobId,
-      chargedPoints: METHODOLOGY_DEFAULT_POINTS,
-      remainingBalance,
+      chargedPoints: 0,
+      remainingBalance: currentBalance,
       methodologyText: methodologyStatement,
     });
   } catch (err: any) {

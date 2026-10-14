@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, listAll, userDirectory } from "@/lib/server/adminAuth";
+import { authenticateAdmin, listAll, userDirectory, Query } from "@/lib/server/adminAuth";
 import { DAY_MS, refundPointsByJob } from "@/lib/server/adminStats";
 
 export const dynamic = "force-dynamic";
@@ -37,21 +36,21 @@ export async function GET(req: NextRequest) {
   const ids = jobs.map((j) => j.$id);
 
   const [quotes, costs, convs, monthJobs, ledger] = await Promise.all([
-    ids.length ? tables.listRows({ databaseId: "digr", tableId: "plans_quotes", queries: [Query.equal("jobId", ids), Query.limit(100)] }).then((r) => r.rows as any[]).catch(() => []) : [],
-    ids.length ? tables.listRows({ databaseId: "digr", tableId: "provider_costs", queries: [Query.equal("jobId", ids), Query.equal("provider", "treg"), Query.limit(100)] }).then((r) => r.rows as any[]).catch(() => []) : [],
-    tables.listRows({ databaseId: "digr", tableId: "conversations", queries: [Query.orderDesc("updatedAt"), Query.limit(100)] }).then((r) => r.rows as any[]).catch(() => []),
+    ids.length ? tables.listRows({ databaseId: "digr", tableId: "plans_quotes", queries: [Query.equal("jobId", ids), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]).catch(() => []) : [],
+    ids.length ? tables.listRows({ databaseId: "digr", tableId: "provider_costs", queries: [Query.equal("jobId", ids), Query.equal("provider", "treg"), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]).catch(() => []) : [],
+    tables.listRows({ databaseId: "digr", tableId: "conversations", queries: [Query.orderDesc("updatedAt"), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]).catch(() => []),
     listAll(tables, "jobs", [Query.greaterThanEqual("createdAt", monthAgo)], 20000),
     listAll(tables, "credit_ledger", [Query.greaterThanEqual("createdAt", monthAgo), Query.equal("type", ["release", "charge"])], 20000),
   ]);
-  const quoteByJob = new Map(quotes.map((q) => [q.jobId, q]));
-  const convTitle = new Map(convs.map((c) => [c.$id, c.title]));
+  const quoteByJob = new Map((quotes as any[]).map((q: any) => [q.jobId, q]));
+  const convTitle = new Map((convs as any[]).map((c: any) => [c.$id, c.title]));
   const costByJob = new Map<string, number>();
-  for (const c of costs) costByJob.set(c.jobId, (costByJob.get(c.jobId) ?? 0) + (c.costEgp || 0));
+  for (const c of (costs as any[])) costByJob.set(c.jobId, (costByJob.get(c.jobId) ?? 0) + (c.costEgp || 0));
   const dir = await userDirectory(users, jobs.map((j) => j.userId));
 
   const statusFilter = req.nextUrl.searchParams.get("status") || "all";
   const rows = jobs.map((j) => {
-    const q = quoteByJob.get(j.$id);
+    const q: any = quoteByJob.get(j.$id);
     let target = "";
     try { const p = JSON.parse(j.params || "{}"); target = p.username ? `بيانات حساب @${String(p.username).replace(/^@/, "")}` : p.query || ""; } catch { /* ignore */ }
     return {
@@ -67,7 +66,7 @@ export async function GET(req: NextRequest) {
       costEgp: costByJob.get(j.$id) ?? null,
       status: uiStatus(j),
     };
-  }).filter((r) => statusFilter === "all" || r.status === statusFilter);
+  }).filter((r: any) => statusFilter === "all" || r.status === statusFilter);
 
   const finished = monthJobs.filter((j) => j.status === "done" || j.status === "failed");
   const refunds = [...refundPointsByJob(ledger as any).values()].reduce((a, r) => a + r.refund, 0);

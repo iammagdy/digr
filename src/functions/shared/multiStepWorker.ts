@@ -1,11 +1,12 @@
 import { logProviderCost } from "./providerCosts";
-import { TablesDB, Storage, Permission, Role, ID, Query } from "node-appwrite";
+import { ID, Query, Role, Permission, TablesDB, Storage } from "./dbCompat";
 import { completeJobWithRelFirst, releaseCredits, releaseReservation } from "./ledger";
 import { calculateFinalSettlement } from "./quotes";
 import {
   generateExcelReport,
   generatePdfReport,
   generateCsvReport,
+  generateMethodologyText as buildMethodologyDoc,
 } from "./fileGenerators";
 import { executeTregCall, TregCallOptions, TregCallResult } from "./tregClient";
 import { parseStoredPlan } from "./planManager";
@@ -250,36 +251,7 @@ export function extractAndFlattenRows(rawResponse: any): Array<Record<string, an
  * Builds white-label methodology facts document (.txt).
  */
 export function generateMethodologyText(payload: any): string {
-  const meta = payload.metadata || {};
-  const dateStr = meta.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const rowsCount = payload.rows?.length || (payload.profile ? 1 : 0);
-  const template = meta.template || meta.platform || "Diger Data Extraction";
-  const jobId = meta.jobId || "N/A";
-
-  return [
-    "============================================================",
-    "             منصة Diger لاستخراج البيانات العامة             ",
-    "               وثيقة المنهجية وإخلاء المسؤولية             ",
-    "============================================================",
-    "",
-    `معرّف الطلب (Job ID): ${jobId}`,
-    `تاريخ الجمع: ${dateStr}`,
-    `المصدر / المنصة: ${template}`,
-    `إجمالي السجلات المستخرجة: ${rowsCount}`,
-    "",
-    "------------------------------------------------------------",
-    "الملاحظات المنهجية ومعايير الجمع:",
-    "------------------------------------------------------------",
-    meta.methodology || `تم استخراج هذه البيانات آلياً من المصدر الرسمي العام بتاريخ ${dateStr}.`,
-    "",
-    "إخلاء المسؤولية العلمية والإحصائية:",
-    "• هذه البيانات عامة ومتاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
-    "• لا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.",
-    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية.",
-    "",
-    "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
-    "============================================================",
-  ].join("\n");
+  return buildMethodologyDoc(payload);
 }
 
 async function executeTregCallWithRetry(
@@ -1206,7 +1178,7 @@ export async function reportStuckJobsReadOnly(
     stuckCount: stuckJobs.length,
     stuckJobs,
     safeReleaseStepsAr: [
-      "1. افتح لوحة تحكم Appwrite -> Databases -> digr -> جدول jobs وحدد معرّف الطلب العالق (jobId).",
+      "1. افتح لوحة تحكم Supabase -> Table Editor -> jobs وحدد معرّف الطلب العالق (jobId).",
       "2. في جدول credit_ledger تأكد من عدم وجود صف بمعرّف rel_<jobId>، ثم أنشئ صفًا بمعرّف مستند مخصص (Custom Document ID) يساوي rel_<jobId> بالقيم: type='release'، delta=+5 (موجب قيمة reservedCredits)، userId=<نفس userId للطلب>، jobId=<jobId>.",
       "3. في جدول jobs حدّث حالة الطلب إلى status='failed' وerrorAr='تم إلغاء الطلب واسترجاع النقاط المحجوزة' (أو شغّل دالة job-worker بـ {\"mode\":\"watchdog\"} لتنفيذ الخطوتين تلقائيًا بأمان).",
     ],

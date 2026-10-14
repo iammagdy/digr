@@ -1,17 +1,30 @@
 import { GlassHeader } from "@/components/landing/GlassHeader";
 import { HeroLens } from "@/components/landing/HeroLens";
 import { Calculator, Faq, FinalCta, Sheets, Statements } from "@/components/landing/Sections";
+import { createServerSideClient } from "@/lib/supabase/server";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  let initialSignedIn = false;
+  try {
+    const supabase = await createServerSideClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    initialSignedIn = Boolean(user);
+  } catch {
+    initialSignedIn = false;
+  }
+
   return (
     <div className="min-h-screen bg-bg text-ink2" style={{ containerType: "inline-size" }}>
-      <GlassHeader />
+      <GlassHeader initialSignedIn={initialSignedIn} />
       <HeroLens />
       <Statements />
       <Sheets />
       <Calculator />
       <Faq />
-      <FinalCta />
+      <FinalCta initialSignedIn={initialSignedIn} />
     </div>
   );
 }
+

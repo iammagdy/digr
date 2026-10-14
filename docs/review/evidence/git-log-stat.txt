@@ -1,0 +1,175 @@
+commit f2d481909bc77da1a31a4463a0cf679a5ad38cfe
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 10:15:34 2026 +0300
+
+    fix(worker): narrow jobId type for strict Next.js production build
+
+ src/app/api/worker/chunk/route.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+commit 4c660290e6c2946c925e03fd664d0c8b0db33317
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 10:12:39 2026 +0300
+
+    docs(evidence): add raw git-log, functions files, and appwrite grep outputs
+
+ docs/review/evidence/appwrite-grep.txt   | 125 +++++++++++++++++++++
+ docs/review/evidence/functions-files.txt |  41 +++++++
+ docs/review/evidence/git-log-stat.txt    | 184 +++++++++++++++++++++++++++++++
+ 3 files changed, 350 insertions(+)
+
+commit 497bd769f6ad16917b866077b598f8a556ecaf6c
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 10:09:11 2026 +0300
+
+    docs(cutover): fix preview host pattern, document instapay handle, anthropic cap and env vars
+
+ docs/CUTOVER.md                        | 56 +++++++++++++++++++++-----------
+ docs/GO_LIVE_REPORT.md                 | 59 ++++++++++++++++++----------------
+ scripts/check-client-bundle-secrets.ts |  2 +-
+ 3 files changed, 70 insertions(+), 47 deletions(-)
+
+commit 346f6abc6f90a5032ce9fc0b5c005e6b162575b8
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 10:03:55 2026 +0300
+
+    feat(ui): landing session state, calculator nav links, login/register anti-flash and admin layout guard
+
+ src/app/admin/layout.tsx               |  33 ++++++++---
+ src/app/login/page.tsx                 |  10 ++++
+ src/app/page.tsx                       |  19 +++++-
+ src/app/register/page.tsx              |  10 ++++
+ src/components/admin/AdminGate.tsx     |   6 +-
+ src/components/app/AppShell.tsx        |   1 +
+ src/components/landing/GlassHeader.tsx |  19 +++++-
+ src/components/landing/Sections.tsx    |   6 +-
+ src/middleware.ts                      |   7 +++
+ tests/auth-account-phase2.test.ts      | 103 +++++++++++++++++++++++++++++++++
+ 10 files changed, 197 insertions(+), 17 deletions(-)
+
+commit 086cc7e629d20a9bfe6a4bea14b6a451ce18cd2f
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 09:58:24 2026 +0300
+
+    fix(chat): support Supabase client in ChatHandler and add requestId/step/reason diagnostics
+
+ src/app/api/chat/route.ts             |   68 +-
+ src/functions/shared/briefManager.ts  |    1 +
+ src/functions/shared/chatHandler.ts   | 1674 ++++++++++++++++++---------------
+ src/functions/shared/ledger.ts        |   13 +-
+ src/functions/shared/llmClient.ts     |    9 +-
+ src/functions/shared/providerCosts.ts |   31 +-
+ src/functions/shared/providerSpend.ts |   40 +-
+ tests/supabase-routes.test.ts         |  228 ++++-
+ 8 files changed, 1296 insertions(+), 768 deletions(-)
+
+commit a8136c8fb5cf998815e02eeef2e9be7ad0cb14b8
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 09:46:47 2026 +0300
+
+    feat(worker): port real chunked execution, artifact generation, notification schema fix and A3 tests
+
+ scripts/verify/verify-worker-dry-run.ts |  95 +++-
+ src/app/api/account/delete/route.ts     |  17 +-
+ src/app/api/cron/watchdog/route.ts      |  35 +-
+ src/app/api/jobs/[id]/data/route.ts     |  21 +-
+ src/app/api/jobs/[id]/download/route.ts |   4 +
+ src/app/api/worker/chunk/route.ts       | 801 +++++++++++++++++++++++++++-----
+ src/functions/shared/fileGenerators.ts  |  17 +-
+ src/lib/server/tregAdapter.ts           | 292 ++++++++++++
+ tests/worker-cron-phase4.test.ts        | 537 ++++++++++++++++++++-
+ 9 files changed, 1655 insertions(+), 164 deletions(-)
+
+commit 31b2540c8e49c08f85527ca14d6ee8cb92f7aec2
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 09:29:37 2026 +0300
+
+    fix(worker-safety-a1): release non-mock chunk jobs with zero charge and block fake accept-quote start
+
+ src/app/api/chat/accept-quote/route.ts | 17 ++++++++++++
+ src/app/api/worker/chunk/route.ts      | 40 +++++++++++++++++++++++++++
+ tests/supabase-routes.test.ts          | 36 +++++++++++++++++++++++++
+ tests/worker-cron-phase4.test.ts       | 49 ++++++++++++++++++++++++++++++++++
+ 4 files changed, 142 insertions(+)
+
+commit fafdd91f1267fb8da3ce04125387018808363510
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Tue Oct 13 00:12:17 2026 +0300
+
+    fix(go-live): unify single-markup pricing, run real worker route dry-run, and align GO_LIVE_REPORT & CUTOVER with code/DB
+
+ docs/CUTOVER.md                         | 131 +++++-----
+ docs/GO_LIVE_REPORT.md                  | 204 +++++++--------
+ scripts/verify/verify-worker-dry-run.ts | 428 ++++++++++++--------------------
+ src/app/api/worker/chunk/route.ts       |  97 +++++---
+ src/functions/shared/planManager.ts     |  12 +-
+ src/functions/shared/providerCosts.ts   |   4 +-
+ src/functions/shared/quotes.ts          |  65 +++++
+ src/lib/calculatorPricing.ts            |   6 +-
+ src/lib/server/adminAuth.ts             |  24 +-
+ tests/chat-plans-phase3.test.ts         |  12 +-
+ tests/public-calculator-phase-d.test.ts |  65 ++++-
+ tests/worker-cron-phase4.test.ts        |  19 +-
+ 12 files changed, 578 insertions(+), 489 deletions(-)
+
+commit 5a8db94180bb62aa3c64471db1b4e9eb9507c459
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Mon Oct 12 23:46:51 2026 +0300
+
+    feat(phase-f): add guarded tiny live preview script and complete GO_LIVE_REPORT.md
+
+ docs/GO_LIVE_REPORT.md                  | 172 ++++++++++++++++++++++++++++++++
+ docs/MEGA_LOG.md                        |  39 +++++++-
+ scripts/verify/run-tiny-live-preview.ts |  79 +++++++++++++++
+ 3 files changed, 289 insertions(+), 1 deletion(-)
+
+commit 3ccf07ebbc9fef21c95b1c39a95ffb3ed9eb89b1
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Mon Oct 12 23:44:00 2026 +0300
+
+    docs(phase-e): update CUTOVER.md with Vercel Hobby cron, Supabase Auth RTL templates, and cutover runbook
+
+ docs/CUTOVER.md | 202 ++++++++++++++++++++++++++++++++++----------------------
+ 1 file changed, 124 insertions(+), 78 deletions(-)
+
+commit e818bad215c0926407a897cf3713988d83cadc3e
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Mon Oct 12 23:42:53 2026 +0300
+
+    feat(phase-d): add public /calculator page using quote writer pricing function with unit tests
+
+ src/app/calculator/page.tsx             | 227 ++++++++++++++++++++++++++++++++
+ src/lib/calculatorPricing.ts            | 113 ++++++++++++++++
+ tests/public-calculator-phase-d.test.ts | 106 +++++++++++++++
+ 3 files changed, 446 insertions(+)
+
+commit 4bd9a4ddc2ec3304fa7fb537050170fc1693fa06
+Author: Magdy Saber. <magdy.saber@outlook.com>
+Date:   Mon Oct 12 23:38:49 2026 +0300
+
+    feat(phase-c): decouple active routes, UI pages, and signed result downloads from Appwrite to Supabase
+
+ docs/review/appwrite-inventory-raw.md        | 124 +++--------
+ scripts/check-client-bundle-secrets.ts       |   2 +
+ src/app/admin/topups/page.tsx                |  20 +-
+ src/app/admin/users/page.tsx                 |   9 +-
+ src/app/api/admin/llm-status/route.ts        |  51 ++++-
+ src/app/api/admin/provider-balance/route.ts  |  40 +++-
+ src/app/api/admin/receipts/[fileId]/route.ts |  41 +++-
+ src/app/api/admin/smoke/route.ts             |  29 ++-
+ src/app/api/chat/edit-plan/route.ts          |  85 ++++----
+ src/app/api/chat/metadata/route.ts           |  40 ++--
+ src/app/api/chat/route.ts                    |  13 +-
+ src/app/api/jobs/[id]/artifacts/route.ts     | 311 ++++++++++++++-------------
+ src/app/api/jobs/[id]/data/route.ts          | 108 +++++-----
+ src/app/api/jobs/[id]/download/route.ts      | 127 +++++++++++
+ src/app/api/jobs/[id]/methodology/route.ts   | 172 +++++++++------
+ src/app/api/onboarding/route.ts              |  99 ++++-----
+ src/app/dashboard/chat/page.tsx              | 238 +++++++++++---------
+ src/app/dashboard/requests/page.tsx          |  89 ++++++--
+ src/app/dashboard/topup/TopupForm.tsx        |  58 +++--
+ src/app/dashboard/topup/page.tsx             | 134 +++++++++---
+ src/app/dashboard/topup/types.ts             |   3 +
+ src/functions/shared/capabilityRegistry.ts   | 120 ++++++++---
+ src/lib/server/adminAuth.ts                  | 195 ++++++++++++++++-
+ 23 files changed, 1389 insertions(+), 719 deletions(-)

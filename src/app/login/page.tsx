@@ -4,6 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
+import { Spinner } from "@/components/ui";
 import { AuthLayout, AuthToast, PasswordInput, authErrorMessage, authInput, authPrimaryBtn } from "@/components/AuthLayout";
 
 export default function LoginPage() {
@@ -42,6 +43,14 @@ export default function LoginPage() {
     }
   }
 
+  if (authLoading || user) {
+    return (
+      <div className="flex min-h-dvh items-center justify-center bg-bg">
+        <Spinner label="جاري التحقق من الجلسة" />
+      </div>
+    );
+  }
+
   return (
     <AuthLayout title="مرحبًا بعودتك" subtitle="سجّل الدخول لمتابعة أبحاثك وملفاتك ورصيدك.">
       <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-3">
@@ -62,3 +71,4 @@ export default function LoginPage() {
     </AuthLayout>
   );
 }
+

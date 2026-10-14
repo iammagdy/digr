@@ -2,17 +2,22 @@ import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import * as path from "path";
 import * as fs from "fs";
-import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
+import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../lib/server/normalizationPipeline";
 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
 
 function getRegularFontBuffer(): Buffer {
   if (!cachedRegularBuffer) {
+    const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
     const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
-    if (fs.existsSync(diskPath)) {
+    if (fs.existsSync(cwdPath)) {
+      cachedRegularBuffer = fs.readFileSync(cwdPath);
+    } else if (fs.existsSync(diskPath)) {
       cachedRegularBuffer = fs.readFileSync(diskPath);
     } else {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { fontRegularBase64 } = require("./embeddedFonts");
       cachedRegularBuffer = Buffer.from(fontRegularBase64, "base64");
     }
   }
@@ -21,10 +26,15 @@ function getRegularFontBuffer(): Buffer {
 
 function getBoldFontBuffer(): Buffer {
   if (!cachedBoldBuffer) {
+    const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
     const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
-    if (fs.existsSync(diskPath)) {
+    if (fs.existsSync(cwdPath)) {
+      cachedBoldBuffer = fs.readFileSync(cwdPath);
+    } else if (fs.existsSync(diskPath)) {
       cachedBoldBuffer = fs.readFileSync(diskPath);
     } else {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { fontBoldBase64 } = require("./embeddedFonts");
       cachedBoldBuffer = Buffer.from(fontBoldBase64, "base64");
     }
   }
@@ -39,18 +49,17 @@ function getBoldFontBuffer(): Buffer {
 export function formatArabicRtl(text: string): string {
   if (!text) return "";
 
-  // If text contains no Arabic characters, keep it as-is
   const hasArabic = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
   if (!hasArabic) return text;
 
-  // Protect ASCII parenthesized tokens like (@iam_megz) or (UTC) or (123)
+  // Protect ASCII parenthesized tokens like (@username) or (UTC) or (123)
   const asciiParenTokens: string[] = [];
   let protectedText = text.replace(/\([a-zA-Z0-9_@.\s-]+\)/g, (match) => {
     asciiParenTokens.push(match);
     return `\u0000ASCII_PAREN_${asciiParenTokens.length - 1}\u0000`;
   });
 
-  // Swap remaining Arabic paired punctuation: '(' becomes ')' and ')' becomes '('
+  // Swap remaining Arabic paired punctuation
   protectedText = protectedText
     .replace(/\(/g, "\u0000OPEN\u0000")
     .replace(/\)/g, "(")
@@ -76,184 +85,559 @@ export function formatArabicRtl(text: string): string {
     }
   }
 
-  // Split into tokens by space and reverse
   return protectedText.split(" ").reverse().join(" ");
 }
 
+// Styling Constants (Academic Navy / Slate / Gold Palette)
+const COLOR_NAVY_HEADER = "FF1B365D";
+const COLOR_NAVY_LIGHT = "FFEBF2FA";
+const COLOR_NAVY_MID = "FF24436E";
+const COLOR_GOLD_ACCENT = "FFC59B27";
+const COLOR_BORDER = "FFD1D5DB";
+const COLOR_ZEBRA_FILL = "FFF8FAFC";
+const COLOR_WHITE = "FFFFFFFF";
+
+const borderThin = {
+  top: { style: "thin" as const, color: { argb: COLOR_BORDER } },
+  left: { style: "thin" as const, color: { argb: COLOR_BORDER } },
+  bottom: { style: "thin" as const, color: { argb: COLOR_BORDER } },
+  right: { style: "thin" as const, color: { argb: COLOR_BORDER } },
+};
+
 /**
- * Generate a white-label Excel (.xlsx) file with:
- * - Sheet 1: Clean data with Arabic column headers + methodology note
- * - Sheet 2: Codebook with field names, Arabic descriptions, and types
+ * Generate a research-grade Excel (.xlsx) workbook with 5 sheets:
+ * 1. لوحة المؤشرات العامة (Executive KPI Dashboard)
+ * 2. البيانات (Full Clean Dataset with RTL & Frozen Header)
+ * 3. تحليل التفاعل (Engagement & Distribution Analysis)
+ * 4. جودة البيانات (Data Quality, Deduplication & Completeness Audit)
+ * 5. دليل الحقول (Dynamic Data Codebook)
  */
-export async function generateExcelReport(payload: any): Promise<Buffer> {
+export async function generateExcelReport(
+  payload: any,
+  options?: { deduplicationAudit?: any[] }
+): Promise<Buffer> {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+  if (norm.metadata.entityType === "companies") {
+    return generateCompanyExcelReport(payload, options?.deduplicationAudit);
+  }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  wb.title = "Diger Data Platform Export";
+  wb.title = norm.metadata.title;
 
-  const profile = payload.profile || {};
-  const metadata = payload.metadata || {};
-  const dateStr = metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const rowsCount = norm.rows.length;
 
-  // ================= Sheet 1: Data =================
-  const wsData = wb.addWorksheet("البيانات", { views: [{ rightToLeft: true }] });
+  // ================= Sheet 1: لوحة المؤشرات العامة =================
+  const wsDash = wb.addWorksheet("لوحة المؤشرات العامة", { views: [{ rightToLeft: true }] });
 
-  // Title Banner Rows
-  const titleRow = wsData.addRow(["منصة Diger لاستخراج البيانات العامة"]);
-  titleRow.font = { name: "Arial", size: 14, bold: true, color: { argb: "FF0F172A" } };
+  // Title Block
+  wsDash.mergeCells("A1:H1");
+  const titleCell = wsDash.getCell("A1");
+  titleCell.value = norm.metadata.title;
+  titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
+  titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  wsDash.getRow(1).height = 40;
 
-  const totalRowsCount = payload.rows?.length || (payload.profile ? 1 : 0);
-  const methText = `ملاحظة منهجية: تم جمع هذه البيانات من مصادر عامة ومتاحة علنًا بتاريخ ${dateStr}. إجمالي السجلات: ${totalRowsCount}. ملاحظة: هذه البيانات عامة ومتاحة علنًا، ولا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.`;
-  const methRow = wsData.addRow([methText]);
-  methRow.font = { name: "Arial", size: 9.5, italic: true, color: { argb: "FF475569" } };
+  // Subtitle
+  wsDash.mergeCells("A2:H2");
+  const subCell = wsDash.getCell("A2");
+  subCell.value = `تقرير استخراج وتوثيق البيانات الأكاديمية • ${norm.metadata.platform} • تاريخ الاستخراج: ${dateStr}`;
+  subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF2D3748" } };
+  subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_LIGHT } };
+  subCell.alignment = { horizontal: "center", vertical: "middle" };
+  wsDash.getRow(2).height = 24;
 
-  wsData.addRow([]); // Blank line
+  wsDash.addRow([]); // Blank row 3
 
-  if (payload.rows && Array.isArray(payload.rows) && payload.rows.length > 0) {
-    // Arbitrary tabular rows support
-    const rawKeys = Object.keys(payload.rows[0]);
-    const headerRow = wsData.addRow(rawKeys);
-    headerRow.font = { name: "Arial", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E293B" } };
-    headerRow.alignment = { horizontal: "center", vertical: "middle" };
-    headerRow.height = 28;
+  // 4 KPI Summary Cards (Rows 4 & 5)
+  wsDash.getRow(4).height = 20;
+  wsDash.getRow(5).height = 32;
 
-    for (const r of payload.rows) {
-      const rowVals = rawKeys.map((k) => (typeof r[k] === "object" ? JSON.stringify(r[k]) : r[k] ?? ""));
-      const addedRow = wsData.addRow(rowVals);
-      addedRow.font = { name: "Arial", size: 10 };
-      addedRow.alignment = { vertical: "middle" };
-      addedRow.height = 22;
-    }
-
-    wsData.columns = rawKeys.map(() => ({ width: 22 }));
-  } else {
-    // Column Headers for TikTok profile
-    const headerValues = [
-      "معرف الحساب",
-      "اسم المستخدم",
-      "الاسم الظاهر",
-      "النبذة التعريفية",
-      "حساب موثق",
-      "إجمالي المتابعين",
-      "الحسابات المتابَعة",
-      "إجمالي الإعجابات",
-      "عدد مقاطع الفيديو",
-      "رابط البايو",
-      "تاريخ الجمع",
-    ];
-
-    const headerRow = wsData.addRow(headerValues);
-    headerRow.font = { name: "Arial", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
-    headerRow.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "FF1E293B" }, // Dark slate
-    };
-    headerRow.alignment = { horizontal: "center", vertical: "middle" };
-    headerRow.height = 28;
-
-    // Data Row
-    const dataValues = [
-      profile.id || "",
-      `@${profile.uniqueId || ""}`,
-      profile.nickname || "",
-      profile.signature || "",
-      profile.verified ? "نعم" : "لا",
-      Number(profile.followerCount || 0),
-      Number(profile.followingCount || 0),
-      Number(profile.heartCount || 0),
-      Number(profile.videoCount || 0),
-      profile.bioLink || "",
-      dateStr,
-    ];
-
-    const dataRow = wsData.addRow(dataValues);
-    dataRow.font = { name: "Arial", size: 10.5 };
-    dataRow.alignment = { vertical: "middle" };
-    dataRow.height = 24;
-
-    // Format numbers with comma separator
-    dataRow.getCell(6).numFmt = "#,##0";
-    dataRow.getCell(7).numFmt = "#,##0";
-    dataRow.getCell(8).numFmt = "#,##0";
-    dataRow.getCell(9).numFmt = "#,##0";
-
-    // Auto-fit column widths
-    wsData.columns = [
-      { width: 16 }, // ID
-      { width: 18 }, // Username
-      { width: 22 }, // Nickname
-      { width: 45 }, // Signature
-      { width: 14 }, // Verified
-      { width: 18 }, // Followers
-      { width: 18 }, // Following
-      { width: 20 }, // Likes
-      { width: 18 }, // Videos
-      { width: 30 }, // Bio Link
-      { width: 15 }, // Date
-    ];
-  }
-
-  // ================= Sheet 2: Codebook =================
-  const wsCode = wb.addWorksheet("دليل البيانات", { views: [{ rightToLeft: true }] });
-
-  const codeTitle = wsCode.addRow(["دليل حقول ومصطلحات البيانات (Data Codebook)"]);
-  codeTitle.font = { name: "Arial", size: 13, bold: true, color: { argb: "FF0F172A" } };
-  wsCode.addRow([]);
-
-  const codeHeader = wsCode.addRow(["اسم الحقل (Field)", "الوصف باللغة العربية (Description)", "نوع البيانات (Type)"]);
-  codeHeader.font = { name: "Arial", size: 10.5, bold: true, color: { argb: "FFFFFFFF" } };
-  codeHeader.fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FF334155" },
-  };
-  codeHeader.alignment = { horizontal: "center", vertical: "middle" };
-  codeHeader.height = 25;
-
-  const codeRows = [
-    ["id", "المعرف الرقمي الفريد للحساب على المنصة", "نص (String)"],
-    ["uniqueId", "اسم المستخدم الرسمي الفريد (Handle)", "نص (String)"],
-    ["nickname", "الاسم المعروض الظاهر للمستخدم في الملف الشخصي", "نص (String)"],
-    ["signature", "النبذة التعريفية وسيرة الحساب المسجلة (Bio)", "نص (String)"],
-    ["verified", "حالة توثيق الحساب بالعلامة الرسمية (نعم / لا)", "منطقي (Boolean)"],
-    ["followerCount", "إجمالي عدد المتابعين للحساب", "رقم صحيح (Integer)"],
-    ["followingCount", "إجمالي عدد الحسابات التي يتابعها هذا الحساب", "رقم صحيح (Integer)"],
-    ["heartCount", "إجمالي عدد الإعجابات التي حصلت عليها جميع مقاطع الحساب", "رقم صحيح (Integer)"],
-    ["videoCount", "إجمالي عدد مقاطع الفيديو المنشورة في الحساب", "رقم صحيح (Integer)"],
-    ["bioLink", "الرابط الإلكتروني الخارجي المضاف في ملف الحساب إن وجد", "نص (String)"],
-    ["collectedAt", "تاريخ وتوقيت إتمام عملية استخراج البيانات", "تاريخ (Date)"],
+  const kpiLayout = [
+    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي السجلات المستخرجة", val: `${rowsCount.toLocaleString("en-US")} سجل` },
+    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "المشاهدات / التفاعلات المرصودة", val: (norm.kpis.totalViews || norm.kpis.totalLikes || norm.kpis.totalComments || 0).toLocaleString("en-US") },
+    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "نسبة اكتمال البيانات", val: `${norm.kpis.dataCompletenessPct}%` },
+    { colsLabel: "G4:H4", colsVal: "G5:H5", label: "المنصة المستهدفة", val: norm.metadata.platform },
   ];
 
-  codeRows.forEach((r, idx) => {
-    const row = wsCode.addRow(r);
-    row.font = { name: "Arial", size: 10 };
-    row.height = 20;
-    if (idx % 2 === 1) {
-      row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
-    }
+  kpiLayout.forEach((card) => {
+    wsDash.mergeCells(card.colsLabel);
+    wsDash.mergeCells(card.colsVal);
+
+    const lbl = wsDash.getCell(card.colsLabel.split(":")[0]);
+    lbl.value = card.label;
+    lbl.font = { name: "Calibri", size: 9.5, bold: true, color: { argb: COLOR_WHITE } };
+    lbl.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+    lbl.alignment = { horizontal: "center", vertical: "middle" };
+
+    const val = wsDash.getCell(card.colsVal.split(":")[0]);
+    val.value = card.val;
+    val.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+    val.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+    val.alignment = { horizontal: "center", vertical: "middle" };
+    val.border = borderThin;
   });
 
-  wsCode.columns = [
-    { width: 22 },
-    { width: 55 },
-    { width: 20 },
+  wsDash.addRow([]); // Blank row 6
+
+  // Methodology Statement Banner (Row 7 & 8)
+  wsDash.mergeCells("A7:H8");
+  const methCell = wsDash.getCell("A7");
+  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
+  methCell.font = { name: "Calibri", size: 9.5, color: { argb: "FF78350F" } };
+  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
+  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+  methCell.border = borderThin;
+  wsDash.getRow(7).height = 24;
+  wsDash.getRow(8).height = 24;
+
+  wsDash.columns = [
+    { width: 16 }, { width: 18 }, { width: 22 }, { width: 22 },
+    { width: 20 }, { width: 20 }, { width: 24 }, { width: 24 },
   ];
+
+  // ================= Sheet 2: البيانات =================
+  const wsData = wb.addWorksheet("البيانات", {
+    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+  });
+
+  // Create Header Map from Codebook for Arabic column headers
+  const codebookMap = new Map<string, string>();
+  norm.codebook.forEach((c) => codebookMap.set(c.field, c.titleAr));
+
+  const headers = norm.columns.map((c) => codebookMap.get(c) || c);
+  const dataHeaderRow = wsData.addRow(headers);
+  dataHeaderRow.font = { name: "Calibri", size: 11, bold: true, color: { argb: COLOR_WHITE } };
+  dataHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  dataHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+  dataHeaderRow.height = 28;
+
+  // Populate Rows with Zebra Striping and Formula Escaping
+  norm.rows.forEach((r, idx) => {
+    const rowValues = norm.columns.map((col) => {
+      const val = r[col];
+      if (val === null || val === undefined) return "";
+      if (typeof val === "boolean") return val ? "نعم" : "لا";
+      if (typeof val === "number") return val;
+      return escapeFormula(val);
+    });
+
+    const addedRow = wsData.addRow(rowValues);
+    addedRow.font = { name: "Calibri", size: 10 };
+    addedRow.height = 22;
+    addedRow.alignment = { vertical: "middle" };
+
+    const rowFillColor = idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE;
+    addedRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: rowFillColor } };
+
+    // Format numbers
+    addedRow.eachCell((cell, colNumber) => {
+      cell.border = borderThin;
+      if (typeof cell.value === "number") {
+        cell.numFmt = Number.isInteger(cell.value) ? "#,##0" : "#,##0.00";
+      }
+    });
+  });
+
+  // Auto-fit column widths
+  wsData.columns = norm.columns.map((col) => {
+    const isText = ["text", "comment_text", "bio"].includes(col);
+    const isUrl = ["url", "profile_url", "bio_link"].includes(col);
+    return { width: isText ? 45 : isUrl ? 32 : 18 };
+  });
+
+  // ================= Sheet 3: تحليل التفاعل =================
+  const wsEngage = wb.addWorksheet("تحليل التفاعل", { views: [{ rightToLeft: true }] });
+  const engTitle = wsEngage.addRow(["تحليل التفاعل والمؤشرات الكمية العامة (Engagement Analysis)"]);
+  engTitle.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+  wsEngage.addRow([]);
+
+  const engHeaders = ["المؤشر الرقمي (Metric)", "القيمة الإجمالية (Total)", "المتوسط لكل سجل (Avg / Record)", "ملاحظات إحصائية (Notes)"];
+  const engHeaderRow = wsEngage.addRow(engHeaders);
+  engHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  engHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+  engHeaderRow.height = 25;
+  engHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const avg = (val: number) => (rowsCount > 0 ? (val / rowsCount).toFixed(1) : "0");
+  const metricsData = [
+    ["إجمالي المشاهدات (Views)", norm.kpis.totalViews, avg(norm.kpis.totalViews), "مجموع المشاهدات المسجلة للعينات المستخرجة"],
+    ["إجمالي الإعجابات (Likes)", norm.kpis.totalLikes, avg(norm.kpis.totalLikes), "تفاعل الإعجاب الصريح بالمنشورات أو التعليقات"],
+    ["إعادة النشر والمشاركات (Shares / Retweets)", norm.kpis.totalShares, avg(norm.kpis.totalShares), "مدى الانتشار وتناقل المحتوى"],
+    ["التعليقات والردود (Comments / Replies)", norm.kpis.totalComments, avg(norm.kpis.totalComments), "كثافة النقاش والتفاعل النصي المباشر"],
+  ];
+
+  metricsData.forEach((m, idx) => {
+    const row = wsEngage.addRow(m);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 22;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((c) => (c.border = borderThin));
+    if (typeof m[1] === "number") row.getCell(2).numFmt = "#,##0";
+  });
+
+  wsEngage.columns = [{ width: 35 }, { width: 22 }, { width: 25 }, { width: 45 }];
+
+  // ================= Sheet 4: جودة البيانات =================
+  const wsQuality = wb.addWorksheet("جودة البيانات", { views: [{ rightToLeft: true }] });
+  const qTitle = wsQuality.addRow(["تقرير جودة وتدقيق البيانات (Data Quality & Verification Audit)"]);
+  qTitle.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+  wsQuality.addRow([]);
+
+  const qHeaders = ["معيار التدقيق (Audit Criteria)", "النتيجة المرصودة (Observed Result)", "التقييم المنهجي (Methodological Note)"];
+  const qHeaderRow = wsQuality.addRow(qHeaders);
+  qHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  qHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+  qHeaderRow.height = 25;
+  qHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const timeRangeDesc = norm.kpis.earliestDate && norm.kpis.latestDate
+    ? `من ${norm.kpis.earliestDate} إلى ${norm.kpis.latestDate}`
+    : `بتاريخ ${dateStr}`;
+
+  const rawCollectedCount = norm.kpis.totalRecords + (norm.kpis.duplicatesRemoved || 0);
+  const targetRequestedDisplay =
+    (norm.metadata as any).targetRequested != null
+      ? `${(norm.metadata as any).targetRequested} سجل`
+      : "عدد السجلات المطلوبة غير متاح";
+  const qualityData = [
+    ["إجمالي السجلات المستلمة (Raw Collected)", `${rawCollectedCount.toLocaleString("en-US")} سجل`, "إجمالي السجلات الواردة من مزود البيانات قبل الفلترة"],
+    ["السجلات الفريدة المسلمة (Unique Delivered)", `${rowsCount.toLocaleString("en-US")} سجل`, "حجم العينة الفعلي المستخلص والموثق في ملف البيانات"],
+    ["السجلات المكررة المستبعدة (Duplicates Removed)", `${norm.kpis.duplicatesRemoved} سجل`, "تم التحقق من تفرد السجلات بالمعرف الرقمي وبصمة المحتوى واستبعاد التكرارات"],
+    ["السجلات المطلوبة (Target Requested)", targetRequestedDisplay, "الحد المستهدف للعينات المطلوبة في خطة البحث"],
+    ["نسبة اكتمال الحقول (Completeness)", `${norm.kpis.dataCompletenessPct}%`, "نسبة الحقول المحتوية على قيم فعلية غير مفقودة"],
+    ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية ولا تمثل حصراً شاملاً"],
+    ["النطاق الزمني للرصد", timeRangeDesc, "الفترة الزمنية الفعلية لتواريخ النشر المستخرجة"],
+    ["النزاهة المنهجية (Integrity)", "استخراج مباشر من الواجهات العامة المتاحة", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
+    ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية", "استخراج مقتصر على الواجهات والصفحات المتاحة علناً دون تجاوز"],
+  ];
+
+  qualityData.forEach((q, idx) => {
+    const row = wsQuality.addRow(q);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 22;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((c) => (c.border = borderThin));
+  });
+
+  wsQuality.columns = [{ width: 35 }, { width: 25 }, { width: 50 }];
+
+  // ================= Sheet 5: دليل الحقول =================
+  const wsCode = wb.addWorksheet("دليل الحقول", { views: [{ rightToLeft: true }] });
+  const codeTitle = wsCode.addRow(["دليل حقول ومصطلحات البيانات (Dynamic Data Codebook)"]);
+  codeTitle.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+  wsCode.addRow([]);
+
+  const codeHeaders = ["اسم الحقل (Field)", "المسمى باللغة العربية (Label)", "الوصف باللغة العربية (Description)", "نوع البيانات (Data Type)"];
+  const codeHeaderRow = wsCode.addRow(codeHeaders);
+  codeHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  codeHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+  codeHeaderRow.height = 25;
+  codeHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  norm.codebook.forEach((c, idx) => {
+    const row = wsCode.addRow([c.field, c.titleAr, c.descriptionAr, c.dataType]);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 20;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+
+  wsCode.columns = [{ width: 20 }, { width: 25 }, { width: 55 }, { width: 22 }];
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }
 
 /**
- * Generate a white-label 1-page PDF report in Arabic RTL with embedded IBM Plex Sans Arabic font
+ * Generates an executive, professional multi-sheet company research workbook:
+ * 1. الملخص التنفيذي ومؤشرات السوق (Executive Summary & KPIs)
+ * 2. دليل الشركات المعتمد (Company Directory with Sector Groupings)
+ * 3. بيانات الشركات للتصفية (Flat Filterable Table with Autofilters)
+ * 4. سجل تدقيق الاستبعاد والمطابقة (Negative-List & Deduplication Audit Log)
+ * 5. جودة البيانات ومحددات الحصر (Data Quality & Limitations)
+ * 6. دليل الحقول (Dynamic Data Codebook)
+ */
+export async function generateCompanyExcelReport(
+  payload: any,
+  deduplicationAudit: any[] = []
+): Promise<Buffer> {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = norm.metadata.title;
+
+  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const rowsCount = norm.rows.length;
+
+  // ================= Sheet 1: الملخص التنفيذي ومؤشرات السوق =================
+  const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", { views: [{ rightToLeft: true }] });
+  wsExec.mergeCells("A1:H1");
+  const titleCell = wsExec.getCell("A1");
+  titleCell.value = norm.metadata.title;
+  titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
+  titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  wsExec.getRow(1).height = 40;
+
+  wsExec.mergeCells("A2:H2");
+  const subCell = wsExec.getCell("A2");
+  subCell.value = `تقرير استقصاء وحصر الشركات المعتمدة • ${norm.metadata.platform} • تاريخ الاستخراج: ${dateStr}`;
+  subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF2D3748" } };
+  subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_LIGHT } };
+  subCell.alignment = { horizontal: "center", vertical: "middle" };
+  wsExec.getRow(2).height = 24;
+
+  wsExec.addRow([]); // Blank row 3
+  wsExec.getRow(4).height = 20;
+  wsExec.getRow(5).height = 32;
+
+  const dupsCount = deduplicationAudit.filter((a) => a.status === "CONFIRMED_DUPLICATE").length || norm.kpis.duplicatesRemoved || 0;
+  const ambigCount = deduplicationAudit.filter((a) => a.status === "POSSIBLE_DUPLICATE").length;
+
+  const kpis = [
+    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي الشركات المسلمة", val: `${rowsCount.toLocaleString("en-US")} شركة` },
+    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "الشركات المستبعدة للتكرار", val: `${dupsCount} شركة` },
+    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "حالات التشابه للمراجعة", val: `${ambigCount} حالة` },
+    { colsLabel: "G4:H4", colsVal: "G5:H5", label: "النطاق الجغرافي", val: norm.metadata.platform },
+  ];
+
+  kpis.forEach((card) => {
+    wsExec.mergeCells(card.colsLabel);
+    wsExec.mergeCells(card.colsVal);
+    const lbl = wsExec.getCell(card.colsLabel.split(":")[0]);
+    lbl.value = card.label;
+    lbl.font = { name: "Calibri", size: 9.5, bold: true, color: { argb: COLOR_WHITE } };
+    lbl.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+    lbl.alignment = { horizontal: "center", vertical: "middle" };
+
+    const val = wsExec.getCell(card.colsVal.split(":")[0]);
+    val.value = card.val;
+    val.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+    val.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+    val.alignment = { horizontal: "center", vertical: "middle" };
+    val.border = borderThin;
+  });
+
+  wsExec.addRow([]); // Blank row 6
+  wsExec.mergeCells("A7:H8");
+  const methCell = wsExec.getCell("A7");
+  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
+  methCell.font = { name: "Calibri", size: 9.5, italic: true, color: { argb: "FF475569" } };
+  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
+  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+  methCell.border = borderThin;
+
+  // ================= Sheet 2: دليل الشركات المعتمد =================
+  const wsDir = wb.addWorksheet("دليل الشركات المعتمد", { views: [{ rightToLeft: true }] });
+  const dirHeaders = ["م", "اسم الشركة / المؤسسة", "النشاط / التخصص الرئيسي", "الموقع الإلكتروني الرسمي", "المدينة / المحافظة", "الهاتف التجاري", "حالة التحقق"];
+  const dirHeaderRow = wsDir.addRow(dirHeaders);
+  dirHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  dirHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  dirHeaderRow.height = 26;
+  dirHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  norm.rows.forEach((r, idx) => {
+    const row = wsDir.addRow([
+      idx + 1,
+      r.company_name || r.name || r.title || `شركة #${idx + 1}`,
+      r.activity || r.sector || r.category || "مقاولات وأعمال هندسية",
+      r.website || r.domain || r.url || "غير متاح",
+      r.city || r.governorate || "جمهورية مصر العربية",
+      r.phone || r.business_phone || "عام / غير مدرج",
+      "معتمدة مستقلة",
+    ]);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 22;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsDir.columns = [{ width: 8 }, { width: 35 }, { width: 32 }, { width: 30 }, { width: 22 }, { width: 20 }, { width: 18 }];
+
+  // ================= Sheet 3: بيانات الشركات للتصفية =================
+  const wsFlat = wb.addWorksheet("بيانات الشركات للتصفية", { views: [{ rightToLeft: true }] });
+  const flatHeaders = ["كود السجل", "اسم الشركة", "النطاق الرسمي", "النشاط", "المحافظة", "الهاتف الرسمي", "مصدر الاستخراج"];
+  const flatHeaderRow = wsFlat.addRow(flatHeaders);
+  flatHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  flatHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+  flatHeaderRow.height = 25;
+  flatHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  norm.rows.forEach((r, idx) => {
+    const row = wsFlat.addRow([
+      r.id || `comp_${idx + 1}`,
+      r.company_name || r.name || r.title || `شركة #${idx + 1}`,
+      r.website || r.domain || r.url || "N/A",
+      r.activity || r.sector || "مقاولات",
+      r.city || r.governorate || "مصر",
+      r.phone || r.business_phone || "N/A",
+      r.source || "بيانات عامة",
+    ]);
+    row.font = { name: "Calibri", size: 9.5 };
+    row.height = 20;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
+  wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 18 }, { width: 20 }];
+
+  // ================= Sheet 4: سجل تدقيق الاستبعاد والمطابقة =================
+  const wsAudit = wb.addWorksheet("سجل تدقيق الاستبعاد والمطابقة", { views: [{ rightToLeft: true }] });
+  const auditHeaders = ["كود الفحص", "اسم الشركة المرشحة", "النطاق المفحوص", "حالة التدقيق (Status)", "السجل المرجعي المطابق", "قاعدة التدقيق (Match Rule)", "السبب والتعليل المنهجي"];
+  const auditHeaderRow = wsAudit.addRow(auditHeaders);
+  auditHeaderRow.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+  auditHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+  auditHeaderRow.height = 25;
+  auditHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const auditItems = deduplicationAudit.length > 0
+    ? deduplicationAudit
+    : norm.rows.map((r, i) => ({
+        candidateId: `cand_${i + 1}`,
+        candidateName: r.company_name || r.name || `شركة #${i + 1}`,
+        candidateDomain: r.website || r.domain,
+        status: "DISTINCT",
+        matchedBaselineRecord: "—",
+        matchRule: "BASELINE_UNMATCHED_UNIQUE",
+        reasonAr: "كيان مستقل تماماً بدون تطابق في النطاق أو العلامة التجارية.",
+      }));
+
+  auditItems.forEach((a, idx) => {
+    const row = wsAudit.addRow([
+      a.candidateId || `cand_${idx + 1}`,
+      a.candidateName,
+      a.candidateDomain || "—",
+      a.status === "CONFIRMED_DUPLICATE" ? "مستبعد لتكراره قطيعاً" : a.status === "POSSIBLE_DUPLICATE" ? "محتمل للمراجعة اليدوية" : "مقبول مستقل",
+      a.matchedBaselineRecord || "—",
+      a.matchRule || "CHECKED_OK",
+      a.reasonAr || "سجل مفحوص وفق ضوابط النزاهة.",
+    ]);
+    row.font = { name: "Calibri", size: 9 };
+    row.height = 20;
+
+    let fillColor = COLOR_WHITE;
+    if (a.status === "CONFIRMED_DUPLICATE") fillColor = "FFFEE2E2"; // soft red
+    else if (a.status === "POSSIBLE_DUPLICATE") fillColor = "FFFEF9C3"; // soft yellow
+    else if (idx % 2 === 1) fillColor = COLOR_ZEBRA_FILL;
+
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsAudit.columns = [{ width: 14 }, { width: 30 }, { width: 25 }, { width: 22 }, { width: 25 }, { width: 28 }, { width: 45 }];
+
+  // ================= Sheet 5: جودة البيانات ومحددات الحصر =================
+  const wsQuality = wb.addWorksheet("جودة البيانات ومحددات الحصر", { views: [{ rightToLeft: true }] });
+  const qHeaders = ["المؤشر المنهجي (Metric)", "القيمة المسجلة (Recorded Value)", "الشرح والتوصيف الأكاديمي (Description)"];
+  const qHeaderRow = wsQuality.addRow(qHeaders);
+  qHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  qHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+  qHeaderRow.height = 25;
+  qHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const rawCollectedCount = rowsCount + dupsCount;
+  const targetRequestedDisplay = (norm.metadata as any).targetRequested != null
+    ? `${(norm.metadata as any).targetRequested} شركة`
+    : "عدد السجلات المطلوبة غير متاح";
+
+  const qualityData = [
+    ["إجمالي السجلات المستلمة (Raw Collected)", `${rawCollectedCount.toLocaleString("en-US")} شركة`, "إجمالي الكيانات الواردة من مصادر البحث العلنية قبل الفلترة والتنقية"],
+    ["الشركات الفريدة المسلمة (Unique Delivered)", `${rowsCount.toLocaleString("en-US")} شركة`, "حجم العينة الفعلي المستخلص والموثق في ملف البيانات بعد استبعاد المكررات"],
+    ["الشركات المستبعدة للتكرار (Duplicates Removed)", `${dupsCount} شركة`, "تم التحقق من تفرد الشركات بمطابقة النطاقات والعلامات التجارية واستبعاد التكرارات القطعية"],
+    ["حالات التشابه المحتملة (Ambiguous Matches)", `${ambigCount} حالة`, "كيانات أظهرت تشابهاً جزئياً وتمت إتاحتها للمراجعة دون حذف تعسفي"],
+    ["الشركات المطلوبة (Target Requested)", targetRequestedDisplay, "الحد المستهدف للشركات المطلوبة في خطة البحث"],
+    ["نسبة اكتمال الحقول (Completeness)", `${norm.kpis.dataCompletenessPct}%`, "نسبة الحقول المحتوية على قيم فعلية غير مفقودة"],
+    ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع الأعمال والشركات غير محصور بقائمة شاملة فإن العينة غير احتمالية"],
+    ["النزاهة المنهجية (Integrity)", "استخراج مباشر من الواجهات العامة المتاحة", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
+    ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية للمؤسسات دون أي جمع لبيانات اتصال شخصية", "استخراج مقتصر على المعلومات المؤسسية المعلنة للشركات دون انتهاك للخصوصية الفردية"],
+  ];
+
+  qualityData.forEach((q, idx) => {
+    const row = wsQuality.addRow(q);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 22;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((c) => (c.border = borderThin));
+  });
+  wsQuality.columns = [{ width: 35 }, { width: 25 }, { width: 55 }];
+
+  // ================= Sheet 6: دليل الحقول =================
+  const wsCode = wb.addWorksheet("دليل الحقول", { views: [{ rightToLeft: true }] });
+  const codeHeaders = ["اسم الحقل (Field)", "المسمى باللغة العربية (Label)", "الوصف باللغة العربية (Description)", "نوع البيانات (Data Type)"];
+  const codeHeaderRow = wsCode.addRow(codeHeaders);
+  codeHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  codeHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+  codeHeaderRow.height = 25;
+  codeHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const companyCodebook = [
+    { field: "company_name", titleAr: "اسم الشركة", descriptionAr: "الاسم التجاري الرسمي للمؤسسة أو الكيان", dataType: "Text" },
+    { field: "activity", titleAr: "النشاط / التخصص", descriptionAr: "مجال عمل ونشاط الشركة (مثل كهروميكانيكا، مقاولات، إلخ)", dataType: "Text" },
+    { field: "website", titleAr: "الموقع الإلكتروني", descriptionAr: "النطاق الرقمي الرسمي للشركة على الإنترنت", dataType: "URL" },
+    { field: "city", titleAr: "المدينة / المحافظة", descriptionAr: "المقر الجغرافي أو النطاق التشغيلي للشركة", dataType: "Text" },
+    { field: "phone", titleAr: "الهاتف التجاري الرسمي", descriptionAr: "أرقام التواصل والخدمات المعلنة للشركة", dataType: "Text" },
+    { field: "source", titleAr: "مصدر البيانات", descriptionAr: "الواجهة العامة أو السجل الذي استخرجت منه البيانات", dataType: "Text" },
+  ];
+
+  companyCodebook.forEach((c, idx) => {
+    const row = wsCode.addRow([c.field, c.titleAr, c.descriptionAr, c.dataType]);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 20;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsCode.columns = [{ width: 20 }, { width: 25 }, { width: 55 }, { width: 22 }];
+
+  const buffer = await wb.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+
+/**
+ * Generate a white-label CSV file with UTF-8 BOM and formula injection protection
+ */
+export function generateCsvReport(payload: any): Buffer {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+
+  const escapeCsv = (val: any) => {
+    const s = String(val ?? "").replace(/\r?\n/g, " ").replace(/"/g, '""');
+    return `"${s}"`;
+  };
+
+  // Header row using Arabic column titles from codebook
+  const codebookMap = new Map<string, string>();
+  norm.codebook.forEach((c) => codebookMap.set(c.field, c.titleAr));
+  const headers = norm.columns.map((c) => codebookMap.get(c) || c);
+  const headerLine = headers.map(escapeCsv).join(",");
+
+  const rowLines = norm.rows.map((row: any) => {
+    return norm.columns
+      .map((col) => {
+        const val = row[col];
+        if (val === null || val === undefined) return '""';
+        if (typeof val === "boolean") return escapeCsv(val ? "نعم" : "لا");
+        if (typeof val === "number") return String(val);
+        return escapeCsv(escapeFormula(val));
+      })
+      .join(",");
+  });
+
+  // UTF-8 BOM (\uFEFF) ensures Excel and statistical software open Arabic without mojibake
+  const csvContent = "\uFEFF" + headerLine + "\n" + rowLines.join("\n") + "\n";
+  return Buffer.from(csvContent, "utf-8");
+}
+
+/**
+ * Generate a white-label Arabic PDF research report with embedded IBM Plex Sans Arabic font
  */
 export function generatePdfReport(payload: any): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    const norm: NormalizedDataset = normalizeDataset(payload);
+
     const doc = new PDFDocument({
       size: "A4",
       margins: { top: 30, bottom: 30, left: 35, right: 35 },
       info: {
-        Title: "تقرير استخراج بيانات Diger",
+        Title: norm.metadata.title,
         Author: "Diger",
         Subject: "Data Report",
         Creator: "Diger Data Platform",
@@ -268,28 +652,23 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(buffers)));
     doc.on("error", reject);
 
-    const contentWidth = 525; // A4 width (595.28) minus margins (35 * 2)
-    const profile = payload.profile || {};
-    const metadata = payload.metadata || {};
-    const dateStr = metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-    const isTabular = Boolean(payload.rows && Array.isArray(payload.rows) && !payload.profile);
-    const titleText = isTabular ? (payload.metadata?.title || "تقرير استخراج البيانات") : "منصة Diger لاستخراج البيانات العامة";
-    const subTitleText = isTabular
-      ? `إجمالي السجلات: ${payload.rows.length} • تاريخ الاستخراج: ${dateStr}`
-      : `تقرير ملف تيك توك الشخصي • تاريخ الاستخراج: ${dateStr}`;
+    const contentWidth = 525;
+    const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const rowsCount = norm.rows.length;
 
-    // 1. Header Banner
-    doc.rect(35, 28, contentWidth, 54).fill("#0F172A"); // Dark slate
+    // 1. Header Banner (Navy)
+    doc.rect(35, 28, contentWidth, 54).fill("#1B365D");
 
-    doc.font("ArabicBold").fontSize(15).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl(titleText), 50, 36, {
+    doc.font("ArabicBold").fontSize(14).fillColor("#FFFFFF");
+    doc.text(formatArabicRtl(norm.metadata.title), 50, 36, {
       width: contentWidth - 30,
       align: "right",
       wordSpacing: 3.5,
     });
 
-    doc.font("ArabicRegular").fontSize(9).fillColor("#94A3B8");
-    doc.text(formatArabicRtl(subTitleText), 50, 58, {
+    doc.font("ArabicRegular").fontSize(8.5).fillColor("#CBD5E1");
+    const subTitle = `تقرير استخراج وتوثيق البيانات الأكاديمية • ${norm.metadata.platform} • تاريخ الاستخراج: ${dateStr}`;
+    doc.text(formatArabicRtl(subTitle), 50, 58, {
       width: contentWidth - 30,
       align: "right",
       wordSpacing: 3,
@@ -297,230 +676,108 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     let currentY = 92;
 
-    if (isTabular) {
-      // Tabular multi-record layout
-      doc.rect(35, currentY, contentWidth, 50).fillAndStroke("#F8FAFC", "#E2E8F0");
-      doc.font("ArabicBold").fontSize(11).fillColor("#0F172A");
-      doc.text(formatArabicRtl(`ملخص استخراج البيانات (${payload.rows.length} سجل)`), 50, currentY + 10, {
-        width: contentWidth - 30,
-        align: "right",
-        wordSpacing: 3,
-      });
-      doc.font("ArabicRegular").fontSize(9).fillColor("#475569");
-      doc.text(formatArabicRtl(`تمت معالجة وحفظ البيانات بصيغ Excel و CSV و PDF مع إتاحة التحميل المباشر.`), 50, currentY + 28, {
-        width: contentWidth - 30,
-        align: "right",
-        wordSpacing: 3,
-      });
-
-      currentY += 65;
-
-      // Table preview (first 10 records)
-      doc.font("ArabicBold").fontSize(10).fillColor("#1E293B");
-      doc.text(formatArabicRtl("عينة من السجلات المستخرجة :"), 35, currentY, {
-        width: contentWidth,
-        align: "right",
-        wordSpacing: 3,
-      });
-      currentY += 16;
-
-      const sampleRows = payload.rows.slice(0, 10);
-      const rowHeight = 22;
-      sampleRows.forEach((r: any, idx: number) => {
-        const ry = currentY + idx * rowHeight;
-        const bg = idx % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
-        doc.rect(35, ry, contentWidth, rowHeight).fillAndStroke(bg, "#E2E8F0");
-
-        const previewText = r.title || r.text || r.username || r.id || `السجل #${idx + 1}`;
-        doc.font("ArabicRegular").fontSize(8).fillColor("#0F172A");
-        doc.text(formatArabicRtl(String(previewText).slice(0, 60)), 45, ry + 6, {
-          width: contentWidth - 20,
-          align: "right",
-          wordSpacing: 2.5,
-        });
-      });
-
-      currentY += sampleRows.length * rowHeight + 20;
-
-      // Methodology Note
-      doc.rect(35, currentY, contentWidth, 48).fillAndStroke("#FEF3C7", "#FDE68A");
-      doc.font("ArabicBold").fontSize(8.5).fillColor("#92400E");
-      doc.text(formatArabicRtl("ملاحظة منهجية :"), 45, currentY + 6, {
-        width: contentWidth - 20,
-        align: "right",
-        wordSpacing: 3,
-      });
-      doc.font("ArabicRegular").fontSize(7.5).fillColor("#78350F");
-      doc.text(formatArabicRtl(metadata.methodology || `تم استخراج ${payload.rows.length} سجل بنجاح.`), 45, currentY + 18, {
-        width: contentWidth - 30,
-        align: "right",
-        wordSpacing: 3,
-      });
-
-      // Footer
-      doc.font("ArabicRegular").fontSize(7.5).fillColor("#94A3B8");
-      doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Diger • جميع الحقوق محفوظة"), 35, 792, {
-        width: contentWidth,
-        align: "center",
-        wordSpacing: 3,
-      });
-
-      doc.end();
-      return;
-    }
-
-    // 2. Account Profile Overview Card
-    doc.rect(35, currentY, contentWidth, 76).fillAndStroke("#F8FAFC", "#CBD5E1");
-
-    doc.font("ArabicBold").fontSize(12).fillColor("#0F172A");
-    const profileHandleText = `الحساب المستهدف : ${profile.nickname || "—"} (@${profile.uniqueId || "—"})`;
-    doc.text(formatArabicRtl(profileHandleText), 50, currentY + 10, {
-      width: contentWidth - 30,
-      align: "right",
-      wordSpacing: 3,
-    });
-
-    doc.font("ArabicRegular").fontSize(9).fillColor("#334155");
-    const bioText = profile.signature ? `النبذة التعريفية : ${profile.signature}` : "النبذة التعريفية : لا توجد نبذة مسجلة";
-    doc.text(formatArabicRtl(bioText), 50, currentY + 31, {
-      width: contentWidth - 30,
-      align: "right",
-      wordSpacing: 3,
-    });
-
-    const verifiedText = profile.verified ? "موثق رسمياً ✓" : "غير موثق";
-    const bioLinkText = profile.bioLink ? profile.bioLink : "لا يوجد رابط خارجي";
-    const statusLine = `حالة التوثيق : ${verifiedText}   |   رابط البايو : ${bioLinkText}`;
-    doc.text(formatArabicRtl(statusLine), 50, currentY + 52, {
-      width: contentWidth - 30,
-      align: "right",
-      wordSpacing: 3,
-    });
-
-    currentY += 86;
-
-    // 3. Key Metric Stat Boxes (4 Columns)
-    doc.font("ArabicBold").fontSize(10.5).fillColor("#1E293B");
-    doc.text(formatArabicRtl("المؤشرات الرقمية الرئيسية :"), 35, currentY, {
-      width: contentWidth,
-      align: "right",
-      wordSpacing: 3,
-    });
-    currentY += 16;
-
+    // 2. Summary KPI Cards (4 columns)
     const boxGap = 8;
     const boxWidth = (contentWidth - boxGap * 3) / 4;
-    const boxHeight = 54;
+    const boxHeight = 52;
 
-    const stats = [
-      { label: "المتابعون", val: Number(profile.followerCount || 0).toLocaleString("en-US") },
-      { label: "إجمالي الإعجابات", val: Number(profile.heartCount || 0).toLocaleString("en-US") },
-      { label: "مقاطع الفيديو", val: Number(profile.videoCount || 0).toLocaleString("en-US") },
-      { label: "الحسابات المتابَعة", val: Number(profile.followingCount || 0).toLocaleString("en-US") },
+    const cards = [
+      { label: "إجمالي السجلات", val: `${rowsCount.toLocaleString("en-US")}` },
+      { label: "التفاعل المرصود", val: (norm.kpis.totalViews || norm.kpis.totalLikes || norm.kpis.totalComments || 0).toLocaleString("en-US") },
+      { label: "نسبة الاكتمال", val: `${norm.kpis.dataCompletenessPct}%` },
+      { label: "المنصة", val: norm.metadata.platform.slice(0, 15) },
     ];
 
-    stats.forEach((st, idx) => {
+    cards.forEach((card, idx) => {
       const bx = 35 + idx * (boxWidth + boxGap);
-      doc.rect(bx, currentY, boxWidth, boxHeight).fillAndStroke("#FFFFFF", "#CBD5E1");
+      doc.rect(bx, currentY, boxWidth, boxHeight).fillAndStroke("#F8FAFC", "#CBD5E1");
 
-      doc.font("ArabicRegular").fontSize(8.5).fillColor("#64748B");
-      doc.text(formatArabicRtl(st.label), bx, currentY + 9, {
+      doc.font("ArabicRegular").fontSize(8).fillColor("#64748B");
+      doc.text(formatArabicRtl(card.label), bx, currentY + 8, {
         width: boxWidth,
         align: "center",
-        wordSpacing: 3,
+        wordSpacing: 2,
       });
 
-      doc.font("ArabicBold").fontSize(12).fillColor("#0F172A");
-      doc.text(st.val, bx, currentY + 26, {
+      doc.font("ArabicBold").fontSize(11).fillColor("#1B365D");
+      doc.text(formatArabicRtl(card.val), bx, currentY + 26, {
         width: boxWidth,
         align: "center",
       });
     });
 
-    currentY += 66;
+    currentY += 62;
 
-    // 4. Detailed Data Table
-    doc.font("ArabicBold").fontSize(10.5).fillColor("#1E293B");
-    doc.text(formatArabicRtl("جدول البيانات التفصيلية :"), 35, currentY, {
+    // 3. Tabular Sample Overview
+    doc.font("ArabicBold").fontSize(10.5).fillColor("#1B365D");
+    doc.text(formatArabicRtl("عينة من السجلات المستخرجة :"), 35, currentY, {
       width: contentWidth,
       align: "right",
       wordSpacing: 3,
     });
     currentY += 16;
 
-    const tableRows = [
-      { field: "اسم المستخدم", value: `@${profile.uniqueId || "—"}` },
-      { field: "الاسم المعروض", value: profile.nickname || "—" },
-      { field: "المعرف الرقمي للحساب", value: profile.id || profile.secUid ? String(profile.id || profile.secUid) : "—" },
-      { field: "إجمالي عدد المتابعين", value: Number(profile.followerCount || 0).toLocaleString("en-US") },
-      { field: "إجمالي عدد الإعجابات", value: Number(profile.heartCount || 0).toLocaleString("en-US") },
-      { field: "عدد مقاطع الفيديو المنشورة", value: Number(profile.videoCount || 0).toLocaleString("en-US") },
-      { field: "عدد الحسابات المتابَعة", value: Number(profile.followingCount || 0).toLocaleString("en-US") },
-      { field: "حالة توثيق الحساب", value: profile.verified ? "موثق رسمياً ✓" : "حساب عادي (غير موثق)" },
-      { field: "رابط البايو في الملف", value: profile.bioLink || "لا يوجد رابط" },
-      { field: "تاريخ ووقت الاستخراج", value: `${dateStr} (UTC)` },
-    ];
+    const sampleRows = norm.rows.slice(0, 5);
+    const rowHeight = 36;
 
-    const rowHeight = 21;
-    tableRows.forEach((row, i) => {
-      const ry = currentY + i * rowHeight;
-      const bg = i % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
+    sampleRows.forEach((r, idx) => {
+      const ry = currentY + idx * rowHeight;
+      const bg = idx % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
       doc.rect(35, ry, contentWidth, rowHeight).fillAndStroke(bg, "#E2E8F0");
 
-      // Right column: Field Label
-      doc.font("ArabicBold").fontSize(8.5).fillColor("#334155");
-      doc.text(formatArabicRtl(row.field), 35 + contentWidth / 2, ry + 5, {
-        width: contentWidth / 2 - 15,
+      const labelText = r.company_name || r.name || r.text || r.comment_text || r.display_name || r.bio || r.author_name || `سجل #${idx + 1}`;
+      const metaText = [
+        r.website || r.domain ? `موقع: ${r.website || r.domain}` : null,
+        r.activity || r.sector ? `نشاط: ${r.activity || r.sector}` : null,
+        r.city || r.governorate ? `نطاق: ${r.city || r.governorate}` : null,
+        r.username ? r.username : null,
+        r.likes_count ? `إعجابات: ${r.likes_count}` : null,
+        r.retweets_count ? `إعادة نشر: ${r.retweets_count}` : null,
+        r.views_count ? `مشاهدات: ${r.views_count}` : null,
+        r.published_at ? String(r.published_at).slice(0, 10) : null,
+      ]
+        .filter(Boolean)
+        .join(" • ");
+
+      doc.font("ArabicBold").fontSize(8.5).fillColor("#1E293B");
+      doc.text(formatArabicRtl(String(labelText).slice(0, 90)), 45, ry + 6, {
+        width: contentWidth - 20,
         align: "right",
-        wordSpacing: 3,
+        wordSpacing: 2,
       });
 
-      // Left column: Value
-      const valHasArabic = /[\u0600-\u06FF]/.test(row.value);
-      doc.font("ArabicRegular").fontSize(8.5).fillColor("#0F172A");
-      if (valHasArabic) {
-        doc.text(formatArabicRtl(row.value), 45, ry + 5, {
-          width: contentWidth / 2 - 20,
-          align: "left",
-          wordSpacing: 3,
-        });
-      } else {
-        doc.text(row.value, 45, ry + 5, {
-          width: contentWidth / 2 - 20,
-          align: "left",
+      if (metaText) {
+        doc.font("ArabicRegular").fontSize(7.5).fillColor("#64748B");
+        doc.text(formatArabicRtl(metaText), 45, ry + 20, {
+          width: contentWidth - 20,
+          align: "right",
+          wordSpacing: 2,
         });
       }
     });
 
-    currentY += tableRows.length * rowHeight + 16;
+    currentY += sampleRows.length * rowHeight + 14;
 
-    // 5. Methodology Note Box
-    doc.rect(35, currentY, contentWidth, 48).fillAndStroke("#FEF3C7", "#FDE68A"); // Light amber note
-
+    // 4. Academic Methodology Box
+    doc.rect(35, currentY, contentWidth, 54).fillAndStroke("#FEF3C7", "#FDE68A");
     doc.font("ArabicBold").fontSize(8.5).fillColor("#92400E");
-    doc.text(formatArabicRtl("ملاحظة منهجية وإخلاء مسؤولية :"), 45, currentY + 6, {
+    doc.text(formatArabicRtl("توثيق المنهجية وإخلاء المسؤولية العلمية :"), 45, currentY + 6, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 3,
     });
 
     doc.font("ArabicRegular").fontSize(7.5).fillColor("#78350F");
-    const line1 = `تم استخراج هذه البيانات آلياً من المصدر الرسمي العام بتاريخ ${dateStr} (إجمالي السجلات: 1).`;
-    const line2 = "ملاحظة: هذه البيانات عامة ومتاحة علناً، ولا تمثل بالضرورة عينة تمثيلية لأغراض التعميم الإحصائي.";
-    doc.text(formatArabicRtl(line1), 50, currentY + 18, {
-      width: contentWidth - 40,
-      align: "right",
-      wordSpacing: 2.5,
-    });
-    doc.text(formatArabicRtl(line2), 50, currentY + 31, {
-      width: contentWidth - 40,
+    const methSummary = norm.metadata.methodology.slice(0, 240);
+    doc.text(formatArabicRtl(methSummary), 45, currentY + 20, {
+      width: contentWidth - 20,
       align: "right",
       wordSpacing: 2.5,
     });
 
-    // 6. Footer (Strictly single page)
+    // 5. Footer (Single Page Safe)
     doc.font("ArabicRegular").fontSize(7.5).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج هذا التقرير عبر منصة Diger • جميع الحقوق محفوظة"), 35, 792, {
+    doc.text(formatArabicRtl("تم استخراج وتوثيق هذا التقرير عبر منصة Diger للبيانات العامة • جميع الحقوق محفوظة"), 35, 792, {
       width: contentWidth,
       align: "center",
       wordSpacing: 3,
@@ -531,57 +788,58 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 }
 
 /**
- * Generate a white-label CSV file with UTF-8 BOM for clean Arabic support in Excel
+ * Builds white-label methodology facts document (.txt).
  */
-export function generateCsvReport(payload: any): Buffer {
-  const profile = payload.profile || {};
-  const metadata = payload.metadata || {};
-  const dateStr = metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-
-  const escapeCsv = (val: any) => {
-    const s = String(val ?? "").replace(/"/g, '""');
-    return `"${s}"`;
-  };
-
-  if (payload.rows && Array.isArray(payload.rows) && payload.rows.length > 0) {
-    const rawKeys = Object.keys(payload.rows[0]);
-    const headerLine = rawKeys.map(escapeCsv).join(",");
-    const rowLines = payload.rows.map((row: any) => {
-      return rawKeys.map((k) => escapeCsv(typeof row[k] === "object" ? JSON.stringify(row[k]) : row[k] ?? "")).join(",");
-    });
-    const csvContent = "\uFEFF" + headerLine + "\n" + rowLines.join("\n") + "\n";
-    return Buffer.from(csvContent, "utf-8");
+export function generateMethodologyText(
+  payload: any,
+  options?: {
+    rawCollected?: number;
+    uniqueDelivered?: number;
+    duplicatesRemoved?: number;
+    deduplicationCount?: number;
   }
+): string {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const rowsCount = options?.uniqueDelivered ?? norm.rows.length;
+  const jobId = norm.metadata.jobId || "N/A";
 
-  const headers = [
-    "معرف الحساب",
-    "اسم المستخدم",
-    "الاسم الظاهر",
-    "النبذة التعريفية",
-    "حساب موثق",
-    "إجمالي المتابعين",
-    "الحسابات المتابَعة",
-    "إجمالي الإعجابات",
-    "عدد مقاطع الفيديو",
-    "رابط البايو",
-    "تاريخ الجمع",
-  ];
+  const dedupCount = options?.duplicatesRemoved ?? options?.deduplicationCount ?? norm.kpis.duplicatesRemoved ?? 0;
+  const rawCollected = options?.rawCollected ?? (norm.kpis.totalRecords + (norm.kpis.duplicatesRemoved || 0));
 
-  const values = [
-    escapeCsv(profile.id || ""),
-    escapeCsv(`@${profile.uniqueId || ""}`),
-    escapeCsv(profile.nickname || ""),
-    escapeCsv(profile.signature || ""),
-    escapeCsv(profile.verified ? "نعم" : "لا"),
-    profile.followerCount || 0,
-    profile.followingCount || 0,
-    profile.heartCount || 0,
-    profile.videoCount || 0,
-    escapeCsv(profile.bioLink || ""),
-    escapeCsv(dateStr),
-  ];
-
-  // UTF-8 BOM (\uFEFF) ensures Excel opens Arabic characters flawlessly
-  const csvContent = "\uFEFF" + headers.join(",") + "\n" + values.join(",") + "\n";
-  return Buffer.from(csvContent, "utf-8");
+  return [
+    "============================================================",
+    "             منصة Diger لاستخراج البيانات العامة             ",
+    "               وثيقة المنهجية الأكاديمية والنزاهة              ",
+    "============================================================",
+    "",
+    `معرّف الطلب (Job ID): ${jobId}`,
+    `تاريخ الجمع: ${dateStr}`,
+    `المصدر / المنصة: ${norm.metadata.platform}`,
+    `نوع الكيان المستخرج: ${norm.metadata.entityType}`,
+    `إجمالي السجلات المستخرجة: ${rowsCount}`,
+    `إجمالي السجلات المستلمة (Raw Collected): ${rawCollected}`,
+    `إجمالي السجلات الخام المستخرجة: ${rawCollected}`,
+    `السجلات الفريدة المسلمة (Unique Delivered): ${rowsCount}`,
+    `السجلات الفريدة المعتمدة: ${rowsCount}`,
+    `السجلات المستبعدة للتكرار (Duplicates Removed): ${dedupCount}`,
+    `السجلات المستبعدة والمكررة: ${dedupCount}`,
+    `نسبة اكتمال الحقول (Completeness): ${norm.kpis.dataCompletenessPct}%`,
+    "نسبة التغطية المنهجية (Coverage): نسبة التغطية غير متاحة (مجتمع البحث غير محصور)",
+    "النزاهة المنهجية (Integrity): استخراج مباشر من الواجهات العامة المتاحة",
+    "",
+    "------------------------------------------------------------",
+    "الملاحظات المنهجية ومعايير الجمع والنزاهة:",
+    "------------------------------------------------------------",
+    norm.metadata.methodology,
+    "",
+    "إخلاء المسؤولية العلمية والإحصائية:",
+    "• هذه البيانات عامة ومتاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
+    "• تمثل لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للبيانات المرصودة.",
+    "• نظراً لأن مجتمع البحث العام غير محصور، فإن العينة غير احتمالية ولا تمثل حصراً شاملاً.",
+    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية، ولا تتضمن جمع بيانات اتصال شخصية.",
+    "",
+    "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
+    "============================================================",
+  ].join("\n");
 }

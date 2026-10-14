@@ -1,4 +1,4 @@
-import { ID, Messaging, Permission, Role, TablesDB, Users } from "node-appwrite";
+import { ID, Messaging, Permission, Role, TablesDB, Users } from "./dbCompat";
 import { calculateBalance } from "./ledger";
 import { renderEmailTemplate, resolveSiteUrl, type PlatformEmailTemplateId } from "./emailTemplates";
 
