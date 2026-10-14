@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Markazi_Text, Vazirmatn } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
 import { AuthProvider } from "@/hooks/useUser";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/lib/theme";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
@@ -75,6 +76,7 @@ export default function RootLayout({
         <ThemeProvider>
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>
+        <Analytics />
       </body>
     </html>
   );
