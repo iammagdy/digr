@@ -294,7 +294,6 @@ export default function WalletPage() {
             onAmount={setAmount}
             creditValue={creditValue}
             ipa={ipa}
-            existingRefs={topups.map((t) => t.reference)}
             pendingCount={pendingCount}
             maxPending={maxPending}
             onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
@@ -313,7 +312,7 @@ export default function WalletPage() {
                 <div key={t.$id} className="flex items-center gap-3.5 border-b border-ln py-3.5">
                   <div className="min-w-0 flex-1">
                     <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م · {formatAr(pts)} نقطة</p>
-                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt"><span dir="ltr">{t.reference}</span> · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
+                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt"><span dir="ltr" className="inline-block max-w-[140px] truncate align-bottom font-mono text-[11px]" title={t.reference}>{t.reference.length > 20 ? t.reference.slice(0, 16) + "…" : t.reference}</span> · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
                     {t.status === "rejected" && t.rejectReason && <p className="mb-0 mt-1.5 text-xs leading-[1.7] text-bad">سبب الرفض: {t.rejectReason}</p>}
                   </div>
                   <span className="shrink-0 rounded-full px-3 py-1 text-xs font-medium" style={{ background: b.bg, color: b.fg }}>{USER_STATUS[t.status]}</span>
