@@ -217,37 +217,16 @@ export async function POST(req: NextRequest) {
           fileBuffer = Buffer.from(base64Data, "base64");
         }
       }
-      // Option B: File reference stored in verified user storage path
+      // Option B: File reference stored in storage path - Prohibit repurposing payment receipts storage
       else if (typeof rawFile.storagePath === "string") {
-        const sPath = rawFile.storagePath.trim();
-        // Strict ownership check: Must reside within user's own storage directory
-        if (!sPath.startsWith(`${verifiedUserId}/`) || sPath.includes("..")) {
-          return NextResponse.json(
-            {
-              success: false,
-              requestId,
-              error: "غير مصرح بالوصول إلى هذا الملف أو المسار غير صالح.",
-            },
-            { status: 403 }
-          );
-        }
-
-        const bucketName = typeof rawFile.bucket === "string" && ["receipts", "results"].includes(rawFile.bucket)
-          ? rawFile.bucket
-          : "receipts";
-        const dlRes = await tables.storage.from(bucketName).download(sPath);
-        if (dlRes.error || !dlRes.data) {
-          return NextResponse.json(
-            {
-              success: false,
-              requestId,
-              error: "تعذر تنزيل الملف المرفق من التخزين السحابي.",
-            },
-            { status: 400 }
-          );
-        }
-        const arrayBuf = await dlRes.data.arrayBuffer();
-        fileBuffer = Buffer.from(arrayBuf);
+        return NextResponse.json(
+          {
+            success: false,
+            requestId,
+            error: "غير مصرح باستخدام مسارات التخزين أو إعادة توجيه حاوية إيصالات الدفع. يتم رفع ملفات الاستبعاد مباشرة وبشكل آمن ومحمي عبر محتوى المرفقات المشفر (Direct In-Memory Payload).",
+          },
+          { status: 403 }
+        );
       }
 
       if (!fileBuffer || fileBuffer.length === 0) {
@@ -319,6 +298,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       requestId,
+      exclusionConfirmation: verifiedUploadedFiles.length > 0 ? {
+        fileName: verifiedUploadedFiles[0].name,
+        baselineRowCount: verifiedUploadedFiles[0].baselineRowCount,
+        companiesCount: verifiedUploadedFiles[0].companyNames.length,
+        domainsCount: verifiedUploadedFiles[0].corporateDomains.length,
+      } : undefined,
       ...result,
     });
   } catch (err: any) {

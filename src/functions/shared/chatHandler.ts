@@ -1410,7 +1410,19 @@ export class ChatHandler {
             capabilitySlug: c.capabilitySlug || c.endpointId,
             endpointId: c.endpointId || c.capabilitySlug,
             paginationStrategy: c.paginationStrategy,
-            params: c.params,
+            params: {
+              ...(c.params || {}),
+              ...(brief.exclusionFile
+                ? {
+                    exclusionRules: {
+                      fileName: brief.exclusionFile.name,
+                      baselineRowCount: brief.exclusionFile.baselineRowCount,
+                      companyNames: brief.exclusionFile.companyNames,
+                      corporateDomains: brief.exclusionFile.corporateDomains,
+                    },
+                  }
+                : {}),
+            },
             targetVolumeMin: c.targetVolumeMin || 1,
             targetVolumeMax: c.targetVolumeMax,
           }));
@@ -1519,6 +1531,9 @@ export class ChatHandler {
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          if (brief.exclusionFile) {
+            planSummaryText += `\n• ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
+          }
           if (managedQuote.capacityConstrained) {
             planSummaryText += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
           }

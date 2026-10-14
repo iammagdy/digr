@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   buildMultiStepResearchPlan,
   executeMultiStepPlanOffline,
@@ -187,5 +187,202 @@ describe("Multi-Step Orchestrator Engine", () => {
     expect(summary.uniqueDeliveredCount).toBe(2);
     const failedStep = summary.stepResults.find((s) => s.status === "failed");
     expect(failedStep?.error).toBe("comments_endpoint_timeout_504");
+  });
+
+  describe("validatePlanCapabilities & Negative Validation Tests", () => {
+    it("rejects plan with invalid plan-level limits (maxTargetVolume <= 0 or > 5000)", () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+      plan.maxTargetVolume = 6000;
+      const res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("الحد الأقصى لحجم العينة"))).toBe(true);
+
+      plan.maxTargetVolume = 0;
+      const resZero = validatePlanCapabilities(plan);
+      expect(resZero.isValid).toBe(false);
+    });
+
+    it("rejects steps with invalid execution limits (maxDeliveredUnits, maxCalls, estimatedPoints)", () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+      plan.steps[0].maxDeliveredUnits = 0;
+      plan.steps[0].maxCalls = 600;
+      plan.steps[0].estimatedPoints = -5;
+
+      const res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("الحد الأقصى للوحدات المنجزة"))).toBe(true);
+      expect(res.errors.some((e) => e.includes("الحد الأقصى لعدد الاستدعاءات"))).toBe(true);
+      expect(res.errors.some((e) => e.includes("قيمة النقاط المقدرة"))).toBe(true);
+    });
+
+    it("rejects invalid DAG dependencies (missing dependency, self-dependency, forward dependency)", () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+
+      // 1. Missing dependency
+      plan.steps[0].dependsOn = ["non_existent_step_id"];
+      let res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("غير موجودة في الخطة"))).toBe(true);
+
+      // 2. Self dependency
+      plan.steps[0].dependsOn = [plan.steps[0].stepId];
+      res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("تبعية ذاتية غير صالحة"))).toBe(true);
+
+      // 3. Forward dependency (step 0 depends on step 1 which hasn't run yet)
+      if (plan.steps.length > 1) {
+        plan.steps[0].dependsOn = [plan.steps[1].stepId];
+        res = validatePlanCapabilities(plan);
+        expect(res.isValid).toBe(false);
+        expect(res.errors.some((e) => e.includes("لم تسبقها في الترتيب التنفيذي"))).toBe(true);
+      }
+    });
+
+    it("rejects unknown / unverified capabilities", () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+      plan.steps.push({
+        stepId: "step_unknown",
+        stepNameAr: "إمكانية غير معروفة",
+        stepType: "data_collection",
+        capabilitySlug: "totally-fake-capability",
+        endpointId: "fake.endpoint",
+        params: {},
+        maxDeliveredUnits: 10,
+        maxCalls: 1,
+        estimatedPoints: 10,
+      });
+
+      const res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("غير معتمدة في كتالوج الخدمات"))).toBe(true);
+    });
+
+    it("rejects endpoint mismatch for known capabilities", () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+      plan.steps.push({
+        stepId: "step_mismatch",
+        stepNameAr: "نقطة غير مطابقة",
+        stepType: "data_collection",
+        capabilitySlug: "tiktok-profile",
+        endpointId: "wrong.endpoint.id",
+        params: { username: "validuser" },
+        maxDeliveredUnits: 1,
+        maxCalls: 1,
+        estimatedPoints: 50,
+      });
+
+      const res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("لا يطابق نقطة النهاية المعتمدة"))).toBe(true);
+    });
+
+    it("rejects missing or empty required parameters according to paramsSchema", () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+      plan.steps.push({
+        stepId: "step_missing_param",
+        stepNameAr: "معلمة مفقودة",
+        stepType: "data_collection",
+        capabilitySlug: "tiktok-profile",
+        endpointId: "tikhub.tiktok.user.profile",
+        params: { username: "" }, // required param is empty string
+        maxDeliveredUnits: 1,
+        maxCalls: 1,
+        estimatedPoints: 50,
+      });
+
+      const res = validatePlanCapabilities(plan);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("المعلمة الإلزامية (username) غير موجودة"))).toBe(true);
+    });
+
+    it("rejects capabilities with unsupported billing units or non-positive unit cost in catalog", () => {
+      const mockCatalog: any[] = [
+        {
+          slug: "bad-billing-unit",
+          nameAr: "وحدة تسعير سيئة",
+          nameEn: "Bad Unit",
+          descriptionAr: "وصف",
+          category: "web",
+          pricingUnit: "invalid_unit",
+          unitCostUsd: 0.05,
+          tregEndpointId: "test.endpoint.1",
+          paramsSchema: "{}",
+          enabled: true,
+        },
+        {
+          slug: "zero-cost-unit",
+          nameAr: "سعر صفري",
+          nameEn: "Zero Cost",
+          descriptionAr: "وصف",
+          category: "web",
+          pricingUnit: "call",
+          unitCostUsd: 0,
+          tregEndpointId: "test.endpoint.2",
+          paramsSchema: "{}",
+          enabled: true,
+        },
+      ];
+
+      const plan: any = {
+        planId: "plan_test_catalog",
+        titleAr: "خطة اختبار",
+        targetPlatform: "web",
+        entityType: "companies",
+        maxTargetVolume: 10,
+        totalReservedPoints: 50,
+        createdAt: new Date().toISOString(),
+        steps: [
+          {
+            stepId: "step_bad_unit",
+            stepNameAr: "خطوة 1",
+            stepType: "data_collection",
+            capabilitySlug: "bad-billing-unit",
+            endpointId: "test.endpoint.1",
+            params: {},
+            maxDeliveredUnits: 10,
+            maxCalls: 1,
+            estimatedPoints: 50,
+          },
+          {
+            stepId: "step_zero_cost",
+            stepNameAr: "خطوة 2",
+            stepType: "data_collection",
+            capabilitySlug: "zero-cost-unit",
+            endpointId: "test.endpoint.2",
+            params: {},
+            maxDeliveredUnits: 10,
+            maxCalls: 1,
+            estimatedPoints: 50,
+          },
+        ],
+      };
+
+      const res = validatePlanCapabilities(plan, mockCatalog);
+      expect(res.isValid).toBe(false);
+      expect(res.errors.some((e) => e.includes("وحدة التسعير (invalid_unit) غير مدعومة"))).toBe(true);
+      expect(res.errors.some((e) => e.includes("سعر الوحدة (0) غير صالح أو مفقود"))).toBe(true);
+    });
+
+    it("executeMultiStepPlanOffline NEVER calls mockExecutor if validation fails", async () => {
+      const intent = extractResearchIntent("جمع 10 تغريدات");
+      const plan = buildMultiStepResearchPlan(intent);
+      // Invalidate the plan
+      plan.maxTargetVolume = 99999;
+
+      const mockExecutorSpy = vi.fn(async () => ({ rows: [] }));
+
+      const summary = await executeMultiStepPlanOffline(plan, mockExecutorSpy);
+
+      expect(summary.status).toBe("failed");
+      expect(mockExecutorSpy).not.toHaveBeenCalled();
+      expect(summary.validationErrors?.length).toBeGreaterThan(0);
+    });
   });
 });

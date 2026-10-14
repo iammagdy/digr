@@ -16,6 +16,10 @@ import {
 import { generateMethodologyText } from "../../../../functions/shared/fileGenerators";
 import { artifactVersionRowId } from "../../../../functions/shared/artifactVersions";
 import { getInMemoryPartialStepFallback } from "../../../../lib/server/tregAdapter";
+import {
+  deduplicateAgainstBaseline,
+  EntityRecord,
+} from "../../../../lib/server/negativeListEngine";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -386,8 +390,37 @@ export async function POST(req: NextRequest) {
     });
 
     const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
+    const rawRows = adapterResult.ok ? (adapterResult.rows || []) : [];
+
+    let filteredRows = rawRows;
+    if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
+      const rules = spec.params.exclusionRules;
+      const baselineRecords: EntityRecord[] = [
+        ...(rules.companyNames || []).map((name: string, i: number) => ({
+          id: `base_name_${i}`,
+          name,
+        })),
+        ...(rules.corporateDomains || []).map((domain: string, i: number) => ({
+          id: `base_dom_${i}`,
+          name: "",
+          domain,
+        })),
+      ];
+
+      const candidateRecords: EntityRecord[] = rawRows.map((r: any, i: number) => ({
+        id: r.id || `cand_${i}`,
+        name: r.company_name || r.name || r.title || "",
+        domain: r.domain || r.website || r.url || "",
+        crNumber: r.cr_number || r.commercial_registration,
+        ...r,
+      }));
+
+      const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
+      filteredRows = dedupResult.delivered;
+    }
+
     const acceptedRows = adapterResult.ok
-      ? (adapterResult.rows || []).slice(0, remainingUnits)
+      ? filteredRows.slice(0, remainingUnits)
       : [];
 
     // 8. Commit provider spend with the real cost from the provider response
@@ -624,10 +657,20 @@ export async function POST(req: NextRequest) {
 
       const completedAtIso = new Date().toISOString();
       const dateStr = completedAtIso.split("T")[0];
+      const isProfileResearch =
+        spec.pricingUnit === "call" &&
+        (spec.capabilitySlug.endsWith("-profile") || spec.capabilitySlug.includes("profile")) &&
+        !finalRows.some((r) => r.company_name || r.cr_number);
+
       const isCompanyResearch =
-        spec.capabilitySlug.includes("company") ||
-        spec.capabilitySlug.includes("linkedin") ||
-        finalRows.some((r) => r.company_name || r.cr_number);
+        !isProfileResearch &&
+        (spec.capabilitySlug.includes("company") ||
+         spec.capabilitySlug === "web-company-search" ||
+         finalRows.some((r) => r.company_name || r.cr_number));
+
+      const methodologyText = spec.params?.exclusionRules
+        ? `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`
+        : `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`;
 
       const finalPayload: any = {
         metadata: {
@@ -640,7 +683,8 @@ export async function POST(req: NextRequest) {
           rowsCount: finalRows.length,
           targetRequested: targetMax,
           entityType: isCompanyResearch ? "companies" : undefined,
-          methodology: `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
+          exclusionApplied: Boolean(spec.params?.exclusionRules),
+          methodology: methodologyText,
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,

@@ -113,20 +113,49 @@ export function validatePlanCapabilities(
 } {
   const errors: string[] = [];
   const validSlugs = new Map(allowedCatalog.map((c) => [c.slug, c]));
+  const allPlanStepIds = new Set(plan.steps.map((s) => s.stepId));
   const seenStepIds = new Set<string>();
   const validatedSteps: ResearchStepSpec[] = [];
 
-  for (const step of plan.steps) {
-    seenStepIds.add(step.stepId);
+  // Plan-level limit validation
+  if (!plan.maxTargetVolume || plan.maxTargetVolume <= 0 || plan.maxTargetVolume > 5000) {
+    errors.push(`الحد الأقصى لحجم العينة للخطة (${plan.maxTargetVolume}) غير صالح. يجب أن يكون بين 1 و 5000.`);
+  }
 
-    // Validate DAG dependencies: all dependencies must have appeared earlier in the plan
+  for (const step of plan.steps) {
+    let stepValid = true;
+
+    // Validate execution limits
+    if (!step.maxDeliveredUnits || step.maxDeliveredUnits <= 0 || step.maxDeliveredUnits > 5000) {
+      errors.push(`الحد الأقصى للوحدات المنجزة للخطوة (${step.stepId}) غير صالح: ${step.maxDeliveredUnits}.`);
+      stepValid = false;
+    }
+    if (!step.maxCalls || step.maxCalls <= 0 || step.maxCalls > 500) {
+      errors.push(`الحد الأقصى لعدد الاستدعاءات للخطوة (${step.stepId}) غير صالح: ${step.maxCalls}.`);
+      stepValid = false;
+    }
+    if (typeof step.estimatedPoints !== "number" || step.estimatedPoints < 0 || !Number.isFinite(step.estimatedPoints)) {
+      errors.push(`قيمة النقاط المقدرة للخطوة (${step.stepId}) غير صالحة: ${step.estimatedPoints}.`);
+      stepValid = false;
+    }
+
+    // Validate DAG dependencies: all dependencies must exist in the plan, not be self, and have appeared earlier
     if (step.dependsOn && step.dependsOn.length > 0) {
       for (const dep of step.dependsOn) {
-        if (!seenStepIds.has(dep) || dep === step.stepId) {
-          errors.push(`خطوة (${step.stepId}) تعتمد على خطوة غير موجودة أو سابقة: ${dep}`);
+        if (!allPlanStepIds.has(dep)) {
+          errors.push(`خطوة (${step.stepId}) تعتمد على خطوة غير موجودة في الخطة: ${dep}`);
+          stepValid = false;
+        } else if (dep === step.stepId) {
+          errors.push(`خطوة (${step.stepId}) لا يمكن أن تعتمد على نفسها (تبعية ذاتية غير صالحة).`);
+          stepValid = false;
+        } else if (!seenStepIds.has(dep)) {
+          errors.push(`خطوة (${step.stepId}) تعتمد على خطوة لم تسبقها في الترتيب التنفيذي: ${dep}`);
+          stepValid = false;
         }
       }
     }
+
+    seenStepIds.add(step.stepId);
 
     // Validate Data Collection & Comment Threads against catalog
     if (step.stepType === "data_collection" || step.stepType === "comment_threads") {
@@ -134,19 +163,35 @@ export function validatePlanCapabilities(
 
       // Guard: Placeholder or non-catalog capability
       if (!catalogEntry) {
-        step.isExecutable = false;
+        stepValid = false;
         errors.push(
           `الإمكانية (${step.capabilitySlug}) غير معتمدة في كتالوج الخدمات الموثوق ولا يمكن تنفيذها في الإنتاج.`
         );
       } else {
         // Verify endpoint ID matches the catalog definition
         if (step.endpointId !== catalogEntry.tregEndpointId) {
-          step.isExecutable = false;
+          stepValid = false;
           errors.push(
             `معرّف نقطة النهاية (${step.endpointId}) لا يطابق نقطة النهاية المعتمدة (${catalogEntry.tregEndpointId}) للإمكانية ${step.capabilitySlug}.`
           );
-        } else {
-          step.isExecutable = true;
+        }
+
+        // Verify billing unit
+        const validBillingUnits = ["call", "item", "page"];
+        if (!catalogEntry.pricingUnit || !validBillingUnits.includes(catalogEntry.pricingUnit)) {
+          stepValid = false;
+          errors.push(
+            `وحدة التسعير (${catalogEntry.pricingUnit}) غير مدعومة للإمكانية ${step.capabilitySlug}.`
+          );
+        }
+
+        // Verify price
+        const unitCost = Number(catalogEntry.unitCostUsd);
+        if (!Number.isFinite(unitCost) || unitCost <= 0) {
+          stepValid = false;
+          errors.push(
+            `سعر الوحدة (${catalogEntry.unitCostUsd}) غير صالح أو مفقود للإمكانية ${step.capabilitySlug}.`
+          );
         }
 
         // Schema validation on required parameters
@@ -157,22 +202,26 @@ export function validatePlanCapabilities(
               : catalogEntry.paramsSchema;
           const required = schema?.required || [];
           for (const reqProp of required) {
-            if (step.params[reqProp] === undefined || step.params[reqProp] === "") {
+            if (
+              step.params === undefined ||
+              step.params[reqProp] === undefined ||
+              step.params[reqProp] === null ||
+              step.params[reqProp] === ""
+            ) {
               errors.push(
                 `المعلمة الإلزامية (${reqProp}) غير موجودة في معلمات الخطوة (${step.stepId}).`
               );
-              step.isExecutable = false;
+              stepValid = false;
             }
           }
         } catch {
-          // Schema parse guard
+          errors.push(`فشل تدقيق مخطط المعلمات للإمكانية ${step.capabilitySlug}.`);
+          stepValid = false;
         }
       }
-    } else {
-      // Internal pipeline steps (exclusion, query_expansion, deduplication, normalization, report_generation)
-      step.isExecutable = true;
     }
 
+    step.isExecutable = stepValid;
     validatedSteps.push(step);
   }
 
@@ -228,9 +277,11 @@ export function buildMultiStepResearchPlan(
     });
 
     // 3. Public Company Discovery
-    // Using approved server unit rate for web company discovery
-    const unitPrice = calculateCapabilityUnitPricePoints(0.002, DEFAULT_PRICING_SETTINGS);
-    const discoveryQuote = calculateCapabilityQuote(targetVol * 2, 0.002, 999999, DEFAULT_PRICING_SETTINGS);
+    const linkedinCap = getCatalogMap().get("linkedin-profile");
+    if (!linkedinCap || typeof linkedinCap.unitCostUsd !== "number" || linkedinCap.unitCostUsd <= 0) {
+      throw new Error("سعر أو تعريف القدرة linkedin-profile غير متوفر في الكتالوج المعتمد.");
+    }
+    const discoveryQuote = calculateCapabilityQuote(targetVol * 2, linkedinCap.unitCostUsd, 999999, DEFAULT_PRICING_SETTINGS);
     const discoveryPoints = discoveryQuote.quotedPoints;
     totalEstimatedPoints += discoveryPoints;
 
@@ -281,8 +332,10 @@ export function buildMultiStepResearchPlan(
     // YouTube Multi-Step Workflow with approved catalog endpoints
     const videoVol = Math.max(5, Math.ceil(targetVol / 20));
     const searchCap = getCatalogMap().get("youtube-search");
-    const videoUnitCost = searchCap?.unitCostUsd ?? 0.0015;
-    const videoQuote = calculateCapabilityQuote(videoVol, videoUnitCost, 999999, DEFAULT_PRICING_SETTINGS);
+    if (!searchCap || typeof searchCap.unitCostUsd !== "number" || searchCap.unitCostUsd <= 0) {
+      throw new Error("سعر أو تعريف القدرة youtube-search غير متوفر في الكتالوج المعتمد.");
+    }
+    const videoQuote = calculateCapabilityQuote(videoVol, searchCap.unitCostUsd, 999999, DEFAULT_PRICING_SETTINGS);
     totalEstimatedPoints += videoQuote.quotedPoints;
 
     steps.push({
@@ -300,8 +353,10 @@ export function buildMultiStepResearchPlan(
 
     // Step 2: Collect Comments for discovered videos
     const commentsCap = getCatalogMap().get("youtube-comments");
-    const commentUnitCost = commentsCap?.unitCostUsd ?? 0.0015;
-    const commentsQuote = calculateCapabilityQuote(targetVol, commentUnitCost, 999999, DEFAULT_PRICING_SETTINGS);
+    if (!commentsCap || typeof commentsCap.unitCostUsd !== "number" || commentsCap.unitCostUsd <= 0) {
+      throw new Error("سعر أو تعريف القدرة youtube-comments غير متوفر في الكتالوج المعتمد.");
+    }
+    const commentsQuote = calculateCapabilityQuote(targetVol, commentsCap.unitCostUsd, 999999, DEFAULT_PRICING_SETTINGS);
     totalEstimatedPoints += commentsQuote.quotedPoints;
 
     steps.push({
@@ -350,8 +405,10 @@ export function buildMultiStepResearchPlan(
   } else {
     // Standard Social Workflow (X / Twitter Keyword Search)
     const xCap = getCatalogMap().get("x-keyword-search");
-    const xUnitCost = xCap?.unitCostUsd ?? 0.00075;
-    const xQuote = calculateCapabilityQuote(targetVol, xUnitCost, 999999, DEFAULT_PRICING_SETTINGS);
+    if (!xCap || typeof xCap.unitCostUsd !== "number" || xCap.unitCostUsd <= 0) {
+      throw new Error("سعر أو تعريف القدرة x-keyword-search غير متوفر في الكتالوج المعتمد.");
+    }
+    const xQuote = calculateCapabilityQuote(targetVol, xCap.unitCostUsd, 999999, DEFAULT_PRICING_SETTINGS);
     totalEstimatedPoints += xQuote.quotedPoints;
 
     steps.push({
@@ -450,7 +507,7 @@ export async function executeMultiStepPlanOffline(
 
   // 1. Initial Validation of Plan Capabilities & Dependencies
   const validation = validatePlanCapabilities(plan);
-  if (!validation.isValid && validation.errors.some((e) => e.includes("غير معتمدة في كتالوج"))) {
+  if (!validation.isValid) {
     return {
       planId: plan.planId,
       status: "failed",
@@ -460,7 +517,7 @@ export async function executeMultiStepPlanOffline(
       stepResults: [],
       finalDataset: [],
       deduplicationAudit: [],
-      methodologyNotesAr: ["فشل التحقق من صحة خطة البحث: تتضمن نقاط نهاية غير معتمدة."],
+      methodologyNotesAr: [`فشل التحقق من صحة خطة البحث: ${validation.errors.join("؛ ")}`],
       validationErrors: validation.errors,
     };
   }

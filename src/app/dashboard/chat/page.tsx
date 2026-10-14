@@ -24,7 +24,7 @@ import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
 import EmptyChat from "./components/EmptyChat";
 import { FailureBox, FilesSection } from "./components/RunSections";
-import Composer from "./components/Composer";
+import Composer, { AttachedFile } from "./components/Composer";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -53,6 +53,11 @@ interface MessageItem {
   id: string;
   role: "user" | "assistant";
   content: string;
+  attachment?: {
+    name: string;
+    type: "xlsx" | "csv";
+    size: number;
+  };
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   planQuote?: PlanQuoteData;
   clarificationQuestions?: string[];
@@ -277,14 +282,19 @@ export default function ChatWorkspacePage() {
   }, [activeJob, loadBalance, extractedRecords.length]);
 
   // Send message
-  async function handleSendMessage(messageContent: string) {
+  async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null) {
     const textToSend = messageContent.trim();
-    if (!textToSend || loading || conversationLoading || !user) return;
+    if ((!textToSend && !attachedFile) || loading || conversationLoading || !user) return;
 
     const userMsg: MessageItem = {
       id: `usr_${Date.now()}`,
       role: "user",
       content: textToSend,
+      attachment: attachedFile ? {
+        name: attachedFile.name,
+        type: attachedFile.type,
+        size: attachedFile.size,
+      } : undefined,
       createdAt: new Date().toISOString(),
     };
 
@@ -311,6 +321,15 @@ export default function ChatWorkspacePage() {
           message: textToSend,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
+          ...(attachedFile ? {
+            uploadedFiles: [
+              {
+                name: attachedFile.name,
+                type: attachedFile.type,
+                content: attachedFile.base64,
+              }
+            ]
+          } : {})
         }),
       });
 
@@ -935,7 +954,22 @@ export default function ChatWorkspacePage() {
   const renderNote = (m: MessageItem) => {
     if (m.hidden || m.jobId) return null;
     if (m.role === "user") {
-      return <p key={m.id} className="mb-0 mt-3 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>;
+      return (
+        <div key={m.id} className="mb-0 mt-3 flex w-fit max-w-full flex-col gap-1.5" style={{ animation: "up .3s both" }}>
+          {m.content && (
+            <p className="mb-0 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink">
+              {m.content}
+            </p>
+          )}
+          {m.attachment && (
+            <div className="flex w-fit items-center gap-2 rounded-full border border-ac/25 bg-ac/5 px-3 py-1 text-xs text-ink font-light">
+              <span className="text-ac">📎</span>
+              <span className="font-medium">{m.attachment.name}</span>
+              <span className="text-[11px] text-mut">({Math.round(m.attachment.size / 1024)} ك.ب)</span>
+            </div>
+          )}
+        </div>
+      );
     }
     return (
       <div key={m.id}>

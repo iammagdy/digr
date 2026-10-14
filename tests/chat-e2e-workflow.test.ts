@@ -2,7 +2,16 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { POST as postChat } from "../src/app/api/chat/route";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
-import { generateExcelReport, generateCsvReport, generatePdfReport } from "../src/functions/shared/fileGenerators";
+import {
+  generateExcelReport,
+  generateCsvReport,
+  generatePdfReport,
+  generateMethodologyText,
+} from "../src/functions/shared/fileGenerators";
+import {
+  deduplicateAgainstBaseline,
+  EntityRecord,
+} from "../src/lib/server/negativeListEngine";
 import ExcelJS from "exceljs";
 
 // Mock Supabase Server Client & Admin Client
@@ -329,5 +338,181 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     const pdfBuf = await generatePdfReport(payload);
     expect(pdfBuf.length).toBeGreaterThan(1000);
+  });
+
+  it("8. Realistic offline acceptance scenario: 50 MEP companies with XLSX exclusion file vs YouTube request without file", async () => {
+    // -------------------------------------------------------------
+    // Part A: 50 MEP Companies Request with Synthetic XLSX Exclusion
+    // -------------------------------------------------------------
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("قائمة الشركات المستبعدة");
+    ws.addRow([
+      "اسم الشركة",
+      "الموقع الإلكتروني",
+      "السجل التجاري",
+      "البريد الإلكتروني الشخصي",
+      "هاتف شخصي",
+    ]);
+    ws.addRow([
+      "شركة أوراسكوم للإنشاءات والصناعة",
+      "orascom.com",
+      "101010",
+      "eng.ahmed.private@gmail.com",
+      "+201012345678",
+    ]);
+    ws.addRow([
+      "شركة بتروجت للخدمات البترولية والمشروعات",
+      "petrojet.com.eg",
+      "202020",
+      "director.personal@yahoo.com",
+      "+201212345678",
+    ]);
+
+    const xlsxBuffer = Buffer.from(await wb.xlsx.writeBuffer());
+    const xlsxBase64 = xlsxBuffer.toString("base64");
+
+    const reqMep = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer valid_jwt_token",
+      },
+      body: JSON.stringify({
+        conversationId: "conv_mep_realistic_acceptance",
+        message: "عايز 50 شركة كهروميكانيكا في مصر، غير الشركات الموجودة في ملف الإكسيل المرفق، وعايز ملف Excel منظم.",
+        uploadedFiles: [
+          {
+            name: "mep_contractors_baseline.xlsx",
+            type: "xlsx",
+            content: xlsxBase64,
+          },
+        ],
+      }),
+    });
+
+    const resMep = await postChat(reqMep);
+    const dataMep = await resMep.json();
+
+    expect(resMep.status).toBe(200);
+    expect(dataMep.success).toBe(true);
+    expect(dataMep.outputType).not.toBe("ask_clarification");
+
+    // 1. Verify exclusion parsing & privacy boundary in conversation brief
+    const convMepKey = dataMep.conversationId || "conv_mep_realistic_acceptance";
+    const persistedBrief = mockConversationBriefs.get(convMepKey);
+    expect(persistedBrief).toBeDefined();
+    expect(persistedBrief?.exclusionFile).toBeDefined();
+    expect(persistedBrief?.exclusionFile.baselineRowCount).toBe(2);
+    expect(persistedBrief?.exclusionFile.corporateDomains).toContain("orascom.com");
+    expect(persistedBrief?.exclusionFile.corporateDomains).toContain("petrojet.com.eg");
+
+    // Privacy boundary check: Personal emails and phones MUST NOT exist in normalizedEntities
+    const entitiesStr = JSON.stringify(persistedBrief?.exclusionFile.normalizedEntities || []);
+    expect(entitiesStr).not.toContain("gmail.com");
+    expect(entitiesStr).not.toContain("yahoo.com");
+    expect(entitiesStr).not.toContain("+201012345678");
+
+    // 2. Verify plan quote items received the exclusion rules
+    if (dataMep.planItems && dataMep.planItems.length > 0) {
+      expect(dataMep.planItems[0].params?.exclusionRules).toBeDefined();
+      expect(dataMep.planItems[0].params?.exclusionRules.baselineRowCount).toBe(2);
+      expect(dataMep.planItems[0].params?.exclusionRules.fileName).toBe("mep_contractors_baseline.xlsx");
+    }
+
+    // 3. Worker chunk deduplication logic simulation against mock provider candidates
+    const baselineRecords: EntityRecord[] = persistedBrief?.exclusionFile.normalizedEntities || [];
+    const candidateRows = [
+      { id: "c1", company_name: "أوراسكوم للإنشاءات", website: "https://orascom.com/about", cr_number: "101010" },
+      { id: "c2", company_name: "شركة بتروجت للمشروعات", website: "http://petrojet.com.eg", cr_number: "202020" },
+      { id: "c3", company_name: "أوراسكوم للتجارة والتوكيلات", website: "orascom-trading.com", cr_number: "999888" },
+      { id: "c4", company_name: "شركة النيل للمقاولات الكهروميكانيكية", website: "nile-mep.com", cr_number: "303030" },
+      { id: "c5", company_name: "الدلتا للأعمال الهندسية", website: "delta-eng.com", cr_number: "404040" },
+    ];
+
+    const candidateRecords: EntityRecord[] = candidateRows.map((r) => ({
+      ...r,
+      name: r.company_name,
+      domain: r.website,
+      crNumber: r.cr_number,
+    }));
+
+    const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
+    expect(dedupResult.confirmedDuplicates.length).toBe(2); // c1 & c2 confirmed duplicates
+    expect(dedupResult.ambiguousMatches.length).toBe(1); // c3 ambiguous match
+    expect(dedupResult.delivered.length).toBe(3); // c3, c4, c5 delivered
+
+    const deliveredNames = dedupResult.delivered.map((r: any) => r.company_name || r.name);
+    expect(deliveredNames).not.toContain("أوراسكوم للإنشاءات");
+    expect(deliveredNames).not.toContain("شركة بتروجت للمشروعات");
+    expect(deliveredNames).toContain("شركة النيل للمقاولات الكهروميكانيكية");
+    expect(deliveredNames).toContain("الدلتا للأعمال الهندسية");
+
+    // 4. Deliverables generation: 6-sheet Excel + UTF-8 BOM CSV
+    const reportPayload = {
+      metadata: {
+        title: "حصر شركات المقاولات الكهروميكانيكية في مصر",
+        platform: "web",
+        entityType: "companies",
+        targetRequested: 50,
+        collectedAt: new Date().toISOString(),
+        exclusionBaselineFileName: "mep_contractors_baseline.xlsx",
+        exclusionBaselineCount: 2,
+        duplicatesRemovedCount: dedupResult.confirmedDuplicates.length,
+        ambiguousCount: dedupResult.ambiguousMatches.length,
+        methodology: "تم حصر شركات المقاولات الكهروميكانيكية مع استبعاد الكيانات المرجعية الواردة في ملف mep_contractors_baseline.xlsx.",
+      },
+      rows: dedupResult.delivered,
+      deduplicationAudit: dedupResult.auditTrail,
+    };
+
+    const finalExcel = await generateExcelReport(reportPayload, { deduplicationAudit: dedupResult.auditTrail });
+    expect(Buffer.isBuffer(finalExcel)).toBe(true);
+    expect(finalExcel.length).toBeGreaterThan(1000);
+
+    const checkWb = new ExcelJS.Workbook();
+    await checkWb.xlsx.load(finalExcel as any);
+    expect(checkWb.worksheets.length).toBe(6);
+    checkWb.worksheets.forEach((ws) => {
+      // All sheets must have RTL view
+      expect(ws.views?.[0]?.rightToLeft).toBe(true);
+    });
+
+    const finalCsv = generateCsvReport(reportPayload);
+    // Verify UTF-8 BOM: 0xEF, 0xBB, 0xBF
+    expect(finalCsv[0]).toBe(0xef);
+    expect(finalCsv[1]).toBe(0xbb);
+    expect(finalCsv[2]).toBe(0xbf);
+    const csvString = finalCsv.toString("utf-8");
+    expect(csvString).toContain("شركة النيل للمقاولات الكهروميكانيكية");
+    expect(csvString).not.toContain("أوراسكوم للإنشاءات,");
+
+    // 5. Methodology text references exclusion file
+    const methodology = generateMethodologyText(reportPayload);
+    expect(methodology).toContain("mep_contractors_baseline.xlsx");
+
+    // -------------------------------------------------------------
+    // Part B: YouTube Request Without Attachment
+    // -------------------------------------------------------------
+    const reqYt = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer valid_jwt_token",
+      },
+      body: JSON.stringify({
+        conversationId: "conv_youtube_acceptance_no_file",
+        message: "عايز 50 مقطع فيديو من يوتيوب عن الذكاء الاصطناعي",
+        uploadedFiles: [],
+      }),
+    });
+
+    const resYt = await postChat(reqYt);
+    const dataYt = await resYt.json();
+
+    expect(resYt.status).toBe(200);
+    expect(dataYt.success).toBe(true);
+    // Should NOT ask for any file clarification
+    expect(dataYt.outputType).not.toBe("ask_clarification");
+    expect(dataYt.contentAr).not.toContain("يرجى إرفاق ملف الاستبعاد");
   });
 });
