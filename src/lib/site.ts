@@ -5,9 +5,8 @@ export const SITE_NAME = "Diger";
 export const SUPPORT_EMAIL = process.env.NEXT_PUBLIC_SUPPORT_EMAIL || "support@diger.tech";
 
 /**
- * Origin used inside e-mailed links (verification, password recovery). Appwrite only accepts hosts that are
- * registered as Web platforms, so production pins it with NEXT_PUBLIC_SITE_URL; previews and localhost fall back
- * to the origin the visitor is on.
+ * Origin used inside e-mailed links (verification, password recovery).
+ * Production pins it with NEXT_PUBLIC_SITE_URL; previews and localhost fall back to the origin the visitor is on.
  */
 export function appBaseUrl(): string {
   const pinned = process.env.NEXT_PUBLIC_SITE_URL;

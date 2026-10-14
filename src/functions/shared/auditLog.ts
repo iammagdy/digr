@@ -1,4 +1,4 @@
-import { ID, Permission, Role, TablesDB } from "node-appwrite";
+import { ID, Permission, Role, TablesDB } from "./dbCompat";
 
 export type AuditKind = "approve" | "reject" | "key" | "toggle" | "setting" | "login";
 

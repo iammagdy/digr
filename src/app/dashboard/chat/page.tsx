@@ -25,6 +25,7 @@ import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
 import EmptyChat from "./components/EmptyChat";
 import { FailureBox, FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
+import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -60,6 +61,7 @@ interface MessageItem {
   };
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   planQuote?: PlanQuoteData;
+  revisionQuote?: RevisionQuoteData;
   clarificationQuestions?: string[];
   clarificationItems?: unknown;
   completedClarificationAnswers?: DiscoveryAnswer[];
@@ -352,6 +354,7 @@ export default function ChatWorkspacePage() {
         content: data.contentAr,
         outputType: data.outputType,
         planQuote: data.planQuote,
+        revisionQuote: data.revisionQuote,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
         suggestedAlternative: data.suggestedAlternative,
@@ -437,6 +440,7 @@ export default function ChatWorkspacePage() {
           content: data.contentAr,
           outputType: data.outputType,
           planQuote: data.planQuote,
+          revisionQuote: data.revisionQuote,
           clarificationQuestions: data.clarificationQuestions,
           clarificationItems: data.clarificationItems,
           suggestedAlternative: data.suggestedAlternative,
@@ -739,6 +743,7 @@ export default function ChatWorkspacePage() {
 
   async function submitArtifactAction(action: { operation: ArtifactEditOperation } | { undoToVersionId: string }) {
     if (!activeJob?.jobId || artifactEditing || !user) return;
+    const targetJobId = activeJob.jobId;
     setArtifactEditing(true);
     try {
       const jwtToken = await getAccessToken();
@@ -762,9 +767,24 @@ export default function ChatWorkspacePage() {
           rowCount: result.version.rowCount,
           isOriginal: false,
         }],
-      } : null);
+      } : {
+        jobId: targetJobId,
+        status: "done",
+        templateSlug: "research-deliverable",
+        rowsCollected: result.version.rowCount,
+        events: [],
+        artifactVersion: result.version,
+        fileIds: result.version.fileIds,
+        versionHistory: [{
+          id: result.version.id,
+          versionNum: result.version.versionNum,
+          parentVersionId: null,
+          rowCount: result.version.rowCount,
+          isOriginal: false,
+        }],
+      });
 
-      const dataResponse = await fetch(`/api/jobs/${activeJob.jobId}/data`);
+      const dataResponse = await fetch(`/api/jobs/${targetJobId}/data`);
       const data = await dataResponse.json();
       if (data.success) {
         setExtractedRecords(Array.isArray(data.rows) ? data.rows : []);
@@ -778,7 +798,7 @@ export default function ChatWorkspacePage() {
         } : null);
       }
 
-      const historyResponse = await fetch(`/api/jobs/${activeJob.jobId}/artifacts`);
+      const historyResponse = await fetch(`/api/jobs/${targetJobId}/artifacts`);
       const history = await historyResponse.json();
       if (history.success) setActiveJob((previous) => previous ? {
         ...previous,
@@ -801,6 +821,24 @@ export default function ChatWorkspacePage() {
     } finally {
       setArtifactEditing(false);
     }
+  }
+
+  async function handleApplyRevisionQuote(revQuote: RevisionQuoteData) {
+    const targetJobId = revQuote.jobId && revQuote.jobId !== "current" ? revQuote.jobId : activeJob?.jobId;
+    if (!targetJobId) {
+      alert("لم يتم العثور على مهمة مكتملة لتعديلها.");
+      return;
+    }
+    if (!activeJob) {
+      setActiveJob({
+        jobId: targetJobId,
+        status: "done",
+        templateSlug: "research-deliverable",
+        rowsCollected: 0,
+        events: [],
+      });
+    }
+    await submitArtifactAction({ operation: revQuote.operation });
   }
 
   // Request Academic Methodology (10 points flow)
@@ -974,6 +1012,14 @@ export default function ChatWorkspacePage() {
     return (
       <div key={m.id}>
         {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>}
+        {m.revisionQuote && (
+          <RevisionQuoteCard
+            quote={m.revisionQuote}
+            onApply={handleApplyRevisionQuote}
+            isApplying={artifactEditing}
+            userBalance={balanceValue}
+          />
+        )}
         {m.errorRetryPrompt && (
           <button
             type="button" onClick={() => handleSendMessage(m.errorRetryPrompt!)}

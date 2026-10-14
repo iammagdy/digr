@@ -46,7 +46,7 @@ function spendCapResult(): RateLimitCheckResult {
 /**
  * Per-account burst protection only: max USER messages per minute. There is no
  * daily quota — internal model calls and tool iterations never count.
- * Supports both Supabase client and Appwrite TablesDB.
+ * Supports Supabase client and query compatibility layer.
  */
 export async function checkUserRateLimits(
   tables: any,

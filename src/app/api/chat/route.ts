@@ -285,7 +285,29 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 5. Delegate to ChatHandler
+    // 5. Verify conversation ownership if conversationId is specified
+    if (conversationId && typeof conversationId === "string") {
+      const { data: convCheck, error: convErr } = await tables
+        .from("conversations")
+        .select("id, user_id")
+        .eq("id", conversationId)
+        .maybeSingle();
+
+      if (!convErr && convCheck) {
+        if (convCheck.user_id && convCheck.user_id !== verifiedUserId) {
+          return NextResponse.json(
+            {
+              success: false,
+              requestId,
+              error: "غير مصرح لك بالوصول إلى هذه المحادثة أو تعديل بياناتها.",
+            },
+            { status: 403 }
+          );
+        }
+      }
+    }
+
+    // 6. Delegate to ChatHandler
     currentStep = "chat_handler";
     const chatHandler = new ChatHandler(tables);
     const result = await chatHandler.handleUserMessage({
@@ -311,6 +333,7 @@ export async function POST(req: NextRequest) {
       (err && typeof err === "object" && typeof err.chatStep === "string" && err.chatStep) ||
       currentStep;
     const reason = toSafeReasonCode(err);
+    const statusCode = typeof err?.statusCode === "number" ? err.statusCode : 500;
     console.error(
       `[chat:request_failed] requestId=${requestId} step=${failingStep} reason=${reason}`,
     );
@@ -320,9 +343,11 @@ export async function POST(req: NextRequest) {
         requestId,
         step: failingStep,
         reason,
-        error: "حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.",
+        error: (statusCode === 403 || statusCode === 404) && err.message
+          ? err.message
+          : "حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.",
       },
-      { status: 500 }
+      { status: statusCode }
     );
   }
 }

@@ -69,7 +69,6 @@ const FIELD_LABEL_KIND: Record<string, "key" | "toggle" | "setting"> = {
 
 /**
  * Updates provider variables (LLM_ENABLED / LLM_PROVIDER / model / API key / TREG_LIVE / TREG_TOKEN / TREG_BASE_URL).
- * The change is written to the Appwrite Site and job functions, which are redeployed; the UI says it takes effect after a restart.
  * Secrets are accepted here but only ever echoed back as the last 4 characters.
  */
 export async function POST(req: NextRequest) {

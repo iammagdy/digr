@@ -1,4 +1,4 @@
-/** Appwrite resource IDs — centralised so nothing is scattered across the codebase */
+/** Database and storage resource identifiers */
 
 import { SUPPORT_EMAIL } from "@/lib/site";
 

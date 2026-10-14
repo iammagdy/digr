@@ -34,5 +34,60 @@ export const Permission = {
   delete: (role: string) => `delete("${role}")`,
 };
 
+let appwriteSdk: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  appwriteSdk = require("node-appwrite");
+} catch {
+  appwriteSdk = null;
+}
+
+class FallbackTablesDB {
+  client: any;
+  constructor(client?: any) {
+    this.client = client;
+  }
+  async getRow(...args: any[]) {
+    return this.client?.getRow ? this.client.getRow(...args) : {};
+  }
+  async createRow(...args: any[]) {
+    return this.client?.createRow ? this.client.createRow(...args) : { $id: ID.unique() };
+  }
+  async updateRow(...args: any[]) {
+    return this.client?.updateRow ? this.client.updateRow(...args) : {};
+  }
+  async listRows(...args: any[]) {
+    return this.client?.listRows ? this.client.listRows(...args) : { rows: [], total: 0 };
+  }
+}
+
+class FallbackMessaging {
+  client: any;
+  constructor(client?: any) {
+    this.client = client;
+  }
+  async createEmail(...args: any[]) {
+    return this.client?.createEmail ? this.client.createEmail(...args) : { $id: ID.unique() };
+  }
+}
+
+class FallbackUsers {
+  client: any;
+  constructor(client?: any) {
+    this.client = client;
+  }
+  async get(...args: any[]) {
+    return this.client?.get ? this.client.get(...args) : { $id: "", prefs: {}, email: "" };
+  }
+}
+
+export const TablesDB = appwriteSdk?.TablesDB || FallbackTablesDB;
 export type TablesDB = any;
+
 export type Storage = any;
+
+export const Messaging = appwriteSdk?.Messaging || FallbackMessaging;
+export type Messaging = any;
+
+export const Users = appwriteSdk?.Users || FallbackUsers;
+export type Users = any;

@@ -1,4 +1,4 @@
-import { executeTregCall, TregCallOptions, TregCallResult } from "../../functions/shared/tregClient";
+import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
 import { extractAndFlattenRows, parseTikTokProfileResponse } from "../../functions/shared/multiStepWorker";
 
 export interface ProviderAdapterCallInput {
@@ -106,7 +106,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   const page = input.step + 1;
-  const pageParams: Record<string, any> = { ...(input.params || {}) };
+  const pageParams: Record<string, any> = serializeProviderParams(input.params || {});
 
   if (input.paginationStrategy === "cursor") {
     if (input.cursor) {

@@ -107,4 +107,68 @@ describe("Fake TREG Server & TREG Client Integration", () => {
     expect(res.httpStatus).toBe(502);
     expect(res.error).toBe("provider_unavailable");
   });
+
+  it("proves sensitive internal fields (exclusionRules, companyNames, etc.) NEVER appear in outbound provider requests", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+
+    const originalFetch = global.fetch;
+    global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedUrl = String(input);
+      capturedBody = String(init?.body || "");
+      return originalFetch(input, init);
+    };
+
+    try {
+      await executeTregCall({
+        baseUrl: fakeTreg.url,
+        endpointId: "tikhub.tiktok.user.profile",
+        method: "GET",
+        params: {
+          username: "khaby.lame",
+          exclusionRules: { fileName: "internal_secret_exclusion.xlsx", baselineRowCount: 100 },
+          companyNames: ["شركة سرية جداً"],
+          corporateDomains: ["secret-domain.com"],
+          internal_state: "active",
+          _token: "internal_jwt",
+        },
+        userId: "user_test_456",
+        jobId: "job_test_789",
+      });
+
+      // Verify outbound URL (GET request)
+      expect(capturedUrl).toContain("uniqueId=khaby.lame");
+      expect(capturedUrl).not.toContain("exclusionRules");
+      expect(capturedUrl).not.toContain("internal_secret_exclusion.xlsx");
+      expect(capturedUrl).not.toContain("شركة سرية");
+      expect(capturedUrl).not.toContain("secret-domain.com");
+      expect(capturedUrl).not.toContain("internal_state");
+      expect(capturedUrl).not.toContain("internal_jwt");
+
+      // Now test POST request
+      await executeTregCall({
+        baseUrl: fakeTreg.url,
+        endpointId: "google.serp.organic",
+        method: "POST",
+        params: {
+          query: "مقاولات كهروميكانيكية",
+          exclusionRules: { fileName: "baseline.xlsx" },
+          companyNames: ["بتروجت", "أوراسكوم"],
+          corporateDomains: ["petrojet.com.eg"],
+          internal_cache_key: "abc123xyz",
+        },
+        userId: "user_test_456",
+        jobId: "job_test_789",
+      });
+
+      expect(capturedBody).toContain("مقاولات كهروميكانيكية");
+      expect(capturedBody).not.toContain("exclusionRules");
+      expect(capturedBody).not.toContain("baseline.xlsx");
+      expect(capturedBody).not.toContain("بتروجت");
+      expect(capturedBody).not.toContain("أوراسكوم");
+      expect(capturedBody).not.toContain("internal_cache_key");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

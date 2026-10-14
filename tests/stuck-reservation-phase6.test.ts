@@ -103,7 +103,9 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
 
   it("(a) refusal path (TREG_LIVE !== 'true') marks job failed in Arabic and releases hold idempotently (rel_<jobId>)", async () => {
     const prevTregLive = process.env.TREG_LIVE;
+    const prevMock = process.env.ENABLE_MOCK_PROVIDER;
     process.env.TREG_LIVE = "false";
+    process.env.ENABLE_MOCK_PROVIDER = "false";
 
     try {
       const memTables = createInMemoryTables(
@@ -177,6 +179,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
       expect(releaseRows).toHaveLength(1);
     } finally {
       process.env.TREG_LIVE = prevTregLive;
+      process.env.ENABLE_MOCK_PROVIDER = prevMock;
     }
   });
 

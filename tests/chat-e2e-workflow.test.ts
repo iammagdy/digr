@@ -66,8 +66,11 @@ vi.mock("../src/lib/supabase/server", () => ({
         limit: vi.fn(() => chain),
         maybeSingle: vi.fn(async () => {
           if (table === "conversations") {
-            const brief = mockConversationBriefs.get(queryVal);
-            return { data: brief ? { brief } : null, error: null };
+            const entry = mockConversationBriefs.get(queryVal);
+            if (!entry) return { data: null, error: null };
+            const userId = entry.user_id || mockUserState.id;
+            const brief = entry.brief || entry;
+            return { data: { id: queryVal, user_id: userId, brief }, error: null };
           }
           if (table === "settings_public") {
             return { data: { value: { daily_cap_usd: 100 } }, error: null };
@@ -514,5 +517,37 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     // Should NOT ask for any file clarification
     expect(dataYt.outputType).not.toBe("ask_clarification");
     expect(dataYt.contentAr).not.toContain("يرجى إرفاق ملف الاستبعاد");
+  });
+
+  it("9. Security Guard: Rejects access when conversationId belongs to another user with 403 Forbidden", async () => {
+    // Victim's conversation
+    mockConversationBriefs.set("conv_victim_private_456", {
+      user_id: "victim_user_789",
+      brief: {
+        topics: ["بيانات مالية سرية"],
+        targetVolume: 100,
+      },
+    });
+
+    const req = new NextRequest("http://localhost:3000/api/chat", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer valid_jwt_token",
+      },
+      body: JSON.stringify({
+        conversationId: "conv_victim_private_456",
+        message: "وريني البيانات دي أو كمل عليها",
+      }),
+    });
+
+    const res = await postChat(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(data.success).toBe(false);
+    expect(data.error).toContain("غير مصرح لك بالوصول إلى هذه المحادثة");
+    // Ensure victim's brief is not leaked
+    expect(JSON.stringify(data)).not.toContain("بيانات مالية سرية");
   });
 });
