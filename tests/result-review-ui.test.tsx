@@ -21,7 +21,7 @@ describe("result review UI contracts (release branch)", () => {
     expect(canvas).toContain("عدّل واسحب تاني");
   });
 
-  it("routes edits and undo through versioned artifact APIs without charging points", () => {
+  it("routes edits and undo through versioned artifact APIs with honest 10-point revision pricing", () => {
     expect(canvas).toContain('action: "dedupe"');
     expect(canvas).toContain('action: "sort"');
     expect(canvas).toContain('action: "select_columns"');
@@ -32,7 +32,8 @@ describe("result review UI contracts (release branch)", () => {
     expect(canvas).toContain("onUndoVersion(parentId)");
     expect(page).toContain('fetch(`/api/jobs/${activeJob.jobId}/artifacts`');
     expect(page).toContain("expectedVersionId: activeJob.artifactVersion?.id || null");
-    expect(page).toContain("بدون خصم نقاط");
+    expect(page).toContain("تكلفة التعديل: ١٠ نقاط");
+    expect(page).not.toContain("بدون خصم نقاط");
   });
 
   it("asks for a quote for new data instead of automatically approving or starting extraction", () => {

@@ -43,9 +43,10 @@ async function getAccessToken(): Promise<string | undefined> {
 
 function mapJobEvents(rows: any[] | null | undefined): JobEvent[] {
   return (rows || []).map((e: any) => ({
-    $id: e.id || e.$id || `ev_${Date.now()}`,
-    textAr: e.text_ar || e.textAr || "",
-    kind: e.kind || "info",
+    $id: String(e.id || e.$id || `ev_${Date.now()}`),
+    textAr: e.message || e.text_ar || e.textAr || "",
+    count: typeof e.units === "number" ? e.units : (typeof e.count === "number" ? e.count : undefined),
+    kind: (e.event_type || e.kind || "info") as JobEvent["kind"],
     createdAt: e.created_at || e.createdAt || new Date().toISOString(),
   }));
 }
@@ -808,7 +809,7 @@ export default function ChatWorkspacePage() {
       setMessages((previous) => [...previous, {
         id: `artifact_v${result.version.versionNum}_${Date.now()}`,
         role: "assistant",
-        content: `اتحفظ التعديل كنسخة رقم ${result.version.versionNum} من النتيجة، بدون خصم نقاط. تقدر ترجع لأي نسخة أقدم.`,
+        content: `اتحفظ التعديل كنسخة رقم ${result.version.versionNum} من النتيجة (تكلفة التعديل: ١٠ نقاط). تقدر ترجع لأي نسخة أقدم في أي وقت.`,
         createdAt: new Date().toISOString(),
       }]);
     } catch (error: any) {

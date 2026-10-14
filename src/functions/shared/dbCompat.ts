@@ -34,60 +34,61 @@ export const Permission = {
   delete: (role: string) => `delete("${role}")`,
 };
 
-let appwriteSdk: any = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  appwriteSdk = require("node-appwrite");
-} catch {
-  appwriteSdk = null;
-}
-
-class FallbackTablesDB {
+export class TablesDB {
   client: any;
   constructor(client?: any) {
     this.client = client;
   }
   async getRow(...args: any[]) {
-    return this.client?.getRow ? this.client.getRow(...args) : {};
+    if (typeof this.client?.getRow === "function") {
+      return this.client.getRow(...args);
+    }
+    throw new Error("TablesDB: getRow is not supported by the provided database client.");
   }
   async createRow(...args: any[]) {
-    return this.client?.createRow ? this.client.createRow(...args) : { $id: ID.unique() };
+    if (typeof this.client?.createRow === "function") {
+      return this.client.createRow(...args);
+    }
+    throw new Error("TablesDB: createRow is not supported by the provided database client.");
   }
   async updateRow(...args: any[]) {
-    return this.client?.updateRow ? this.client.updateRow(...args) : {};
+    if (typeof this.client?.updateRow === "function") {
+      return this.client.updateRow(...args);
+    }
+    throw new Error("TablesDB: updateRow is not supported by the provided database client.");
   }
   async listRows(...args: any[]) {
-    return this.client?.listRows ? this.client.listRows(...args) : { rows: [], total: 0 };
+    if (typeof this.client?.listRows === "function") {
+      return this.client.listRows(...args);
+    }
+    throw new Error("TablesDB: listRows is not supported by the provided database client.");
   }
 }
 
-class FallbackMessaging {
+export type Storage = any;
+
+export class Messaging {
   client: any;
   constructor(client?: any) {
     this.client = client;
   }
   async createEmail(...args: any[]) {
-    return this.client?.createEmail ? this.client.createEmail(...args) : { $id: ID.unique() };
+    if (typeof this.client?.createEmail === "function") {
+      return this.client.createEmail(...args);
+    }
+    throw new Error("Messaging: createEmail is not supported by the provided client.");
   }
 }
 
-class FallbackUsers {
+export class Users {
   client: any;
   constructor(client?: any) {
     this.client = client;
   }
   async get(...args: any[]) {
-    return this.client?.get ? this.client.get(...args) : { $id: "", prefs: {}, email: "" };
+    if (typeof this.client?.get === "function") {
+      return this.client.get(...args);
+    }
+    throw new Error("Users: get is not supported by the provided client.");
   }
 }
-
-export const TablesDB = appwriteSdk?.TablesDB || FallbackTablesDB;
-export type TablesDB = any;
-
-export type Storage = any;
-
-export const Messaging = appwriteSdk?.Messaging || FallbackMessaging;
-export type Messaging = any;
-
-export const Users = appwriteSdk?.Users || FallbackUsers;
-export type Users = any;

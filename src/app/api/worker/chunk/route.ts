@@ -529,6 +529,21 @@ export async function POST(req: NextRequest) {
 
     const recordedDeliveredUnits: number = compData.delivered_units;
 
+    // Record real progress in job_events
+    try {
+      if (!isDone && !compData.already_completed) {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `تم جمع ${recordedDeliveredUnits} سجل حتى الآن...`,
+          units: recordedDeliveredUnits,
+          event_type: "progress",
+        });
+      }
+    } catch (evtErr: any) {
+      console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+    }
+
     if (compData.already_completed) {
       console.warn(
         `[worker:chunk_already_completed] jobId=${jobId} step=${currentStep} currentDbStep=${compData.current_step}`
@@ -732,31 +747,46 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Save JSON & methodology text in partials bucket for /api/jobs/[id]/data & /methodology
-        const [dataJsonUp1, dataJsonUp2, methUp] = await Promise.all([
+        const jsonBuffer = Buffer.from(JSON.stringify(finalPayload), "utf-8");
+        const methBuffer = Buffer.from(methodologyText, "utf-8");
+
+        // Save JSON in results bucket (primary deliverables) & partials bucket (backward compatibility)
+        const [dataJsonUp1, dataJsonUp2, resJsonUp1, resJsonUp2, methUp] = await Promise.all([
           partialsBucket.upload(
             `${userId}/${jobId}/data.json`,
-            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            jsonBuffer,
             { contentType: "application/json", upsert: true }
           ),
           partialsBucket.upload(
             `${jobId}/data.json`,
-            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            jsonBuffer,
+            { contentType: "application/json", upsert: true }
+          ),
+          resultsBucket.upload(
+            `${userId}/${jobId}/data.json`,
+            jsonBuffer,
+            { contentType: "application/json", upsert: true }
+          ),
+          resultsBucket.upload(
+            `${jobId}/data.json`,
+            jsonBuffer,
             { contentType: "application/json", upsert: true }
           ),
           partialsBucket.upload(
             `${userId}/${jobId}/methodology.txt`,
-            Buffer.from(methodologyText, "utf-8"),
+            methBuffer,
             { contentType: "text/plain; charset=utf-8", upsert: true }
           ),
         ]);
 
-        if (dataJsonUp1?.error || dataJsonUp2?.error || methUp?.error) {
+        if (dataJsonUp1?.error || dataJsonUp2?.error || resJsonUp1?.error || resJsonUp2?.error || methUp?.error) {
           throw new Error(
             dataJsonUp1?.error?.message ||
               dataJsonUp2?.error?.message ||
+              resJsonUp1?.error?.message ||
+              resJsonUp2?.error?.message ||
               methUp?.error?.message ||
-              "partials_artifact_upload_error"
+              "storage_artifact_upload_error"
           );
         }
       } catch (uploadErr: any) {
@@ -860,6 +890,20 @@ export async function POST(req: NextRequest) {
         }
       } catch {
         // Non-blocking partial step cleanup
+      }
+
+      // Record completion event in job_events table
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `تم إكمال استخراج ${finalRows.length} سجل بنجاح وحفظ ملفات النتائج.`,
+          units: finalRows.length,
+          event_type: "progress",
+          created_at: completedAtIso,
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
       }
 
       // Emit notification to user matching tracked migrations schema: (id, user_id, title, body, read, link, created_at)

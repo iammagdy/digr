@@ -40,7 +40,12 @@ export default function Composer({
 
     const ext = file.name.split(".").pop()?.toLowerCase();
     if (ext !== "xlsx" && ext !== "csv") {
-      setFileError("صيغة الملف غير مدعومة. يرجى رفع ملف بصيغة Excel (.xlsx) أو CSV (.csv).");
+      const isMediaOrDoc = ["pdf", "jpg", "jpeg", "png", "webp", "doc", "docx", "gif"].includes(ext || "");
+      if (isMediaOrDoc) {
+        setFileError("ملفات PDF والمستندات المصورة غير مدعومة حالياً. يدعم ديجر حصرياً ملفات استبعاد الكيانات بصيغة جداول البيانات Excel (.xlsx) أو CSV (.csv).");
+      } else {
+        setFileError("صيغة الملف غير مدعومة. يرجى رفع ملف استبعاد بصيغة جداول البيانات Excel (.xlsx) أو CSV (.csv).");
+      }
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -207,6 +212,9 @@ export default function Composer({
             </svg>
           </button>
         </form>
+        <p className="m-0 mt-1 text-center text-[11px] font-light text-mut">
+          يدعم إرفاق ملفات الاستبعاد (Excel و CSV حتى ٥ ميجابايت). ملفات PDF والمستندات المصورة غير مدعومة حالياً.
+        </p>
       </div>
     </div>
   );

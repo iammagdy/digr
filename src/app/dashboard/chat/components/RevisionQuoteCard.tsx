@@ -76,6 +76,9 @@ export default function RevisionQuoteCard({
         <p className="m-0 mt-1">
           • <strong className="text-ink">إدارة النسخ:</strong> سيتم حفظ التعديل كنسخة جديدة برقم {quote.targetVersion ? formatAr(quote.targetVersion) : "جديد"} مع الحفاظ التام على النسخة الأصلية للرجوع إليها في أي وقت.
         </p>
+        <p className="m-0 mt-1 text-amber-800 dark:text-amber-300">
+          • <strong className="text-ink">الخصم المالي:</strong> تكلفة التعديل ١٠ نقاط تُخصم عند اعتماد النسخة. تتطلب العملية تفعيل الخصم الذري المعتمد لضمان حماية الرصيد وعدم الخصم إلا عند نجاح الحفظ.
+        </p>
       </div>
 
       {error && (

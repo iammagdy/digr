@@ -75,23 +75,35 @@ async function getVersions(jobId: string, adminClient: any): Promise<ArtifactVer
   }));
 }
 
-async function readJsonFile(fileId: string, jobId: string, adminClient: any): Promise<ArtifactResultPayload> {
+async function readJsonFile(fileId: string, jobId: string, adminClient: any, userId?: string): Promise<ArtifactResultPayload> {
   const candidatePaths = [
     fileId,
     `${jobId}/data.json`,
     `results/${jobId}/data.json`,
+    `partials/${jobId}/data.json`,
   ];
+  if (userId) {
+    candidatePaths.unshift(`${userId}/${jobId}/data.json`);
+  }
 
-  for (const path of candidatePaths) {
-    const { data: blob, error } = await adminClient.storage
-      .from("results")
-      .download(path);
+  const buckets = ["results", "partials"];
+  for (const bucket of buckets) {
+    for (const path of candidatePaths) {
+      if (!path) continue;
+      try {
+        const { data: blob, error } = await adminClient.storage
+          .from(bucket)
+          .download(path);
 
-    if (!error && blob) {
-      const text = await blob.text();
-      const parsed = JSON.parse(text);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as ArtifactResultPayload;
+        if (!error && blob) {
+          const text = typeof blob.text === "function" ? await blob.text() : String(blob);
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as ArtifactResultPayload;
+          }
+        }
+      } catch {
+        // try next path/bucket
       }
     }
   }
@@ -218,9 +230,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const rowId = artifactVersionRowId(jobId, versionNum);
     const operation = parsedBody.data.operation;
 
+    // Financial Guard: Modifications require verified financial approval (10 points initial pricing).
+    // Invariant: No free services. Modifications without authorized ledger charge are blocked.
+    const revChgId = `chg_rev_${jobId}_v${versionNum}`;
+    const { data: existingRevCharge } = await adminClient
+      .from("credit_ledger")
+      .select("id")
+      .eq("id", revChgId)
+      .maybeSingle();
+
+    if (!existingRevCharge) {
+      return NextResponse.json(
+        {
+          success: false,
+          blocked: true,
+          error: "خاصية تعديل وتخصيص المخرجات محددة بسعر ١٠ نقاط لكل نسخة، وهي معلقة حالياً بانتظار اعتماد آلية الخصم المالي الذرية (purchase_revision_atomic) من إدارة المنصة لحماية رصيد الحساب.",
+          reason: "revision_charging_pending_owner_approval",
+        },
+        { status: 409 }
+      );
+    }
+
     let currentPayload: ArtifactResultPayload;
     try {
-      currentPayload = await readJsonFile(`${jobId}/data.json`, jobId, adminClient);
+      currentPayload = await readJsonFile(`${jobId}/data.json`, jobId, adminClient, job.user_id);
     } catch {
       return NextResponse.json({ success: false, error: "بيانات النتيجة الأصلية غير متاحة للتحرير." }, { status: 409 });
     }
