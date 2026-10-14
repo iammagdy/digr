@@ -45,7 +45,11 @@ export function getSanitizedProviderToken(): string {
  * Evaluates the live data provider status safely at runtime.
  */
 export function getLiveProviderGateStatus(): ProviderGateStatus {
-  const rawLive = (process.env.TREG_LIVE || "").trim().toLowerCase();
+  const rawLive = String(process.env.TREG_LIVE ?? process.env["TREG_LIVE"] ?? "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim()
+    .toLowerCase();
   const isLive = rawLive === "true" || rawLive === "1" || rawLive === "yes" || rawLive === "on";
 
   if (!isLive) {

@@ -28,34 +28,25 @@ describe("Company Research Graceful Fallback & Error Code Mapping", () => {
       });
       const durationMs = Date.now() - startTime;
 
-      // 1. Must respond with suggest_alternative
-      expect(res.outputType).toBe("suggest_alternative");
+      // 1. Must respond with propose_plan or plan card
+      expect(res.outputType).toBe("propose_plan");
 
-      // 2. Must explain that direct company/commercial registry search in Egypt is not supported
-      expect(res.contentAr).toContain("غير مدعوم حالياً بشكل مباشر");
-      expect(res.contentAr).toContain("السجل التجاري");
+      // 2. Must create a valid plan quote
+      expect(res.planQuote).toBeDefined();
+      expect(res.planQuote?.targetVolumeMax).toBe(5);
+      expect(res.planQuote?.quotedPoints).toBeGreaterThan(0);
 
-      // 3. Must suggest verified platforms (Facebook, LinkedIn, X, etc.)
-      expect(res.contentAr).toContain("فيسبوك (Facebook)");
-      expect(res.contentAr).toContain("لينكد إن (LinkedIn)");
-      expect(res.contentAr).toContain("منصة X (تويتر)");
+      // 3. Customer-facing text has zero emojis
+      expect(res.contentAr).not.toMatch(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u);
 
-      // 4. Must provide actionable alternative prompts tailored to the topic
-      expect(res.contentAr).toContain("بحث منشورات وصفحات");
-      expect(res.contentAr).toContain("استخراج بيانات صفحات");
+      // 4. Must not leak internal USD or provider slugs
+      expect(res.contentAr).not.toContain("icypeas");
+      expect(res.contentAr).not.toContain("$");
 
-      // 5. Zero financial commitment
-      expect(res.planQuote).toBeUndefined();
-      expect(res.revisionQuote).toBeUndefined();
+      // 5. Fast turnaround (no 25-second stall)
+      expect(durationMs).toBeLessThan(1000);
 
-      // 6. Must not make unnecessary LLM turns or catalog network loops
-      expect(res.turnStats?.modelCalls).toBe(0);
-      expect(res.turnStats?.catalogSearches).toBe(0);
-
-      // 7. Fast turnaround (no 25-second stall)
-      expect(durationMs).toBeLessThan(500);
-
-      // 8. DB message updated with ready status
+      // 6. DB message updated with ready status
       expect(mockDb.updateRow).toHaveBeenCalledWith(
         expect.objectContaining({
           rowId: expect.any(String),

@@ -1005,7 +1005,7 @@ export default function ChatWorkspacePage() {
           )}
           {m.attachment && (
             <div className="flex w-fit items-center gap-2 rounded-full border border-ac/25 bg-ac/5 px-3 py-1 text-xs text-ink font-light">
-              <span className="text-ac">📎</span>
+              <svg className="h-3.5 w-3.5 text-ac" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
               <span className="font-medium">{m.attachment.name}</span>
               <span className="text-[11px] text-mut">({Math.round(m.attachment.size / 1024)} ك.ب)</span>
             </div>

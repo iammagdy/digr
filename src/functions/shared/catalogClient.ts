@@ -83,6 +83,8 @@ const PLATFORM_ARABIC_NAMES: Record<string, string> = {
   snapchat: "سناب شات",
   telegram: "تيليجرام",
   web: "الويب العام",
+  companies: "قواعد بيانات الشركات",
+  b2b: "بيانات الشركات والأعمال",
 };
 
 /**
@@ -157,15 +159,18 @@ export function deriveArabicTaskName(rawEndpoint: any, platform: string): { name
   let nameAr = `استخراج بيانات من ${platformAr}`;
   let summaryAr = `جمع واستخراج البيانات العامة من ${platformAr}`;
 
-  if (nameEn.includes("comment") || summaryEn.includes("comment") || idStr.includes("comment")) {
+  if (nameEn.includes("compan") || summaryEn.includes("compan") || idStr.includes("compan") || idStr.includes("lead")) {
+    nameAr = "بحث واستخراج بيانات الشركات";
+    summaryAr = "البحث في بيانات وسجلات الشركات واستخراج معلومات التواصل والأنشطة";
+  } else if (nameEn.includes("comment") || summaryEn.includes("comment") || idStr.includes("comment")) {
     nameAr = `استخراج تعليقات ${platformAr}`;
     summaryAr = `جمع التعليقات العامة والمشاركات من ${platformAr}`;
   } else if (nameEn.includes("profile") || summaryEn.includes("profile") || idStr.includes("profile") || nameEn.includes("user")) {
     nameAr = `استخراج ملف حساب ${platformAr}`;
     summaryAr = `استخراج البيانات والإحصائيات العامة لحساب ${platformAr}`;
   } else if (nameEn.includes("search") || summaryEn.includes("search") || idStr.includes("search")) {
-    nameAr = `بحث واستخراج منشورات ${platformAr}`;
-    summaryAr = `البحث في المنشورات والمحتوى العام على ${platformAr} بالكلمات المفتاحية`;
+    nameAr = `بحث واستخراج بيانات ${platformAr}`;
+    summaryAr = `البحث في البيانات والمحتوى العام على ${platformAr} بالكلمات المفتاحية`;
   } else if (nameEn.includes("video") || summaryEn.includes("video") || idStr.includes("video") || nameEn.includes("post") || summaryEn.includes("post")) {
     nameAr = `استخراج منشورات ومحتوى ${platformAr}`;
     summaryAr = `استخراج المنشورات والمحتوى العام والتفاعلات على ${platformAr}`;
@@ -566,38 +571,71 @@ export async function searchCatalog(
   // If platform hint is provided, filter or prioritize that platform
   if (normPlatform) {
     const platformMatches = normalized.filter(
-      (ep) => ep.platform === normPlatform || ep.platform.includes(normPlatform) || normPlatform.includes(ep.platform)
+      (ep) =>
+        ep.platform === normPlatform ||
+        ep.platform.includes(normPlatform) ||
+        normPlatform.includes(ep.platform) ||
+        (normPlatform === "companies" && (ep.id.includes("companies") || ep.platform === "web"))
     );
     if (platformMatches.length > 0) {
       normalized = platformMatches;
     }
   }
 
+  // Detect auxiliary/non-extraction endpoints (count-only, autocomplete, preview, status)
+  const isAuxiliaryEndpoint = (ep: CatalogEndpointSummary): boolean => {
+    const id = (ep.id || "").toLowerCase();
+    return (
+      /\.(count|autocomplete|preview|status|suggestions?)$/i.test(id) ||
+      id.includes(".count.") ||
+      id.includes(".autocomplete.")
+    );
+  };
+
   // 3. Rank endpoints:
-  // - Higher success rate first
-  // - Higher sample size
+  // - Priced extraction endpoints (>0 cost) FIRST (no free services)
+  // - Non-auxiliary extraction endpoints first
+  // - Matching platform
+  // - Higher success rate
   // - Lower price in USD
+  // - Higher sample size
   normalized.sort((a, b) => {
-    // If platform hint, matching platform wins
+    // 1. Positive cost first (0-cost count/preview endpoints deprioritized)
+    const aHasCost = a.catalogPriceUsd > 0 && a.pointsPerUnit > 0 ? 1 : 0;
+    const bHasCost = b.catalogPriceUsd > 0 && b.pointsPerUnit > 0 ? 1 : 0;
+    if (aHasCost !== bHasCost) {
+      return bHasCost - aHasCost;
+    }
+
+    // 2. Non-auxiliary extraction endpoints first
+    const aAux = isAuxiliaryEndpoint(a) ? 1 : 0;
+    const bAux = isAuxiliaryEndpoint(b) ? 1 : 0;
+    if (aAux !== bAux) {
+      return aAux - bAux;
+    }
+
+    // 3. Platform match
     if (normPlatform) {
-      const aMatch = a.platform === normPlatform ? 1 : 0;
-      const bMatch = b.platform === normPlatform ? 1 : 0;
+      const aMatch =
+        a.platform === normPlatform || (normPlatform === "companies" && a.id.includes("companies")) ? 1 : 0;
+      const bMatch =
+        b.platform === normPlatform || (normPlatform === "companies" && b.id.includes("companies")) ? 1 : 0;
       if (aMatch !== bMatch) return bMatch - aMatch;
     }
 
-    // Success rate comparison (e.g. 0.99 vs 0.88)
+    // 4. Success rate comparison (e.g. 0.99 vs 0.88)
     const rateDiff = b.observedSuccessRate - a.observedSuccessRate;
     if (Math.abs(rateDiff) > 0.05) {
       return rateDiff;
     }
 
-    // Cost comparison (lower price wins)
+    // 5. Cost comparison (lower positive price wins)
     const costDiff = a.catalogPriceUsd - b.catalogPriceUsd;
     if (Math.abs(costDiff) > 0.0001) {
       return costDiff;
     }
 
-    // Sample size tiebreaker
+    // 6. Sample size tiebreaker
     return b.observedSamples - a.observedSamples;
   });
 

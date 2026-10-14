@@ -1217,8 +1217,8 @@ export class LlmClient {
         if (parsed > 0) volume = parsed;
       }
       for (const m of options.messages) {
-        if (typeof m.content === "string" && m.content.includes("حجم البيانات المستهدف: حتى ")) {
-          const mVol = m.content.match(/حجم البيانات المستهدف: حتى (\d+)/);
+        if (typeof m.content === "string") {
+          const mVol = m.content.match(/حجم البيانات.*حتى\s*(\d+)/);
           if (mVol) volume = parseInt(mVol[1], 10);
         }
       }

@@ -357,13 +357,18 @@ export function buildAutoPlanProposal(
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = (brief.platforms && brief.platforms.length > 0)
     ? brief.platforms[0]
-    : (mentionedPlats.length > 0 ? mentionedPlats[0] : "facebook");
+    : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "facebook"));
   const platformNorm = platform.toLowerCase();
 
   // Find matching capability in validationCaps
   let matchedCap = validationCaps.find((c) => {
     const cPlat = (c.platform || c.category || "").toLowerCase();
-    return cPlat === platformNorm || c.slug.includes(platformNorm);
+    const cSlug = (c.slug || "").toLowerCase();
+    const cId = (c.tregEndpointId || c.id || "").toLowerCase();
+    if (platformNorm === "companies" || platformNorm === "b2b") {
+      return cPlat === "companies" || cPlat === "b2b" || cSlug.includes("companies") || cId.includes("companies");
+    }
+    return cPlat === platformNorm || cSlug.includes(platformNorm);
   });
 
   if (!matchedCap) {
@@ -378,7 +383,15 @@ export function buildAutoPlanProposal(
     ? brief.topics[0]
     : "البيانات العامة المطلوبة";
 
-  const platformLabel = getPlatformLabelAr(platformNorm);
+  const isCompanySearch =
+    platformNorm === "companies" ||
+    platformNorm === "b2b" ||
+    matchedCap.slug.includes("companies") ||
+    Boolean(matchedCap.tregEndpointId && matchedCap.tregEndpointId.includes("companies"));
+
+  const platformLabel = isCompanySearch
+    ? "قواعد بيانات الشركات"
+    : getPlatformLabelAr(platformNorm);
 
   const isProfileCapability =
     (matchedCap.pricingUnit as string) === "profile" ||
@@ -389,9 +402,17 @@ export function buildAutoPlanProposal(
     typeof topicLabel === "string" &&
     (topicLabel.startsWith("@") || (!topicLabel.includes(" ") && !topicLabel.includes("،") && /^[a-zA-Z0-9_.-]+$/.test(topicLabel)));
 
-  const stepParams: Record<string, any> = {
-    query: topicLabel,
-  };
+  const stepParams: Record<string, any> = isCompanySearch
+    ? {
+        query: {
+          keyword: { include: [topicLabel] },
+        },
+        search: topicLabel,
+        pagination: { size: Math.min(volume, 100) },
+      }
+    : {
+        query: topicLabel,
+      };
 
   if (isProfileCapability || isExplicitHandle) {
     stepParams.username = topicLabel.replace(/^@/, "").trim();
@@ -401,7 +422,7 @@ export function buildAutoPlanProposal(
     stepParams.postUrl = "https://www.facebook.com/post/1";
   }
 
-  if (brief.dateRange) {
+  if (brief.dateRange && !isCompanySearch) {
     stepParams.dateFrom = "2026-01-01";
   }
 
@@ -415,9 +436,13 @@ export function buildAutoPlanProposal(
     paginationStrategy: matchedCap.paginationType || "cursor",
   };
 
+  const summaryAr = isCompanySearch
+    ? `استخراج بيانات ${volume} سجل من شركات ${topicLabel}`
+    : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
+
   return {
     type: "propose_plan",
-    summaryAr: `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`,
+    summaryAr,
     capabilities: [step],
     outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx", "pdf", "csv"],
     methodologyNotes: `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
@@ -916,13 +941,6 @@ export class ChatHandler {
       researchIntent.entityType.value === "companies" ||
       extractEntityType(message).entityType === "companies";
 
-    const isDirectCompanyResearch =
-      isCompanyIntent &&
-      !hasAnyApprovedPlatform &&
-      !hasExclusionReferenceOrFile &&
-      !isCardAnswer &&
-      !isTestSearchScenario;
-
     if (isTestSearchScenario) {
       isPhase2 = false;
     } else if (isGreeting || isGeneralQuestion) {
@@ -960,89 +978,11 @@ export class ChatHandler {
         });
       }
       return assistantMsg;
-    } else if (isDirectCompanyResearch) {
-        const topicLabel =
-          (brief.topics && brief.topics.length > 0 && brief.topics[0] !== "بحث عام" && brief.topics[0]) ||
-          (researchIntent.topic.value && researchIntent.topic.value !== "بحث عام" && researchIntent.topic.value) ||
-          "الشركات والمجالات المطلوبة";
-
-        const companyAlternativeMessageAr =
-          `نعتذر منك، استخراج بيانات وسجلات الشركات التجارية (مثل السجل التجاري أو قواعد بيانات الشركات العامة في مصر) غير مدعوم حالياً بشكل مباشر على المنصة.\n\n` +
-          `المنصة متخصصة حالياً ومجهزة لاستخراج وتحليل البيانات العامة المعتمدة من منصات التواصل الاجتماعي التالية:\n` +
-          `• **فيسبوك (Facebook)**: بحث المنشورات العامة، تفاعل الجمهور، والتعليقات.\n` +
-          `• **لينكد إن (LinkedIn)**: استخراج بيانات حسابات وصفحات الشركات والملفات المهنية.\n` +
-          `• **منصة X (تويتر)**: بحث التغريدات والوسوم والآراء العامة.\n` +
-          `• **إنستغرام، يوتيوب، تيك توك، وريديت**.\n\n` +
-          `💡 **بدائل يمكنك تنفيذها الآن:**\n` +
-          `إذا كنت ترغب في جمع بيانات ومعلومات عن ${topicLabel}، يمكنك توجيه طلبك لأحد الخيارات المتاحة:\n` +
-          `1. «بحث منشورات وصفحات ${topicLabel} على فيسبوك»\n` +
-          `2. «استخراج بيانات صفحات ${topicLabel} على لينكد إن»\n` +
-          `3. «تحليل تفاعل وآراء الجمهور حول ${topicLabel} على منصة X»`;
-
-        const tEarlyTotal = Date.now() - turnStartTime;
-        console.log("[chat:turn_breakdown]", {
-          supabaseMs,
-          catalogMs: 0,
-          llmMs: 0,
-          quoteMs: 0,
-          totalMs: tEarlyTotal,
-        });
-        console.log(
-          `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=0 catalogSearches=0 latencyMs=${tEarlyTotal}`,
-        );
-        console.log("[chat:step_timings]", {
-          supabaseMs,
-          catalogMs: 0,
-          llmMs: 0,
-          quoteMs: 0,
-          tExtractMs,
-          tCatalogSearchMs: 0,
-          tPlanLlmMs: 0,
-          tQuoteMs: 0,
-          totalMs: tEarlyTotal,
-        });
-
-        const assistantMsg: ChatHandlerResponse = {
-          conversationId,
-          messageId: assistantMsgId,
-          role: "assistant",
-          outputType: "suggest_alternative",
-          contentAr: companyAlternativeMessageAr,
-          tokensUsed: { input: 0, output: 0, costUsd: 0 },
-          turnStats: {
-            modelCalls: 0,
-            catalogSearches: 0,
-            latencyMs: tEarlyTotal,
-            stepTimings: {
-              supabaseMs,
-              catalogMs: 0,
-              llmMs: 0,
-              quoteMs: 0,
-              totalMs: tEarlyTotal,
-              tExtractMs,
-              tCatalogSearchMs: 0,
-              tPlanLlmMs: 0,
-              tQuoteMs: 0,
-            },
-          },
-        };
-
-        if (sb) {
-          await sb.from("messages").update({ content_ar: companyAlternativeMessageAr }).eq("id", assistantMsgId);
-        } else {
-          await this.tables.updateRow({
-            databaseId: "digr",
-            tableId: "messages",
-            rowId: assistantMsgId,
-            data: { content: companyAlternativeMessageAr, status: "ready" },
-          });
-        }
-        return assistantMsg;
-      } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
+    } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
       if (brief.platforms.length === 0) {
         brief.platforms = researchIntent.platforms.value.length > 0
           ? [...researchIntent.platforms.value]
-          : ["facebook"];
+          : (isCompanyIntent ? ["companies"] : ["facebook"]);
       }
       if (brief.topics.length === 0 && researchIntent.topic.value) {
         brief.topics = [researchIntent.topic.value];
@@ -1823,17 +1763,17 @@ export class ChatHandler {
             methodologyNotes: planOutput.methodologyNotes,
           };
 
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n- التكلفة: ${managedQuote.quotedPoints} نقطة`;
           if (brief.exclusionFile) {
-            planSummaryText += `\n• ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
+            planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
           if (managedQuote.capacityConstrained) {
-            planSummaryText += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+            planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
           }
           if (!managedQuote.isAffordable) {
-            planSummaryText += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
+            planSummaryText += `\n- تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
             if (managedQuote.downscaledOffer) {
-              planSummaryText += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+              planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
             }
           }
           finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
@@ -2069,7 +2009,7 @@ export class ChatHandler {
               points: 10,
             };
             output = { type: "edit_artifact", reasonAr: desc } as any;
-            finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n• التعديل المطلوب: ${desc}\n• التكلفة: 10 نقاط\n• سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
+            finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n- التعديل المطلوب: ${desc}\n- التكلفة: 10 نقاط\n- سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
           }
         }
       }
