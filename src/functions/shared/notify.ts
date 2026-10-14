@@ -1,14 +1,27 @@
 import { ID, Messaging, Permission, Role, TablesDB, Users } from "./dbCompat";
+import { calculateBalance } from "./ledger";
+import { renderEmailTemplate, resolveSiteUrl, type PlatformEmailTemplateId } from "./emailTemplates";
 
-export type NotificationKind = "topup_approved" | "topup_rejected" | "job_done" | "refund" | "welcome";
+export type NotificationKind = "topup_approved" | "topup_rejected" | "topup_received" | "job_done" | "refund" | "welcome";
 type PrefKey = "topup" | "done" | "refund" | "news";
 
 const PREF_FOR_KIND: Record<NotificationKind, PrefKey | null> = {
   topup_approved: "topup",
   topup_rejected: "topup",
+  topup_received: "topup",
   job_done: "done",
   refund: "refund",
   welcome: null,
+};
+
+/** Which branded platform email template renders each notification kind. */
+const TEMPLATE_FOR_KIND: Record<NotificationKind, PlatformEmailTemplateId> = {
+  welcome: "welcome",
+  topup_received: "topup-received",
+  topup_approved: "topup-approved",
+  topup_rejected: "topup-rejected",
+  job_done: "job-done",
+  refund: "refund",
 };
 
 export interface NotifyInput {
@@ -17,6 +30,8 @@ export interface NotifyInput {
   title: string;
   body: string;
   link?: string;
+  /** Template variables for the branded email (Name / SiteURL are filled in here). */
+  emailVars?: Record<string, string | number | undefined>;
 }
 
 /**
@@ -57,10 +72,21 @@ export async function notifyUser(
     const prefs = ((user.prefs as any)?.notif ?? {}) as Partial<Record<PrefKey, boolean>>;
     if (pref && prefs[pref] === false) return;
     if (!user.email) return;
+    const vars: Record<string, string | number> = { Name: user.name || "مستخدم", ...input.emailVars };
+    // Balance is only shown on the topup-approved / refund templates; fetch it lazily.
+    // Guarded: a failure leaves Balance blank and never breaks the notification.
+    if ((input.kind === "topup_approved" || input.kind === "refund") && vars.Balance === undefined) {
+      try {
+        vars.Balance = arDigits(await calculateBalance(tables, input.userId));
+      } catch {
+        vars.Balance = "";
+      }
+    }
+    const { subject, html } = renderEmailTemplate(TEMPLATE_FOR_KIND[input.kind], vars);
     await new Messaging(client).createEmail({
       messageId: ID.unique(),
-      subject: input.title,
-      content: `<div dir="rtl" style="font-family:sans-serif;line-height:1.9"><p>${escapeHtml(input.title)}</p><p>${escapeHtml(input.body)}</p></div>`,
+      subject,
+      content: html,
       users: [input.userId],
       html: true,
     });
@@ -68,10 +94,6 @@ export async function notifyUser(
     // No Messaging provider configured, or the user opted out: the in-app notification already exists.
     log?.(`email skipped: ${e?.message}`);
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
 const arDigits = (n: number) => String(n).replace(/\d/g, (d) => String.fromCharCode(0x0660 + Number(d)));
@@ -82,6 +104,12 @@ export interface JobOutcome {
   chargedCredits?: number;
   refundCredits?: number;
   reservedCredits?: number;
+  /** Display title of the research job (template name), used by the job-done / refund emails. */
+  jobTitle?: string;
+  /** Requested volume (target), used by the job-done email. */
+  requestedUnits?: number;
+  /** Short reason phrase for the refund email ("السبب: ..."). */
+  refundReason?: string;
 }
 
 /** In-app (+ email per preferences) events for a finished run: «اكتمل بحثك» and «رجعت N نقطة لرصيدك». */
@@ -92,16 +120,31 @@ export async function notifyJobOutcome(
   log?: (m: string) => void,
 ): Promise<void> {
   const refund = Math.max(0, Number(result.refundCredits ?? 0));
+  const jobTitle = result.jobTitle || "بحثك";
+  const jobUrl = `${resolveSiteUrl()}/dashboard/requests`;
   if (result.status === "done" || result.status === "cancelled") {
     await notifyUser(client, {
       userId, kind: "job_done", title: "اكتمل بحثك",
       body: `${arDigits(result.deliveredUnits ?? 0)} سجلًا، والملفات جاهزة للتحميل.`,
       link: "/dashboard/requests",
+      emailVars: {
+        Charged: arDigits(result.chargedCredits ?? 0),
+        Delivered: arDigits(result.deliveredUnits ?? 0),
+        Refunded: arDigits(refund),
+        Requested: result.requestedUnits === undefined ? "" : arDigits(result.requestedUnits),
+        JobTitle: jobTitle,
+        JobURL: jobUrl,
+      },
     }, log);
     if (refund > 0) {
       await notifyUser(client, {
         userId, kind: "refund", title: `رجعت ${arDigits(refund)} نقطة لرصيدك`,
         body: "فرق الحجز من بحثك الأخير عاد إلى محفظتك.", link: "/dashboard/topup",
+        emailVars: {
+          Points: arDigits(refund),
+          Reason: result.refundReason || "فرق الحجز من بحثك الأخير",
+          JobTitle: jobTitle,
+        },
       }, log);
     }
   } else if (result.status === "failed") {
@@ -109,6 +152,11 @@ export async function notifyJobOutcome(
     await notifyUser(client, {
       userId, kind: "refund", title: back > 0 ? `رجعت ${arDigits(back)} نقطة لرصيدك` : "تعذّر إكمال البحث",
       body: "تعذّر إكمال البحث ولم يُخصم شيء — رجعت النقاط المحجوزة كاملة.", link: "/dashboard/requests",
+      emailVars: {
+        Points: arDigits(back),
+        Reason: result.refundReason || "تعذّر إكمال البحث ولم يُخصم شيء",
+        JobTitle: jobTitle,
+      },
     }, log);
   }
 }

@@ -1,6 +1,8 @@
 import { Client, TablesDB, Storage, Users, Query, Permission, Role, ID } from "../../shared/dbCompat";
 import { z } from "zod";
-import { EG_MOBILE_RE, isThreePartName, normalizeDigits, normalizePhone, normalizeSenderName } from "../../../lib/arabicDigits";
+import { EG_MOBILE_RE, isThreePartName, normalizeDigits, normalizePhone, normalizeSenderName, toArabicDigits } from "../../../lib/arabicDigits";
+import { notifyUser } from "../../shared/notify";
+import { formatArabicDate } from "../../shared/emailTemplates";
 
 const DEFAULT_MAX_PENDING = 3;
 
@@ -61,10 +63,12 @@ export default async ({ req, res, log, error }: any) => {
 
     // 2. Cap on pending top-ups per user (settings_public.maxPendingTopups, default 3)
     let maxPending = DEFAULT_MAX_PENDING;
+    let creditValueEgp = 0.1;
     try {
       const pub: any = await tables.getRow({ databaseId: "digr", tableId: "settings_public", rowId: "pricing" });
       if (Number.isInteger(pub?.maxPendingTopups) && pub.maxPendingTopups > 0) maxPending = pub.maxPendingTopups;
-    } catch { /* settings row or column missing: keep the default */ }
+      if (typeof pub?.creditValueEgp === "number" && pub.creditValueEgp > 0) creditValueEgp = pub.creditValueEgp;
+    } catch { /* settings row or column missing: keep the defaults */ }
     const pendingTopups = await tables.listRows({
       databaseId: "digr",
       tableId: "topups",
@@ -200,6 +204,22 @@ export default async ({ req, res, log, error }: any) => {
         Permission.read(Role.label("admin")),
       ],
     });
+
+    // 6. Notify the user (in-app + branded topup-received email). Never blocks the submission:
+    // notifyUser swallows its own failures, and the row above is already created.
+    await notifyUser(client, {
+      userId: callerId,
+      kind: "topup_received",
+      title: "تم استلام طلب الشحن",
+      body: `طلب شحن بقيمة ${toArabicDigits(validated.amountEgp)} ج.م — قيد المراجعة.`,
+      link: "/dashboard/topup",
+      emailVars: {
+        AmountEgp: toArabicDigits(validated.amountEgp),
+        CreatedAt: formatArabicDate(new Date().toISOString()),
+        Credits: toArabicDigits(Math.floor(validated.amountEgp / creditValueEgp)),
+        Reference: validated.reference,
+      },
+    }, log);
 
     return res.json({
       success: true,
