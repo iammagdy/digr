@@ -53,33 +53,8 @@ export async function POST(
       return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا الطلب." }, { status: 403 });
     }
 
-    // 3. Verify points balance before charging
-    const { data: ledgerRows, error: ledgerErr } = await adminClient
-      .from("credit_ledger")
-      .select("delta")
-      .eq("user_id", verifiedUserId);
-
-    if (ledgerErr) {
-      throw ledgerErr;
-    }
-
-    const currentBalance = (ledgerRows || []).reduce((sum, r) => sum + (Number(r.delta) || 0), 0);
-
-    if (currentBalance < METHODOLOGY_DEFAULT_POINTS) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `الرصيد غير كافٍ. يلزم ${METHODOLOGY_DEFAULT_POINTS} نقاط لصياغة المنهجية الأكاديمية (رصيدك الحالي: ${currentBalance} نقطة).`,
-        },
-        { status: 400 }
-      );
-    }
-
-    // 4. Ledger Flow: Deterministic Reserve then Release-First Charge
-    const methResId = `res_meth_${jobId}`;
-    const methRelId = `rel_meth_${jobId}`;
+    // 3. Ledger Flow Check: Check if methodology was already purchased
     const methChgId = `chg_meth_${jobId}`;
-
     const { data: existingMeth } = await adminClient
       .from("credit_ledger")
       .select("id")
@@ -87,33 +62,26 @@ export async function POST(
       .maybeSingle();
 
     if (!existingMeth) {
-      // Write reserve (-10)
-      await adminClient.from("credit_ledger").insert({
-        id: methResId,
-        user_id: verifiedUserId,
-        delta: -METHODOLOGY_DEFAULT_POINTS,
-        type: "reserve",
-        note: "حجز نقاط صياغة المنهجية",
-      });
-
-      // Write release (+10)
-      await adminClient.from("credit_ledger").insert({
-        id: methRelId,
-        user_id: verifiedUserId,
-        delta: METHODOLOGY_DEFAULT_POINTS,
-        type: "release",
-        note: "استرداد حجز نقاط المنهجية",
-      });
-
-      // Write charge (-10)
-      await adminClient.from("credit_ledger").insert({
-        id: methChgId,
-        user_id: verifiedUserId,
-        delta: -METHODOLOGY_DEFAULT_POINTS,
-        type: "charge",
-        note: "خصم تكلفة صياغة المنهجية الأكاديمية",
-      });
+      // BLOCKER 3: Direct independent ledger inserts (res_meth_, rel_meth_, chg_meth_) are forbidden.
+      // On-demand methodology purchase requires atomic RPC (purchase_methodology_atomic)
+      // which is pending owner approval.
+      return NextResponse.json(
+        {
+          success: false,
+          blocked: true,
+          error: "خاصية شراء صياغة المنهجية عند الطلب معلقة بانتظار اعتماد التخصيص المالي الذري (purchase_methodology_atomic).",
+          reason: "methodology_charging_pending_owner_approval",
+        },
+        { status: 409 }
+      );
     }
+
+    const { data: ledgerRows } = await adminClient
+      .from("credit_ledger")
+      .select("delta")
+      .eq("user_id", verifiedUserId);
+
+    const currentBalance = (ledgerRows || []).reduce((sum, r) => sum + (Number(r.delta) || 0), 0);
 
     // 5. Read real run facts from server storage
     let rawParsed: any = null;
@@ -212,15 +180,12 @@ export async function POST(
 - أخلاقيات البحث: اقتصر الجمع على المحتوى المنشور علناً دون الالتفاف على أي قيود خصوصية.`;
     }
 
-    const remainingBalance = existingMeth
-      ? currentBalance
-      : currentBalance - METHODOLOGY_DEFAULT_POINTS;
-
+    const remainingBalance = currentBalance;
     return NextResponse.json({
       success: true,
       jobId,
-      chargedPoints: METHODOLOGY_DEFAULT_POINTS,
-      remainingBalance,
+      chargedPoints: 0,
+      remainingBalance: currentBalance,
       methodologyText: methodologyStatement,
     });
   } catch (err: any) {

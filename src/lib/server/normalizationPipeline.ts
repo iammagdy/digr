@@ -307,6 +307,55 @@ export function deduplicateRecords(rows: Array<Record<string, any>>): {
 }
 
 /**
+ * Organizes relational comment data so direct replies nest immediately under
+ * their parent top-level comment while preserving all records and stability.
+ */
+export function organizeCommentHierarchy(
+  rows: Array<Record<string, any>>
+): Array<Record<string, any>> {
+  const hasHierarchy = rows.some((r) => r.parent_id !== undefined || r.is_reply === true);
+  if (!hasHierarchy) return rows;
+
+  const topLevel: Array<Record<string, any>> = [];
+  const repliesByParent = new Map<string, Array<Record<string, any>>>();
+  const orphanedReplies: Array<Record<string, any>> = [];
+
+  for (const r of rows) {
+    if (r.parent_id) {
+      const pid = String(r.parent_id);
+      if (!repliesByParent.has(pid)) repliesByParent.set(pid, []);
+      repliesByParent.get(pid)!.push(r);
+    } else if (r.is_reply) {
+      orphanedReplies.push(r);
+    } else {
+      topLevel.push(r);
+    }
+  }
+
+  const result: Array<Record<string, any>> = [];
+  for (const parent of topLevel) {
+    result.push(parent);
+    const parentKey1 = parent.source_id ? String(parent.source_id) : "";
+    const parentKey2 = parent.id ? String(parent.id) : "";
+    const directReplies =
+      (parentKey1 ? repliesByParent.get(parentKey1) : undefined) ||
+      (parentKey2 ? repliesByParent.get(parentKey2) : undefined);
+    if (directReplies && directReplies.length > 0) {
+      result.push(...directReplies);
+      if (parentKey1) repliesByParent.delete(parentKey1);
+      if (parentKey2) repliesByParent.delete(parentKey2);
+    }
+  }
+
+  for (const remaining of repliesByParent.values()) {
+    result.push(...remaining);
+  }
+  result.push(...orphanedReplies);
+
+  return result;
+}
+
+/**
  * Computes summary KPI metrics for the dataset.
  */
 export function computeKpis(rows: Array<Record<string, any>>, duplicatesRemoved: number = 0): DatasetKpis {
@@ -444,8 +493,9 @@ export function normalizeDataset(
 
   const mappedRows = rawRows.map((r, i) => normalizeRecord(r, i));
 
-  // 3. Deduplicate
-  const { uniqueRows, duplicatesCount } = deduplicateRecords(mappedRows);
+  // 3. Deduplicate and organize relational comment hierarchy
+  const { uniqueRows: dedupedRows, duplicatesCount } = deduplicateRecords(mappedRows);
+  const uniqueRows = organizeCommentHierarchy(dedupedRows);
 
   // 4. Determine Active Columns
   const columnSet = new Set<string>();

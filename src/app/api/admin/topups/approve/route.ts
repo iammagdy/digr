@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
 
       // Email: topup-approved (never blocks or fails the request)
       try {
-        const rcpt = await getRecipient(adminClient, topup.user_id);
+        const rcpt = await getRecipient(adminClient, topup.user_id, "topup-approved");
         if (rcpt) {
           const balance = await getBalance(adminClient, topup.user_id);
           await sendPlatformEmail("topup-approved", rcpt.email, {
@@ -147,6 +147,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reject") {
+      if (!rejectReason) {
+        return NextResponse.json(
+          { success: false, error: "سبب الرفض مطلوب" },
+          { status: 400 }
+        );
+      }
+      const confirmedRejectReason: string = rejectReason;
+
       // Update topup status to rejected
       await adminClient
         .from("topups")
@@ -158,7 +166,7 @@ export async function POST(req: NextRequest) {
         id: `notif_${topupId}`,
         user_id: topup.user_id,
         title: "تم رفض طلب الشحن",
-        body: `تم رفض طلب الشحن (مرجع: ${topup.reference}). السبب: ${rejectReason}`,
+        body: `تم رفض طلب الشحن (مرجع: ${topup.reference}). السبب: ${confirmedRejectReason}`,
         link: "/dashboard/topup",
         read: false,
         created_at: now,
@@ -166,13 +174,13 @@ export async function POST(req: NextRequest) {
 
       // Email: topup-rejected (never blocks or fails the request)
       try {
-        const rcpt = await getRecipient(adminClient, topup.user_id);
+        const rcpt = await getRecipient(adminClient, topup.user_id, "topup-rejected");
         if (rcpt) {
           await sendPlatformEmail("topup-rejected", rcpt.email, {
             Name: rcpt.name,
             AmountEgp: String(topup.amount_egp),
             Reference: topup.reference,
-            RejectReason: rejectReason,
+            RejectReason: confirmedRejectReason,
           });
         }
       } catch (emailErr) {

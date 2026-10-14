@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { Account, TablesDB } from "node-appwrite";
 import {
   LlmClient,
   getLlmStatusSnapshot,
@@ -10,18 +9,53 @@ import {
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { GET as getLlmStatus } from "../src/app/api/admin/llm-status/route";
 
+const mockSbAuth = vi.hoisted(() => ({
+  user: null as any,
+  lastUsageTimestamp: "2026-10-11T09:30:00.000Z" as string | null,
+}));
+
+vi.mock("../src/lib/supabase/server", () => ({
+  createServerSideClient: vi.fn(async () => ({
+    auth: {
+      getUser: vi.fn(async (jwt?: string) => {
+        if (!jwt || !mockSbAuth.user) {
+          return { data: { user: null }, error: { message: "Invalid JWT" } };
+        }
+        return { data: { user: mockSbAuth.user }, error: null };
+      }),
+    },
+  })),
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn((table: string) => ({
+      select: vi.fn(() => ({
+        order: vi.fn(() => ({
+          limit: vi.fn(async () => ({
+            data: mockSbAuth.lastUsageTimestamp
+              ? [{ created_at: mockSbAuth.lastUsageTimestamp }]
+              : [],
+            error: null,
+          })),
+        })),
+      })),
+    })),
+  })),
+}));
+
 describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin Status", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
     process.env = { ...originalEnv };
     setLastLlmFallbackReason(null);
+    mockSbAuth.user = null;
+    mockSbAuth.lastUsageTimestamp = "2026-10-11T09:30:00.000Z";
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
     process.env = originalEnv;
     setLastLlmFallbackReason(null);
+    mockSbAuth.user = null;
     vi.restoreAllMocks();
   });
 
@@ -135,10 +169,11 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
     });
 
     it("rejects authenticated non-admin users with 403", async () => {
-      vi.spyOn(Account.prototype, "get").mockResolvedValue({
-        $id: "user_regular",
-        labels: ["user"],
-      } as any);
+      mockSbAuth.user = {
+        id: "user_regular",
+        email: "user@example.com",
+        app_metadata: { role: "user" },
+      };
 
       const req = new NextRequest("http://localhost:3000/api/admin/llm-status", {
         method: "GET",
@@ -154,17 +189,13 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
       process.env.LLM_ENABLED = "true";
       process.env.ANTHROPIC_API_KEY = secretKey;
       process.env.ANTHROPIC_MODEL = "claude-haiku-5-5";
-      process.env.APPWRITE_API_KEY = "server-appwrite-key";
 
-      vi.spyOn(Account.prototype, "get").mockResolvedValue({
-        $id: "admin_1",
-        labels: ["admin"],
-      } as any);
-
-      vi.spyOn(TablesDB.prototype, "listRows").mockResolvedValue({
-        total: 1,
-        rows: [{ createdAt: "2026-10-11T09:30:00.000Z" }],
-      } as any);
+      mockSbAuth.user = {
+        id: "admin_1",
+        email: "admin@diger.tech",
+        app_metadata: { role: "admin" },
+      };
+      mockSbAuth.lastUsageTimestamp = "2026-10-11T09:30:00.000Z";
 
       const req = new NextRequest("http://localhost:3000/api/admin/llm-status", {
         method: "GET",

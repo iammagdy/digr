@@ -6,8 +6,44 @@ import { createAdminClient } from "../../../../lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const authHeader = req.headers.get("authorization");
+  const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+  const cookieToken =
+    req.cookies.get("diger_jwt")?.value ||
+    req.cookies.get("digr_jwt")?.value ||
+    req.cookies.get("sb-access-token")?.value;
+
+  const acceptsHtml =
+    (req.headers.get("accept") || "").includes("text/html") &&
+    req.nextUrl.searchParams.get("format") !== "json";
+
+  if (!bearer && !cookieToken) {
+    if (acceptsHtml) {
+      return new NextResponse(
+        `<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>حالة المساعد الذكي — Diger</title>
+</head>
+<body>
+  <script>
+    fetch("/api/admin/llm-status?format=json").then(r => r.json()).then(console.log);
+  </script>
+</body>
+</html>`,
+        {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        }
+      );
+    }
+  }
+
   const auth = await authenticateAdmin(req);
-  if (!auth.ok) return auth.response;
+  if (!auth.ok) {
+    return auth.response;
+  }
 
   let lastUsageTimestamp: string | null = null;
   try {

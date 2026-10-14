@@ -100,7 +100,7 @@ async function executeReleaseConfirmation(
             .eq("id", jobId)
             .maybeSingle();
           if (jobRow?.user_id) {
-            const rcpt = await getRecipient(adminClient, jobRow.user_id);
+            const rcpt = await getRecipient(adminClient, jobRow.user_id, "refund");
             if (rcpt) {
               const balance = await getBalance(adminClient, jobRow.user_id);
               const endpointId =
@@ -841,7 +841,7 @@ export async function POST(req: NextRequest) {
 
       // Email: job-done (never blocks or fails the request)
       try {
-        const rcpt = await getRecipient(adminClient, userId);
+        const rcpt = await getRecipient(adminClient, userId, "job-done");
         if (rcpt) {
           await sendPlatformEmail("job-done", rcpt.email, {
             Name: rcpt.name,

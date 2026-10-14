@@ -290,12 +290,16 @@ export async function generateExcelReport(payload: any): Promise<Buffer> {
     ? `من ${norm.kpis.earliestDate} إلى ${norm.kpis.latestDate}`
     : `بتاريخ ${dateStr}`;
 
+  const rawCollectedCount = norm.kpis.totalRecords + (norm.kpis.duplicatesRemoved || 0);
   const qualityData = [
-    ["إجمالي السجلات المستخرجة", `${rowsCount.toLocaleString("en-US")} سجل`, "حجم العينة الفعلي المستخلص والموثق"],
-    ["السجلات المكررة المستبعدة", `${norm.kpis.duplicatesRemoved} سجل`, "تم التحقق من تفرد السجلات بالمعرف الرقمي وبصمة المحتوى"],
+    ["إجمالي السجلات المستلمة (Raw Collected)", `${rawCollectedCount.toLocaleString("en-US")} سجل`, "إجمالي السجلات الواردة من مزود البيانات قبل الفلترة"],
+    ["السجلات الفريدة المسلمة (Unique Delivered)", `${rowsCount.toLocaleString("en-US")} سجل`, "حجم العينة الفعلي المستخلص والموثق في ملف البيانات"],
+    ["السجلات المكررة المستبعدة (Duplicates Removed)", `${norm.kpis.duplicatesRemoved} سجل`, "تم التحقق من تفرد السجلات بالمعرف الرقمي وبصمة المحتوى واستبعاد التكرارات"],
+    ["السجلات المطلوبة (Target Requested)", `${norm.metadata.rowsCount || rowsCount} سجل`, "الحد المستهدف للعينات المطلوبة في خطة البحث"],
     ["نسبة اكتمال الحقول (Completeness)", `${norm.kpis.dataCompletenessPct}%`, "نسبة الحقول المحتوية على قيم فعلية غير مفقودة"],
+    ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية ولا تمثل حصراً شاملاً"],
     ["النطاق الزمني للرصد", timeRangeDesc, "الفترة الزمنية الفعلية لتواريخ النشر المستخرجة"],
-    ["النزاهة المنهجية (Integrity)", "نقل مباشر مطابق 100%", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
+    ["النزاهة المنهجية (Integrity)", "نقل مطابق للمصدر المعلن", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
     ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية", "استخراج مقتصر على الواجهات والصفحات المتاحة علناً دون تجاوز"],
   ];
 
