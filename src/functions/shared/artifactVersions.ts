@@ -1,4 +1,4 @@
-import { Query, TablesDB } from "node-appwrite";
+import { Query, TablesDB } from "./dbCompat";
 import { createHash } from "crypto";
 
 export function artifactVersionRowId(jobId: string, versionNum: number): string {

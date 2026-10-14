@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 
 export interface RateLimitConfig {
   /** Per-account burst protection: max USER messages per minute. No daily quota. */

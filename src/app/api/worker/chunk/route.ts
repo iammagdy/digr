@@ -13,7 +13,7 @@ import {
   getConfiguredProviderSpendCapUsd,
   getConfiguredJobPointsCap,
 } from "../../../../functions/shared/providerSpend";
-import { generateMethodologyText } from "../../../../functions/shared/multiStepWorker";
+import { generateMethodologyText } from "../../../../functions/shared/fileGenerators";
 import { artifactVersionRowId } from "../../../../functions/shared/artifactVersions";
 import { getInMemoryPartialStepFallback } from "../../../../lib/server/tregAdapter";
 

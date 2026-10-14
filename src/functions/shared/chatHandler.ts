@@ -1,5 +1,5 @@
 import { logProviderCost } from "./providerCosts";
-import { TablesDB, ID, Query } from "node-appwrite";
+import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import {
   getEnabledCapabilities,

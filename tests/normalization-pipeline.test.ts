@@ -242,4 +242,25 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(norm.rows[4].source_id).toBe("r1_c2");
     });
   });
+
+  describe("9. Target Requested & Research Fact Preservation", () => {
+    it("preserves explicit targetRequested or defaults to null if absent", () => {
+      const payloadWithoutTarget = {
+        metadata: { title: "بحث عام", platform: "X" },
+        rows: [{ id: "1", text: "عينة" }],
+      };
+      const normWithout = normalizeDataset(payloadWithoutTarget);
+      expect(normWithout.metadata.targetRequested).toBeNull();
+
+      const payloadWithTarget = {
+        metadata: { title: "بحث محدد", platform: "X", targetRequested: 250 },
+        rows: [{ id: "1", text: "عينة" }],
+      };
+      const normWith = normalizeDataset(payloadWithTarget);
+      expect(normWith.metadata.targetRequested).toBe(250);
+
+      const normWithOptions = normalizeDataset(payloadWithoutTarget, { targetRequested: 500 });
+      expect(normWithOptions.metadata.targetRequested).toBe(500);
+    });
+  });
 });

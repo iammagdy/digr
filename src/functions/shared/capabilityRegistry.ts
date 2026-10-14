@@ -1,4 +1,4 @@
-import { TablesDB } from "node-appwrite";
+import { TablesDB } from "./dbCompat";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
 export type CapabilityUnit = "page" | "query" | "profile" | "1000 items";

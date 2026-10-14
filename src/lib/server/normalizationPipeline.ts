@@ -28,6 +28,7 @@ export interface NormalizedDataset {
     rowsCount: number;
     methodology: string;
     entityType: "posts" | "comments" | "profile" | "search" | "tabular";
+    targetRequested?: number | string | null;
   };
   profile: Record<string, any> | null;
   rows: Array<Record<string, any>>;
@@ -458,6 +459,7 @@ export function normalizeDataset(
     platform?: string;
     title?: string;
     jobId?: string;
+    targetRequested?: number | string | null;
   }
 ): NormalizedDataset {
   const meta = rawPayload?.metadata || {};
@@ -562,6 +564,7 @@ export function normalizeDataset(
       rowsCount: uniqueRows.length,
       methodology: methodologyText,
       entityType,
+      targetRequested: options?.targetRequested !== undefined ? options.targetRequested : (meta.targetRequested !== undefined ? meta.targetRequested : null),
     },
     profile: cleanProfile,
     rows: uniqueRows,

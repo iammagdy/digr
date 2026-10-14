@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
 
