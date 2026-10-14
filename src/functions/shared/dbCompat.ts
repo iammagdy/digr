@@ -65,7 +65,50 @@ export class TablesDB {
   }
 }
 
-export type Storage = any;
+export class Client {
+  endpoint = "";
+  project = "";
+  key = "";
+  setEndpoint(endpoint: string) { this.endpoint = endpoint; return this; }
+  setProject(project: string) { this.project = project; return this; }
+  setKey(key?: string) { this.key = key || ""; return this; }
+}
+
+export class Functions {
+  client: any;
+  constructor(client?: any) { this.client = client; }
+  async createExecution(...args: any[]) {
+    if (typeof this.client?.createExecution === "function") {
+      return this.client.createExecution(...args);
+    }
+    throw new Error("Functions: createExecution is not supported by the provided client.");
+  }
+}
+
+export class Storage {
+  client: any;
+  constructor(client?: any) { this.client = client; }
+  async getFile(...args: any[]) {
+    if (typeof this.client?.getFile === "function") return this.client.getFile(...args);
+    throw new Error("Storage: getFile is not supported by the provided client.");
+  }
+  async getFileDownload(...args: any[]) {
+    if (typeof this.client?.getFileDownload === "function") return this.client.getFileDownload(...args);
+    throw new Error("Storage: getFileDownload is not supported by the provided client.");
+  }
+  async createFile(...args: any[]) {
+    if (typeof this.client?.createFile === "function") return this.client.createFile(...args);
+    throw new Error("Storage: createFile is not supported by the provided client.");
+  }
+  async deleteFile(...args: any[]) {
+    if (typeof this.client?.deleteFile === "function") return this.client.deleteFile(...args);
+    throw new Error("Storage: deleteFile is not supported by the provided client.");
+  }
+  async updateFile(...args: any[]) {
+    if (typeof this.client?.updateFile === "function") return this.client.updateFile(...args);
+    throw new Error("Storage: updateFile is not supported by the provided client.");
+  }
+}
 
 export class Messaging {
   client: any;
@@ -90,5 +133,17 @@ export class Users {
       return this.client.get(...args);
     }
     throw new Error("Users: get is not supported by the provided client.");
+  }
+  async updatePrefs(...args: any[]) {
+    if (typeof this.client?.updatePrefs === "function") return this.client.updatePrefs(...args);
+    throw new Error("Users: updatePrefs is not supported by the provided client.");
+  }
+  async deleteSessions(...args: any[]) {
+    if (typeof this.client?.deleteSessions === "function") return this.client.deleteSessions(...args);
+    throw new Error("Users: deleteSessions is not supported by the provided client.");
+  }
+  async updateStatus(...args: any[]) {
+    if (typeof this.client?.updateStatus === "function") return this.client.updateStatus(...args);
+    throw new Error("Users: updateStatus is not supported by the provided client.");
   }
 }

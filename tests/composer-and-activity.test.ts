@@ -32,8 +32,8 @@ describe("Composer & Activity Feed Integrity", () => {
     expect(acceptCode).toContain('.from("job_events").insert');
     // Worker records chunk progress in job_events
     expect(workerCode).toContain('.from("job_events").insert');
-    // Worker uploads data.json to results bucket
-    expect(workerCode).toContain('resultsBucket.upload');
+    // Worker uploads data.json to partials bucket (results bucket strictly restricts MIME types to xlsx, csv, and pdf)
+    expect(workerCode).toContain('partialsBucket.upload');
     expect(workerCode).toContain('${jobId}/data.json');
   });
 

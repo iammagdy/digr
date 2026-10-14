@@ -1,4 +1,4 @@
-import { Client, TablesDB, Functions, Query, Permission, Role, ID } from "node-appwrite";
+import { Client, TablesDB, Functions, Query, Permission, Role, ID } from "../../shared/dbCompat";
 import { z } from "zod";
 import {
   reserveCredits,

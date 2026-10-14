@@ -7,7 +7,7 @@ import {
 } from "../src/functions/shared/multiStepWorker";
 import { releaseReservation } from "../src/functions/shared/ledger";
 
-vi.mock("node-appwrite", () => {
+const createMockSdk = vi.hoisted(() => () => {
   class MockClient {
     setEndpoint() { return this; }
     setProject() { return this; }
@@ -28,6 +28,9 @@ vi.mock("node-appwrite", () => {
     },
   };
 });
+
+vi.mock("node-appwrite", createMockSdk);
+vi.mock("../src/functions/shared/dbCompat", createMockSdk);
 
 function createInMemoryTables(initialJobs: any[] = [], initialLedger: any[] = []) {
   const jobsMap = new Map<string, any>(initialJobs.map((j) => [j.$id, { ...j }]));
@@ -130,7 +133,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
         ]
       );
 
-      const { TablesDB } = await import("node-appwrite");
+      const { TablesDB } = await import("../src/functions/shared/dbCompat");
       (TablesDB as any).mockImplementation(function () {
         return memTables;
       });

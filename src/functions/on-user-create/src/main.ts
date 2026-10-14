@@ -1,4 +1,4 @@
-import { Client, TablesDB, Permission, Role } from "node-appwrite";
+import { Client, TablesDB, Permission, Role } from "../../shared/dbCompat";
 import { notifyUser } from "../../shared/notify";
 
 export default async ({ req, res, log, error }: any) => {

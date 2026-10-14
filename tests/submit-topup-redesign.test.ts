@@ -8,7 +8,7 @@ const state = vi.hoisted(() => ({
   maxPending: undefined as number | undefined,
 }));
 
-vi.mock("node-appwrite", () => {
+const createMockSubmitTopupSdk = vi.hoisted(() => () => {
   class MockClient { setEndpoint() { return this; } setProject() { return this; } setKey() { return this; } }
   class TablesDB {
     async listRows({ tableId, queries }: any) {
@@ -36,6 +36,9 @@ vi.mock("node-appwrite", () => {
     Query: { equal: (f: string, v: any) => `equal(${f},${JSON.stringify(v)})`, limit: (n: number) => `limit(${n})` },
   };
 });
+
+vi.mock("node-appwrite", createMockSubmitTopupSdk);
+vi.mock("../src/functions/shared/dbCompat", createMockSubmitTopupSdk);
 
 import submitTopup from "../src/functions/submit-topup/src/main";
 

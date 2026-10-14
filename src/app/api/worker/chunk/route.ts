@@ -750,24 +750,15 @@ export async function POST(req: NextRequest) {
         const jsonBuffer = Buffer.from(JSON.stringify(finalPayload), "utf-8");
         const methBuffer = Buffer.from(methodologyText, "utf-8");
 
-        // Save JSON in results bucket (primary deliverables) & partials bucket (backward compatibility)
-        const [dataJsonUp1, dataJsonUp2, resJsonUp1, resJsonUp2, methUp] = await Promise.all([
+        // Save internal research dataset (data.json) & methodology text in partials bucket
+        // (results bucket strictly restricts allowed_mime_types to xlsx, csv, and pdf)
+        const [dataJsonUp1, dataJsonUp2, methUp] = await Promise.all([
           partialsBucket.upload(
             `${userId}/${jobId}/data.json`,
             jsonBuffer,
             { contentType: "application/json", upsert: true }
           ),
           partialsBucket.upload(
-            `${jobId}/data.json`,
-            jsonBuffer,
-            { contentType: "application/json", upsert: true }
-          ),
-          resultsBucket.upload(
-            `${userId}/${jobId}/data.json`,
-            jsonBuffer,
-            { contentType: "application/json", upsert: true }
-          ),
-          resultsBucket.upload(
             `${jobId}/data.json`,
             jsonBuffer,
             { contentType: "application/json", upsert: true }
@@ -779,14 +770,12 @@ export async function POST(req: NextRequest) {
           ),
         ]);
 
-        if (dataJsonUp1?.error || dataJsonUp2?.error || resJsonUp1?.error || resJsonUp2?.error || methUp?.error) {
+        if (dataJsonUp1?.error || dataJsonUp2?.error || methUp?.error) {
           throw new Error(
             dataJsonUp1?.error?.message ||
               dataJsonUp2?.error?.message ||
-              resJsonUp1?.error?.message ||
-              resJsonUp2?.error?.message ||
               methUp?.error?.message ||
-              "storage_artifact_upload_error"
+              "partials_artifact_upload_error"
           );
         }
       } catch (uploadErr: any) {
