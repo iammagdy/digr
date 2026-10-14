@@ -7,6 +7,8 @@ import {
   createBuiltInMockAdapter,
 } from "../../../../lib/server/tregAdapter";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
+import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
+import { getBalance } from "../../../../lib/supabase/ledger";
 import {
   getConfiguredProviderSpendCapUsd,
   getConfiguredJobPointsCap,
@@ -87,6 +89,35 @@ async function executeReleaseConfirmation(
       p_force: true,
     });
     if (!relErr && Boolean(relData?.success === true || relData?.already_released === true)) {
+      // Email: refund (only on a NEW release with points actually returned;
+      // never on an already-released job, and never blocks/fails the release)
+      try {
+        const releasedCredits = Number(relData?.released_credits) || 0;
+        if (relData?.already_released !== true && releasedCredits > 0) {
+          const { data: jobRow } = await adminClient
+            .from("jobs")
+            .select("user_id, endpoint_id")
+            .eq("id", jobId)
+            .maybeSingle();
+          if (jobRow?.user_id) {
+            const rcpt = await getRecipient(adminClient, jobRow.user_id);
+            if (rcpt) {
+              const balance = await getBalance(adminClient, jobRow.user_id);
+              const endpointId =
+                typeof jobRow.endpoint_id === "string" ? jobRow.endpoint_id : "";
+              await sendPlatformEmail("refund", rcpt.email, {
+                Name: rcpt.name,
+                Points: String(Math.round(releasedCredits)),
+                JobTitle: endpointId ? `نتائج استخراج ${endpointId}` : "بحثك",
+                Reason: reason,
+                Balance: String(balance),
+              });
+            }
+          }
+        }
+      } catch (emailErr) {
+        console.error("[email:refund_failed]", emailErr);
+      }
       return { confirmed: true, data: relData, diagnostic: null };
     }
     const diagnostic =
@@ -806,6 +837,19 @@ export async function POST(req: NextRequest) {
             }`
           );
         }
+      }
+
+      // Email: job-done (never blocks or fails the request)
+      try {
+        const rcpt = await getRecipient(adminClient, userId);
+        if (rcpt) {
+          await sendPlatformEmail("job-done", rcpt.email, {
+            Name: rcpt.name,
+            JobTitle: `نتائج استخراج ${spec.capabilitySlug}`,
+          });
+        }
+      } catch (emailErr) {
+        console.error("[email:job-done_failed]", emailErr);
       }
 
       return NextResponse.json({

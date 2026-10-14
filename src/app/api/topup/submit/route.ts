@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { sendPlatformEmail, resolveDisplayName, formatArabicDate } from "@/lib/server/sendPlatformEmail";
 import {
   EG_MOBILE_RE,
   isThreePartName,
@@ -146,6 +147,27 @@ export async function POST(req: NextRequest) {
         { success: false, error: "تعذر تسجيل طلب الشحن. حاول مجدداً." },
         { status: 500 }
       );
+    }
+
+    // Email: topup-received (never blocks or fails the request)
+    try {
+      if (user.email) {
+        const creditValueEgp =
+          typeof pricingSetting?.value?.creditValueEgp === "number" &&
+          pricingSetting.value.creditValueEgp > 0
+            ? pricingSetting.value.creditValueEgp
+            : 0.1;
+        const expectedCredits = Math.floor(validated.amountEgp / creditValueEgp);
+        await sendPlatformEmail("topup-received", user.email, {
+          Name: resolveDisplayName(user),
+          AmountEgp: String(validated.amountEgp),
+          Credits: String(expectedCredits),
+          Reference: validated.reference,
+          CreatedAt: formatArabicDate(newTopup.created_at),
+        });
+      }
+    } catch (emailErr) {
+      console.error("[email:topup-received_failed]", emailErr);
     }
 
     return NextResponse.json({

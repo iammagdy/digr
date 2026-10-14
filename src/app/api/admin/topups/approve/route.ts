@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
-import { applyTopup } from "@/lib/supabase/ledger";
+import { applyTopup, getBalance } from "@/lib/supabase/ledger";
+import { sendPlatformEmail, getRecipient } from "@/lib/server/sendPlatformEmail";
 import { normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
 
 export const dynamic = "force-dynamic";
@@ -108,6 +109,23 @@ export async function POST(req: NextRequest) {
         created_at: now,
       });
 
+      // Email: topup-approved (never blocks or fails the request)
+      try {
+        const rcpt = await getRecipient(adminClient, topup.user_id);
+        if (rcpt) {
+          const balance = await getBalance(adminClient, topup.user_id);
+          await sendPlatformEmail("topup-approved", rcpt.email, {
+            Name: rcpt.name,
+            Credits: String(credits),
+            ConfirmedAmountEgp: String(effectiveAmount),
+            Reference: topup.reference,
+            Balance: String(balance),
+          });
+        }
+      } catch (emailErr) {
+        console.error("[email:topup-approved_failed]", emailErr);
+      }
+
       // 7. Admin audit log
       await adminClient.from("admin_audit_log").insert({
         actor_id: user.id,
@@ -145,6 +163,21 @@ export async function POST(req: NextRequest) {
         read: false,
         created_at: now,
       });
+
+      // Email: topup-rejected (never blocks or fails the request)
+      try {
+        const rcpt = await getRecipient(adminClient, topup.user_id);
+        if (rcpt) {
+          await sendPlatformEmail("topup-rejected", rcpt.email, {
+            Name: rcpt.name,
+            AmountEgp: String(topup.amount_egp),
+            Reference: topup.reference,
+            RejectReason: rejectReason,
+          });
+        }
+      } catch (emailErr) {
+        console.error("[email:topup-rejected_failed]", emailErr);
+      }
 
       // Admin audit log
       await adminClient.from("admin_audit_log").insert({
