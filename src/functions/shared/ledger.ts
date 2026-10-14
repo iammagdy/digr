@@ -1,4 +1,4 @@
-import { TablesDB, Query, Permission, Role } from "node-appwrite";
+import { TablesDB, Query, Permission, Role } from "./dbCompat";
 
 export const DATABASE_ID = "digr";
 export const CREDIT_LEDGER_TABLE = "credit_ledger";

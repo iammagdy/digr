@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const db = vi.hoisted(() => ({ rows: [] as any[], updates: [] as any[], ledger: [] as any[], audit: [] as any[], notifs: [] as any[], emails: 0, admin: true, topup: null as any }));
 
-vi.mock("node-appwrite", () => {
+const createMockSdk = vi.hoisted(() => () => {
   class MockClient { setEndpoint() { return this; } setProject() { return this; } setKey() { return this; } }
   class Users {
     async get({ userId }: any) { return userId === "admin1" ? { name: "سارة علي", labels: db.admin ? ["admin"] : [] } : { name: "عميل", email: "c@example.com", prefs: {} }; }
@@ -26,6 +26,9 @@ vi.mock("node-appwrite", () => {
     Query: {},
   };
 });
+
+vi.mock("node-appwrite", createMockSdk);
+vi.mock("../src/functions/shared/dbCompat", createMockSdk);
 
 import approve from "../src/functions/approve-topup/src/main";
 

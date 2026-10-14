@@ -1,5 +1,5 @@
 import { logProviderCost } from "./providerCosts";
-import { TablesDB, Storage, Permission, Role, ID, Query } from "node-appwrite";
+import { ID, Query, Role, Permission, TablesDB, Storage } from "./dbCompat";
 import { completeJobWithRelFirst, releaseCredits, releaseReservation } from "./ledger";
 import { calculateFinalSettlement } from "./quotes";
 import {
@@ -1178,7 +1178,7 @@ export async function reportStuckJobsReadOnly(
     stuckCount: stuckJobs.length,
     stuckJobs,
     safeReleaseStepsAr: [
-      "1. افتح لوحة تحكم Appwrite -> Databases -> digr -> جدول jobs وحدد معرّف الطلب العالق (jobId).",
+      "1. افتح لوحة تحكم Supabase -> Table Editor -> jobs وحدد معرّف الطلب العالق (jobId).",
       "2. في جدول credit_ledger تأكد من عدم وجود صف بمعرّف rel_<jobId>، ثم أنشئ صفًا بمعرّف مستند مخصص (Custom Document ID) يساوي rel_<jobId> بالقيم: type='release'، delta=+5 (موجب قيمة reservedCredits)، userId=<نفس userId للطلب>، jobId=<jobId>.",
       "3. في جدول jobs حدّث حالة الطلب إلى status='failed' وerrorAr='تم إلغاء الطلب واسترجاع النقاط المحجوزة' (أو شغّل دالة job-worker بـ {\"mode\":\"watchdog\"} لتنفيذ الخطوتين تلقائيًا بأمان).",
     ],

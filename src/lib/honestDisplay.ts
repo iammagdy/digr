@@ -119,7 +119,7 @@ export function showDerivedAmounts(view: BalanceView): boolean {
 }
 
 /**
- * Extract the authoritative total from an Appwrite listDocuments-style response.
+ * Extract the authoritative total from a list/query response.
  * Returns null when the response carries no usable total — callers must then
  * render an unavailable state, never the page length as a total.
  */

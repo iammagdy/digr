@@ -1,4 +1,4 @@
-import { TablesDB, ID, Query, Permission, Role } from "node-appwrite";
+import { TablesDB, ID, Query, Permission, Role } from "./dbCompat";
 import { computePlanHash, parseStoredPlan, PlanItem } from "./planManager";
 import { isQuoteExpired } from "./quotes";
 import { calculateBalance, reserveCredits, releaseCredits } from "./ledger";

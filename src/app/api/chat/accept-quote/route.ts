@@ -82,6 +82,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Record initial activity event in job_events table
+    try {
+      await adminClient.from("job_events").insert({
+        job_id: acceptRes.jobId,
+        user_id: user.id,
+        message: `تم حجز ${acceptRes.reservedCredits} نقطة وتأكيد الطلب. جاري البدء...`,
+        units: 0,
+        event_type: "info",
+      });
+    } catch (evtErr: any) {
+      console.warn("[accept-quote:job_events_insert_warning]", evtErr?.message || "");
+    }
+
     // Trigger initial chunk execution (Hobby Design B)
     if (process.env.CRON_SECRET) {
       const baseUrl = process.env.VERCEL_URL

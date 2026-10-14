@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers } from "../../../../lib/server/adminAuth";
+import { authenticateAdmin, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers, Query } from "../../../../lib/server/adminAuth";
 import { DAY_MS } from "../../../../lib/server/adminStats";
 import { ledgerBalance } from "../../../../lib/server/userStats";
 
@@ -76,7 +75,7 @@ export async function GET(req: NextRequest) {
     if (csv) return { ...base, balance: 0, jobs: 0 };
     const [balance, jobs] = await Promise.all([
       ledgerBalance(tables, u.$id),
-      tables.listRows({ databaseId: "digr", tableId: "jobs", queries: [Query.equal("userId", u.$id), Query.limit(1)] }).then((r) => r.total),
+      tables.listRows({ databaseId: "digr", tableId: "jobs", queries: [Query.equal("userId", u.$id), Query.limit(1)] }).then((r: any) => r.total),
     ]);
     return { ...base, balance, jobs };
   }));

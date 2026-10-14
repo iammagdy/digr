@@ -57,17 +57,63 @@ export function resolveDisplayName(user: {
   return "عزيزنا العميل";
 }
 
-/** Resolve a user's email + display name via the Admin API. Returns null if unknown. */
+export type NotificationCategory = "topup" | "done" | "refund" | "news";
+
+export const TEMPLATE_CATEGORY_MAP: Record<PlatformEmailTemplateId, NotificationCategory | null> = {
+  welcome: null,
+  "topup-received": "topup",
+  "topup-approved": "topup",
+  "topup-rejected": "topup",
+  "job-done": "done",
+  refund: "refund",
+};
+
+/**
+ * Checks whether an email template is enabled according to the user's notification preferences.
+ * - welcome: always enabled (system template)
+ * - topup / done / refund: default true unless explicitly set to false
+ * - news: default false
+ */
+export function isEmailPreferenceEnabled(
+  template: PlatformEmailTemplateId,
+  userMetadata?: Record<string, any> | null
+): boolean {
+  const category = TEMPLATE_CATEGORY_MAP[template];
+  if (!category) return true;
+
+  const notif = (userMetadata?.prefs as any)?.notif;
+  if (!notif || typeof notif !== "object") {
+    return category !== "news";
+  }
+
+  const val = notif[category];
+  if (typeof val === "boolean") {
+    return val;
+  }
+
+  return category !== "news";
+}
+
+/** Resolve a user's email + display name via the Admin API. Returns null if unknown or opted-out. */
 export async function getRecipient(
-  adminClient: SupabaseClient,
-  userId: string
+  adminClient: any,
+  userId: string,
+  template?: PlatformEmailTemplateId
 ): Promise<{ email: string; name: string } | null> {
   try {
-    const {
-      data: { user },
-      error,
-    } = await adminClient.auth.admin.getUserById(userId);
+    if (!adminClient?.auth?.admin?.getUserById) return null;
+    const { data, error } = await adminClient.auth.admin.getUserById(userId);
+    const user = data?.user;
     if (error || !user?.email) return null;
+
+    if (template && !isEmailPreferenceEnabled(template, user.user_metadata)) {
+      const category = TEMPLATE_CATEGORY_MAP[template];
+      console.log(
+        `[email:preference_disabled] template=${template} category=${category} userId=${userId}`
+      );
+      return null;
+    }
+
     return { email: user.email, name: resolveDisplayName(user) };
   } catch (err) {
     console.error("[email:recipient_lookup_failed]", err);
@@ -99,6 +145,7 @@ export async function sendPlatformEmail(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ template, to, vars }),
+      signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) {
       console.error(`[email:send_failed] template=${template} status=${res.status}`);

@@ -24,7 +24,8 @@ import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
 import EmptyChat from "./components/EmptyChat";
 import { FailureBox, FilesSection } from "./components/RunSections";
-import Composer from "./components/Composer";
+import Composer, { AttachedFile } from "./components/Composer";
+import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -42,9 +43,10 @@ async function getAccessToken(): Promise<string | undefined> {
 
 function mapJobEvents(rows: any[] | null | undefined): JobEvent[] {
   return (rows || []).map((e: any) => ({
-    $id: e.id || e.$id || `ev_${Date.now()}`,
-    textAr: e.text_ar || e.textAr || "",
-    kind: e.kind || "info",
+    $id: String(e.id || e.$id || `ev_${Date.now()}`),
+    textAr: e.message || e.text_ar || e.textAr || "",
+    count: typeof e.units === "number" ? e.units : (typeof e.count === "number" ? e.count : undefined),
+    kind: (e.event_type || e.kind || "info") as JobEvent["kind"],
     createdAt: e.created_at || e.createdAt || new Date().toISOString(),
   }));
 }
@@ -53,8 +55,14 @@ interface MessageItem {
   id: string;
   role: "user" | "assistant";
   content: string;
+  attachment?: {
+    name: string;
+    type: "xlsx" | "csv";
+    size: number;
+  };
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   planQuote?: PlanQuoteData;
+  revisionQuote?: RevisionQuoteData;
   clarificationQuestions?: string[];
   clarificationItems?: unknown;
   completedClarificationAnswers?: DiscoveryAnswer[];
@@ -277,14 +285,19 @@ export default function ChatWorkspacePage() {
   }, [activeJob, loadBalance, extractedRecords.length]);
 
   // Send message
-  async function handleSendMessage(messageContent: string) {
+  async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null) {
     const textToSend = messageContent.trim();
-    if (!textToSend || loading || conversationLoading || !user) return;
+    if ((!textToSend && !attachedFile) || loading || conversationLoading || !user) return;
 
     const userMsg: MessageItem = {
       id: `usr_${Date.now()}`,
       role: "user",
       content: textToSend,
+      attachment: attachedFile ? {
+        name: attachedFile.name,
+        type: attachedFile.type,
+        size: attachedFile.size,
+      } : undefined,
       createdAt: new Date().toISOString(),
     };
 
@@ -311,6 +324,15 @@ export default function ChatWorkspacePage() {
           message: textToSend,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
+          ...(attachedFile ? {
+            uploadedFiles: [
+              {
+                name: attachedFile.name,
+                type: attachedFile.type,
+                content: attachedFile.base64,
+              }
+            ]
+          } : {})
         }),
       });
 
@@ -333,6 +355,7 @@ export default function ChatWorkspacePage() {
         content: data.contentAr,
         outputType: data.outputType,
         planQuote: data.planQuote,
+        revisionQuote: data.revisionQuote,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
         suggestedAlternative: data.suggestedAlternative,
@@ -418,6 +441,7 @@ export default function ChatWorkspacePage() {
           content: data.contentAr,
           outputType: data.outputType,
           planQuote: data.planQuote,
+          revisionQuote: data.revisionQuote,
           clarificationQuestions: data.clarificationQuestions,
           clarificationItems: data.clarificationItems,
           suggestedAlternative: data.suggestedAlternative,
@@ -720,6 +744,7 @@ export default function ChatWorkspacePage() {
 
   async function submitArtifactAction(action: { operation: ArtifactEditOperation } | { undoToVersionId: string }) {
     if (!activeJob?.jobId || artifactEditing || !user) return;
+    const targetJobId = activeJob.jobId;
     setArtifactEditing(true);
     try {
       const jwtToken = await getAccessToken();
@@ -743,9 +768,24 @@ export default function ChatWorkspacePage() {
           rowCount: result.version.rowCount,
           isOriginal: false,
         }],
-      } : null);
+      } : {
+        jobId: targetJobId,
+        status: "done",
+        templateSlug: "research-deliverable",
+        rowsCollected: result.version.rowCount,
+        events: [],
+        artifactVersion: result.version,
+        fileIds: result.version.fileIds,
+        versionHistory: [{
+          id: result.version.id,
+          versionNum: result.version.versionNum,
+          parentVersionId: null,
+          rowCount: result.version.rowCount,
+          isOriginal: false,
+        }],
+      });
 
-      const dataResponse = await fetch(`/api/jobs/${activeJob.jobId}/data`);
+      const dataResponse = await fetch(`/api/jobs/${targetJobId}/data`);
       const data = await dataResponse.json();
       if (data.success) {
         setExtractedRecords(Array.isArray(data.rows) ? data.rows : []);
@@ -759,7 +799,7 @@ export default function ChatWorkspacePage() {
         } : null);
       }
 
-      const historyResponse = await fetch(`/api/jobs/${activeJob.jobId}/artifacts`);
+      const historyResponse = await fetch(`/api/jobs/${targetJobId}/artifacts`);
       const history = await historyResponse.json();
       if (history.success) setActiveJob((previous) => previous ? {
         ...previous,
@@ -769,7 +809,7 @@ export default function ChatWorkspacePage() {
       setMessages((previous) => [...previous, {
         id: `artifact_v${result.version.versionNum}_${Date.now()}`,
         role: "assistant",
-        content: `اتحفظ التعديل كنسخة رقم ${result.version.versionNum} من النتيجة، بدون خصم نقاط. تقدر ترجع لأي نسخة أقدم.`,
+        content: `اتحفظ التعديل كنسخة رقم ${result.version.versionNum} من النتيجة (تكلفة التعديل: ١٠ نقاط). تقدر ترجع لأي نسخة أقدم في أي وقت.`,
         createdAt: new Date().toISOString(),
       }]);
     } catch (error: any) {
@@ -782,6 +822,24 @@ export default function ChatWorkspacePage() {
     } finally {
       setArtifactEditing(false);
     }
+  }
+
+  async function handleApplyRevisionQuote(revQuote: RevisionQuoteData) {
+    const targetJobId = revQuote.jobId && revQuote.jobId !== "current" ? revQuote.jobId : activeJob?.jobId;
+    if (!targetJobId) {
+      alert("لم يتم العثور على مهمة مكتملة لتعديلها.");
+      return;
+    }
+    if (!activeJob) {
+      setActiveJob({
+        jobId: targetJobId,
+        status: "done",
+        templateSlug: "research-deliverable",
+        rowsCollected: 0,
+        events: [],
+      });
+    }
+    await submitArtifactAction({ operation: revQuote.operation });
   }
 
   // Request Academic Methodology (10 points flow)
@@ -935,11 +993,34 @@ export default function ChatWorkspacePage() {
   const renderNote = (m: MessageItem) => {
     if (m.hidden || m.jobId) return null;
     if (m.role === "user") {
-      return <p key={m.id} className="mb-0 mt-3 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>;
+      return (
+        <div key={m.id} className="mb-0 mt-3 flex w-fit max-w-full flex-col gap-1.5" style={{ animation: "up .3s both" }}>
+          {m.content && (
+            <p className="mb-0 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink">
+              {m.content}
+            </p>
+          )}
+          {m.attachment && (
+            <div className="flex w-fit items-center gap-2 rounded-full border border-ac/25 bg-ac/5 px-3 py-1 text-xs text-ink font-light">
+              <span className="text-ac">📎</span>
+              <span className="font-medium">{m.attachment.name}</span>
+              <span className="text-[11px] text-mut">({Math.round(m.attachment.size / 1024)} ك.ب)</span>
+            </div>
+          )}
+        </div>
+      );
     }
     return (
       <div key={m.id}>
         {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>}
+        {m.revisionQuote && (
+          <RevisionQuoteCard
+            quote={m.revisionQuote}
+            onApply={handleApplyRevisionQuote}
+            isApplying={artifactEditing}
+            userBalance={balanceValue}
+          />
+        )}
         {m.errorRetryPrompt && (
           <button
             type="button" onClick={() => handleSendMessage(m.errorRetryPrompt!)}

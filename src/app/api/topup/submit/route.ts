@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
-import { sendPlatformEmail, resolveDisplayName, formatArabicDate } from "@/lib/server/sendPlatformEmail";
+import {
+  sendPlatformEmail,
+  resolveDisplayName,
+  formatArabicDate,
+  isEmailPreferenceEnabled,
+} from "@/lib/server/sendPlatformEmail";
 import {
   EG_MOBILE_RE,
   isThreePartName,
@@ -151,7 +156,7 @@ export async function POST(req: NextRequest) {
 
     // Email: topup-received (never blocks or fails the request)
     try {
-      if (user.email) {
+      if (user.email && isEmailPreferenceEnabled("topup-received", user.user_metadata)) {
         const creditValueEgp =
           typeof pricingSetting?.value?.creditValueEgp === "number" &&
           pricingSetting.value.creditValueEgp > 0
@@ -165,6 +170,8 @@ export async function POST(req: NextRequest) {
           Reference: validated.reference,
           CreatedAt: formatArabicDate(newTopup.created_at),
         });
+      } else if (user.email) {
+        console.log(`[email:preference_disabled] template=topup-received category=topup userId=${user.id}`);
       }
     } catch (emailErr) {
       console.error("[email:topup-received_failed]", emailErr);

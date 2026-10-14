@@ -1,5 +1,5 @@
 import { logProviderCost } from "./providerCosts";
-import { TablesDB, ID, Query } from "node-appwrite";
+import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import {
   getEnabledCapabilities,
@@ -48,6 +48,8 @@ import {
   isRepetitionComplaint,
   type ResearchBrief,
 } from "./briefManager";
+import { extractResearchIntent } from "../../lib/server/researchIntent";
+import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -56,6 +58,7 @@ export interface ChatHandlerInput {
   answers?: any;
   userBalance?: number;
   testScenario?: string;
+  uploadedFiles?: any[];
 }
 
 export interface ChatHandlerResponse {
@@ -65,6 +68,7 @@ export interface ChatHandlerResponse {
   contentAr: string;
   outputType: LlmTurnOutput["type"];
   planQuote?: any;
+  revisionQuote?: any;
   clarificationQuestions?: string[];
   clarificationItems?: NormalizedClarificationQuestion[];
   clarificationIntro?: string;
@@ -602,9 +606,16 @@ export class ChatHandler {
         try {
           const { data: conv } = await sb
             .from("conversations")
-            .select("id, status, brief")
+            .select("id, user_id, status, brief")
             .eq("id", conversationId)
             .maybeSingle();
+
+          if (conv && conv.user_id && conv.user_id !== userId) {
+            const authErr: any = new Error("غير مصرح لك بالوصول إلى هذه المحادثة أو تعديل بياناتها.");
+            authErr.statusCode = 403;
+            throw authErr;
+          }
+
           if (!conv) {
             conversationId = ID.unique();
             const { error: convCreateErr } = await sb.from("conversations").insert({
@@ -627,8 +638,14 @@ export class ChatHandler {
             tableId: "conversations",
             rowId: conversationId,
           });
-          totalConvTokens = conv.totalTokens || 0;
-        } catch {
+          if (conv && conv.userId && conv.userId !== userId) {
+            const authErr: any = new Error("غير مصرح لك بالوصول إلى هذه المحادثة أو تعديل بياناتها.");
+            authErr.statusCode = 403;
+            throw authErr;
+          }
+          totalConvTokens = conv?.totalTokens || 0;
+        } catch (convErr: any) {
+          if (convErr?.statusCode === 403) throw convErr;
           // Conversation not found, create new ID
           conversationId = ID.unique();
         }
@@ -751,12 +768,114 @@ export class ChatHandler {
     const isCardAnswer = Boolean((input as any).answers) || message.includes("clarification_answers") || (message.trim().startsWith("{") && message.includes("answers"));
 
     const isTestSearchScenario = typeof testScenario === "string" && testScenario.startsWith("search_");
+    const rawUploadedFiles = (input as any).uploadedFiles || [];
+
+    // If incoming uploadedFiles has an exclusion file, persist it into the conversation brief
+    if (rawUploadedFiles.length > 0) {
+      const topFile = rawUploadedFiles[0];
+      if (topFile.baselineRowCount !== undefined || topFile.companyNames !== undefined) {
+        brief.exclusionFile = {
+          name: topFile.name || "قائمة_الاستبعاد.xlsx",
+          baselineRowCount: topFile.baselineRowCount || topFile.companyNames?.length || 0,
+          companyNames: topFile.companyNames || [],
+          corporateDomains: topFile.corporateDomains || [],
+          normalizedEntities: topFile.normalizedEntities || [],
+        };
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+      }
+    }
+
+    // Active exclusion files: from current request or previously persisted in conversation brief
+    const activeFiles = rawUploadedFiles.length > 0
+      ? rawUploadedFiles
+      : brief.exclusionFile
+      ? [brief.exclusionFile]
+      : [];
+
+    const researchIntent = extractResearchIntent(message, undefined, activeFiles);
+    const discoveryDecision = evaluateDiscoveryDecision(researchIntent);
     let isPhase2 = false;
 
     if (isTestSearchScenario) {
       isPhase2 = false;
     } else if (isGreeting || isGeneralQuestion) {
       isPhase2 = false;
+    } else if (discoveryDecision.action === "CLARIFY" && discoveryDecision.missingCrucialFields.includes("exclusion_file")) {
+      const q = discoveryDecision.questions[0];
+      const assistantMsg: ChatHandlerResponse = {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        outputType: "ask_clarification",
+        contentAr: q.questionAr,
+        clarificationIntro: "عشان أجهز لك خطة دقيقة مع استبعاد الشركات المطلوبة، محتاج الملف المرفق:",
+        clarificationQuestions: [q.questionAr],
+        clarificationItems: [
+          {
+            id: q.id,
+            text: q.questionAr,
+            question: q.questionAr,
+            type: "single",
+            options: q.suggestedAnswersAr || ["رفع الملف الآن", "متابعة البحث بدون استبعاد"],
+            allowOther: true,
+          },
+        ],
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+      };
+      if (sb) {
+        await sb.from("messages").update({ content_ar: q.questionAr }).eq("id", assistantMsgId);
+      } else {
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: assistantMsgId,
+          data: { content: q.questionAr, status: "ready" },
+        });
+      }
+      return assistantMsg;
+    } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
+      if (brief.platforms.length === 0) {
+        brief.platforms = researchIntent.platforms.value.length > 0
+          ? [...researchIntent.platforms.value]
+          : researchIntent.entityType.value === "companies"
+          ? ["web"]
+          : ["web"];
+      }
+      if (brief.topics.length === 0 && researchIntent.topic.value) {
+        brief.topics = [researchIntent.topic.value];
+      }
+
+      const hasExplicitVolume = researchIntent.sampleSize.provenance === "EXPLICIT";
+      const hasExclusionFile = activeFiles.length > 0 || !!brief.exclusionFile;
+      const isReadyForInstantPlan =
+        hasExplicitVolume || hasExclusionFile || (brief.targetVolume !== undefined && brief.targetVolume > 0) || wantsPriceOrProceed || isCardAnswer;
+
+      if (isReadyForInstantPlan) {
+        if (!brief.targetVolume || brief.targetVolume <= 0) {
+          brief.targetVolume = researchIntent.sampleSize.value || 500;
+        }
+        const dateVal = researchIntent.dateRange?.value?.relative || (researchIntent.dateRange?.value?.from ? `${researchIntent.dateRange.value.from} إلى ${researchIntent.dateRange.value.to || ""}` : undefined);
+        if (!brief.dateRange && dateVal) {
+          brief.dateRange = dateVal;
+        }
+        if (!brief.formats || brief.formats.length === 0) {
+          brief.formats = researchIntent.outputTypes?.value?.length > 0
+            ? [...researchIntent.outputTypes.value]
+            : ["xlsx", "csv", "pdf"];
+        }
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        isPhase2 = true;
+      } else {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        isPhase2 = false;
+      }
+    } else if (researchIntent.entityType.value === "companies" && researchIntent.sampleSize.provenance === "EXPLICIT") {
+      if (brief.platforms.length === 0) brief.platforms = ["web"];
+      if (brief.topics.length === 0) brief.topics = [researchIntent.topic.value];
+      if (!brief.targetVolume) brief.targetVolume = researchIntent.sampleSize.value;
+      if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx", "csv", "pdf"];
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      isPhase2 = true;
     } else if (userComplained) {
       if (brief.platforms.length === 0) brief.platforms.push("facebook");
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
@@ -1100,6 +1219,7 @@ export class ChatHandler {
 
       let finalContentAr = "";
       let planQuoteData: any = undefined;
+      let revisionQuoteData: any = undefined;
       let clarificationQuestionsList: string[] | undefined = undefined;
       let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
@@ -1305,7 +1425,19 @@ export class ChatHandler {
             capabilitySlug: c.capabilitySlug || c.endpointId,
             endpointId: c.endpointId || c.capabilitySlug,
             paginationStrategy: c.paginationStrategy,
-            params: c.params,
+            params: {
+              ...(c.params || {}),
+              ...(brief.exclusionFile
+                ? {
+                    exclusionRules: {
+                      fileName: brief.exclusionFile.name,
+                      baselineRowCount: brief.exclusionFile.baselineRowCount,
+                      companyNames: brief.exclusionFile.companyNames,
+                      corporateDomains: brief.exclusionFile.corporateDomains,
+                    },
+                  }
+                : {}),
+            },
             targetVolumeMin: c.targetVolumeMin || 1,
             targetVolumeMax: c.targetVolumeMax,
           }));
@@ -1414,6 +1546,9 @@ export class ChatHandler {
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n• الهدف: ${planOutput.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          if (brief.exclusionFile) {
+            planSummaryText += `\n• ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
+          }
           if (managedQuote.capacityConstrained) {
             planSummaryText += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
           }
@@ -1565,7 +1700,100 @@ export class ChatHandler {
       } else if (output.type === "refuse") {
         finalContentAr = output.reasonAr;
       } else if (output.type === "edit_artifact") {
-        finalContentAr = `تم تطبيق التعديل التحريري المطلق: ${output.reasonAr}`;
+        let latestJobId: string | null = null;
+        try {
+          if (sb) {
+            const { data: jobDoc } = await sb
+              .from("jobs")
+              .select("id, status")
+              .eq("conversation_id", conversationId)
+              .eq("user_id", userId)
+              .in("status", ["done", "completed"])
+              .order("created_at", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+            latestJobId = jobDoc?.id || null;
+          }
+        } catch {}
+
+        let operation: any = { action: "convert_formats", formats: ["xlsx", "pdf", "csv"] };
+        const actionType = (output as any).action;
+        const params = (output as any).parameters || {};
+        if (actionType === "dedupe") {
+          operation = { action: "dedupe", keys: Array.isArray(params.keys) ? params.keys : ["id", "username", "profileUrl"] };
+        } else if (actionType === "sort") {
+          operation = { action: "sort", field: params.field || "followers", direction: params.direction || "desc" };
+        } else if (actionType === "select_columns") {
+          operation = { action: "select_columns", columns: Array.isArray(params.columns) ? params.columns : ["username", "displayName", "followers", "likes"] };
+        } else if (actionType === "filter") {
+          operation = { action: "filter", field: params.field || "username", operator: params.operator || "contains", value: params.value ?? "" };
+        } else if (actionType === "anonymize") {
+          operation = { action: "anonymize", fields: Array.isArray(params.fields) ? params.fields : ["username", "displayName", "bio", "bioLink", "profileUrl"] };
+        }
+
+        const revisionDesc = (output as any).reasonAr || "تعديل تنسيق وإخراج ملفات النتائج";
+        revisionQuoteData = {
+          jobId: latestJobId || "current",
+          revisionDescription: revisionDesc,
+          operation,
+          points: 10,
+        };
+        finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n• التعديل المطلوب: ${revisionDesc}\n• التكلفة: 10 نقاط\n• سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
+      }
+
+      // Post-job artifact revision detector: if user requests deliverable formatting fix on existing completed job
+      if (!revisionQuoteData && output.type !== "propose_plan" && output.type !== "edit_plan") {
+        const mLower = message.toLowerCase();
+        const isRtlFix = mLower.includes("rtl") || mLower.includes("يمين") || mLower.includes("يسار") || mLower.includes("اتجاه الشيت");
+        const isDedupe = mLower.includes("احذف التكرار") || mLower.includes("حذف التكرار") || mLower.includes("إزالة التكرار");
+        const isSort = mLower.includes("رتب") || mLower.includes("ترتيب");
+        const isAnonymize = mLower.includes("اخفي") || mLower.includes("إخفاء الهوية");
+        const isColumns = mLower.includes("أعمدة") || mLower.includes("اعمدة");
+
+        if (isRtlFix || isDedupe || isSort || isAnonymize || isColumns) {
+          let completedJobId: string | null = null;
+          try {
+            if (sb) {
+              const { data: jobDoc } = await sb
+                .from("jobs")
+                .select("id, status")
+                .eq("conversation_id", conversationId)
+                .eq("user_id", userId)
+                .in("status", ["done", "completed"])
+                .order("created_at", { ascending: false })
+                .limit(1)
+                .maybeSingle();
+              completedJobId = jobDoc?.id || null;
+            }
+          } catch {}
+
+          if (completedJobId) {
+            let op: any = { action: "convert_formats", formats: ["xlsx", "pdf", "csv"] };
+            let desc = "إعادة ضبط اتجاه وتنسيق الجداول (RTL) والأعمدة القياسية";
+            if (isDedupe) {
+              op = { action: "dedupe", keys: ["id", "username", "profileUrl"] };
+              desc = "حذف السجلات المكررة والاحتفاظ بالسجلات الفريدة فقط";
+            } else if (isSort) {
+              op = { action: "sort", field: "followers", direction: "desc" };
+              desc = "إعادة ترتيب السجلات تنازلياً";
+            } else if (isAnonymize) {
+              op = { action: "anonymize", fields: ["username", "displayName", "bio", "bioLink", "profileUrl"] };
+              desc = "إخفاء أسماء ومعرفات المستخدمين لحماية الخصوصية";
+            } else if (isColumns) {
+              op = { action: "select_columns", columns: ["username", "displayName", "followers", "likes"] };
+              desc = "تحديد واختيار الأعمدة الأساسية فقط";
+            }
+
+            revisionQuoteData = {
+              jobId: completedJobId,
+              revisionDescription: desc,
+              operation: op,
+              points: 10,
+            };
+            output = { type: "edit_artifact", reasonAr: desc } as any;
+            finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n• التعديل المطلوب: ${desc}\n• التكلفة: 10 نقاط\n• سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
+          }
+        }
       }
 
       // 9. Update Assistant Message to 'ready'
@@ -1680,6 +1908,7 @@ export class ChatHandler {
         contentAr: finalContentAr,
         outputType: output.type,
         planQuote: planQuoteData,
+        revisionQuote: revisionQuoteData,
         clarificationQuestions: clarificationQuestionsList,
         clarificationItems: clarificationItemsList,
         suggestedAlternative: output.type === "suggest_alternative" ? output : undefined,

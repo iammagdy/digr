@@ -7,7 +7,7 @@ import {
 } from "../src/functions/shared/multiStepWorker";
 import { releaseReservation } from "../src/functions/shared/ledger";
 
-vi.mock("node-appwrite", () => {
+const createMockSdk = vi.hoisted(() => () => {
   class MockClient {
     setEndpoint() { return this; }
     setProject() { return this; }
@@ -28,6 +28,9 @@ vi.mock("node-appwrite", () => {
     },
   };
 });
+
+vi.mock("node-appwrite", createMockSdk);
+vi.mock("../src/functions/shared/dbCompat", createMockSdk);
 
 function createInMemoryTables(initialJobs: any[] = [], initialLedger: any[] = []) {
   const jobsMap = new Map<string, any>(initialJobs.map((j) => [j.$id, { ...j }]));
@@ -103,7 +106,9 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
 
   it("(a) refusal path (TREG_LIVE !== 'true') marks job failed in Arabic and releases hold idempotently (rel_<jobId>)", async () => {
     const prevTregLive = process.env.TREG_LIVE;
+    const prevMock = process.env.ENABLE_MOCK_PROVIDER;
     process.env.TREG_LIVE = "false";
+    process.env.ENABLE_MOCK_PROVIDER = "false";
 
     try {
       const memTables = createInMemoryTables(
@@ -128,7 +133,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
         ]
       );
 
-      const { TablesDB } = await import("node-appwrite");
+      const { TablesDB } = await import("../src/functions/shared/dbCompat");
       (TablesDB as any).mockImplementation(function () {
         return memTables;
       });
@@ -177,6 +182,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
       expect(releaseRows).toHaveLength(1);
     } finally {
       process.env.TREG_LIVE = prevTregLive;
+      process.env.ENABLE_MOCK_PROVIDER = prevMock;
     }
   });
 

@@ -13,9 +13,13 @@ import {
   getConfiguredProviderSpendCapUsd,
   getConfiguredJobPointsCap,
 } from "../../../../functions/shared/providerSpend";
-import { generateMethodologyText } from "../../../../functions/shared/multiStepWorker";
+import { generateMethodologyText } from "../../../../functions/shared/fileGenerators";
 import { artifactVersionRowId } from "../../../../functions/shared/artifactVersions";
 import { getInMemoryPartialStepFallback } from "../../../../lib/server/tregAdapter";
+import {
+  deduplicateAgainstBaseline,
+  EntityRecord,
+} from "../../../../lib/server/negativeListEngine";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -100,7 +104,7 @@ async function executeReleaseConfirmation(
             .eq("id", jobId)
             .maybeSingle();
           if (jobRow?.user_id) {
-            const rcpt = await getRecipient(adminClient, jobRow.user_id);
+            const rcpt = await getRecipient(adminClient, jobRow.user_id, "refund");
             if (rcpt) {
               const balance = await getBalance(adminClient, jobRow.user_id);
               const endpointId =
@@ -386,8 +390,37 @@ export async function POST(req: NextRequest) {
     });
 
     const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
+    const rawRows = adapterResult.ok ? (adapterResult.rows || []) : [];
+
+    let filteredRows = rawRows;
+    if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
+      const rules = spec.params.exclusionRules;
+      const baselineRecords: EntityRecord[] = [
+        ...(rules.companyNames || []).map((name: string, i: number) => ({
+          id: `base_name_${i}`,
+          name,
+        })),
+        ...(rules.corporateDomains || []).map((domain: string, i: number) => ({
+          id: `base_dom_${i}`,
+          name: "",
+          domain,
+        })),
+      ];
+
+      const candidateRecords: EntityRecord[] = rawRows.map((r: any, i: number) => ({
+        id: r.id || `cand_${i}`,
+        name: r.company_name || r.name || r.title || "",
+        domain: r.domain || r.website || r.url || "",
+        crNumber: r.cr_number || r.commercial_registration,
+        ...r,
+      }));
+
+      const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
+      filteredRows = dedupResult.delivered;
+    }
+
     const acceptedRows = adapterResult.ok
-      ? (adapterResult.rows || []).slice(0, remainingUnits)
+      ? filteredRows.slice(0, remainingUnits)
       : [];
 
     // 8. Commit provider spend with the real cost from the provider response
@@ -495,6 +528,21 @@ export async function POST(req: NextRequest) {
     }
 
     const recordedDeliveredUnits: number = compData.delivered_units;
+
+    // Record real progress in job_events
+    try {
+      if (!isDone && !compData.already_completed) {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `تم جمع ${recordedDeliveredUnits} سجل حتى الآن...`,
+          units: recordedDeliveredUnits,
+          event_type: "progress",
+        });
+      }
+    } catch (evtErr: any) {
+      console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+    }
 
     if (compData.already_completed) {
       console.warn(
@@ -623,17 +671,35 @@ export async function POST(req: NextRequest) {
       const finalRows = collectedRows;
 
       const completedAtIso = new Date().toISOString();
-      const dateStr = completedAtIso.slice(0, 10);
+      const dateStr = completedAtIso.split("T")[0];
+      const isProfileResearch =
+        spec.pricingUnit === "call" &&
+        (spec.capabilitySlug.endsWith("-profile") || spec.capabilitySlug.includes("profile")) &&
+        !finalRows.some((r) => r.company_name || r.cr_number);
+
+      const isCompanyResearch =
+        !isProfileResearch &&
+        (spec.capabilitySlug.includes("company") ||
+         spec.capabilitySlug === "web-company-search" ||
+         finalRows.some((r) => r.company_name || r.cr_number));
+
+      const methodologyText = spec.params?.exclusionRules
+        ? `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`
+        : `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`;
+
       const finalPayload: any = {
         metadata: {
-          platform: "Digr Data Platform",
+          platform: (spec as any).platform || "Digr Data Platform",
           company: "Digr",
           title: `نتائج استخراج ${spec.capabilitySlug}`,
           template: spec.capabilitySlug,
           jobId,
           collectedAt: completedAtIso,
           rowsCount: finalRows.length,
-          methodology: `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
+          targetRequested: targetMax,
+          entityType: isCompanyResearch ? "companies" : undefined,
+          exclusionApplied: Boolean(spec.params?.exclusionRules),
+          methodology: methodologyText,
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,
@@ -681,21 +747,25 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Save JSON & methodology text in partials bucket for /api/jobs/[id]/data & /methodology
+        const jsonBuffer = Buffer.from(JSON.stringify(finalPayload), "utf-8");
+        const methBuffer = Buffer.from(methodologyText, "utf-8");
+
+        // Save internal research dataset (data.json) & methodology text in partials bucket
+        // (results bucket strictly restricts allowed_mime_types to xlsx, csv, and pdf)
         const [dataJsonUp1, dataJsonUp2, methUp] = await Promise.all([
           partialsBucket.upload(
             `${userId}/${jobId}/data.json`,
-            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            jsonBuffer,
             { contentType: "application/json", upsert: true }
           ),
           partialsBucket.upload(
             `${jobId}/data.json`,
-            Buffer.from(JSON.stringify(finalPayload), "utf-8"),
+            jsonBuffer,
             { contentType: "application/json", upsert: true }
           ),
           partialsBucket.upload(
             `${userId}/${jobId}/methodology.txt`,
-            Buffer.from(methodologyText, "utf-8"),
+            methBuffer,
             { contentType: "text/plain; charset=utf-8", upsert: true }
           ),
         ]);
@@ -811,6 +881,20 @@ export async function POST(req: NextRequest) {
         // Non-blocking partial step cleanup
       }
 
+      // Record completion event in job_events table
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `تم إكمال استخراج ${finalRows.length} سجل بنجاح وحفظ ملفات النتائج.`,
+          units: finalRows.length,
+          event_type: "progress",
+          created_at: completedAtIso,
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+      }
+
       // Emit notification to user matching tracked migrations schema: (id, user_id, title, body, read, link, created_at)
       if (userId) {
         try {
@@ -841,7 +925,7 @@ export async function POST(req: NextRequest) {
 
       // Email: job-done (never blocks or fails the request)
       try {
-        const rcpt = await getRecipient(adminClient, userId);
+        const rcpt = await getRecipient(adminClient, userId, "job-done");
         if (rcpt) {
           await sendPlatformEmail("job-done", rcpt.email, {
             Name: rcpt.name,

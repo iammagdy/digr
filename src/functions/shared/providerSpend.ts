@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 export const DEFAULT_JOB_POINTS_CAP = 600;

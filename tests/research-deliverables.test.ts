@@ -124,6 +124,56 @@ describe("Research Deliverables Generator Suite", () => {
       expect(contentStr).not.toContain("TikHub");
       expect(contentStr).not.toContain("apify");
     });
+
+    it("verifies quality sheet reports supported facts and accurate integrity phrasing", async () => {
+      const bufferWithoutTarget = await generateExcelReport(sampleDataset);
+      const wbWithout = new ExcelJS.Workbook();
+      await wbWithout.xlsx.load(bufferWithoutTarget as any);
+      const wsQualityWithout = wbWithout.getWorksheet("جودة البيانات");
+      expect(wsQualityWithout).toBeDefined();
+
+      const qualityRowsWithout: Record<string, string> = {};
+      wsQualityWithout?.eachRow((row, rowNumber) => {
+        if (rowNumber > 3) {
+          const key = row.getCell(1).value?.toString() || "";
+          const val = row.getCell(2).value?.toString() || "";
+          qualityRowsWithout[key] = val;
+        }
+      });
+
+      // When targetRequested is missing, must not fall back to delivered rows; state unavailable
+      expect(qualityRowsWithout["السجلات المطلوبة (Target Requested)"]).toBe("عدد السجلات المطلوبة غير متاح");
+      // Integrity phrasing must not claim unverified exact identity
+      expect(qualityRowsWithout["النزاهة المنهجية (Integrity)"]).toBe("استخراج مباشر من الواجهات العامة المتاحة");
+      expect(qualityRowsWithout["النزاهة المنهجية (Integrity)"]).not.toContain("نقل مطابق للمصدر المعلن");
+      // Verifies distinct metrics
+      expect(qualityRowsWithout["إجمالي السجلات المستلمة (Raw Collected)"]).toBeDefined();
+      expect(qualityRowsWithout["السجلات الفريدة المسلمة (Unique Delivered)"]).toBe("2 سجل");
+      expect(qualityRowsWithout["السجلات المكررة المستبعدة (Duplicates Removed)"]).toBe("0 سجل");
+      expect(qualityRowsWithout["نسبة اكتمال الحقول (Completeness)"]).toBeDefined();
+
+      // With explicit targetRequested provided
+      const datasetWithTarget = {
+        ...sampleDataset,
+        metadata: {
+          ...sampleDataset.metadata,
+          targetRequested: 100,
+        },
+      };
+      const bufferWithTarget = await generateExcelReport(datasetWithTarget);
+      const wbWith = new ExcelJS.Workbook();
+      await wbWith.xlsx.load(bufferWithTarget as any);
+      const wsQualityWith = wbWith.getWorksheet("جودة البيانات");
+      const qualityRowsWith: Record<string, string> = {};
+      wsQualityWith?.eachRow((row, rowNumber) => {
+        if (rowNumber > 3) {
+          const key = row.getCell(1).value?.toString() || "";
+          const val = row.getCell(2).value?.toString() || "";
+          qualityRowsWith[key] = val;
+        }
+      });
+      expect(qualityRowsWith["السجلات المطلوبة (Target Requested)"]).toBe("100 سجل");
+    });
   });
 
   describe("2. CSV Report (.csv) Generation", () => {

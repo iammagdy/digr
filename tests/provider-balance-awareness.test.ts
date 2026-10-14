@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { Account, TablesDB } from "node-appwrite";
 import {
   getConfiguredProviderCreditUsd,
   getConfiguredProviderSpendCapUsd,
@@ -17,18 +16,44 @@ import {
 import { createAndSaveManagedQuote } from "../src/functions/shared/planManager";
 import { GET as getProviderBalanceRoute } from "../src/app/api/admin/provider-balance/route";
 
+const mockSbAuth = vi.hoisted(() => ({
+  user: null as any,
+}));
+
+vi.mock("../src/lib/supabase/server", () => ({
+  createServerSideClient: vi.fn(async () => ({
+    auth: {
+      getUser: vi.fn(async (jwt?: string) => {
+        if (!jwt || !mockSbAuth.user) {
+          return { data: { user: null }, error: { message: "Invalid JWT" } };
+        }
+        return { data: { user: mockSbAuth.user }, error: null };
+      }),
+    },
+  })),
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        gte: vi.fn(async () => ({ data: [], error: null })),
+      })),
+    })),
+  })),
+}));
+
 describe("Task 5: Provider Balance Awareness & Admin Endpoint", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     process.env = { ...originalEnv };
     resetProviderBalanceCacheForTesting();
+    mockSbAuth.user = null;
     vi.restoreAllMocks();
   });
 
   afterEach(() => {
     process.env = { ...originalEnv };
     resetProviderBalanceCacheForTesting();
+    mockSbAuth.user = null;
     vi.restoreAllMocks();
   });
 
@@ -132,7 +157,7 @@ describe("Task 5: Provider Balance Awareness & Admin Endpoint", () => {
       listRows: vi.fn().mockResolvedValue({ total: 0, rows: [] }),
       createRow: vi.fn().mockResolvedValue({ $id: "q_123" }),
       updateRow: vi.fn().mockResolvedValue({}),
-    } as unknown as TablesDB;
+    } as any;
 
     const dummyCapability = {
       slug: "facebook-comments",
@@ -210,10 +235,11 @@ describe("Task 5: Provider Balance Awareness & Admin Endpoint", () => {
     });
 
     it("rejects authenticated non-admin users with 403", async () => {
-      vi.spyOn(Account.prototype, "get").mockResolvedValue({
-        $id: "user_regular",
-        labels: ["user"],
-      } as any);
+      mockSbAuth.user = {
+        id: "user_regular",
+        email: "user@example.com",
+        app_metadata: { role: "user" },
+      };
 
       const req = new NextRequest("http://localhost:3000/api/admin/provider-balance", {
         method: "GET",
@@ -228,10 +254,11 @@ describe("Task 5: Provider Balance Awareness & Admin Endpoint", () => {
       process.env.PROVIDER_DAILY_SPEND_CAP_USD = "0.80";
       setProviderBalanceForTesting(0.95);
 
-      vi.spyOn(Account.prototype, "get").mockResolvedValue({
-        $id: "admin_user",
-        labels: ["admin"],
-      } as any);
+      mockSbAuth.user = {
+        id: "admin_user",
+        email: "admin@diger.tech",
+        app_metadata: { role: "admin" },
+      };
 
       const req = new NextRequest("http://localhost:3000/api/admin/provider-balance", {
         method: "GET",

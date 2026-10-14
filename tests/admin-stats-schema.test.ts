@@ -3,7 +3,7 @@ import { NextRequest } from "next/server";
 import { GET as getStats } from "../src/app/api/admin/stats/route";
 import { GET as getFinance } from "../src/app/api/admin/finance/route";
 import { GET as getTopups } from "../src/app/api/admin/topups/route";
-import { Query } from "node-appwrite";
+import { Query } from "../src/functions/shared/dbCompat";
 import { authenticateAdmin } from "../src/lib/server/adminAuth";
 
 interface MockDbState {

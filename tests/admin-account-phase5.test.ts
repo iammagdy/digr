@@ -200,7 +200,7 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
       }
     });
 
-    it("should allow Appwrite fallback path only when ENABLE_APPWRITE_ADMIN_FALLBACK=true", async () => {
+    it("permanently blocks and removes Appwrite fallback path regardless of ENABLE_APPWRITE_ADMIN_FALLBACK", async () => {
       process.env.ENABLE_APPWRITE_ADMIN_FALLBACK = "true";
       const req = new NextRequest("http://127.0.0.1:3000/api/admin/audit");
       const res = await authenticateAdmin(req);
@@ -208,7 +208,7 @@ describe("Phase 5: Admin Auth & Account Lifecycle Guardrails", () => {
       if (!res.ok) {
         expect(res.response.status).toBe(401);
         const data = await res.response.json();
-        expect(data.error).toContain("يرجى تسجيل الدخول أولاً");
+        expect(data.error).toContain("Supabase");
       }
       delete process.env.ENABLE_APPWRITE_ADMIN_FALLBACK;
     });

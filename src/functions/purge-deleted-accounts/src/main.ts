@@ -1,4 +1,4 @@
-import { Client, TablesDB, Storage, Users, Query } from "node-appwrite";
+import { Client, TablesDB, Storage, Users, Query } from "../../shared/dbCompat";
 
 const RESULTS_BUCKET = "results";
 const BATCH = 10;

@@ -1,4 +1,4 @@
-import { ID, Messaging, Permission, Role, TablesDB, Users } from "node-appwrite";
+import { ID, Messaging, Permission, Role, TablesDB, Users } from "./dbCompat";
 
 export type NotificationKind = "topup_approved" | "topup_rejected" | "job_done" | "refund" | "welcome";
 type PrefKey = "topup" | "done" | "refund" | "news";

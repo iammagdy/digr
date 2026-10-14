@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { z } from "zod";
-import { TablesDB, ID, Query } from "node-appwrite";
+import { TablesDB, ID, Query } from "./dbCompat";
 import {
   Capability,
   validateCapabilityParams,

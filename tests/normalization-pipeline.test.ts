@@ -214,4 +214,53 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(norm.metadata.methodology).toContain("Diger");
     });
   });
+
+  describe("8. Relational Comment Hierarchy Grouping", () => {
+    it("groups YouTube replies directly under their respective parent comment while preserving total count", () => {
+      const rawComments = {
+        metadata: {
+          title: "تعليقات يوتيوب وثائقي",
+          platform: "يوتيوب (YouTube)",
+        },
+        rows: [
+          { comment_id: "c1", text: "تعليق رئيسي أول", is_reply: false },
+          { comment_id: "c2", text: "تعليق رئيسي ثاني", is_reply: false },
+          { comment_id: "r1_c1", text: "رد أول على التعليق الأول", is_reply: true, parent_id: "c1" },
+          { comment_id: "r2_c1", text: "رد ثاني على التعليق الأول", is_reply: true, parent_id: "c1" },
+          { comment_id: "r1_c2", text: "رد على التعليق الثاني", is_reply: true, parent_id: "c2" },
+        ],
+      };
+
+      const norm = normalizeDataset(rawComments);
+      expect(norm.rows.length).toBe(5);
+      // c1 should be followed immediately by r1_c1 and r2_c1
+      expect(norm.rows[0].source_id).toBe("c1");
+      expect(norm.rows[1].source_id).toBe("r1_c1");
+      expect(norm.rows[2].source_id).toBe("r2_c1");
+      // then c2 followed by r1_c2
+      expect(norm.rows[3].source_id).toBe("c2");
+      expect(norm.rows[4].source_id).toBe("r1_c2");
+    });
+  });
+
+  describe("9. Target Requested & Research Fact Preservation", () => {
+    it("preserves explicit targetRequested or defaults to null if absent", () => {
+      const payloadWithoutTarget = {
+        metadata: { title: "بحث عام", platform: "X" },
+        rows: [{ id: "1", text: "عينة" }],
+      };
+      const normWithout = normalizeDataset(payloadWithoutTarget);
+      expect(normWithout.metadata.targetRequested).toBeNull();
+
+      const payloadWithTarget = {
+        metadata: { title: "بحث محدد", platform: "X", targetRequested: 250 },
+        rows: [{ id: "1", text: "عينة" }],
+      };
+      const normWith = normalizeDataset(payloadWithTarget);
+      expect(normWith.metadata.targetRequested).toBe(250);
+
+      const normWithOptions = normalizeDataset(payloadWithoutTarget, { targetRequested: 500 });
+      expect(normWithOptions.metadata.targetRequested).toBe(500);
+    });
+  });
 });

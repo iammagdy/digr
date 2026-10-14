@@ -27,7 +27,8 @@ export interface NormalizedDataset {
     collectedAt: string;
     rowsCount: number;
     methodology: string;
-    entityType: "posts" | "comments" | "profile" | "search" | "tabular";
+    entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies";
+    targetRequested?: number | string | null;
   };
   profile: Record<string, any> | null;
   rows: Array<Record<string, any>>;
@@ -307,6 +308,55 @@ export function deduplicateRecords(rows: Array<Record<string, any>>): {
 }
 
 /**
+ * Organizes relational comment data so direct replies nest immediately under
+ * their parent top-level comment while preserving all records and stability.
+ */
+export function organizeCommentHierarchy(
+  rows: Array<Record<string, any>>
+): Array<Record<string, any>> {
+  const hasHierarchy = rows.some((r) => r.parent_id !== undefined || r.is_reply === true);
+  if (!hasHierarchy) return rows;
+
+  const topLevel: Array<Record<string, any>> = [];
+  const repliesByParent = new Map<string, Array<Record<string, any>>>();
+  const orphanedReplies: Array<Record<string, any>> = [];
+
+  for (const r of rows) {
+    if (r.parent_id) {
+      const pid = String(r.parent_id);
+      if (!repliesByParent.has(pid)) repliesByParent.set(pid, []);
+      repliesByParent.get(pid)!.push(r);
+    } else if (r.is_reply) {
+      orphanedReplies.push(r);
+    } else {
+      topLevel.push(r);
+    }
+  }
+
+  const result: Array<Record<string, any>> = [];
+  for (const parent of topLevel) {
+    result.push(parent);
+    const parentKey1 = parent.source_id ? String(parent.source_id) : "";
+    const parentKey2 = parent.id ? String(parent.id) : "";
+    const directReplies =
+      (parentKey1 ? repliesByParent.get(parentKey1) : undefined) ||
+      (parentKey2 ? repliesByParent.get(parentKey2) : undefined);
+    if (directReplies && directReplies.length > 0) {
+      result.push(...directReplies);
+      if (parentKey1) repliesByParent.delete(parentKey1);
+      if (parentKey2) repliesByParent.delete(parentKey2);
+    }
+  }
+
+  for (const remaining of repliesByParent.values()) {
+    result.push(...remaining);
+  }
+  result.push(...orphanedReplies);
+
+  return result;
+}
+
+/**
  * Computes summary KPI metrics for the dataset.
  */
 export function computeKpis(rows: Array<Record<string, any>>, duplicatesRemoved: number = 0): DatasetKpis {
@@ -409,6 +459,7 @@ export function normalizeDataset(
     platform?: string;
     title?: string;
     jobId?: string;
+    targetRequested?: number | string | null;
   }
 ): NormalizedDataset {
   const meta = rawPayload?.metadata || {};
@@ -444,8 +495,9 @@ export function normalizeDataset(
 
   const mappedRows = rawRows.map((r, i) => normalizeRecord(r, i));
 
-  // 3. Deduplicate
-  const { uniqueRows, duplicatesCount } = deduplicateRecords(mappedRows);
+  // 3. Deduplicate and organize relational comment hierarchy
+  const { uniqueRows: dedupedRows, duplicatesCount } = deduplicateRecords(mappedRows);
+  const uniqueRows = organizeCommentHierarchy(dedupedRows);
 
   // 4. Determine Active Columns
   const columnSet = new Set<string>();
@@ -490,8 +542,16 @@ export function normalizeDataset(
   const codebook = generateDynamicCodebook(columns, uniqueRows.slice(0, 20));
 
   // 6. Determine Entity Type
-  let entityType: "posts" | "comments" | "profile" | "search" | "tabular" = "tabular";
-  if (columns.includes("comment_text") || columns.includes("parent_id")) {
+  let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" = "tabular";
+  if (
+    rawPayload?.entityType === "companies" ||
+    rawPayload?.metadata?.entityType === "companies" ||
+    columns.includes("company_name") ||
+    columns.includes("cr_number") ||
+    columns.includes("domain")
+  ) {
+    entityType = "companies";
+  } else if (columns.includes("comment_text") || columns.includes("parent_id")) {
     entityType = "comments";
   } else if (columns.includes("retweets_count") || columns.includes("tweet_id") || columns.includes("text")) {
     entityType = "posts";
@@ -512,6 +572,7 @@ export function normalizeDataset(
       rowsCount: uniqueRows.length,
       methodology: methodologyText,
       entityType,
+      targetRequested: options?.targetRequested !== undefined ? options.targetRequested : (meta.targetRequested !== undefined ? meta.targetRequested : null),
     },
     profile: cleanProfile,
     rows: uniqueRows,

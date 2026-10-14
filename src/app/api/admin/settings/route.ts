@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, creditValueEgp, listAllUsers } from "@/lib/server/adminAuth";
+import { authenticateAdmin, creditValueEgp, listAllUsers, Query } from "@/lib/server/adminAuth";
 import { normalizeDigits } from "@/lib/arabicDigits";
 
 export const dynamic = "force-dynamic";

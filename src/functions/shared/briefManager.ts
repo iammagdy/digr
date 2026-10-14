@@ -1,4 +1,4 @@
-import { TablesDB, Query } from "node-appwrite";
+import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
 
@@ -13,6 +13,13 @@ export interface ResearchBrief {
   language?: string;
   formats?: string[];
   notes?: string;
+  exclusionFile?: {
+    name: string;
+    baselineRowCount: number;
+    companyNames?: string[];
+    corporateDomains?: string[];
+    normalizedEntities?: Array<{ name: string; domain?: string; crNumber?: string }>;
+  };
 }
 
 const briefCache = new Map<string, ResearchBrief>();
@@ -453,6 +460,7 @@ export function formatBriefForSystemPrompt(brief: ResearchBrief): string {
 export async function getConversationBrief(
   tables: TablesDB | null | undefined,
   conversationId: string,
+  userId?: string,
 ): Promise<ResearchBrief> {
   const cached = briefCache.get(conversationId);
   if (cached) return { ...cached };
@@ -465,9 +473,14 @@ export async function getConversationBrief(
     try {
       const { data } = await (tables as any)
         .from("conversations")
-        .select("brief")
+        .select("brief, user_id")
         .eq("id", conversationId)
         .maybeSingle();
+
+      if (data && userId && data.user_id && data.user_id !== userId) {
+        return { platforms: [], topics: [] };
+      }
+
       if (data?.brief && typeof data.brief === "object") {
         briefCache.set(conversationId, data.brief);
         return data.brief;
@@ -515,10 +528,14 @@ export async function saveConversationBrief(
 
   if (typeof tables.from === "function") {
     try {
-      await tables
+      const q = tables
         .from("conversations")
         .update({ brief, updated_at: new Date().toISOString() })
         .eq("id", conversationId);
+      if (userId) {
+        q.eq("user_id", userId);
+      }
+      await q;
     } catch {
       // Non-fatal
     }

@@ -1,4 +1,4 @@
-import { ID, TablesDB } from "node-appwrite";
+import { ID, TablesDB } from "./dbCompat";
 
 let cachedRate: { value: number; at: number } | null = null;
 

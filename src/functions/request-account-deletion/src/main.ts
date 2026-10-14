@@ -1,4 +1,4 @@
-import { Client, TablesDB, Users, Query } from "node-appwrite";
+import { Client, TablesDB, Users, Query } from "../../shared/dbCompat";
 
 const GRACE_DAYS = 30;
 
