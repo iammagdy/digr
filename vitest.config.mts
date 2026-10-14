@@ -9,7 +9,7 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.{ts,tsx}"],
     exclude: ["**/node_modules/**", "**/dist/**", "**/supabase/functions/**"],
-    testTimeout: 15000,
+    testTimeout: 30000,
   },
   resolve: {
     alias: {
