@@ -61,6 +61,7 @@ interface MessageItem {
     size: number;
   };
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
+  intent?: "chat" | "research";
   planQuote?: PlanQuoteData;
   revisionQuote?: RevisionQuoteData;
   clarificationQuestions?: string[];
@@ -100,7 +101,7 @@ export default function ChatWorkspacePage() {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
-  const [loadingStatusText, setLoadingStatusText] = useState("يفكّر في سؤالك ويجهّز الخطوة التالية...");
+  const [loadingStatusText, setLoadingStatusText] = useState("يكتب الرد...");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
@@ -303,7 +304,17 @@ export default function ChatWorkspacePage() {
     };
 
     const isPriceOrPlanRequest = /(هيكلفني كام|احسبلي|احسب لي|السعر|بكام|كم نقطة|كم يكلف|تكلف كام|التكلفة|كم التكلفة|السعر كام|ابدأ|نفذ|تمام جهز الخطة|اعمل الخطة)/i.test(textToSend);
-    setLoadingStatusText(isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : "يفكّر في سؤالك ويجهّز الخطوة التالية...");
+    const hasPriorResearch = Boolean(
+      activeJob ||
+      messages.some((m) =>
+        m.planQuote ||
+        (m.clarificationQuestions && m.clarificationQuestions.length > 0) ||
+        m.outputType === "propose_plan" ||
+        m.outputType === "ask_clarification" ||
+        m.intent === "research"
+      )
+    );
+    setLoadingStatusText(isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : (hasPriorResearch ? "يفكّر في سؤالك ويجهّز الخطوة التالية..." : "يكتب الرد..."));
     setMessages((prev) => [...prev, userMsg]);
     setInputText("");
     setLoading(true);
@@ -355,6 +366,7 @@ export default function ChatWorkspacePage() {
         role: "assistant",
         content: data.contentAr,
         outputType: data.outputType,
+        intent: data.intent,
         planQuote: data.planQuote,
         revisionQuote: data.revisionQuote,
         clarificationQuestions: data.clarificationQuestions,
@@ -441,6 +453,7 @@ export default function ChatWorkspacePage() {
           role: "assistant",
           content: data.contentAr,
           outputType: data.outputType,
+          intent: data.intent,
           planQuote: data.planQuote,
           revisionQuote: data.revisionQuote,
           clarificationQuestions: data.clarificationQuestions,
@@ -523,7 +536,9 @@ export default function ChatWorkspacePage() {
         .map((document) => ({
           id: document.id || document.$id,
           role: document.role as "user" | "assistant",
-          content: String(document.content || "").slice(0, 20000),
+          content: String(document.content_ar || document.content || "").slice(0, 20000),
+          clarificationItems: document.clarification_items,
+          planQuote: document.quote,
           createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
         })));
 
@@ -972,6 +987,17 @@ export default function ChatWorkspacePage() {
   /* ── derived document state ───────────────────────────────────────── */
   const isClarification = (m: MessageItem) =>
     m.outputType === "ask_clarification" || (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems);
+  const isResearchActive = Boolean(
+    activeJob ||
+    messages.some((m) =>
+      m.planQuote ||
+      (m.clarificationQuestions && m.clarificationQuestions.length > 0) ||
+      isClarification(m) ||
+      m.outputType === "propose_plan" ||
+      m.outputType === "ask_clarification" ||
+      m.intent === "research"
+    )
+  );
   const firstUserIdx = messages.findIndex((m) => m.role === "user");
   const question = conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : "");
   const startIdx = messages.findIndex((m) => !!m.jobId);
@@ -1174,22 +1200,33 @@ export default function ChatWorkspacePage() {
           )}
 
           {!chatEmpty && !conversationLoading && messages.length > 0 && (
-            <ResearchDocument
-              dateLabel={dateLabel}
-              question={question}
-              stage={stage}
-              failed={activeJob?.status === "failed"}
-              banner={!llmEnabled ? (
-                <div role="status" className="mb-[18px] flex items-start gap-2.5 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.8] text-ink2">
-                  <span className="mt-0.5 flex text-goldT"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 8v5M12 16.5v.5M10.3 4l-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0z" /></svg></span>
-                  <span>المساعد الذكي يعمل الآن بالوضع المبسّط: أسئلة ثابتة وخطة قياسية. السعر والموافقة والتنفيذ تعمل بشكل طبيعي.</span>
-                </div>
-              ) : null}
-              details={detailsNode}
-              plan={planNode}
-              run={runNode}
-              files={filesNode}
-            />
+            isResearchActive ? (
+              <ResearchDocument
+                dateLabel={dateLabel}
+                question={question}
+                stage={stage}
+                failed={activeJob?.status === "failed"}
+                banner={!llmEnabled ? (
+                  <div role="status" className="mb-[18px] flex items-start gap-2.5 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.8] text-ink2">
+                    <span className="mt-0.5 flex text-goldT"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 8v5M12 16.5v.5M10.3 4l-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0z" /></svg></span>
+                    <span>المساعد الذكي يعمل الآن بالوضع المبسّط: أسئلة ثابتة وخطة قياسية. السعر والموافقة والتنفيذ تعمل بشكل طبيعي.</span>
+                  </div>
+                ) : null}
+                details={detailsNode}
+                plan={planNode}
+                run={runNode}
+                files={filesNode}
+              />
+            ) : (
+              <div className="mx-auto w-full max-w-[680px] space-y-3 py-4">
+                {messages.map((m) => renderNote(m))}
+                {loading && (
+                  <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>
+                    {loadingStatusText}
+                  </p>
+                )}
+              </div>
+            )
           )}
           <div ref={messagesEndRef} />
         </div>

@@ -24,7 +24,8 @@ export const AskClarificationSchema = z.object({
   questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
   optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
   reasonAr: z.string().min(1),
-}).strict();
+  intent: z.enum(["chat", "research"]).optional(),
+}).passthrough();
 
 export const AskQuestionsSchema = z.object({
   type: z.literal("ask_questions"),
@@ -160,6 +161,7 @@ export const AnswerQuestionSchema = z.object({
   type: z.literal("answer_question"),
   answerAr: z.preprocess((val) => (typeof val === "string" ? val : String(val || "")), z.string().min(1)),
   topic: z.string().optional(),
+  intent: z.enum(["chat", "research"]).default("chat").optional(),
 }).passthrough();
 
 export const RefuseSchema = z.object({
@@ -423,6 +425,7 @@ export const ACTION_RESULT_JSON_SCHEMA = {
         "update_brief",
       ],
     },
+    intent: { type: "string", enum: ["chat", "research"] },
     platforms: { type: "array", items: { type: "string" } },
     topics: { type: "array", items: { type: "string" } },
     keywords: { type: "array", items: { type: "string" } },
@@ -1085,6 +1088,7 @@ export class LlmClient {
           type: "answer_question",
           answerAr: answerText,
           topic: isGreeting ? "greeting" : "identity",
+          intent: "chat",
         },
         inputTokens: 250,
         outputTokens: 50,
@@ -2231,6 +2235,7 @@ export class LlmClient {
             rawPayload = {
               type: "answer_question",
               answerAr: extractedText,
+              intent: "chat",
             };
           }
         } else {
@@ -2288,6 +2293,18 @@ export class LlmClient {
         }
       }
 
+      if (scrubbedPayload.type === "answer_question" && !scrubbedPayload.intent) {
+        scrubbedPayload.intent = "chat";
+      } else if (
+        (scrubbedPayload.type === "propose_plan" ||
+          scrubbedPayload.type === "ask_clarification" ||
+          scrubbedPayload.type === "ask_questions" ||
+          scrubbedPayload.type === "search_catalog") &&
+        !scrubbedPayload.intent
+      ) {
+        scrubbedPayload.intent = "research";
+      }
+
       let validatedOutput: LlmTurnOutput;
       const parseResult = LlmTurnOutputSchema.safeParse(scrubbedPayload);
       if (parseResult.success) {
@@ -2309,6 +2326,7 @@ export class LlmClient {
           validatedOutput = {
             type: "answer_question",
             answerAr: scrubWhiteLabelText(candidateText.trim()),
+            intent: "chat",
           };
         } else {
           throw parseResult.error;

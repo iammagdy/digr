@@ -21,9 +21,28 @@ export function BalanceProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     try {
       const supabase = createClient();
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
+      // 1. Primary: Shared server-side balance endpoint
+      const res = await fetch("/api/wallet/balance", { headers }).catch(() => null);
+      if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json?.success && typeof json.balance === "number") {
+          setBalance(balanceReady(json.balance));
+          return;
+        }
+      }
+
+      // 2. Direct client fallback strictly filtered by user.id
       const { data, error } = await supabase
         .from("credit_ledger")
-        .select("delta");
+        .select("delta")
+        .eq("user_id", user.id);
 
       if (error) {
         // A failed request proves nothing about the balance — never show a fake zero.
