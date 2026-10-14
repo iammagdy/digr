@@ -48,7 +48,7 @@ import {
   isRepetitionComplaint,
   type ResearchBrief,
 } from "./briefManager";
-import { extractResearchIntent } from "../../lib/server/researchIntent";
+import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 
 export interface ChatHandlerInput {
@@ -900,6 +900,29 @@ export class ChatHandler {
     const discoveryDecision = evaluateDiscoveryDecision(researchIntent);
     let isPhase2 = false;
 
+    const mentionedPlats = detectMentionedPlatforms(message);
+    const approvedSocialPlatforms = ["facebook", "x", "twitter", "youtube", "instagram", "tiktok", "reddit", "linkedin"];
+    const hasApprovedPlatformInMessage = mentionedPlats.some((p) => approvedSocialPlatforms.includes(p.toLowerCase()));
+    const hasApprovedPlatformInBrief = brief.platforms.some((p) => approvedSocialPlatforms.includes(p.toLowerCase()));
+    const hasAnyApprovedPlatform = hasApprovedPlatformInMessage || hasApprovedPlatformInBrief;
+
+    const hasExclusionReferenceOrFile = Boolean(
+      brief.exclusionFile ||
+      activeFiles.length > 0 ||
+      researchIntent.userExclusions.value.hasExclusionReference
+    );
+
+    const isCompanyIntent =
+      researchIntent.entityType.value === "companies" ||
+      extractEntityType(message).entityType === "companies";
+
+    const isDirectCompanyResearch =
+      isCompanyIntent &&
+      !hasAnyApprovedPlatform &&
+      !hasExclusionReferenceOrFile &&
+      !isCardAnswer &&
+      !isTestSearchScenario;
+
     if (isTestSearchScenario) {
       isPhase2 = false;
     } else if (isGreeting || isGeneralQuestion) {
@@ -937,13 +960,89 @@ export class ChatHandler {
         });
       }
       return assistantMsg;
-    } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
+    } else if (isDirectCompanyResearch) {
+        const topicLabel =
+          (brief.topics && brief.topics.length > 0 && brief.topics[0] !== "بحث عام" && brief.topics[0]) ||
+          (researchIntent.topic.value && researchIntent.topic.value !== "بحث عام" && researchIntent.topic.value) ||
+          "الشركات والمجالات المطلوبة";
+
+        const companyAlternativeMessageAr =
+          `نعتذر منك، استخراج بيانات وسجلات الشركات التجارية (مثل السجل التجاري أو قواعد بيانات الشركات العامة في مصر) غير مدعوم حالياً بشكل مباشر على المنصة.\n\n` +
+          `المنصة متخصصة حالياً ومجهزة لاستخراج وتحليل البيانات العامة المعتمدة من منصات التواصل الاجتماعي التالية:\n` +
+          `• **فيسبوك (Facebook)**: بحث المنشورات العامة، تفاعل الجمهور، والتعليقات.\n` +
+          `• **لينكد إن (LinkedIn)**: استخراج بيانات حسابات وصفحات الشركات والملفات المهنية.\n` +
+          `• **منصة X (تويتر)**: بحث التغريدات والوسوم والآراء العامة.\n` +
+          `• **إنستغرام، يوتيوب، تيك توك، وريديت**.\n\n` +
+          `💡 **بدائل يمكنك تنفيذها الآن:**\n` +
+          `إذا كنت ترغب في جمع بيانات ومعلومات عن ${topicLabel}، يمكنك توجيه طلبك لأحد الخيارات المتاحة:\n` +
+          `1. «بحث منشورات وصفحات ${topicLabel} على فيسبوك»\n` +
+          `2. «استخراج بيانات صفحات ${topicLabel} على لينكد إن»\n` +
+          `3. «تحليل تفاعل وآراء الجمهور حول ${topicLabel} على منصة X»`;
+
+        const tEarlyTotal = Date.now() - turnStartTime;
+        console.log("[chat:turn_breakdown]", {
+          supabaseMs,
+          catalogMs: 0,
+          llmMs: 0,
+          quoteMs: 0,
+          totalMs: tEarlyTotal,
+        });
+        console.log(
+          `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=0 catalogSearches=0 latencyMs=${tEarlyTotal}`,
+        );
+        console.log("[chat:step_timings]", {
+          supabaseMs,
+          catalogMs: 0,
+          llmMs: 0,
+          quoteMs: 0,
+          tExtractMs,
+          tCatalogSearchMs: 0,
+          tPlanLlmMs: 0,
+          tQuoteMs: 0,
+          totalMs: tEarlyTotal,
+        });
+
+        const assistantMsg: ChatHandlerResponse = {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          outputType: "suggest_alternative",
+          contentAr: companyAlternativeMessageAr,
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: {
+            modelCalls: 0,
+            catalogSearches: 0,
+            latencyMs: tEarlyTotal,
+            stepTimings: {
+              supabaseMs,
+              catalogMs: 0,
+              llmMs: 0,
+              quoteMs: 0,
+              totalMs: tEarlyTotal,
+              tExtractMs,
+              tCatalogSearchMs: 0,
+              tPlanLlmMs: 0,
+              tQuoteMs: 0,
+            },
+          },
+        };
+
+        if (sb) {
+          await sb.from("messages").update({ content_ar: companyAlternativeMessageAr }).eq("id", assistantMsgId);
+        } else {
+          await this.tables.updateRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: assistantMsgId,
+            data: { content: companyAlternativeMessageAr, status: "ready" },
+          });
+        }
+        return assistantMsg;
+      } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
       if (brief.platforms.length === 0) {
         brief.platforms = researchIntent.platforms.value.length > 0
           ? [...researchIntent.platforms.value]
-          : researchIntent.entityType.value === "companies"
-          ? ["web"]
-          : ["web"];
+          : ["facebook"];
       }
       if (brief.topics.length === 0 && researchIntent.topic.value) {
         brief.topics = [researchIntent.topic.value];
@@ -973,13 +1072,6 @@ export class ChatHandler {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         isPhase2 = false;
       }
-    } else if (researchIntent.entityType.value === "companies" && researchIntent.sampleSize.provenance === "EXPLICIT") {
-      if (brief.platforms.length === 0) brief.platforms = ["web"];
-      if (brief.topics.length === 0) brief.topics = [researchIntent.topic.value];
-      if (!brief.targetVolume) brief.targetVolume = researchIntent.sampleSize.value;
-      if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx", "csv", "pdf"];
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
-      isPhase2 = true;
     } else if (userComplained) {
       if (brief.platforms.length === 0) brief.platforms.push("facebook");
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
@@ -1612,6 +1704,10 @@ export class ChatHandler {
 
         let planRetries = 0;
         while (platformCheck.valid && !planValidation.valid && planRetries < 3) {
+          if (planValidation.issues.some((i) => i.kind === "missing_cost")) {
+            console.warn("[chat:plan_validation_missing_cost_abort_retry]", { issues: planValidation.issues });
+            break;
+          }
           planRetries++;
           console.warn("[chat:plan_fix_retry]", { attempt: planRetries, errors: planValidation.errors });
           loopMessages.push(
@@ -1672,9 +1768,22 @@ export class ChatHandler {
               } as any;
             } else {
               const autoPlan = buildAutoPlanProposal(brief, validationCaps, message);
-              planOutput = autoPlan;
-              planItems = mapPlanItems(autoPlan);
-              planValidation = { valid: true, errors: [], issues: [] };
+              const autoPlanItems = mapPlanItems(autoPlan);
+              const autoCheck = validatePlanAgainstLiveCatalog(autoPlanItems, turnEndpoints, allCapabilities);
+              if (autoCheck.valid) {
+                planOutput = autoPlan;
+                planItems = autoPlanItems;
+                planValidation = { valid: true, errors: [], issues: [] };
+              } else {
+                console.warn("[chat:auto_plan_invalid_pricing]", { errors: autoCheck.errors });
+                finalContentAr = "نعتذر منك، لم نتمكن من إعداد خطة تسعير معتمدة لهذا الطلب لعدم توفر خدمة موثقة بالتسعير المطلوب حالياً. يمكنك تجربة إحدى المنصات المعتمدة (فيسبوك، لينكد إن، إكس، يوتيوب).";
+                output = {
+                  type: "suggest_alternative",
+                  explanationAr: finalContentAr,
+                } as any;
+                planOutput = null;
+                planValidation = { valid: false, errors: autoCheck.errors, issues: autoCheck.issues };
+              }
             }
           }
         }

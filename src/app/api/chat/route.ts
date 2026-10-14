@@ -14,24 +14,11 @@ import {
 } from "../../../functions/shared/clarification";
 import { createServerSideClient, createAdminClient } from "../../../lib/supabase/server";
 import { parseExclusionFile } from "../../../lib/server/exclusionFileParser";
+import { sanitizeCustomerErrorMessage } from "../../../functions/shared/catalogClient";
+import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../functions/shared/chatErrors";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-function toSafeReasonCode(err: unknown): string {
-  if (!err || typeof err !== "object") return "internal_error";
-  const anyErr = err as Record<string, unknown>;
-  const candidate =
-    (typeof anyErr.reasonCode === "string" && anyErr.reasonCode) ||
-    (typeof anyErr.code === "string" && anyErr.code) ||
-    (typeof anyErr.name === "string" && anyErr.name !== "Error" && anyErr.name) ||
-    (typeof anyErr.message === "string" &&
-    /is not a function/i.test(anyErr.message)
-      ? "IncompatibleClientError"
-      : "internal_error");
-  const cleaned = String(candidate).replace(/[^a-zA-Z0-9_:-]/g, "_").slice(0, 64);
-  return cleaned || "internal_error";
-}
 
 export async function POST(req: NextRequest) {
   const requestId = `req_${crypto.randomUUID()}`;
@@ -334,20 +321,23 @@ export async function POST(req: NextRequest) {
     const failingStep =
       (err && typeof err === "object" && typeof err.chatStep === "string" && err.chatStep) ||
       currentStep;
-    const reason = toSafeReasonCode(err);
+    const reason = toSafeReasonCode(err, failingStep);
     const statusCode = typeof err?.statusCode === "number" ? err.statusCode : 500;
     console.error(
       `[chat:request_failed] requestId=${requestId} step=${failingStep} reason=${reason}`,
     );
+    const customerError =
+      (statusCode === 403 || statusCode === 404) && err.message
+        ? sanitizeCustomerErrorMessage(err.message)
+        : reasonCodeToCustomerMessage(reason, err?.message);
+
     return NextResponse.json(
       {
         success: false,
         requestId,
         step: failingStep,
         reason,
-        error: (statusCode === 403 || statusCode === 404) && err.message
-          ? err.message
-          : "حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.",
+        error: customerError,
       },
       { status: statusCode }
     );
