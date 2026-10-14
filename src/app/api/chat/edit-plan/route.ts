@@ -8,7 +8,8 @@ import {
   createAndSaveManagedQuote,
   PlanState,
 } from "@/functions/shared/planManager";
-import { getEnabledCapabilities } from "@/functions/shared/capabilityRegistry";
+import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
+import { sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
 
 export const dynamic = "force-dynamic";
@@ -102,12 +103,17 @@ export async function POST(req: NextRequest) {
 
     const updatedPlan = applyPlanOperations(currentPlan, parsedOps.data);
 
-    // 5. Validate updated plan against capability schemas
-    const capabilities = await getEnabledCapabilities(adminClient);
-    const valResult = validatePlanAgainstSchemas(updatedPlan.items, capabilities);
+    // 5. Validate updated plan against all capability schemas (static + catalog)
+    const [capabilities, catalogCapabilities] = await Promise.all([
+      getEnabledCapabilities(adminClient),
+      getCatalogCapabilities(adminClient),
+    ]);
+    const allCapabilities = [...capabilities, ...catalogCapabilities];
+    const valResult = validatePlanAgainstSchemas(updatedPlan.items, allCapabilities);
     if (!valResult.valid) {
+      const sanitizedError = sanitizeCustomerErrorMessage(valResult.errors.join("، "));
       return NextResponse.json(
-        { success: false, error: `خطأ في معاملات الخطة: ${valResult.errors.join(", ")}` },
+        { success: false, error: `خطأ في معاملات الخطة: ${sanitizedError}` },
         { status: 400 }
       );
     }
@@ -119,7 +125,7 @@ export async function POST(req: NextRequest) {
       userId: verifiedUserId,
       plan: updatedPlan,
       userBalance,
-      capabilities,
+      capabilities: allCapabilities,
     });
 
     return NextResponse.json({
@@ -130,7 +136,7 @@ export async function POST(req: NextRequest) {
   } catch (err: any) {
     console.error("Edit plan API error:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ أثناء تعديل الخطة." },
+      { success: false, error: sanitizeCustomerErrorMessage(err.message || "حدث خطأ أثناء تعديل الخطة.") },
       { status: 500 }
     );
   }

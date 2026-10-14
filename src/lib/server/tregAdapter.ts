@@ -1,5 +1,6 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
 import { extractAndFlattenRows, parseTikTokProfileResponse } from "../../functions/shared/multiStepWorker";
+import { getLiveProviderGateStatus } from "./providerGate";
 
 export interface ProviderAdapterCallInput {
   jobId: string;
@@ -90,7 +91,8 @@ export async function executeTregCallWithRetry(
 export const defaultTregAdapter: ProviderAdapterFn = async (
   input: ProviderAdapterCallInput
 ): Promise<ProviderAdapterCallOutput> => {
-  if (process.env.TREG_LIVE !== "true" || !process.env.TREG_TOKEN?.trim()) {
+  const gate = getLiveProviderGateStatus();
+  if (!gate.isReady) {
     return {
       ok: false,
       httpStatus: 503,
@@ -99,9 +101,8 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       costUsd: 0,
       costMicro: 0,
       tregCallId: "",
-      errorCode: "treg_live_disabled",
-      errorMessageAr:
-        "محرك استخراج البيانات المباشر غير مفعل حالياً؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.",
+      errorCode: gate.reasonCode,
+      errorMessageAr: gate.messageAr,
     };
   }
 

@@ -150,14 +150,26 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
               <button type="button" onClick={() => setOpenId(null)} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac">تم</button>
             )}
           </div>
-          {(open.allowOther || open.type === "free" || open.options.length === 0) && (
+          {(open.allowOther || open.type === "free" || open.options.length === 0 || open.parameterType === "volume" || open.id.includes("volume")) && (
             <form onSubmit={(e) => { e.preventDefault(); submitDraft(open); }} className="mt-2.5 flex items-center gap-2">
               <input
-                value={draft} onChange={(e) => setDraft(e.target.value)} maxLength={200}
-                placeholder={open.options.length ? "أخرى…" : "اكتب إجابتك"}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                maxLength={200}
+                type={open.parameterType === "volume" || open.id.includes("volume") ? "number" : "text"}
+                inputMode={open.parameterType === "volume" || open.id.includes("volume") ? "numeric" : "text"}
+                min={open.parameterType === "volume" || open.id.includes("volume") ? 1 : undefined}
+                max={open.parameterType === "volume" || open.id.includes("volume") ? 5000 : undefined}
+                placeholder={
+                  open.parameterType === "volume" || open.id.includes("volume")
+                    ? "أو أدخل رقماً مخصصاً (مثلاً: 25، 50، 1000)..."
+                    : open.options.length ? "أخرى…" : "اكتب إجابتك"
+                }
                 className="min-h-11 min-w-0 flex-1 rounded-full border border-ln bg-sf px-4 text-base font-light text-ink outline-none focus:border-ln2"
               />
-              <button type="submit" disabled={!draft.trim()} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac disabled:opacity-40">إضافة</button>
+              <button type="submit" disabled={!draft.trim()} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac disabled:opacity-40">
+                {open.parameterType === "volume" || open.id.includes("volume") ? "تطبيق العدد" : "إضافة"}
+              </button>
             </form>
           )}
         </div>

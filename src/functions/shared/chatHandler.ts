@@ -84,6 +84,11 @@ export interface ChatHandlerResponse {
     catalogSearches: number;
     latencyMs: number;
     stepTimings?: {
+      supabaseMs?: number;
+      catalogMs?: number;
+      llmMs?: number;
+      quoteMs?: number;
+      totalMs?: number;
       tExtractMs: number;
       tCatalogSearchMs: number;
       tPlanLlmMs: number;
@@ -322,7 +327,7 @@ export function buildCodeDiscoveryFallback(
       text: "ما حجم البيانات المطلوب جمعها؟",
       question: "ما حجم البيانات المطلوب جمعها؟",
       type: "single",
-      options: ["حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
+      options: ["حتى 50 سجلاً", "حتى 100 سجل", "حتى 500 سجل", "أكثر من 500 سجل"],
       allowOther: true,
     },
   ];
@@ -370,21 +375,41 @@ export function buildAutoPlanProposal(
     : (brief.postCount && brief.commentsPerPost ? brief.postCount * brief.commentsPerPost : 500);
 
   const topicLabel = (brief.topics && brief.topics.length > 0)
-    ? brief.topics.join("، ")
+    ? brief.topics[0]
     : "البيانات العامة المطلوبة";
 
   const platformLabel = getPlatformLabelAr(platformNorm);
+
+  const isProfileCapability =
+    (matchedCap.pricingUnit as string) === "profile" ||
+    matchedCap.slug.includes("profile") ||
+    matchedCap.slug.includes("user");
+
+  const isExplicitHandle =
+    typeof topicLabel === "string" &&
+    (topicLabel.startsWith("@") || (!topicLabel.includes(" ") && !topicLabel.includes("،") && /^[a-zA-Z0-9_.-]+$/.test(topicLabel)));
+
+  const stepParams: Record<string, any> = {
+    query: topicLabel,
+  };
+
+  if (isProfileCapability || isExplicitHandle) {
+    stepParams.username = topicLabel.replace(/^@/, "").trim();
+  }
+
+  if (matchedCap.slug.includes("post-comments") || matchedCap.slug.includes("comment")) {
+    stepParams.postUrl = "https://www.facebook.com/post/1";
+  }
+
+  if (brief.dateRange) {
+    stepParams.dateFrom = "2026-01-01";
+  }
 
   const step: any = {
     stepId: "plan_step_1",
     capabilitySlug: matchedCap.slug || matchedCap.id,
     endpointId: matchedCap.tregEndpointId || matchedCap.id || matchedCap.slug,
-    params: {
-      query: topicLabel,
-      postUrl: "https://www.facebook.com/post/1",
-      username: topicLabel.replace(/^@/, "").replace(/\s+/g, "_"),
-      dateFrom: brief.dateRange ? "2026-01-01" : undefined,
-    },
+    params: stepParams,
     targetVolumeMin: 1,
     targetVolumeMax: volume,
     paginationStrategy: matchedCap.paginationType || "cursor",
@@ -624,6 +649,10 @@ export class ChatHandler {
     const turnStartTime = Date.now();
     let modelCallCount = 0;
     let catalogSearchCount = 0;
+    let supabaseMs = 0;
+    let catalogMs = 0;
+    let llmMs = 0;
+    let quoteMs = 0;
     let tExtractMs = 0;
     let tCatalogSearchMs = 0;
     let tPlanLlmMs = 0;
@@ -638,6 +667,7 @@ export class ChatHandler {
       // 1. Get or Create Conversation
       let conversationId = input.conversationId;
       let totalConvTokens = 0;
+      const tSbConvStart = Date.now();
 
       if (!conversationId) {
         conversationId = ID.unique();
@@ -715,17 +745,21 @@ export class ChatHandler {
           conversationId = ID.unique();
         }
       }
+      supabaseMs += Date.now() - tSbConvStart;
 
       // 2. Fetch User Points Balance from Ledger
       currentStep = "balance_fetch";
       let userBalance = input.userBalance;
       if (userBalance === undefined) {
+        const tSbBalStart = Date.now();
         userBalance = await getBalance(this.tables, userId);
+        supabaseMs += Date.now() - tSbBalStart;
       }
 
       // 2b. Fetch User Profile for Dynamic Persona Context
       currentStep = "profile_fetch";
       let userProfile: any = undefined;
+      const tSbProfStart = Date.now();
       try {
         if (sb) {
           const { data: prof } = await sb
@@ -744,10 +778,12 @@ export class ChatHandler {
       } catch {
         // Profile not found or not created yet
       }
+      supabaseMs += Date.now() - tSbProfStart;
 
       // 3. Save User Message in DB
       currentStep = "user_message_insert";
       const userMsgId = ID.unique();
+      const tSbMsgStart = Date.now();
       if (sb) {
         const { error: userMsgErr } = await sb.from("messages").insert({
           id: userMsgId,
@@ -802,9 +838,11 @@ export class ChatHandler {
           },
         });
       }
+      supabaseMs += Date.now() - tSbMsgStart;
 
       // 5. Research Brief & Two-Phase Routing
       currentStep = "brief_resolution";
+      const tSbBriefStart = Date.now();
       const currentBrief = await getConversationBrief(this.tables, conversationId);
       let brief = extractBriefFromMessage(message, currentBrief);
 
@@ -822,6 +860,7 @@ export class ChatHandler {
       }
     }
     await saveConversationBrief(this.tables, conversationId, userId, brief);
+    supabaseMs += Date.now() - tSbBriefStart;
     tExtractMs = Date.now() - turnStartTime;
 
     const userComplained = isRepetitionComplaint(message);
@@ -987,13 +1026,55 @@ export class ChatHandler {
     }
 
       currentStep = "capabilities_load";
+      const tSbCapsStart = Date.now();
       const [capabilities, catalogCapabilities] = await Promise.all([
         getEnabledCapabilities(this.tables),
         getCatalogCapabilities(this.tables),
       ]);
+      supabaseMs += Date.now() - tSbCapsStart;
 
       let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
       const tSearchStart = Date.now();
+
+      const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
+        catalogSearchCount++;
+        const cached = getCachedCatalogEndpoints();
+        const tCat0 = Date.now();
+        try {
+          const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
+            setTimeout(() => resolve([]), 2500)
+          );
+          let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
+          catalogMs += Date.now() - tCat0;
+          if (res && res.length > 0) return res;
+        } catch {
+          catalogMs += Date.now() - tCat0;
+        }
+
+        // Check cached endpoints matching platform first
+        const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
+        if (matchedCached.length > 0) return matchedCached;
+
+        if (p) {
+          try {
+            catalogSearchCount++;
+            const tCat1 = Date.now();
+            const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
+              setTimeout(() => resolve([]), 1500)
+            );
+            const res = await Promise.race([searchCatalog(p, p), timeoutPromise]);
+            catalogMs += Date.now() - tCat1;
+            if (res && res.length > 0) return res;
+          } catch (err: any) {
+            console.warn("[chat:catalog_search_fallback_failure]", { platform: p, error: err?.message });
+          }
+        }
+
+        return [];
+      };
+
+      const detectedPlatforms = brief.platforms.length > 0 ? brief.platforms : detectMentionedPlatforms(message);
+      const searchTopic = brief.topics.length > 0 ? brief.topics.join(" ") : message;
 
       if (isPhase2) {
         currentStep = "catalog_search";
@@ -1016,40 +1097,7 @@ export class ChatHandler {
         }
 
         // Server-side: run catalog search once per platform in brief (24h cache)
-        const platformsToSearch = brief.platforms.length > 0 ? brief.platforms : detectMentionedPlatforms(message);
-        const searchTopic = brief.topics.length > 0 ? brief.topics.join(" ") : message;
-
-        const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
-          catalogSearchCount++;
-          const cached = getCachedCatalogEndpoints();
-          try {
-            const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-              setTimeout(() => resolve([]), 2500)
-            );
-            let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
-            if (res && res.length > 0) return res;
-          } catch {}
-
-          // Check cached endpoints matching platform first
-          const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
-          if (matchedCached.length > 0) return matchedCached;
-
-          if (p) {
-            try {
-              catalogSearchCount++;
-              const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-                setTimeout(() => resolve([]), 1500)
-              );
-              const res = await Promise.race([searchCatalog(p, p), timeoutPromise]);
-              if (res && res.length > 0) return res;
-            } catch (err: any) {
-              console.warn("[chat:catalog_search_fallback_failure]", { platform: p, error: err?.message });
-            }
-          }
-
-          return [];
-        };
-
+        const platformsToSearch = detectedPlatforms;
         if (platformsToSearch.length > 0) {
           const results = await Promise.all(
             platformsToSearch.map((p) => runCatalogSearchWithRetries(searchTopic, p))
@@ -1066,9 +1114,19 @@ export class ChatHandler {
         catalogSearchCount++;
         const mentionedPlatforms = detectMentionedPlatforms(message);
         const platformHint = mentionedPlatforms[0] || undefined;
+        const tCat2 = Date.now();
         liveCatalogEndpoints = await searchCatalog(message, platformHint);
+        catalogMs += Date.now() - tCat2;
+      } else if (!isGreeting && !isGeneralQuestion && detectedPlatforms.length > 0) {
+        // Phase 1 optimization: Zero network calls, load matching cached endpoints for detected platforms
+        currentStep = "phase1_catalog_cached";
+        const cached = getCachedCatalogEndpoints();
+        const matched = cached.filter((c) =>
+          detectedPlatforms.some((p) => (c.platform || "").toLowerCase() === p.toLowerCase())
+        );
+        liveCatalogEndpoints.push(...matched);
       }
-      tCatalogSearchMs = Date.now() - tSearchStart;
+      tCatalogSearchMs = catalogMs || (Date.now() - tSearchStart);
 
       const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
 
@@ -1078,6 +1136,7 @@ export class ChatHandler {
 
       // 6. Fetch previous messages for context
       currentStep = "message_history";
+      const tSbHistStart = Date.now();
       let messagesContext: Array<{ role: "user" | "assistant" | "system"; content: string }> = [];
       if (sb) {
         const { data: rows, error: histErr } = await sb
@@ -1111,6 +1170,7 @@ export class ChatHandler {
             content: r.content,
           }));
       }
+      supabaseMs += Date.now() - tSbHistStart;
 
       // 7. Execute LLM Turn
       let parsedPurposes: string[] = [];
@@ -1170,9 +1230,15 @@ export class ChatHandler {
           content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية — المرحلة الثانية (Phase 2)]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
         });
       } else if (!isGreeting && !isGeneralQuestion && !isTestSearchScenario) {
+        const compactCatalog = buildCompactCatalogSummary(
+          liveCatalogEndpoints.length > 0 ? liveCatalogEndpoints : getCachedCatalogEndpoints()
+        );
+        const catalogContext = compactCatalog
+          ? `\n\n[أدوات جمع البيانات المتاحة في الكتالوج]:\n${compactCatalog}\n(الأدوات المناسبة متوفرة بالفعل أعلاه. لا تستدعِ search_catalog. اطرح فوراً أسئلة استكشافية ذكية ومحددة عبر ask_clarification لاستكمال متطلبات البحث).`
+          : "";
         turnMessages.push({
           role: "system",
-          content: `${formatBriefForSystemPrompt(brief)}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]: استوعب هدف البحث بدقة كخبير استشاري. إذا كان الطلب يتطلب أدوات جمع بيانات عامة، استدعِ search_catalog لاكتشاف الأدوات المناسبة من الكتالوج المفتوح، أو اطرح أسئلة توضيحية ذكية ومحددة لاستكمال متطلبات البحث عبر update_brief أو ask_clarification.`,
+          content: `${formatBriefForSystemPrompt(brief)}${catalogContext}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]: استوعب هدف البحث بدقة كخبير استشاري. إذا كانت الأدوات متوفرة أعلاه، اطرح مباشرة أسئلة توضيحية ذكية ومحددة عبر ask_clarification لاستكمال متطلبات البحث، دون استدعاء search_catalog.`,
         });
       }
 
@@ -1196,6 +1262,7 @@ export class ChatHandler {
         totalConversationTokens: effectiveConvTokens,
         testScenario,
       });
+      llmMs += Date.now() - tLlmStart;
 
       let output: typeof llmResult.output = llmResult.output;
 
@@ -1213,6 +1280,7 @@ export class ChatHandler {
       const turnSearchResults: CatalogEndpointSummary[] = [...liveCatalogEndpoints];
       const repeatTurn = async () => {
         modelCallCount++;
+        const tLlmRepeatStart = Date.now();
         llmResult = await this.llm.executeTurn({
           messages: loopMessages,
           sanitizedCapabilities: sanitizedCaps,
@@ -1230,12 +1298,15 @@ export class ChatHandler {
           totalConversationTokens: effectiveConvTokens,
           testScenario,
         });
+        llmMs += Date.now() - tLlmRepeatStart;
         output = llmResult.output;
       };
       while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
         catalogIterations++;
         catalogSearchCount++;
+        const tCatLoopStart = Date.now();
         let searchRes = await searchCatalog(output.query, output.platform);
+        catalogMs += Date.now() - tCatLoopStart;
         if (searchRes.length === 0) {
           // Retry silently up to 3 times with alternatives
           const fallbacks = [
@@ -1246,7 +1317,9 @@ export class ChatHandler {
           for (let i = 0; i < fallbacks.length && searchRes.length === 0; i++) {
             try {
               catalogSearchCount++;
+              const tCatRetryStart = Date.now();
               searchRes = await searchCatalog(fallbacks[i].q, fallbacks[i].p);
+              catalogMs += Date.now() - tCatRetryStart;
             } catch (err: any) {
               console.warn("[chat:catalog_tool_retry_failure]", { attempt: i + 1, error: err?.message });
             }
@@ -1292,7 +1365,7 @@ export class ChatHandler {
       // raw catalog list).
       const fallbackToDiscovery = (customIntro?: string, colonFallback: boolean = false) => {
         const fallback =
-          testScenario === "search_then_stall"
+          (typeof testScenario === "string" && testScenario.startsWith("search_"))
             ? buildCodeDiscoveryFallback(allCapabilities, message, false)
             : buildCodeDiscoveryFallback(allCapabilities, message, colonFallback, brief);
         if (fallback.items.length > 0) {
@@ -1622,6 +1695,7 @@ export class ChatHandler {
             capabilities: validationCaps,
           });
           tQuoteMs = Date.now() - tQuoteStart;
+          quoteMs = tQuoteMs;
 
           planQuoteData = {
             quoteId: managedQuote.quoteId,
@@ -1894,6 +1968,7 @@ export class ChatHandler {
       // 9. Update Assistant Message to 'ready'
       currentStep = "assistant_message_save";
       finalContentAr = deduplicateIntroText(finalContentAr);
+      const tSbMsgUpdateStart = Date.now();
       if (sb) {
         const { error: msgUpdateErr } = await sb
           .from("messages")
@@ -1918,10 +1993,12 @@ export class ChatHandler {
           },
         });
       }
+      supabaseMs += Date.now() - tSbMsgUpdateStart;
 
       // 10. Record Token Usage & Stats in llm_usage (Server-only).
       // Logging must never block the reply: failures are swallowed.
       currentStep = "usage_log";
+      const tSbLogStart = Date.now();
       try {
         if (sb) {
           await sb.from("llm_usage").insert({
@@ -1983,16 +2060,28 @@ export class ChatHandler {
           },
         });
       }
+      supabaseMs += Date.now() - tSbLogStart;
 
       const totalLatencyMs = Date.now() - turnStartTime;
+      console.log("[chat:turn_breakdown]", {
+        supabaseMs,
+        catalogMs,
+        llmMs,
+        quoteMs,
+        totalMs: totalLatencyMs,
+      });
       console.log(
         `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=${modelCallCount} catalogSearches=${catalogSearchCount} latencyMs=${totalLatencyMs}`,
       );
       console.log("[chat:step_timings]", {
+        supabaseMs,
+        catalogMs,
+        llmMs,
+        quoteMs,
         tExtractMs,
-        tCatalogSearchMs,
-        tPlanLlmMs,
-        tQuoteMs,
+        tCatalogSearchMs: catalogMs,
+        tPlanLlmMs: llmMs,
+        tQuoteMs: quoteMs,
         totalMs: totalLatencyMs,
       });
 
@@ -2018,10 +2107,15 @@ export class ChatHandler {
           catalogSearches: catalogSearchCount,
           latencyMs: totalLatencyMs,
           stepTimings: {
+            supabaseMs,
+            catalogMs,
+            llmMs,
+            quoteMs,
+            totalMs: totalLatencyMs,
             tExtractMs,
-            tCatalogSearchMs,
-            tPlanLlmMs,
-            tQuoteMs,
+            tCatalogSearchMs: catalogMs,
+            tPlanLlmMs: llmMs,
+            tQuoteMs: quoteMs,
           },
         },
       };

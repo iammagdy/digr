@@ -29,7 +29,8 @@ export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
     (process.env.TREG_API_KEY && process.env.TREG_API_KEY.trim().length > 0)
   );
 
-  const liveSwitch = process.env.TREG_LIVE === "true";
+  const liveRaw = (process.env.TREG_LIVE || "").trim().toLowerCase();
+  const liveSwitch = liveRaw === "true" || liveRaw === "1" || liveRaw === "yes" || liveRaw === "on";
 
   if (!liveSwitch) {
     return {

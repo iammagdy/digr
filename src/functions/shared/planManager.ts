@@ -18,6 +18,7 @@ import {
   PricingSettings,
 } from "./quotes";
 import type { CatalogEndpointSummary } from "./catalogClient";
+import { getCachedCatalogEndpoints } from "./catalogClient";
 import { checkPlanProviderCapacity, getConfiguredJobPointsCap } from "./providerSpend";
 
 // ================= Schemas for Strict Plan Editing =================
@@ -296,27 +297,58 @@ export function validatePlanAgainstSchemas(
   capabilities: Capability[]
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
+  const cachedEndpoints = getCachedCatalogEndpoints();
 
   for (const it of planItems) {
-    const matchedCap = capabilities.find(
+    let matchedCap = capabilities.find(
       (c) =>
         c.slug === it.capabilitySlug ||
         c.tregEndpointId === it.capabilitySlug ||
         (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId))
     );
+
     if (!matchedCap) {
-      errors.push(`الخدمة '${it.capabilitySlug}' غير متوافقة مع متطلبات البحث`);
+      const cached = cachedEndpoints.find(
+        (e) =>
+          e.slug === it.capabilitySlug ||
+          e.id === it.capabilitySlug ||
+          (it.endpointId && (e.id === it.endpointId || e.slug === it.endpointId))
+      );
+      if (cached) {
+        matchedCap = {
+          id: cached.id,
+          slug: cached.slug,
+          nameAr: cached.nameAr,
+          nameEn: cached.nameEn || cached.slug,
+          descriptionAr: cached.summaryAr,
+          category: cached.platform,
+          platform: cached.platform,
+          unitCostUsd: cached.catalogPriceUsd,
+          pointsPerUnit: cached.pointsPerUnit,
+          maxRows: cached.pagination?.maxLimit ? cached.pagination.maxLimit * 50 : 5000,
+          enabled: true,
+          paramsSchema: typeof cached.paramsSchema === "string" ? cached.paramsSchema : JSON.stringify(cached.paramsSchema || {}),
+          pricingUnit: cached.billingUnit as any,
+          paginationType: cached.pagination?.type as any,
+          tregEndpointId: cached.id,
+          tregMethod: cached.method,
+        };
+      }
+    }
+
+    if (!matchedCap) {
+      errors.push("الخدمة المحددة غير متوافقة مع متطلبات البحث");
       continue;
     }
 
     if (!matchedCap.enabled) {
-      errors.push(`الخدمة '${matchedCap.nameAr}' غير مفعلة حالياً`);
+      errors.push(`الخدمة "${matchedCap.nameAr || "المحددة"}" غير مفعلة حالياً`);
       continue;
     }
 
     const valRes = validateCapabilityParams(matchedCap, it.params);
     if (!valRes.valid) {
-      errors.push(...(valRes.errors || [`مدخلات غير صالحة للخدمة ${matchedCap.nameAr}`]));
+      errors.push(...(valRes.errors || [`مدخلات غير صالحة للخدمة ${matchedCap.nameAr || "المحددة"}`]));
     }
 
     if (it.targetVolumeMax > matchedCap.maxRows) {
@@ -512,7 +544,7 @@ export async function createAndSaveManagedQuote(
 
   for (const it of plan.items) {
     // Match capability strictly; NEVER substitute capabilities[0]
-    const cap = capabilities.find(
+    let cap = capabilities.find(
       (c) =>
         c.slug === it.capabilitySlug ||
         c.tregEndpointId === it.capabilitySlug ||
@@ -521,7 +553,36 @@ export async function createAndSaveManagedQuote(
     );
 
     if (!cap) {
-      throw new Error(`الخدمة المطلوبة "${it.capabilitySlug || it.endpointId || "غير محددة"}" غير معتمدة أو غير موجودة في الكتالوج.`);
+      const cached = getCachedCatalogEndpoints().find(
+        (e) =>
+          e.slug === it.capabilitySlug ||
+          e.id === it.capabilitySlug ||
+          (it.endpointId && (e.id === it.endpointId || e.slug === it.endpointId))
+      );
+      if (cached) {
+        cap = {
+          id: cached.id,
+          slug: cached.slug,
+          nameAr: cached.nameAr,
+          nameEn: cached.nameEn || cached.slug,
+          descriptionAr: cached.summaryAr,
+          category: cached.platform,
+          platform: cached.platform,
+          unitCostUsd: cached.catalogPriceUsd,
+          pointsPerUnit: cached.pointsPerUnit,
+          maxRows: 5000,
+          enabled: true,
+          paramsSchema: typeof cached.paramsSchema === "string" ? cached.paramsSchema : JSON.stringify(cached.paramsSchema || {}),
+          pricingUnit: cached.billingUnit as any,
+          paginationType: cached.pagination?.type as any,
+          tregEndpointId: cached.id,
+          tregMethod: cached.method,
+        };
+      }
+    }
+
+    if (!cap) {
+      throw new Error("الخدمة المطلوبة غير معتمدة أو غير موجودة في الكتالوج.");
     }
 
     const itemUnitCostUsd =

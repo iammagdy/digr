@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
+import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
+import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -52,17 +54,17 @@ export async function POST(req: NextRequest) {
     }
 
     // A1 Safety Guard: Do not silently accept a quote and start fake work when live provider is disabled
-    const isLiveProviderReady =
-      process.env.TREG_LIVE === "true" && Boolean(process.env.TREG_TOKEN?.trim());
+    const gateStatus = getLiveProviderGateStatus();
     const isTestMockAllowed =
       process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true";
 
-    if (!isLiveProviderReady && !isTestMockAllowed) {
+    if (!gateStatus.isReady && !isTestMockAllowed) {
+      console.warn("[accept-quote:gate_blocked]", { reasonCode: gateStatus.reasonCode });
       return NextResponse.json(
         {
           success: false,
-          error:
-            "محرك استخراج البيانات المباشر غير مفعل حالياً؛ لم يتم حجز أو خصم أي نقاط من رصيدك.",
+          error: gateStatus.messageAr,
+          reasonCode: gateStatus.reasonCode,
         },
         { status: 503 }
       );
@@ -78,7 +80,7 @@ export async function POST(req: NextRequest) {
 
     if (!acceptRes.success || !acceptRes.jobId) {
       return NextResponse.json(
-        { success: false, error: acceptRes.errorAr || "تعذر اعتماد العرض." },
+        { success: false, error: sanitizeCustomerErrorMessage(acceptRes.errorAr || "تعذر اعتماد العرض.") },
         { status: acceptRes.statusCode || 400 }
       );
     }

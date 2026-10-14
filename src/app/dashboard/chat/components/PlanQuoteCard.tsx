@@ -105,7 +105,9 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
-  const initialParam = primaryItem?.params ? (primaryItem.params.username || primaryItem.params.query || "") : "";
+  const initialParam = primaryItem?.params
+    ? (primaryItem.params.query || primaryItem.params.keyword || primaryItem.params.topic || primaryItem.params.search || primaryItem.params.username || "")
+    : "";
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -214,11 +216,16 @@ export default function PlanQuoteCard({
       {!locked && low && !expired && (
         <div className="mt-[18px] flex flex-col gap-3 rounded-[18px] px-4 py-3.5" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)", animation: "up .4s both" }}>
           <p className="m-0 text-sm leading-[1.8] text-ink">
-            رصيدك <strong>{formatNumber(balance)}</strong> نقطة — تحتاج <strong className="text-goldT">{formatNumber(shortPts)} نقطة</strong> إضافية لبدء هذا البحث.
+            رصيدك <strong>{formatNumber(balance)}</strong> نقطة — تحتاج <strong className="text-goldT">{formatNumber(shortPts)} نقطة</strong> إضافية لتنفيذ الحجم الكامل ({formatAr(quote.targetVolumeMax)} سجل).
           </p>
+          {quote.downscaledOffer && (
+            <p className="m-0 text-xs font-light leading-[1.8] text-ink">
+              خيار فوري: يمكنك بدء البحث بعدد مخفض حتى <strong>{formatAr(quote.downscaledOffer.maxAffordableUnits)}</strong> سجل مقابل {formatAr(quote.downscaledOffer.affordableQuotedPoints)} نقطة متوفرة في رصيدك.
+            </p>
+          )}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => onTopupShort(shortEgp)} className={`${PRIMARY_BTN} min-h-11 min-w-[180px] flex-1 text-[13px]`}>
-              اشحن {formatAr(shortEgp)} ج.م والعودة هنا
+              شحن الرصيد ({formatAr(shortEgp)} ج.م) والبدء
             </button>
             <button
               type="button"
@@ -226,7 +233,7 @@ export default function PlanQuoteCard({
               disabled={quote.isDependent && !quote.downscaledOffer}
               className={`${SECONDARY_BTN} min-h-11`}
             >
-              قلّل عدد السجلات
+              {quote.downscaledOffer ? `البدء بـ ${formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط` : "تعديل عدد السجلات"}
             </button>
           </div>
         </div>

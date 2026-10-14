@@ -6,6 +6,7 @@ import {
   getInjectedProviderAdapter,
   createBuiltInMockAdapter,
 } from "../../../../lib/server/tregAdapter";
+import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
@@ -268,12 +269,13 @@ export async function POST(req: NextRequest) {
         process.env.ENABLE_MOCK_PROVIDER === "true"
     );
 
-    const isLiveProviderReady =
-      process.env.TREG_LIVE === "true" && Boolean(process.env.TREG_TOKEN?.trim());
+    const gateStatus = getLiveProviderGateStatus();
+    const isLiveProviderReady = gateStatus.isReady;
 
     // A1 Safety Guard: when neither live provider nor non-production test adapter is active,
     // never advance delivered_units or settle; release full reserve with zero charge.
     if (!useMockProvider && !isLiveProviderReady) {
+      console.warn("[worker_chunk:gate_blocked]", { jobId, reasonCode: gateStatus.reasonCode });
       const releaseReason =
         "محرك استخراج البيانات المباشر غير مفعل حالياً؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
       const rel = await executeReleaseConfirmation(adminClient, jobId, releaseReason);

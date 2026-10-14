@@ -152,34 +152,35 @@ export function inferRelatedKeywords(topic: string, message: string = ""): strin
 export function extractTargetVolume(text: string): number | undefined {
   if (!text) return undefined;
 
-  const postCount = extractPostCount(text);
-  const cpp = extractCommentsPerPost(text);
+  // Normalize Arabic-Indic digits to ASCII first
+  const normalized = text.replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+
+  const postCount = extractPostCount(normalized);
+  const cpp = extractCommentsPerPost(normalized);
   if (postCount && cpp) {
     return postCount * cpp;
   }
 
   // Pattern 1: e.g. "3000 comment" or "3000 تعليق" or "500 منشور"
-  const m1 = text.match(/(\d+|[٠-٩]+)\s*(comment|comments|تعليق|تعليقات|بوست|منشور|منشورات|تغريدة|تغريدات|فيديو|مقاطع|سجل|سجلات|عينة|نتيجة)/i);
+  const m1 = normalized.match(/(\d+)\s*(comment|comments|تعليق|تعليقات|بوست|منشور|منشورات|تغريدة|تغريدات|فيديو|مقاطع|سجل|سجلات|عينة|نتيجة)/i);
   if (m1) {
-    const raw = m1[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
-    const val = parseInt(raw, 10);
+    const val = parseInt(m1[1], 10);
     if (val > 0) return val;
   }
 
   // Pattern 2: e.g. "اسحب 3000" or "جمع 500" or "حتى 1000"
-  const m2 = text.match(/(اسحب|سحب|جمع|هات|عايز|عاوز|محتاج|حتى)\s*(\d+|[٠-٩]+)/i);
+  const m2 = normalized.match(/(اسحب|سحب|جمع|هات|عايز|عاوز|محتاج|حتى)\s*(\d+)/i);
   if (m2) {
-    const raw = m2[2].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
-    const val = parseInt(raw, 10);
+    const val = parseInt(m2[2], 10);
     if (val > 0) return val;
   }
 
-  // Pattern 3: any bare number > 10 that isn't a year (like 2024..2027)
-  const nums = text.match(/\b(\d+)\b/g);
+  // Pattern 3: any bare number > 0 that isn't a year (like 2024..2027)
+  const nums = normalized.match(/\b(\d+)\b/g);
   if (nums) {
     for (const n of nums) {
       const v = parseInt(n, 10);
-      if (v > 10 && v !== 2024 && v !== 2025 && v !== 2026 && v !== 2027) {
+      if (v > 0 && v !== 2024 && v !== 2025 && v !== 2026 && v !== 2027) {
         return v;
       }
     }

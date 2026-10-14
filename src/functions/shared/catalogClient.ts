@@ -89,8 +89,9 @@ const PLATFORM_ARABIC_NAMES: Record<string, string> = {
  * Known providers to strictly scrub from user-facing text
  */
 const KNOWN_PROVIDER_SCRUB_PATTERNS = [
-  /\b(tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows)\b/gi,
-  /\b(TikHub|ScrapeCreators|AnyAPI|BrightData|Crawl4AI|JustOneAPI|Apify|SocialData)\b/g,
+  /\b(diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows)\b/gi,
+  /\b(Diffbot|TikHub|ScrapeCreators|AnyAPI|BrightData|Crawl4AI|JustOneAPI|Apify|SocialData)\b/g,
+  /\b[a-zA-Z0-9_\-]+\.(x|facebook|tiktok|instagram|youtube|linkedin|reddit)\.[a-zA-Z0-9_\-\.]+\b/gi,
 ];
 
 export function scrubProviderNames(text: string): string {
@@ -100,6 +101,37 @@ export function scrubProviderNames(text: string): string {
     clean = clean.replace(pattern, "");
   }
   return clean.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Sanitizes any error or diagnostic string that could be presented to customers.
+ * Completely removes or replaces raw provider names, endpoint slugs, or internal ids.
+ */
+export function sanitizeCustomerErrorMessage(rawError: unknown): string {
+  if (!rawError) return "حدث خطأ غير متوقع. يرجى المحاولة لاحقاً.";
+  let str = typeof rawError === "string" ? rawError : (rawError as any)?.message || String(rawError);
+
+  // 1. Replace quotes around specific capability slugs e.g. 'diffbot-x-extract-discussion'
+  str = str.replace(/['"`][a-zA-Z0-9_\-\.]{3,}['"`]/g, "المحددة");
+
+  // 2. Scrub known provider names and domains
+  for (const pattern of KNOWN_PROVIDER_SCRUB_PATTERNS) {
+    str = str.replace(pattern, "");
+  }
+
+  // 3. Scrub bare provider-slug patterns (e.g. diffbot-x-extract-discussion)
+  str = str.replace(/\b[a-z0-9]+-[a-z0-9]+-[a-z0-9]+(?:-[a-z0-9]+)*\b/gi, "المحددة");
+  str = str.replace(/\b[a-z0-9]+\.[a-z0-9]+(?:\.[a-z0-9]+)*\b/gi, "");
+
+  // 4. Scrub HTTP and URL references
+  str = str.replace(/https?:\/\/[^\s]+/gi, "");
+
+  // 5. Clean up redundant spaces or punctuation
+  str = str.replace(/الخدمة\s+المحددة/g, "الخدمة المحددة");
+  str = str.replace(/الخدمة\s+''/g, "الخدمة المحددة");
+  str = str.replace(/\s{2,}/g, " ").trim();
+
+  return str || "حدث خطأ أثناء معالجة الطلب. يرجى المحاولة مرة أخرى.";
 }
 
 /**
