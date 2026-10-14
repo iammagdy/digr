@@ -1,6 +1,5 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { Client as ServerClient, TablesDB, Client as UserClient, Account } from "node-appwrite";
 import { ChatHandler } from "../../../functions/shared/chatHandler";
 import { setLastLlmFallbackReason } from "../../../functions/shared/llmClient";
 import {
@@ -16,9 +15,6 @@ import {
 import { createServerSideClient, createAdminClient } from "../../../lib/supabase/server";
 
 export const dynamic = "force-dynamic";
-
-const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
 
 function toSafeReasonCode(err: unknown): string {
   if (!err || typeof err !== "object") return "internal_error";
@@ -69,76 +65,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authenticate user: check Supabase session or verified Appwrite JWT/session cookie
+    // 1. Authenticate user: strictly via Supabase session or verified Bearer token
     currentStep = "authenticate_user";
     let verifiedUserId: string | null = null;
     let emailVerified = false;
-    let isSupabaseSession = false;
 
-    // Check Supabase session or bearer token first
     try {
       const supabase = await createServerSideClient();
       const authHeader = req.headers.get("authorization");
       const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
       let user = null;
       if (bearer) {
-        const { data } = await supabase.auth.getUser(bearer);
-        user = data?.user;
+        const { data, error } = await supabase.auth.getUser(bearer);
+        if (!error) user = data?.user;
       } else {
-        const { data } = await supabase.auth.getUser();
-        user = data?.user;
+        const { data, error } = await supabase.auth.getUser();
+        if (!error) user = data?.user;
       }
       if (user) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
-        isSupabaseSession = true;
       }
     } catch {}
 
-    // Fall back to Appwrite authentication if no Supabase session
     if (!verifiedUserId) {
-      const authHeader = req.headers.get("authorization");
-      const bearerJwt = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-      const bodyJwt = typeof body.jwt === "string" ? body.jwt.trim() : null;
-      const effectiveJwt = bearerJwt || bodyJwt;
-
-      const sessionCookie =
-        req.cookies.get(`a_session_${projectId}`)?.value ||
-        req.cookies.get(`a_session_${projectId}_legacy`)?.value;
-
-      if (!effectiveJwt && !sessionCookie) {
-        return NextResponse.json(
-          {
-            success: false,
-            requestId,
-            error: "غير مصرح. يرجى تسجيل الدخول أولاً للوصول للمساعد الذكي.",
-          },
-          { status: 401 }
-        );
-      }
-
-      const userClient = new UserClient().setEndpoint(endpoint).setProject(projectId);
-      if (effectiveJwt) {
-        userClient.setJWT(effectiveJwt);
-      } else if (sessionCookie) {
-        userClient.setSession(sessionCookie);
-      }
-
-      try {
-        const userAccount = new Account(userClient);
-        const userDoc = await userAccount.get();
-        verifiedUserId = userDoc.$id;
-        emailVerified = userDoc.emailVerification === true;
-      } catch {
-        return NextResponse.json(
-          {
-            success: false,
-            requestId,
-            error: "انتهت صلاحية جلسة تسجيل الدخول أو أنها غير صالحة. يرجى تسجيل الدخول مجدداً.",
-          },
-          { status: 401 }
-        );
-      }
+      return NextResponse.json(
+        {
+          success: false,
+          requestId,
+          error: "غير مصرح. يرجى تسجيل الدخول أولاً للوصول للمساعد الذكي.",
+        },
+        { status: 401 }
+      );
     }
 
     // Research is blocked until the email is verified
@@ -161,18 +119,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Determine tables DAL: Supabase Admin client or legacy Appwrite TablesDB
+    // Determine tables DAL: Supabase Admin client exclusively
     currentStep = "init_db_client";
-    let tables: any;
-    if (isSupabaseSession) {
-      tables = createAdminClient();
-    } else {
-      const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-      const projectId = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || "6ac947090008606ef482";
-      const apiKey = process.env.APPWRITE_API_KEY || "";
-      const serverClient = new ServerClient().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
-      tables = new TablesDB(serverClient);
-    }
+    const tables = createAdminClient();
 
     // 2. Global daily spend cap (platform protection)
     currentStep = "global_spend_cap";

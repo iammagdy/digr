@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers } from "../../../../lib/server/adminAuth";
+import { authenticateAdmin, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers, Query } from "../../../../lib/server/adminAuth";
 import { DAY_MS } from "../../../../lib/server/adminStats";
 import { ledgerBalance } from "../../../../lib/server/userStats";
 

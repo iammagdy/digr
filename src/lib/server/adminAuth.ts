@@ -1,28 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Account, Client, Query, TablesDB, Users } from "node-appwrite";
-import { writeAudit, type AuditKind } from "../../functions/shared/auditLog";
+import { createServerSideClient, createAdminClient } from "../supabase/server";
 
-export const ENDPOINT = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT || process.env.APPWRITE_ENDPOINT || "https://fra.cloud.appwrite.io/v1";
-export const PROJECT_ID = process.env.NEXT_PUBLIC_APPWRITE_PROJECT_ID || process.env.APPWRITE_PROJECT_ID || "6ac947090008606ef482";
+export type AuditKind = "approve" | "reject" | "key" | "toggle" | "setting" | "login" | string;
 
-export function serverClient(): Client {
-  return new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID).setKey(process.env.APPWRITE_API_KEY || "");
-}
+export const Query = {
+  equal: (attr: string, val: any) => JSON.stringify({ method: "equal", attribute: attr, values: [val] }),
+  notEqual: (attr: string, val: any) => JSON.stringify({ method: "notEqual", attribute: attr, values: [val] }),
+  greaterThanEqual: (attr: string, val: any) => JSON.stringify({ method: "greaterThanEqual", attribute: attr, values: [val] }),
+  lessThanEqual: (attr: string, val: any) => JSON.stringify({ method: "lessThanEqual", attribute: attr, values: [val] }),
+  orderDesc: (attr: string) => JSON.stringify({ method: "orderDesc", attribute: attr }),
+  orderAsc: (attr: string) => JSON.stringify({ method: "orderAsc", attribute: attr }),
+  limit: (limit: number) => JSON.stringify({ method: "limit", values: [limit] }),
+  offset: (offset: number) => JSON.stringify({ method: "offset", values: [offset] }),
+};
 
 export function clientIp(req: Pick<NextRequest, "headers">): string {
   const xf = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "";
   return xf.split(",")[0].trim();
-}
-
-function extractFallbackSession(headerVal: string | null): string | null {
-  if (!headerVal) return null;
-  try {
-    const parsed = JSON.parse(headerVal);
-    const v = parsed?.[`a_session_${PROJECT_ID}`] || parsed?.[`a_session_${PROJECT_ID}_legacy`];
-    return typeof v === "string" && v.trim() ? v.trim() : null;
-  } catch {
-    return null;
-  }
 }
 
 export interface AdminContext {
@@ -30,13 +24,11 @@ export interface AdminContext {
   adminName: string;
   adminEmail: string;
   ip: string;
-  client: Client;
-  tables: TablesDB;
-  users: Users;
+  client?: any;
+  tables: any;
+  users: any;
   audit: (kind: AuditKind, label: string, target: string, extra?: { targetType?: string; targetId?: string }) => Promise<void>;
 }
-
-import { createServerSideClient, createAdminClient } from "../supabase/server";
 
 function toSnakeCaseKey(key: string, tableId?: string): string {
   if (tableId === "provider_costs" && key === "at") return "created_at";
@@ -252,7 +244,6 @@ function createSupabaseUsersAdapter(adminClient: any): any {
 }
 
 export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; ctx: AdminContext } | { ok: false; response: NextResponse }> {
-  // 1. Try Supabase Admin session / Bearer token first
   try {
     const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
@@ -266,98 +257,54 @@ export async function authenticateAdmin(req: NextRequest): Promise<{ ok: true; c
       sbUser = data?.user;
     }
 
-    if (sbUser) {
-      if (sbUser.app_metadata?.role === "admin") {
-        const adminClient = createAdminClient();
-        const ip = clientIp(req);
-        const client = serverClient();
-        return {
-          ok: true,
-          ctx: {
-            adminId: sbUser.id,
-            adminName: sbUser.user_metadata?.name || sbUser.email || "مسؤول",
-            adminEmail: sbUser.email || "",
-            ip,
-            client,
-            tables: createSupabaseTablesAdapter(adminClient),
-            users: createSupabaseUsersAdapter(adminClient),
-            audit: async (kind, label, target, extra) => {
-              try {
-                await adminClient.from("admin_audit_log").insert({
-                  actor_id: sbUser.id,
-                  action: kind,
-                  target_type: extra?.targetType || "admin",
-                  target_id: target,
-                  details: { actorName: sbUser.user_metadata?.name || "مسؤول", label, target, ip, ...extra },
-                });
-              } catch {
-                writeAudit(client, { actorId: sbUser.id, actorName: sbUser.user_metadata?.name || "مسؤول", kind, label, target, ip, ...extra }).catch(() => {});
-              }
-            },
-          },
-        };
-      } else {
-        return {
-          ok: false,
-          response: NextResponse.json({ error: "ممنوع — هذه الواجهة مخصصة لمديري النظام فقط." }, { status: 403 }),
-        };
-      }
+    if (!sbUser) {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: "غير مصرح. يرجى تسجيل الدخول بحساب مسؤول في Supabase." }, { status: 401 }),
+      };
     }
-  } catch {
-    // Continue if Supabase client threw an error
-  }
 
-  // Appwrite fallback guard: disabled by default unless explicitly enabled via ENABLE_APPWRITE_ADMIN_FALLBACK=true
-  const allowAppwriteFallback = process.env.ENABLE_APPWRITE_ADMIN_FALLBACK === "true";
-  if (!allowAppwriteFallback) {
+    if (sbUser.app_metadata?.role !== "admin") {
+      return {
+        ok: false,
+        response: NextResponse.json({ error: "ممنوع — هذه الواجهة مخصصة لمديري النظام فقط." }, { status: 403 }),
+      };
+    }
+
+    const adminClient = createAdminClient();
+    const ip = clientIp(req);
+    return {
+      ok: true,
+      ctx: {
+        adminId: sbUser.id,
+        adminName: sbUser.user_metadata?.name || sbUser.email || "مسؤول",
+        adminEmail: sbUser.email || "",
+        ip,
+        tables: createSupabaseTablesAdapter(adminClient),
+        users: createSupabaseUsersAdapter(adminClient),
+        audit: async (kind, label, target, extra) => {
+          try {
+            await adminClient.from("admin_audit_log").insert({
+              actor_id: sbUser.id,
+              action: kind,
+              target_type: extra?.targetType || "admin",
+              target_id: target,
+              details: { actorName: sbUser.user_metadata?.name || "مسؤول", label, target, ip, ...extra },
+            });
+          } catch {}
+        },
+      },
+    };
+  } catch {
     return {
       ok: false,
       response: NextResponse.json({ error: "غير مصرح. يرجى تسجيل الدخول بحساب مسؤول في Supabase." }, { status: 401 }),
     };
   }
-
-  const authHeader = req.headers.get("authorization");
-  const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
-  const cookieJwt = (req.cookies.get("diger_jwt") ?? req.cookies.get("digr_jwt"))?.value?.trim() || null;
-  const jwt = bearer || cookieJwt;
-  const session =
-    req.cookies.get(`a_session_${PROJECT_ID}`)?.value ||
-    req.cookies.get(`a_session_${PROJECT_ID}_legacy`)?.value ||
-    extractFallbackSession(req.headers.get("x-fallback-cookies"));
-
-  if (!jwt && !session) {
-    return { ok: false, response: NextResponse.json({ error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 }) };
-  }
-
-  const userClient = new Client().setEndpoint(ENDPOINT).setProject(PROJECT_ID);
-  if (jwt) userClient.setJWT(jwt);
-  else if (session) userClient.setSession(session);
-
-  let me: any;
-  try {
-    me = await new Account(userClient).get();
-  } catch {
-    return { ok: false, response: NextResponse.json({ error: "انتهت صلاحية الجلسة أو أنها غير صالحة." }, { status: 401 }) };
-  }
-  if (!(Array.isArray(me?.labels) && me.labels.includes("admin"))) {
-    return { ok: false, response: NextResponse.json({ error: "ممنوع — هذه الواجهة مخصصة لمديري النظام فقط." }, { status: 403 }) };
-  }
-
-  const client = serverClient();
-  const ip = clientIp(req);
-  return {
-    ok: true,
-    ctx: {
-      adminId: me.$id, adminName: me.name || "مسؤول", adminEmail: me.email || "", ip, client,
-      tables: new TablesDB(client), users: new Users(client),
-      audit: (kind, label, target, extra) =>
-        writeAudit(client, { actorId: me.$id, actorName: me.name || "مسؤول", kind, label, target, ip, ...extra }),
-    },
-  };
 }
 
 /** Pages through a table (100 per request) up to `cap` rows. */
-export async function listAll(tables: TablesDB, tableId: string, queries: string[] = [], cap = 5000): Promise<any[]> {
+export async function listAll(tables: any, tableId: string, queries: string[] = [], cap = 5000): Promise<any[]> {
   const out: any[] = [];
   for (let offset = 0; offset < cap; offset += 100) {
     const page = await tables.listRows({ databaseId: "digr", tableId, queries: [...queries, Query.limit(100), Query.offset(offset)] });
@@ -368,7 +315,7 @@ export async function listAll(tables: TablesDB, tableId: string, queries: string
 }
 
 /** Same for the Users API. */
-export async function listAllUsers(users: Users, queries: string[] = [], cap = 5000): Promise<any[]> {
+export async function listAllUsers(users: any, queries: string[] = [], cap = 5000): Promise<any[]> {
   const out: any[] = [];
   for (let offset = 0; offset < cap; offset += 100) {
     const page = await users.list({ queries: [...queries, Query.limit(100), Query.offset(offset)] });
@@ -379,7 +326,7 @@ export async function listAllUsers(users: Users, queries: string[] = [], cap = 5
 }
 
 /** id → {name,email} for a set of users (20 parallel lookups at a time; unknown ids resolve to empty strings). */
-export async function userDirectory(users: Users, ids: string[]): Promise<Map<string, { name: string; email: string }>> {
+export async function userDirectory(users: any, ids: string[]): Promise<Map<string, { name: string; email: string }>> {
   const unique = [...new Set(ids.filter(Boolean))];
   const out = new Map<string, { name: string; email: string }>();
   for (let i = 0; i < unique.length; i += 20) {
@@ -392,7 +339,7 @@ export async function userDirectory(users: Users, ids: string[]): Promise<Map<st
 }
 
 /** Current EGP value of one point from settings_public (default 0.10). */
-export async function creditValueEgp(tables: TablesDB): Promise<number> {
+export async function creditValueEgp(tables: any): Promise<number> {
   try {
     const row: any = await tables.getRow({ databaseId: "digr", tableId: "settings_public", rowId: "pricing" });
     if (Number(row?.creditValueEgp) > 0) return Number(row.creditValueEgp);
@@ -410,7 +357,7 @@ export interface TopupApprovalInfo {
  * directly from the append-only credit_ledger (read-only query).
  * Each approved topup creates an immutable row with id 'top_<topupId>' and type 'topup'.
  */
-export async function getTopupApprovalMap(tables: TablesDB): Promise<Map<string, TopupApprovalInfo>> {
+export async function getTopupApprovalMap(tables: any): Promise<Map<string, TopupApprovalInfo>> {
   const ledgerRows = await listAll(tables, "credit_ledger", [Query.equal("type", "topup")], 10000).catch(() => []);
   const map = new Map<string, TopupApprovalInfo>();
   for (const row of ledgerRows) {

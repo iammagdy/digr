@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
-import { authenticateAdmin, listAll, userDirectory } from "@/lib/server/adminAuth";
+import { authenticateAdmin, listAll, userDirectory, Query } from "@/lib/server/adminAuth";
 import { DAY_MS, refundPointsByJob } from "@/lib/server/adminStats";
 
 export const dynamic = "force-dynamic";

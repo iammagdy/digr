@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Query } from "node-appwrite";
+import { authenticateAdmin, Query } from "@/lib/server/adminAuth";
 import { getLlmStatusSnapshot } from "@/functions/shared/llmClient";
-import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { LLM_KEY_ENV, LLM_MODEL_ENV, last4 } from "@/lib/server/providerEnv";
 import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
 
@@ -85,7 +84,7 @@ export async function POST(req: NextRequest) {
     if (err) return NextResponse.json({ error: err, key: u?.key }, { status: 400 });
   }
 
-  const results = await applyEnvUpdates(auth.ctx.client, updates, auth.ctx.tables);
+  const results = await applyEnvUpdates(null, updates, auth.ctx.tables);
 
   for (const u of updates) {
     const kind = FIELD_LABEL_KIND[u.key] ?? "setting";

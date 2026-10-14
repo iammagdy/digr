@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
-import { Account, TablesDB } from "node-appwrite";
 import {
   LlmClient,
   getLlmStatusSnapshot,
@@ -8,6 +7,46 @@ import {
 } from "../src/functions/shared/llmClient";
 import { GET as getLlmStatus } from "../src/app/api/admin/llm-status/route";
 import { POST as postChat } from "../src/app/api/chat/route";
+
+const mockSbAuth = vi.hoisted(() => ({
+  user: {
+    id: "admin_test",
+    email: "admin@diger.tech",
+    email_confirmed_at: "2026-10-12T00:00:00Z",
+    app_metadata: { role: "admin" },
+  } as any,
+  spendCapExceeded: false,
+}));
+
+vi.mock("../src/lib/supabase/server", () => ({
+  createServerSideClient: vi.fn(async () => ({
+    auth: {
+      getUser: vi.fn(async () => ({
+        data: { user: mockSbAuth.user },
+        error: null,
+      })),
+    },
+  })),
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn((table: string) => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          single: vi.fn(async () => ({ data: null, error: null })),
+          maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+        })),
+        order: vi.fn(() => ({
+          limit: vi.fn(async () => ({ data: [], error: null })),
+        })),
+        gte: vi.fn(async () => {
+          if (table === "provider_costs" && mockSbAuth.spendCapExceeded) {
+            return { data: [{ cost_usd: 5.0, costUsd: 5.0, at: new Date().toISOString() }], error: null };
+          }
+          return { data: [], error: null };
+        }),
+      })),
+    })),
+  })),
+}));
 
 describe("LLM Error Reason Codes & Browser-Accessible Admin Status", () => {
   const originalEnv = process.env;

@@ -8,10 +8,63 @@ import {
   RateLimitConfig,
 } from "../src/functions/shared/rateLimits";
 import { LlmClient } from "../src/functions/shared/llmClient";
-import { Account, TablesDB } from "node-appwrite";
+
+const mockSbState = vi.hoisted(() => ({
+  user: null as any,
+  authError: null as any,
+  tablesError: false,
+}));
+
+vi.mock("../src/lib/supabase/server", () => ({
+  createServerSideClient: vi.fn(async () => ({
+    auth: {
+      getUser: vi.fn(async (token?: string) => {
+        if (token === "invalid_or_expired_jwt_token_12345") {
+          return { data: { user: null }, error: new Error("invalid JWT") };
+        }
+        if (token === "forged_jwt") {
+          return {
+            data: { user: { id: "user_a", email_confirmed_at: "2026-10-12T00:00:00Z" } },
+            error: null,
+          };
+        }
+        if (token === "unverified_jwt") {
+          return {
+            data: { user: { id: "user_a", email_confirmed_at: null, user_metadata: { email_verified: false } } },
+            error: null,
+          };
+        }
+        return { data: { user: mockSbState.user }, error: mockSbState.authError };
+      }),
+    },
+  })),
+  createAdminClient: vi.fn(() => ({
+    from: vi.fn((table: string) => {
+      if (mockSbState.tablesError) {
+        throw new Error("private missing-table details");
+      }
+      return {
+        select: vi.fn(() => ({
+          gte: vi.fn(async () => ({ data: [], error: null })),
+          eq: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              gte: vi.fn(async () => ({ count: 0, error: null })),
+            })),
+          })),
+        })),
+        insert: vi.fn(async () => ({ data: null, error: null })),
+      };
+    }),
+  })),
+}));
 
 describe("P1.5 Security & Rate Limits Suite", () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    mockSbState.user = null;
+    mockSbState.authError = null;
+    mockSbState.tablesError = false;
+    vi.restoreAllMocks();
+  });
 
   // ================= 1. Authentication & Identity Spoofing Tests =================
 
@@ -39,21 +92,14 @@ describe("P1.5 Security & Rate Limits Suite", () => {
       body: JSON.stringify({ message: "مرحبا" }),
     });
 
-    const accountGet = vi
-      .spyOn(Account.prototype, "get")
-      .mockRejectedValue(new Error("invalid JWT"));
     const res = await POST(req);
-    expect(accountGet).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body.success).toBe(false);
-    expect(body.error).toContain("صلاحية");
+    expect(body.error).toContain("غير مصرح");
   });
 
   it("should reject /api/chat request if body attempts to claim another user's ID (403)", async () => {
-    // Simulated request where JWT belongs to userA, but body claims victim_user_b
-    // When JWT verification is mocked or executed:
-    // Even if body contains userId: 'victim_user_b', the server detects spoofing
     const req = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",
       headers: {
@@ -65,20 +111,16 @@ describe("P1.5 Security & Rate Limits Suite", () => {
         message: "استخرج بيانات",
       }),
     });
-    const accountGet = vi
-      .spyOn(Account.prototype, "get")
-      .mockResolvedValue({ $id: "user_a", emailVerification: true } as any);
 
     const res = await POST(req);
-    expect(accountGet).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.success).toBe(false);
   });
 
   it("fails closed with a friendly response when llm_usage is unavailable", async () => {
-    vi.spyOn(Account.prototype, "get").mockResolvedValue({ $id: "user_a", emailVerification: true } as any);
-    vi.spyOn(TablesDB.prototype, "listRows").mockRejectedValue(new Error("private missing-table details"));
+    mockSbState.user = { id: "user_a", email_confirmed_at: "2026-10-12T00:00:00Z" };
+    mockSbState.tablesError = true;
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const req = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",
@@ -211,10 +253,9 @@ describe("email verification gate on research routes", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("rejects /api/chat for an unverified account (403)", async () => {
-    vi.spyOn(Account.prototype, "get").mockResolvedValue({ $id: "user_a", emailVerification: false } as any);
     const req = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer jwt" },
+      headers: { "Content-Type": "application/json", Authorization: "Bearer unverified_jwt" },
       body: JSON.stringify({ message: "استخرج بيانات" }),
     });
     const res = await POST(req);
