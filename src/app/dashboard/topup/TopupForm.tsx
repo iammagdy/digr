@@ -3,34 +3,35 @@
 import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
-import { EG_MOBILE_RE, formatAr, isThreePartName, normalizeDigits, normalizePhone, normalizeSenderName } from "@/lib/arabicDigits";
+import { formatAr } from "@/lib/arabicDigits";
 import { compressReceipt } from "@/lib/receiptImage";
 import { TOPUP_PRESETS_EGP } from "@/lib/pricing";
+import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
 import type { TopupRecord } from "./types";
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 const ALLOWED = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
 
-const FIELD =
-  "min-h-[58px] w-full rounded-[20px] border border-ln bg-bg px-5 text-base font-light text-ink outline-none transition-colors focus:border-ln2";
-
-/** Design «اشحن عبر Instapay». Validation copy matches the design and the server's messages. */
+/** Design «اشحن عبر Instapay». Only amount preset and receipt image upload required. */
 export default function TopupForm({
-  amount, onAmount, creditValue, ipa, onSubmitted, existingRefs, pendingCount, maxPending,
+  amount,
+  onAmount,
+  creditValue,
+  ipa,
+  onSubmitted,
+  pendingCount,
+  maxPending,
 }: {
   amount: number;
   onAmount: (n: number) => void;
   creditValue: number;
   ipa: string | null;
   onSubmitted: (t: TopupRecord) => void;
-  existingRefs: string[];
   pendingCount: number;
   maxPending: number;
+  existingRefs?: string[];
 }) {
   const { user } = useUser();
-  const [sName, setSName] = useState("");
-  const [sPhone, setSPhone] = useState("");
-  const [ref, setRef] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [err, setErr] = useState("");
   const [sending, setSending] = useState(false);
@@ -41,7 +42,11 @@ export default function TopupForm({
 
   const copy = async () => {
     if (!ipa) return;
-    try { await navigator.clipboard?.writeText(ipa); } catch { /* clipboard blocked */ }
+    try {
+      await navigator.clipboard?.writeText(ipa);
+    } catch {
+      /* clipboard blocked */
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 1800);
   };
@@ -49,25 +54,32 @@ export default function TopupForm({
   const pickFile = async (f: File | undefined) => {
     if (!f) return;
     setErr("");
-    if (!ALLOWED.includes(f.type)) { setErr("صيغة الملف غير مدعومة. الصيغ المسموحة: PNG, JPG, PDF"); return; }
+    if (!ALLOWED.includes(f.type)) {
+      setErr(TOPUP_ERROR_MESSAGES.file_invalid_type);
+      return;
+    }
     const small = await compressReceipt(f);
-    if (small.size > MAX_RECEIPT_BYTES) { setErr("حجم الإيصال يجب ألا يتجاوز 5 ميجابايت"); return; }
+    if (small.size > MAX_RECEIPT_BYTES) {
+      setErr(TOPUP_ERROR_MESSAGES.file_oversized);
+      return;
+    }
     setFile(small);
   };
 
   async function submit() {
     if (sending || !user) return;
-    const reference = normalizeDigits(ref).trim();
-    const name = normalizeSenderName(sName);
-    const phone = normalizePhone(sPhone);
-    if (!navigator.onLine) return setErr("أنت غير متصل بالإنترنت. لن يُرسل الطلب حتى يعود الاتصال.");
-    if (!ipa) return setErr("الشحن غير متاح حاليًا — يرجى التواصل مع فريق الدعم.");
-    if (!isThreePartName(name)) return setErr("اكتب اسم المحوِّل الثلاثي كما يظهر في إنستاباي");
-    if (!EG_MOBILE_RE.test(phone)) return setErr("رقم الموبايل غير صحيح — ١١ رقمًا يبدأ بـ 01");
-    if (reference.length < 3) return setErr("رقم العملية مطلوب");
-    if (!file) return setErr("صورة إيصال التحويل مطلوبة لمراجعة الطلب");
-    if (existingRefs.includes(reference)) return setErr("رقم العملية مستخدم مسبقاً في طلب آخر.");
-    if (pendingCount >= maxPending) return setErr(`لديك ${maxPending} طلبات شحن معلقة بالفعل. يرجى انتظار معالجتها قبل تقديم طلب جديد.`);
+    if (!navigator.onLine) {
+      return setErr(TOPUP_ERROR_MESSAGES.network_offline);
+    }
+    if (!file) {
+      return setErr(TOPUP_ERROR_MESSAGES.receipt_missing);
+    }
+    if (!ipa) {
+      return setErr(TOPUP_ERROR_MESSAGES.payment_details_not_configured);
+    }
+    if (pendingCount >= maxPending) {
+      return setErr(`لديك ${formatAr(maxPending)} طلبات شحن معلقة بالفعل. يرجى انتظار معالجتها قبل تقديم طلب جديد.`);
+    }
 
     setSending(true);
     setErr("");
@@ -79,7 +91,9 @@ export default function TopupForm({
         .from("receipts")
         .upload(receiptFileId, file, { contentType: file.type, upsert: true });
 
-      if (uploadErr) throw new Error("تعذر رفع إيصال التحويل: " + uploadErr.message);
+      if (uploadErr) {
+        throw new Error("تعذر رفع إيصال التحويل: " + uploadErr.message);
+      }
 
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch("/api/topup/submit", {
@@ -90,22 +104,22 @@ export default function TopupForm({
         },
         body: JSON.stringify({
           amountEgp: amount,
-          reference,
-          senderName: name,
-          senderPhone: phone,
           receiptFileId,
         }),
       });
+
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "فشل إرسال طلب الشحن");
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || TOPUP_ERROR_MESSAGES.server_error);
+      }
 
       const doc: TopupRecord = {
         $id: data.topupId,
         id: data.topupId,
         amountEgp: amount,
-        reference,
-        senderName: name,
-        senderPhone: phone,
+        reference: data.reference || `rcpt_${data.topupId}`,
+        senderName: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "عميل Diger",
+        senderPhone: user.user_metadata?.phone || "غير مسجل",
         receiptFileId,
         status: "pending",
         createdAt: new Date().toISOString(),
@@ -113,10 +127,11 @@ export default function TopupForm({
         rejectReason: null,
         credits: null,
       };
-      setRef(""); setSName(""); setSPhone(""); setFile(null);
+
+      setFile(null);
       onSubmitted(doc);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "حدث خطأ أثناء إرسال طلب الشحن");
+      setErr(e instanceof Error ? e.message : TOPUP_ERROR_MESSAGES.server_error);
     } finally {
       setSending(false);
     }
@@ -131,9 +146,16 @@ export default function TopupForm({
           const on = amount === egp;
           return (
             <button
-              key={egp} type="button" onClick={() => onAmount(egp)} aria-pressed={on}
+              key={egp}
+              type="button"
+              onClick={() => onAmount(egp)}
+              aria-pressed={on}
               className="flex min-h-16 min-w-[110px] flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-[20px] transition-all duration-[250ms]"
-              style={{ border: `1px solid ${on ? "var(--ac)" : "var(--ln)"}`, background: on ? "var(--ac)" : "transparent", color: on ? "var(--onac)" : "var(--ink)" }}
+              style={{
+                border: `1px solid ${on ? "var(--ac)" : "var(--ln)"}`,
+                background: on ? "var(--ac)" : "transparent",
+                color: on ? "var(--onac)" : "var(--ink)",
+              }}
             >
               <span className="text-lg font-medium">{formatAr(Math.floor(egp / creditValue))}</span>
               <span className="text-[11px] font-light opacity-75">{formatAr(egp)} ج.م</span>
@@ -145,32 +167,35 @@ export default function TopupForm({
       <div className="flex items-center justify-between gap-2.5 rounded-[20px] bg-sf2 px-[18px] py-3.5">
         <div className="min-w-0">
           <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي (IPA) · منصة Diger</p>
-          <p className="mb-0 mt-1 truncate text-base text-ink" dir="ltr">{ipa ?? "—"}</p>
+          {ipa ? (
+            <p className="mb-0 mt-1 truncate text-base text-ink" dir="ltr">{ipa}</p>
+          ) : (
+            <p className="mb-0 mt-1 text-sm text-mut">بيانات الدفع قيد التهيئة حالياً — يرجى التواصل مع فريق الدعم</p>
+          )}
         </div>
-        <button type="button" onClick={copy} disabled={!ipa} className="min-h-11 shrink-0 cursor-pointer rounded-full border-0 bg-sf px-4 text-[13px] text-ink disabled:opacity-50">
+        <button
+          type="button"
+          onClick={copy}
+          disabled={!ipa}
+          className="min-h-11 shrink-0 cursor-pointer rounded-full border-0 bg-sf px-4 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-40"
+        >
           {copied ? "تم النسخ" : "نسخ"}
         </button>
       </div>
 
-      <label className="flex flex-col gap-1.5">
-        <span className="text-[13px] text-mut">اسم المحوِّل الثلاثي (كما يظهر في إنستاباي)</span>
-        <input type="text" autoComplete="name" value={sName} onChange={(e) => { setSName(e.target.value); setErr(""); }} placeholder="أحمد محمد علي" className={FIELD} />
-      </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-[13px] text-mut">رقم الموبايل المحوَّل منه</span>
-        <input type="tel" dir="ltr" inputMode="tel" autoComplete="tel" value={sPhone} onChange={(e) => { setSPhone(e.target.value); setErr(""); }} placeholder="01012345678" className={`${FIELD} text-left`} />
-      </label>
-      <label className="flex flex-col gap-1.5">
-        <span className="text-[13px] text-mut">رقم العملية المرجعي</span>
-        <input
-          type="text" dir="ltr" inputMode="numeric" value={ref} onChange={(e) => { setRef(e.target.value); setErr(""); }} placeholder="418290384729"
-          className={`${FIELD} text-left`} style={{ borderColor: err ? "var(--bad)" : undefined }}
-        />
-      </label>
-
-      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp,application/pdf" className="hidden" onChange={(e) => { void pickFile(e.target.files?.[0]); e.target.value = ""; }} />
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          void pickFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
       <button
-        type="button" onClick={() => (file ? setFile(null) : fileRef.current?.click())}
+        type="button"
+        onClick={() => (file ? setFile(null) : fileRef.current?.click())}
         className="flex min-h-[58px] cursor-pointer items-center justify-center gap-2 rounded-[20px] text-[13px] font-light"
         style={{
           border: `1px ${file ? "solid" : "dashed"} var(--ln2)`,
@@ -182,16 +207,29 @@ export default function TopupForm({
       </button>
 
       {err && (
-        <p role="alert" className="-mt-1.5 mb-0 rounded-2xl px-4 py-3 text-[13px] leading-[1.8] text-bad" style={{ background: "color-mix(in oklab, var(--bad) 12%, transparent)", animation: "up .3s both" }}>{err}</p>
+        <p
+          role="alert"
+          className="-mt-1.5 mb-0 rounded-2xl px-4 py-3 text-[13px] leading-[1.8] text-bad"
+          style={{
+            background: "color-mix(in oklab, var(--bad) 12%, transparent)",
+            animation: "up .3s both",
+          }}
+        >
+          {err}
+        </p>
       )}
 
       <button
-        type="button" onClick={submit} disabled={sending}
+        type="button"
+        onClick={submit}
+        disabled={sending}
         className="min-h-[58px] cursor-pointer rounded-full border-0 bg-ac text-[15px] text-onac disabled:opacity-60"
       >
         {sending ? "جارٍ الإرسال…" : `إرسال طلب شحن ${formatAr(points)} نقطة`}
       </button>
-      <p className="m-0 text-center text-xs font-light text-fnt">بعد التحويل، يراجع فريق الإدارة الرقم المرجعي ويعتمد الرصيد في محفظتك.</p>
+      <p className="m-0 text-center text-xs font-light text-fnt">
+        بعد التحويل، يراجع فريق الإدارة صورة الإيصال ويعتمد الرصيد في محفظتك فور التحقق.
+      </p>
     </div>
   );
 }

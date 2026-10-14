@@ -17,7 +17,7 @@ export default function SubmittedCard({
   const stepDef = st === "approved" ? [2, 2, 2] : st === "rejected" ? [2, 3, 0] : [2, 1, 0];
   const labels = ["تم الإرسال", st === "rejected" ? "مرفوض" : "مراجعة الإدارة", "إضافة النقاط"];
   const title = st === "approved" ? `تم اعتماد الطلب وإضافة ${formatAr(pts)} نقطة` : st === "rejected" ? "تم رفض طلب الشحن" : "تم استلام طلب الشحن بنجاح";
-  const sub = st === "approved" ? "أُضيفت النقاط إلى رصيدك ويمكنك استخدامها في أبحاثك الآن." : st === "rejected" ? "راجع بيانات التحويل وأرسل طلبًا جديدًا برقم عملية صحيح." : "سيتم مراجعته واعتماد النقاط لمحفظتك فور التحقق.";
+  const sub = st === "approved" ? "أُضيفت النقاط إلى رصيدك ويمكنك استخدامها في أبحاثك الآن." : st === "rejected" ? "راجع سبب الرفض وأرسل طلباً جديداً بإيصال تحويل صحيح ومكتمل." : "سيتم مراجعته واعتماد النقاط لمحفظتك فور التحقق.";
   const badge = statusBadge(st);
   const when = `${formatDate(topup.createdAt)}، ${formatTime(topup.createdAt)}`;
   const rows: Array<[string, string, "rtl" | "ltr"]> = [
@@ -68,7 +68,7 @@ export default function SubmittedCard({
         {rows.map(([k, v, dir]) => (
           <div key={k} className="flex min-h-12 items-center justify-between gap-3 border-b border-ln text-sm">
             <span className="font-light text-mut">{k}</span>
-            <span dir={dir} className="font-medium text-ink">{v}</span>
+            <span dir={dir} className="max-w-[240px] truncate font-medium text-ink font-mono" title={v}>{v.length > 24 ? v.slice(0, 20) + "…" : v}</span>
           </div>
         ))}
         <div className="flex min-h-12 items-center justify-between gap-3 text-sm">
