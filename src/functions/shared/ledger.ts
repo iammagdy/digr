@@ -9,14 +9,51 @@ export const CREDIT_LEDGER_TABLE = "credit_ledger";
  */
 export async function calculateBalance(tables: TablesDB | any, userId: string): Promise<number> {
   if (tables && typeof tables.from === "function") {
-    const { data, error } = await tables
+    const query = tables
       .from(CREDIT_LEDGER_TABLE)
       .select("delta")
       .eq("user_id", userId);
-    if (error) {
-      throw error;
+
+    if (typeof query?.range !== "function") {
+      const { data, error } = await query;
+      if (error) {
+        throw error;
+      }
+      return (data || []).reduce((sum: number, row: any) => sum + Number(row.delta || 0), 0);
     }
-    return (data || []).reduce((sum: number, row: any) => sum + Number(row.delta || 0), 0);
+
+    let total = 0;
+    let from = 0;
+    const batchSize = 1000;
+
+    while (true) {
+      const to = from + batchSize - 1;
+      const { data, error } = await tables
+        .from(CREDIT_LEDGER_TABLE)
+        .select("delta")
+        .eq("user_id", userId)
+        .range(from, to);
+
+      if (error) {
+        throw error;
+      }
+
+      if (!data || data.length === 0) {
+        break;
+      }
+
+      for (const row of data) {
+        total += Number(row.delta || 0);
+      }
+
+      if (data.length < batchSize) {
+        break;
+      }
+
+      from += batchSize;
+    }
+
+    return total;
   }
 
   let total = 0;

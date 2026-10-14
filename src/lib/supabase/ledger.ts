@@ -4,21 +4,59 @@ export const CREDIT_LEDGER_TABLE = "credit_ledger";
 
 /**
  * Calculates the true balance of a user across all ledger rows.
+ * Implements full server-side pagination to eliminate PostgREST 1,000-row truncation.
  */
 export async function calculateBalance(
-  client: SupabaseClient,
+  client: SupabaseClient | any,
   userId: string
 ): Promise<number> {
-  const { data, error } = await client
+  const query = client
     .from(CREDIT_LEDGER_TABLE)
     .select("delta")
     .eq("user_id", userId);
 
-  if (error) {
-    throw new Error(`Failed to calculate balance: ${error.message}`);
+  // If query does not support range pagination (e.g. simplified test mock without range)
+  if (typeof query?.range !== "function") {
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Failed to calculate balance: ${error.message}`);
+    }
+    return (data || []).reduce((sum: number, row: any) => sum + Number(row.delta || 0), 0);
   }
 
-  return (data || []).reduce((sum, row) => sum + Number(row.delta || 0), 0);
+  // Paginate through all ledger entries in batches of 1000
+  let total = 0;
+  let from = 0;
+  const batchSize = 1000;
+
+  while (true) {
+    const to = from + batchSize - 1;
+    const { data, error } = await client
+      .from(CREDIT_LEDGER_TABLE)
+      .select("delta")
+      .eq("user_id", userId)
+      .range(from, to);
+
+    if (error) {
+      throw new Error(`Failed to calculate balance: ${error.message}`);
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    for (const row of data) {
+      total += Number(row.delta || 0);
+    }
+
+    if (data.length < batchSize) {
+      break;
+    }
+
+    from += batchSize;
+  }
+
+  return total;
 }
 
 export const getBalance = calculateBalance;

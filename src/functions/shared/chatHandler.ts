@@ -67,6 +67,7 @@ export interface ChatHandlerResponse {
   role: "assistant";
   contentAr: string;
   outputType: LlmTurnOutput["type"];
+  intent?: "chat" | "research";
   planQuote?: any;
   revisionQuote?: any;
   clarificationQuestions?: string[];
@@ -952,6 +953,7 @@ export class ChatHandler {
         messageId: assistantMsgId,
         role: "assistant",
         outputType: "ask_clarification",
+        intent: "research",
         contentAr: q.questionAr,
         clarificationIntro: "عشان أجهز لك خطة دقيقة مع استبعاد الشركات المطلوبة، محتاج الملف المرفق:",
         clarificationQuestions: [q.questionAr],
@@ -2134,12 +2136,32 @@ export class ChatHandler {
         totalMs: totalLatencyMs,
       });
 
+      const computedIntent: "chat" | "research" =
+        (output as any).intent ||
+        (isGreeting || isGeneralQuestion
+          ? "chat"
+          : output.type === "propose_plan" ||
+            output.type === "ask_clarification" ||
+            output.type === "ask_questions" ||
+            output.type === "edit_plan"
+          ? "research"
+          : output.type === "answer_question"
+          ? "chat"
+          : "research");
+
+      if (computedIntent === "chat") {
+        planQuoteData = undefined;
+        clarificationQuestionsList = undefined;
+        clarificationItemsList = undefined;
+      }
+
       return {
         conversationId,
         messageId: assistantMsgId,
         role: "assistant",
         contentAr: finalContentAr,
-        outputType: output.type,
+        outputType: computedIntent === "chat" ? "answer_question" : output.type,
+        intent: computedIntent,
         planQuote: planQuoteData,
         revisionQuote: revisionQuoteData,
         clarificationQuestions: clarificationQuestionsList,
