@@ -543,7 +543,13 @@ export function normalizeDataset(
 
   // 6. Determine Entity Type
   let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" = "tabular";
-  if (rawPayload?.entityType === "companies" || columns.includes("company_name") || columns.includes("cr_number") || columns.includes("domain")) {
+  if (
+    rawPayload?.entityType === "companies" ||
+    rawPayload?.metadata?.entityType === "companies" ||
+    columns.includes("company_name") ||
+    columns.includes("cr_number") ||
+    columns.includes("domain")
+  ) {
     entityType = "companies";
   } else if (columns.includes("comment_text") || columns.includes("parent_id")) {
     entityType = "comments";

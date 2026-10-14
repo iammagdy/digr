@@ -13,6 +13,7 @@ import {
   validateStructuredClarificationAnswers,
 } from "../../../functions/shared/clarification";
 import { createServerSideClient, createAdminClient } from "../../../lib/supabase/server";
+import { parseExclusionFile } from "../../../lib/server/exclusionFileParser";
 
 export const dynamic = "force-dynamic";
 
@@ -155,13 +156,164 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4. Delegate to ChatHandler
+    // 4. Validate uploaded exclusion files (XLSX/CSV) if provided
+    currentStep = "validate_uploaded_files";
+    const rawUploadedFiles = Array.isArray(body.uploadedFiles)
+      ? body.uploadedFiles
+      : body.uploadedFile
+      ? [body.uploadedFile]
+      : [];
+    const verifiedUploadedFiles: Array<{
+      name: string;
+      type: "xlsx" | "csv";
+      baselineRowCount: number;
+      companyNames: string[];
+      corporateDomains: string[];
+      normalizedEntities: Array<{ name: string; domain?: string; crNumber?: string }>;
+    }> = [];
+
+    const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
+    const MAX_EXCLUSION_ROWS = 5000;
+
+    for (const rawFile of rawUploadedFiles) {
+      if (!rawFile || typeof rawFile !== "object") continue;
+
+      const rawName = typeof rawFile.name === "string" ? rawFile.name.trim() : "exclusion_file.xlsx";
+      const cleanName = rawName.replace(/[^a-zA-Z0-9_\u0600-\u06FF.-]/g, "_").slice(0, 100);
+      const ext = cleanName.split(".").pop()?.toLowerCase();
+
+      if (ext !== "xlsx" && ext !== "csv") {
+        return NextResponse.json(
+          {
+            success: false,
+            requestId,
+            error: "صيغة الملف غير مدعومة. الصيغ المقبولة لاستبعاد الشركات هي Excel (.xlsx) أو CSV (.csv).",
+          },
+          { status: 400 }
+        );
+      }
+
+      let fileBuffer: Buffer | null = null;
+
+      // Option A: File provided as content (base64 or text)
+      if (typeof rawFile.content === "string") {
+        if (rawFile.content.length > MAX_FILE_SIZE_BYTES * 1.4) {
+          return NextResponse.json(
+            {
+              success: false,
+              requestId,
+              error: "حجم الملف يتجاوز الحد الأقصى المسموح به (5 ميجابايت).",
+            },
+            { status: 400 }
+          );
+        }
+
+        if (ext === "csv" && !rawFile.content.startsWith("data:") && !/^[A-Za-z0-9+/=]+$/.test(rawFile.content.slice(0, 100))) {
+          fileBuffer = Buffer.from(rawFile.content, "utf-8");
+        } else {
+          const base64Data = rawFile.content.includes("base64,")
+            ? rawFile.content.split("base64,")[1]
+            : rawFile.content;
+          fileBuffer = Buffer.from(base64Data, "base64");
+        }
+      }
+      // Option B: File reference stored in verified user storage path
+      else if (typeof rawFile.storagePath === "string") {
+        const sPath = rawFile.storagePath.trim();
+        // Strict ownership check: Must reside within user's own storage directory
+        if (!sPath.startsWith(`${verifiedUserId}/`) || sPath.includes("..")) {
+          return NextResponse.json(
+            {
+              success: false,
+              requestId,
+              error: "غير مصرح بالوصول إلى هذا الملف أو المسار غير صالح.",
+            },
+            { status: 403 }
+          );
+        }
+
+        const bucketName = typeof rawFile.bucket === "string" && ["receipts", "results"].includes(rawFile.bucket)
+          ? rawFile.bucket
+          : "receipts";
+        const dlRes = await tables.storage.from(bucketName).download(sPath);
+        if (dlRes.error || !dlRes.data) {
+          return NextResponse.json(
+            {
+              success: false,
+              requestId,
+              error: "تعذر تنزيل الملف المرفق من التخزين السحابي.",
+            },
+            { status: 400 }
+          );
+        }
+        const arrayBuf = await dlRes.data.arrayBuffer();
+        fileBuffer = Buffer.from(arrayBuf);
+      }
+
+      if (!fileBuffer || fileBuffer.length === 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            requestId,
+            error: "الملف المرفق فارغ أو غير صالح.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (fileBuffer.length > MAX_FILE_SIZE_BYTES) {
+        return NextResponse.json(
+          {
+            success: false,
+            requestId,
+            error: "حجم الملف يتجاوز الحد الأقصى المسموح به (5 ميجابايت).",
+          },
+          { status: 400 }
+        );
+      }
+
+      try {
+        const spec = await parseExclusionFile(fileBuffer, ext as "xlsx" | "csv");
+
+        if (spec.baselineRowCount > MAX_EXCLUSION_ROWS) {
+          return NextResponse.json(
+            {
+              success: false,
+              requestId,
+              error: `قائمة الاستبعاد تتجاوز الحد الأقصى المسموح به (${MAX_EXCLUSION_ROWS.toLocaleString()} شركة). يرجى تقليص حجم الملف.`,
+            },
+            { status: 400 }
+          );
+        }
+
+        verifiedUploadedFiles.push({
+          name: cleanName,
+          type: ext as "xlsx" | "csv",
+          baselineRowCount: spec.baselineRowCount,
+          companyNames: spec.companyNames,
+          corporateDomains: spec.corporateDomains,
+          normalizedEntities: spec.normalizedEntities,
+        });
+      } catch (parseErr: any) {
+        return NextResponse.json(
+          {
+            success: false,
+            requestId,
+            error: "تعذر قراءة ملف الاستبعاد. يرجى التأكد من سلامة ملف Excel أو CSV.",
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // 5. Delegate to ChatHandler
     currentStep = "chat_handler";
     const chatHandler = new ChatHandler(tables);
     const result = await chatHandler.handleUserMessage({
       userId: verifiedUserId,
       conversationId: conversationId || undefined,
       message: message.trim(),
+      uploadedFiles: verifiedUploadedFiles,
     });
 
     return NextResponse.json({

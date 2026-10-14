@@ -754,8 +754,31 @@ export class ChatHandler {
     const isCardAnswer = Boolean((input as any).answers) || message.includes("clarification_answers") || (message.trim().startsWith("{") && message.includes("answers"));
 
     const isTestSearchScenario = typeof testScenario === "string" && testScenario.startsWith("search_");
-    const uploadedFiles = (input as any).uploadedFiles || [];
-    const researchIntent = extractResearchIntent(message, undefined, uploadedFiles);
+    const rawUploadedFiles = (input as any).uploadedFiles || [];
+
+    // If incoming uploadedFiles has an exclusion file, persist it into the conversation brief
+    if (rawUploadedFiles.length > 0) {
+      const topFile = rawUploadedFiles[0];
+      if (topFile.baselineRowCount !== undefined || topFile.companyNames !== undefined) {
+        brief.exclusionFile = {
+          name: topFile.name || "قائمة_الاستبعاد.xlsx",
+          baselineRowCount: topFile.baselineRowCount || topFile.companyNames?.length || 0,
+          companyNames: topFile.companyNames || [],
+          corporateDomains: topFile.corporateDomains || [],
+          normalizedEntities: topFile.normalizedEntities || [],
+        };
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+      }
+    }
+
+    // Active exclusion files: from current request or previously persisted in conversation brief
+    const activeFiles = rawUploadedFiles.length > 0
+      ? rawUploadedFiles
+      : brief.exclusionFile
+      ? [brief.exclusionFile]
+      : [];
+
+    const researchIntent = extractResearchIntent(message, undefined, activeFiles);
     const discoveryDecision = evaluateDiscoveryDecision(researchIntent);
     let isPhase2 = false;
 
@@ -796,6 +819,42 @@ export class ChatHandler {
         });
       }
       return assistantMsg;
+    } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
+      if (brief.platforms.length === 0) {
+        brief.platforms = researchIntent.platforms.value.length > 0
+          ? [...researchIntent.platforms.value]
+          : researchIntent.entityType.value === "companies"
+          ? ["web"]
+          : ["web"];
+      }
+      if (brief.topics.length === 0 && researchIntent.topic.value) {
+        brief.topics = [researchIntent.topic.value];
+      }
+
+      const hasExplicitVolume = researchIntent.sampleSize.provenance === "EXPLICIT";
+      const hasExclusionFile = activeFiles.length > 0 || !!brief.exclusionFile;
+      const isReadyForInstantPlan =
+        hasExplicitVolume || hasExclusionFile || (brief.targetVolume !== undefined && brief.targetVolume > 0) || wantsPriceOrProceed || isCardAnswer;
+
+      if (isReadyForInstantPlan) {
+        if (!brief.targetVolume || brief.targetVolume <= 0) {
+          brief.targetVolume = researchIntent.sampleSize.value || 500;
+        }
+        const dateVal = researchIntent.dateRange?.value?.relative || (researchIntent.dateRange?.value?.from ? `${researchIntent.dateRange.value.from} إلى ${researchIntent.dateRange.value.to || ""}` : undefined);
+        if (!brief.dateRange && dateVal) {
+          brief.dateRange = dateVal;
+        }
+        if (!brief.formats || brief.formats.length === 0) {
+          brief.formats = researchIntent.outputTypes?.value?.length > 0
+            ? [...researchIntent.outputTypes.value]
+            : ["xlsx", "csv", "pdf"];
+        }
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        isPhase2 = true;
+      } else {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        isPhase2 = false;
+      }
     } else if (researchIntent.entityType.value === "companies" && researchIntent.sampleSize.provenance === "EXPLICIT") {
       if (brief.platforms.length === 0) brief.platforms = ["web"];
       if (brief.topics.length === 0) brief.topics = [researchIntent.topic.value];

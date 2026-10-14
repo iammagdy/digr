@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildMultiStepResearchPlan,
   executeMultiStepPlanOffline,
+  validatePlanCapabilities,
 } from "../src/lib/server/multiStepOrchestrator";
 import { extractResearchIntent } from "../src/lib/server/researchIntent";
 import { ExclusionSpec } from "../src/lib/server/exclusionFileParser";
@@ -97,5 +98,94 @@ describe("Multi-Step Orchestrator Engine", () => {
     expect(failedStep).toBeDefined();
     expect(failedStep?.error).toBe("simulated_upstream_provider_500_error");
     expect(summary.methodologyNotesAr.some((n) => n.includes("خطأ المزود"))).toBe(true);
+  });
+
+  it("validates plan capabilities and marks unverified placeholder endpoints as unexecutable", () => {
+    const intent = extractResearchIntent("جمع 100 تغريدة من تويتر");
+    const plan = buildMultiStepResearchPlan(intent);
+
+    // Inject an unapproved placeholder capability into the plan
+    plan.steps.push({
+      stepId: "step_malicious_unverified",
+      stepNameAr: "نقطة غير معتمدة",
+      stepType: "data_collection",
+      capabilitySlug: "unapproved-random-scraper",
+      endpointId: "google.serp.organic",
+      params: { query: "test" },
+      maxDeliveredUnits: 10,
+      maxCalls: 1,
+      estimatedPoints: 50,
+    });
+
+    const validation = validatePlanCapabilities(plan);
+
+    expect(validation.isValid).toBe(false);
+    expect(validation.errors.some((e: string) => e.includes("غير معتمدة في كتالوج"))).toBe(true);
+    const unverifiedStep = validation.validatedSteps.find(
+      (s: any) => s.stepId === "step_malicious_unverified"
+    );
+    expect(unverifiedStep?.isExecutable).toBe(false);
+  });
+
+  it("produces genuine query expansion and real non-empty deliverables in report_generation", async () => {
+    const intent = extractResearchIntent("عايز 50 شركة مقاولات كهروميكانيكية في مصر");
+    const plan = buildMultiStepResearchPlan(intent);
+
+    const mockExecutor = async (step: any) => {
+      if (step.stepType === "data_collection") {
+        return {
+          rows: [
+            { id: "c1", company_name: "شركة المقاولون العرب", website: "arabcont.com" },
+            { id: "c2", company_name: "شركة حسن علام للمقاولات", website: "hassanallam.com" },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+
+    const summary = await executeMultiStepPlanOffline(plan, mockExecutor, { intent });
+
+    expect(summary.status).toBe("completed");
+
+    // 1. Verify query expansion generated genuine sector terms
+    const expansionStep = summary.stepResults.find((s) => s.stepType === "query_expansion");
+    expect(expansionStep?.status).toBe("completed");
+    expect(expansionStep?.rows.length).toBeGreaterThan(1);
+    expect(expansionStep?.rows.some((q) => q.includes("كهروميكانيك") || q.includes("MEP"))).toBe(true);
+
+    // 2. Verify report generation actually created valid buffers
+    const reportStep = summary.stepResults.find((s) => s.stepType === "report_generation");
+    expect(reportStep?.status).toBe("completed");
+    expect(reportStep?.generatedFiles?.excelBytes).toBeGreaterThan(1000);
+    expect(reportStep?.generatedFiles?.csvBytes).toBeGreaterThan(10);
+    expect(reportStep?.generatedFiles?.pdfBytes).toBeGreaterThan(1000);
+  });
+
+  it("handles partial success when late step fails after collecting data", async () => {
+    const intent = extractResearchIntent("عايز 50 مقطع فيديو من يوتيوب عن الذكاء الاصطناعي");
+    const plan = buildMultiStepResearchPlan(intent);
+
+    let callCount = 0;
+    const stepFlakyExecutor = async (step: any) => {
+      callCount++;
+      if (step.stepId === "step_1_video_search") {
+        return {
+          rows: [{ id: "v1", title: "مقطع فيديو 1" }, { id: "v2", title: "مقطع فيديو 2" }],
+        };
+      }
+      // Step 2 fails
+      return {
+        rows: [],
+        error: "comments_endpoint_timeout_504",
+      };
+    };
+
+    const summary = await executeMultiStepPlanOffline(plan, stepFlakyExecutor);
+
+    expect(summary.status).toBe("partial_success");
+    expect(summary.rawCollectedCount).toBe(2);
+    expect(summary.uniqueDeliveredCount).toBe(2);
+    const failedStep = summary.stepResults.find((s) => s.status === "failed");
+    expect(failedStep?.error).toBe("comments_endpoint_timeout_504");
   });
 });

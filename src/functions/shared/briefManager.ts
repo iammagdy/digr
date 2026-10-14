@@ -13,6 +13,13 @@ export interface ResearchBrief {
   language?: string;
   formats?: string[];
   notes?: string;
+  exclusionFile?: {
+    name: string;
+    baselineRowCount: number;
+    companyNames?: string[];
+    corporateDomains?: string[];
+    normalizedEntities?: Array<{ name: string; domain?: string; crNumber?: string }>;
+  };
 }
 
 const briefCache = new Map<string, ResearchBrief>();

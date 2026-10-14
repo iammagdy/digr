@@ -169,7 +169,7 @@ export function extractUserExclusions(
   provenance: ProvenanceStatus;
 } {
   const textExclusions: string[] = [];
-  const fileExclusionRegex = /(?:غير|بدون|باستثناء)\s*(?:الشركات|الأسماء|الموجود|المسجل|المسجلة)?\s*(?:في|الموجودة في|المسجلة في)?\s*(?:الملف|الشيت|الإكسل|الاكسل|ملف|شيت)/iu;
+  const fileExclusionRegex = /(?:مع استبعاد|استبعاد|استبعد|غير|بدون|باستثناء)\s*(?:الشركات|الأسماء|الموجود|المسجل|المسجلة|اللي)?\s*(?:في|الموجودة في|المسجلة في|اللي في)?\s*(?:الملف|الشيت|الإكسل|الاكسل|ملف|شيت)/iu;
   const hasExclusionReference = fileExclusionRegex.test(text);
 
   const directExclusionMatch = text.match(/(?:استبعد|شيل|بدون|غير)\s+([^.،,؛\n!؟?]+)/giu);
@@ -182,7 +182,14 @@ export function extractUserExclusions(
     }
   }
 
-  const fileReferences = uploadedFiles.filter((f) => f.purpose === "exclusion_list");
+  const fileReferences: UploadedFileReference[] = (uploadedFiles as any[])
+    .filter((f: any) => !f.purpose || f.purpose === "exclusion_list")
+    .map((f: any, idx: number) => ({
+      fileId: String(f.fileId || `file_${idx}`),
+      fileName: String(f.fileName || f.name || `file_${idx}`),
+      fileType: ((f.fileType || f.type || "xlsx") as string).toLowerCase().includes("csv") ? "csv" : "xlsx",
+      purpose: ((f.purpose || "exclusion_list") as string) === "reference_data" ? "reference_data" : "exclusion_list",
+    }));
 
   const provenance: ProvenanceStatus =
     hasExclusionReference || textExclusions.length > 0 || fileReferences.length > 0
@@ -310,7 +317,8 @@ export function extractResearchIntent(
       "بيانات", "داتا", "معلومات", "سجلات", "منشورات", "بوستات", "تعليقات", "كومنتات", "تغريدات", "تويتات",
       "فيديوهات", "مقاطع", "فيسبوك", "فيس", "بوك", "تويتر", "تيك", "توك", "تيك توك", "انستغرام", "إنستغرام",
       "يوتيوب", "لينكدإن", "لينكد", "جوجل", "غوغل", "منصة", "حساب", "صفحة", "جروب", "مجموعة", "قناة",
-      "facebook", "twitter", "tiktok", "instagram", "youtube", "linkedin", "google", "x", "data"
+      "facebook", "twitter", "tiktok", "instagram", "youtube", "linkedin", "google", "x", "data",
+      "هيكلفني", "تكلفة", "تكلفته", "تكاليف", "كام", "بكام", "سعره", "احسبلي", "أحسبلي", "احسب", "أحسب", "فلوس", "نقاط", "رصيد"
     ]);
     const words = text
       .split(/[\s,،؛!؟?]+/)

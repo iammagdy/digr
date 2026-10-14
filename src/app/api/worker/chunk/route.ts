@@ -623,16 +623,23 @@ export async function POST(req: NextRequest) {
       const finalRows = collectedRows;
 
       const completedAtIso = new Date().toISOString();
-      const dateStr = completedAtIso.slice(0, 10);
+      const dateStr = completedAtIso.split("T")[0];
+      const isCompanyResearch =
+        spec.capabilitySlug.includes("company") ||
+        spec.capabilitySlug.includes("linkedin") ||
+        finalRows.some((r) => r.company_name || r.cr_number);
+
       const finalPayload: any = {
         metadata: {
-          platform: "Digr Data Platform",
+          platform: (spec as any).platform || "Digr Data Platform",
           company: "Digr",
           title: `نتائج استخراج ${spec.capabilitySlug}`,
           template: spec.capabilitySlug,
           jobId,
           collectedAt: completedAtIso,
           rowsCount: finalRows.length,
+          targetRequested: targetMax,
+          entityType: isCompanyResearch ? "companies" : undefined,
           methodology: `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
         },
         profile: firstRawProfile || finalRows[0] || null,

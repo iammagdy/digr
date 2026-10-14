@@ -103,7 +103,7 @@ export interface SanitizedCapabilityForLlm {
   enabled: boolean;
 }
 
-const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
+export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "tiktok-profile",
     slug: "tiktok-profile",
