@@ -7,6 +7,7 @@ import {
   buildNormalizedParamsSchema,
   sanitizeCatalogEndpointForCustomer,
   scrubProviderNames,
+  mapSearchQueryToEnglish,
 } from "../src/functions/shared/catalogClient";
 
 describe("Phase A: Dynamic TREG Catalog Access, Normalization, 24h Caching & Sanitization", () => {
@@ -243,5 +244,16 @@ describe("Phase A: Dynamic TREG Catalog Access, Normalization, 24h Caching & San
     expect((sanitized as any).costUsd).toBeUndefined();
     expect(sanitized.pointsPerUnit).toBeGreaterThan(0);
     expect(scrubProviderNames("TikHub AnyAPI ScrapeCreators BrightData")).toBe("");
+  });
+
+  it("6. Correctly maps Arabic user search terms to English keywords for TREG catalog search", () => {
+    expect(mapSearchQueryToEnglish("شركات ومقاولات في مصر")).toBe("companies");
+    expect(mapSearchQueryToEnglish("تعليقات فيسبوك عن الذهب")).toBe("facebook comments");
+    expect(mapSearchQueryToEnglish("عايز تعليقات", "facebook")).toBe("facebook comments");
+    expect(mapSearchQueryToEnglish("منشورات فيسبوك")).toBe("facebook posts");
+    expect(mapSearchQueryToEnglish("حساب تيك توك")).toBe("tiktok profile");
+    expect(mapSearchQueryToEnglish("linkedin profiles")).toBe("linkedin profiles");
+    expect(mapSearchQueryToEnglish("بحث جوجل")).toBe("web search");
+    expect(mapSearchQueryToEnglish("بحث", "facebook")).toBe("facebook search");
   });
 });

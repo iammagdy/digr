@@ -335,6 +335,71 @@ export function buildCodeDiscoveryFallback(
 }
 
 /**
+ * Automatically builds a robust, validated plan proposal when the user has answered
+ * all clarification questions or when Phase 2 is active, preventing dead-end stalls.
+ */
+export function buildAutoPlanProposal(
+  brief: ResearchBrief,
+  validationCaps: Capability[],
+  message: string = "",
+): {
+  type: "propose_plan";
+  summaryAr: string;
+  capabilities: any[];
+  outputFormats: string[];
+  methodologyNotes: string;
+} {
+  const mentionedPlats = detectMentionedPlatforms(message);
+  const platform = (brief.platforms && brief.platforms.length > 0)
+    ? brief.platforms[0]
+    : (mentionedPlats.length > 0 ? mentionedPlats[0] : "facebook");
+  const platformNorm = platform.toLowerCase();
+
+  // Find matching capability in validationCaps
+  let matchedCap = validationCaps.find((c) => {
+    const cPlat = (c.platform || c.category || "").toLowerCase();
+    return cPlat === platformNorm || c.slug.includes(platformNorm);
+  });
+
+  if (!matchedCap) {
+    matchedCap = getClosestVerifiedCapability(validationCaps);
+  }
+
+  const volume = (brief.targetVolume && brief.targetVolume > 0)
+    ? brief.targetVolume
+    : (brief.postCount && brief.commentsPerPost ? brief.postCount * brief.commentsPerPost : 500);
+
+  const topicLabel = (brief.topics && brief.topics.length > 0)
+    ? brief.topics.join("، ")
+    : "البيانات العامة المطلوبة";
+
+  const platformLabel = getPlatformLabelAr(platformNorm);
+
+  const step: any = {
+    stepId: "plan_step_1",
+    capabilitySlug: matchedCap.slug || matchedCap.id,
+    endpointId: matchedCap.tregEndpointId || matchedCap.id || matchedCap.slug,
+    params: {
+      query: topicLabel,
+      postUrl: "https://www.facebook.com/post/1",
+      username: topicLabel.replace(/^@/, "").replace(/\s+/g, "_"),
+      dateFrom: brief.dateRange ? "2026-01-01" : undefined,
+    },
+    targetVolumeMin: 1,
+    targetVolumeMax: volume,
+    paginationStrategy: matchedCap.paginationType || "cursor",
+  };
+
+  return {
+    type: "propose_plan",
+    summaryAr: `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`,
+    capabilities: [step],
+    outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx", "pdf", "csv"],
+    methodologyNotes: `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
+  };
+}
+
+/**
  * Deterministic history compaction: keep the first message and the most recent
  * turns, replace the middle with a compact internal summary. The active plan
  * state (if any) is preserved in the summary.
@@ -959,38 +1024,37 @@ export class ChatHandler {
           const cached = getCachedCatalogEndpoints();
           try {
             const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-              setTimeout(() => resolve([]), 3000)
+              setTimeout(() => resolve([]), 2500)
             );
             let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
             if (res && res.length > 0) return res;
           } catch {}
 
-          // Fallbacks
-          const fallbacks = [
-            { q: p || "", plat: p },
-            { q: "", plat: p },
-            { q: topic, plat: undefined },
-          ];
-          for (let i = 0; i < fallbacks.length; i++) {
+          // Check cached endpoints matching platform first
+          const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
+          if (matchedCached.length > 0) return matchedCached;
+
+          if (p) {
             try {
               catalogSearchCount++;
               const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
                 setTimeout(() => resolve([]), 1500)
               );
-              const res = await Promise.race([searchCatalog(fallbacks[i].q, fallbacks[i].plat), timeoutPromise]);
+              const res = await Promise.race([searchCatalog(p, p), timeoutPromise]);
               if (res && res.length > 0) return res;
             } catch (err: any) {
-              console.warn("[chat:catalog_search_retry_failure]", { attempt: i + 1, error: err?.message });
+              console.warn("[chat:catalog_search_fallback_failure]", { platform: p, error: err?.message });
             }
           }
-          const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
-          if (matchedCached.length > 0) return matchedCached;
+
           return [];
         };
 
         if (platformsToSearch.length > 0) {
-          for (const p of platformsToSearch) {
-            const res = await runCatalogSearchWithRetries(searchTopic, p);
+          const results = await Promise.all(
+            platformsToSearch.map((p) => runCatalogSearchWithRetries(searchTopic, p))
+          );
+          for (const res of results) {
             liveCatalogEndpoints.push(...res);
           }
         } else {
@@ -1242,10 +1306,14 @@ export class ChatHandler {
             questions: fallback.items,
             questionsAr: clarificationQuestionsList,
           } as any;
+        } else if (isPhase2 || isCardAnswer || (brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume))) {
+          clarificationQuestionsList = undefined;
+          clarificationItemsList = undefined;
+          output = buildAutoPlanProposal(brief, validationCaps, message) as any;
         } else {
           clarificationQuestionsList = undefined;
           clarificationItemsList = undefined;
-          finalContentAr = deduplicateIntroText(customIntro || "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.");
+          finalContentAr = deduplicateIntroText(customIntro || "عشان أجهز لك خطة دقيقة، محتاج أعرف المنصة والموضوع المطلوب بحثه.");
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -1363,6 +1431,10 @@ export class ChatHandler {
               questions: clarificationItemsList,
               questionsAr: clarificationQuestionsList,
             } as any;
+          } else if (isPhase2 || isCardAnswer || (brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume))) {
+            clarificationItemsList = undefined;
+            clarificationQuestionsList = undefined;
+            output = buildAutoPlanProposal(brief, validationCaps, message) as any;
           } else {
             clarificationItemsList = undefined;
             clarificationQuestionsList = undefined;
@@ -1372,6 +1444,10 @@ export class ChatHandler {
               answerAr: finalContentAr,
             } as any;
           }
+        } else if (isPhase2 || isCardAnswer || (brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume))) {
+          clarificationItemsList = undefined;
+          clarificationQuestionsList = undefined;
+          output = buildAutoPlanProposal(brief, validationCaps, message) as any;
         } else {
           clarificationItemsList = undefined;
           clarificationQuestionsList = undefined;
@@ -1402,10 +1478,14 @@ export class ChatHandler {
               ? llmResult.textBlockAr
               : clarification.contentAr,
           );
+        } else if (isPhase2 || isCardAnswer || (brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume))) {
+          clarificationItemsList = undefined;
+          clarificationQuestionsList = undefined;
+          output = buildAutoPlanProposal(brief, validationCaps, message) as any;
         } else {
           clarificationItemsList = undefined;
           clarificationQuestionsList = undefined;
-          finalContentAr = "تم تسجيل متطلبات البحث بنجاح، جاري إعداد الخطة المناسبة.";
+          finalContentAr = "عشان أجهز لك خطة دقيقة، محتاج أعرف المنصة والموضوع المطلوب بحثه.";
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -1413,8 +1493,14 @@ export class ChatHandler {
         }
       } else if (output.type === "answer_question") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
-        finalContentAr = output.answerAr;
-      } else if (output.type === "write_note") {
+        if ((isPhase2 || isCardAnswer) && brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume)) {
+          output = buildAutoPlanProposal(brief, validationCaps, message) as any;
+        } else {
+          finalContentAr = output.answerAr;
+        }
+      }
+
+      if (output.type === "write_note") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
       } else if (output.type === "propose_plan") {
@@ -1500,18 +1586,27 @@ export class ChatHandler {
           } else {
             console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
             const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, false, brief);
-            clarificationQuestionsList = planFallback.items.map((item) => item.text);
-            clarificationItemsList = planFallback.items;
-            finalContentAr = deduplicateIntroText(planFallback.intro);
-            output = {
-              type: "ask_clarification",
-              reasonAr: finalContentAr,
-              intro: finalContentAr,
-              questions: planFallback.items,
-              questionsAr: clarificationQuestionsList,
-            } as any;
+            if (planFallback.items.length > 0) {
+              clarificationQuestionsList = planFallback.items.map((item) => item.text);
+              clarificationItemsList = planFallback.items;
+              finalContentAr = deduplicateIntroText(planFallback.intro);
+              output = {
+                type: "ask_clarification",
+                reasonAr: finalContentAr,
+                intro: finalContentAr,
+                questions: planFallback.items,
+                questionsAr: clarificationQuestionsList,
+              } as any;
+            } else {
+              const autoPlan = buildAutoPlanProposal(brief, validationCaps, message);
+              planOutput = autoPlan;
+              planItems = mapPlanItems(autoPlan);
+              planValidation = { valid: true, errors: [], issues: [] };
+            }
           }
-        } else {
+        }
+
+        if (platformCheck.valid && planValidation.valid && planOutput) {
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
           const managedQuote = await createAndSaveManagedQuote(this.tables, {

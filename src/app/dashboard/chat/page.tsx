@@ -72,6 +72,7 @@ interface MessageItem {
   /** Internal turns (clarification-answer summaries) are shown through the details sentence instead. */
   hidden?: boolean;
   errorRetryPrompt?: string;
+  retryClarification?: { assistantMessageId: string; answers: DiscoveryAnswer[] };
   createdAt: string;
 }
 
@@ -308,7 +309,7 @@ export default function ChatWorkspacePage() {
     setLoading(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 35000);
+    const timeoutId = setTimeout(() => controller.abort(), 55000);
 
     try {
       const jwtToken = await getAccessToken();
@@ -411,7 +412,7 @@ export default function ChatWorkspacePage() {
     }]);
     setLoading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 35000);
+    const timeoutId = setTimeout(() => controller.abort(), 55000);
 
     try {
       const jwtToken = await getAccessToken();
@@ -455,13 +456,15 @@ export default function ChatWorkspacePage() {
       }
       loadConversations();
     } catch (err: any) {
-      const errorContent = err.name === "AbortError"
-        ? "استغرق الإرسال وقتاً أطول من المتوقع. يمكنك المحاولة مرة أخرى."
+      const isTimeout = err.name === "AbortError";
+      const errorContent = isTimeout
+        ? "استغرق إرسال الإجابات وقتاً أطول من المتوقع. يرجى الضغط على زر إعادة المحاولة."
         : err.message || "تعذر إرسال إجابات الاستكشاف. يرجى المحاولة مرة أخرى.";
       setMessages((previous) => [...previous, {
         id: `err_${Date.now()}`,
         role: "assistant",
         content: errorContent,
+        retryClarification: { assistantMessageId, answers },
         createdAt: new Date().toISOString(),
       }]);
     } finally {
@@ -1027,6 +1030,15 @@ export default function ChatWorkspacePage() {
             className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
           >
             إعادة المحاولة الآن
+          </button>
+        )}
+        {m.retryClarification && (
+          <button
+            type="button"
+            onClick={() => handleSubmitClarification(m.retryClarification!.assistantMessageId, m.retryClarification!.answers)}
+            className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
+          >
+            إعادة إرسال الإجابات الآن
           </button>
         )}
       </div>

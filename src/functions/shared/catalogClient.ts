@@ -387,6 +387,65 @@ export async function getEndpointDetails(
 }
 
 /**
+ * Maps Arabic and user task queries to English catalog search keywords for TREG.
+ * TREG's live catalog search (/catalog/search?q=...) indexes English names, platforms and tags.
+ */
+export function mapSearchQueryToEnglish(query: string, platformHint?: string): string {
+  const normPlatform = (platformHint || "").trim().toLowerCase();
+  const qLower = (query || "").toLowerCase();
+
+  const hasArabic = /[\u0600-\u06FF]/.test(query);
+
+  if (!hasArabic && query.trim().length > 1) {
+    return query.trim();
+  }
+
+  // 1. Check for specific platform mentions
+  let platformKeyword = normPlatform;
+  if (qLower.includes("فيسبوك") || qLower.includes("فيس")) platformKeyword = "facebook";
+  else if (qLower.includes("تيك توك") || qLower.includes("تيكتوك")) platformKeyword = "tiktok";
+  else if (qLower.includes("تويتر") || qLower.includes("منصة x") || qLower.includes("منصة إكس")) platformKeyword = "x";
+  else if (qLower.includes("يوتيوب")) platformKeyword = "youtube";
+  else if (qLower.includes("انستغرام") || qLower.includes("إنستغرام") || qLower.includes("انستا")) platformKeyword = "instagram";
+  else if (qLower.includes("ريديت")) platformKeyword = "reddit";
+  else if (qLower.includes("لينكد")) platformKeyword = "linkedin";
+
+  // 2. Check for companies / B2B intent
+  if (
+    qLower.includes("شركات") ||
+    qLower.includes("شركة") ||
+    qLower.includes("مقاولات") ||
+    qLower.includes("أعمال") ||
+    qLower.includes("بزنس") ||
+    qLower.includes("عقارات") ||
+    qLower.includes("مصانع") ||
+    qLower.includes("سجل تجاري")
+  ) {
+    return "companies";
+  }
+
+  // 3. Task intents
+  if (qLower.includes("تعليق") || qLower.includes("تعليقات")) {
+    return platformKeyword ? `${platformKeyword} comments` : "social comments";
+  }
+  if (qLower.includes("منشور") || qLower.includes("منشورات") || qLower.includes("بوست")) {
+    return platformKeyword ? `${platformKeyword} posts` : "social posts";
+  }
+  if (qLower.includes("حساب") || qLower.includes("ملف") || qLower.includes("بروفايل")) {
+    return platformKeyword ? `${platformKeyword} profile` : "profile";
+  }
+  if (qLower.includes("بحث") || qLower.includes("سيرش") || qLower.includes("جوجل")) {
+    return platformKeyword ? `${platformKeyword} search` : "web search";
+  }
+
+  if (platformKeyword) {
+    return platformKeyword;
+  }
+
+  return "social search";
+}
+
+/**
  * Server-only catalog search function:
  * Searches https://treg.to/catalog/search?q={query}
  * Caches in memory for 24 hours.
@@ -400,7 +459,8 @@ export async function searchCatalog(
   const limit = options?.limit || 10;
   const trimmedQuery = (query || "").trim();
   const normPlatform = (platformHint || "").trim().toLowerCase();
-  const cacheKey = `${trimmedQuery.toLowerCase()}::${normPlatform}`;
+  const effectiveQuery = mapSearchQueryToEnglish(trimmedQuery, normPlatform);
+  const cacheKey = `${trimmedQuery.toLowerCase()}::${effectiveQuery}::${normPlatform}`;
 
   // 1. Check in-memory cache
   if (!options?.bypassCache) {
@@ -418,7 +478,7 @@ export async function searchCatalog(
 
   if (token || options?.fetchFn || (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true")) {
     try {
-      const searchUrl = `${baseUrl}/catalog/search?q=${encodeURIComponent(trimmedQuery || normPlatform || "all")}`;
+      const searchUrl = `${baseUrl}/catalog/search?q=${encodeURIComponent(effectiveQuery)}`;
       const headers: Record<string, string> = {};
       if (token) {
         headers["X-Treg-Token"] = token;
@@ -427,7 +487,7 @@ export async function searchCatalog(
       const res = await effectiveFetch(searchUrl, {
         method: "GET",
         headers,
-        signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(3000) : undefined,
+        signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(2500) : undefined,
       });
 
       if (res.ok) {

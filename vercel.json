@@ -7,6 +7,12 @@
     }
   ],
   "functions": {
+    "src/app/api/chat/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/chat/accept-quote/route.ts": {
+      "maxDuration": 60
+    },
     "src/app/api/worker/chunk/route.ts": {
       "maxDuration": 60
     },

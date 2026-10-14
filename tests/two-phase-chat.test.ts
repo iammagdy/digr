@@ -276,5 +276,79 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
       expect(brief.platforms).toContain("facebook");
       expect(brief.targetVolume).toBe(2000);
     });
+
+    it("(i) answering clarification card with structured answers immediately transitions to propose_plan with quote and never stalls", async () => {
+      const tables = makeMockTables();
+      const handler = new ChatHandler(tables as any);
+
+      // Turn 1: user mentions platform and topic only
+      const res1 = await handler.handleUserMessage({
+        userId: "user_test",
+        message: "عايز أجمع تعليقات من فيسبوك عن العقارات",
+        userBalance: 500,
+      });
+
+      expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
+      expect(res1.planQuote).toBeUndefined();
+
+      // Turn 2: user answers clarification card via answers array (e.g. sample size > 500)
+      const res2 = await handler.handleUserMessage({
+        userId: "user_test",
+        conversationId: res1.conversationId,
+        message: "تم اختيار الخيارات المناسبة",
+        answers: [
+          {
+            questionId: "code_volume",
+            question: "ما حجم البيانات المطلوب جمعها؟",
+            value: "أكثر من 500 سجل",
+          },
+        ],
+        userBalance: 500,
+      });
+
+      // Assert: transitions directly to propose_plan, creates and returns quote, does not stall!
+      expect(res2.outputType).toBe("propose_plan");
+      expect(res2.planQuote).toBeDefined();
+      expect(res2.planQuote.quotedPoints).toBeGreaterThan(0);
+      expect(res2.planQuote.quoteId).toBeDefined();
+
+      const brief = await getConversationBrief(tables as any, res1.conversationId);
+      expect(brief.platforms).toContain("facebook");
+      expect(brief.targetVolume).toBeGreaterThanOrEqual(500);
+    });
+
+    it("(j) submitting clarification answers with sample_size questionId updates targetVolume and generates quote", async () => {
+      const tables = makeMockTables();
+      const handler = new ChatHandler(tables as any);
+
+      // Turn 1: user mentions platform and topic
+      const res1 = await handler.handleUserMessage({
+        userId: "user_test",
+        message: "بحث عن منشورات فيسبوك عن الاستثمار",
+        userBalance: 500,
+      });
+
+      // Turn 2: user submits clarification answers with sample_size
+      const res2 = await handler.handleUserMessage({
+        userId: "user_test",
+        conversationId: res1.conversationId,
+        message: "تم تحديد العينة",
+        answers: [
+          {
+            questionId: "sample_size",
+            question: "حجم العينة المطلوب",
+            value: "1000",
+          },
+        ],
+        userBalance: 500,
+      });
+
+      expect(res2.outputType).toBe("propose_plan");
+      expect(res2.planQuote).toBeDefined();
+      expect(res2.planQuote.quotedPoints).toBeGreaterThan(0);
+
+      const brief = await getConversationBrief(tables as any, res1.conversationId);
+      expect(brief.targetVolume).toBe(1000);
+    });
   });
 });

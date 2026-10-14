@@ -244,7 +244,7 @@ export function extractBriefFromCardAnswers(
       }
     }
     // 3. Volume
-    else if (qId.includes("volume") || qId.includes("count") || qText.includes("عدد") || qText.includes("حجم") || qText.includes("سجل")) {
+    else if (qId.includes("volume") || qId.includes("count") || qId.includes("sample") || qId.includes("size") || qText.includes("عدد") || qText.includes("حجم") || qText.includes("سجل") || qText.includes("عينة")) {
       const vol = extractTargetVolume(valToUse);
       if (vol) brief.targetVolume = vol;
     }

@@ -16,6 +16,7 @@ import { createServerSideClient, createAdminClient } from "../../../lib/supabase
 import { parseExclusionFile } from "../../../lib/server/exclusionFileParser";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 function toSafeReasonCode(err: unknown): string {
   if (!err || typeof err !== "object") return "internal_error";
@@ -314,6 +315,7 @@ export async function POST(req: NextRequest) {
       userId: verifiedUserId,
       conversationId: conversationId || undefined,
       message: message.trim(),
+      answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,
     });
 
