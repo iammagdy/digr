@@ -48,6 +48,8 @@ import {
   isRepetitionComplaint,
   type ResearchBrief,
 } from "./briefManager";
+import { extractResearchIntent } from "../../lib/server/researchIntent";
+import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -56,6 +58,7 @@ export interface ChatHandlerInput {
   answers?: any;
   userBalance?: number;
   testScenario?: string;
+  uploadedFiles?: any[];
 }
 
 export interface ChatHandlerResponse {
@@ -751,12 +754,55 @@ export class ChatHandler {
     const isCardAnswer = Boolean((input as any).answers) || message.includes("clarification_answers") || (message.trim().startsWith("{") && message.includes("answers"));
 
     const isTestSearchScenario = typeof testScenario === "string" && testScenario.startsWith("search_");
+    const uploadedFiles = (input as any).uploadedFiles || [];
+    const researchIntent = extractResearchIntent(message, undefined, uploadedFiles);
+    const discoveryDecision = evaluateDiscoveryDecision(researchIntent);
     let isPhase2 = false;
 
     if (isTestSearchScenario) {
       isPhase2 = false;
     } else if (isGreeting || isGeneralQuestion) {
       isPhase2 = false;
+    } else if (discoveryDecision.action === "CLARIFY" && discoveryDecision.missingCrucialFields.includes("exclusion_file")) {
+      const q = discoveryDecision.questions[0];
+      const assistantMsg: ChatHandlerResponse = {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        outputType: "ask_clarification",
+        contentAr: q.questionAr,
+        clarificationIntro: "عشان أجهز لك خطة دقيقة مع استبعاد الشركات المطلوبة، محتاج الملف المرفق:",
+        clarificationQuestions: [q.questionAr],
+        clarificationItems: [
+          {
+            id: q.id,
+            text: q.questionAr,
+            question: q.questionAr,
+            type: "single",
+            options: q.suggestedAnswersAr || ["رفع الملف الآن", "متابعة البحث بدون استبعاد"],
+            allowOther: true,
+          },
+        ],
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+      };
+      if (sb) {
+        await sb.from("messages").update({ content_ar: q.questionAr }).eq("id", assistantMsgId);
+      } else {
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: assistantMsgId,
+          data: { content: q.questionAr, status: "ready" },
+        });
+      }
+      return assistantMsg;
+    } else if (researchIntent.entityType.value === "companies" && researchIntent.sampleSize.provenance === "EXPLICIT") {
+      if (brief.platforms.length === 0) brief.platforms = ["web"];
+      if (brief.topics.length === 0) brief.topics = [researchIntent.topic.value];
+      if (!brief.targetVolume) brief.targetVolume = researchIntent.sampleSize.value;
+      if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx", "csv", "pdf"];
+      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      isPhase2 = true;
     } else if (userComplained) {
       if (brief.platforms.length === 0) brief.platforms.push("facebook");
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");

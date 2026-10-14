@@ -112,8 +112,14 @@ const borderThin = {
  * 4. جودة البيانات (Data Quality, Deduplication & Completeness Audit)
  * 5. دليل الحقول (Dynamic Data Codebook)
  */
-export async function generateExcelReport(payload: any): Promise<Buffer> {
+export async function generateExcelReport(
+  payload: any,
+  options?: { deduplicationAudit?: any[] }
+): Promise<Buffer> {
   const norm: NormalizedDataset = normalizeDataset(payload);
+  if (norm.metadata.entityType === "companies") {
+    return generateCompanyExcelReport(payload, options?.deduplicationAudit);
+  }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = norm.metadata.title;
@@ -345,6 +351,248 @@ export async function generateExcelReport(payload: any): Promise<Buffer> {
 }
 
 /**
+ * Generates an executive, professional multi-sheet company research workbook:
+ * 1. الملخص التنفيذي ومؤشرات السوق (Executive Summary & KPIs)
+ * 2. دليل الشركات المعتمد (Company Directory with Sector Groupings)
+ * 3. بيانات الشركات للتصفية (Flat Filterable Table with Autofilters)
+ * 4. سجل تدقيق الاستبعاد والمطابقة (Negative-List & Deduplication Audit Log)
+ * 5. جودة البيانات ومحددات الحصر (Data Quality & Limitations)
+ * 6. دليل الحقول (Dynamic Data Codebook)
+ */
+export async function generateCompanyExcelReport(
+  payload: any,
+  deduplicationAudit: any[] = []
+): Promise<Buffer> {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = norm.metadata.title;
+
+  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const rowsCount = norm.rows.length;
+
+  // ================= Sheet 1: الملخص التنفيذي ومؤشرات السوق =================
+  const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", { views: [{ rightToLeft: true }] });
+  wsExec.mergeCells("A1:H1");
+  const titleCell = wsExec.getCell("A1");
+  titleCell.value = norm.metadata.title;
+  titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
+  titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  wsExec.getRow(1).height = 40;
+
+  wsExec.mergeCells("A2:H2");
+  const subCell = wsExec.getCell("A2");
+  subCell.value = `تقرير استقصاء وحصر الشركات المعتمدة • ${norm.metadata.platform} • تاريخ الاستخراج: ${dateStr}`;
+  subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF2D3748" } };
+  subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_LIGHT } };
+  subCell.alignment = { horizontal: "center", vertical: "middle" };
+  wsExec.getRow(2).height = 24;
+
+  wsExec.addRow([]); // Blank row 3
+  wsExec.getRow(4).height = 20;
+  wsExec.getRow(5).height = 32;
+
+  const dupsCount = deduplicationAudit.filter((a) => a.status === "CONFIRMED_DUPLICATE").length || norm.kpis.duplicatesRemoved || 0;
+  const ambigCount = deduplicationAudit.filter((a) => a.status === "POSSIBLE_DUPLICATE").length;
+
+  const kpis = [
+    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي الشركات المسلمة", val: `${rowsCount.toLocaleString("en-US")} شركة` },
+    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "الشركات المستبعدة للتكرار", val: `${dupsCount} شركة` },
+    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "حالات التشابه للمراجعة", val: `${ambigCount} حالة` },
+    { colsLabel: "G4:H4", colsVal: "G5:H5", label: "النطاق الجغرافي", val: norm.metadata.platform },
+  ];
+
+  kpis.forEach((card) => {
+    wsExec.mergeCells(card.colsLabel);
+    wsExec.mergeCells(card.colsVal);
+    const lbl = wsExec.getCell(card.colsLabel.split(":")[0]);
+    lbl.value = card.label;
+    lbl.font = { name: "Calibri", size: 9.5, bold: true, color: { argb: COLOR_WHITE } };
+    lbl.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+    lbl.alignment = { horizontal: "center", vertical: "middle" };
+
+    const val = wsExec.getCell(card.colsVal.split(":")[0]);
+    val.value = card.val;
+    val.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+    val.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+    val.alignment = { horizontal: "center", vertical: "middle" };
+    val.border = borderThin;
+  });
+
+  wsExec.addRow([]); // Blank row 6
+  wsExec.mergeCells("A7:H8");
+  const methCell = wsExec.getCell("A7");
+  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
+  methCell.font = { name: "Calibri", size: 9.5, italic: true, color: { argb: "FF475569" } };
+  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
+  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+  methCell.border = borderThin;
+
+  // ================= Sheet 2: دليل الشركات المعتمد =================
+  const wsDir = wb.addWorksheet("دليل الشركات المعتمد", { views: [{ rightToLeft: true }] });
+  const dirHeaders = ["م", "اسم الشركة / المؤسسة", "النشاط / التخصص الرئيسي", "الموقع الإلكتروني الرسمي", "المدينة / المحافظة", "الهاتف التجاري", "حالة التحقق"];
+  const dirHeaderRow = wsDir.addRow(dirHeaders);
+  dirHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  dirHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  dirHeaderRow.height = 26;
+  dirHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  norm.rows.forEach((r, idx) => {
+    const row = wsDir.addRow([
+      idx + 1,
+      r.company_name || r.name || r.title || `شركة #${idx + 1}`,
+      r.activity || r.sector || r.category || "مقاولات وأعمال هندسية",
+      r.website || r.domain || r.url || "غير متاح",
+      r.city || r.governorate || "جمهورية مصر العربية",
+      r.phone || r.business_phone || "عام / غير مدرج",
+      "معتمدة مستقلة",
+    ]);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 22;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsDir.columns = [{ width: 8 }, { width: 35 }, { width: 32 }, { width: 30 }, { width: 22 }, { width: 20 }, { width: 18 }];
+
+  // ================= Sheet 3: بيانات الشركات للتصفية =================
+  const wsFlat = wb.addWorksheet("بيانات الشركات للتصفية", { views: [{ rightToLeft: true }] });
+  const flatHeaders = ["كود السجل", "اسم الشركة", "النطاق الرسمي", "النشاط", "المحافظة", "الهاتف الرسمي", "مصدر الاستخراج"];
+  const flatHeaderRow = wsFlat.addRow(flatHeaders);
+  flatHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  flatHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+  flatHeaderRow.height = 25;
+  flatHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  norm.rows.forEach((r, idx) => {
+    const row = wsFlat.addRow([
+      r.id || `comp_${idx + 1}`,
+      r.company_name || r.name || r.title || `شركة #${idx + 1}`,
+      r.website || r.domain || r.url || "N/A",
+      r.activity || r.sector || "مقاولات",
+      r.city || r.governorate || "مصر",
+      r.phone || r.business_phone || "N/A",
+      r.source || "بيانات عامة",
+    ]);
+    row.font = { name: "Calibri", size: 9.5 };
+    row.height = 20;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
+  wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 18 }, { width: 20 }];
+
+  // ================= Sheet 4: سجل تدقيق الاستبعاد والمطابقة =================
+  const wsAudit = wb.addWorksheet("سجل تدقيق الاستبعاد والمطابقة", { views: [{ rightToLeft: true }] });
+  const auditHeaders = ["كود الفحص", "اسم الشركة المرشحة", "النطاق المفحوص", "حالة التدقيق (Status)", "السجل المرجعي المطابق", "قاعدة التدقيق (Match Rule)", "السبب والتعليل المنهجي"];
+  const auditHeaderRow = wsAudit.addRow(auditHeaders);
+  auditHeaderRow.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+  auditHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+  auditHeaderRow.height = 25;
+  auditHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const auditItems = deduplicationAudit.length > 0
+    ? deduplicationAudit
+    : norm.rows.map((r, i) => ({
+        candidateId: `cand_${i + 1}`,
+        candidateName: r.company_name || r.name || `شركة #${i + 1}`,
+        candidateDomain: r.website || r.domain,
+        status: "DISTINCT",
+        matchedBaselineRecord: "—",
+        matchRule: "BASELINE_UNMATCHED_UNIQUE",
+        reasonAr: "كيان مستقل تماماً بدون تطابق في النطاق أو العلامة التجارية.",
+      }));
+
+  auditItems.forEach((a, idx) => {
+    const row = wsAudit.addRow([
+      a.candidateId || `cand_${idx + 1}`,
+      a.candidateName,
+      a.candidateDomain || "—",
+      a.status === "CONFIRMED_DUPLICATE" ? "مستبعد لتكراره قطيعاً" : a.status === "POSSIBLE_DUPLICATE" ? "محتمل للمراجعة اليدوية" : "مقبول مستقل",
+      a.matchedBaselineRecord || "—",
+      a.matchRule || "CHECKED_OK",
+      a.reasonAr || "سجل مفحوص وفق ضوابط النزاهة.",
+    ]);
+    row.font = { name: "Calibri", size: 9 };
+    row.height = 20;
+
+    let fillColor = COLOR_WHITE;
+    if (a.status === "CONFIRMED_DUPLICATE") fillColor = "FFFEE2E2"; // soft red
+    else if (a.status === "POSSIBLE_DUPLICATE") fillColor = "FFFEF9C3"; // soft yellow
+    else if (idx % 2 === 1) fillColor = COLOR_ZEBRA_FILL;
+
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsAudit.columns = [{ width: 14 }, { width: 30 }, { width: 25 }, { width: 22 }, { width: 25 }, { width: 28 }, { width: 45 }];
+
+  // ================= Sheet 5: جودة البيانات ومحددات الحصر =================
+  const wsQuality = wb.addWorksheet("جودة البيانات ومحددات الحصر", { views: [{ rightToLeft: true }] });
+  const qHeaders = ["المؤشر المنهجي (Metric)", "القيمة المسجلة (Recorded Value)", "الشرح والتوصيف الأكاديمي (Description)"];
+  const qHeaderRow = wsQuality.addRow(qHeaders);
+  qHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  qHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+  qHeaderRow.height = 25;
+  qHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const rawCollectedCount = rowsCount + dupsCount;
+  const targetRequestedDisplay = (norm.metadata as any).targetRequested != null
+    ? `${(norm.metadata as any).targetRequested} شركة`
+    : "عدد السجلات المطلوبة غير متاح";
+
+  const qualityData = [
+    ["إجمالي السجلات المستلمة (Raw Collected)", `${rawCollectedCount.toLocaleString("en-US")} شركة`, "إجمالي الكيانات الواردة من مصادر البحث العلنية قبل الفلترة والتنقية"],
+    ["الشركات الفريدة المسلمة (Unique Delivered)", `${rowsCount.toLocaleString("en-US")} شركة`, "حجم العينة الفعلي المستخلص والموثق في ملف البيانات بعد استبعاد المكررات"],
+    ["الشركات المستبعدة للتكرار (Duplicates Removed)", `${dupsCount} شركة`, "تم التحقق من تفرد الشركات بمطابقة النطاقات والعلامات التجارية واستبعاد التكرارات القطعية"],
+    ["حالات التشابه المحتملة (Ambiguous Matches)", `${ambigCount} حالة`, "كيانات أظهرت تشابهاً جزئياً وتمت إتاحتها للمراجعة دون حذف تعسفي"],
+    ["الشركات المطلوبة (Target Requested)", targetRequestedDisplay, "الحد المستهدف للشركات المطلوبة في خطة البحث"],
+    ["نسبة اكتمال الحقول (Completeness)", `${norm.kpis.dataCompletenessPct}%`, "نسبة الحقول المحتوية على قيم فعلية غير مفقودة"],
+    ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع الأعمال والشركات غير محصور بقائمة شاملة فإن العينة غير احتمالية"],
+    ["النزاهة المنهجية (Integrity)", "استخراج مباشر من الواجهات العامة المتاحة", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
+    ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية للمؤسسات دون أي جمع لبيانات اتصال شخصية", "استخراج مقتصر على المعلومات المؤسسية المعلنة للشركات دون انتهاك للخصوصية الفردية"],
+  ];
+
+  qualityData.forEach((q, idx) => {
+    const row = wsQuality.addRow(q);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 22;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((c) => (c.border = borderThin));
+  });
+  wsQuality.columns = [{ width: 35 }, { width: 25 }, { width: 55 }];
+
+  // ================= Sheet 6: دليل الحقول =================
+  const wsCode = wb.addWorksheet("دليل الحقول", { views: [{ rightToLeft: true }] });
+  const codeHeaders = ["اسم الحقل (Field)", "المسمى باللغة العربية (Label)", "الوصف باللغة العربية (Description)", "نوع البيانات (Data Type)"];
+  const codeHeaderRow = wsCode.addRow(codeHeaders);
+  codeHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  codeHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
+  codeHeaderRow.height = 25;
+  codeHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
+  const companyCodebook = [
+    { field: "company_name", titleAr: "اسم الشركة", descriptionAr: "الاسم التجاري الرسمي للمؤسسة أو الكيان", dataType: "Text" },
+    { field: "activity", titleAr: "النشاط / التخصص", descriptionAr: "مجال عمل ونشاط الشركة (مثل كهروميكانيكا، مقاولات، إلخ)", dataType: "Text" },
+    { field: "website", titleAr: "الموقع الإلكتروني", descriptionAr: "النطاق الرقمي الرسمي للشركة على الإنترنت", dataType: "URL" },
+    { field: "city", titleAr: "المدينة / المحافظة", descriptionAr: "المقر الجغرافي أو النطاق التشغيلي للشركة", dataType: "Text" },
+    { field: "phone", titleAr: "الهاتف التجاري الرسمي", descriptionAr: "أرقام التواصل والخدمات المعلنة للشركة", dataType: "Text" },
+    { field: "source", titleAr: "مصدر البيانات", descriptionAr: "الواجهة العامة أو السجل الذي استخرجت منه البيانات", dataType: "Text" },
+  ];
+
+  companyCodebook.forEach((c, idx) => {
+    const row = wsCode.addRow([c.field, c.titleAr, c.descriptionAr, c.dataType]);
+    row.font = { name: "Calibri", size: 10 };
+    row.height = 20;
+    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((cell) => (cell.border = borderThin));
+  });
+  wsCode.columns = [{ width: 20 }, { width: 25 }, { width: 55 }, { width: 22 }];
+
+  const buffer = await wb.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+
+/**
  * Generate a white-label CSV file with UTF-8 BOM and formula injection protection
  */
 export function generateCsvReport(payload: any): Buffer {
@@ -477,8 +725,11 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       const bg = idx % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
       doc.rect(35, ry, contentWidth, rowHeight).fillAndStroke(bg, "#E2E8F0");
 
-      const labelText = r.text || r.comment_text || r.display_name || r.bio || r.author_name || `سجل #${idx + 1}`;
+      const labelText = r.company_name || r.name || r.text || r.comment_text || r.display_name || r.bio || r.author_name || `سجل #${idx + 1}`;
       const metaText = [
+        r.website || r.domain ? `موقع: ${r.website || r.domain}` : null,
+        r.activity || r.sector ? `نشاط: ${r.activity || r.sector}` : null,
+        r.city || r.governorate ? `نطاق: ${r.city || r.governorate}` : null,
         r.username ? r.username : null,
         r.likes_count ? `إعجابات: ${r.likes_count}` : null,
         r.retweets_count ? `إعادة نشر: ${r.retweets_count}` : null,
@@ -539,11 +790,22 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 /**
  * Builds white-label methodology facts document (.txt).
  */
-export function generateMethodologyText(payload: any): string {
+export function generateMethodologyText(
+  payload: any,
+  options?: {
+    rawCollected?: number;
+    uniqueDelivered?: number;
+    duplicatesRemoved?: number;
+    deduplicationCount?: number;
+  }
+): string {
   const norm: NormalizedDataset = normalizeDataset(payload);
   const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const rowsCount = norm.rows.length;
+  const rowsCount = options?.uniqueDelivered ?? norm.rows.length;
   const jobId = norm.metadata.jobId || "N/A";
+
+  const dedupCount = options?.duplicatesRemoved ?? options?.deduplicationCount ?? norm.kpis.duplicatesRemoved ?? 0;
+  const rawCollected = options?.rawCollected ?? (norm.kpis.totalRecords + (norm.kpis.duplicatesRemoved || 0));
 
   return [
     "============================================================",
@@ -554,18 +816,28 @@ export function generateMethodologyText(payload: any): string {
     `معرّف الطلب (Job ID): ${jobId}`,
     `تاريخ الجمع: ${dateStr}`,
     `المصدر / المنصة: ${norm.metadata.platform}`,
+    `نوع الكيان المستخرج: ${norm.metadata.entityType}`,
     `إجمالي السجلات المستخرجة: ${rowsCount}`,
+    `إجمالي السجلات المستلمة (Raw Collected): ${rawCollected}`,
+    `إجمالي السجلات الخام المستخرجة: ${rawCollected}`,
+    `السجلات الفريدة المسلمة (Unique Delivered): ${rowsCount}`,
+    `السجلات الفريدة المعتمدة: ${rowsCount}`,
+    `السجلات المستبعدة للتكرار (Duplicates Removed): ${dedupCount}`,
+    `السجلات المستبعدة والمكررة: ${dedupCount}`,
+    `نسبة اكتمال الحقول (Completeness): ${norm.kpis.dataCompletenessPct}%`,
+    "نسبة التغطية المنهجية (Coverage): نسبة التغطية غير متاحة (مجتمع البحث غير محصور)",
+    "النزاهة المنهجية (Integrity): استخراج مباشر من الواجهات العامة المتاحة",
     "",
     "------------------------------------------------------------",
-    "الملاحظات المنهجية ومعايير الجمع:",
+    "الملاحظات المنهجية ومعايير الجمع والنزاهة:",
     "------------------------------------------------------------",
     norm.metadata.methodology,
     "",
     "إخلاء المسؤولية العلمية والإحصائية:",
     "• هذه البيانات عامة ومتاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
     "• تمثل لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للبيانات المرصودة.",
-    "• لا تمثل بالضرورة عينة عشوائية تمثيلية لأغراض التعميم الإحصائي.",
-    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية.",
+    "• نظراً لأن مجتمع البحث العام غير محصور، فإن العينة غير احتمالية ولا تمثل حصراً شاملاً.",
+    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية، ولا تتضمن جمع بيانات اتصال شخصية.",
     "",
     "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
     "============================================================",

@@ -27,7 +27,7 @@ export interface NormalizedDataset {
     collectedAt: string;
     rowsCount: number;
     methodology: string;
-    entityType: "posts" | "comments" | "profile" | "search" | "tabular";
+    entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies";
     targetRequested?: number | string | null;
   };
   profile: Record<string, any> | null;
@@ -542,8 +542,10 @@ export function normalizeDataset(
   const codebook = generateDynamicCodebook(columns, uniqueRows.slice(0, 20));
 
   // 6. Determine Entity Type
-  let entityType: "posts" | "comments" | "profile" | "search" | "tabular" = "tabular";
-  if (columns.includes("comment_text") || columns.includes("parent_id")) {
+  let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" = "tabular";
+  if (rawPayload?.entityType === "companies" || columns.includes("company_name") || columns.includes("cr_number") || columns.includes("domain")) {
+    entityType = "companies";
+  } else if (columns.includes("comment_text") || columns.includes("parent_id")) {
     entityType = "comments";
   } else if (columns.includes("retweets_count") || columns.includes("tweet_id") || columns.includes("text")) {
     entityType = "posts";
