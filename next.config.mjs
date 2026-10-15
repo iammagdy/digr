@@ -8,7 +8,10 @@ const __dirname = path.dirname(__filename);
 const nextConfig = {
   output: "standalone",
   outputFileTracingIncludes: {
-    "/api/**/*": ["./src/assets/fonts/**/*"],
+    "/api/**/*": [
+      "./src/assets/fonts/**/*",
+      "./node_modules/pdfkit/js/data/**/*",
+    ],
   },
   env: {
     NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf",
