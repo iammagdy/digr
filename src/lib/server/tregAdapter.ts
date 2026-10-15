@@ -1,4 +1,5 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
+import { getEndpointDetails } from "../../functions/shared/catalogClient";
 import {
   extractAndFlattenRows,
   parseTikTokProfileResponse,
@@ -220,8 +221,20 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   const page = input.step + 1;
+  let effectiveEndpointId = input.endpointId;
+  if (effectiveEndpointId && effectiveEndpointId.includes("-") && !effectiveEndpointId.includes(".")) {
+    try {
+      const details = await getEndpointDetails(effectiveEndpointId);
+      if (details?.id && details.id.includes(".")) {
+        effectiveEndpointId = details.id;
+      }
+    } catch {
+      // Continue
+    }
+  }
+
   const isIcypeasCompanies =
-    input.endpointId === "icypeas.companies.search" ||
+    effectiveEndpointId === "icypeas.companies.search" ||
     input.capabilitySlug === "icypeas-companies-search" ||
     input.capabilitySlug === "company-research";
 
@@ -246,7 +259,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   const isSingleAttemptCap =
-    input.endpointId === "tikhub.tiktok.user.profile" ||
+    effectiveEndpointId === "tikhub.tiktok.user.profile" ||
     input.capabilitySlug === "tiktok-profile";
   const retries = isSingleAttemptCap ? 0 : 3;
 
@@ -254,7 +267,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   const callResult = await executeTregCallWithRetry(
     {
-      endpointId: input.endpointId,
+      endpointId: effectiveEndpointId,
       method: effectiveMethod,
       params: pageParams,
       userId: input.userId,

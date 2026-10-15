@@ -721,8 +721,9 @@ export async function POST(req: NextRequest) {
       const isCompanyResearch =
         !isProfileResearch &&
         (spec.capabilitySlug.includes("company") ||
+         spec.capabilitySlug.includes("companies") ||
          spec.capabilitySlug === "web-company-search" ||
-         finalRows.some((r) => r.company_name || r.cr_number));
+         finalRows.some((r) => r.company_name || r.cr_number || r.website_url || r.company_size || r.industry));
 
       const methodologySummary = spec.params?.exclusionRules
         ? `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`

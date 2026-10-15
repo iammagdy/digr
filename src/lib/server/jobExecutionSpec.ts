@@ -118,7 +118,7 @@ export async function resolveJobExecutionSpec(
   try {
     const details = await getEndpointDetails(endpointId || capabilitySlug);
     if (details) {
-      if (!endpointId || endpointId === capabilitySlug) {
+      if (!endpointId || endpointId === capabilitySlug || !endpointId.includes(".")) {
         endpointId = details.id || endpointId;
       }
       method = method || details.method;

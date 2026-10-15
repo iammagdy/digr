@@ -449,10 +449,10 @@ export async function generateCompanyExcelReport(
     const row = wsDir.addRow([
       idx + 1,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.activity || r.sector || r.category || "مقاولات وأعمال هندسية",
-      r.website || r.domain || r.url || "غير متاح",
-      r.city || r.governorate || "جمهورية مصر العربية",
-      r.phone || r.business_phone || "عام / غير مدرج",
+      r.activity || r.sector || r.industry || r.category || "مقاولات وأعمال هندسية",
+      r.website || r.website_url || r.domain || r.url || "غير متاح",
+      r.city || r.state || r.governorate || "جمهورية مصر العربية",
+      r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "عام / غير مدرج",
       "معتمدة مستقلة",
     ]);
     row.font = { name: "Calibri", size: 10 };
@@ -475,10 +475,10 @@ export async function generateCompanyExcelReport(
     const row = wsFlat.addRow([
       r.id || `comp_${idx + 1}`,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.website || r.domain || r.url || "N/A",
-      r.activity || r.sector || "مقاولات",
-      r.city || r.governorate || "مصر",
-      r.phone || r.business_phone || "N/A",
+      r.website || r.website_url || r.domain || r.url || "N/A",
+      r.activity || r.sector || r.industry || "مقاولات",
+      r.city || r.state || r.governorate || "مصر",
+      r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "N/A",
       r.source || "بيانات عامة",
     ]);
     row.font = { name: "Calibri", size: 9.5 };

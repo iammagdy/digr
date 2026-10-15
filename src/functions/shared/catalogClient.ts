@@ -379,13 +379,22 @@ export async function getEndpointDetails(
 
       if (res.ok) {
         const raw = await res.json();
-        if (raw && (raw.id || raw.endpoint_id)) {
-          const normalized = normalizeCatalogEndpoint(raw);
+        const epData = raw?.endpoint || raw;
+        if (epData && (epData.id || epData.endpoint_id)) {
+          const normalized = normalizeCatalogEndpoint(epData);
           catalogCache.set(cacheKey, {
             timestamp: Date.now(),
             results: [normalized],
           });
           return normalized;
+        }
+      } else if (normId.includes("-") && !normId.includes(".")) {
+        const hits = await searchCatalog(normId);
+        const match = hits.find(
+          (h) => h.slug.toLowerCase() === normId.toLowerCase() || h.id.toLowerCase() === normId.toLowerCase()
+        );
+        if (match && match.id && match.id !== normId) {
+          return getEndpointDetails(match.id, options);
         }
       }
     } catch {

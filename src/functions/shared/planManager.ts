@@ -620,7 +620,12 @@ export async function createAndSaveManagedQuote(
 
     // Retain all required fields on the item
     it.capabilitySlug = cap.slug || it.capabilitySlug;
-    it.endpointId = it.endpointId || cap.tregEndpointId || cap.id || cap.slug;
+    it.endpointId =
+      cap.tregEndpointId && cap.tregEndpointId.includes(".")
+        ? cap.tregEndpointId
+        : cap.id && cap.id.includes(".")
+        ? cap.id
+        : it.endpointId || cap.tregEndpointId || cap.id || cap.slug;
     it.unitCostUsd = itemUnitCostUsd;
     it.unitPricePoints = unitPrice;
     it.targetVolumeMax = itemVolume;

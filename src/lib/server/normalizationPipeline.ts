@@ -561,9 +561,13 @@ export function normalizeDataset(
   if (
     rawPayload?.entityType === "companies" ||
     rawPayload?.metadata?.entityType === "companies" ||
+    meta.template?.includes("company") ||
+    meta.template?.includes("companies") ||
     columns.includes("company_name") ||
     columns.includes("cr_number") ||
-    columns.includes("domain")
+    columns.includes("domain") ||
+    columns.includes("website_url") ||
+    columns.includes("company_size")
   ) {
     entityType = "companies";
   } else if (columns.includes("comment_text") || columns.includes("parent_id")) {
