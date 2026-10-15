@@ -1300,7 +1300,7 @@ export class ChatHandler {
         const compactSummary = buildCompactCatalogSummary(liveCatalogEndpoints.length > 0 ? liveCatalogEndpoints : getCachedCatalogEndpoints());
         turnMessages.push({
           role: "system",
-          content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية — المرحلة الثانية (Phase 2)]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة.`,
+          content: `${formatBriefForSystemPrompt(brief)}\n\n${compactSummary}\n\n[تعليمات داخلية — المرحلة الثانية (Phase 2)]: متطلبات البحث مكتملة الآن. استدعِ الآن propose_plan لاقتراح خطة مسعرة مطابقة للمنصة والأدوات المتاحة أعلاه. حدد الخطوات والمدخلات بدقة. ممنوع استدعاء search_catalog لأن الأدوات المتاحة محددة ومسعرة بالفعل أعلاه.`,
         });
       } else if (!isGreeting && !isGeneralQuestion && !isTestSearchScenario) {
         const compactCatalog = buildCompactCatalogSummary(

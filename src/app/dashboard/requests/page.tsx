@@ -229,6 +229,12 @@ export default function RequestsPage() {
   }
 
   const openFile = (job: JobDoc, retry = false) => {
+    try {
+      sessionStorage.setItem("diger_active_job_id", job.$id);
+      sessionStorage.setItem("diger_canvas_open", "1");
+    } catch {
+      // Non-blocking storage fallback
+    }
     const c = quotes[job.$id]?.conversationId;
     const query = new URLSearchParams();
     query.set("jobId", job.$id);
@@ -281,7 +287,13 @@ export default function RequestsPage() {
             <article key={j.$id} className="flex flex-col gap-3.5 rounded-3xl border border-ln bg-sf p-[18px]" style={{ animation: "up .35s both" }}>
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="m-0 text-base font-medium leading-[1.6] text-ink">{title}</h3>
+                  <button
+                    type="button"
+                    onClick={() => openFile(j, k === "refunded")}
+                    className="m-0 cursor-pointer border-0 bg-transparent p-0 text-right text-base font-medium leading-[1.6] text-ink hover:underline focus-visible:outline-2"
+                  >
+                    {title}
+                  </button>
                   <p className="mb-0 mt-1 text-xs text-fnt">{platformOf(j.templateSlug)} · {dayLabel(j.createdAt)}</p>
                 </div>
                 <span className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium" style={{ background: `color-mix(in oklab, ${st.tint} 13%, transparent)`, color: st.fg }}>{st.label}</span>
@@ -303,8 +315,14 @@ export default function RequestsPage() {
                     {ext === "xlsx" ? "Excel" : ext.toUpperCase()}
                   </button>
                 ))}
-                <button type="button" onClick={() => openFile(j, k === "refunded")} className="min-h-11 cursor-pointer rounded-full border-0 bg-sf2 px-3.5 text-xs text-ink">
-                  {k === "running" ? "متابعة التقدم" : k === "refunded" ? "إعادة المحاولة" : "فتح ملف البحث"}
+                <button
+                  type="button"
+                  onClick={() => openFile(j, k === "refunded")}
+                  className={`min-h-11 cursor-pointer rounded-full border-0 px-4 text-xs font-medium transition-colors ${
+                    k === "running" ? "bg-ac text-onac hover:opacity-90" : "bg-sf2 text-ink hover:bg-sf"
+                  }`}
+                >
+                  {k === "running" ? "متابعة التقدم" : k === "refunded" ? "إعادة المحاولة" : "متابعة التفاصيل والملفات"}
                 </button>
               </div>
             </article>

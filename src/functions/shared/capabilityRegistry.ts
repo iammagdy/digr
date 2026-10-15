@@ -440,12 +440,19 @@ export const APPROVED_CAPABILITY_CATALOG: Capability[] = buildApprovedCatalog();
  * Return the full approved capability catalog (verified, pending_verification, planned),
  * merging any status overrides from the database table when available.
  */
+let memoryCachedCatalog: { data: Capability[]; expiresAt: number } | null = null;
+const CATALOG_MEMORY_CACHE_TTL_MS = 60_000;
+
 export async function getCatalogCapabilities(
   tables?: TablesDB | any,
   settings: RegistryPricingSettings = getRegistryPricingSettings()
 ): Promise<Capability[]> {
   const baseCatalog = buildApprovedCatalog(settings);
   if (!tables) return baseCatalog;
+
+  if (memoryCachedCatalog && Date.now() < memoryCachedCatalog.expiresAt) {
+    return memoryCachedCatalog.data;
+  }
 
   try {
     let dbRows: Capability[] = [];
@@ -512,7 +519,9 @@ export async function getCatalogCapabilities(
         enabled: isValidCost && (status === "verified" || Boolean(row.enabled)),
       });
     }
-    return Array.from(merged.values());
+    const result = Array.from(merged.values());
+    memoryCachedCatalog = { data: result, expiresAt: Date.now() + CATALOG_MEMORY_CACHE_TTL_MS };
+    return result;
   } catch {
     return baseCatalog;
   }
@@ -523,6 +532,10 @@ export async function getCatalogCapabilities(
  * falling back to verified entries in APPROVED_CAPABILITY_CATALOG if the table is empty.
  */
 export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<Capability[]> {
+  if (memoryCachedCatalog && Date.now() < memoryCachedCatalog.expiresAt) {
+    return memoryCachedCatalog.data.filter((c) => c.enabled);
+  }
+
   if (tables && typeof tables.from === "function") {
     try {
       const { data } = await tables.from("capability_registry").select("*").eq("enabled", true);

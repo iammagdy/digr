@@ -3,21 +3,25 @@ import ExcelJS from "exceljs";
 import * as path from "path";
 import * as fs from "fs";
 import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../lib/server/normalizationPipeline";
+import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
 
 function getRegularFontBuffer(): Buffer {
   if (!cachedRegularBuffer) {
-    const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
-    const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
-    if (fs.existsSync(cwdPath)) {
-      cachedRegularBuffer = fs.readFileSync(cwdPath);
-    } else if (fs.existsSync(diskPath)) {
-      cachedRegularBuffer = fs.readFileSync(diskPath);
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { fontRegularBase64 } = require("./embeddedFonts");
+    try {
+      const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
+      const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
+      if (fs.existsSync(cwdPath)) {
+        cachedRegularBuffer = fs.readFileSync(cwdPath);
+      } else if (fs.existsSync(diskPath)) {
+        cachedRegularBuffer = fs.readFileSync(diskPath);
+      }
+    } catch {
+      // Fall through to embedded base64
+    }
+    if (!cachedRegularBuffer) {
       cachedRegularBuffer = Buffer.from(fontRegularBase64, "base64");
     }
   }
@@ -26,15 +30,18 @@ function getRegularFontBuffer(): Buffer {
 
 function getBoldFontBuffer(): Buffer {
   if (!cachedBoldBuffer) {
-    const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
-    const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
-    if (fs.existsSync(cwdPath)) {
-      cachedBoldBuffer = fs.readFileSync(cwdPath);
-    } else if (fs.existsSync(diskPath)) {
-      cachedBoldBuffer = fs.readFileSync(diskPath);
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { fontBoldBase64 } = require("./embeddedFonts");
+    try {
+      const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
+      const diskPath = path.join(__dirname, "..", "..", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");
+      if (fs.existsSync(cwdPath)) {
+        cachedBoldBuffer = fs.readFileSync(cwdPath);
+      } else if (fs.existsSync(diskPath)) {
+        cachedBoldBuffer = fs.readFileSync(diskPath);
+      }
+    } catch {
+      // Fall through to embedded base64
+    }
+    if (!cachedBoldBuffer) {
       cachedBoldBuffer = Buffer.from(fontBoldBase64, "base64");
     }
   }

@@ -62,6 +62,21 @@ function mapJobEvents(rows: any[] | null | undefined): JobEvent[] {
   return events;
 }
 
+function dedupeAndSortChronological(events: JobEvent[]): JobEvent[] {
+  const seen = new Set<string>();
+  const unique: JobEvent[] = [];
+  for (const ev of events) {
+    const key = ev.$id || `${ev.createdAt}_${ev.textAr}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(ev);
+    }
+  }
+  // Sort descending by date, then use chronological() to restore display order
+  const descEvents = unique.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return chronological(descEvents);
+}
+
 interface MessageItem {
   id: string;
   role: "user" | "assistant";
@@ -136,6 +151,25 @@ export default function ChatWorkspacePage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationLoadSequence = useRef(0);
+
+  // Sync canvasOpen and activeJob to sessionStorage for reload persistence
+  useEffect(() => {
+    try {
+      if (canvasOpen) {
+        sessionStorage.setItem("diger_canvas_open", "1");
+      } else {
+        sessionStorage.removeItem("diger_canvas_open");
+      }
+    } catch {}
+  }, [canvasOpen]);
+
+  useEffect(() => {
+    try {
+      if (activeJob?.jobId) {
+        sessionStorage.setItem("diger_active_job_id", activeJob.jobId);
+      }
+    } catch {}
+  }, [activeJob?.jobId]);
 
   // 1. Check Profile & Onboarding status
   useEffect(() => {
@@ -277,7 +311,7 @@ export default function ChatWorkspacePage() {
           setActiveJob((prev) => {
             if (!prev || prev.jobId !== activeJob.jobId) return prev;
             const mapped = mapJobEvents([newEvt]);
-            const nextEvents = chronological([...prev.events, ...mapped]);
+            const nextEvents = dedupeAndSortChronological([...prev.events, ...mapped]);
             const newUnits =
               typeof newEvt.units === "number" && newEvt.units > prev.rowsCollected
                 ? newEvt.units
@@ -317,7 +351,7 @@ export default function ChatWorkspacePage() {
             requestedRows: jobDoc.target_volume_max ?? prev.requestedRows,
             errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
             // Latest events first from the server, restored to reading order for display.
-            events: chronological(mapJobEvents(eventsRes.data)),
+            events: dedupeAndSortChronological(mapJobEvents(eventsRes.data)),
           };
         });
 
@@ -348,7 +382,7 @@ export default function ChatWorkspacePage() {
               if (prev.events.some((event) => event.textAr === message)) return prev;
               return {
                 ...prev,
-                events: chronological([
+                events: dedupeAndSortChronological([
                   ...prev.events,
                   { $id: `nudge_retry_${Date.now()}`, textAr: message, kind: "info", createdAt: new Date().toISOString() },
                 ]),
@@ -698,10 +732,13 @@ export default function ChatWorkspacePage() {
             reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
             errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
             requestedRows: quoteTargetMax ?? jobDoc.target_volume_max ?? undefined,
-            events: chronological(mapJobEvents(eventsRes.data)),
+            events: dedupeAndSortChronological(mapJobEvents(eventsRes.data)),
           });
           if (jobDoc.status === "completed" || jobDoc.status === "done") await loadJobResults(jId);
-          if (targetJobId || jobDoc.status === "running" || jobDoc.status === "queued") {
+          const savedCanvasOpen = (() => {
+            try { return sessionStorage.getItem("diger_canvas_open") === "1"; } catch { return false; }
+          })();
+          if (targetJobId || jobDoc.status === "running" || jobDoc.status === "queued" || savedCanvasOpen) {
             setCanvasOpen(true);
           }
         }
@@ -1141,8 +1178,20 @@ export default function ChatWorkspacePage() {
     if (!user || deepLinkHandled.current) return;
     const search = new URLSearchParams(window.location.search);
     const convId = search.get("c");
-    const jobId = search.get("jobId");
     const retry = search.get("retry") === "1";
+    let jobId = search.get("jobId");
+    if (!jobId && typeof window !== "undefined") {
+      try {
+        jobId = sessionStorage.getItem("diger_active_job_id");
+      } catch {}
+    }
+    const shouldOpenCanvas = (() => {
+      try {
+        return sessionStorage.getItem("diger_canvas_open") === "1";
+      } catch {
+        return false;
+      }
+    })();
 
     if (!convId && !jobId) return;
     deepLinkHandled.current = true;
@@ -1173,10 +1222,12 @@ export default function ChatWorkspacePage() {
               reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
               errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
               requestedRows: jobDoc.target_volume_max ?? undefined,
-              events: chronological(mapJobEvents(eventsRes.data)),
+              events: dedupeAndSortChronological(mapJobEvents(eventsRes.data)),
             });
             if (jobDoc.status === "completed" || jobDoc.status === "done") await loadJobResults(jId);
-            setCanvasOpen(true);
+            if (shouldOpenCanvas || search.get("jobId") || jobDoc.status === "running" || jobDoc.status === "queued") {
+              setCanvasOpen(true);
+            }
 
             // If we can find the matching conversation from messages, open it too!
             for (const m of (msgRes.data || []) as any[]) {

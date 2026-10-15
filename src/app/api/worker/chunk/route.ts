@@ -572,11 +572,11 @@ export async function POST(req: NextRequest) {
 
     // Record real progress in job_events
     try {
-      if (!isDone && !compData.already_completed) {
+      if (!compData.already_completed) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم استلام الدفعة ${currentStep + 1}: تم قبول ${acceptedRows.length} سجل جديد (الإجمالي المعتمد: ${recordedDeliveredUnits} من ${targetMax}).`,
+          message: `تم استلام الدفعة ${currentStep + 1}: تم فحص وتدقيق السجلات وقبول ${acceptedRows.length} سجل جديد (الإجمالي المعتمد: ${recordedDeliveredUnits} من ${targetMax}).`,
           units: recordedDeliveredUnits,
           event_type: "progress",
         });
@@ -724,7 +724,7 @@ export async function POST(req: NextRequest) {
          spec.capabilitySlug === "web-company-search" ||
          finalRows.some((r) => r.company_name || r.cr_number));
 
-      const methodologyText = spec.params?.exclusionRules
+      const methodologySummary = spec.params?.exclusionRules
         ? `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`
         : `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`;
 
@@ -740,7 +740,7 @@ export async function POST(req: NextRequest) {
           targetRequested: targetMax,
           entityType: isCompanyResearch ? "companies" : undefined,
           exclusionApplied: Boolean(spec.params?.exclusionRules),
-          methodology: methodologyText,
+          methodology: methodologySummary,
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,
@@ -762,82 +762,114 @@ export async function POST(req: NextRequest) {
         console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
       }
 
+      const methodologyText = generateMethodologyText(finalPayload);
+      const jsonBuffer = Buffer.from(JSON.stringify(finalPayload), "utf-8");
+      const methBuffer = Buffer.from(methodologyText, "utf-8");
+
+      // Save internal research dataset (data.json) & methodology text in partials bucket FIRST.
+      // This guarantees customer collected data is NEVER lost even if report rendering fails.
+      await Promise.allSettled([
+        partialsBucket.upload(
+          `${userId}/${jobId}/data.json`,
+          jsonBuffer,
+          { contentType: "application/json", upsert: true }
+        ),
+        partialsBucket.upload(
+          `${jobId}/data.json`,
+          jsonBuffer,
+          { contentType: "application/json", upsert: true }
+        ),
+        partialsBucket.upload(
+          `${userId}/${jobId}/methodology.txt`,
+          methBuffer,
+          { contentType: "text/plain; charset=utf-8", upsert: true }
+        ),
+        partialsBucket.upload(
+          `${jobId}/methodology.txt`,
+          methBuffer,
+          { contentType: "text/plain; charset=utf-8", upsert: true }
+        ),
+      ]);
+
+      let savedCsvPath: string | null = null;
+      let savedXlsxPath: string | null = null;
+      let savedPdfPath: string | null = null;
+      const fileErrors: string[] = [];
+
       try {
         const {
           generateCsvReport,
           generateExcelReport,
           generatePdfReport,
         } = await import("../../../../functions/shared/fileGenerators");
-        const csvBuf = generateCsvReport(finalPayload);
-        const [xlsxBuf, pdfBuf] = await Promise.all([
-          generateExcelReport(finalPayload),
-          generatePdfReport(finalPayload),
-        ]);
-        const methodologyText = generateMethodologyText(finalPayload);
 
         const resultsBucket = adminClient.storage.from("results");
-        const [csvUp, xlsxUp, pdfUp] = await Promise.all([
-          resultsBucket.upload(csvPath, csvBuf, {
+
+        // 1. CSV Report
+        try {
+          const csvBuf = generateCsvReport(finalPayload);
+          const csvUp = await resultsBucket.upload(csvPath, csvBuf, {
             contentType: "text/csv",
             upsert: true,
-          }),
-          resultsBucket.upload(xlsxPath, xlsxBuf, {
+          });
+          if (!csvUp?.error) {
+            savedCsvPath = csvPath;
+          } else {
+            fileErrors.push(`csv: ${csvUp.error.message || "upload_failed"}`);
+            console.error("[worker:csv_upload_error]", csvUp.error);
+          }
+        } catch (csvErr: any) {
+          fileErrors.push(`csv: ${csvErr?.message || "gen_failed"}`);
+          console.error("[worker:csv_gen_error]", csvErr?.message || csvErr);
+        }
+
+        // 2. Excel (.xlsx) Report
+        try {
+          const xlsxBuf = await generateExcelReport(finalPayload);
+          const xlsxUp = await resultsBucket.upload(xlsxPath, xlsxBuf, {
             contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             upsert: true,
-          }),
-          resultsBucket.upload(pdfPath, pdfBuf, {
+          });
+          if (!xlsxUp?.error) {
+            savedXlsxPath = xlsxPath;
+          } else {
+            fileErrors.push(`xlsx: ${xlsxUp.error.message || "upload_failed"}`);
+            console.error("[worker:xlsx_upload_error]", xlsxUp.error);
+          }
+        } catch (xlsxErr: any) {
+          fileErrors.push(`xlsx: ${xlsxErr?.message || "gen_failed"}`);
+          console.error("[worker:xlsx_gen_error]", xlsxErr?.message || xlsxErr);
+        }
+
+        // 3. PDF Report
+        try {
+          const pdfBuf = await generatePdfReport(finalPayload);
+          const pdfUp = await resultsBucket.upload(pdfPath, pdfBuf, {
             contentType: "application/pdf",
             upsert: true,
-          }),
-        ]);
-
-        if (csvUp?.error || xlsxUp?.error || pdfUp?.error) {
-          throw new Error(
-            csvUp?.error?.message ||
-              xlsxUp?.error?.message ||
-              pdfUp?.error?.message ||
-              "results_upload_error"
-          );
+          });
+          if (!pdfUp?.error) {
+            savedPdfPath = pdfPath;
+          } else {
+            fileErrors.push(`pdf: ${pdfUp.error.message || "upload_failed"}`);
+            console.error("[worker:pdf_upload_error]", pdfUp.error);
+          }
+        } catch (pdfErr: any) {
+          fileErrors.push(`pdf: ${pdfErr?.message || "gen_failed"}`);
+          console.error("[worker:pdf_gen_error]", pdfErr?.message || pdfErr);
         }
+      } catch (importErr: any) {
+        fileErrors.push(`import: ${importErr?.message || "import_failed"}`);
+        console.error("[worker:file_generators_import_failed]", importErr?.message || importErr);
+      }
 
-        const jsonBuffer = Buffer.from(JSON.stringify(finalPayload), "utf-8");
-        const methBuffer = Buffer.from(methodologyText, "utf-8");
-
-        // Save internal research dataset (data.json) & methodology text in partials bucket
-        // (results bucket strictly restricts allowed_mime_types to xlsx, csv, and pdf)
-        const [dataJsonUp1, dataJsonUp2, methUp] = await Promise.all([
-          partialsBucket.upload(
-            `${userId}/${jobId}/data.json`,
-            jsonBuffer,
-            { contentType: "application/json", upsert: true }
-          ),
-          partialsBucket.upload(
-            `${jobId}/data.json`,
-            jsonBuffer,
-            { contentType: "application/json", upsert: true }
-          ),
-          partialsBucket.upload(
-            `${userId}/${jobId}/methodology.txt`,
-            methBuffer,
-            { contentType: "text/plain; charset=utf-8", upsert: true }
-          ),
-        ]);
-
-        if (dataJsonUp1?.error || dataJsonUp2?.error || methUp?.error) {
-          throw new Error(
-            dataJsonUp1?.error?.message ||
-              dataJsonUp2?.error?.message ||
-              methUp?.error?.message ||
-              "partials_artifact_upload_error"
-          );
-        }
-      } catch (uploadErr: any) {
+      if (!savedCsvPath && !savedXlsxPath && !savedPdfPath) {
         console.error(
-          "[worker:results_upload_failed] reason=storage_upload_error",
-          uploadErr?.message || ""
+          "[worker:results_upload_failed] all file generators or uploads failed",
+          fileErrors.join("; ")
         );
         const uploadFailReason =
-          "تعذر حفظ ملفات النتائج النهائية؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+          "تعذر حفظ ملفات النتائج النهائية؛ تم الاحتفاظ بنسخة البيانات في النظام واسترداد كامل الرصيد المحجوز دون أي خصم.";
         const rel = await executeReleaseConfirmation(adminClient, jobId, uploadFailReason);
         if (!rel.confirmed) {
           return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -866,9 +898,9 @@ export async function POST(req: NextRequest) {
           job_id: jobId,
           user_id: userId,
           version_number: 1,
-          file_id_xlsx: xlsxPath,
-          file_id_pdf: pdfPath,
-          file_id_csv: csvPath,
+          file_id_xlsx: savedXlsxPath,
+          file_id_pdf: savedPdfPath,
+          file_id_csv: savedCsvPath,
           created_at: completedAtIso,
         };
         const avRes =
@@ -907,10 +939,11 @@ export async function POST(req: NextRequest) {
       }
 
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
+      const primaryResultPath = savedCsvPath || savedXlsxPath || savedPdfPath || `${userId}/${jobId}/result.csv`;
       const { data: settleData, error: settleErr } = await adminClient.rpc("settle_job_atomic", {
         p_job_id: jobId,
         p_points_cap: jobPointsCap,
-        p_result_file_id: csvPath,
+        p_result_file_id: primaryResultPath,
       });
 
       if (settleErr) {
@@ -936,10 +969,15 @@ export async function POST(req: NextRequest) {
 
       // Record completion event in job_events table
       try {
+        const filesSaved = [
+          savedXlsxPath ? "Excel" : null,
+          savedPdfPath ? "PDF" : null,
+          savedCsvPath ? "CSV" : null,
+        ].filter(Boolean).join(" و ");
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم إكمال استخراج ${finalRows.length} سجل بنجاح وحفظ ملفات النتائج.`,
+          message: `تم إكمال استخراج ${finalRows.length} سجل بنجاح وحفظ ملفات النتائج (${filesSaved || "المتاحة"}).`,
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
-import { formatNumber } from "@/lib/honestDisplay";
 
 export interface TerminalEvent {
   $id: string;
@@ -39,28 +38,28 @@ const clock = (iso?: string) => {
 const PHASE_LABELS: Record<string, { label: string; badgeClass: string; dotClass: string }> = {
   queued: {
     label: "في قائمة الانتظار",
-    badgeClass: "bg-amber-950/40 text-amber-300 border-amber-800/50",
-    dotClass: "bg-amber-400 animate-pulse",
+    badgeClass: "bg-sf border border-ln text-mut",
+    dotClass: "bg-gold animate-pulse",
   },
   running: {
     label: "جاري التنفيذ",
-    badgeClass: "bg-emerald-950/40 text-emerald-300 border-emerald-800/50",
-    dotClass: "bg-emerald-400 animate-pulse",
+    badgeClass: "bg-sf border border-ln text-ink",
+    dotClass: "bg-teal animate-pulse",
   },
   done: {
     label: "اكتمل بنجاح",
-    badgeClass: "bg-blue-950/40 text-blue-300 border-blue-800/50",
-    dotClass: "bg-blue-400",
+    badgeClass: "bg-sf border border-ln text-ink",
+    dotClass: "bg-ok",
   },
   failed: {
     label: "تعذر الاستكمال",
-    badgeClass: "bg-rose-950/40 text-rose-300 border-rose-800/50",
-    dotClass: "bg-rose-400",
+    badgeClass: "bg-sf border border-bad/30 text-bad",
+    dotClass: "bg-bad",
   },
   cancelled: {
     label: "تم الإلغاء",
-    badgeClass: "bg-zinc-800/50 text-zinc-300 border-zinc-700/50",
-    dotClass: "bg-zinc-400",
+    badgeClass: "bg-sf border border-ln text-mut",
+    dotClass: "bg-mut",
   },
 };
 
@@ -134,18 +133,18 @@ export default function ActivityTerminal({
   return (
     <div
       dir="rtl"
-      className="flex h-full w-full flex-col overflow-hidden bg-[#0c1017] text-[#c9d1d9] font-sans antialiased select-text"
+      className="flex h-full w-full flex-col overflow-hidden bg-sf text-ink font-sans antialiased select-text"
     >
-      {/* 1. Terminal Header */}
-      <div className="flex shrink-0 flex-col border-b border-[#21262d] bg-[#161b22] px-4 py-3">
+      {/* 1. Panel Header */}
+      <div className="flex shrink-0 flex-col border-b border-ln bg-sf2 px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <span className="flex h-2.5 w-2.5 rounded-full relative">
               <span className={`h-full w-full rounded-full ${phase.dotClass}`} />
             </span>
-            <span className="text-xs font-semibold text-[#f0f6fc]">سجل النشاط والتنفيذ</span>
+            <span className="text-xs font-semibold text-ink">سجل النشاط والتنفيذ</span>
             <span
-              className={`rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none ${phase.badgeClass}`}
+              className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium leading-none ${phase.badgeClass}`}
             >
               {phase.label}
             </span>
@@ -157,7 +156,7 @@ export default function ActivityTerminal({
                 type="button"
                 onClick={onClose}
                 aria-label="إغلاق لوحة النشاط"
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-[#8b949e] hover:bg-[#21262d] hover:text-[#f0f6fc] transition-colors"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-mut hover:bg-sf hover:text-ink transition-colors cursor-pointer"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 6L6 18M6 6l12 12" />
@@ -168,27 +167,27 @@ export default function ActivityTerminal({
         </div>
 
         {/* Real-time KPI Summary */}
-        <div className="mt-3 grid grid-cols-3 gap-2 rounded-xl border border-[#30363d] bg-[#0d1117] p-2.5 text-center text-xs">
+        <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl border border-ln bg-sf p-2.5 text-center text-xs">
           <div className="flex flex-col items-center justify-center">
-            <span className="text-[11px] text-[#8b949e]">المقبول الفريد</span>
-            <span className="mt-0.5 font-mono text-xs font-bold text-[#f0f6fc]">
+            <span className="text-[11px] text-mut">المقبول الفريد</span>
+            <span className="mt-0.5 text-xs font-semibold text-ink">
               {formatAr(rowsCollected)}
               {requestedRows ? ` / ${formatAr(requestedRows)}` : ""}
             </span>
           </div>
 
-          <div className="flex flex-col items-center justify-center border-x border-[#21262d]">
-            <span className="text-[11px] text-[#8b949e]">التكرار المستبعد</span>
-            <span className="mt-0.5 font-mono text-xs font-bold text-amber-300">
+          <div className="flex flex-col items-center justify-center border-x border-ln">
+            <span className="text-[11px] text-mut">التكرار المستبعد</span>
+            <span className="mt-0.5 text-xs font-semibold text-ink">
               {formatAr(effectiveDuplicates)}
             </span>
           </div>
 
           <div className="flex flex-col items-center justify-center">
-            <span className="text-[11px] text-[#8b949e]">
+            <span className="text-[11px] text-mut">
               {status === "done" ? "النقاط المخصومة" : "النقاط المحجوزة"}
             </span>
-            <span className="mt-0.5 font-mono text-xs font-bold text-emerald-400">
+            <span className="mt-0.5 text-xs font-semibold text-gold">
               {status === "done" && typeof chargedPoints === "number"
                 ? formatAr(chargedPoints)
                 : typeof reservedPoints === "number"
@@ -199,44 +198,39 @@ export default function ActivityTerminal({
         </div>
       </div>
 
-      {/* 2. Scrolling Terminal Output */}
+      {/* 2. Scrolling Events Output */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 font-mono text-[12px] leading-relaxed space-y-2.5 selection:bg-[#264f78]"
+        className="flex-1 overflow-y-auto p-4 text-[13px] leading-relaxed space-y-3"
       >
-        <div className="text-[11px] text-[#8b949e] border-b border-[#21262d] pb-2 mb-3">
-          محطة رصد مهام الاستخراج المباشر — ديجر
-        </div>
-
         {displayEvents.map((evt, idx) => {
           const isError = evt.kind === "error";
           const isProgress = evt.kind === "progress";
           const isWarning = evt.kind === "warning";
 
-          const indicator = isError ? "[×]" : isWarning ? "[!]" : isProgress ? "[>]" : "[•]";
-          const textColor = isError
-            ? "text-rose-400"
+          const dotColor = isError
+            ? "bg-bad"
             : isWarning
-            ? "text-amber-300"
+            ? "bg-gold"
             : isProgress
-            ? "text-emerald-300"
-            : "text-[#c9d1d9]";
+            ? "bg-teal"
+            : "bg-mut/50";
 
           return (
             <div
               key={evt.$id || idx}
-              className={`flex items-start gap-2.5 rounded px-1.5 py-0.5 transition-colors ${textColor} hover:bg-[#161b22]`}
+              className="flex items-start gap-2.5 rounded-xl px-2 py-1.5 transition-colors hover:bg-sf2"
             >
-              <span className="shrink-0 text-[#8b949e] select-none text-[11px]">
+              <span className="shrink-0 text-fnt select-none text-xs tnum pt-0.5">
                 {clock(evt.createdAt)}
               </span>
-              <span className="shrink-0 select-none text-[11px] opacity-75">{indicator}</span>
-              <span className="flex-1 break-words">
+              <span className={`h-2 w-2 rounded-full shrink-0 mt-1.5 ${dotColor}`} />
+              <span className={`flex-1 break-words leading-relaxed ${isError ? "text-bad font-medium" : "text-ink"}`}>
                 {evt.textAr}
                 {typeof evt.count === "number" && evt.count > 0 && (
-                  <span className="mr-1.5 rounded bg-[#21262d] px-1.5 py-0.2 text-[10px] text-[#f0f6fc]">
-                    {formatNumber(evt.count)}
+                  <span className="mr-1.5 rounded-full bg-sf2 border border-ln px-2 py-0.5 text-[11px] text-mut">
+                    {formatAr(evt.count)}
                   </span>
                 )}
               </span>
@@ -244,15 +238,15 @@ export default function ActivityTerminal({
           );
         })}
 
-        {status === "failed" && errorAr && (
-          <div className="mt-3 rounded border border-rose-900/60 bg-rose-950/30 p-2.5 text-xs text-rose-300">
-            [خطأ في التنفيذ]: {errorAr}
+        {status === "failed" && errorAr && !displayEvents.some((e) => e.kind === "error" || (errorAr && (e.textAr.includes(errorAr) || errorAr.includes(e.textAr)))) && (
+          <div className="mt-3 rounded-2xl border border-bad/30 bg-bad/5 p-3 text-xs text-bad leading-relaxed">
+            {errorAr}
           </div>
         )}
 
         {status === "done" && (
-          <div className="mt-3 rounded border border-blue-900/60 bg-blue-950/30 p-2.5 text-xs text-blue-200">
-            [اكتمل التنفيذ]: تم حفظ الملفات النهائية وتسوية الرصيد بنجاح.
+          <div className="mt-3 rounded-2xl border border-ln bg-sf2 p-3 text-xs text-ink leading-relaxed">
+            تم استخراج السجلات وإعداد ملفات النتائج وتوثيقها بنجاح.
           </div>
         )}
       </div>
@@ -263,7 +257,7 @@ export default function ActivityTerminal({
           <button
             type="button"
             onClick={scrollToBottom}
-            className="flex items-center gap-1.5 rounded-full border border-[#30363d] bg-[#161b22] px-3 py-1 text-xs text-[#f0f6fc] shadow-lg hover:bg-[#21262d] transition-all"
+            className="flex items-center gap-1.5 rounded-full border border-ln bg-sf px-3 py-1 text-xs text-ink shadow-sm hover:bg-sf2 transition-all cursor-pointer"
           >
             <span>أحدث الأحداث ↓</span>
           </button>
@@ -272,27 +266,27 @@ export default function ActivityTerminal({
 
       {/* 3. Footer Actions (when completed) */}
       {status === "done" && onDownload && (
-        <div className="shrink-0 border-t border-[#21262d] bg-[#161b22] p-3">
-          <div className="text-[11px] text-[#8b949e] mb-2">الملفات الجاهزة للتحميل:</div>
+        <div className="shrink-0 border-t border-ln bg-sf2 p-3.5">
+          <div className="text-xs text-mut mb-2 font-medium">الملفات الجاهزة للتحميل:</div>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
               onClick={() => onDownload("xlsx")}
-              className="flex-1 min-h-9 cursor-pointer rounded-lg border border-[#30363d] bg-[#0d1117] px-3 text-xs font-semibold text-[#f0f6fc] hover:border-emerald-600 transition-colors"
+              className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
             >
               تحميل Excel
             </button>
             <button
               type="button"
               onClick={() => onDownload("pdf")}
-              className="flex-1 min-h-9 cursor-pointer rounded-lg border border-[#30363d] bg-[#0d1117] px-3 text-xs font-semibold text-[#f0f6fc] hover:border-blue-600 transition-colors"
+              className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
             >
               تحميل PDF
             </button>
             <button
               type="button"
               onClick={() => onDownload("csv")}
-              className="flex-1 min-h-9 cursor-pointer rounded-lg border border-[#30363d] bg-[#0d1117] px-3 text-xs font-semibold text-[#f0f6fc] hover:border-[#8b949e] transition-colors"
+              className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
             >
               تحميل CSV
             </button>

@@ -257,6 +257,9 @@ export default function PlanQuoteCard({
             </button>
             <button
               type="button"
+              data-testid="edit-plan-downscaled-btn"
+              id={`edit-plan-downscaled-btn-${quote.quoteId}`}
+              aria-label={quote.downscaledOffer ? `البدء بـ ${formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط` : "تعديل عدد السجلات"}
               onClick={() => (quote.downscaledOffer && onAcceptDownscaled ? onAcceptDownscaled(quote.downscaledOffer.maxAffordableUnits) : setIsEditing(true))}
               disabled={quote.isDependent && !quote.downscaledOffer}
               className={`${SECONDARY_BTN} min-h-11`}
@@ -297,7 +300,15 @@ export default function PlanQuoteCard({
                 "أوافق وابدأ البحث"
               )}
             </button>
-            <button type="button" onClick={handleOpenEdit} disabled={quote.isDependent} className={`${SECONDARY_BTN} min-h-11`}>
+            <button
+              type="button"
+              data-testid="edit-plan-btn"
+              id={`edit-plan-btn-${quote.quoteId}`}
+              aria-label={isEditing ? "إلغاء التعديل" : "تعديل خطة البحث"}
+              onClick={handleOpenEdit}
+              disabled={quote.isDependent}
+              className={`${SECONDARY_BTN} min-h-11`}
+            >
               {isEditing ? "إلغاء التعديل" : "تعديل"}
             </button>
           </div>

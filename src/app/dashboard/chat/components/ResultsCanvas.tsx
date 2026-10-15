@@ -218,7 +218,6 @@ export default function ResultsCanvas({
             chargedPoints={chargedPoints}
             duplicatesRemoved={duplicatesRemoved}
             errorAr={errorAr}
-            onClose={onClose || onCloseMobile}
             onDownload={onDownload}
           />
         </div>
