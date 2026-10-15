@@ -50,6 +50,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
+import { detectCountryFromText, detectIndustryFromText } from "../../lib/planParameters";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -420,12 +421,18 @@ export function buildAutoPlanProposal(
     typeof topicLabel === "string" &&
     (topicLabel.startsWith("@") || (!topicLabel.includes(" ") && !topicLabel.includes("،") && /^[a-zA-Z0-9_.-]+$/.test(topicLabel)));
 
+  const detectedCountry = detectCountryFromText(message);
+  const detectedIndustry = detectIndustryFromText(message);
+
   const stepParams: Record<string, any> = isCompanySearch
     ? {
         query: {
-          keyword: { include: [topicLabel] },
+          keyword: { include: detectedIndustry.englishKeywords },
+          ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
         },
         search: topicLabel,
+        ...(detectedCountry ? { country: detectedCountry.canonicalEnglish, location: detectedCountry.canonicalEnglish } : {}),
+        industry: detectedIndustry.arabicLabel,
         pagination: { size: Math.min(volume, 100) },
       }
     : {
@@ -1669,28 +1676,39 @@ export class ChatHandler {
         finalContentAr = (output as any).answerAr;
       } else if (output.type === "propose_plan") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const explicitCountry = detectCountryFromText(message);
         const mapPlanItems = (out: any) =>
-          ((out as any).capabilities || (out as any).steps || []).map((c: any) => ({
-            stepId: c.stepId,
-            capabilitySlug: c.capabilitySlug || c.endpointId,
-            endpointId: c.endpointId || c.capabilitySlug,
-            paginationStrategy: c.paginationStrategy,
-            params: {
-              ...(c.params || {}),
-              ...(brief.exclusionFile
-                ? {
-                    exclusionRules: {
-                      fileName: brief.exclusionFile.name,
-                      baselineRowCount: brief.exclusionFile.baselineRowCount,
-                      companyNames: brief.exclusionFile.companyNames,
-                      corporateDomains: brief.exclusionFile.corporateDomains,
-                    },
-                  }
-                : {}),
-            },
-            targetVolumeMin: c.targetVolumeMin || 1,
-            targetVolumeMax: c.targetVolumeMax,
-          }));
+          ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
+            const itemParams = { ...(c.params || {}) };
+            if (explicitCountry && !itemParams.country && !itemParams.location) {
+              itemParams.country = explicitCountry.canonicalEnglish;
+              itemParams.location = explicitCountry.canonicalEnglish;
+              if (itemParams.query && typeof itemParams.query === "object") {
+                itemParams.query.location = { include: [explicitCountry.canonicalEnglish] };
+              }
+            }
+            return {
+              stepId: c.stepId,
+              capabilitySlug: c.capabilitySlug || c.endpointId,
+              endpointId: c.endpointId || c.capabilitySlug,
+              paginationStrategy: c.paginationStrategy,
+              params: {
+                ...itemParams,
+                ...(brief.exclusionFile
+                  ? {
+                      exclusionRules: {
+                        fileName: brief.exclusionFile.name,
+                        baselineRowCount: brief.exclusionFile.baselineRowCount,
+                        companyNames: brief.exclusionFile.companyNames,
+                        corporateDomains: brief.exclusionFile.corporateDomains,
+                      },
+                    }
+                  : {}),
+              },
+              targetVolumeMin: c.targetVolumeMin || 1,
+              targetVolumeMax: c.targetVolumeMax,
+            };
+          });
 
         let planOutput: any = output;
         let planItems = mapPlanItems(planOutput);
