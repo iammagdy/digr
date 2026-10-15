@@ -160,19 +160,32 @@ export function parseIcypeasCompaniesResponse(data: any): { rows: Record<string,
     return { rows: [], nextCursor: null };
   }
 
-  const rows = rawLeads.map((lead: any, idx: number) => ({
-    contact_name: lead.firstname ? `${lead.firstname} ${lead.lastname || ""}`.trim() : "",
-    job_title: String(lead.lastJobTitle || lead.headline || lead.jobTitle || "").trim(),
-    company_name: String(lead.lastCompanyName || lead.name || lead.company_name || `شركة #${idx + 1}`).trim(),
-    website: String(lead.lastCompanyWebsite || lead.website || lead.url || "").trim(),
-    linkedin_url: String(lead.profileUrl || lead.url || "").trim(),
-    industry: String(lead.lastCompanyIndustry || lead.industry || lead.specialties?.[0] || "").trim(),
-    location: String(lead.lastCompanyAddress || lead.address || lead.location || "").trim(),
-    headcount: lead.numberOfEmployees != null && lead.numberOfEmployees !== "" ? String(lead.numberOfEmployees) : (lead.lastCompanySize ? String(lead.lastCompanySize) : ""),
-    description: String(lead.description || lead.headline || lead.slogan || "").trim(),
-    phone: String(lead.phone || "").trim(),
-    founded_year: lead.foundedYear != null ? String(lead.foundedYear) : "",
-  }));
+  const rows = rawLeads.map((lead: any, idx: number) => {
+    const contactName = lead.firstname ? `${lead.firstname} ${lead.lastname || ""}`.trim() : String(lead.fullName || lead.name || "").trim();
+    const jobTitle = String(lead.currentJobTitle || lead.lastJobTitle || lead.headline || lead.jobTitle || "").trim();
+    const companyName = String(lead.currentCompanyName || lead.lastCompanyName || lead.name || lead.company_name || `شركة #${idx + 1}`).trim();
+    const website = String(lead.currentCompanyWebsite || lead.lastCompanyWebsite || lead.website || lead.url || "").trim();
+    const rawEmail = String(lead.email || lead.workEmail || lead.work_email || lead.corporateEmail || "").trim();
+    const phone = String(lead.phone || lead.businessPhone || lead.phone_number || lead.officePhone || "").trim();
+
+    return {
+      contact_name: contactName,
+      job_title: jobTitle,
+      company_name: companyName,
+      website: website,
+      linkedin_url: String(lead.profileUrl || lead.linkedin || lead.url || "").trim(),
+      industry: String(lead.lastCompanyIndustry || lead.currentCompanyIndustry || lead.industry || lead.specialties?.[0] || "").trim(),
+      location: String(lead.lastCompanyAddress || lead.address || lead.location || "").trim(),
+      headcount: lead.numberOfEmployees != null && lead.numberOfEmployees !== "" ? String(lead.numberOfEmployees) : (lead.lastCompanySize ? String(lead.lastCompanySize) : ""),
+      description: String(lead.description || lead.headline || lead.slogan || "").trim(),
+      work_email: rawEmail,
+      phone: phone,
+      email_verification_status: rawEmail ? "متحقق" : "غير متاح",
+      title_verification_status: jobTitle ? "متحقق" : "غير متوفر",
+      verification_status: "متحقق",
+      founded_year: lead.foundedYear != null ? String(lead.foundedYear) : "",
+    };
+  });
 
   const nextCursor = data.pagination?.token ? String(data.pagination.token) : null;
   return { rows, nextCursor };

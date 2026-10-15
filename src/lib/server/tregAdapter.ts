@@ -337,6 +337,78 @@ export function normalizeIcypeasCompanyParams(
   };
 }
 
+/**
+ * Normalizes decision maker / people search parameters into Icypeas API shape:
+ * POST /find-people with { query: { location, currentJobTitle }, pagination: { size, token } }
+ */
+export function normalizeIcypeasPeopleParams(
+  rawParams: Record<string, any>,
+  pageSize: number,
+  cursor?: string | null
+): Record<string, any> {
+  const queryObj: Record<string, any> = (rawParams?.query && typeof rawParams.query === "object")
+    ? { ...rawParams.query }
+    : {};
+
+  const fullPromptText = [
+    rawParams?.search,
+    rawParams?.query,
+    rawParams?.keyword,
+    rawParams?.topic,
+    rawParams?.location,
+    rawParams?.country,
+    rawParams?.city,
+    rawParams?.jobTitle,
+    rawParams?.title,
+    queryObj?.keyword?.include?.[0],
+    queryObj?.location?.include?.[0],
+  ]
+    .filter((v) => typeof v === "string" && v.trim().length > 0)
+    .join(" ");
+
+  const detectedCountry =
+    detectCountryFromText(rawParams?.country || "") ||
+    detectCountryFromText(rawParams?.location || "") ||
+    detectCountryFromText(queryObj?.location?.include?.[0] || "") ||
+    detectCountryFromText(fullPromptText);
+
+  const finalQuery: Record<string, any> = {};
+
+  if (detectedCountry) {
+    finalQuery.location = { include: [detectedCountry.canonicalEnglish] };
+  } else {
+    finalQuery.location = { include: ["Egypt"] };
+  }
+
+  let title = "CEO";
+  const t = fullPromptText.toLowerCase();
+  if (t.includes("ceo") || t.includes("رئيس تنفيذي") || t.includes("الرئيس التنفيذي")) {
+    title = "CEO";
+  } else if (t.includes("cto") || t.includes("مدير تقني") || t.includes("المدير التقني")) {
+    title = "CTO";
+  } else if (t.includes("founder") || t.includes("مؤسس")) {
+    title = "Founder";
+  } else if (t.includes("director") || t.includes("مدير")) {
+    title = "Director";
+  }
+
+  finalQuery.currentJobTitle = { include: [title] };
+
+  const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
+  const paginationObj: Record<string, any> = {
+    size: effectiveSize,
+  };
+
+  if (cursor && String(cursor).trim()) {
+    paginationObj.token = String(cursor).trim();
+  }
+
+  return {
+    query: finalQuery,
+    pagination: paginationObj,
+  };
+}
+
 export interface ProviderAdapterCallInput {
   jobId: string;
   userId: string;
@@ -459,9 +531,17 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     input.capabilitySlug === "icypeas-companies-search" ||
     input.capabilitySlug === "company-research";
 
+  const isIcypeasPeople =
+    effectiveEndpointId === "icypeas.people.search" ||
+    input.capabilitySlug === "icypeas-people-search";
+
+  const isIcypeas = isIcypeasCompanies || isIcypeasPeople;
+
   let pageParams: Record<string, any>;
   if (isIcypeasCompanies) {
     pageParams = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, input.cursor);
+  } else if (isIcypeasPeople) {
+    pageParams = normalizeIcypeasPeopleParams(input.params || {}, input.pageSize, input.cursor);
   } else {
     pageParams = serializeProviderParams(input.params || {});
     if (input.paginationStrategy === "cursor") {
@@ -484,7 +564,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     input.capabilitySlug === "tiktok-profile";
   const retries = isSingleAttemptCap ? 0 : 3;
 
-  const effectiveMethod = isIcypeasCompanies ? "POST" : input.method;
+  const effectiveMethod = isIcypeas ? "POST" : input.method;
 
   const callResult = await executeTregCallWithRetry(
     {
@@ -548,7 +628,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     } else {
       rows = extractAndFlattenRows(callResult.data);
     }
-  } else if (isIcypeasCompanies) {
+  } else if (isIcypeas) {
     const parsed = parseIcypeasCompaniesResponse(callResult.data);
     rows = parsed.rows;
     nextCursor = parsed.nextCursor;
@@ -556,7 +636,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     rows = extractAndFlattenRows(callResult.data);
   }
 
-  if (rows.length > 0 && !isIcypeasCompanies) {
+  if (rows.length > 0 && !isIcypeas) {
     if (input.paginationStrategy === "cursor") {
       const candidateCursor =
         callResult.data?.next_cursor ??
