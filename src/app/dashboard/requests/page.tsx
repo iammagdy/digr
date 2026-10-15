@@ -242,16 +242,15 @@ export default function RequestsPage() {
         // Fall back to direct signed URL navigation
       }
 
-      const a = document.createElement("a");
-      a.href = blobUrl || payload.signedUrl;
-      a.download = payload.downloadFileName || `diger_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
-      if (!blobUrl) a.target = "_blank";
-      document.body.appendChild(a);
-      a.click();
       if (blobUrl) {
-        setTimeout(() => { URL.revokeObjectURL(blobUrl!); a.remove(); }, 250);
+        const a = document.createElement("a");
+        a.href = blobUrl;
+        a.download = payload.downloadFileName || `diger_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => { URL.revokeObjectURL(blobUrl!); a.remove(); }, 30000);
       } else {
-        setTimeout(() => { a.remove(); }, 250);
+        window.location.assign(payload.signedUrl);
       }
     } catch {
       setDlError("تعذّر تحميل الملف. يرجى إعادة المحاولة. (التحميل متاح لمدة ٩٠ يومًا)");

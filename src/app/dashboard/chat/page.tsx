@@ -958,16 +958,15 @@ export default function ChatWorkspacePage() {
         // Fall back to direct signed URL navigation
       }
 
-      const link = document.createElement("a");
-      link.href = blobUrl || payload.signedUrl;
-      link.download = payload.downloadFileName || `diger_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
-      if (!blobUrl) link.target = "_blank";
-      document.body.appendChild(link);
-      link.click();
       if (blobUrl) {
-        setTimeout(() => { URL.revokeObjectURL(blobUrl!); link.remove(); }, 250);
+        const link = document.createElement("a");
+        link.href = blobUrl;
+        link.download = payload.downloadFileName || `diger_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => { URL.revokeObjectURL(blobUrl!); link.remove(); }, 30000);
       } else {
-        setTimeout(() => { link.remove(); }, 250);
+        window.location.assign(payload.signedUrl);
       }
     } catch (err: any) {
       console.error("[chat:download_error]", err);
