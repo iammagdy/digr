@@ -131,6 +131,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       quote: newQuote,
+      planQuote: newQuote,
       messageAr: "تم تحديث الخطة وإعادة احتساب عرض السعر بنجاح!",
     });
   } catch (err: any) {

@@ -2145,6 +2145,7 @@ export class LlmClient {
           "Content-Type": "application/json",
           "x-api-key": apiKey,
           "anthropic-version": "2023-06-01",
+          "anthropic-beta": "prompt-caching-2024-07-31",
         },
         signal: controller.signal,
         body: JSON.stringify({
@@ -2157,6 +2158,7 @@ export class LlmClient {
               name: "actionResult",
               description: "Structured output response from the assistant adhering to Diger system protocols",
               input_schema: ACTION_RESULT_JSON_SCHEMA,
+              cache_control: { type: "ephemeral" },
             },
           ],
           tool_choice: {

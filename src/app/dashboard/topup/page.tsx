@@ -49,6 +49,7 @@ export default function WalletPage() {
   const [amount, setAmount] = useState(100);
   const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
   const [ipa, setIpa] = useState<string | null>(isIpaAvailable(ipaFromEnv) ? ipaFromEnv! : null);
+  const [loadingIpa, setLoadingIpa] = useState(!isIpaAvailable(ipaFromEnv));
   const [maxPending, setMaxPending] = useState(3);
   const formRef = useRef<HTMLDivElement>(null);
   const returnTo = useRef("/dashboard/chat");
@@ -73,8 +74,13 @@ export default function WalletPage() {
           if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
           if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
         })
-        .catch(() => {});
-    } catch {}
+        .catch(() => {})
+        .finally(() => {
+          setLoadingIpa(false);
+        });
+    } catch {
+      setLoadingIpa(false);
+    }
   }, []);
 
   const loadLedger = useCallback(async () => {
@@ -294,6 +300,7 @@ export default function WalletPage() {
             onAmount={setAmount}
             creditValue={creditValue}
             ipa={ipa}
+            loadingIpa={loadingIpa}
             pendingCount={pendingCount}
             maxPending={maxPending}
             onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}

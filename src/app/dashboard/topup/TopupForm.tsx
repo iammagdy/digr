@@ -18,6 +18,7 @@ export default function TopupForm({
   onAmount,
   creditValue,
   ipa,
+  loadingIpa = false,
   onSubmitted,
   pendingCount,
   maxPending,
@@ -26,6 +27,7 @@ export default function TopupForm({
   onAmount: (n: number) => void;
   creditValue: number;
   ipa: string | null;
+  loadingIpa?: boolean;
   onSubmitted: (t: TopupRecord) => void;
   pendingCount: number;
   maxPending: number;
@@ -167,7 +169,9 @@ export default function TopupForm({
       <div className="flex items-center justify-between gap-2.5 rounded-[20px] bg-sf2 px-[18px] py-3.5">
         <div className="min-w-0">
           <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي (IPA) · منصة Diger</p>
-          {ipa ? (
+          {loadingIpa ? (
+            <p className="mb-0 mt-1 animate-pulse text-sm text-mut">جاري تحميل بيانات الدفع...</p>
+          ) : ipa ? (
             <p className="mb-0 mt-1 truncate text-base text-ink" dir="ltr">{ipa}</p>
           ) : (
             <p className="mb-0 mt-1 text-sm text-mut">بيانات الدفع قيد التهيئة حالياً — يرجى التواصل مع فريق الدعم</p>
@@ -176,7 +180,7 @@ export default function TopupForm({
         <button
           type="button"
           onClick={copy}
-          disabled={!ipa}
+          disabled={loadingIpa || !ipa}
           className="min-h-11 shrink-0 cursor-pointer rounded-full border-0 bg-sf px-4 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
           {copied ? "تم النسخ" : "نسخ"}

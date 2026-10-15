@@ -701,17 +701,57 @@ export default function ChatWorkspacePage() {
     newParam: string,
     newFormats: string[]
   ) {
-    const primaryItem = currentQuote.items?.[0] || { capabilitySlug: "tiktok-profile", params: {} };
+    const primaryItem = currentQuote.items?.[0] || { capabilitySlug: "company-research", params: {} };
     const slug = primaryItem.capabilitySlug;
 
     const operations: any[] = [
-      { action: "set_limit", capabilitySlug: slug, targetVolumeMax: Number(newLimit) },
+      { action: "set_limit", capabilitySlug: slug, targetVolumeMax: Math.max(1, Number(newLimit) || 1) },
       { action: "set_formats", formats: newFormats },
     ];
 
-    if (newParam.trim()) {
-      const cleanVal = newParam.replace(/^@/, "").trim();
-      operations.push({ action: "set_param", capabilitySlug: slug, key: "username", value: cleanVal });
+    const cleanVal = typeof newParam === "string" ? newParam.trim() : "";
+    if (cleanVal && cleanVal !== "[object Object]") {
+      const isProfile = slug.includes("profile") || slug.includes("user");
+      const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
+      const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
+
+      if (isProfile) {
+        operations.push({
+          action: "set_param",
+          capabilitySlug: slug,
+          key: "username",
+          value: cleanVal.replace(/^@/, "").trim(),
+        });
+      } else if (isCompany) {
+        operations.push({
+          action: "set_param",
+          capabilitySlug: slug,
+          key: "search",
+          value: cleanVal,
+        });
+        operations.push({
+          action: "set_param",
+          capabilitySlug: slug,
+          key: "query",
+          value: { keyword: { include: [cleanVal] } },
+        });
+      } else if (isPostOrUrl && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
+        const urlKey = slug.includes("youtube") ? "videoUrl" : slug.includes("reddit") ? "postUrl" : "url";
+        operations.push({
+          action: "set_param",
+          capabilitySlug: slug,
+          key: urlKey,
+          value: cleanVal,
+        });
+      } else {
+        const paramKey = primaryItem.params && "keyword" in primaryItem.params ? "keyword" : "query";
+        operations.push({
+          action: "set_param",
+          capabilitySlug: slug,
+          key: paramKey,
+          value: cleanVal,
+        });
+      }
     }
 
     const jwtToken = await getAccessToken();
@@ -734,13 +774,18 @@ export default function ChatWorkspacePage() {
       throw new Error(data.error || "فشل تحديث الخطة وعرض السعر");
     }
 
+    const updatedQuote: PlanQuoteData = data.planQuote || data.quote;
+    if (!updatedQuote) {
+      throw new Error("لم يتم استلام تفاصيل عرض السعر المحدث.");
+    }
+
     setMessages((prev) =>
       prev.map((msg) => {
         if (msg.planQuote?.quoteId === currentQuote.quoteId) {
           return {
             ...msg,
-            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${data.planQuote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${data.planQuote.quotedPoints} نقطة`,
-            planQuote: data.planQuote,
+            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${updatedQuote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${updatedQuote.quotedPoints} نقطة`,
+            planQuote: updatedQuote,
           };
         }
         return msg;

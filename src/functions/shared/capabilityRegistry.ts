@@ -390,6 +390,37 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
     paginationType: "none",
     enabled: true,
   },
+  {
+    id: "company-research",
+    slug: "company-research",
+    platform: "companies",
+    category: "companies",
+    status: "verified",
+    unit: "1000 items",
+    estimatedCostUsdPerUnit: 0.00018,
+    maxItemsPerCall: 50,
+    estimatedSuccessRate: 0.95,
+    verificationNote: VERIFICATION_NOTE,
+    nameAr: "البحث في بيانات الشركات والأعمال",
+    nameEn: "Company & Business Research",
+    descriptionAr: "البحث في بيانات الشركات المسجلة وتفاصيل الاتصال والأنشطة التجارية",
+    paramsSchema: JSON.stringify({
+      type: "object",
+      properties: {
+        search: { type: "string", description: "اسم الشركة أو مجال النشاط" },
+        query: { description: "معايير البحث والاستعلام" },
+        country: { type: "string", description: "الدولة أو النطاق الجغرافي" },
+      },
+      required: [],
+    }),
+    tregEndpointId: "treg.companies.search",
+    tregMethod: "POST",
+    pricingUnit: "item",
+    unitCostUsd: 0.00018,
+    maxRows: 500,
+    paginationType: "cursor",
+    enabled: true,
+  },
 ];
 
 export function buildApprovedCatalog(

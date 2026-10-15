@@ -32,6 +32,7 @@ export const EditPlanSetParamSchema = z.object({
     z.number(),
     z.boolean(),
     z.array(z.string().max(100)).max(20),
+    z.record(z.string(), z.any()),
   ]),
 });
 
