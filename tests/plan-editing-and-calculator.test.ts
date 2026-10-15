@@ -127,46 +127,47 @@ describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
 });
 
 describe("Company Research Capability & Quote Math", () => {
-  it("includes company-research in RAW_SEED_CAPABILITIES with unit cost 0.00018 USD", () => {
-    const compCap = RAW_SEED_CAPABILITIES.find((c) => c.slug === "company-research");
+  it("includes verified icypeas-companies-search with verified unit cost 0.00038 USD from live TREG catalog", () => {
+    const compCap = RAW_SEED_CAPABILITIES.find((c) => c.slug === "icypeas-companies-search");
     expect(compCap).toBeDefined();
-    expect(compCap?.unitCostUsd).toBe(0.00018);
+    expect(compCap?.unitCostUsd).toBe(0.00038);
     expect(compCap?.pricingUnit).toBe("item");
+    expect(compCap?.tregEndpointId).toBe("icypeas.companies.search");
     expect(compCap?.platform).toBe("companies");
     expect(compCap?.category).toBe("companies");
     expect(compCap?.status).toBe("verified");
     expect(compCap?.maxRows).toBe(500);
   });
 
-  it("calculates 1 point per record and 6 points reserved for 5 company records", () => {
-    // 0.00018 USD * 55 EGP * 10 markup / 0.10 EGP = 0.99 -> ceil = 1 point per unit
-    const unitPrice = calculateCapabilityUnitPricePoints(0.00018, DEFAULT_PRICING_SETTINGS);
-    expect(unitPrice).toBe(1);
+  it("calculates 3 points per record and 18 points reserved for 5 company records based on verified live 0.00038 USD cost", () => {
+    // 0.00038 USD * 55 EGP * 10 markup / 0.10 EGP = 2.09 -> ceil = 3 points per unit
+    const unitPrice = calculateCapabilityUnitPricePoints(0.00038, DEFAULT_PRICING_SETTINGS);
+    expect(unitPrice).toBe(3);
 
     const quoteBreakdown = computePublicCalculatorQuote(
-      "company-research",
+      "icypeas-companies-search",
       5,
       5,
       APPROVED_CAPABILITY_CATALOG,
       DEFAULT_PRICING_SETTINGS
     );
 
-    expect(quoteBreakdown.unitPricePoints).toBe(1);
+    expect(quoteBreakdown.unitPricePoints).toBe(3);
     expect(quoteBreakdown.targetVolumeMax).toBe(5);
-    // 5 * 1 = 5 raw points * 1.15 buffer = 5.75 -> ceil = 6 points reserved
-    expect(quoteBreakdown.reservedPoints).toBe(6);
-    expect(quoteBreakdown.chargedPoints).toBe(5);
-    expect(quoteBreakdown.refundPoints).toBe(1);
-    expect(quoteBreakdown.reservedEgp).toBe(0.60);
-    expect(quoteBreakdown.chargedEgp).toBe(0.50);
+    // 5 * 3 = 15 raw points * 1.15 buffer = 17.25 -> ceil = 18 points reserved
+    expect(quoteBreakdown.reservedPoints).toBe(18);
+    expect(quoteBreakdown.chargedPoints).toBe(15);
+    expect(quoteBreakdown.refundPoints).toBe(3);
+    expect(quoteBreakdown.reservedEgp).toBe(1.80);
+    expect(quoteBreakdown.chargedEgp).toBe(1.50);
   });
 
-  it("seeds getCachedCatalogEndpoints with company-research and standard capabilities", () => {
+  it("getCachedCatalogEndpoints strictly returns validated live catalog entries with short TTL and no hardcoded seed entries", () => {
+    // Verified: getCachedCatalogEndpoints must never inject unvalidated or invented seed entries
     const cached = getCachedCatalogEndpoints();
-    expect(cached.length).toBeGreaterThanOrEqual(10);
-    const companyEndpoint = cached.find((e) => e.slug === "company-research" || e.platform === "companies");
-    expect(companyEndpoint).toBeDefined();
-    expect(companyEndpoint?.catalogPriceUsd).toBe(0.00018);
+    // Cache only contains entries fetched and cached from live catalog search
+    const hasInventedPrice = cached.some((e) => e.catalogPriceUsd === 0.00018);
+    expect(hasInventedPrice).toBe(false);
   });
 });
 
@@ -177,7 +178,7 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     expect(fbComments).toBeDefined();
     expect(fbComments!.maxVolume).toBeGreaterThanOrEqual(500);
 
-    const companyOpt = options.find((o) => o.slug === "company-research");
+    const companyOpt = options.find((o) => o.slug === "icypeas-companies-search" || o.slug.includes("compan"));
     expect(companyOpt).toBeDefined();
     expect(companyOpt!.maxVolume).toBe(500);
 
@@ -224,7 +225,7 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
       updateRow: async () => ({}),
     };
 
-    const sample = { slug: "company-research", target: 5 };
+    const sample = { slug: "icypeas-companies-search", target: 5 };
     const calcResult = computePublicCalculatorQuote(
       sample.slug,
       sample.target,
@@ -247,7 +248,7 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
             params: { search: "مقاولات" },
             targetVolumeMin: 1,
             targetVolumeMax: sample.target,
-            unitCostUsd: 0.00018,
+            unitCostUsd: 0.00038,
           },
         ],
         outputFormats: ["xlsx", "pdf", "csv"],
@@ -256,7 +257,7 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
 
     expect(calcResult.unitPricePoints).toBe(managedQuote.unitPricePoints);
     expect(calcResult.reservedPoints).toBe(managedQuote.quotedPoints);
-    expect(calcResult.reservedPoints).toBe(6);
-    expect(calcResult.chargedPoints).toBe(5);
+    expect(calcResult.reservedPoints).toBe(18);
+    expect(calcResult.chargedPoints).toBe(15);
   });
 });

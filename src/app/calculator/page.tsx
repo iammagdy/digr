@@ -257,7 +257,7 @@ export default function PublicCalculatorPage() {
               </thead>
               <tbody className="divide-y divide-ln/40">
                 {[
-                  { slug: "company-research", target: 5 },
+                  { slug: "icypeas-companies-search", target: 5 },
                   { slug: "tiktok-profile", target: 1 },
                   { slug: "facebook-post-comments", target: 20 },
                   { slug: "facebook-post-comments", target: 100 },

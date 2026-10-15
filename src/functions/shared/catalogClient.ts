@@ -38,7 +38,7 @@ export interface SanitizedEndpointForCustomer {
   paginationType: "cursor" | "offset" | "page" | "none";
 }
 
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes short TTL
 const catalogCache = new Map<string, { timestamp: number; results: CatalogEndpointSummary[] }>();
 
 /**
@@ -49,8 +49,9 @@ export function clearCatalogCache(): void {
 }
 
 /**
- * All currently cached catalog endpoints (24h TTL). Used as a fallback source
- * for plan validation alongside the current turn's live search results.
+ * All currently cached validated live catalog endpoints (short 5m TTL).
+ * Strictly contains only endpoints validated from live catalog queries,
+ * never hardcoded or invented seed capabilities.
  */
 export function getCachedCatalogEndpoints(): CatalogEndpointSummary[] {
   const now = Date.now();
@@ -64,39 +65,6 @@ export function getCachedCatalogEndpoints(): CatalogEndpointSummary[] {
       seen.add(key);
       out.push(ep);
     }
-  }
-
-  // Include seed capabilities from APPROVED_CAPABILITY_CATALOG as reliable default catalog
-  for (const cap of APPROVED_CAPABILITY_CATALOG) {
-    const key = cap.slug || cap.id || cap.tregEndpointId;
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    let paramsSchema: Record<string, any> = {};
-    try {
-      paramsSchema = typeof cap.paramsSchema === "string" ? JSON.parse(cap.paramsSchema) : (cap.paramsSchema || {});
-    } catch {}
-    out.push({
-      id: cap.tregEndpointId || cap.id || cap.slug,
-      slug: cap.slug,
-      nameAr: cap.nameAr,
-      nameEn: cap.nameEn,
-      summaryAr: cap.descriptionAr,
-      summaryEn: cap.descriptionAr,
-      platform: (cap.platform || cap.category || "web").toLowerCase(),
-      method: cap.tregMethod || "GET",
-      path: `/${cap.slug}`,
-      paramsSchema,
-      billingUnit: (cap.pricingUnit || "item") as any,
-      catalogPriceUsd: cap.unitCostUsd,
-      pointsPerUnit: cap.pointsPerUnit || 1,
-      pagination: {
-        type: cap.paginationType || "none",
-        maxLimit: cap.maxItemsPerCall || 100,
-      },
-      observedSuccessRate: cap.estimatedSuccessRate || 0.95,
-      observedSamples: 100,
-      scope: "read",
-    });
   }
 
   return out;
@@ -324,8 +292,9 @@ export function normalizeCatalogEndpoint(raw: any): CatalogEndpointSummary {
 
   const catalogPriceUsd = Number.isFinite(rawCostUsd) && rawCostUsd > 0 ? Number(rawCostUsd.toFixed(6)) : 0;
 
-  const billingUnit = (costObj.unit === "record" || costObj.unit === "row" || costObj.unit === "item" || costObj.unit === "page")
-    ? costObj.unit
+  const rawUnit = String(costObj.unit || "").toLowerCase();
+  const billingUnit = (rawUnit === "record" || rawUnit === "row" || rawUnit === "item" || rawUnit === "page" || rawUnit === "result")
+    ? (rawUnit === "result" ? "record" : rawUnit)
     : "call";
 
   const observed = raw.observed || {};
@@ -648,7 +617,19 @@ export async function searchCatalog(
       return aAux - bAux;
     }
 
-    // 3. Platform match
+    // 2b. Deprioritize endpoints with documented live failure warnings (e.g. failed live with 422 openai_error)
+    const aWarn = /failed live|openai_error|not reliable/i.test(a.summaryEn || "") || JSON.stringify(a.paramsSchema).includes("failed live") ? 1 : 0;
+    const bWarn = /failed live|openai_error|not reliable/i.test(b.summaryEn || "") || JSON.stringify(b.paramsSchema).includes("failed live") ? 1 : 0;
+    if (aWarn !== bWarn) {
+      return aWarn - bWarn;
+    }
+
+    // 2c. Prioritize search/discovery endpoints (.search) over lookup/enrichment endpoints
+    const aSearch = a.id.includes(".search") ? 1 : 0;
+    const bSearch = b.id.includes(".search") ? 1 : 0;
+    if (aSearch !== bSearch) {
+      return bSearch - aSearch;
+    }
     if (normPlatform) {
       const aMatch =
         a.platform === normPlatform || (normPlatform === "companies" && a.id.includes("companies")) ? 1 : 0;

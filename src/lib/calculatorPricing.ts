@@ -93,7 +93,9 @@ export function computePublicCalculatorQuote(
   const safeDelivered = Math.max(0, Math.min(safeTarget, Math.floor(Number(deliveredVolume) ?? safeTarget)));
 
   const cap =
-    capabilities.find((c) => c.slug === capabilitySlug) || capabilities[0];
+    capabilities.find((c) => c.slug === capabilitySlug) ||
+    capabilities.find((c) => (capabilitySlug.includes("compan") || capabilitySlug.includes("search")) && c.slug.includes("compan")) ||
+    capabilities[0];
 
   const unitPricePoints = calculateCapabilityUnitPricePoints(cap.unitCostUsd, settings);
   const rawPoints = safeTarget * unitPricePoints;
