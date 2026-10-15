@@ -73,8 +73,30 @@ export function normalizeIcypeasCompanyParams(
       results.push("contracting", "construction");
     } else if (k.includes("عقارات") || k.includes("تطوير عقاري") || k.includes("real estate")) {
       results.push("real estate");
-    } else if (k.includes("تكنولوجيا") || k.includes("برمجيات") || k.includes("software") || k.includes("tech")) {
-      results.push("software", "technology");
+    } else if (
+      k.includes("تكنولوجيا") ||
+      k.includes("تقنية") ||
+      k.includes("معلومات") ||
+      k.includes("برمجيات") ||
+      k.includes("software") ||
+      k.includes("tech") ||
+      k.includes("it")
+    ) {
+      results.push("software", "technology", "information technology");
+    } else if (k.includes("أثاث") || k.includes("موبيليا") || k.includes("furniture")) {
+      results.push("furniture", "woodworking");
+    } else if (k.includes("صواريخ") || k.includes("rocket") || k.includes("aerospace")) {
+      results.push("aerospace", "rocket");
+    } else if (k.includes("أدوية") || k.includes("صيدلة") || k.includes("pharma")) {
+      results.push("pharmaceuticals", "healthcare");
+    } else if (k.includes("أغذية") || k.includes("مطاعم") || k.includes("طعام") || k.includes("food")) {
+      results.push("food", "restaurants", "beverages");
+    } else if (k.includes("سيارات") || k.includes("automotive")) {
+      results.push("automotive", "vehicles");
+    } else if (k.includes("تعليم") || k.includes("مدارس") || k.includes("education")) {
+      results.push("education");
+    } else if (k.includes("مصانع") || k.includes("تصنيع") || k.includes("صناعة") || k.includes("manufacturing")) {
+      results.push("manufacturing", "factory");
     } else if (k.includes("سياحة") || k.includes("فنادق") || k.includes("tourism")) {
       results.push("tourism", "hospitality");
     } else if (k.includes("شحن") || k.includes("لوجستيات") || k.includes("logistics")) {
