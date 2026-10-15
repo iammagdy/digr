@@ -11,6 +11,267 @@ import { getLiveProviderGateStatus } from "./providerGate";
  * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
  * POST /find-companies with { query: { location, keyword, industry }, pagination: { size, token } }
  */
+export interface CountryMapping {
+  canonicalEnglish: string;
+  arabicLabel: string;
+}
+
+export interface IndustryMapping {
+  englishKeywords: string[];
+  arabicLabel: string;
+}
+
+export function detectCountryFromText(text: string): CountryMapping | null {
+  if (!text || typeof text !== "string") return null;
+  const t = text.toLowerCase().trim();
+
+  if (t.includes("ليختنشتاين") || t.includes("liechtenstein")) {
+    return { canonicalEnglish: "Liechtenstein", arabicLabel: "ليختنشتاين" };
+  }
+  if (t.includes("ألمانيا") || t.includes("المانيا") || t.includes("germany") || t.includes("deutschland")) {
+    return { canonicalEnglish: "Germany", arabicLabel: "ألمانيا" };
+  }
+  if (t.includes("النمسا") || t.includes("austria") || t.includes("österreich")) {
+    return { canonicalEnglish: "Austria", arabicLabel: "النمسا" };
+  }
+  if (
+    t.includes("السعودية") ||
+    t.includes("المملكة العربية السعودية") ||
+    t.includes("saudi") ||
+    t.includes("ksa")
+  ) {
+    return { canonicalEnglish: "Saudi Arabia", arabicLabel: "المملكة العربية السعودية" };
+  }
+  if (
+    t.includes("الإمارات") ||
+    t.includes("الامارات") ||
+    t.includes("دبي") ||
+    t.includes("أبوظبي") ||
+    t.includes("ابوظبي") ||
+    t.includes("uae") ||
+    t.includes("emirates")
+  ) {
+    return { canonicalEnglish: "United Arab Emirates", arabicLabel: "الإمارات العربية المتحدة" };
+  }
+  if (
+    t.includes("مصر") ||
+    t.includes("القاهرة") ||
+    t.includes("الإسكندرية") ||
+    t.includes("الاسكندرية") ||
+    t.includes("الجيزة") ||
+    t.includes("egypt") ||
+    t.includes("cairo")
+  ) {
+    return { canonicalEnglish: "Egypt", arabicLabel: "مصر" };
+  }
+  if (t.includes("الكويت") || t.includes("kuwait")) {
+    return { canonicalEnglish: "Kuwait", arabicLabel: "الكويت" };
+  }
+  if (t.includes("قطر") || t.includes("qatar")) {
+    return { canonicalEnglish: "Qatar", arabicLabel: "قطر" };
+  }
+  if (t.includes("البحرين") || t.includes("bahrain")) {
+    return { canonicalEnglish: "Bahrain", arabicLabel: "البحرين" };
+  }
+  if (t.includes("عمان") || t.includes("سلطنة عمان") || t.includes("oman")) {
+    return { canonicalEnglish: "Oman", arabicLabel: "سلطنة عمان" };
+  }
+  if (t.includes("الأردن") || t.includes("الاردن") || t.includes("jordan")) {
+    return { canonicalEnglish: "Jordan", arabicLabel: "الأردن" };
+  }
+  if (t.includes("المملكة المتحدة") || t.includes("بريطانيا") || t.includes("إنجلترا") || t.includes("uk") || t.includes("united kingdom")) {
+    return { canonicalEnglish: "United Kingdom", arabicLabel: "المملكة المتحدة" };
+  }
+  if (t.includes("الولايات المتحدة") || t.includes("أمريكا") || t.includes("امريكا") || t.includes("usa") || t.includes("united states")) {
+    return { canonicalEnglish: "United States", arabicLabel: "الولايات المتحدة" };
+  }
+  if (t.includes("فرنسا") || t.includes("france")) {
+    return { canonicalEnglish: "France", arabicLabel: "فرنسا" };
+  }
+  if (t.includes("إيطاليا") || t.includes("ايطاليا") || t.includes("italy")) {
+    return { canonicalEnglish: "Italy", arabicLabel: "إيطاليا" };
+  }
+  if (t.includes("إسبانيا") || t.includes("اسبانيا") || t.includes("spain")) {
+    return { canonicalEnglish: "Spain", arabicLabel: "إسبانيا" };
+  }
+  if (t.includes("سويسرا") || t.includes("switzerland")) {
+    return { canonicalEnglish: "Switzerland", arabicLabel: "سويسرا" };
+  }
+  if (t.includes("هولندا") || t.includes("netherlands") || t.includes("holland")) {
+    return { canonicalEnglish: "Netherlands", arabicLabel: "هولندا" };
+  }
+  if (t.includes("تركيا") || t.includes("turkey") || t.includes("türkiye")) {
+    return { canonicalEnglish: "Turkey", arabicLabel: "تركيا" };
+  }
+
+  return null;
+}
+
+export function detectIndustryFromText(text: string): IndustryMapping {
+  const t = (text || "").toLowerCase().trim();
+
+  if (t.includes("صواريخ") || t.includes("صاروخ") || t.includes("rocket") || t.includes("aerospace") || t.includes("فضاء")) {
+    return { englishKeywords: ["aerospace", "rocket"], arabicLabel: "صناعة الصواريخ والفضاء" };
+  }
+  if (t.includes("طاقة شمسية") || t.includes("شمسية") || t.includes("solar") || t.includes("طاقة متجددة") || t.includes("renewable")) {
+    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة" };
+  }
+  if (t.includes("أغذية") || t.includes("اغذية") || t.includes("طعام") || t.includes("مطاعم") || t.includes("أطعمة") || t.includes("food") || t.includes("beverage")) {
+    return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم" };
+  }
+  if (
+    t.includes("تقنية") ||
+    t.includes("تكنولوجيا") ||
+    t.includes("معلومات") ||
+    t.includes("برمجيات") ||
+    t.includes("برمجة") ||
+    t.includes("software") ||
+    t.includes("tech") ||
+    t.includes("it")
+  ) {
+    return { englishKeywords: ["information technology", "software", "technology"], arabicLabel: "تقنية المعلومات والبرمجيات" };
+  }
+  if (
+    t.includes("مقاولات") ||
+    t.includes("تشييد") ||
+    t.includes("بناء") ||
+    t.includes("construction") ||
+    t.includes("contracting")
+  ) {
+    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد" };
+  }
+  if (t.includes("أثاث") || t.includes("اثاث") || t.includes("موبيليا") || t.includes("furniture") || t.includes("woodworking")) {
+    return { englishKeywords: ["furniture", "woodworking"], arabicLabel: "صناعة الأثاث" };
+  }
+  if (t.includes("عقارات") || t.includes("تطوير عقاري") || t.includes("real estate")) {
+    return { englishKeywords: ["real estate"], arabicLabel: "التطوير العقاري" };
+  }
+  if (t.includes("أدوية") || t.includes("ادوية") || t.includes("صيدلة") || t.includes("pharma")) {
+    return { englishKeywords: ["pharmaceuticals", "healthcare"], arabicLabel: "الأدوية والرعاية الصحية" };
+  }
+  if (t.includes("سيارات") || t.includes("automotive") || t.includes("vehicles")) {
+    return { englishKeywords: ["automotive", "vehicles"], arabicLabel: "السيارات والمركبات" };
+  }
+  if (t.includes("تعليم") || t.includes("مدارس") || t.includes("education")) {
+    return { englishKeywords: ["education"], arabicLabel: "التعليم" };
+  }
+  if (t.includes("سياحة") || t.includes("فنادق") || t.includes("tourism") || t.includes("hospitality")) {
+    return { englishKeywords: ["tourism", "hospitality"], arabicLabel: "السياحة والضيافة" };
+  }
+  if (t.includes("شحن") || t.includes("لوجستيات") || t.includes("logistics") || t.includes("freight")) {
+    return { englishKeywords: ["logistics", "freight"], arabicLabel: "الشحن والخدمات اللوجستية" };
+  }
+  if (t.includes("صيد الحيتان") || t.includes("حيتان") || t.includes("whale hunting") || t.includes("whaling")) {
+    return { englishKeywords: ["whale hunting", "whaling"], arabicLabel: "صيد الحيتان" };
+  }
+  if (t.includes("مصانع") || t.includes("تصنيع") || t.includes("صناعة") || t.includes("manufacturing") || t.includes("factory")) {
+    return { englishKeywords: ["manufacturing", "factory"], arabicLabel: "التصنيع والإنتاج الصناعي" };
+  }
+
+  // Fallback: clean words
+  const cleaned = t
+    .replace(/[^\w\s\u0600-\u06FF]/g, " ")
+    .replace(/\b(عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (cleaned.length > 0) {
+    return { englishKeywords: [cleaned], arabicLabel: cleaned };
+  }
+
+  return { englishKeywords: ["contracting"], arabicLabel: "قواعد بيانات الشركات" };
+}
+
+/**
+ * Validates whether a company record returned from provider genuinely matches requested location.
+ */
+export function isCompanyRowMatchingLocation(row: Record<string, any>, expectedCountryCanonical?: string | null): boolean {
+  if (!expectedCountryCanonical) return true;
+  const targetLower = expectedCountryCanonical.toLowerCase().trim();
+  const rowLoc = String(row.location || row.address || row.country || row.city || "").toLowerCase();
+  const rowWeb = String(row.website || row.linkedin_url || "").toLowerCase();
+  const rowDesc = String(row.description || "").toLowerCase();
+
+  if (targetLower.includes("liechtenstein")) {
+    return (
+      rowLoc.includes("liechtenstein") ||
+      rowLoc.includes("balzers") ||
+      rowLoc.includes("vaduz") ||
+      rowLoc.includes("schaan") ||
+      rowWeb.includes(".li") ||
+      rowDesc.includes("liechtenstein")
+    );
+  }
+  if (targetLower.includes("saudi")) {
+    return (
+      rowLoc.includes("saudi") ||
+      rowLoc.includes("riyadh") ||
+      rowLoc.includes("jeddah") ||
+      rowLoc.includes("dammam") ||
+      rowLoc.includes("khobar") ||
+      rowWeb.includes(".sa") ||
+      rowLoc.includes("السعودية") ||
+      rowLoc.includes("المملكة العربية السعودية")
+    );
+  }
+  if (targetLower.includes("emirates") || targetLower.includes("uae")) {
+    return (
+      rowLoc.includes("emirates") ||
+      rowLoc.includes("uae") ||
+      rowLoc.includes("dubai") ||
+      rowLoc.includes("abu dhabi") ||
+      rowLoc.includes("sharjah") ||
+      rowWeb.includes(".ae") ||
+      rowLoc.includes("الإمارات") ||
+      rowLoc.includes("الامارات") ||
+      rowLoc.includes("دبي")
+    );
+  }
+  if (targetLower.includes("germany")) {
+    return (
+      rowLoc.includes("germany") ||
+      rowLoc.includes("deutschland") ||
+      rowLoc.includes("berlin") ||
+      rowLoc.includes("munich") ||
+      rowLoc.includes("münchen") ||
+      rowLoc.includes("essen") ||
+      rowLoc.includes("frankfurt") ||
+      rowLoc.includes("hamburg") ||
+      rowWeb.includes(".de") ||
+      rowLoc.includes("ألمانيا")
+    );
+  }
+  if (targetLower.includes("egypt")) {
+    return (
+      rowLoc.includes("egypt") ||
+      rowLoc.includes("cairo") ||
+      rowLoc.includes("giza") ||
+      rowLoc.includes("alexandria") ||
+      rowWeb.includes(".eg") ||
+      rowLoc.includes("مصر") ||
+      rowLoc.includes("القاهرة") ||
+      rowLoc.includes("الجيزة")
+    );
+  }
+  if (targetLower.includes("austria")) {
+    return (
+      rowLoc.includes("austria") ||
+      rowLoc.includes("österreich") ||
+      rowLoc.includes("vienna") ||
+      rowLoc.includes("wien") ||
+      rowWeb.includes(".at") ||
+      rowLoc.includes("النمسا")
+    );
+  }
+
+  return rowLoc.includes(targetLower) || rowDesc.includes(targetLower);
+}
+
+/**
+ * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
+ * POST /find-companies with { query: { location, keyword, industry }, pagination: { size, token } }
+ * NEVER defaults country to Egypt. Extracts true country and industry from user parameters.
+ */
 export function normalizeIcypeasCompanyParams(
   rawParams: Record<string, any>,
   pageSize: number,
@@ -20,108 +281,51 @@ export function normalizeIcypeasCompanyParams(
     ? { ...rawParams.query }
     : {};
 
-  const rawLocation = String(
-    rawParams?.location ||
-    rawParams?.country ||
-    rawParams?.city ||
-    queryObj?.location?.include?.[0] ||
-    (typeof queryObj?.location === "string" ? queryObj.location : "") ||
-    ""
-  ).trim();
+  const fullPromptText = [
+    rawParams?.search,
+    rawParams?.query,
+    rawParams?.keyword,
+    rawParams?.topic,
+    rawParams?.location,
+    rawParams?.country,
+    rawParams?.city,
+    queryObj?.keyword?.include?.[0],
+    queryObj?.location?.include?.[0],
+  ]
+    .filter((v) => typeof v === "string" && v.trim().length > 0)
+    .join(" ");
 
-  const rawKeyword = String(
-    rawParams?.keyword ||
-    rawParams?.search ||
-    rawParams?.query ||
-    rawParams?.topic ||
-    queryObj?.keyword?.include?.[0] ||
-    (typeof queryObj?.keyword === "string" ? queryObj.keyword : "") ||
-    ""
-  ).trim();
+  // 1. Detect Country without hidden default
+  let detectedCountry =
+    detectCountryFromText(rawParams?.country || "") ||
+    detectCountryFromText(rawParams?.location || "") ||
+    detectCountryFromText(queryObj?.location?.include?.[0] || "") ||
+    detectCountryFromText(fullPromptText);
 
-  const rawIndustry = String(
-    rawParams?.industry ||
-    rawParams?.sector ||
-    queryObj?.industry?.include?.[0] ||
-    (typeof queryObj?.industry === "string" ? queryObj.industry : "") ||
-    ""
-  ).trim();
+  // 2. Detect Industry
+  const detectedIndustry = detectIndustryFromText(fullPromptText);
 
-  const translateLocation = (loc: string): string => {
-    const l = loc.toLowerCase();
-    if (l.includes("مصر") || l.includes("egypt")) return "Egypt";
-    if (l.includes("القاهرة") || l.includes("cairo")) return "Cairo, Egypt";
-    if (l.includes("الجيزة") || l.includes("giza")) return "Giza, Egypt";
-    if (l.includes("الإسكندرية") || l.includes("alexandria")) return "Alexandria, Egypt";
-    if (l.includes("السعودية") || l.includes("saudi")) return "Saudi Arabia";
-    if (l.includes("الرياض") || l.includes("riyadh")) return "Riyadh, Saudi Arabia";
-    if (l.includes("الإمارات") || l.includes("uae") || l.includes("emirates")) return "United Arab Emirates";
-    if (l.includes("دبي") || l.includes("dubai")) return "Dubai, United Arab Emirates";
-    return loc || "Egypt";
-  };
+  const finalQuery: Record<string, any> = {};
 
-  const translateKeywords = (kw: string): string[] => {
-    const k = kw.toLowerCase();
-    const results: string[] = [];
-    if (
-      k.includes("مقاولات") ||
-      k.includes("تشييد") ||
-      k.includes("بناء") ||
-      k.includes("construction") ||
-      k.includes("contracting")
-    ) {
-      results.push("contracting", "construction");
-    } else if (k.includes("عقارات") || k.includes("تطوير عقاري") || k.includes("real estate")) {
-      results.push("real estate");
-    } else if (
-      k.includes("تكنولوجيا") ||
-      k.includes("تقنية") ||
-      k.includes("معلومات") ||
-      k.includes("برمجيات") ||
-      k.includes("software") ||
-      k.includes("tech") ||
-      k.includes("it")
-    ) {
-      results.push("software", "technology", "information technology");
-    } else if (k.includes("أثاث") || k.includes("موبيليا") || k.includes("furniture")) {
-      results.push("furniture", "woodworking");
-    } else if (k.includes("صواريخ") || k.includes("rocket") || k.includes("aerospace")) {
-      results.push("aerospace", "rocket");
-    } else if (k.includes("أدوية") || k.includes("صيدلة") || k.includes("pharma")) {
-      results.push("pharmaceuticals", "healthcare");
-    } else if (k.includes("أغذية") || k.includes("مطاعم") || k.includes("طعام") || k.includes("food")) {
-      results.push("food", "restaurants", "beverages");
-    } else if (k.includes("سيارات") || k.includes("automotive")) {
-      results.push("automotive", "vehicles");
-    } else if (k.includes("تعليم") || k.includes("مدارس") || k.includes("education")) {
-      results.push("education");
-    } else if (k.includes("مصانع") || k.includes("تصنيع") || k.includes("صناعة") || k.includes("manufacturing")) {
-      results.push("manufacturing", "factory");
-    } else if (k.includes("سياحة") || k.includes("فنادق") || k.includes("tourism")) {
-      results.push("tourism", "hospitality");
-    } else if (k.includes("شحن") || k.includes("لوجستيات") || k.includes("logistics")) {
-      results.push("logistics", "freight");
-    } else if (k.includes("استشارات") || k.includes("consulting")) {
-      results.push("consulting");
-    } else if (kw) {
-      const cleaned = kw.replace(/[^\w\s\u0600-\u06FF]/g, " ").trim();
-      if (cleaned) results.push(cleaned);
-    }
-    return results.length > 0 ? results : ["contracting"];
-  };
-
-  const locationVal = translateLocation(rawLocation || "Egypt");
-  const keywordVals = translateKeywords(rawKeyword || rawIndustry || "contracting");
-
-  const finalQuery: Record<string, any> = {
-    location: { include: [locationVal] },
-    keyword: { include: keywordVals },
-  };
-
-  if (rawIndustry) {
-    const indVals = translateKeywords(rawIndustry);
-    finalQuery.industry = { include: indVals };
+  if (detectedCountry) {
+    finalQuery.location = { include: [detectedCountry.canonicalEnglish] };
+  } else {
+    // If no country was specified by the user, default explicitly to Egypt
+    detectedCountry = { canonicalEnglish: "Egypt", arabicLabel: "مصر (افتراضي)" };
+    finalQuery.location = { include: ["Egypt"] };
   }
+
+  finalQuery.keyword = { include: detectedIndustry.englishKeywords };
+
+  if (rawParams?.industry) {
+    finalQuery.industry = { include: detectedIndustry.englishKeywords };
+  }
+
+  // Preserve extracted constraints for delivery verification
+  finalQuery._expectedCountry = detectedCountry?.canonicalEnglish || null;
+  finalQuery._expectedCountryAr = detectedCountry?.arabicLabel || null;
+  finalQuery._expectedIndustryAr = detectedIndustry.arabicLabel;
+  finalQuery._expectedKeywords = detectedIndustry.englishKeywords;
 
   const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
   const paginationObj: Record<string, any> = {
