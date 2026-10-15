@@ -126,6 +126,24 @@ export async function POST(req: NextRequest) {
       }
       verifiedUserId = guestSessionToUuid(guestSessionCookie);
       emailVerified = true;
+
+      // Ensure guest user exists in auth.users so foreign keys on conversations & messages are satisfied
+      if (tables.auth?.admin?.createUser) {
+        try {
+          const { error: createGuestErr } = await tables.auth.admin.createUser({
+            id: verifiedUserId,
+            email: `${verifiedUserId}@guest.internal`,
+            password: crypto.randomUUID(),
+            email_confirm: false,
+            user_metadata: { is_guest: true, guest_session: guestSessionCookie },
+          });
+          if (createGuestErr && !createGuestErr.message?.toLowerCase().includes("already")) {
+            console.warn("[chat:ensure_guest_user_warn]", createGuestErr.message);
+          }
+        } catch (guestErr: any) {
+          console.warn("[chat:ensure_guest_user_error]", guestErr?.message);
+        }
+      }
     } else {
       // Authenticated user: migrate previous guest conversation if guest session cookie exists
       if (guestSessionCookie) {
@@ -135,6 +153,9 @@ export async function POST(req: NextRequest) {
             tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
             tables.from("messages").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
           ]);
+          if (tables.auth?.admin?.deleteUser) {
+            await tables.auth.admin.deleteUser(prevGuestUuid).catch(() => {});
+          }
         } catch (migErr) {
           console.warn("[chat:guest_migration_failed]", migErr);
         }
