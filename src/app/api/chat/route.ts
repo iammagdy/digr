@@ -120,34 +120,61 @@ export async function POST(req: NextRequest) {
       }
 
       isGuest = true;
-      if (!guestSessionCookie) {
-        guestSessionCookie = `gst_${crypto.randomUUID()}`;
-        newGuestCookieToSet = guestSessionCookie;
-      }
-      verifiedUserId = guestSessionToUuid(guestSessionCookie);
-      emailVerified = true;
-
-      // Ensure guest user exists in auth.users so foreign keys on conversations & messages are satisfied
-      if (tables.auth?.admin?.createUser) {
-        try {
-          const { error: createGuestErr } = await tables.auth.admin.createUser({
-            id: verifiedUserId,
-            email: `${verifiedUserId}@guest.internal`,
-            password: crypto.randomUUID(),
-            email_confirm: false,
-            user_metadata: { is_guest: true, guest_session: guestSessionCookie },
-          });
-          if (createGuestErr && !createGuestErr.message?.toLowerCase().includes("already")) {
-            console.warn("[chat:ensure_guest_user_warn]", createGuestErr.message);
+      let existingGuestId: string | null = null;
+      if (guestSessionCookie && guestSessionCookie.startsWith("gst_")) {
+        const potentialUuid = guestSessionCookie.slice(4);
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(potentialUuid)) {
+          if (tables.auth?.admin?.getUserById) {
+            try {
+              const { data: userCheck } = await tables.auth.admin.getUserById(potentialUuid);
+              if (userCheck?.user?.id) {
+                existingGuestId = userCheck.user.id;
+              }
+            } catch {}
+          } else {
+            existingGuestId = potentialUuid;
           }
-        } catch (guestErr: any) {
-          console.warn("[chat:ensure_guest_user_error]", guestErr?.message);
         }
       }
+
+      if (existingGuestId) {
+        verifiedUserId = existingGuestId;
+      } else if (tables.auth?.admin?.createUser) {
+        try {
+          const { data: newGuestUser, error: createGuestErr } = await tables.auth.admin.createUser({
+            email: `guest_${crypto.randomUUID().replace(/-/g, "")}@diger.tech`,
+            password: crypto.randomUUID(),
+            email_confirm: false,
+            user_metadata: { is_guest: true },
+          });
+          if (newGuestUser?.user?.id) {
+            verifiedUserId = newGuestUser.user.id;
+            guestSessionCookie = `gst_${verifiedUserId}`;
+            newGuestCookieToSet = guestSessionCookie;
+          } else if (createGuestErr) {
+            console.warn("[chat:create_guest_user_warn]", createGuestErr.message);
+          }
+        } catch (guestErr: any) {
+          console.warn("[chat:create_guest_user_error]", guestErr?.message);
+        }
+      }
+
+      if (!verifiedUserId) {
+        if (!guestSessionCookie) {
+          guestSessionCookie = `gst_${crypto.randomUUID()}`;
+          newGuestCookieToSet = guestSessionCookie;
+        }
+        verifiedUserId = guestSessionCookie.startsWith("gst_") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestSessionCookie.slice(4))
+          ? guestSessionCookie.slice(4)
+          : guestSessionToUuid(guestSessionCookie);
+      }
+      emailVerified = true;
     } else {
       // Authenticated user: migrate previous guest conversation if guest session cookie exists
       if (guestSessionCookie) {
-        const prevGuestUuid = guestSessionToUuid(guestSessionCookie);
+        const prevGuestUuid = guestSessionCookie.startsWith("gst_") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestSessionCookie.slice(4))
+          ? guestSessionCookie.slice(4)
+          : guestSessionToUuid(guestSessionCookie);
         try {
           await Promise.all([
             tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
