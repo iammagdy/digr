@@ -81,46 +81,34 @@ export const ResearchIntentSchema = z.object({
   methodologyRequirements: IntentFieldSchema(z.array(z.string())),
 });
 
+import { extractNumberFromText, normalizeEasternArabicDigits } from "../arabicNumbers";
+import { detectCountryFromText } from "../planParameters";
+
 /**
  * Normalizes Eastern Arabic digits to standard ASCII digits
  */
 function normalizeDigits(text: string): string {
-  return text.replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+  return normalizeEasternArabicDigits(text);
 }
 
 /**
  * Extracts sample size / count from Egyptian Arabic phrasing
  */
 export function extractSampleSize(text: string): { count?: number; provenance: ProvenanceStatus; sourceText?: string } {
-  const norm = normalizeDigits(text);
-  // Match e.g. "50 شركة", "100 فيديو", "500 تعليق", "1000 بوست", "عايز 50", "حجم 200"
-  const match = norm.match(
-    /(?:عايز|حجم|عدد|بحد أقصى|بحد اقصى|استخرج|اجمع)?\s*(\d+)\s*(?:شركة|شركات|مؤسسة|فيديو|فيديوهات|مقطع|مقاطع|بوست|بوستات|منشور|منشورات|تعليق|تعليقات|سجل|سجلات|عينة|عينات)?/i
-  );
-  if (match && match[1]) {
-    const val = parseInt(match[1], 10);
-    if (val > 0 && val <= 100000) {
-      return { count: val, provenance: "EXPLICIT", sourceText: match[0].trim() };
-    }
+  const num = extractNumberFromText(text);
+  if (num !== undefined && num > 0 && num <= 100000) {
+    return { count: num, provenance: "EXPLICIT", sourceText: String(num) };
   }
   return { provenance: "UNKNOWN" };
 }
 
 /**
- * Extracts geographic scope from Egyptian Arabic phrasing
- */
-/**
- * Extracts geographic scope from Egyptian Arabic phrasing
+ * Extracts geographic scope from Egyptian Arabic phrasing and global countries
  */
 export function extractGeographicScope(text: string): { scope: string; provenance: ProvenanceStatus; sourceText?: string } {
-  if (/(?:^|[^\p{L}\p{N}])(مصر|مصرية|مصري|القاهرة|الإسكندرية|اسكندرية|الجيزة|الدلتا|الصعيد)(?:$|[^\p{L}\p{N}])/iu.test(text)) {
-    return { scope: "مصر", provenance: "EXPLICIT", sourceText: "مصر" };
-  }
-  if (/(?:^|[^\p{L}\p{N}])(السعودية|سعودية|الرياض|جدة|الدمام|المملكة)(?:$|[^\p{L}\p{N}])/iu.test(text)) {
-    return { scope: "المملكة العربية السعودية", provenance: "EXPLICIT", sourceText: "السعودية" };
-  }
-  if (/(?:^|[^\p{L}\p{N}])(الإمارات|اماراتية|دبي|أبوظبي|الشارقة)(?:$|[^\p{L}\p{N}])/iu.test(text)) {
-    return { scope: "الإمارات", provenance: "EXPLICIT", sourceText: "الإمارات" };
+  const detected = detectCountryFromText(text);
+  if (detected) {
+    return { scope: detected.arabicLabel, provenance: "EXPLICIT", sourceText: detected.arabicLabel };
   }
   if (/(?:^|[^\p{L}\p{N}])(الخليج|دول الخليج|الوطن العربي|الشرق الأوسط)(?:$|[^\p{L}\p{N}])/iu.test(text)) {
     return { scope: "الشرق الأوسط والخليج العربي", provenance: "EXPLICIT", sourceText: "الخليج" };

@@ -30,6 +30,7 @@ import {
   detectIndustryFromText,
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
+import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -471,6 +472,8 @@ export async function POST(req: NextRequest) {
       spec.capabilitySlug === "web-company-search" ||
       spec.endpointId.includes("icypeas");
 
+    let uncertainRows: any[] = [];
+
     if (isCompanyCapability && Array.isArray(filteredRows) && filteredRows.length > 0) {
       const fullText = [
         spec.params?.search,
@@ -494,16 +497,56 @@ export async function POST(req: NextRequest) {
       const expectedCountry = targetCountryObj?.canonicalEnglish || null;
       const expectedIndustry = detectIndustryFromText(fullText);
 
-      const countBeforeValidation = filteredRows.length;
-      filteredRows = filteredRows.filter((r: any) =>
-        isCompanyRowMatchingConstraints(r, expectedCountry, expectedIndustry.arabicLabel)
-      );
+      const candidateRowsForReview = filteredRows.map((r: any, idx: number) => ({
+        index: idx,
+        id: r.id || `comp_${idx + 1}`,
+        company_name: r.company_name || r.name,
+        industry: r.industry,
+        description: r.description,
+        location: r.location || r.city || r.country,
+        website: r.website || r.url,
+      }));
 
-      const rejectedCount = countBeforeValidation - filteredRows.length;
-      if (rejectedCount > 0) {
+      const reviews = await reviewCompanyBatch({
+        customerRequest: fullText || spec.params?.search || "",
+        targetCountry: expectedCountry || "Egypt",
+        targetIndustryAr: expectedIndustry.arabicLabel,
+        rows: candidateRowsForReview,
+      });
+
+      const matchedRows: any[] = [];
+      const excludedRows: any[] = [];
+
+      reviews.forEach((rev, idx) => {
+        const originalRow = filteredRows[idx];
+        if (rev.decision === "match") {
+          matchedRows.push({ ...originalRow, _relevance_status: "مطابق", _relevance_reason: rev.reasonAr });
+        } else if (rev.decision === "uncertain") {
+          uncertainRows.push({ ...originalRow, _relevance_status: "قيد المراجعة والتدقيق", _relevance_reason: rev.reasonAr });
+        } else {
+          excludedRows.push({ ...originalRow, _relevance_status: "غير مطابق", _relevance_reason: rev.reasonAr });
+        }
+      });
+
+      filteredRows = matchedRows;
+
+      if (excludedRows.length > 0 || uncertainRows.length > 0) {
         console.log(
-          `[worker:validation] Excluded ${rejectedCount} company records failing constraints (country: ${expectedCountry || "any"}, industry: ${expectedIndustry.arabicLabel}). Matching retained: ${filteredRows.length}`
+          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry.arabicLabel})`
         );
+      }
+
+      // Record detailed event in job_events
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `فحص ملاءمة الدفعة: ${matchedRows.length} مطابق، ${uncertainRows.length} قيد المراجعة، ${excludedRows.length} مستبعد (غير مطابق).`,
+          units: currentDelivered + matchedRows.length,
+          event_type: "progress",
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:relevance_event_warning]", evtErr?.message || "");
       }
     }
 
@@ -532,9 +575,9 @@ export async function POST(req: NextRequest) {
       spec.paginationStrategy !== "none" &&
       acceptedRows.length < Math.min(effectivePageSize, remainingUnits) &&
       !adapterResult.nextCursor;
+    // Multi-page fetching continues until targetMax matching rows are reached or cursor exhausted
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
-      acceptedRows.length > 0 &&
       newDeliveredUnits < targetMax &&
       !isShortLastPage;
     const isDone = !hasMorePages || newDeliveredUnits >= targetMax;

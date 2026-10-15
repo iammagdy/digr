@@ -19,6 +19,7 @@ export interface CountryMapping {
 export interface IndustryMapping {
   englishKeywords: string[];
   arabicLabel: string;
+  exactTaxonomy?: string[];
 }
 
 export function detectCountryFromText(text: string): CountryMapping | null {
@@ -111,13 +112,13 @@ export function detectIndustryFromText(text: string): IndustryMapping {
   const t = (text || "").toLowerCase().trim();
 
   if (t.includes("صواريخ") || t.includes("صاروخ") || t.includes("rocket") || t.includes("aerospace") || t.includes("فضاء")) {
-    return { englishKeywords: ["aerospace", "rocket"], arabicLabel: "صناعة الصواريخ والفضاء" };
+    return { englishKeywords: ["aerospace", "rocket"], arabicLabel: "صناعة الصواريخ والفضاء", exactTaxonomy: ["Aviation & Aerospace", "Defense & Space"] };
   }
   if (t.includes("طاقة شمسية") || t.includes("شمسية") || t.includes("solar") || t.includes("طاقة متجددة") || t.includes("renewable")) {
-    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة" };
+    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة", exactTaxonomy: ["Renewables & Environment", "Oil & Energy"] };
   }
   if (t.includes("أغذية") || t.includes("اغذية") || t.includes("طعام") || t.includes("مطاعم") || t.includes("أطعمة") || t.includes("food") || t.includes("beverage")) {
-    return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم" };
+    return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم", exactTaxonomy: ["Food & Beverages", "Restaurants"] };
   }
   if (
     t.includes("تقنية") ||
@@ -129,7 +130,7 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     t.includes("tech") ||
     t.includes("it")
   ) {
-    return { englishKeywords: ["information technology", "software", "technology"], arabicLabel: "تقنية المعلومات والبرمجيات" };
+    return { englishKeywords: ["information technology", "software", "technology"], arabicLabel: "تقنية المعلومات والبرمجيات", exactTaxonomy: ["Information Technology & Services", "Computer Software"] };
   }
   if (
     t.includes("مقاولات") ||
@@ -138,34 +139,34 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     t.includes("construction") ||
     t.includes("contracting")
   ) {
-    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد" };
+    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد", exactTaxonomy: ["Construction", "Building Materials"] };
   }
   if (t.includes("أثاث") || t.includes("اثاث") || t.includes("موبيليا") || t.includes("furniture") || t.includes("woodworking")) {
-    return { englishKeywords: ["furniture", "woodworking"], arabicLabel: "صناعة الأثاث" };
+    return { englishKeywords: ["furniture", "woodworking"], arabicLabel: "صناعة الأثاث", exactTaxonomy: ["Furniture"] };
   }
   if (t.includes("عقارات") || t.includes("تطوير عقاري") || t.includes("real estate")) {
-    return { englishKeywords: ["real estate"], arabicLabel: "التطوير العقاري" };
+    return { englishKeywords: ["real estate"], arabicLabel: "التطوير العقاري", exactTaxonomy: ["Real Estate"] };
   }
   if (t.includes("أدوية") || t.includes("ادوية") || t.includes("صيدلة") || t.includes("pharma")) {
-    return { englishKeywords: ["pharmaceuticals", "healthcare"], arabicLabel: "الأدوية والرعاية الصحية" };
+    return { englishKeywords: ["pharmaceuticals", "healthcare"], arabicLabel: "الأدوية والرعاية الصحية", exactTaxonomy: ["Pharmaceuticals", "Hospital & Health Care"] };
   }
   if (t.includes("سيارات") || t.includes("automotive") || t.includes("vehicles")) {
-    return { englishKeywords: ["automotive", "vehicles"], arabicLabel: "السيارات والمركبات" };
+    return { englishKeywords: ["automotive", "vehicles"], arabicLabel: "السيارات والمركبات", exactTaxonomy: ["Automotive"] };
   }
   if (t.includes("تعليم") || t.includes("مدارس") || t.includes("education")) {
-    return { englishKeywords: ["education"], arabicLabel: "التعليم" };
+    return { englishKeywords: ["education"], arabicLabel: "التعليم", exactTaxonomy: ["Education Management", "Primary/Secondary Education"] };
   }
   if (t.includes("سياحة") || t.includes("فنادق") || t.includes("tourism") || t.includes("hospitality")) {
-    return { englishKeywords: ["tourism", "hospitality"], arabicLabel: "السياحة والضيافة" };
+    return { englishKeywords: ["tourism", "hospitality"], arabicLabel: "السياحة والضيافة", exactTaxonomy: ["Hospitality", "Leisure, Travel & Tourism"] };
   }
   if (t.includes("شحن") || t.includes("لوجستيات") || t.includes("logistics") || t.includes("freight")) {
-    return { englishKeywords: ["logistics", "freight"], arabicLabel: "الشحن والخدمات اللوجستية" };
+    return { englishKeywords: ["logistics", "freight"], arabicLabel: "الشحن والخدمات اللوجستية", exactTaxonomy: ["Logistics & Supply Chain", "Transportation/Trucking/Railroad"] };
   }
   if (t.includes("صيد الحيتان") || t.includes("حيتان") || t.includes("whale hunting") || t.includes("whaling")) {
-    return { englishKeywords: ["whale hunting", "whaling"], arabicLabel: "صيد الحيتان" };
+    return { englishKeywords: ["whale hunting", "whaling"], arabicLabel: "صيد الحيتان", exactTaxonomy: ["Fishery"] };
   }
   if (t.includes("مصانع") || t.includes("تصنيع") || t.includes("صناعة") || t.includes("manufacturing") || t.includes("factory")) {
-    return { englishKeywords: ["manufacturing", "factory"], arabicLabel: "التصنيع والإنتاج الصناعي" };
+    return { englishKeywords: ["manufacturing", "factory"], arabicLabel: "التصنيع والإنتاج الصناعي", exactTaxonomy: ["Mechanical or Industrial Engineering", "Electrical/Electronic Manufacturing"] };
   }
 
   // Fallback: clean words
@@ -313,6 +314,10 @@ export function normalizeIcypeasCompanyParams(
     // If no country was specified by the user, default explicitly to Egypt
     detectedCountry = { canonicalEnglish: "Egypt", arabicLabel: "مصر (افتراضي)" };
     finalQuery.location = { include: ["Egypt"] };
+  }
+
+  if (detectedIndustry.exactTaxonomy && detectedIndustry.exactTaxonomy.length > 0) {
+    finalQuery.industry = { include: detectedIndustry.exactTaxonomy };
   }
 
   finalQuery.keyword = { include: detectedIndustry.englishKeywords };

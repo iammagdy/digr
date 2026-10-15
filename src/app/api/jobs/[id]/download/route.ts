@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 
 export const dynamic = "force-dynamic";
 
@@ -60,7 +61,31 @@ export async function GET(
       return NextResponse.json({ success: false, error: "صيغة الملف غير مدعومة" }, { status: 400 });
     }
 
-    const downloadFileName = `digr_${job.template_slug || "dataset"}_${jobId.slice(0, 8)}.${format}`;
+    let country = "مصر";
+    let industry = "شركات";
+    const count = job.delivered_units || job.rows_collected || job.target_volume_max || 1;
+    const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
+
+    const sourceText = `${job.brief || ""} ${job.search_query || ""} ${job.template_slug || ""}`;
+    const detectedC = detectCountryFromText(sourceText);
+    if (detectedC?.arabicLabel) {
+      country = detectedC.arabicLabel;
+    }
+    const detectedInd = detectIndustryFromText(sourceText);
+    if (detectedInd?.arabicLabel) {
+      industry = detectedInd.arabicLabel;
+    }
+
+    const isCompanyJob =
+      job.platform === "companies" ||
+      job.template_slug?.includes("compan") ||
+      job.template_slug?.includes("b2b");
+
+    let downloadFileName = isCompanyJob
+      ? `${industry} في ${country} - ${count} شركة - ${date}.${format}`
+      : `${job.template_slug || "بيانات"} - ${count} سجل - ${date}.${format}`;
+
+    downloadFileName = downloadFileName.replace(/[/\\?%*:|"<>]/g, "-").trim();
 
     // 4. Candidate file paths in results storage bucket
     const candidatePaths = [

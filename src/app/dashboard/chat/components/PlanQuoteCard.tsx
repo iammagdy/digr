@@ -44,7 +44,14 @@ export interface PlanQuoteData {
 interface PlanQuoteCardProps {
   quote: PlanQuoteData;
   onStart: (quote: PlanQuoteData) => void;
-  onSaveEdit: (quote: PlanQuoteData, newLimit: number, newParam: string, newFormats: string[]) => Promise<void>;
+  onSaveEdit: (
+    quote: PlanQuoteData,
+    newLimit: number,
+    newParam: string,
+    newFormats: string[],
+    newCountry?: string,
+    newIndustry?: string
+  ) => Promise<void>;
   onAcceptDownscaled?: (units: number) => void;
   isStarting: boolean;
   /** Live available points (ledger sum). null while unknown: the quote's own snapshot is used. */
@@ -89,6 +96,9 @@ const PRIMARY_BTN =
 const SECONDARY_BTN =
   "cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2 disabled:opacity-50";
 
+const EDIT_PLAN_BTN_LABEL = "تعديل الخطة";
+export const _LEGACY_EDIT_BTN_LABEL = "تعديل";
+
 import { extractParamDisplayString, extractInterpretedParameters } from "@/lib/planParameters";
 export { extractParamDisplayString, extractInterpretedParameters };
 
@@ -111,6 +121,8 @@ export default function PlanQuoteCard({
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr);
   const [editParamVal, setEditParamVal] = useState(initialParam);
+  const [editCountry, setEditCountry] = useState(interpreted.countryAr);
+  const [editIndustry, setEditIndustry] = useState(interpreted.industryAr);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -119,7 +131,10 @@ export default function PlanQuoteCard({
 
   useEffect(() => {
     const pItem = quote.items?.[0];
+    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr);
     setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    setEditCountry(inter.countryAr);
+    setEditIndustry(inter.industryAr);
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   }, [quote]);
@@ -146,7 +161,10 @@ export default function PlanQuoteCard({
 
   function handleOpenEdit() {
     const pItem = quote.items?.[0];
+    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr);
     setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    setEditCountry(inter.countryAr);
+    setEditIndustry(inter.industryAr);
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
     setEditError("");
@@ -157,7 +175,7 @@ export default function PlanQuoteCard({
     setSavingEdit(true);
     setEditError("");
     try {
-      await onSaveEdit(quote, editLimit, editParamVal, editFormats);
+      await onSaveEdit(quote, editLimit, editParamVal, editFormats, editCountry, editIndustry);
       setIsEditing(false);
     } catch (err: any) {
       const rawMsg = err instanceof Error ? err.message : String(err || "");
@@ -186,6 +204,7 @@ export default function PlanQuoteCard({
     <div className="mt-[18px] rounded-2xl border border-ln bg-sf p-4" style={{ animation: "up .6s both" }} aria-label="خطة البحث وعرض السعر" dir="rtl">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
+          <p className="m-0 text-xs text-mut mb-1 font-medium">التكلفة المتوقعة</p>
           <p className="m-0 text-[34px] font-normal leading-none text-ink">
             {formatAr(quote.quotedPoints)}
             <span className="text-base text-mut" style={{ marginInlineStart: 8 }}>نقطة</span>
@@ -222,6 +241,29 @@ export default function PlanQuoteCard({
         </div>
       </div>
 
+      {/* Execution Steps */}
+      <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]">
+        <p className="m-0 font-medium text-ink">خطوات التنفيذ المنهجية:</p>
+        <ul className="m-0 list-inside space-y-1 pr-1 font-light text-ink2">
+          <li className="flex items-start gap-2">
+            <span className="text-ac font-bold">١.</span>
+            <span>استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد ({interpreted.countryAr} · {interpreted.industryAr}).</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-ac font-bold">٢.</span>
+            <span>تدقيق الملاءمة الذكي ومراجعة كل شركة واستبعاد الأنشطة غير المطابقة.</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-ac font-bold">٣.</span>
+            <span>إزالة التكرار والتحقق من هواتف النطاق وبيانات التواصل المتاحة.</span>
+          </li>
+          <li className="flex items-start gap-2">
+            <span className="text-ac font-bold">٤.</span>
+            <span>إعداد ملف البيانات المعتمد ({formats.join("، ")}) وتوثيق المنهجية الأكاديمية المستقلة.</span>
+          </li>
+        </ul>
+      </div>
+
       {/* Deliverable format choices chips directly on the main card */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
         <span className="text-mut text-[12px]">صيغ التسليم المعتمدة:</span>
@@ -241,30 +283,49 @@ export default function PlanQuoteCard({
 
       {isEditing && !locked && (
         <div className="mt-4 space-y-3 rounded-[18px] bg-sf2 p-3.5 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label htmlFor={`pq-country-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الدولة / النطاق الجغرافي</label>
+              <input
+                id={`pq-country-${quote.quoteId}`} type="text" value={editCountry} onChange={(e) => setEditCountry(e.target.value)} dir="auto"
+                className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
+              />
+            </div>
+            <div>
+              <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">النشاط / التخصص الرئيسي</label>
+              <input
+                id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto"
+                className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
+              />
+            </div>
+          </div>
           <div>
-            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الهدف المستهدف</label>
+            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الكلمات المفتاحية / الاستعلام</label>
             <input
               id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
-              className="min-h-11 w-full rounded-full border border-ln bg-sf px-4 text-base font-light text-ink outline-none focus:border-ln2"
+              className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
             />
           </div>
           <div>
-            <label htmlFor={`pq-limit-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الحد الأقصى للسجلات</label>
+            <label htmlFor={`pq-limit-${quote.quoteId}`} className="mb-1 block font-medium text-ink">العدد الأقصى المطلوب (سجلات)</label>
             <input
               id={`pq-limit-${quote.quoteId}`} type="number" inputMode="numeric" min={1} max={10000} value={editLimit} onChange={(e) => setEditLimit(Number(e.target.value))}
-              className="tnum min-h-11 w-full rounded-full border border-ln bg-sf px-4 text-base font-light text-ink outline-none focus:border-ln2"
+              className="tnum min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
             />
           </div>
-          <div className="flex flex-wrap gap-2" role="group" aria-label="الصيغ">
-            {["xlsx", "pdf", "csv"].map((f) => (
-              <button
-                key={f} type="button" aria-pressed={editFormats.includes(f)} onClick={() => toggleFormat(f)}
-                className="min-h-11 cursor-pointer rounded-full px-3.5 text-[13px] text-ink"
-                style={{ border: `1px solid ${editFormats.includes(f) ? "var(--gold)" : "var(--ln)"}`, background: editFormats.includes(f) ? "var(--sf)" : "transparent" }}
-              >
-                {FORMAT_LABEL[f]}
-              </button>
-            ))}
+          <div>
+            <label className="mb-1 block font-medium text-ink">صيغ التسليم</label>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="الصيغ">
+              {["xlsx", "pdf", "csv"].map((f) => (
+                <button
+                  key={f} type="button" aria-pressed={editFormats.includes(f)} onClick={() => toggleFormat(f)}
+                  className="min-h-10 cursor-pointer rounded-xl px-3.5 text-[13px] text-ink"
+                  style={{ border: `1px solid ${editFormats.includes(f) ? "var(--gold)" : "var(--ln)"}`, background: editFormats.includes(f) ? "var(--sf)" : "transparent" }}
+                >
+                  {FORMAT_LABEL[f]}
+                </button>
+              ))}
+            </div>
           </div>
           {editError && <p role="alert" className="m-0 text-xs text-bad">{editError}</p>}
           <div className="flex items-center justify-end gap-2 pt-1">
@@ -344,7 +405,7 @@ export default function PlanQuoteCard({
               disabled={quote.isDependent}
               className={`${SECONDARY_BTN} min-h-11`}
             >
-              {isEditing ? "إلغاء التعديل" : "تعديل"}
+              {isEditing ? "إلغاء التعديل" : EDIT_PLAN_BTN_LABEL}
             </button>
           </div>
           <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">بالموافقة سيُحجز المبلغ تقديريًا — ولا يُخصم النهائي إلا بعد تسليم السجلات.</p>

@@ -43,11 +43,8 @@ export interface NormalizedDataset {
  */
 export function escapeFormula(value: any): any {
   if (typeof value !== "string") return value;
-  if (/^[=+\-@\t\r]/.test(value)) {
-    return `'${value}`;
-  }
   const trimmed = value.trim();
-  if (/^[=+\-@\t\r]/.test(trimmed)) {
+  if (/^[=+\-@\t\r]/.test(value) || /^[=+\-@\t\r]/.test(trimmed)) {
     return `'${value}`;
   }
   return value;
