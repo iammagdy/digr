@@ -372,7 +372,7 @@ export function extractBriefFromMessage(
       let rawMatch = topicMatch[1].trim();
       rawMatch = rawMatch
         .replace(/(?:خلال الفترة|خلال|من الفترة|بحد أقصى|بحد اقصى|عدد|آخر شهر|آخر أسبوع).*$/i, "")
-        .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة)\b/gi, "")
+        .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة|شركات|شركة|مؤسسات|مؤسسة)\b/gi, "")
         .trim();
       if (rawMatch.length > 1 && !isGreetingWord(rawMatch) && !brief.topics.includes(rawMatch)) {
         brief.topics.push(rawMatch);

@@ -1201,51 +1201,91 @@ export class LlmClient {
         m.content.includes("propose_plan"),
     );
     if (hasPhase2PlanInstruction || options.testScenario === "phase2_plan") {
+      const isCompanyPrompt =
+        promptLower.includes("شركات") ||
+        promptLower.includes("شركة") ||
+        promptLower.includes("مؤسسات") ||
+        promptLower.includes("مؤسسة") ||
+        promptLower.includes("companies") ||
+        promptLower.includes("b2b");
+
+      const targetPlatform = isCompanyPrompt
+        ? "compan"
+        : promptLower.includes("فيسبوك") || promptLower.includes("facebook")
+        ? "facebook"
+        : promptLower.includes("instagram") || promptLower.includes("انستغرام")
+        ? "instagram"
+        : promptLower.includes("tiktok") || promptLower.includes("تيك توك")
+        ? "tiktok"
+        : promptLower.includes("twitter") || promptLower.includes("تويتر") || /\bمنصة\s*x\b|\bx\b/i.test(promptLower)
+        ? "x"
+        : promptLower.includes("youtube") || promptLower.includes("يوتيوب")
+        ? "youtube"
+        : promptLower.includes("reddit") || promptLower.includes("ريديت")
+        ? "reddit"
+        : "";
+
       const matchedCap = (options.sanitizedCapabilities || []).find((c: any) =>
-        (c.platform || c.slug || "").toLowerCase().includes(
-          promptLower.includes("فيسبوك") ? "facebook" :
-          promptLower.includes("instagram") || promptLower.includes("انستغرام") ? "instagram" :
-          promptLower.includes("tiktok") || promptLower.includes("تيك توك") ? "tiktok" :
-          promptLower.includes("twitter") || promptLower.includes("تويتر") || promptLower.includes("x") ? "x" :
-          promptLower.includes("youtube") || promptLower.includes("يوتيوب") ? "youtube" :
-          promptLower.includes("reddit") || promptLower.includes("ريديت") ? "reddit" : ""
-        )
+        (c.platform || c.slug || c.category || c.id || "").toLowerCase().includes(targetPlatform)
       ) || options.sanitizedCapabilities?.[0] || {
-        slug: "facebook-post-comments",
-        id: "facebook-post-comments",
-        nameAr: "استخراج تعليقات فيسبوك",
+        slug: isCompanyPrompt ? "icypeas-companies-search" : "facebook-post-comments",
+        id: isCompanyPrompt ? "icypeas.companies.search" : "facebook-post-comments",
+        nameAr: isCompanyPrompt ? "بحث واستخراج بيانات الشركات" : "استخراج تعليقات فيسبوك",
       };
 
       let volume = 100;
-      const volMatch = lastUserMsg.match(/(\d+)/);
+      const volMatch = lastUserMsg.match(/(\d+|[٠-٩]+)/);
       if (volMatch) {
-        const parsed = parseInt(volMatch[1], 10);
+        const raw = volMatch[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+        const parsed = parseInt(raw, 10);
         if (parsed > 0) volume = parsed;
       }
       for (const m of options.messages) {
         if (typeof m.content === "string") {
-          const mVol = m.content.match(/حجم البيانات.*حتى\s*(\d+)/);
-          if (mVol) volume = parseInt(mVol[1], 10);
+          const mVol = m.content.match(/حجم البيانات.*حتى\s*(\d+|[٠-٩]+)/);
+          if (mVol) {
+            const raw = mVol[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+            volume = parseInt(raw, 10);
+          }
         }
       }
+
+      const isCompanySearch =
+        isCompanyPrompt ||
+        (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("compan") ||
+        (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("b2b") ||
+        (matchedCap.id || "").includes("icypeas");
+
+      const params = isCompanySearch
+        ? {
+            query: { keyword: { include: ["contracting", "construction"] }, location: { include: ["Egypt"] } },
+            pagination: { size: volume },
+          }
+        : { query: lastUserMsg.slice(0, 50), postUrl: "https://www.facebook.com/post/123" };
+
+      const summaryAr = isCompanySearch
+        ? `استخراج بيانات ${volume} سجل من شركات مقاولات في مصر`
+        : `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`;
 
       return {
         output: {
           type: "propose_plan",
-          summaryAr: `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`,
+          summaryAr,
           capabilities: [
             {
               stepId: "plan_step_1",
-              capabilitySlug: matchedCap.slug || "facebook-post-comments",
-              endpointId: matchedCap.id || matchedCap.slug || "facebook-post-comments",
-              params: { query: lastUserMsg.slice(0, 50), postUrl: "https://www.facebook.com/post/123" },
+              capabilitySlug: matchedCap.slug || (isCompanySearch ? "icypeas-companies-search" : "facebook-post-comments"),
+              endpointId: matchedCap.id || matchedCap.slug || (isCompanySearch ? "icypeas.companies.search" : "facebook-post-comments"),
+              params,
               targetVolumeMin: 1,
               targetVolumeMax: volume,
-              paginationStrategy: "cursor",
+              paginationStrategy: isCompanySearch ? "none" : "cursor",
             },
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
-          methodologyNotes: "استخراج وتوثيق البيانات العامة وفق المعايير البحثية المعتمدة.",
+          methodologyNotes: isCompanySearch
+            ? "جمع وتوثيق البيانات العامة لمنصة قواعد بيانات الشركات وفق المعايير البحثية المعتمدة."
+            : "استخراج وتوثيق البيانات العامة وفق المعايير البحثية المعتمدة.",
         },
         inputTokens: 600,
         outputTokens: 120,
@@ -1969,6 +2009,60 @@ export class LlmClient {
       };
     }
 
+    // I. Companies / B2B research plan proposal
+    if (
+      promptLower.includes("شركات") ||
+      promptLower.includes("شركة") ||
+      promptLower.includes("مؤسسات") ||
+      promptLower.includes("مؤسسة") ||
+      promptLower.includes("companies") ||
+      promptLower.includes("business")
+    ) {
+      const volumeMatch = lastUserMsg.match(/(\d+|[٠-٩]+)/);
+      let targetVolume = 5;
+      if (volumeMatch) {
+        const raw = volumeMatch[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
+        targetVolume = Math.max(1, parseInt(raw, 10) || 5);
+      }
+      const cap = (options.sanitizedCapabilities || []).find(
+        (c: any) =>
+          (c.platform || c.category || c.slug || "").toLowerCase().includes("compan") ||
+          (c.platform || c.category || c.slug || "").toLowerCase().includes("b2b") ||
+          (c.id || "").includes("icypeas")
+      ) || {
+        slug: "icypeas-companies-search",
+        id: "icypeas.companies.search",
+      };
+
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: `استخراج بيانات ${targetVolume} سجل من شركات مقاولات في مصر`,
+          capabilities: [
+            {
+              stepId: "plan_step_1",
+              capabilitySlug: cap.slug || "icypeas-companies-search",
+              endpointId: cap.id || cap.slug || "icypeas.companies.search",
+              params: {
+                query: { keyword: { include: ["contracting", "construction"] }, location: { include: ["Egypt"] } },
+                pagination: { size: targetVolume },
+              },
+              targetVolumeMin: 1,
+              targetVolumeMax: targetVolume,
+              paginationStrategy: "none",
+            },
+          ],
+          outputFormats: ["xlsx", "pdf", "csv"],
+          methodologyNotes: "جمع وتوثيق البيانات العامة لمنصة قواعد بيانات الشركات وفق المعايير البحثية المعتمدة.",
+        },
+        inputTokens: 800,
+        outputTokens: 140,
+        costUsd: (800 * 0.10 + 140 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
     // Default: Ask clarifying discovery questions with tappable suggested options
     return {
       output: {
@@ -2321,12 +2415,35 @@ export class LlmClient {
         if (!scrubbedPayload.capabilities && scrubbedPayload.steps) {
           scrubbedPayload.capabilities = scrubbedPayload.steps;
         }
+        if (!Array.isArray(scrubbedPayload.capabilities) || scrubbedPayload.capabilities.length === 0) {
+          const defaultCap = options.sanitizedCapabilities?.[0];
+          scrubbedPayload.capabilities = [
+            {
+              stepId: "plan_step_1",
+              capabilitySlug: defaultCap?.slug || "icypeas-companies-search",
+              params: {},
+              targetVolumeMin: 1,
+              targetVolumeMax: defaultCap?.maxRows || 5,
+            },
+          ];
+        }
         if (Array.isArray(scrubbedPayload.capabilities)) {
           for (const cap of scrubbedPayload.capabilities) {
-            if (!cap.capabilitySlug && cap.endpointId) {
-              cap.capabilitySlug = cap.endpointId;
+            if (!cap.capabilitySlug) {
+              cap.capabilitySlug =
+                cap.endpointId ||
+                cap.slug ||
+                cap.id ||
+                options.sanitizedCapabilities?.[0]?.slug ||
+                "icypeas-companies-search";
             }
+            if (!cap.params || typeof cap.params !== "object") cap.params = {};
+            if (!cap.targetVolumeMin) cap.targetVolumeMin = 1;
+            if (!cap.targetVolumeMax) cap.targetVolumeMax = 5;
           }
+        }
+        if (!scrubbedPayload.summaryAr) {
+          scrubbedPayload.summaryAr = "خطة استخراج بيانات وبحث عامة";
         }
       }
 
@@ -2349,7 +2466,7 @@ export class LlmClient {
       } else {
         const issues = parseResult.error.issues;
         const failingPaths = issues.map((iss) => (Array.isArray(iss.path) ? iss.path.join(".") : String(iss.path || ""))).filter(Boolean).join(", ").slice(0, 200);
-        console.warn(`[llm:schema_tolerant_recovery] failingPaths=${failingPaths}`);
+        console.warn(`[llm:schema_tolerant_recovery] failingPaths=${failingPaths}`, JSON.stringify(issues), "payload:", JSON.stringify(scrubbedPayload));
 
         const candidateText =
           extractedText ||
@@ -2496,12 +2613,35 @@ export class LlmClient {
         if (!parsedResult.capabilities && parsedResult.steps) {
           parsedResult.capabilities = parsedResult.steps;
         }
+        if (!Array.isArray(parsedResult.capabilities) || parsedResult.capabilities.length === 0) {
+          const defaultCap = options.sanitizedCapabilities?.[0];
+          parsedResult.capabilities = [
+            {
+              stepId: "plan_step_1",
+              capabilitySlug: defaultCap?.slug || "icypeas-companies-search",
+              params: {},
+              targetVolumeMin: 1,
+              targetVolumeMax: defaultCap?.maxRows || 5,
+            },
+          ];
+        }
         if (Array.isArray(parsedResult.capabilities)) {
           for (const cap of parsedResult.capabilities) {
-            if (!cap.capabilitySlug && cap.endpointId) {
-              cap.capabilitySlug = cap.endpointId;
+            if (!cap.capabilitySlug) {
+              cap.capabilitySlug =
+                cap.endpointId ||
+                cap.slug ||
+                cap.id ||
+                options.sanitizedCapabilities?.[0]?.slug ||
+                "icypeas-companies-search";
             }
+            if (!cap.params || typeof cap.params !== "object") cap.params = {};
+            if (!cap.targetVolumeMin) cap.targetVolumeMin = 1;
+            if (!cap.targetVolumeMax) cap.targetVolumeMax = 5;
           }
+        }
+        if (!parsedResult.summaryAr) {
+          parsedResult.summaryAr = "خطة استخراج بيانات وبحث عامة";
         }
       }
 

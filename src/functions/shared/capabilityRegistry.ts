@@ -668,6 +668,7 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
 }
 
 const PLATFORM_PATTERNS: Array<{ platform: string; labelAr: string; regex: RegExp }> = [
+  { platform: "companies", labelAr: "قواعد بيانات الشركات والأعمال (B2B Databases)", regex: /شركات|شركة|مؤسسات|مؤسسة|أعمال|business|companies|company|\bb2b\b/i },
   { platform: "tiktok", labelAr: "تيك توك (TikTok)", regex: /تيك\s*توك|tiktok/i },
   { platform: "facebook", labelAr: "فيسبوك (Facebook)", regex: /فيسبوك|فيس\s*بوك|facebook|\bfb\b/i },
   { platform: "x", labelAr: "منصة X (تويتر)", regex: /تويتر|تغريد|twitter|منصة\s*x|\bx\.com\b/i },
