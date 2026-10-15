@@ -31,6 +31,7 @@ import {
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
 import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
+import { toArabicDigits } from "../../../../lib/arabicDigits";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -815,16 +816,25 @@ export async function POST(req: NextRequest) {
          spec.capabilitySlug === "web-company-search" ||
          finalRows.some((r) => r.company_name || r.cr_number || r.website_url || r.company_size || r.industry));
 
+      const detectedCountry = detectCountryFromText(
+        [spec.params?.country, spec.params?.location, spec.params?.search, spec.params?.query?.keyword?.include?.[0]].filter(Boolean).join(" ")
+      )?.arabicLabel || "مصر";
+
       const methodologySummary = spec.params?.exclusionRules
-        ? `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`
-        : `تم استخراج ${finalRows.length} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`;
+        ? `تم استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: تم الجمع والتحقق حصرياً من مصادر متاحة علناً.`
+        : `تم استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: تم الجمع والتحقق حصرياً من مصادر متاحة علناً.`;
+
+      const cleanTitle = isCompanyResearch
+        ? `دليل الشركات والمؤسسات المعتمدة في ${detectedCountry}`
+        : "تقرير البيانات المعتمدة والتحقق المنهجي";
 
       const finalPayload: any = {
         metadata: {
-          platform: (spec as any).platform || "Digr Data Platform",
-          company: "Digr",
-          title: `نتائج استخراج ${spec.capabilitySlug}`,
-          template: spec.capabilitySlug,
+          platform: "web",
+          country: detectedCountry,
+          company: "Diger",
+          title: cleanTitle,
+          template: isCompanyResearch ? "شركات ومؤسسات" : spec.capabilitySlug,
           jobId,
           collectedAt: completedAtIso,
           rowsCount: finalRows.length,

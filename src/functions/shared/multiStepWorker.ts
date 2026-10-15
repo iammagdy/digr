@@ -161,13 +161,15 @@ export function parseIcypeasCompaniesResponse(data: any): { rows: Record<string,
   }
 
   const rows = rawLeads.map((lead: any, idx: number) => ({
-    company_name: String(lead.name || lead.company_name || `شركة #${idx + 1}`).trim(),
-    website: String(lead.website || lead.url || "").trim(),
-    linkedin_url: String(lead.url || "").trim(),
-    industry: String(lead.industry || lead.specialties?.[0] || "").trim(),
-    location: String(lead.address || lead.location || "").trim(),
-    headcount: lead.numberOfEmployees != null && lead.numberOfEmployees !== "" ? String(lead.numberOfEmployees) : "",
-    description: String(lead.description || lead.slogan || "").trim(),
+    contact_name: lead.firstname ? `${lead.firstname} ${lead.lastname || ""}`.trim() : "",
+    job_title: String(lead.lastJobTitle || lead.headline || lead.jobTitle || "").trim(),
+    company_name: String(lead.lastCompanyName || lead.name || lead.company_name || `شركة #${idx + 1}`).trim(),
+    website: String(lead.lastCompanyWebsite || lead.website || lead.url || "").trim(),
+    linkedin_url: String(lead.profileUrl || lead.url || "").trim(),
+    industry: String(lead.lastCompanyIndustry || lead.industry || lead.specialties?.[0] || "").trim(),
+    location: String(lead.lastCompanyAddress || lead.address || lead.location || "").trim(),
+    headcount: lead.numberOfEmployees != null && lead.numberOfEmployees !== "" ? String(lead.numberOfEmployees) : (lead.lastCompanySize ? String(lead.lastCompanySize) : ""),
+    description: String(lead.description || lead.headline || lead.slogan || "").trim(),
     phone: String(lead.phone || "").trim(),
     founded_year: lead.foundedYear != null ? String(lead.foundedYear) : "",
   }));

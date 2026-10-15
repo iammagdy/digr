@@ -6,6 +6,7 @@ import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../l
 import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
 import { extractCityFromAddress } from "../../lib/server/addressParser";
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
+import { toArabicDigits } from "../../lib/arabicDigits";
 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
@@ -381,10 +382,12 @@ export async function generateCompanyExcelReport(
   const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const rowsCount = norm.rows.length;
 
+  const detectedTitleCountry = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
   const targetCountry = (norm.metadata as any).country ||
-    (norm.metadata.platform && !["web", "companies", "b2b"].includes(norm.metadata.platform.toLowerCase())
+    detectedTitleCountry?.arabicLabel ||
+    (norm.metadata.platform && !["web", "companies", "b2b", "digr", "digr data platform"].includes(norm.metadata.platform.toLowerCase())
       ? norm.metadata.platform
-      : detectCountryFromText(norm.metadata.title || "")?.arabicLabel || "مصر");
+      : "مصر");
 
   // ================= Sheet 1: الملخص التنفيذي ومؤشرات السوق =================
   const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", { views: [{ rightToLeft: true }] });
@@ -413,9 +416,9 @@ export async function generateCompanyExcelReport(
   const uncertainCount = uncertainRows?.length || ambigCount || 0;
 
   const kpis = [
-    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي الشركات المسلمة", val: `${rowsCount.toLocaleString("ar-EG")} شركة` },
-    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "الشركات المستبعدة للتكرار", val: `${dupsCount} شركة` },
-    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "سجلات قيد المراجعة والتدقيق", val: `${uncertainCount} شركة` },
+    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي الشركات المسلمة", val: `${toArabicDigits(rowsCount)} شركة` },
+    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "الشركات المستبعدة للتكرار", val: `${toArabicDigits(dupsCount)} شركة` },
+    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "سجلات قيد المراجعة والتدقيق", val: `${toArabicDigits(uncertainCount)} شركة` },
     { colsLabel: "G4:H4", colsVal: "G5:H5", label: "النطاق الجغرافي", val: targetCountry },
   ];
 
@@ -744,10 +747,12 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     const rowsCount = norm.rows.length;
     const isCompany = norm.metadata.entityType === "companies";
 
+    const detectedTitleCountryPdf = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
     const targetCountry = (norm.metadata as any).country ||
-      (norm.metadata.platform && !["web", "companies", "b2b"].includes(norm.metadata.platform.toLowerCase())
+      detectedTitleCountryPdf?.arabicLabel ||
+      (norm.metadata.platform && !["web", "companies", "b2b", "digr", "digr data platform"].includes(norm.metadata.platform.toLowerCase())
         ? norm.metadata.platform
-        : detectCountryFromText(norm.metadata.title || "")?.arabicLabel || "مصر");
+        : "مصر");
 
     // 1. Header Banner (Academic Navy)
     doc.rect(30, 24, contentWidth, 52).fill("#1B365D");
