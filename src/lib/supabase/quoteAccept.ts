@@ -84,11 +84,18 @@ export async function acceptQuoteSupabase(
           if (lower.includes("facebook") || lower.startsWith("unverified-")) return false;
 
           const approved = APPROVED_CAPABILITY_CATALOG.find(
-            (c: any) => c.slug === slugOrId || c.tregEndpointId === slugOrId
+            (c: any) => c.slug === slugOrId || c.tregEndpointId === slugOrId || c.id === slugOrId
           );
           if (approved) {
             return approved.status === "verified" && approved.enabled !== false;
           }
+
+          // Dynamic live catalog endpoints (e.g. companies research from live TREG catalog)
+          const it = items.find((x: any) => x?.capabilitySlug === slugOrId || x?.endpointId === slugOrId);
+          if (it && Number(it.unitCostUsd || it.catalogPriceUsd) > 0) {
+            return true;
+          }
+
           // Allow synthetic unit test endpoint names only in non-production test runner
           return process.env.NODE_ENV === "test";
         };
