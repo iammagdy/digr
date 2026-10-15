@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   // 1. Authenticate with CRON_SECRET (timing-safe)
   if (!verifyCronSecret(req)) {
     return NextResponse.json(
-      { success: false, error: "غير مصرح. رمز الأمان الخاص بالمراقب اليومي غير صالح." },
+      { success: false, error: "غير مصرح. رمز الأمان الخاص بالمهام المجدولة غير صالح." },
       { status: 401 }
     );
   }
@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
     for (const job of staleJobs || []) {
       const { data: releaseData, error: relErr } = await adminClient.rpc("release_job_atomic", {
         p_job_id: job.id,
-        p_error_message: "تم إلغاء المهمة تلقائياً بواسطة مراقب المهام (Watchdog) لتجاوز المهلة الزمنية، واسترجاع كامل الرصيد المحجوز.",
+        p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم إرجاع كامل نقاطك المحجوزة لرصيدك.",
         p_force: true,
       });
 
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
               id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
               user_id: job.user_id,
               title: "إلغاء واسترجاع طلب متوقف",
-              body: "تم إلغاء المهمة تلقائياً لعدم الاستجابة لأكثر من 30 دقيقة، واسترجاع كامل الرصيد المحجوز إلى محفظتك دون أي خصم.",
+              body: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم إرجاع كامل نقاطك المحجوزة لرصيدك دون أي خصم.",
               link: "/dashboard/jobs",
               read: false,
               created_at: new Date().toISOString(),
@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
   } catch (err: any) {
     console.error("Watchdog execution failed:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ أثناء تشغيل مراقب المهام." },
+      { success: false, error: err.message || "حدث خطأ أثناء فحص المهام المعلقة." },
       { status: 500 }
     );
   }

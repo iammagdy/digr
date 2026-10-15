@@ -39,6 +39,12 @@ export interface PublicCalculatorBreakdown {
   isCapped?: boolean;
   maxCapPoints?: number;
   maxCappedVolume?: number;
+  cappedReservedPoints?: number;
+  cappedReservedEgp?: number;
+  cappedChargedPoints?: number;
+  cappedChargedEgp?: number;
+  cappedRefundPoints?: number;
+  cappedRefundEgp?: number;
 }
 
 function cleanArText(text: string): string {
@@ -64,7 +70,7 @@ export function getPublicCalculatorOptions(
       unitLabelAr: isProfile ? "حساب" : "سجل",
       enabled: Boolean(cap.enabled),
       defaultVolume: isProfile ? 1 : 100,
-      maxVolume: isProfile ? 50 : Math.min(1000, (cap.maxItemsPerCall || 100) * 10),
+      maxVolume: isProfile ? 50 : Math.max(500, cap.maxRows || 500),
     };
   });
 }
@@ -110,6 +116,14 @@ export function computePublicCalculatorQuote(
     reservedPoints
   );
 
+  // Downscaled settlement values matching the capped volume when isCapped is true
+  const cappedDelivered = isCapped ? Math.min(safeDelivered, maxCappedVolume) : safeDelivered;
+  const cappedSettlement = calculateFinalSettlement(
+    cappedDelivered,
+    unitPricePoints,
+    effectiveMaxCap
+  );
+
   const creditValueEgp = settings.creditValueEgp;
 
   return {
@@ -129,5 +143,11 @@ export function computePublicCalculatorQuote(
     isCapped,
     maxCapPoints: effectiveMaxCap,
     maxCappedVolume,
+    cappedReservedPoints: effectiveMaxCap,
+    cappedReservedEgp: Number((effectiveMaxCap * creditValueEgp).toFixed(2)),
+    cappedChargedPoints: cappedSettlement.chargePoints,
+    cappedChargedEgp: Number((cappedSettlement.chargePoints * creditValueEgp).toFixed(2)),
+    cappedRefundPoints: cappedSettlement.refundPoints,
+    cappedRefundEgp: Number((cappedSettlement.refundPoints * creditValueEgp).toFixed(2)),
   };
 }

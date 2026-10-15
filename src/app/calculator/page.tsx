@@ -160,46 +160,72 @@ export default function PublicCalculatorPage() {
         </section>
 
         {/* Numeric Results */}
-        <section className="grid grid-cols-1 gap-4 min-[720px]:grid-cols-3">
-          <div className="rounded-[20px] border border-ln bg-sf p-5">
-            <p className="m-0 text-xs font-medium text-mut">
-              الحجز المؤقت عند الموافقة (يشمل هامش أمان {formatAr(breakdown.safetyBufferPercent)}٪)
-            </p>
-            <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ink">
-              {formatAr(breakdown.reservedPoints)}{" "}
-              <span className="text-base font-normal text-mut">نقطة</span>
-            </p>
-            <p className="mb-0 mt-2 text-sm text-mut">
-              يعادل {formatAr(breakdown.reservedEgp)} ج.م
-            </p>
-          </div>
+        {(() => {
+          const displayReservedPoints = breakdown.isCapped
+            ? (breakdown.cappedReservedPoints ?? breakdown.reservedPoints)
+            : breakdown.reservedPoints;
+          const displayReservedEgp = breakdown.isCapped
+            ? (breakdown.cappedReservedEgp ?? breakdown.reservedEgp)
+            : breakdown.reservedEgp;
+          const displayChargedPoints = breakdown.isCapped
+            ? (breakdown.cappedChargedPoints ?? breakdown.chargedPoints)
+            : breakdown.chargedPoints;
+          const displayChargedEgp = breakdown.isCapped
+            ? (breakdown.cappedChargedEgp ?? breakdown.chargedEgp)
+            : breakdown.chargedEgp;
+          const displayRefundPoints = breakdown.isCapped
+            ? (breakdown.cappedRefundPoints ?? breakdown.refundPoints)
+            : breakdown.refundPoints;
+          const displayRefundEgp = breakdown.isCapped
+            ? (breakdown.cappedRefundEgp ?? breakdown.refundEgp)
+            : breakdown.refundEgp;
+          const displayDeliveredVolume = breakdown.isCapped
+            ? (breakdown.maxCappedVolume ?? breakdown.deliveredVolume)
+            : breakdown.deliveredVolume;
 
-          <div className="rounded-[20px] border border-ln bg-sf p-5">
-            <p className="m-0 text-xs font-medium text-mut">
-              الخصم النهائي على العمل المسلَّم ({formatAr(breakdown.deliveredVolume)} {currentOption?.unitLabelAr})
-            </p>
-            <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ink">
-              {formatAr(breakdown.chargedPoints)}{" "}
-              <span className="text-base font-normal text-mut">نقطة</span>
-            </p>
-            <p className="mb-0 mt-2 text-sm text-mut">
-              يعادل {formatAr(breakdown.chargedEgp)} ج.م
-            </p>
-          </div>
+          return (
+            <section className="grid grid-cols-1 gap-4 min-[720px]:grid-cols-3">
+              <div className="rounded-[20px] border border-ln bg-sf p-5">
+                <p className="m-0 text-xs font-medium text-mut">
+                  الحجز المؤقت عند الموافقة (يشمل هامش أمان {formatAr(breakdown.safetyBufferPercent)}٪)
+                </p>
+                <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ink">
+                  {formatAr(displayReservedPoints)}{" "}
+                  <span className="text-base font-normal text-mut">نقطة</span>
+                </p>
+                <p className="mb-0 mt-2 text-sm text-mut">
+                  يعادل {formatAr(displayReservedEgp)} ج.م
+                </p>
+              </div>
 
-          <div className="rounded-[20px] border border-ln bg-sf p-5">
-            <p className="m-0 text-xs font-medium text-mut">
-              المبلغ المسترد تلقائيًا إلى رصيدك بعد التسوية
-            </p>
-            <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ok">
-              {formatAr(breakdown.refundPoints)}{" "}
-              <span className="text-base font-normal text-mut">نقطة</span>
-            </p>
-            <p className="mb-0 mt-2 text-sm text-mut">
-              يعادل {formatAr(breakdown.refundEgp)} ج.م
-            </p>
-          </div>
-        </section>
+              <div className="rounded-[20px] border border-ln bg-sf p-5">
+                <p className="m-0 text-xs font-medium text-mut">
+                  الخصم النهائي على العمل المسلَّم ({formatAr(displayDeliveredVolume)} {currentOption?.unitLabelAr})
+                </p>
+                <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ink">
+                  {formatAr(displayChargedPoints)}{" "}
+                  <span className="text-base font-normal text-mut">نقطة</span>
+                </p>
+                <p className="mb-0 mt-2 text-sm text-mut">
+                  يعادل {formatAr(displayChargedEgp)} ج.م
+                </p>
+              </div>
+
+              <div className="rounded-[20px] border border-ln bg-sf p-5">
+                <p className="m-0 text-xs font-medium text-mut">
+                  المبلغ المسترد تلقائيًا إلى رصيدك بعد التسوية
+                </p>
+                <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ok">
+                  {formatAr(displayRefundPoints)}{" "}
+                  <span className="text-base font-normal text-mut">نقطة</span>
+                </p>
+                <p className="mb-0 mt-2 text-sm text-mut">
+                  يعادل {formatAr(displayRefundEgp)} ج.م
+                </p>
+              </div>
+            </section>
+          );
+        })()}
 
         {breakdown.isCapped && (
           <div role="status" className="rounded-[20px] border border-amber-500/40 bg-amber-500/10 p-5 text-xs leading-relaxed text-ink">
@@ -231,8 +257,8 @@ export default function PublicCalculatorPage() {
               </thead>
               <tbody className="divide-y divide-ln/40">
                 {[
+                  { slug: "company-research", target: 5 },
                   { slug: "tiktok-profile", target: 1 },
-                  { slug: "tiktok-profile", target: 5 },
                   { slug: "facebook-post-comments", target: 20 },
                   { slug: "facebook-post-comments", target: 100 },
                   { slug: "facebook-post-search", target: 10 },
@@ -243,17 +269,24 @@ export default function PublicCalculatorPage() {
                   { slug: "linkedin-profile", target: 5 },
                 ].map((sample, idx) => {
                   const b = computePublicCalculatorQuote(sample.slug, sample.target, sample.target);
+                  const effectiveTarget = b.isCapped ? (b.maxCappedVolume || sample.target) : sample.target;
+                  const effectiveReserved = b.isCapped ? (b.cappedReservedPoints ?? b.reservedPoints) : b.reservedPoints;
+                  const effectiveCharged = b.isCapped ? (b.cappedChargedPoints ?? b.chargedPoints) : b.chargedPoints;
+                  const effectiveChargedEgp = b.isCapped ? (b.cappedChargedEgp ?? b.chargedEgp) : b.chargedEgp;
                   return (
                     <tr key={idx} className="hover:bg-sf2/50 transition-colors">
                       <td className="px-3 py-2 font-medium text-ink">{b.nameAr}</td>
-                      <td className="px-3 py-2 font-mono">{formatAr(sample.target)}</td>
+                      <td className="px-3 py-2 font-mono">
+                        {formatAr(effectiveTarget)}
+                        {b.isCapped ? <span className="mr-1 text-[10px] text-mut">(سقف)</span> : null}
+                      </td>
                       <td className="px-3 py-2 font-mono">{formatAr(b.unitPricePoints)} نقطة</td>
-                      <td className="px-3 py-2 font-mono">{formatAr(b.reservedPoints)} نقطة</td>
-                      <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(b.chargedPoints)} نقطة</td>
-                      <td className="px-3 py-2 font-mono">{formatAr(b.chargedEgp)} ج.م</td>
+                      <td className="px-3 py-2 font-mono">{formatAr(effectiveReserved)} نقطة</td>
+                      <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(effectiveCharged)} نقطة</td>
+                      <td className="px-3 py-2 font-mono">{formatAr(effectiveChargedEgp)} ج.م</td>
                       <td className="px-3 py-2">
                         <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
-                          مطابق (فرق ٠)
+                          {b.isCapped ? "مطابق (سقف أمان)" : "مطابق (فرق ٠)"}
                         </span>
                       </td>
                     </tr>

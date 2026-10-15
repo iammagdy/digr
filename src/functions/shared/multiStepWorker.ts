@@ -1071,7 +1071,7 @@ export async function runJobWatchdog(
         job.userId,
         job.$id,
         job.reservedCredits,
-        "إلغاء حجز الرصيد لتجاوز مهلة معالجة الطلب (Watchdog Recovery)"
+        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب واسترجاع كامل النقاط"
       );
 
       if (releaseRes.alreadyReleased) {

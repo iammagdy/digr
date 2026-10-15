@@ -89,6 +89,9 @@ const PRIMARY_BTN =
 const SECONDARY_BTN =
   "cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2 disabled:opacity-50";
 
+import { extractParamDisplayString } from "@/lib/planParameters";
+export { extractParamDisplayString };
+
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
 export default function PlanQuoteCard({
   quote,
@@ -105,15 +108,20 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
-  const initialParam = primaryItem?.params
-    ? (primaryItem.params.query || primaryItem.params.keyword || primaryItem.params.topic || primaryItem.params.search || primaryItem.params.username || "")
-    : "";
+  const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr);
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editError, setEditError] = useState("");
   const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const pItem = quote.items?.[0];
+    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    setEditLimit(quote.targetVolumeMax || 1);
+    setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
+  }, [quote]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 15000);
@@ -135,14 +143,34 @@ export default function PlanQuoteCard({
     }
   }
 
+  function handleOpenEdit() {
+    const pItem = quote.items?.[0];
+    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    setEditLimit(quote.targetVolumeMax || 1);
+    setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
+    setEditError("");
+    setIsEditing((v) => !v);
+  }
+
   async function handleSave() {
     setSavingEdit(true);
     setEditError("");
     try {
       await onSaveEdit(quote, editLimit, editParamVal, editFormats);
       setIsEditing(false);
-    } catch (err) {
-      setEditError(err instanceof Error ? err.message : "فشل تحديث الخطة وعرض السعر");
+    } catch (err: any) {
+      const rawMsg = err instanceof Error ? err.message : String(err || "");
+      let safeMsg = "فشل تحديث الخطة وعرض السعر. يرجى المحاولة مرة أخرى.";
+      if (rawMsg.includes("is not a function") || rawMsg.includes("undefined") || rawMsg.includes("null") || rawMsg.includes("trim")) {
+        safeMsg = "تعذر تحديث الخطة بسبب تنسيق غير صالح في المعاملات. يرجى مراجعة القيمة المدخلة.";
+      } else if (rawMsg.includes("غير مصرح") || rawMsg.includes("401") || rawMsg.includes("403")) {
+        safeMsg = "انتهت الجلسة أو غير مصرح. يرجى تسجيل الدخول والمحاولة مرة أخرى.";
+      } else if (rawMsg.includes("صلاحية") || rawMsg.includes("expired")) {
+        safeMsg = "انتهت صلاحية عرض السعر. يرجى تحديث السعر أولاً.";
+      } else if (rawMsg.length > 0 && !rawMsg.includes("TypeError") && !rawMsg.includes("SyntaxError")) {
+        safeMsg = rawMsg;
+      }
+      setEditError(safeMsg);
     } finally {
       setSavingEdit(false);
     }
@@ -269,7 +297,7 @@ export default function PlanQuoteCard({
                 "أوافق وابدأ البحث"
               )}
             </button>
-            <button type="button" onClick={() => setIsEditing((v) => !v)} disabled={quote.isDependent} className={`${SECONDARY_BTN} min-h-11`}>
+            <button type="button" onClick={handleOpenEdit} disabled={quote.isDependent} className={`${SECONDARY_BTN} min-h-11`}>
               {isEditing ? "إلغاء التعديل" : "تعديل"}
             </button>
           </div>

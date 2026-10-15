@@ -65,6 +65,40 @@ export function getCachedCatalogEndpoints(): CatalogEndpointSummary[] {
       out.push(ep);
     }
   }
+
+  // Include seed capabilities from APPROVED_CAPABILITY_CATALOG as reliable default catalog
+  for (const cap of APPROVED_CAPABILITY_CATALOG) {
+    const key = cap.slug || cap.id || cap.tregEndpointId;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    let paramsSchema: Record<string, any> = {};
+    try {
+      paramsSchema = typeof cap.paramsSchema === "string" ? JSON.parse(cap.paramsSchema) : (cap.paramsSchema || {});
+    } catch {}
+    out.push({
+      id: cap.tregEndpointId || cap.id || cap.slug,
+      slug: cap.slug,
+      nameAr: cap.nameAr,
+      nameEn: cap.nameEn,
+      summaryAr: cap.descriptionAr,
+      summaryEn: cap.descriptionAr,
+      platform: (cap.platform || cap.category || "web").toLowerCase(),
+      method: cap.tregMethod || "GET",
+      path: `/${cap.slug}`,
+      paramsSchema,
+      billingUnit: (cap.pricingUnit || "item") as any,
+      catalogPriceUsd: cap.unitCostUsd,
+      pointsPerUnit: cap.pointsPerUnit || 1,
+      pagination: {
+        type: cap.paginationType || "none",
+        maxLimit: cap.maxItemsPerCall || 100,
+      },
+      observedSuccessRate: cap.estimatedSuccessRate || 0.95,
+      observedSamples: 100,
+      scope: "read",
+    });
+  }
+
   return out;
 }
 

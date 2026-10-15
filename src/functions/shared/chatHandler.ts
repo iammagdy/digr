@@ -1074,12 +1074,27 @@ export class ChatHandler {
       const tSearchStart = Date.now();
 
       const runCatalogSearchWithRetries = async (topic: string, p?: string) => {
-        catalogSearchCount++;
         const cached = getCachedCatalogEndpoints();
+        const matchedCached = cached.filter((c) => {
+          if (!p) return true;
+          const plat = (c.platform || "").toLowerCase();
+          const target = p.toLowerCase();
+          if (target === "companies" || target === "b2b") {
+            return plat === "companies" || plat === "b2b" || c.slug.includes("companies") || c.id.includes("companies");
+          }
+          return plat === target || c.slug.includes(target);
+        });
+
+        // Fast path: if cached capabilities match the requested platform, return immediately (0ms latency)
+        if (matchedCached.length > 0) {
+          return matchedCached;
+        }
+
+        catalogSearchCount++;
         const tCat0 = Date.now();
         try {
           const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-            setTimeout(() => resolve([]), 2500)
+            setTimeout(() => resolve([]), 1200)
           );
           let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
           catalogMs += Date.now() - tCat0;
@@ -1088,16 +1103,12 @@ export class ChatHandler {
           catalogMs += Date.now() - tCat0;
         }
 
-        // Check cached endpoints matching platform first
-        const matchedCached = cached.filter((c) => !p || (c.platform || "").toLowerCase() === p.toLowerCase());
-        if (matchedCached.length > 0) return matchedCached;
-
         if (p) {
           try {
             catalogSearchCount++;
             const tCat1 = Date.now();
             const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
-              setTimeout(() => resolve([]), 1500)
+              setTimeout(() => resolve([]), 800)
             );
             const res = await Promise.race([searchCatalog(p, p), timeoutPromise]);
             catalogMs += Date.now() - tCat1;
