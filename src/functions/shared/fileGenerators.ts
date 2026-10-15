@@ -449,9 +449,9 @@ export async function generateCompanyExcelReport(
     const row = wsDir.addRow([
       idx + 1,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.activity || r.sector || r.industry || r.category || "مقاولات وأعمال هندسية",
+      r.activity || r.sector || r.industry || r.category || "عام / غير مدرج",
       r.website || r.website_url || r.domain || r.url || "غير متاح",
-      r.city || r.state || r.governorate || "جمهورية مصر العربية",
+      r.city || r.state || r.governorate || r.location || r.country || "عام / غير مدرج",
       r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "عام / غير مدرج",
       "معتمدة مستقلة",
     ]);
@@ -476,8 +476,8 @@ export async function generateCompanyExcelReport(
       r.id || `comp_${idx + 1}`,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
       r.website || r.website_url || r.domain || r.url || "N/A",
-      r.activity || r.sector || r.industry || "مقاولات",
-      r.city || r.state || r.governorate || "مصر",
+      r.activity || r.sector || r.industry || r.category || "عام",
+      r.city || r.state || r.governorate || r.location || r.country || "عام",
       r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "N/A",
       r.source || "بيانات عامة",
     ]);
