@@ -420,6 +420,36 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
     paginationType: "none",
     enabled: true,
   },
+  {
+    id: "icypeas-people-search",
+    slug: "icypeas-people-search",
+    platform: "people",
+    category: "people",
+    status: "verified",
+    unit: "1000 items",
+    estimatedCostUsdPerUnit: 0.00038,
+    maxItemsPerCall: 100,
+    estimatedSuccessRate: 0.99,
+    verificationNote: VERIFICATION_NOTE,
+    nameAr: "بحث صناع القرار والمهنيين",
+    nameEn: "Decision Makers & People Search",
+    descriptionAr: "البحث في بيانات صناع القرار والمهنيين والمسؤولين التنفيذيين بالمسمى والشركة والدولة",
+    paramsSchema: JSON.stringify({
+      type: "object",
+      properties: {
+        query: { type: "object", description: "معايير البحث والاستعلام (jobTitle, location, keyword)" },
+        pagination: { type: "object", description: "خيارات ترقيم الصفحات والحجم" },
+      },
+      required: ["query"],
+    }),
+    tregEndpointId: "icypeas.people.search",
+    tregMethod: "POST",
+    pricingUnit: "item",
+    unitCostUsd: 0.00038,
+    maxRows: 500,
+    paginationType: "none",
+    enabled: true,
+  },
 ];
 
 export function buildApprovedCatalog(
