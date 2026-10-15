@@ -103,6 +103,18 @@ async function executeReleaseConfirmation(
             .eq("id", jobId)
             .maybeSingle();
           if (jobRow?.user_id) {
+            try {
+              await adminClient.from("job_events").insert({
+                job_id: jobId,
+                user_id: jobRow.user_id,
+                message: `تعذر استكمال الاستخراج: ${reason} (تم استرداد ${Math.round(releasedCredits)} نقطة لرصيدك).`,
+                units: 0,
+                event_type: "error",
+              });
+            } catch (evtErr: any) {
+              console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+            }
+
             const rcpt = await getRecipient(adminClient, jobRow.user_id, "refund");
             if (rcpt) {
               const balance = await getBalance(adminClient, jobRow.user_id);
@@ -319,6 +331,21 @@ export async function POST(req: NextRequest) {
         ? body.mockEstimatedCostUsd
         : Math.max(0.0001, Number((spec.unitCostUsd * estUnitsThisCall).toFixed(6)));
 
+    // Record step 0 event if beginning first chunk
+    if (currentStep === 0) {
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `بدء استخراج البيانات (المستهدف حتى ${targetMax} سجل)...`,
+          units: 0,
+          event_type: "info",
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+      }
+    }
+
     // 6. Reserve provider spend BEFORE calling provider
     let spendCostId: number | null = null;
     const { data: spendReserve, error: spendErr } = await adminClient.rpc(
@@ -417,6 +444,20 @@ export async function POST(req: NextRequest) {
 
       const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
       filteredRows = dedupResult.delivered;
+      const excludedCount = dedupResult.confirmedDuplicates?.length || 0;
+      if (excludedCount > 0) {
+        try {
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: `تم تدقيق السجلات واستبعاد ${excludedCount} سجل مكرر.`,
+            units: currentDelivered,
+            event_type: "progress",
+          });
+        } catch (evtErr: any) {
+          console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+        }
+      }
     }
 
     const acceptedRows = adapterResult.ok
@@ -535,7 +576,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم جمع ${recordedDeliveredUnits} سجل حتى الآن...`,
+          message: `تم استلام الدفعة ${currentStep + 1}: تم قبول ${acceptedRows.length} سجل جديد (الإجمالي المعتمد: ${recordedDeliveredUnits} من ${targetMax}).`,
           units: recordedDeliveredUnits,
           event_type: "progress",
         });
@@ -708,6 +749,18 @@ export async function POST(req: NextRequest) {
       const csvPath = `${userId}/${jobId}/result.csv`;
       const xlsxPath = `${userId}/${jobId}/result.xlsx`;
       const pdfPath = `${userId}/${jobId}/result.pdf`;
+
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: "جاري تجهيز وتنسيق ملفات النتائج (Excel و PDF و CSV)...",
+          units: finalRows.length,
+          event_type: "progress",
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+      }
 
       try {
         const {
@@ -891,6 +944,19 @@ export async function POST(req: NextRequest) {
           event_type: "progress",
           created_at: completedAtIso,
         });
+
+        const chargedPts = Math.round(Number(settleData?.charged_credits) || 0);
+        const refundedPts = Math.round(Number(settleData?.refunded_credits) || 0);
+        if (refundedPts > 0) {
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: `تم خصم ${chargedPts} نقطة وتحرير ${refundedPts} نقطة متبقية تلقائياً لرصيدك.`,
+            units: finalRows.length,
+            event_type: "info",
+            created_at: completedAtIso,
+          });
+        }
       } catch (evtErr: any) {
         console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
       }

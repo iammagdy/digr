@@ -59,6 +59,7 @@ export interface ChatHandlerInput {
   userBalance?: number;
   testScenario?: string;
   uploadedFiles?: any[];
+  isGuest?: boolean;
 }
 
 export interface ChatHandlerResponse {
@@ -944,53 +945,9 @@ export class ChatHandler {
       researchIntent.entityType.value === "companies" ||
       extractEntityType(message).entityType === "companies";
 
-    if (isGreeting) {
-      const greetingReply = "أهلاً بك! أنا مساعد Diger لأبحاث واستخراج البيانات من المنصات والسجلات العامة. كيف يمكنني مساعدتك اليوم؟";
-      if (sb) {
-        await sb.from("messages").update({ content_ar: greetingReply }).eq("id", assistantMsgId);
-      } else {
-        await this.tables.updateRow({
-          databaseId: "digr",
-          tableId: "messages",
-          rowId: assistantMsgId,
-          data: { content: greetingReply, status: "ready" },
-        });
-      }
-      return {
-        conversationId,
-        messageId: assistantMsgId,
-        role: "assistant",
-        outputType: "answer_question",
-        intent: "chat",
-        contentAr: greetingReply,
-        tokensUsed: { input: 0, output: 0, costUsd: 0 },
-      };
-    }
-
-    if (isGeneralQuestion) {
-      const generalReply = "أنا مساعد Diger الذكي لأبحاث واستخراج البيانات العامة. أساعدك في صياغة خطة بحث دقيقة، استخراج السجلات من المنصات والسجلات العامة، وتجهيزها في ملفات Excel و CSV و PDF.";
-      if (sb) {
-        await sb.from("messages").update({ content_ar: generalReply }).eq("id", assistantMsgId);
-      } else {
-        await this.tables.updateRow({
-          databaseId: "digr",
-          tableId: "messages",
-          rowId: assistantMsgId,
-          data: { content: generalReply, status: "ready" },
-        });
-      }
-      return {
-        conversationId,
-        messageId: assistantMsgId,
-        role: "assistant",
-        outputType: "answer_question",
-        intent: "chat",
-        contentAr: generalReply,
-        tokensUsed: { input: 0, output: 0, costUsd: 0 },
-      };
-    }
-
     if (isTestSearchScenario) {
+      isPhase2 = false;
+    } else if (isGreeting || isGeneralQuestion) {
       isPhase2 = false;
     } else if (discoveryDecision.action === "CLARIFY" && discoveryDecision.missingCrucialFields.includes("exclusion_file")) {
       const q = discoveryDecision.questions[0];
@@ -1351,7 +1308,7 @@ export class ChatHandler {
       // can continue with ask_questions / propose_plan / plain text. Raw catalog
       // results — tool names and bare per-tool point prices — are never shown
       // to the user as a list; prices appear only inside a priced plan.
-      const MAX_CATALOG_ITERATIONS = 4;
+      const MAX_CATALOG_ITERATIONS = input.isGuest ? 0 : 4;
       let catalogIterations = 0;
       const loopMessages = [...turnMessages];
       // Every catalog search of this turn (pre-search + loop iterations), keyed by
@@ -1656,6 +1613,14 @@ export class ChatHandler {
       if (output.type === "write_note") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         finalContentAr = `${output.titleAr}\n\n${output.contentAr}`;
+      } else if (input.isGuest && output.type === "propose_plan") {
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const summaryText = (output as any).summaryAr || "يمكنني مساعدتك في استخراج هذه البيانات بدقة وفق متطلباتك.";
+        output = {
+          type: "answer_question",
+          answerAr: `${summaryText}\n\nللاطلاع على خطة التنفيذ المكتملة وعرض السعر بالنقاط وبدء البحث، يرجى إنشاء حساب مجاني أو تسجيل الدخول.`,
+        };
+        finalContentAr = (output as any).answerAr;
       } else if (output.type === "propose_plan") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         const mapPlanItems = (out: any) =>

@@ -2137,6 +2137,7 @@ export class LlmClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
+    const llmStartTime = Date.now();
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -2166,6 +2167,15 @@ export class LlmClient {
       });
 
       clearTimeout(timeoutId);
+      const llmLatencyMs = Date.now() - llmStartTime;
+      console.log(
+        JSON.stringify({
+          tag: "anthropic_call_timing",
+          model,
+          latencyMs: llmLatencyMs,
+          status: response.status,
+        })
+      );
 
       if (!response.ok) {
         const errText = await response.text();

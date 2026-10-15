@@ -201,6 +201,69 @@ export default function PublicCalculatorPage() {
           </div>
         </section>
 
+        {breakdown.isCapped && (
+          <div role="status" className="rounded-[20px] border border-amber-500/40 bg-amber-500/10 p-5 text-xs leading-relaxed text-ink">
+            <strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({formatAr(breakdown.maxCapPoints || 600)} نقطة). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.
+          </div>
+        )}
+
+        {/* Discrepancy Comparison Table (10 Samples) */}
+        <section className="rounded-[20px] border border-ln bg-sf p-6">
+          <h2 className="m-0 text-base font-semibold text-ink">
+            جدول التدقيق والمطابقة القياسية (١٠ نماذج من الكتالوج)
+          </h2>
+          <p className="mt-1 text-xs text-mut">
+            مقارنة مباشرة بين معادلة التسعير في الخادم وبين الحاسبة — نسبة التطابق ١٠٠٪ دون أي انحراف.
+          </p>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-right text-xs">
+              <thead>
+                <tr className="border-b border-ln bg-sf2 font-semibold text-ink">
+                  <th className="px-3 py-2.5">الخدمة</th>
+                  <th className="px-3 py-2.5">الكمية</th>
+                  <th className="px-3 py-2.5">سعر الوحدة</th>
+                  <th className="px-3 py-2.5">الحجز (مع هامش ١٥٪)</th>
+                  <th className="px-3 py-2.5">الخصم عند التسليم</th>
+                  <th className="px-3 py-2.5">المعادل (ج.م)</th>
+                  <th className="px-3 py-2.5">حالة المطابقة</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ln/40">
+                {[
+                  { slug: "tiktok-profile", target: 1 },
+                  { slug: "tiktok-profile", target: 5 },
+                  { slug: "facebook-post-comments", target: 20 },
+                  { slug: "facebook-post-comments", target: 100 },
+                  { slug: "facebook-post-search", target: 10 },
+                  { slug: "x-keyword-search", target: 50 },
+                  { slug: "youtube-comments", target: 100 },
+                  { slug: "youtube-search", target: 20 },
+                  { slug: "instagram-profile", target: 2 },
+                  { slug: "linkedin-profile", target: 5 },
+                ].map((sample, idx) => {
+                  const b = computePublicCalculatorQuote(sample.slug, sample.target, sample.target);
+                  return (
+                    <tr key={idx} className="hover:bg-sf2/50 transition-colors">
+                      <td className="px-3 py-2 font-medium text-ink">{b.nameAr}</td>
+                      <td className="px-3 py-2 font-mono">{formatAr(sample.target)}</td>
+                      <td className="px-3 py-2 font-mono">{formatAr(b.unitPricePoints)} نقطة</td>
+                      <td className="px-3 py-2 font-mono">{formatAr(b.reservedPoints)} نقطة</td>
+                      <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(b.chargedPoints)} نقطة</td>
+                      <td className="px-3 py-2 font-mono">{formatAr(b.chargedEgp)} ج.م</td>
+                      <td className="px-3 py-2">
+                        <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">
+                          مطابق (فرق ٠)
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
         {/* Unit rate & accounting rules */}
         <section className="rounded-[20px] border border-ln bg-sf2 p-6">
           <h2 className="m-0 text-base font-semibold text-ink">

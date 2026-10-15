@@ -253,6 +253,18 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   const costMicro = parseInt(response.headers.get("x-treg-cost-micro") || "0", 10);
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
+  console.log(
+    JSON.stringify({
+      tag: "treg_call_timing",
+      endpointId: options.endpointId,
+      method,
+      latencyMs,
+      status: response.status,
+      costMicro,
+      tregCallId,
+    })
+  );
+
   let responseBody: any = null;
   let rawText = "";
   try {

@@ -1,5 +1,6 @@
 import {
   calculateCapabilityQuote,
+  calculateCapabilityUnitPricePoints,
   calculateFinalSettlement,
   DEFAULT_PRICING_SETTINGS,
   type PricingSettings,
@@ -8,6 +9,8 @@ import {
   APPROVED_CAPABILITY_CATALOG,
   type Capability,
 } from "../functions/shared/capabilityRegistry";
+export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
+export const DEFAULT_JOB_POINTS_CAP = 600;
 
 export interface PublicCalculatorOption {
   slug: string;
@@ -33,6 +36,9 @@ export interface PublicCalculatorBreakdown {
   refundPoints: number;
   refundEgp: number;
   safetyBufferPercent: number;
+  isCapped?: boolean;
+  maxCapPoints?: number;
+  maxCappedVolume?: number;
 }
 
 function cleanArText(text: string): string {
@@ -65,14 +71,17 @@ export function getPublicCalculatorOptions(
 
 /**
  * Computes the exact reservation, final charge, and refund using the SAME
- * pricing functions (calculateCapabilityQuote + calculateFinalSettlement) as the quote writer.
+ * pricing functions (calculateCapabilityUnitPricePoints + calculateFinalSettlement)
+ * as the quote writer, strictly enforcing JOB_MAX_POINTS_CAP and daily spend cap.
  */
 export function computePublicCalculatorQuote(
   capabilitySlug: string,
   targetVolumeMax: number,
   deliveredVolume: number = targetVolumeMax,
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG,
-  settings: PricingSettings = DEFAULT_PRICING_SETTINGS
+  settings: PricingSettings = DEFAULT_PRICING_SETTINGS,
+  jobPointsCap: number = DEFAULT_JOB_POINTS_CAP,
+  dailySpendCapUsd: number = DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD
 ): PublicCalculatorBreakdown {
   const safeTarget = Math.max(1, Math.floor(Number(targetVolumeMax) || 1));
   const safeDelivered = Math.max(0, Math.min(safeTarget, Math.floor(Number(deliveredVolume) ?? safeTarget)));
@@ -80,17 +89,25 @@ export function computePublicCalculatorQuote(
   const cap =
     capabilities.find((c) => c.slug === capabilitySlug) || capabilities[0];
 
-  const quote = calculateCapabilityQuote(
-    safeTarget,
-    cap.unitCostUsd,
-    Number.MAX_SAFE_INTEGER,
-    settings
-  );
+  const unitPricePoints = calculateCapabilityUnitPricePoints(cap.unitCostUsd, settings);
+  const rawPoints = safeTarget * unitPricePoints;
+  const withBuffer = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
+  const reservedPoints = Math.max(settings.minPoints, withBuffer);
+
+  const dailyCapPoints = Math.floor((dailySpendCapUsd * settings.usdToEgp * settings.markup) / settings.creditValueEgp);
+  const effectiveMaxCap = Math.min(jobPointsCap, dailyCapPoints);
+
+  const isCapped = reservedPoints > effectiveMaxCap;
+
+  const costPerUnitWithBuffer = unitPricePoints * (1 + settings.safetyBuffer);
+  const maxCappedVolume = isCapped
+    ? Math.max(1, Math.floor(effectiveMaxCap / costPerUnitWithBuffer))
+    : safeTarget;
 
   const settlement = calculateFinalSettlement(
     safeDelivered,
-    quote.unitPricePoints,
-    quote.quotedPoints
+    unitPricePoints,
+    reservedPoints
   );
 
   const creditValueEgp = settings.creditValueEgp;
@@ -100,14 +117,17 @@ export function computePublicCalculatorQuote(
     nameAr: cap.nameAr,
     targetVolumeMax: safeTarget,
     deliveredVolume: safeDelivered,
-    unitPricePoints: quote.unitPricePoints,
-    unitPriceEgp: Number((quote.unitPricePoints * creditValueEgp).toFixed(4)),
-    reservedPoints: quote.quotedPoints,
-    reservedEgp: Number((quote.quotedPoints * creditValueEgp).toFixed(2)),
+    unitPricePoints,
+    unitPriceEgp: Number((unitPricePoints * creditValueEgp).toFixed(4)),
+    reservedPoints,
+    reservedEgp: Number((reservedPoints * creditValueEgp).toFixed(2)),
     chargedPoints: settlement.chargePoints,
     chargedEgp: Number((settlement.chargePoints * creditValueEgp).toFixed(2)),
     refundPoints: settlement.refundPoints,
     refundEgp: Number((settlement.refundPoints * creditValueEgp).toFixed(2)),
-    safetyBufferPercent: quote.safetyBufferPercent,
+    safetyBufferPercent: Math.round(settings.safetyBuffer * 100),
+    isCapped,
+    maxCapPoints: effectiveMaxCap,
+    maxCappedVolume,
   };
 }

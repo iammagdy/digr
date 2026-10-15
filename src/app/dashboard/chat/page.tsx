@@ -120,6 +120,7 @@ export default function ChatWorkspacePage() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
 
   // Active Job & Canvas Data
   const [startingQuoteId, setStartingQuoteId] = useState<string | null>(null);
@@ -249,15 +250,48 @@ export default function ChatWorkspacePage() {
     }
   }
 
-  // 5. Poll active job status
+  // 5. Poll and subscribe to active job status
   useEffect(() => {
     if (!activeJob || activeJob.status === "done" || activeJob.status === "failed" || activeJob.status === "cancelled") {
       return;
     }
 
+    const supabase = createClient();
+
+    // Instant real-time listener for job events
+    const channel = supabase
+      .channel(`job_events_live_${activeJob.jobId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "job_events",
+          filter: `job_id=eq.${activeJob.jobId}`,
+        },
+        (payload) => {
+          const newEvt = payload.new;
+          if (!newEvt) return;
+          setActiveJob((prev) => {
+            if (!prev || prev.jobId !== activeJob.jobId) return prev;
+            const mapped = mapJobEvents([newEvt]);
+            const nextEvents = chronological([...prev.events, ...mapped]);
+            const newUnits =
+              typeof newEvt.units === "number" && newEvt.units > prev.rowsCollected
+                ? newEvt.units
+                : prev.rowsCollected;
+            return {
+              ...prev,
+              events: nextEvents,
+              rowsCollected: newUnits,
+            };
+          });
+        }
+      )
+      .subscribe();
+
     const interval = setInterval(async () => {
       try {
-        const supabase = createClient();
         const [jobRes, eventsRes] = await Promise.all([
           supabase.from("jobs").select("*").eq("id", activeJob.jobId).maybeSingle(),
           supabase
@@ -294,13 +328,29 @@ export default function ChatWorkspacePage() {
       }
     }, 2000);
 
-    return () => clearInterval(interval);
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [activeJob, loadBalance, extractedRecords.length]);
 
   // Send message
   async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null) {
     const textToSend = messageContent.trim();
-    if ((!textToSend && !attachedFile) || loading || conversationLoading || !user) return;
+    if ((!textToSend && !attachedFile) || loading || conversationLoading) return;
+
+    if (!user && attachedFile) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `warn_${Date.now()}`,
+          role: "assistant",
+          content: "رفع الملفات وفحص قوائم الاستبعاد متاح بعد تسجيل الدخول.",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      return;
+    }
 
     const userMsg: MessageItem = {
       id: `usr_${Date.now()}`,
@@ -366,10 +416,14 @@ export default function ChatWorkspacePage() {
         throw new Error(data.error || "فشل الاتصال بالمساعد الذكي");
       }
 
+      if (data.isGuest) {
+        setGuestRemaining(data.remainingGuestMessages ?? 0);
+      }
+
       if (data.conversationId) {
         setConversationId(data.conversationId);
         setConversationTitle((title) => title || textToSend.slice(0, 50));
-        loadConversations();
+        if (user) loadConversations();
       }
 
       const assistantMsg: MessageItem = {
@@ -412,7 +466,7 @@ export default function ChatWorkspacePage() {
   }
 
   async function handleSubmitClarification(assistantMessageId: string, answers: DiscoveryAnswer[]) {
-    if (loading || !user || !answers.length) return;
+    if (loading || !answers.length) return;
     const summary = answers
       .map((answer) => {
         const value = answer.skipped
@@ -614,6 +668,9 @@ export default function ChatWorkspacePage() {
             events: chronological(mapJobEvents(eventsRes.data)),
           });
           if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
+          if (targetJobId || jobDoc.status === "running" || jobDoc.status === "queued") {
+            setCanvasOpen(true);
+          }
         }
       }
     } catch {
@@ -729,12 +786,13 @@ export default function ChatWorkspacePage() {
         events: [
           {
             $id: `init_${Date.now()}`,
-            textAr: `تم حجز ${data.reservedCredits} نقطة وتأكيد الطلب. جاري البدء...`,
+            textAr: "تم قبول الطلب وجاري بدء التنفيذ...",
             kind: "info",
             createdAt: new Date().toISOString(),
           },
         ],
       });
+      setCanvasOpen(true);
 
       setMessages((prev) => [
         ...prev,
@@ -1040,6 +1098,7 @@ export default function ChatWorkspacePage() {
               events: chronological(mapJobEvents(eventsRes.data)),
             });
             if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
+            setCanvasOpen(true);
 
             // If we can find the matching conversation from messages, open it too!
             for (const m of (msgRes.data || []) as any[]) {
@@ -1203,15 +1262,29 @@ export default function ChatWorkspacePage() {
         onGoRequests={() => router.push("/dashboard/requests")}
       />
     ) : (
-      <ActivityTimeline
-        status={activeJob.status}
-        events={activeJob.events}
-        rowsCollected={activeJob.rowsCollected}
-        eventLimit={EVENT_HISTORY_LIMIT}
-        spentPoints={activeJob.chargedCredits}
-        reservedPoints={activeJob.reservedCredits}
-        requestedRows={activeJob.requestedRows}
-      />
+      <div className="space-y-3">
+        <ActivityTimeline
+          status={activeJob.status}
+          events={activeJob.events}
+          rowsCollected={activeJob.rowsCollected}
+          eventLimit={EVENT_HISTORY_LIMIT}
+          spentPoints={activeJob.chargedCredits}
+          reservedPoints={activeJob.reservedCredits}
+          requestedRows={activeJob.requestedRows}
+        />
+        {!canvasOpen && (
+          <div className="flex justify-start">
+            <button
+              type="button"
+              onClick={() => setCanvasOpen(true)}
+              className="flex items-center gap-2 rounded-full border border-ln2 bg-sf px-4 py-2 text-xs font-semibold text-ink hover:bg-sf2 transition-colors cursor-pointer"
+            >
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>عرض لوحة النشاط والتنفيذ</span>
+            </button>
+          </div>
+        )}
+      </div>
     )
   ) : null;
 
@@ -1248,6 +1321,25 @@ export default function ChatWorkspacePage() {
       {/* 2. Research document + composer */}
       <div data-screen-label="Chat" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ containerType: "inline-size" }}>
         <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-[18px] pb-7 pt-5">
+          {!user && (
+            <div
+              role="status"
+              className="mx-auto mb-4 flex w-full max-w-[680px] items-center justify-between gap-3 rounded-2xl border border-amber-500/30 bg-sf2 px-4 py-2.5 text-xs text-ink"
+            >
+              <div className="flex items-center gap-2">
+                <span className="flex h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                <span>
+                  وضع الزائر: متبقي لك {formatAr(guestRemaining ?? 3)} رسائل مجانية. تُحفظ محادثتك وتُنقل لحسابك تلقائياً عند التسجيل.
+                </span>
+              </div>
+              <a
+                href="/register"
+                className="shrink-0 rounded-full bg-ac px-3 py-1 font-semibold text-onac text-xs hover:opacity-90 transition-opacity no-underline"
+              >
+                إنشاء حساب مجاني
+              </a>
+            </div>
+          )}
           {conversationLoading && (
             <div role="status" aria-label="جاري تحميل المحادثة" className="mx-auto w-full max-w-[680px] space-y-3 py-4">
               <span className="sr-only">جاري تحميل المحادثة</span>
@@ -1320,6 +1412,13 @@ export default function ChatWorkspacePage() {
               records={extractedRecords}
               profile={extractedProfile}
               jobId={activeJob?.jobId || null}
+              jobStatus={activeJob?.status}
+              jobEvents={activeJob?.events}
+              rowsCollected={activeJob?.rowsCollected}
+              requestedRows={activeJob?.requestedRows}
+              reservedPoints={activeJob?.reservedCredits}
+              chargedPoints={activeJob?.chargedCredits}
+              errorAr={activeJob?.errorAr}
               onDownload={handleDownload}
               downloadingKey={downloadingKey}
               onExplainMethodology={() =>
@@ -1327,6 +1426,7 @@ export default function ChatWorkspacePage() {
               }
               onRequestDocxMethodology={handleGenerateMethodology}
               onCloseMobile={() => setCanvasOpen(false)}
+              onClose={() => setCanvasOpen(false)}
               review={activeJob?.review}
               reviewSeverity={activeJob?.reviewSeverity}
               onKeepResult={handleKeepResult}

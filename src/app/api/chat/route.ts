@@ -20,6 +20,17 @@ import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../function
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+function guestSessionToUuid(sessionId: string): string {
+  const hash = crypto.createHash("sha256").update(`guest_session:${sessionId}`).digest("hex");
+  return [
+    hash.substring(0, 8),
+    hash.substring(8, 12),
+    "4" + hash.substring(13, 16),
+    ((parseInt(hash.substring(16, 18), 16) & 0x3f) | 0x80).toString(16) + hash.substring(18, 20),
+    hash.substring(20, 32),
+  ].join("-");
+}
+
 export async function POST(req: NextRequest) {
   const requestId = `req_${crypto.randomUUID()}`;
   let currentStep = "parse_request";
@@ -54,19 +65,32 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1. Authenticate user: strictly via Supabase session or verified Bearer token
+    // 1. Authenticate user or initialize guest session
     currentStep = "authenticate_user";
     let verifiedUserId: string | null = null;
     let emailVerified = false;
+    let isGuest = false;
+
+    let guestSessionCookie = req.cookies.get("guest_session_id")?.value || null;
+    let newGuestCookieToSet: string | null = null;
+    const isGuestHeader = req.headers.get("x-guest-mode") === "true";
+    const isGuestBody = body.isGuest === true;
+
+    const authHeader = req.headers.get("authorization");
+    const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
 
     try {
       const supabase = await createServerSideClient();
-      const authHeader = req.headers.get("authorization");
-      const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
       let user = null;
       if (bearer) {
         const { data, error } = await supabase.auth.getUser(bearer);
-        if (!error) user = data?.user;
+        if (error || !data?.user) {
+          return NextResponse.json(
+            { success: false, requestId, error: "غير مصرح لك بالوصول: رمز الدخول غير صالح أو منتهي الصلاحية." },
+            { status: 401 }
+          );
+        }
+        user = data.user;
       } else {
         const { data, error } = await supabase.auth.getUser();
         if (!error) user = data?.user;
@@ -75,21 +99,50 @@ export async function POST(req: NextRequest) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
       }
-    } catch {}
-
-    if (!verifiedUserId) {
-      return NextResponse.json(
-        {
-          success: false,
-          requestId,
-          error: "غير مصرح. يرجى تسجيل الدخول أولاً للوصول للمساعد الذكي.",
-        },
-        { status: 401 }
-      );
+    } catch {
+      if (bearer) {
+        return NextResponse.json(
+          { success: false, requestId, error: "غير مصرح لك بالوصول: رمز الدخول غير صالح." },
+          { status: 401 }
+        );
+      }
     }
 
-    // Research is blocked until the email is verified
-    if (!emailVerified) {
+    const tables = createAdminClient();
+
+    if (!verifiedUserId) {
+      // Must be an explicit guest (has guest cookie, or guest header/body flag)
+      if (!guestSessionCookie && !isGuestHeader && !isGuestBody) {
+        return NextResponse.json(
+          { success: false, requestId, error: "غير مصرح لك بالوصول: يرجى تسجيل الدخول أو إرسال رمز مصادقة صالح." },
+          { status: 401 }
+        );
+      }
+
+      isGuest = true;
+      if (!guestSessionCookie) {
+        guestSessionCookie = `gst_${crypto.randomUUID()}`;
+        newGuestCookieToSet = guestSessionCookie;
+      }
+      verifiedUserId = guestSessionToUuid(guestSessionCookie);
+      emailVerified = true;
+    } else {
+      // Authenticated user: migrate previous guest conversation if guest session cookie exists
+      if (guestSessionCookie) {
+        const prevGuestUuid = guestSessionToUuid(guestSessionCookie);
+        try {
+          await Promise.all([
+            tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
+            tables.from("messages").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
+          ]);
+        } catch (migErr) {
+          console.warn("[chat:guest_migration_failed]", migErr);
+        }
+      }
+    }
+
+    // Research is blocked until the email is verified (for logged in accounts)
+    if (!isGuest && !emailVerified) {
       return NextResponse.json(
         { success: false, requestId, error: "فعّل بريدك الإلكتروني أولًا لبدء البحث." },
         { status: 403 }
@@ -108,9 +161,58 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Determine tables DAL: Supabase Admin client exclusively
+    const GUEST_MESSAGE_LIMIT = Number(process.env.GUEST_FREE_MESSAGE_LIMIT) || 3;
+    let remainingGuestMessages = GUEST_MESSAGE_LIMIT;
+
+    if (isGuest) {
+      if (body.exclusionFile || (body.uploadedFiles && body.uploadedFiles.length > 0)) {
+        return NextResponse.json(
+          {
+            success: false,
+            requestId,
+            isGuest: true,
+            error: "رفع وتحليل الملفات متاح فقط بعد تسجيل الدخول.",
+          },
+          { status: 403 }
+        );
+      }
+
+      // Count prior user messages sent by this guest UUID
+      const { count: priorMessagesCount } = await tables
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("user_id", verifiedUserId)
+        .eq("role", "user");
+
+      const usedCount = priorMessagesCount || 0;
+      if (usedCount >= GUEST_MESSAGE_LIMIT) {
+        const limitRes = NextResponse.json(
+          {
+            success: false,
+            requestId,
+            isGuest: true,
+            guestLimitReached: true,
+            remainingGuestMessages: 0,
+            error: `لقد استهلكت الـ ${GUEST_MESSAGE_LIMIT} رسائل المجانية المتاحة كزائر. يرجى إنشاء حساب أو تسجيل الدخول لحفظ محادثتك والمتابعة.`,
+          },
+          { status: 403 }
+        );
+        if (newGuestCookieToSet) {
+          limitRes.cookies.set("guest_session_id", newGuestCookieToSet, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            maxAge: 30 * 24 * 60 * 60,
+            path: "/",
+          });
+        }
+        return limitRes;
+      }
+
+      remainingGuestMessages = Math.max(0, GUEST_MESSAGE_LIMIT - (usedCount + 1));
+    }
+
     currentStep = "init_db_client";
-    const tables = createAdminClient();
 
     // 2. Global daily spend cap (platform protection)
     currentStep = "global_spend_cap";
@@ -304,11 +406,14 @@ export async function POST(req: NextRequest) {
       message: message.trim(),
       answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,
+      isGuest,
     });
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       requestId,
+      isGuest,
+      remainingGuestMessages: isGuest ? remainingGuestMessages : undefined,
       exclusionConfirmation: verifiedUploadedFiles.length > 0 ? {
         fileName: verifiedUploadedFiles[0].name,
         baselineRowCount: verifiedUploadedFiles[0].baselineRowCount,
@@ -317,6 +422,20 @@ export async function POST(req: NextRequest) {
       } : undefined,
       ...result,
     });
+
+    if (newGuestCookieToSet) {
+      response.cookies.set("guest_session_id", newGuestCookieToSet, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 30 * 24 * 60 * 60,
+        path: "/",
+      });
+    } else if (!isGuest && guestSessionCookie) {
+      response.cookies.delete("guest_session_id");
+    }
+
+    return response;
   } catch (err: any) {
     const failingStep =
       (err && typeof err === "object" && typeof err.chatStep === "string" && err.chatStep) ||

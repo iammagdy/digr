@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
+import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 
 export interface ExtractedRecord {
   id: string;
@@ -15,11 +16,20 @@ interface ResultsCanvasProps {
   records: ExtractedRecord[];
   profile: any;
   jobId: string | null;
+  jobStatus?: "queued" | "running" | "done" | "failed" | "cancelled";
+  jobEvents?: TerminalEvent[];
+  rowsCollected?: number;
+  requestedRows?: number;
+  reservedPoints?: number;
+  chargedPoints?: number;
+  duplicatesRemoved?: number;
+  errorAr?: string;
   onDownload: (ext: "xlsx" | "pdf" | "csv") => void;
   downloadingKey: string | null;
   onExplainMethodology: () => void;
   onRequestDocxMethodology: () => void;
   onCloseMobile: () => void;
+  onClose?: () => void;
   review?: ResultReview | null;
   reviewSeverity?: ReviewSeverity;
   onKeepResult: () => void;
@@ -63,11 +73,20 @@ export default function ResultsCanvas({
   records,
   profile,
   jobId,
+  jobStatus,
+  jobEvents = [],
+  rowsCollected = 0,
+  requestedRows,
+  reservedPoints,
+  chargedPoints,
+  duplicatesRemoved,
+  errorAr,
   onDownload,
   downloadingKey,
   onExplainMethodology,
   onRequestDocxMethodology,
   onCloseMobile,
+  onClose,
   review,
   reviewSeverity,
   onKeepResult,
@@ -80,7 +99,17 @@ export default function ResultsCanvas({
   onArtifactEdit,
   onUndoVersion,
 }: ResultsCanvasProps) {
-  const [tab, setTab] = useState<"table" | "pdf" | "notes" | "files">("table");
+  const [tab, setTab] = useState<"terminal" | "table" | "pdf" | "notes" | "files">(
+    jobStatus === "running" || jobStatus === "queued" || records.length === 0 ? "terminal" : "table"
+  );
+
+  useEffect(() => {
+    if (jobStatus === "running" || jobStatus === "queued") {
+      setTab("terminal");
+    } else if (jobStatus === "done" && records.length > 0) {
+      setTab((prev) => (prev === "terminal" ? "table" : prev));
+    }
+  }, [jobStatus, records.length]);
   const [searchTerm, setSearchTerm] = useState("");
   const [notesText, setNotesText] = useState("");
   const [renameFrom, setRenameFrom] = useState("");
@@ -123,9 +152,9 @@ export default function ResultsCanvas({
         </div>
         <button
           type="button"
-          onClick={onCloseMobile}
+          onClick={onClose || onCloseMobile}
           aria-label="إغلاق لوحة النتائج"
-          className="touch-target inline-flex items-center justify-center rounded-xl text-sand-500 hover:bg-sand-200 hover:text-ink-900 lg:hidden"
+          className="touch-target inline-flex items-center justify-center rounded-xl text-sand-500 hover:bg-sand-200 hover:text-ink-900"
         >
           <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
             <path strokeLinecap="round" d="m6 6 12 12M18 6 6 18" />
@@ -136,6 +165,7 @@ export default function ResultsCanvas({
       <div className="border-b border-sand-200 bg-sf px-3">
         <Tabs
           tabs={[
+            { id: "terminal" as const, label: "سجل النشاط" },
             { id: "table" as const, label: "البيانات" },
             { id: "pdf" as const, label: "التقرير" },
             { id: "notes" as const, label: "الملاحظات" },
@@ -177,6 +207,22 @@ export default function ResultsCanvas({
         </section>
       )}
 
+      {tab === "terminal" ? (
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ActivityTerminal
+            status={jobStatus || (jobId ? "running" : "queued")}
+            events={jobEvents}
+            rowsCollected={records.length > 0 ? records.length : rowsCollected}
+            requestedRows={requestedRows}
+            reservedPoints={reservedPoints}
+            chargedPoints={chargedPoints}
+            duplicatesRemoved={duplicatesRemoved}
+            errorAr={errorAr}
+            onClose={onClose || onCloseMobile}
+            onDownload={onDownload}
+          />
+        </div>
+      ) : (
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {tab === "table" && (
           <div className="space-y-4">
@@ -370,6 +416,7 @@ export default function ResultsCanvas({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

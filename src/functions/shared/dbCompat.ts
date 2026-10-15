@@ -1,12 +1,15 @@
-import crypto from "node:crypto";
-
 /**
  * Self-contained database and query compatibility primitives.
  * Replaces node-appwrite SDK dependency across the shared runtime.
  */
 
 export const ID = {
-  unique: () => crypto.randomUUID().replace(/-/g, "").slice(0, 20),
+  unique: () => {
+    if (typeof globalThis !== "undefined" && globalThis.crypto?.randomUUID) {
+      return globalThis.crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+    }
+    return Math.random().toString(36).substring(2, 12) + Math.random().toString(36).substring(2, 12);
+  },
 };
 
 export const Query = {

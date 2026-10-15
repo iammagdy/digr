@@ -46,16 +46,33 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(destUrl);
   }
 
+  const isChat = pathname === "/dashboard/chat";
   const isDashboard = pathname.startsWith("/dashboard");
   const isAdmin = pathname.startsWith("/admin");
 
-  if (isDashboard || isAdmin) {
+  if (isAdmin || isDashboard) {
     if (!user) {
-      const loginUrl = request.nextUrl.clone();
-      loginUrl.pathname = "/login";
-      return NextResponse.redirect(loginUrl);
+      const hasGuestCookie = request.cookies.has("guest_session_id");
+      const isGuestOptIn = request.nextUrl.searchParams.get("guest") === "true";
+      if (isChat && (hasGuestCookie || isGuestOptIn)) {
+        if (isGuestOptIn && !hasGuestCookie) {
+          supabaseResponse.cookies.set("guest_session_id", `gst_${crypto.randomUUID()}`, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            maxAge: 30 * 24 * 60 * 60,
+            path: "/",
+          });
+        }
+      } else {
+        const loginUrl = request.nextUrl.clone();
+        loginUrl.pathname = "/login";
+        return NextResponse.redirect(loginUrl);
+      }
     }
+  }
 
+  if ((isDashboard || isAdmin) && user) {
     const isEmailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
 
     // 403 on unverified email

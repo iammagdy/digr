@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
       await adminClient.from("job_events").insert({
         job_id: acceptRes.jobId,
         user_id: user.id,
-        message: `تم حجز ${acceptRes.reservedCredits} نقطة وتأكيد الطلب. جاري البدء...`,
+        message: `تم قبول الطلب وجاري بدء التنفيذ (تم حجز ${acceptRes.reservedCredits} نقطة)`,
         units: 0,
         event_type: "info",
       });
