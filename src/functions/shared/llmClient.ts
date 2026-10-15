@@ -3,6 +3,7 @@ import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
+import { toArabicDigits } from "../../lib/arabicDigits";
 
 // ================= Schema Definitions =================
 
@@ -318,6 +319,7 @@ export interface LlmCallOptions {
     persona?: string;
     purposes?: string[];
     topic?: string;
+    displayName?: string;
   };
   todayDate?: string;
   userBalancePoints?: number;
@@ -1280,6 +1282,30 @@ export class LlmClient {
         inputTokens: 450,
         outputTokens: 80,
         costUsd: (450 * 0.10 + 80 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
+    // C0. Greetings and conversational openings (answer_question)
+    const isUserGreeting =
+      isGreetingOrGeneralQuestion(lastUserMsg).isGreeting ||
+      /^(أهلا|أهلاً|اهلا|مرحبا|مرحباً|ازيك|ازيكم|صباح الخير|مساء الخير|السلام عليكم|سلام عليكم|هلا|هاي|hello|hi)/i.test(promptLower.trim());
+
+    if (isUserGreeting) {
+      const uName = options.userProfile?.displayName || "مجدي";
+      const uBal = options.userBalancePoints != null ? options.userBalancePoints : 500;
+      const uBalAr = toArabicDigits(uBal);
+      return {
+        output: {
+          type: "answer_question",
+          intent: "chat",
+          answerAr: `أهلاً يا ${uName}، رصيدك ${uBalAr} نقطة. كيف يمكنني مساعدتك اليوم في استخراج البيانات العامة وتوثيقها؟`,
+          topic: "greeting",
+        },
+        inputTokens: 300,
+        outputTokens: 40,
+        costUsd: (300 * 0.10 + 40 * 0.50) / 1_000_000,
         model: fakeModel,
         promptVersion: PROMPT_VERSION,
       };

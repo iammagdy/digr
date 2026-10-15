@@ -399,7 +399,12 @@ export default function ResultsCanvas({
             <div className="rounded-[20px] border border-sand-200 bg-sand-50/70 p-4 text-xs">
               <p className="mb-2 font-bold text-ink-900">حقائق الاستخراج والمنهجية</p>
               <dl className="space-y-1.5 text-sand-600">
-                <div className="flex justify-between gap-2"><dt>المصدر</dt><dd className="font-semibold text-ink-800" dir="auto">بيانات عامة (@{profile?.username || "tiktok"})</dd></div>
+                <div className="flex justify-between gap-2">
+                  <dt>المصدر</dt>
+                  <dd className="font-semibold text-ink-800" dir="auto">
+                    {profile?.username ? `بيانات عامة (@${profile.username})` : "قواعد بيانات الشركات والأعمال العامة"}
+                  </dd>
+                </div>
                 <div className="flex justify-between gap-2"><dt>تاريخ الجمع</dt><dd className="font-semibold text-ink-800">{profile?.collectedDate || (records[0]?.extractedAt as string) || "غير متاح"}</dd></div>
                 <div className="flex justify-between gap-2"><dt>السجلات المعروضة</dt><dd className="tnum font-semibold text-ink-800">{formatNumber(records.length)}</dd></div>
               </dl>

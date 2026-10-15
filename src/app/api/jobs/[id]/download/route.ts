@@ -72,9 +72,15 @@ export async function GET(
       `${user.id}/${jobId}/${format}_${jobId}.${format}`,
       `${jobId}/data.${format}`,
       `${jobId}/${format}_${jobId}.${format}`,
-      `${jobId}/data.json`,
-      `results/${jobId}/data.json`,
     ];
+
+    if (format === "pdf") {
+      candidatePaths.push(
+        `${job.user_id}/${jobId}/methodology.pdf`,
+        `${user.id}/${jobId}/methodology.pdf`,
+        `${jobId}/methodology.pdf`
+      );
+    }
 
     let signedUrl: string | null = null;
 
@@ -97,10 +103,12 @@ export async function GET(
         `${job.user_id}/${jobId}/data.json`,
         `${user.id}/${jobId}/data.json`,
         `${jobId}/data.json`,
+        `partials/${jobId}/data.json`,
+        `${jobId}/step_0.json`,
         `json_${jobId}`,
       ];
 
-      for (const bucketName of ["results", "partials"]) {
+      for (const bucketName of ["partials", "results"]) {
         if (jsonText) break;
         const bucket = adminClient.storage?.from?.(bucketName);
         if (!bucket || typeof bucket.download !== "function") continue;

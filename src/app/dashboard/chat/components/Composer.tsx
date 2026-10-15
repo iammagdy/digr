@@ -189,6 +189,7 @@ export default function Composer({
           {/* Text Input */}
           <input
             ref={inputRef}
+            id="chat-composer-input"
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}

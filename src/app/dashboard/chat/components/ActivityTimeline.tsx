@@ -49,7 +49,7 @@ export default function ActivityTimeline({
   const hasEvents = events && events.length > 0;
   const scopeNote =
     eventLimit !== undefined && hasEvents && events.length >= eventLimit
-      ? `يعرض أحدث ${formatNumber(eventLimit)} حدثًا مسجَّلًا.`
+      ? `يعرض أحدث ${formatAr(eventLimit)} حدثًا مسجَّلًا.`
       : null;
 
   const liveSnapshot = deriveLiveActivitySnapshot({
@@ -94,8 +94,8 @@ export default function ActivityTimeline({
               >
                 <time className="tnum min-w-10 text-fnt" dateTime={evt.createdAt}>{clock(evt.createdAt)}</time>
                 <span>
-                  {sanitizeActivityText(evt.textAr)}
-                  {evt.count !== undefined && <span className="tnum text-fnt"> · {formatNumber(evt.count)}</span>}
+                  {toArabicDigits(sanitizeActivityText(evt.textAr))}
+                  {evt.count !== undefined && <span className="tnum text-fnt"> · {formatAr(evt.count)}</span>}
                 </span>
               </p>
             ))

@@ -948,17 +948,29 @@ export default function ChatWorkspacePage() {
       if (!res.ok || !payload?.success || !payload?.signedUrl) {
         throw new Error(payload?.error || "الملف غير متاح للتحميل حالياً");
       }
-      const fileRes = await fetch(payload.signedUrl);
-      if (!fileRes.ok) throw new Error(String(fileRes.status));
-      const blobUrl = URL.createObjectURL(await fileRes.blob());
+      let blobUrl: string | null = null;
+      try {
+        const fileRes = await fetch(payload.signedUrl);
+        if (fileRes.ok) {
+          blobUrl = URL.createObjectURL(await fileRes.blob());
+        }
+      } catch {
+        // Fall back to direct signed URL navigation
+      }
+
       const link = document.createElement("a");
-      link.href = blobUrl;
+      link.href = blobUrl || payload.signedUrl;
       link.download = payload.downloadFileName || `diger_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
+      if (!blobUrl) link.target = "_blank";
       document.body.appendChild(link);
       link.click();
-      setTimeout(() => { URL.revokeObjectURL(blobUrl); link.remove(); }, 250);
+      if (blobUrl) {
+        setTimeout(() => { URL.revokeObjectURL(blobUrl!); link.remove(); }, 250);
+      } else {
+        setTimeout(() => { link.remove(); }, 250);
+      }
     } catch (err: any) {
-      alert(`تعذر تحميل الملف: ${err.message}`);
+      console.error("[chat:download_error]", err);
     } finally {
       setDownloadingKey(null);
     }
@@ -1490,7 +1502,15 @@ export default function ChatWorkspacePage() {
             <EmptyChat
               firstName={firstName}
               zeroBalance={balanceValue !== null && balanceValue <= 0}
-              onStart={(prompt) => handleSendMessage(prompt)}
+              onStart={(prompt) => {
+                setInputText(prompt);
+                setTimeout(() => {
+                  const input = document.getElementById("chat-composer-input") || document.querySelector('input[aria-label="اسأل ديجر"]');
+                  if (input instanceof HTMLInputElement) {
+                    input.focus();
+                  }
+                }, 50);
+              }}
             />
           )}
 

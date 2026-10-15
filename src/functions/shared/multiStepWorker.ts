@@ -139,6 +139,44 @@ export function parseTikTokProfileResponse(rawBody: any, requestedUsername: stri
 }
 
 /**
+ * Robust parser for Icypeas company search responses returned by TREG (/find-companies)
+ */
+export function parseIcypeasCompaniesResponse(data: any): { rows: Record<string, any>[]; nextCursor: string | null } {
+  if (!data || typeof data !== "object") {
+    return { rows: [], nextCursor: null };
+  }
+
+  const rawLeads = Array.isArray(data.leads)
+    ? data.leads
+    : Array.isArray(data.data?.leads)
+    ? data.data.leads
+    : Array.isArray(data.results)
+    ? data.results
+    : Array.isArray(data.data)
+    ? data.data
+    : [];
+
+  if (rawLeads.length === 0) {
+    return { rows: [], nextCursor: null };
+  }
+
+  const rows = rawLeads.map((lead: any, idx: number) => ({
+    company_name: String(lead.name || lead.company_name || `شركة #${idx + 1}`).trim(),
+    website: String(lead.website || lead.url || "").trim(),
+    linkedin_url: String(lead.url || "").trim(),
+    industry: String(lead.industry || lead.specialties?.[0] || "").trim(),
+    location: String(lead.address || lead.location || "").trim(),
+    headcount: lead.numberOfEmployees != null && lead.numberOfEmployees !== "" ? String(lead.numberOfEmployees) : "",
+    description: String(lead.description || lead.slogan || "").trim(),
+    phone: String(lead.phone || "").trim(),
+    founded_year: lead.foundedYear != null ? String(lead.foundedYear) : "",
+  }));
+
+  const nextCursor = data.pagination?.token ? String(data.pagination.token) : null;
+  return { rows, nextCursor };
+}
+
+/**
  * Generic row flattener: flattens top-level and 1 nested level (e.g. user.name -> user_name, stats.likes -> likes).
  * Joins arrays of primitives with comma.
  */
@@ -241,9 +279,16 @@ export function extractAndFlattenRows(rawResponse: any): Array<Record<string, an
     }
 
     if (candidates.length === 0) {
-      const obj = rawResponse.data || rawResponse.user || rawResponse.profile || rawResponse;
-      if (obj && typeof obj === "object" && Object.keys(obj).length > 0) {
-        candidates = [obj];
+      // Strictly prevent treating empty provider envelopes { total: 0, success: true } as a data row
+      const isEnvelopeWithoutData =
+        (typeof rawResponse.total === "number" && rawResponse.total === 0) ||
+        (rawResponse.success === true && (rawResponse.leads === "" || rawResponse.leads === null || !rawResponse.leads));
+
+      if (!isEnvelopeWithoutData) {
+        const obj = rawResponse.data || rawResponse.user || rawResponse.profile;
+        if (obj && typeof obj === "object" && Object.keys(obj).length > 0) {
+          candidates = [obj];
+        }
       }
     }
   }

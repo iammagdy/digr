@@ -1,6 +1,119 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
-import { extractAndFlattenRows, parseTikTokProfileResponse } from "../../functions/shared/multiStepWorker";
+import {
+  extractAndFlattenRows,
+  parseTikTokProfileResponse,
+  parseIcypeasCompaniesResponse,
+} from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
+
+/**
+ * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
+ * POST /find-companies with { query: { location, keyword, industry }, pagination: { size, token } }
+ */
+export function normalizeIcypeasCompanyParams(
+  rawParams: Record<string, any>,
+  pageSize: number,
+  cursor?: string | null
+): Record<string, any> {
+  const queryObj: Record<string, any> = (rawParams?.query && typeof rawParams.query === "object")
+    ? { ...rawParams.query }
+    : {};
+
+  const rawLocation = String(
+    rawParams?.location ||
+    rawParams?.country ||
+    rawParams?.city ||
+    queryObj?.location?.include?.[0] ||
+    (typeof queryObj?.location === "string" ? queryObj.location : "") ||
+    ""
+  ).trim();
+
+  const rawKeyword = String(
+    rawParams?.keyword ||
+    rawParams?.search ||
+    rawParams?.query ||
+    rawParams?.topic ||
+    queryObj?.keyword?.include?.[0] ||
+    (typeof queryObj?.keyword === "string" ? queryObj.keyword : "") ||
+    ""
+  ).trim();
+
+  const rawIndustry = String(
+    rawParams?.industry ||
+    rawParams?.sector ||
+    queryObj?.industry?.include?.[0] ||
+    (typeof queryObj?.industry === "string" ? queryObj.industry : "") ||
+    ""
+  ).trim();
+
+  const translateLocation = (loc: string): string => {
+    const l = loc.toLowerCase();
+    if (l.includes("مصر") || l.includes("egypt")) return "Egypt";
+    if (l.includes("القاهرة") || l.includes("cairo")) return "Cairo, Egypt";
+    if (l.includes("الجيزة") || l.includes("giza")) return "Giza, Egypt";
+    if (l.includes("الإسكندرية") || l.includes("alexandria")) return "Alexandria, Egypt";
+    if (l.includes("السعودية") || l.includes("saudi")) return "Saudi Arabia";
+    if (l.includes("الرياض") || l.includes("riyadh")) return "Riyadh, Saudi Arabia";
+    if (l.includes("الإمارات") || l.includes("uae") || l.includes("emirates")) return "United Arab Emirates";
+    if (l.includes("دبي") || l.includes("dubai")) return "Dubai, United Arab Emirates";
+    return loc || "Egypt";
+  };
+
+  const translateKeywords = (kw: string): string[] => {
+    const k = kw.toLowerCase();
+    const results: string[] = [];
+    if (
+      k.includes("مقاولات") ||
+      k.includes("تشييد") ||
+      k.includes("بناء") ||
+      k.includes("construction") ||
+      k.includes("contracting")
+    ) {
+      results.push("contracting", "construction");
+    } else if (k.includes("عقارات") || k.includes("تطوير عقاري") || k.includes("real estate")) {
+      results.push("real estate");
+    } else if (k.includes("تكنولوجيا") || k.includes("برمجيات") || k.includes("software") || k.includes("tech")) {
+      results.push("software", "technology");
+    } else if (k.includes("سياحة") || k.includes("فنادق") || k.includes("tourism")) {
+      results.push("tourism", "hospitality");
+    } else if (k.includes("شحن") || k.includes("لوجستيات") || k.includes("logistics")) {
+      results.push("logistics", "freight");
+    } else if (k.includes("استشارات") || k.includes("consulting")) {
+      results.push("consulting");
+    } else if (kw) {
+      const cleaned = kw.replace(/[^\w\s\u0600-\u06FF]/g, " ").trim();
+      if (cleaned) results.push(cleaned);
+    }
+    return results.length > 0 ? results : ["contracting"];
+  };
+
+  const locationVal = translateLocation(rawLocation || "Egypt");
+  const keywordVals = translateKeywords(rawKeyword || rawIndustry || "contracting");
+
+  const finalQuery: Record<string, any> = {
+    location: { include: [locationVal] },
+    keyword: { include: keywordVals },
+  };
+
+  if (rawIndustry) {
+    const indVals = translateKeywords(rawIndustry);
+    finalQuery.industry = { include: indVals };
+  }
+
+  const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
+  const paginationObj: Record<string, any> = {
+    size: effectiveSize,
+  };
+
+  if (cursor && String(cursor).trim()) {
+    paginationObj.token = String(cursor).trim();
+  }
+
+  return {
+    query: finalQuery,
+    pagination: paginationObj,
+  };
+}
 
 export interface ProviderAdapterCallInput {
   jobId: string;
@@ -107,20 +220,29 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   const page = input.step + 1;
-  const pageParams: Record<string, any> = serializeProviderParams(input.params || {});
+  const isIcypeasCompanies =
+    input.endpointId === "icypeas.companies.search" ||
+    input.capabilitySlug === "icypeas-companies-search" ||
+    input.capabilitySlug === "company-research";
 
-  if (input.paginationStrategy === "cursor") {
-    if (input.cursor) {
-      pageParams.cursor = input.cursor;
-      pageParams.next_cursor = input.cursor;
+  let pageParams: Record<string, any>;
+  if (isIcypeasCompanies) {
+    pageParams = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, input.cursor);
+  } else {
+    pageParams = serializeProviderParams(input.params || {});
+    if (input.paginationStrategy === "cursor") {
+      if (input.cursor) {
+        pageParams.cursor = input.cursor;
+        pageParams.next_cursor = input.cursor;
+      }
+    } else if (input.paginationStrategy === "offset") {
+      const numericOffset = input.cursor ? Number(input.cursor) : input.step * input.pageSize;
+      pageParams.offset = Number.isFinite(numericOffset) ? numericOffset : input.step * input.pageSize;
+      pageParams.limit = input.pageSize;
+    } else if (input.paginationStrategy === "page") {
+      pageParams.page = page;
+      pageParams.limit = input.pageSize;
     }
-  } else if (input.paginationStrategy === "offset") {
-    const numericOffset = input.cursor ? Number(input.cursor) : input.step * input.pageSize;
-    pageParams.offset = Number.isFinite(numericOffset) ? numericOffset : input.step * input.pageSize;
-    pageParams.limit = input.pageSize;
-  } else if (input.paginationStrategy === "page") {
-    pageParams.page = page;
-    pageParams.limit = input.pageSize;
   }
 
   const isSingleAttemptCap =
@@ -128,10 +250,12 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     input.capabilitySlug === "tiktok-profile";
   const retries = isSingleAttemptCap ? 0 : 3;
 
+  const effectiveMethod = isIcypeasCompanies ? "POST" : input.method;
+
   const callResult = await executeTregCallWithRetry(
     {
       endpointId: input.endpointId,
-      method: input.method,
+      method: effectiveMethod,
       params: pageParams,
       userId: input.userId,
       jobId: input.jobId,
@@ -174,6 +298,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   let rows: Record<string, any>[] = [];
   let rawProfile: Record<string, any> | null = null;
+  let nextCursor: string | null = null;
 
   if (
     input.endpointId === "tikhub.tiktok.user.profile" ||
@@ -189,12 +314,15 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     } else {
       rows = extractAndFlattenRows(callResult.data);
     }
+  } else if (isIcypeasCompanies) {
+    const parsed = parseIcypeasCompaniesResponse(callResult.data);
+    rows = parsed.rows;
+    nextCursor = parsed.nextCursor;
   } else {
     rows = extractAndFlattenRows(callResult.data);
   }
 
-  let nextCursor: string | null = null;
-  if (rows.length > 0) {
+  if (rows.length > 0 && !isIcypeasCompanies) {
     if (input.paginationStrategy === "cursor") {
       const candidateCursor =
         callResult.data?.next_cursor ??

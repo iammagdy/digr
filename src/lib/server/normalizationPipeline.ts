@@ -112,6 +112,9 @@ export function detectPlatform(text?: string): string {
   if (str.includes("telegram")) {
     return "تيليجرام (Telegram)";
   }
+  if (str.includes("company") || str.includes("companies") || str.includes("b2b") || str.includes("icypeas")) {
+    return "قواعد بيانات الشركات والأعمال (B2B Databases)";
+  }
   return "منصة Diger للبيانات العامة";
 }
 
@@ -121,6 +124,15 @@ export function detectPlatform(text?: string): string {
 const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; type: string }> = {
   id: { titleAr: "معرف السجل", descAr: "المعرف الرقمي المتسلسل للسجل داخل المنصة", type: "نص (String)" },
   source_id: { titleAr: "معرف المصدر الأصلي", descAr: "المعرف الفريد للمنشور أو التعليق على المنصة المصدر", type: "نص (String)" },
+  company_name: { titleAr: "اسم الشركة", descAr: "الاسم التجاري الرسمي للشركة أو المؤسسة", type: "نص (String)" },
+  industry: { titleAr: "مجال النشاط", descAr: "التخصص أو القطاع التجاري والصناعي", type: "نص (String)" },
+  website: { titleAr: "الموقع الإلكتروني", descAr: "رابط النطاق الرقمي الرسمي للمنشأة", type: "رابط (URL)" },
+  linkedin_url: { titleAr: "رابط لينكد إن", descAr: "رابط الصفحة المهنية للشركة على منصة لينكد إن", type: "رابط (URL)" },
+  location: { titleAr: "المقر والنطاق الجغرافي", descAr: "العنوان أو المدينة والدولة المسجلة للمقر", type: "نص (String)" },
+  headcount: { titleAr: "حجم العمالة", descAr: "العدد التقديري للعاملين بالمنشأة", type: "رقم صحيح (Integer)" },
+  description: { titleAr: "نبذة عن النشاط", descAr: "الوصف التعريفي المعتمد لطبيعة خدمات ومنتجات الشركة", type: "نص طويل (Text)" },
+  phone: { titleAr: "الهاتف التجاري", descAr: "رقم الهاتف المعتمد للتواصل مع المنشأة", type: "نص (String)" },
+  founded_year: { titleAr: "سنة التأسيس", descAr: "تاريخ وسنة إنشاء الشركة أو بدء النشاط", type: "رقم صحيح (Integer)" },
   tweet_id: { titleAr: "معرف التغريدة", descAr: "المعرف الرقمي الرسمي للتغريدة على منصة X", type: "نص (String)" },
   video_id: { titleAr: "معرف المقطع", descAr: "المعرف الفريد لمقطع الفيديو على المنصة", type: "نص (String)" },
   comment_id: { titleAr: "معرف التعليق", descAr: "المعرف الفريد للتعليق على المنصة", type: "نص (String)" },
@@ -288,7 +300,10 @@ export function deduplicateRecords(rows: Array<Record<string, any>>): {
   for (const row of rows) {
     const key =
       row.source_id ||
+      row.website ||
+      row.linkedin_url ||
       row.url ||
+      (row.company_name ? `company_${String(row.company_name).toLowerCase().trim()}` : null) ||
       (row.text && row.published_at ? `${row.text}_${row.published_at}` : null) ||
       (row.text ? crypto.createHash("md5").update(String(row.text)).digest("hex") : null);
 

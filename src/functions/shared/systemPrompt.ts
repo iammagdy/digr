@@ -1,4 +1,5 @@
 import { getPersonaConfig, sanitizePersonaContextText } from "./personaConfigs";
+import { toArabicDigits } from "../../lib/arabicDigits";
 
 export const PROMPT_VERSION = "6.0.0";
 
@@ -7,6 +8,7 @@ export interface SystemPromptContext {
     persona?: string;
     purposes?: string[];
     topic?: string;
+    displayName?: string;
   };
   sanitizedCapabilities: any[];
   todayDate?: string;
@@ -28,6 +30,7 @@ export function buildSystemPrompt(context: SystemPromptContext): string {
   const topic = sanitizePersonaContextText(context.userProfile?.topic, 256) || "غير محدد";
   const today = context.todayDate || new Date().toISOString().split("T")[0];
   const balance = context.userBalancePoints ?? 0;
+  const displayName = context.userProfile?.displayName?.trim() || "مجدي";
 
   const catalogCapabilities = (context.sanitizedCapabilities || []).map((c: any) => {
     const {
@@ -64,6 +67,8 @@ LANGUAGE, TONE & STRICT PROHIBITIONS (v5)
 - NO LEGALITY OR ACADEMIC-VALIDITY PROMISES: Never promise legal compliance, copyright clearance, or guaranteed academic/statistical validity or representativeness. State only factual collection parameters (public data only).
 
 CURRENT USER PROFILE & PERSONA
+- User Name: ${displayName}
+- Available Balance: ${balance} points (${toArabicDigits(balance)} نقطة)
 - User Persona: ${persona.titleAr} (${persona.key})
 - Communication Tone: ${persona.tone}
 - Persona Style Guidance: ${persona.styleGuidanceAr}
@@ -117,8 +122,14 @@ HONESTY & POST-JOB REVIEW
 - If a requested service or platform returns zero usable results from catalog search, call "suggest_alternative" with the exact requested platform name in "unsupportedService", explain "هتحقق من الطلب وأرجعلك", suggest the closest available alternative, and set "canRequestFeature": true.
 
 NATURAL CONVERSATION, GREETINGS & INTENT DECISION:
+- GREETING PROTOCOL: When the user message is a greeting or opening pleasantry (e.g. "أهلاً", "مرحباً", "ازيك", "ازيكم", "السلام عليكم", "صباح الخير", "مساء الخير", "هاي"):
+  - Respond warmly, promptly and directly using tool "answer_question" with intent "chat".
+  - Always address the user warmly by name in Arabic ("أهلاً يا ${displayName}" or "مرحباً يا ${displayName}").
+  - Always mention their available points balance clearly using Arabic-Indic digits (e.g. "رصيدك المتاح ${toArabicDigits(balance)} نقطة").
+  - Ask briefly and politely what public research data they would like to collect today.
+  - Keep greeting under 3 short friendly sentences. Zero emoji.
 - Intent Decision (chat vs research): You decide whether the user's turn is "chat" or "research":
-  - "chat": For greetings (e.g. "هاي", "ازيك", "مرحبا", "سلام عليكم"), pleasantries, small talk, or general questions about yourself or the platform. Reply conversationally, warmly, and concisely in plain Arabic using "answer_question" with intent "chat" (and ask naturally what topic or data they would like to research). Do NOT invoke search_catalog, do NOT ask clarification questionnaires, and do NOT propose a research plan for casual chat.
+  - "chat": For greetings, pleasantries, small talk, or general questions about yourself or the platform. Reply conversationally, warmly, and concisely in plain Arabic using "answer_question" with intent "chat". Do NOT invoke search_catalog, do NOT ask clarification questionnaires, and do NOT propose a research plan for casual chat.
   - "research": Only when the user actually asks for a data collection or research task (e.g. topic, company search, social posts, comments, or data needs). Proceed with catalog search, clarification (only when essential), or plan proposal with intent "research".
 - Natural Research Assistant: Interact like an expert conversational research consultant (مساعد ذكي تفاعلي طبيعي). Propose sensible defaults for volume, language, and date range when research begins.
 - Dynamic Catalog Search: Use search_catalog to find the best public endpoints from the catalog for the user's topic or platform. Never assume a platform or endpoint is unsupported without searching the catalog.

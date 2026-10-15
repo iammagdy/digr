@@ -13,7 +13,7 @@ interface JobDoc {
   $id: string;
   templateSlug: string;
   params?: string;
-  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  status: string;
   reservedCredits: number;
   chargedCredits?: number;
   rowsCollected?: number;
@@ -23,14 +23,32 @@ interface JobDoc {
 }
 interface QuoteInfo { conversationId: string; targetVolumeMax: number; summaryAr?: string }
 
-type Kind = "done" | "running" | "refunded";
-const kindOf = (s: JobDoc["status"]): Kind => (s === "done" ? "done" : s === "failed" || s === "cancelled" ? "refunded" : "running");
+type Kind = "done" | "partial" | "running" | "refunded";
+const kindOfJob = (j: JobDoc): Kind => {
+  const s = String(j.status || "").toLowerCase();
+  if (s === "failed" || s === "cancelled" || s === "refused") return "refunded";
+  if (s === "done" || s === "completed") {
+    const req = j.targetVolumeMax;
+    const delivered = j.rowsCollected ?? 0;
+    if (req && req > 0 && delivered < req) return "partial";
+    return "done";
+  }
+  return "running";
+};
+const kindOfTab = (k: Kind): "done" | "running" | "refunded" => (k === "partial" ? "done" : k);
+
 const STATUS: Record<Kind, { label: string; fg: string; tint: string }> = {
   done: { label: "مكتمل", fg: "var(--ok)", tint: "var(--ok)" },
+  partial: { label: "مكتمل جزئياً", fg: "var(--gold)", tint: "var(--gold)" },
   running: { label: "قيد التنفيذ", fg: "var(--gold)", tint: "var(--gold)" },
   refunded: { label: "مسترد", fg: "var(--mut)", tint: "var(--mut)" },
 };
-const TABS: Array<["all" | Kind, string]> = [["all", "الكل"], ["done", "مكتملة"], ["running", "قيد التنفيذ"], ["refunded", "مستردة"]];
+const TABS: Array<["all" | "done" | "running" | "refunded", string]> = [
+  ["all", "الكل"],
+  ["done", "مكتملة"],
+  ["running", "قيد التنفيذ"],
+  ["refunded", "مستردة"],
+];
 
 function platformOf(slug: string): string {
   const s = slug.toLowerCase();
@@ -41,6 +59,7 @@ function platformOf(slug: string): string {
   if (s.includes("linkedin")) return "لينكدإن";
   if (s.includes("reddit")) return "ريديت";
   if (s.startsWith("x-") || s.includes("twitter")) return "إكس";
+  if (s.includes("company") || s.includes("companies") || s.includes("b2b")) return "قواعد بيانات الشركات";
   return "الإنترنت العام";
 }
 
@@ -191,11 +210,11 @@ export default function RequestsPage() {
 
   const counts = useMemo(() => ({
     all: jobs.length,
-    done: jobs.filter((j) => kindOf(j.status) === "done").length,
-    running: jobs.filter((j) => kindOf(j.status) === "running").length,
-    refunded: jobs.filter((j) => kindOf(j.status) === "refunded").length,
+    done: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "done").length,
+    running: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "running").length,
+    refunded: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "refunded").length,
   }), [jobs]);
-  const list = jobs.filter((j) => filter === "all" || kindOf(j.status) === filter);
+  const list = jobs.filter((j) => filter === "all" || kindOfTab(kindOfJob(j)) === filter);
 
   async function download(job: JobDoc, ext: "xlsx" | "pdf" | "csv") {
     const key = `${job.$id}_${ext}`;
@@ -212,15 +231,28 @@ export default function RequestsPage() {
       if (!res.ok) throw new Error(String(res.status));
       const payload = await res.json();
       if (!payload?.success || !payload?.signedUrl) throw new Error("no_signed_url");
-      const fileRes = await fetch(payload.signedUrl);
-      if (!fileRes.ok) throw new Error(String(fileRes.status));
-      const url = URL.createObjectURL(await fileRes.blob());
+
+      let blobUrl: string | null = null;
+      try {
+        const fileRes = await fetch(payload.signedUrl);
+        if (fileRes.ok) {
+          blobUrl = URL.createObjectURL(await fileRes.blob());
+        }
+      } catch {
+        // Fall back to direct signed URL navigation
+      }
+
       const a = document.createElement("a");
-      a.href = url;
+      a.href = blobUrl || payload.signedUrl;
       a.download = payload.downloadFileName || `diger_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
+      if (!blobUrl) a.target = "_blank";
       document.body.appendChild(a);
       a.click();
-      setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 250);
+      if (blobUrl) {
+        setTimeout(() => { URL.revokeObjectURL(blobUrl!); a.remove(); }, 250);
+      } else {
+        setTimeout(() => { a.remove(); }, 250);
+      }
     } catch {
       setDlError("تعذّر تحميل الملف. يرجى إعادة المحاولة. (التحميل متاح لمدة ٩٠ يومًا)");
     } finally {
@@ -274,7 +306,7 @@ export default function RequestsPage() {
         {loading && [0, 1, 2].map((i) => <div key={i} className="h-40 rounded-3xl bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />)}
 
         {!loading && list.map((j) => {
-          const k = kindOf(j.status);
+          const k = kindOfJob(j);
           const st = STATUS[k];
           const q = quotes[j.$id];
           const title = (q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || (j.templateSlug ? `طلب ${platformOf(j.templateSlug)}` : "طلب بحث");
@@ -283,6 +315,7 @@ export default function RequestsPage() {
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
             : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0) : "";
+          const hasFiles = k === "done" || k === "partial";
           return (
             <article key={j.$id} className="flex flex-col gap-3.5 rounded-3xl border border-ln bg-sf p-[18px]" style={{ animation: "up .35s both" }}>
               <div className="flex items-start justify-between gap-3">
@@ -301,12 +334,12 @@ export default function RequestsPage() {
               <div className="grid grid-cols-3 gap-2 border-t border-ln pt-3 text-xs text-mut">
                 <span>السجلات<br /><strong className="text-sm font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
                 <span>النقاط المخصومة<br /><strong className="text-sm font-semibold text-ink">{k === "running" ? "محجوز" : formatAr(j.chargedCredits ?? 0)}</strong></span>
-                <span>الملفات<br /><strong className="text-sm font-semibold text-ink">{k === "done" ? "٣" : "—"}</strong></span>
+                <span>الملفات<br /><strong className="text-sm font-semibold text-ink">{hasFiles ? "٣" : "—"}</strong></span>
               </div>
               {k === "running" && <div className="h-1 overflow-hidden rounded bg-sf2"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>}
               {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{note}</p>}
               <div className="flex flex-wrap gap-2">
-                {k === "done" && (["xlsx", "pdf", "csv"] as const).map((ext) => (
+                {hasFiles && (["xlsx", "pdf", "csv"] as const).map((ext) => (
                   <button
                     key={ext} type="button" onClick={() => download(j, ext)} disabled={dl === `${j.$id}_${ext}`}
                     className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border border-ln2 bg-transparent px-3.5 text-xs text-ink disabled:opacity-60"

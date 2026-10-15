@@ -190,18 +190,30 @@ export default function PlanQuoteCard({
             <span className="text-base text-mut" style={{ marginInlineStart: 8 }}>نقطة</span>
           </p>
           <p className="mb-0 mt-2 text-[13px] font-light text-mut">
-            ≈ {formatAr(Number((quote.quotedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatNumber(balance)} نقطة`}
+            ≈ {formatAr(Number((quote.quotedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatAr(balance)} نقطة`}
           </p>
         </div>
         <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
           حتى {formatAr(quote.targetVolumeMax)} سجل<br />
-          {formats.join(" · ")}
-          {!locked && !expired && expiryShort(quote.expiresAt, now) && <><br />{expiryShort(quote.expiresAt, now)}</>}
+          {!locked && !expired && expiryShort(quote.expiresAt, now) && <>{expiryShort(quote.expiresAt, now)}</>}
         </p>
       </div>
 
-      <p className="mb-0 mt-[18px] border-t border-ln pt-4 text-[13px] font-light leading-[1.9] text-ink2">
-        المنهجية: جمع البيانات العامة المتاحة للحساب فقط، مع توثيق تاريخ الجمع وفصل المطلوب عن المجمَّع فعليًا.
+      {/* Deliverable format choices chips directly on the main card */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
+        <span className="text-mut text-[12px]">صيغ التسليم المعتمدة:</span>
+        {(quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "csv", "pdf"]).map((fmt) => (
+          <span
+            key={fmt}
+            className="inline-flex items-center gap-1 rounded-full border border-ln bg-sf2 px-2.5 py-1 text-ink text-[12px] font-medium"
+          >
+            {fmt === "xlsx" ? "Excel (بيانات)" : fmt === "csv" ? "CSV (بيانات)" : "PDF (دليل المنهجية)"}
+          </span>
+        ))}
+      </div>
+
+      <p className="mb-0 mt-[14px] border-t border-ln pt-3 text-[13px] font-light leading-[1.9] text-ink2">
+        المنهجية: {quote.methodologyNotes || "جمع وتوثيق البيانات العامة وفق المعايير المعتمدة وفصل ملف البيانات عن توثيق المنهجية."}
       </p>
 
       {isEditing && !locked && (

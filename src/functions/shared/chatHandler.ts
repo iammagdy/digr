@@ -1318,6 +1318,13 @@ export class ChatHandler {
       currentStep = "llm_turn";
       const tLlmStart = Date.now();
       modelCallCount++;
+      const resolvedDisplayName =
+        (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
+        (userProfile?.name && String(userProfile.name).trim()) ||
+        (userProfile?.full_name && String(userProfile.full_name).trim()) ||
+        (userProfile?.email && String(userProfile.email).toLowerCase().includes("magdy") ? "مجدي" : "") ||
+        "مجدي";
+
       let llmResult = await this.llm.executeTurn({
         messages: turnMessages,
         sanitizedCapabilities: sanitizedCaps,
@@ -1326,8 +1333,11 @@ export class ChatHandler {
               persona: userProfile.persona,
               purposes: parsedPurposes,
               topic: userProfile.topic,
+              displayName: resolvedDisplayName,
             }
-          : undefined,
+          : {
+              displayName: resolvedDisplayName,
+            },
         todayDate: new Date().toISOString().split("T")[0],
         userBalancePoints: userBalance,
         conversationId,
