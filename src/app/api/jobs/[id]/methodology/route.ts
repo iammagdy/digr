@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeDataset, detectPlatform } from "@/lib/server/normalizationPipeline";
+import { toArabicDigits } from "@/lib/arabicDigits";
 
 export const dynamic = "force-dynamic";
 
@@ -137,9 +138,28 @@ export async function POST(
       // Fallback
     }
 
+    const isCompanyJob =
+      rawParsed?.metadata?.entityType === "companies" ||
+      jobDoc.endpoint_id?.includes("compan") ||
+      jobDoc.platform === "companies";
+
+    const cleanTitle =
+      rawParsed?.metadata?.title && !rawParsed.metadata.title.includes(".")
+        ? rawParsed.metadata.title
+        : isCompanyJob
+          ? "دليل واستخراج بيانات الشركات والمؤسسات المعتمدة"
+          : (jobDoc.template_slug && !jobDoc.template_slug.includes("."))
+            ? jobDoc.template_slug
+            : "تقرير البيانات والأبحاث الميدانية المعتمدة";
+
+    const cleanPlatform =
+      rawParsed?.metadata?.platform === "web" || jobDoc.platform === "web" || !jobDoc.platform
+        ? "المصادر الرقمية المتاحة على شبكة الإنترنت"
+        : rawParsed?.metadata?.platform || jobDoc.platform;
+
     const normalized = normalizeDataset(rawParsed || { profile: null, rows: [] }, {
-      platform: jobDoc.platform || undefined,
-      title: jobDoc.template_slug || jobDoc.endpoint_id,
+      platform: cleanPlatform,
+      title: cleanTitle,
       jobId,
     });
 
@@ -153,21 +173,21 @@ export async function POST(
     if (isProfileMode) {
       const p = normalized.profile!;
       const facts = {
-        platform: normalized.metadata.platform || "TikTok",
+        platform: cleanPlatform,
         account: p.username || `@${jobDoc.template_slug || "account"}`,
         displayName: p.display_name || "",
         verifiedStatus: p.verified ? "موثق رسمياً" : "غير موثق",
-        followers: Number(p.followers_count || 0),
-        likes: Number(p.likes_count || 0),
-        videosCount: Number(p.posts_count || 0),
+        followers: toArabicDigits(p.followers_count || 0),
+        likes: toArabicDigits(p.likes_count || 0),
+        videosCount: toArabicDigits(p.posts_count || 0),
         date: (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0],
-        recordsCount: normalized.rows.length || 1,
+        recordsCount: toArabicDigits(normalized.rows.length || 1),
       };
 
       methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
 1. مصدر البيانات وأصلها (Data Provenance):
-تم جمع بيانات هذه الدراسة بصورة آلية ومباشرة عبر منصة Diger من المصدر العلني المتاح على منصة ${facts.platform} للحساب (${facts.account})${facts.displayName ? ` - [${facts.displayName}]` : ""}، وحالة التوثيق (${facts.verifiedStatus}).
+تم جمع بيانات هذه الدراسة بصورة آلية ومباشرة عبر منصة Diger من المصدر العلني المتاح عبر (${facts.platform}) للحساب (${facts.account})${facts.displayName ? ` - [${facts.displayName}]` : ""}، وحالة التوثيق (${facts.verifiedStatus}).
 
 2. النطاق الزمني والتغطية (Temporal Bounds & Coverage):
 أُجريت عملية الاستخراج بتاريخ ${facts.date}. وتمثل المؤشرات الرقمية لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للحساب في تاريخ الجمع:
@@ -183,23 +203,30 @@ export async function POST(
       const k = normalized.kpis;
       const dateStr = (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0];
       const timeRange = k.earliestDate && k.latestDate ? `من ${k.earliestDate} إلى ${k.latestDate}` : `بتاريخ ${dateStr}`;
+      const entityTypeName = isCompanyJob
+        ? "شركات ومؤسسات تجارية معتمدة"
+        : normalized.metadata.entityType === "posts"
+          ? "منشورات وتدوينات"
+          : normalized.metadata.entityType === "comments"
+            ? "سلاسل تعليقات وردود تفاعلية"
+            : "سجلات مستخرجة";
 
       methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
 1. أصل ومصدر البيانات (Data Provenance & Collection Strategy):
-تم استخراج بيانات هذه الدراسة بصورة مؤتمتة ومطابقة للأصول المنهجية عبر منصة Diger للبحث والاستقصاء الميداني، استناداً إلى واجهات المصادر المتاحة لمنصة ${normalized.metadata.platform}.
-- موضوع / نطاق البحث: ${normalized.metadata.title}
-- نوع الكيانات المستخرجة: ${normalized.metadata.entityType === "posts" ? "منشورات وتغريدات" : normalized.metadata.entityType === "comments" ? "سلاسل تعليقات وردود تفاعلية" : "سجلات مستخرجة"}
-- إجمالي السجلات المستخلصة بعد تدقيق التكرار: ${k.totalRecords} سجل
-- السجلات المكررة التي تم استبعادها آلياً: ${k.duplicatesRemoved} سجل
+تم استخراج بيانات هذه الدراسة بصورة مؤتمتة ومطابقة للأصول المنهجية عبر منصة Diger للبحث والاستقصاء الميداني، استناداً إلى (${cleanPlatform}).
+- موضوع / نطاق البحث: ${cleanTitle}
+- نوع الكيانات المستخرجة: ${entityTypeName}
+- إجمالي السجلات المستخلصة بعد تدقيق التكرار: ${toArabicDigits(k.totalRecords)} سجل
+- السجلات المكررة التي تم استبعادها آلياً: ${toArabicDigits(k.duplicatesRemoved)} سجل
 
 2. النطاق الزمني ومؤشرات التفاعل المرصودة (Temporal Bounds & Engagement Metrics):
 تم حصر البيانات للفترة الزمنية (${timeRange})، وتلخص المؤشرات الإجمالية التالية التفاعل العام المرصود:
-- إجمالي المشاهدات المسجلة: ${k.totalViews.toLocaleString("en-US")}
-- إجمالي الإعجابات والتفاعلات: ${k.totalLikes.toLocaleString("en-US")}
-- إجمالي إعادة النشر والمشاركات: ${k.totalShares.toLocaleString("en-US")}
-- إجمالي الردود والتعليقات: ${k.totalComments.toLocaleString("en-US")}
-- نسبة اكتمال الحقول الخالية من القيم المفقودة: ${k.dataCompletenessPct}%
+- إجمالي المشاهدات المسجلة: ${toArabicDigits(k.totalViews)}
+- إجمالي الإعجابات والتفاعلات: ${toArabicDigits(k.totalLikes)}
+- إجمالي إعادة النشر والمشاركات: ${toArabicDigits(k.totalShares)}
+- إجمالي الردود والتعليقات: ${toArabicDigits(k.totalComments)}
+- نسبة اكتمال الحقول الخالية من القيم المفقودة: ${toArabicDigits(k.dataCompletenessPct)}%
 
 3. النزاهة المنهجية ومحددات التحليل (Methodological Integrity & Limitations):
 - نقل المؤشرات: جرى نقل النصوص والمقاييس الرقمية بدقة دون أي تحوير أو ترجيح إحصائي أو توليد اصطناعي.
