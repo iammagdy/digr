@@ -317,10 +317,6 @@ export function normalizeIcypeasCompanyParams(
 
   finalQuery.keyword = { include: detectedIndustry.englishKeywords };
 
-  if (rawParams?.industry) {
-    finalQuery.industry = { include: detectedIndustry.englishKeywords };
-  }
-
   const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
   const paginationObj: Record<string, any> = {
     size: effectiveSize,
