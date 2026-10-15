@@ -131,15 +131,18 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("mousedown", on);
   }, [acctOpen]);
 
-  if (!user) return null;
+  if (!user && !isChat) return null;
 
-  const navItems: Array<{ id: string; label: string; icon: string; href?: string; meta?: string; badge?: number; active: boolean; onClick?: () => void }> = [
+  const navItems: Array<{ id: string; label: string; icon: string; href?: string; meta?: string; badge?: number; active: boolean; onClick?: () => void }> = user ? [
     { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
     { id: "notifs", label: "الإشعارات", icon: UI.bell, badge: notifs.unread, active: notifsOpen, onClick: () => { setNotifsOpen((v) => !v); setDrawer(false); setAcctOpen(false); } },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
+  ] : [
+    { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
+    { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
   ];
 
   const menu: Array<{ label: string; icon: string; meta?: string; danger?: boolean; href?: string; onClick?: () => void }> = [
@@ -236,6 +239,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   })}
                 </div>
               )}
+            {user ? (
               <button
                 type="button" onClick={() => { setAcctOpen((v) => !v); setNotifsOpen(false); }} aria-haspopup="menu" aria-expanded={acctOpen}
                 className={`flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border-0 px-1.5 text-right transition-colors hover:bg-sf2 ${acctOpen ? "bg-sf2" : "bg-transparent"}`}
@@ -250,6 +254,22 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </span>
                 <span className="text-xs text-fnt transition-transform duration-200" style={{ transform: `rotate(${acctOpen ? 0 : 180}deg)` }}>⌃</span>
               </button>
+            ) : (
+              <div className="flex flex-col gap-1.5 p-1">
+                <Link
+                  href="/login"
+                  className="flex min-h-[38px] items-center justify-center rounded-xl bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-ink-800 transition-colors no-underline text-center"
+                >
+                  تسجيل الدخول
+                </Link>
+                <Link
+                  href="/register"
+                  className="flex min-h-[34px] items-center justify-center rounded-xl border border-ln2 bg-sf px-3 py-1 text-xs font-medium text-ink hover:bg-sf2 transition-colors no-underline text-center"
+                >
+                  إنشاء حساب جديد
+                </Link>
+              </div>
+            )}
             </div>
           </aside>
         )}
@@ -264,21 +284,32 @@ export function AppShell({ children }: { children: ReactNode }) {
               )}
               <h1 className="m-0 truncate text-[15px] font-medium text-ink">{pageTitle}</h1>
             </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label="الإشعارات" aria-expanded={notifsOpen}
-                className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-0 text-ink hover:bg-sf2 ${notifsOpen ? "bg-sf2" : "bg-transparent"}`}
-              >
-                <Icon d={UI.bell} size={19} />
-                {notifs.unread > 0 && (
-                  <span className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{toArabicDigits(notifs.unread)}</span>
-                )}
-              </button>
-              <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">
-                <span className="text-sm font-medium text-ink">{balanceText(balance)}</span>
-                <span className="text-xs font-light text-mut">نقطة</span>
-              </Link>
-            </div>
+            {user ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label="الإشعارات" aria-expanded={notifsOpen}
+                  className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-0 text-ink hover:bg-sf2 ${notifsOpen ? "bg-sf2" : "bg-transparent"}`}
+                >
+                  <Icon d={UI.bell} size={19} />
+                  {notifs.unread > 0 && (
+                    <span className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{toArabicDigits(notifs.unread)}</span>
+                  )}
+                </button>
+                <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">
+                  <span className="text-sm font-medium text-ink">{balanceText(balance)}</span>
+                  <span className="text-xs font-light text-mut">نقطة</span>
+                </Link>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/login"
+                  className="inline-flex min-h-9 items-center justify-center rounded-full bg-ink-900 px-4 text-xs font-semibold text-white hover:bg-ink-800 transition-colors no-underline"
+                >
+                  تسجيل الدخول
+                </Link>
+              </div>
+            )}
           </header>
 
           {!online && (
