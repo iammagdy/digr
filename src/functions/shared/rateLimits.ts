@@ -12,8 +12,8 @@ export const DEFAULT_RATE_LIMITS: RateLimitConfig = {
   // guard (per USER message, never per model call) plus the global kill switch.
   messagesPerMinute: 20,
   conversationMaxTokens: 40_000,
-  // Global kill switch (platform protection). Override via LLM_DAILY_SPEND_CAP_USD.
-  globalDailySpendCapUsd: 1.0,
+  // Global kill switch (platform protection). Override via LLM_DAILY_SPEND_CAP_USD or settings_private.
+  globalDailySpendCapUsd: 50.0,
 };
 
 export interface RateLimitCheckResult {
@@ -147,7 +147,22 @@ export async function checkGlobalDailySpendCap(
   tables: any,
   config: RateLimitConfig = DEFAULT_RATE_LIMITS,
 ): Promise<RateLimitCheckResult> {
-  const cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", config.globalDailySpendCapUsd);
+  let configuredLimit = config.globalDailySpendCapUsd;
+
+  if (tables && typeof tables.from === "function") {
+    try {
+      const { data: row } = await tables
+        .from("settings_private")
+        .select("value")
+        .eq("key", "pricing")
+        .maybeSingle();
+      if (row?.value?.llmDailySpendCapUsd && Number.isFinite(Number(row.value.llmDailySpendCapUsd))) {
+        configuredLimit = Number(row.value.llmDailySpendCapUsd);
+      }
+    } catch {}
+  }
+
+  const cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", configuredLimit);
   let totalCostUsd = 0;
 
   if (tables && typeof tables.from === "function") {
