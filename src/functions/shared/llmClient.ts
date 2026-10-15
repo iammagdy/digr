@@ -2427,6 +2427,21 @@ export class LlmClient {
             },
           ];
         }
+        const userPromptLower = (options.messages || [])
+          .filter((m) => m.role === "user")
+          .map((m) => m.content)
+          .join(" ")
+          .toLowerCase();
+
+        const isCompanyPrompt =
+          userPromptLower.includes("شركات") ||
+          userPromptLower.includes("شركة") ||
+          userPromptLower.includes("مؤسسات") ||
+          userPromptLower.includes("مؤسسة") ||
+          userPromptLower.includes("companies") ||
+          userPromptLower.includes("company") ||
+          userPromptLower.includes("b2b");
+
         if (Array.isArray(scrubbedPayload.capabilities)) {
           for (const cap of scrubbedPayload.capabilities) {
             if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
@@ -2628,6 +2643,21 @@ export class LlmClient {
             },
           ];
         }
+        const userPromptLower = (options.messages || [])
+          .filter((m) => m.role === "user")
+          .map((m) => m.content)
+          .join(" ")
+          .toLowerCase();
+
+        const isCompanyPrompt =
+          userPromptLower.includes("شركات") ||
+          userPromptLower.includes("شركة") ||
+          userPromptLower.includes("مؤسسات") ||
+          userPromptLower.includes("مؤسسة") ||
+          userPromptLower.includes("companies") ||
+          userPromptLower.includes("company") ||
+          userPromptLower.includes("b2b");
+
         if (Array.isArray(parsedResult.capabilities)) {
           for (const cap of parsedResult.capabilities) {
             if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {

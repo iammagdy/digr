@@ -25,6 +25,11 @@ import {
   deduplicateAgainstBaseline,
   EntityRecord,
 } from "../../../../lib/server/negativeListEngine";
+import {
+  detectCountryFromText,
+  detectIndustryFromText,
+  isCompanyRowMatchingConstraints,
+} from "../../../../lib/planParameters";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -457,6 +462,48 @@ export async function POST(req: NextRequest) {
         } catch (evtErr: any) {
           console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
         }
+      }
+    }
+
+    const isCompanyCapability =
+      spec.capabilitySlug.includes("company") ||
+      spec.capabilitySlug.includes("companies") ||
+      spec.capabilitySlug === "web-company-search" ||
+      spec.endpointId.includes("icypeas");
+
+    if (isCompanyCapability && Array.isArray(filteredRows) && filteredRows.length > 0) {
+      const fullText = [
+        spec.params?.search,
+        spec.params?.query,
+        spec.params?.keyword,
+        spec.params?.topic,
+        spec.params?.location,
+        spec.params?.country,
+        spec.params?.city,
+        typeof spec.params?.query === "object" ? spec.params.query?.keyword?.include?.[0] : "",
+        typeof spec.params?.query === "object" ? spec.params.query?.location?.include?.[0] : "",
+      ]
+        .filter((v) => typeof v === "string" && v.trim().length > 0)
+        .join(" ");
+
+      const targetCountryObj =
+        detectCountryFromText(spec.params?.country || "") ||
+        detectCountryFromText(spec.params?.location || "") ||
+        detectCountryFromText(fullText);
+
+      const expectedCountry = targetCountryObj?.canonicalEnglish || null;
+      const expectedIndustry = detectIndustryFromText(fullText);
+
+      const countBeforeValidation = filteredRows.length;
+      filteredRows = filteredRows.filter((r: any) =>
+        isCompanyRowMatchingConstraints(r, expectedCountry, expectedIndustry.arabicLabel)
+      );
+
+      const rejectedCount = countBeforeValidation - filteredRows.length;
+      if (rejectedCount > 0) {
+        console.log(
+          `[worker:validation] Excluded ${rejectedCount} company records failing constraints (country: ${expectedCountry || "any"}, industry: ${expectedIndustry.arabicLabel}). Matching retained: ${filteredRows.length}`
+        );
       }
     }
 
