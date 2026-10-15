@@ -45,7 +45,7 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
       process.env.VERCEL_ENV = "production";
       process.env.APP_URL = "http://127.0.0.1:3000";
       const req = new NextRequest("https://diger.tech/api/chat/accept-quote", {
-        headers: { host: "diger.tech", "x-forwarded-proto": "https" },
+        headers: { host: "diger.tech", "x-forwarded-proto": "https", "x-forwarded-host": "127.0.0.1:3000" },
       });
       expect(resolveInternalBaseUrl(req)).toBe("https://diger.tech");
     });

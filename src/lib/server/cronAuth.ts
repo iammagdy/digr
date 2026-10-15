@@ -14,8 +14,12 @@ export function resolveInternalBaseUrl(req?: NextRequest): string {
   // request. APP_URL can accidentally contain a local development URL, which
   // turns internal worker dispatches into requests to 127.0.0.1 on Vercel.
   if (req) {
-    const proto = req.headers.get("x-forwarded-proto") || req.nextUrl?.protocol?.replace(":", "") || "https";
-    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl?.host;
+    const proto = isProduction
+      ? req.nextUrl?.protocol?.replace(":", "") || "https"
+      : req.headers.get("x-forwarded-proto") || req.nextUrl?.protocol?.replace(":", "") || "https";
+    const host = isProduction
+      ? req.nextUrl?.host
+      : req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl?.host;
     if (host && (!isProduction || proto === "https")) {
       return `${proto}://${host}`;
     }
