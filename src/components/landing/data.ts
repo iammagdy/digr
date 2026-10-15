@@ -23,7 +23,7 @@ export const STATEMENTS = [
 ];
 
 export const SHEETS = [
-  { name: "CSV", ext: ".csv", desc: "ترميز UTF-8 للتحليل البرمجي", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
+  { name: "CSV", ext: ".csv", desc: "بيانات جدولية للتحليل البرمجي", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
   { name: "PDF", ext: ".pdf", desc: "ملخص تنفيذي", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
   { name: "Excel", ext: ".xlsx", desc: "ورقتا البيانات والدليل المنهجي", z: 3, to: "translateY(-6%)", delay: "0s" },
 ];
@@ -59,7 +59,7 @@ function buildFieldItems(): string[] {
     () => pick(F) + ": " + pick(["نعم","لا","متاح","غير متاح","عام", AR2(n(1, 500))]),
     () => AR2(n(0, 23)) + ":" + AR2(n(10, 59)) + " · " + pick(P),
     () => pick(F) + " · " + pick(F),
-    () => pick(["UTF-8 · CSV","XLSX · ورقتان","PDF · ملخص تنفيذي","دليل المتغيرات","JSON · " + AR2(n(1, 40)) + " ك.ب"]),
+    () => pick(["CSV · جدول بيانات","XLSX · ورقتان","PDF · ملخص تنفيذي","دليل المتغيرات","JSON · " + AR2(n(1, 40)) + " ك.ب"]),
     () => "آخر " + AR2(n(1, 12)) + " " + pick(["أشهر","أسابيع","أيام"]),
   ];
   const seen = new Set<string>();

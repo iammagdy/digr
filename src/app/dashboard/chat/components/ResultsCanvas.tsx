@@ -375,7 +375,7 @@ export default function ResultsCanvas({
             {[
               { ext: "xlsx" as const, title: "ملف Excel كامل (.xlsx)", desc: "جدول البيانات + دليل المتغيرات + صفحة المنهجية." },
               { ext: "pdf" as const, title: "تقرير ملخص (.pdf)", desc: "صياغة موثقة مع مقاييس التغطية." },
-              { ext: "csv" as const, title: "بيانات خام (.csv)", desc: "UTF-8 — للتحليل الإحصائي والبرمجي." },
+              { ext: "csv" as const, title: "بيانات خام (.csv)", desc: "بيانات جدولية — للتحليل الإحصائي والبرمجي." },
             ].map((f) => (
               <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">
                 <div className="flex min-w-0 items-center gap-3">

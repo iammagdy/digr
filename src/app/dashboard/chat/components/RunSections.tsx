@@ -5,7 +5,7 @@ import { formatAr } from "@/lib/arabicDigits";
 const FILES = [
   { ext: "xlsx" as const, name: "Excel", desc: "البيانات + الدليل المنهجي" },
   { ext: "pdf" as const, name: "PDF", desc: "ملخص تنفيذي" },
-  { ext: "csv" as const, name: "CSV", desc: "UTF-8" },
+  { ext: "csv" as const, name: "CSV", desc: "بيانات جدولية" },
 ];
 
 const pointsWord = (n: number) => (n >= 3 && n <= 10 ? "نقاط" : "نقطة");
