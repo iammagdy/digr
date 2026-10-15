@@ -89,8 +89,8 @@ const PRIMARY_BTN =
 const SECONDARY_BTN =
   "cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2 disabled:opacity-50";
 
-import { extractParamDisplayString } from "@/lib/planParameters";
-export { extractParamDisplayString };
+import { extractParamDisplayString, extractInterpretedParameters } from "@/lib/planParameters";
+export { extractParamDisplayString, extractInterpretedParameters };
 
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
 export default function PlanQuoteCard({
@@ -108,6 +108,7 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
+  const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr);
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
@@ -197,6 +198,28 @@ export default function PlanQuoteCard({
           حتى {formatAr(quote.targetVolumeMax)} سجل<br />
           {!locked && !expired && expiryShort(quote.expiresAt, now) && <>{expiryShort(quote.expiresAt, now)}</>}
         </p>
+      </div>
+
+      {/* Interpreted Parameters: Country, Industry, Target Volume */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px]">
+        <div className="flex items-center gap-1.5">
+          <span className="text-mut">الدولة / النطاق:</span>
+          <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
+            {interpreted.countryAr}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-mut">النشاط / التخصص:</span>
+          <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
+            {interpreted.industryAr}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-mut">العدد المطلوب:</span>
+          <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
+            حتى {formatAr(quote.targetVolumeMax)} سجل
+          </span>
+        </div>
       </div>
 
       {/* Deliverable format choices chips directly on the main card */}
