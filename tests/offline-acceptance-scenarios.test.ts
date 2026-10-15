@@ -113,7 +113,7 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
     expect(excelBuffer).toBeDefined();
     expect(excelBuffer.length).toBeGreaterThan(1000);
 
-    // Verify all 6 sheets exist in generated Excel workbook
+    // Verify Excel workbook is data-only (no audit/methodology/codebook sheets)
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(excelBuffer as any);
 
@@ -121,9 +121,10 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
     expect(sheetNames.some((n) => n.includes("الملخص التنفيذي"))).toBe(true);
     expect(sheetNames.some((n) => n.includes("دليل الشركات"))).toBe(true);
     expect(sheetNames.some((n) => n.includes("للتصفية"))).toBe(true);
-    expect(sheetNames.some((n) => n.includes("سجل تدقيق الاستبعاد"))).toBe(true);
-    expect(sheetNames.some((n) => n.includes("جودة البيانات"))).toBe(true);
-    expect(sheetNames.some((n) => n.includes("دليل الحقول"))).toBe(true);
+    // Explicitly confirm no audit/methodology/field-dictionary sheets inside Excel
+    expect(sheetNames.some((n) => n.includes("سجل تدقيق الاستبعاد"))).toBe(false);
+    expect(sheetNames.some((n) => n.includes("جودة البيانات"))).toBe(false);
+    expect(sheetNames.some((n) => n.includes("دليل الحقول"))).toBe(false);
 
     // Check methodology text transparency: honest coverage statement
     const methodology = generateMethodologyText(payload, {

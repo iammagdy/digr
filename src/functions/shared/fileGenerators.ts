@@ -544,139 +544,35 @@ export async function generateCompanyExcelReport(
   wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
   wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 18 }];
 
-  // ================= Sheet 4: سجل تدقيق الاستبعاد والمطابقة =================
-  const wsAudit = wb.addWorksheet("سجل تدقيق الاستبعاد والمطابقة", {
-    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
-  });
-  const auditHeaders = ["كود الفحص", "اسم الشركة المرشحة", "النطاق المفحوص", "حالة التدقيق (Status)", "السجل المرجعي المطابق", "قاعدة التدقيق (Match Rule)", "السبب والتعليل المنهجي"];
-  const auditHeaderRow = wsAudit.addRow(auditHeaders);
-  auditHeaderRow.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
-  auditHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
-  auditHeaderRow.height = 25;
-  auditHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
-
-  const auditItems: any[] = [];
+  // ================= Sheet 3: سجل المراجعة والتدقيق (Uncertain Data Rows Only) =================
   if (uncertainRows && uncertainRows.length > 0) {
+    const wsReview = wb.addWorksheet("سجل المراجعة والتدقيق", {
+      views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+    });
+    const reviewHeaders = ["م", "اسم الشركة المرشحة", "الموقع الإلكتروني", "المدينة / المحافظة", "النشاط المقترح", "سبب التدقيق المنهجي"];
+    const reviewHeaderRow = wsReview.addRow(reviewHeaders);
+    reviewHeaderRow.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+    reviewHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+    reviewHeaderRow.height = 25;
+    reviewHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+
     uncertainRows.forEach((u, i) => {
-      auditItems.push({
-        candidateId: u.id || `unc_${i + 1}`,
-        candidateName: u.company_name || u.name || `شركة #${i + 1}`,
-        candidateDomain: u.website || u.domain || "—",
-        status: "POSSIBLE_DUPLICATE",
-        matchedBaselineRecord: "—",
-        matchRule: "RELEVANCE_UNCERTAIN_REVIEW",
-        reasonAr: u._relevance_reason || "سجل قيد المراجعة والتدقيق المنهجي لاشتباه في تداخل النشاط.",
-      });
+      const row = wsReview.addRow([
+        i + 1,
+        u.company_name || u.name || `شركة #${i + 1}`,
+        u.website || u.domain || "—",
+        u.location || u.city || "—",
+        u.industry || u.activity || "—",
+        u._relevance_reason || "سجل قيد المراجعة لاشتباه في تداخل النشاط.",
+      ]);
+      row.font = { name: "Calibri", size: 9.5 };
+      row.height = 20;
+      row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } };
+      row.eachCell((cell) => (cell.border = borderThin));
     });
+    wsReview.autoFilter = { from: { row: 1, column: 1 }, to: { row: uncertainRows.length + 1, column: reviewHeaders.length } };
+    wsReview.columns = [{ width: 8 }, { width: 32 }, { width: 28 }, { width: 20 }, { width: 24 }, { width: 45 }];
   }
-
-  if (deduplicationAudit && deduplicationAudit.length > 0) {
-    auditItems.push(...deduplicationAudit);
-  }
-
-  if (auditItems.length === 0) {
-    norm.rows.forEach((r, i) => {
-      auditItems.push({
-        candidateId: `cand_${i + 1}`,
-        candidateName: r.company_name || r.name || `شركة #${i + 1}`,
-        candidateDomain: r.website || r.domain || "—",
-        status: "DISTINCT",
-        matchedBaselineRecord: "—",
-        matchRule: "BASELINE_UNMATCHED_UNIQUE",
-        reasonAr: "كيان مستقل تماماً ومطابق لمعايير البحث والنزاهة المنهجية.",
-      });
-    });
-  }
-
-  auditItems.forEach((a, idx) => {
-    const row = wsAudit.addRow([
-      a.candidateId || `cand_${idx + 1}`,
-      a.candidateName,
-      a.candidateDomain || "—",
-      a.status === "CONFIRMED_DUPLICATE" ? "مستبعد لتكراره قطعياً" : a.status === "POSSIBLE_DUPLICATE" ? "قيد المراجعة والتدقيق" : "مقبول مستقل",
-      a.matchedBaselineRecord || "—",
-      a.matchRule || "CHECKED_OK",
-      a.reasonAr || "سجل مفحوص وفق ضوابط النزاهة.",
-    ]);
-    row.font = { name: "Calibri", size: 9 };
-    row.height = 20;
-
-    let fillColor = COLOR_WHITE;
-    if (a.status === "CONFIRMED_DUPLICATE") fillColor = "FFFEE2E2";
-    else if (a.status === "POSSIBLE_DUPLICATE") fillColor = "FFFEF9C3";
-    else if (idx % 2 === 1) fillColor = COLOR_ZEBRA_FILL;
-
-    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
-    row.eachCell((cell) => (cell.border = borderThin));
-  });
-  wsAudit.autoFilter = { from: { row: 1, column: 1 }, to: { row: auditItems.length + 1, column: auditHeaders.length } };
-  wsAudit.columns = [{ width: 14 }, { width: 30 }, { width: 25 }, { width: 22 }, { width: 25 }, { width: 28 }, { width: 45 }];
-
-  // ================= Sheet 5: جودة البيانات ومحددات الحصر =================
-  const wsQuality = wb.addWorksheet("جودة البيانات ومحددات الحصر", { views: [{ rightToLeft: true }] });
-  const qHeaders = ["المؤشر المنهجي (Metric)", "القيمة المسجلة (Recorded Value)", "الشرح والتوصيف الأكاديمي (Description)"];
-  const qHeaderRow = wsQuality.addRow(qHeaders);
-  qHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
-  qHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
-  qHeaderRow.height = 25;
-  qHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
-
-  const rawCollectedCount = rowsCount + dupsCount + uncertainCount;
-  const targetRequestedDisplay = (norm.metadata as any).targetRequested != null
-    ? `${(norm.metadata as any).targetRequested} شركة`
-    : "عدد السجلات المطلوبة غير متاح";
-
-  const qualityData = [
-    ["إجمالي السجلات المستلمة (Raw Collected)", `${rawCollectedCount.toLocaleString("ar-EG")} شركة`, "إجمالي الكيانات الواردة من مصادر البحث العلنية قبل الفلترة والتنقية"],
-    ["الشركات الفريدة المسلمة (Unique Delivered)", `${rowsCount.toLocaleString("ar-EG")} شركة`, "حجم العينة الفعلي المستخلص والموثق في ملف البيانات بعد استبعاد المكررات"],
-    ["الشركات المستبعدة للتكرار (Duplicates Removed)", `${dupsCount} شركة`, "تم التحقق من تفرد الشركات بمطابقة النطاقات والعلامات التجارية واستبعاد التكرارات القطعية"],
-    ["حالات التشابه والمراجعة (Review Matches)", `${uncertainCount} حالة`, "كيانات أظهرت تداخلاً محتملاً وتمت إتاحتها في سجل المراجعة دون احتسابها ضمن الرسوم"],
-    ["الشركات المطلوبة (Target Requested)", targetRequestedDisplay, "الحد المستهدف للشركات المطلوبة في خطة البحث"],
-    ["نسبة اكتمال الحقول (Completeness)", `${norm.kpis.dataCompletenessPct}%`, "نسبة الحقول المحتوية على قيم فعلية غير مفقودة"],
-    ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع الأعمال والشركات غير محصور بقائمة شاملة فإن العينة غير احتمالية"],
-    ["النزاهة المنهجية (Integrity)", "استخراج مباشر من الواجهات العامة المتاحة", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
-    ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية للمؤسسات دون أي جمع لبيانات اتصال شخصية", "استخراج مقتصر على المعلومات المؤسسية المعلنة للشركات دون انتهاك للخصوصية الفردية"],
-  ];
-
-  qualityData.forEach((q, idx) => {
-    const row = wsQuality.addRow(q);
-    row.font = { name: "Calibri", size: 10 };
-    row.height = 22;
-    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
-    row.eachCell((c) => (c.border = borderThin));
-  });
-  wsQuality.columns = [{ width: 35 }, { width: 25 }, { width: 55 }];
-
-  // ================= Sheet 6: دليل الحقول =================
-  const wsCode = wb.addWorksheet("دليل الحقول", {
-    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
-  });
-  const codeHeaders = ["اسم الحقل (Field)", "المسمى باللغة العربية (Label)", "الوصف باللغة العربية (Description)", "نوع البيانات (Data Type)"];
-  const codeHeaderRow = wsCode.addRow(codeHeaders);
-  codeHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
-  codeHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
-  codeHeaderRow.height = 25;
-  codeHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
-
-  const companyCodebook = [
-    { field: "company_name", titleAr: "اسم الشركة", descriptionAr: "الاسم التجاري الرسمي للمؤسسة أو الكيان", dataType: "Text" },
-    { field: "activity", titleAr: "النشاط / التخصص", descriptionAr: "مجال عمل ونشاط الشركة (مثل كهروميكانيكا، مقاولات، إلخ)", dataType: "Text" },
-    { field: "website", titleAr: "الموقع الإلكتروني الرسمي", descriptionAr: "النطاق الرقمي الرسمي للشركة على الإنترنت", dataType: "URL" },
-    { field: "linkedin_url", titleAr: "رابط لينكد إن", descriptionAr: "الصفحة المهنية للشركة على منصة لينكد إن", dataType: "URL" },
-    { field: "city", titleAr: "المدينة / المحافظة", descriptionAr: "المقر الجغرافي أو النطاق التشغيلي للشركة", dataType: "Text" },
-    { field: "phone", titleAr: "الهاتف التجاري الرسمي", descriptionAr: "أرقام التواصل والخدمات المعلنة للشركة", dataType: "Text" },
-    { field: "verification_status", titleAr: "حالة التحقق", descriptionAr: "حالة التحقق المنهجي من تفرد الكيان ومطابقته", dataType: "Text" },
-  ];
-
-  companyCodebook.forEach((c, idx) => {
-    const row = wsCode.addRow([c.field, c.titleAr, c.descriptionAr, c.dataType]);
-    row.font = { name: "Calibri", size: 10 };
-    row.height = 20;
-    row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: idx % 2 === 1 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
-    row.eachCell((cell) => (cell.border = borderThin));
-  });
-  wsCode.autoFilter = { from: { row: 1, column: 1 }, to: { row: companyCodebook.length + 1, column: codeHeaders.length } };
-  wsCode.columns = [{ width: 22 }, { width: 25 }, { width: 55 }, { width: 22 }];
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
