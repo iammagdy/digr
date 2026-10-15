@@ -18,7 +18,12 @@ import {
   getConfiguredProviderSpendCapUsd,
   getConfiguredJobPointsCap,
 } from "../../../../functions/shared/providerSpend";
-import { generateMethodologyText } from "../../../../functions/shared/fileGenerators";
+import {
+  generateMethodologyText,
+  generateCsvReport,
+  generateExcelReport,
+  generatePdfReport,
+} from "../../../../functions/shared/fileGenerators";
 import { artifactVersionRowId } from "../../../../functions/shared/artifactVersions";
 import { getInMemoryPartialStepFallback } from "../../../../lib/server/tregAdapter";
 import {
@@ -898,12 +903,6 @@ export async function POST(req: NextRequest) {
       const fileErrors: string[] = [];
 
       try {
-        const {
-          generateCsvReport,
-          generateExcelReport,
-          generatePdfReport,
-        } = await import("../../../../functions/shared/fileGenerators");
-
         const resultsBucket = adminClient.storage.from("results");
 
         // 1. CSV Report

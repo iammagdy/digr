@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
+import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 
 export const dynamic = "force-dynamic";
 
@@ -149,9 +150,6 @@ export async function GET(
       if (jsonText) {
         try {
           const parsed = JSON.parse(jsonText);
-          const { generateExcelReport, generateCsvReport, generatePdfReport } = await import(
-            "@/functions/shared/fileGenerators"
-          );
 
           let fileBuf: Buffer | null = null;
           let mimeType = "application/octet-stream";
