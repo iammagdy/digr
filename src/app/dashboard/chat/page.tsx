@@ -27,6 +27,7 @@ import { FailureBox, FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
 import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 import { getJobIdForQuote } from "@/lib/md5";
+import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -128,6 +129,7 @@ export default function ChatWorkspacePage() {
   const [extractedRecords, setExtractedRecords] = useState<ExtractedRecord[]>([]);
   const [extractedProfile, setExtractedProfile] = useState<any>(null);
   const loadedResultJobs = useRef(new Set<string>());
+  const lastNudgeAt = useRef(new Map<string, number>());
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [artifactEditing, setArtifactEditing] = useState(false);
   const [viewportHeight, setViewportHeight] = useState<number | null>(null);
@@ -252,7 +254,7 @@ export default function ChatWorkspacePage() {
 
   // 5. Poll and subscribe to active job status
   useEffect(() => {
-    if (!activeJob || activeJob.status === "done" || activeJob.status === "failed" || activeJob.status === "cancelled") {
+    if (!activeJob || isTerminalJobStatus(activeJob.status)) {
       return;
     }
 
@@ -308,7 +310,7 @@ export default function ChatWorkspacePage() {
           if (!prev) return null;
           return {
             ...prev,
-            status: jobDoc.status,
+            status: toChatJobStatus(jobDoc.status),
             rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
             chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
             reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
@@ -320,8 +322,39 @@ export default function ChatWorkspacePage() {
         });
 
         const jId = jobDoc.id || jobDoc.$id;
-        if ((jobDoc.status === "done" || jobDoc.status === "cancelled") && !loadedResultJobs.current.has(jId)) {
+        if (isTerminalJobStatus(jobDoc.status)) {
+          void loadBalance();
+        }
+        if ((jobDoc.status === "completed" || jobDoc.status === "done") && !loadedResultJobs.current.has(jId)) {
           await loadJobResults(jId);
+        }
+
+        const now = Date.now();
+        const leaseActive = jobDoc.lease_until && new Date(jobDoc.lease_until).getTime() > now;
+        const backoffActive = jobDoc.next_attempt_at && new Date(jobDoc.next_attempt_at).getTime() > now;
+        const lastNudge = lastNudgeAt.current.get(jId) || 0;
+        if (
+          (jobDoc.status === "queued" || jobDoc.status === "running") &&
+          !leaseActive &&
+          !backoffActive &&
+          now - lastNudge >= 10_000
+        ) {
+          lastNudgeAt.current.set(jId, now);
+          void fetch(`/api/jobs/${jId}/nudge`, { method: "POST" }).then(async (nudgeRes) => {
+            if (nudgeRes.ok) return;
+            const message = "تعذر الاتصال بمحرك التنفيذ. ستُعاد المحاولة تلقائياً مع بقاء النقاط محجوزة مؤقتاً.";
+            setActiveJob((prev) => {
+              if (!prev || prev.jobId !== jId || isTerminalJobStatus(prev.status)) return prev;
+              if (prev.events.some((event) => event.textAr === message)) return prev;
+              return {
+                ...prev,
+                events: chronological([
+                  ...prev.events,
+                  { $id: `nudge_retry_${Date.now()}`, textAr: message, kind: "info", createdAt: new Date().toISOString() },
+                ]),
+              };
+            });
+          }).catch(() => {});
         }
       } catch (err) {
         console.warn("Polling job status error:", err);
@@ -658,7 +691,7 @@ export default function ChatWorkspacePage() {
           const jId = jobDoc.id || jobDoc.$id;
           setActiveJob({
             jobId: jId,
-            status: jobDoc.status,
+            status: toChatJobStatus(jobDoc.status),
             templateSlug: quoteTemplateSlug || jobDoc.endpoint_id || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
             rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
             chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
@@ -667,7 +700,7 @@ export default function ChatWorkspacePage() {
             requestedRows: quoteTargetMax ?? jobDoc.target_volume_max ?? undefined,
             events: chronological(mapJobEvents(eventsRes.data)),
           });
-          if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
+          if (jobDoc.status === "completed" || jobDoc.status === "done") await loadJobResults(jId);
           if (targetJobId || jobDoc.status === "running" || jobDoc.status === "queued") {
             setCanvasOpen(true);
           }
@@ -823,7 +856,7 @@ export default function ChatWorkspacePage() {
 
       setActiveJob({
         jobId: data.jobId,
-        status: "running",
+        status: data.workerDispatch?.started ? "running" : "queued",
         templateSlug: quote.items?.[0]?.capabilitySlug || "tiktok-profile",
         rowsCollected: 0,
         reservedCredits: data.reservedCredits,
@@ -839,20 +872,12 @@ export default function ChatWorkspacePage() {
       });
       setCanvasOpen(true);
 
-      // Trigger immediate worker execution via client-side nudge
-      if (data.jobId) {
-        fetch(`/api/jobs/${data.jobId}/nudge`, {
-          method: "POST",
-          headers,
-        }).catch(() => {});
-      }
-
       setMessages((prev) => [
         ...prev,
         {
           id: `start_${Date.now()}`,
           role: "assistant",
-          content: `بدأت عملية الاستخراج بنجاح! تم حجز ${data.reservedCredits} نقطة احتياطياً. يمكنك متابعة تقدم السحب في سجل النشاط ولوحة النتائج.`,
+          content: `${data.messageAr || "تم قبول الطلب."} تم حجز ${data.reservedCredits} نقطة. يمكنك متابعة التنفيذ في سجل النشاط ولوحة النتائج.`,
           jobId: data.jobId,
           createdAt: new Date().toISOString(),
         },
@@ -1141,7 +1166,7 @@ export default function ChatWorkspacePage() {
             const jId = jobDoc.id || jobDoc.$id;
             setActiveJob({
               jobId: jId,
-              status: jobDoc.status,
+              status: toChatJobStatus(jobDoc.status),
               templateSlug: jobDoc.endpoint_id || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
               rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
               chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
@@ -1150,7 +1175,7 @@ export default function ChatWorkspacePage() {
               requestedRows: jobDoc.target_volume_max ?? undefined,
               events: chronological(mapJobEvents(eventsRes.data)),
             });
-            if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
+            if (jobDoc.status === "completed" || jobDoc.status === "done") await loadJobResults(jId);
             setCanvasOpen(true);
 
             // If we can find the matching conversation from messages, open it too!
@@ -1189,7 +1214,7 @@ export default function ChatWorkspacePage() {
   const startIdx = messages.findIndex((m) => !!m.jobId);
   const lastPlanIdx = messages.reduce((acc, m, i) => (m.planQuote ? i : acc), -1);
   const lastClarIdx = messages.reduce((acc, m, i) => (isClarification(m) ? i : acc), -1);
-  const jobFinished = activeJob?.status === "done" || activeJob?.status === "cancelled";
+  const jobFinished = Boolean(activeJob && isTerminalJobStatus(activeJob.status) && activeJob.status !== "failed");
   const answeringNow = loading && lastClarIdx >= 0 && !!messages[lastClarIdx].completedClarificationAnswers;
 
   let stage: DocStage = 0;

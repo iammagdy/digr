@@ -398,6 +398,9 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
 
     it("should enforce nudge rate limiting: rapid successive calls return 429", async () => {
       const nudgeRoute = await import("../src/app/api/jobs/[id]/nudge/route");
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+        new Response(JSON.stringify({ success: true, claimed: true }), { status: 200 })
+      );
       const req1 = new NextRequest("http://127.0.0.1:3000/api/jobs/job_owned_by_user_1/nudge", {
         method: "POST",
         headers: { authorization: "Bearer token_user_1" },
@@ -418,6 +421,37 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       expect(res2.status).toBe(429);
       const json2 = await res2.json();
       expect(json2.error).toContain("تم تنشيط المهمة مؤخراً");
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      fetchSpy.mockRestore();
+    });
+
+    it("atomically releases a queued zero-attempt reservation after 60 seconds", async () => {
+      mockWorkerDb.releasedJobs = [];
+      mockNudgeDb.jobs = [{
+        id: "job_zero_attempt_timeout",
+        user_id: "user_owner_1",
+        status: "queued",
+        step: 0,
+        attempt_count: 0,
+        created_at: new Date(Date.now() - 61_000).toISOString(),
+        lease_until: null,
+        next_attempt_at: null,
+      }];
+      const nudgeRoute = await import("../src/app/api/jobs/[id]/nudge/route");
+      const req = new NextRequest("https://diger.tech/api/jobs/job_zero_attempt_timeout/nudge", {
+        method: "POST",
+        headers: { authorization: "Bearer token_user_1" },
+      });
+      const res = await nudgeRoute.POST(req, {
+        params: Promise.resolve({ id: "job_zero_attempt_timeout" }),
+      });
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ released: true, status: "failed" });
+      expect(mockWorkerDb.releasedJobs).toEqual([{
+        p_job_id: "job_zero_attempt_timeout",
+        p_error_message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب وإرجاع كامل النقاط المحجوزة.",
+      }]);
     });
   });
 

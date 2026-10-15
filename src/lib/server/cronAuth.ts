@@ -7,16 +7,30 @@ import crypto from "node:crypto";
  * deployment protection or preview auth barriers.
  */
 export function resolveInternalBaseUrl(req?: NextRequest): string {
-  if (process.env.APP_URL) {
-    return process.env.APP_URL.replace(/\/+$/, "");
-  }
+  const isProduction = process.env.VERCEL_ENV === "production" ||
+    (process.env.NODE_ENV === "production" && process.env.VERCEL === "1");
+
+  // In production, use the origin that actually received the authenticated
+  // request. APP_URL can accidentally contain a local development URL, which
+  // turns internal worker dispatches into requests to 127.0.0.1 on Vercel.
   if (req) {
     const proto = req.headers.get("x-forwarded-proto") || req.nextUrl?.protocol?.replace(":", "") || "https";
     const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl?.host;
-    if (host) {
+    if (host && (!isProduction || proto === "https")) {
       return `${proto}://${host}`;
     }
   }
+
+  if (isProduction && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/\/+$/, "")}`;
+  }
+
+  if (process.env.APP_URL) {
+    const configuredUrl = process.env.APP_URL.replace(/\/+$/, "");
+    const isLoopback = /^https?:\/\/(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$/i.test(configuredUrl);
+    if (!isProduction || !isLoopback) return configuredUrl;
+  }
+
   if (process.env.NEXT_PUBLIC_SITE_URL) {
     return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/+$/, "");
   }
@@ -25,6 +39,9 @@ export function resolveInternalBaseUrl(req?: NextRequest): string {
   }
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL.replace(/\/+$/, "")}`;
+  }
+  if (isProduction) {
+    throw new Error("No production origin is available for the internal worker trigger.");
   }
   return "http://127.0.0.1:3000";
 }

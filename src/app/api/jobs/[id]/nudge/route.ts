@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createServerSideClient } from "../../../../../lib/supabase/server";
+import { createAdminClient, createServerSideClient } from "../../../../../lib/supabase/server";
 import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../../lib/server/cronAuth";
+import { dispatchWorkerChunk } from "../../../../../lib/server/workerDispatch";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+const ZERO_ATTEMPT_START_TIMEOUT_MS = 60_000;
 
 const nudgeRateLimitCache = new Map<string, number>();
 
@@ -49,7 +52,7 @@ export async function POST(
     // 2. Fetch job and verify ownership
     const { data: job, error: jobErr } = await supabase
       .from("jobs")
-      .select("id, user_id, status, step, lease_until, next_attempt_at, updated_at")
+      .select("id, user_id, status, step, attempt_count, created_at, lease_until, next_attempt_at, updated_at")
       .eq("id", jobId)
       .maybeSingle();
 
@@ -80,7 +83,7 @@ export async function POST(
     nudgeRateLimitCache.set(cacheKey, nowTime);
 
     // 3. Status guards
-    if (job.status === "completed" || job.status === "failed") {
+    if (["completed", "done", "failed", "cancelled", "refused"].includes(job.status)) {
       return NextResponse.json({
         success: true,
         nudged: false,
@@ -90,6 +93,15 @@ export async function POST(
     }
 
     const now = new Date();
+
+    if (job.status !== "queued" && job.status !== "running") {
+      return NextResponse.json({
+        success: true,
+        nudged: false,
+        status: job.status,
+        message: "حالة المهمة لا تسمح ببدء جزء جديد.",
+      });
+    }
 
     // If an active lease is held, don't interrupt it
     if (job.lease_until && new Date(job.lease_until) > now) {
@@ -111,34 +123,84 @@ export async function POST(
       });
     }
 
+    // A newly accepted job that never acquired its first chunk must not hold
+    // customer points indefinitely. The normal retry path gets 60 seconds;
+    // after that, use the approved atomic release RPC (no direct ledger writes).
+    const createdAt = job.created_at ? new Date(job.created_at).getTime() : Number.NaN;
+    if (
+      job.status === "queued" &&
+      Number(job.attempt_count || 0) === 0 &&
+      Number.isFinite(createdAt) &&
+      now.getTime() - createdAt >= ZERO_ATTEMPT_START_TIMEOUT_MS
+    ) {
+      const adminClient = createAdminClient();
+      const { data: released, error: releaseError } = await adminClient.rpc("release_job_atomic", {
+        p_job_id: job.id,
+        p_error_message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب وإرجاع كامل النقاط المحجوزة.",
+      });
+      if (releaseError || released?.success !== true) {
+        console.error(`[nudge:release_failed] jobId=${job.id} code=${releaseError?.code || "rpc_failed"}`);
+        return NextResponse.json(
+          { success: false, error: "تعذر بدء المهمة أو تأكيد إرجاع الرصيد. سيُعاد التحقق تلقائياً." },
+          { status: 503 }
+        );
+      }
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: job.id,
+          user_id: user.id,
+          message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب وإرجاع كامل النقاط المحجوزة.",
+          units: 0,
+          event_type: "error",
+        });
+      } catch (eventError: any) {
+        console.warn(`[nudge:release_event_failed] jobId=${job.id} code=${eventError?.code || "unknown"}`);
+      }
+      return NextResponse.json({
+        success: true,
+        nudged: false,
+        released: true,
+        status: "failed",
+        releasedCredits: released.released_credits,
+        message: "تعذر بدء المهمة خلال دقيقة، وتم إرجاع النقاط المحجوزة.",
+      });
+    }
+
     // 4. Stalled or unassigned lease: Trigger worker chunk safely
     try {
       const baseUrl = resolveInternalBaseUrl(req);
-      const authHeaders = createInternalWorkerAuthHeaders(job.id);
-      fetch(`${baseUrl}/api/worker/chunk`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders,
-        },
-        body: JSON.stringify({
-          jobId: job.id,
-          expectedStep: job.step ?? 0,
-        }),
-      }).catch((fetchErr) => {
+      const workerResult = await dispatchWorkerChunk(
+        baseUrl,
+        job.id,
+        job.step ?? 0,
+        createInternalWorkerAuthHeaders(job.id)
+      ).catch((fetchErr) => {
         console.error("Worker trigger on nudge error:", fetchErr);
+        throw fetchErr;
+      });
+      if (workerResult.status < 200 || workerResult.status >= 300) {
+        return NextResponse.json(
+          { success: false, nudged: false, status: job.status, error: "تعذر بدء جزء التنفيذ. ستتم إعادة المحاولة تلقائياً.", workerStatus: workerResult.status },
+          { status: 502 }
+        );
+      }
+      return NextResponse.json({
+        success: true,
+        nudged: workerResult.started,
+        status: job.status,
+        jobId: job.id,
+        step: job.step ?? 0,
+        worker: workerResult.body,
+        message: "تم تنفيذ محاولة تنشيط المهمة.",
       });
     } catch (nudgeErr) {
       console.warn("[nudge:trigger_warn]", nudgeErr);
     }
 
-    return NextResponse.json({
-      success: true,
-      nudged: true,
-      jobId: job.id,
-      step: job.step ?? 0,
-      message: "تم تنشيط المهمة بنجاح.",
-    });
+    return NextResponse.json(
+      { success: false, nudged: false, status: job.status, error: "تعذر الاتصال بمحرك التنفيذ. ستتم إعادة المحاولة تلقائياً." },
+      { status: 502 }
+    );
   } catch (err: any) {
     console.error("Nudge job route error:", err);
     return NextResponse.json(

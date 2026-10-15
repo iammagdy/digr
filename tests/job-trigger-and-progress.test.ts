@@ -6,11 +6,14 @@ import {
   resolveInternalBaseUrl,
 } from "../src/lib/server/cronAuth";
 import { md5, getJobIdForQuote } from "../src/lib/md5";
+import { isTerminalJobStatus, toChatJobStatus } from "../src/lib/jobs/status";
+import { dispatchWorkerChunk } from "../src/lib/server/workerDispatch";
 
 describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
+    vi.unstubAllEnvs();
     process.env = { ...originalEnv };
   });
 
@@ -30,10 +33,21 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
   });
 
   describe("Internal Worker Auth & Canonical URL Resolution", () => {
-    it("resolves canonical base URL prioritizing APP_URL over temporary Vercel URLs", () => {
+    it("resolves canonical base URL from APP_URL outside production requests", () => {
       process.env.APP_URL = "https://diger.tech";
       process.env.VERCEL_URL = "diger-git-test-iammagdy.vercel.app";
       expect(resolveInternalBaseUrl()).toBe("https://diger.tech");
+    });
+
+    it("prefers the actual HTTPS production request origin over a stale localhost APP_URL", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      process.env.VERCEL = "1";
+      process.env.VERCEL_ENV = "production";
+      process.env.APP_URL = "http://127.0.0.1:3000";
+      const req = new NextRequest("https://diger.tech/api/chat/accept-quote", {
+        headers: { host: "diger.tech", "x-forwarded-proto": "https" },
+      });
+      expect(resolveInternalBaseUrl(req)).toBe("https://diger.tech");
     });
 
     it("falls back to request headers or VERCEL_PROJECT_PRODUCTION_URL when APP_URL is absent", () => {
@@ -107,6 +121,35 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
 
       expect(verifyCronSecret(req)).toBe(false);
     });
+  });
+
+  describe("Terminal job state mapping", () => {
+    it.each(["completed", "done", "failed", "cancelled", "refused"])(
+      "stops polling terminal database status %s",
+      (status) => expect(isTerminalJobStatus(status)).toBe(true)
+    );
+
+    it("maps the database completed state to the finished chat state", () => {
+      expect(toChatJobStatus("completed")).toBe("done");
+      expect(isTerminalJobStatus(toChatJobStatus("completed"))).toBe(true);
+    });
+  });
+
+  it("awaits the first bounded worker chunk and reports its claim acknowledgement", async () => {
+    let finishFetch!: (response: Response) => void;
+    const fetcher = vi.fn(() => new Promise<Response>((resolve) => { finishFetch = resolve; }));
+    let settled = false;
+    const dispatch = dispatchWorkerChunk("https://diger.tech", "job_123", 0, { "x-worker-job-id": "job_123" }, 5_000, fetcher)
+      .then((result) => { settled = true; return result; });
+
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    finishFetch(new Response(JSON.stringify({ success: true, claimed: true }), { status: 200 }));
+    await expect(dispatch).resolves.toMatchObject({ started: true, status: 200, body: { claimed: true } });
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://diger.tech/api/worker/chunk",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ jobId: "job_123", expectedStep: 0 }) })
+    );
   });
 
   describe("Event Deduplication & Progress State Mapping", () => {
