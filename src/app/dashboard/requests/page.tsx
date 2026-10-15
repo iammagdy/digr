@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { JOBS_COLLECTION } from "@/lib/constants";
+import { getJobIdForQuote } from "@/lib/md5";
 
 interface JobDoc {
   $id: string;
@@ -16,6 +17,7 @@ interface JobDoc {
   reservedCredits: number;
   chargedCredits?: number;
   rowsCollected?: number;
+  targetVolumeMax?: number;
   errorAr?: string;
   createdAt: string;
 }
@@ -69,7 +71,7 @@ export default function RequestsPage() {
     if (!user) return;
     try {
       const supabase = createClient();
-      const [jobsRes, quotesRes, convRes] = await Promise.all([
+      const [jobsRes, quotesRes, convRes, msgsRes] = await Promise.all([
         supabase
           .from(JOBS_COLLECTION)
           .select("*")
@@ -78,7 +80,7 @@ export default function RequestsPage() {
           .limit(100),
         supabase
           .from("plans_quotes")
-          .select("job_id, conversation_id, target_volume_max, summary_ar")
+          .select("id, status, items, total_reserved_credits, created_at")
           .eq("user_id", user.id)
           .eq("status", "accepted")
           .order("created_at", { ascending: false })
@@ -89,31 +91,51 @@ export default function RequestsPage() {
           .eq("user_id", user.id)
           .order("updated_at", { ascending: false })
           .limit(100),
+        supabase
+          .from("messages")
+          .select("conversation_id, quote")
+          .eq("user_id", user.id)
+          .not("quote", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(100),
       ]);
       if (jobsRes.error) throw jobsRes.error;
       const mappedJobs: JobDoc[] = (jobsRes.data || []).map((r: any) => ({
         $id: r.id,
-        templateSlug: r.template_slug || r.templateSlug || "",
+        templateSlug: r.endpoint_id || r.template_slug || r.templateSlug || "",
         params: typeof r.params === "string" ? r.params : JSON.stringify(r.params || {}),
         status: r.status,
-        reservedCredits: r.reserved_credits ?? r.reservedCredits ?? 0,
-        chargedCredits: r.charged_credits ?? r.chargedCredits ?? undefined,
-        rowsCollected: r.rows_collected ?? r.rowsCollected ?? undefined,
-        errorAr: r.error_ar ?? r.errorAr ?? undefined,
+        reservedCredits: Number(r.reserved_credits ?? r.reservedCredits ?? 0),
+        chargedCredits: r.charged_credits !== undefined && r.charged_credits !== null ? Number(r.charged_credits) : undefined,
+        rowsCollected: r.delivered_units ?? r.rows_collected ?? r.rowsCollected ?? 0,
+        targetVolumeMax: typeof r.target_volume_max === "number" ? r.target_volume_max : undefined,
+        errorAr: r.error_message ?? r.error_ar ?? r.errorAr ?? undefined,
         createdAt: r.created_at || r.createdAt || new Date().toISOString(),
       }));
       setJobs(mappedJobs);
 
-      const qMap: Record<string, QuoteInfo> = {};
-      for (const q of (quotesRes.data || []) as any[]) {
-        const jId = q.job_id || q.jobId;
-        if (jId) {
-          qMap[jId] = {
-            conversationId: q.conversation_id || q.conversationId,
-            targetVolumeMax: q.target_volume_max ?? q.targetVolumeMax ?? 0,
-            summaryAr: q.summary_ar || q.summaryAr,
+      // Map quoteId to conversationId and summaryAr from messages table
+      const quoteToConv: Record<string, { conversationId: string; summaryAr?: string }> = {};
+      for (const m of (msgsRes?.data || []) as any[]) {
+        const qId = m.quote?.quoteId || m.quote?.id;
+        if (qId && m.conversation_id) {
+          quoteToConv[qId] = {
+            conversationId: m.conversation_id,
+            summaryAr: m.quote?.summaryAr || m.quote?.summary_ar,
           };
         }
+      }
+
+      const qMap: Record<string, QuoteInfo> = {};
+      for (const q of (quotesRes?.data || []) as any[]) {
+        const jId = getJobIdForQuote(q.id);
+        const item = Array.isArray(q.items) ? q.items[0] : null;
+        const msgInfo = quoteToConv[q.id];
+        qMap[jId] = {
+          conversationId: msgInfo?.conversationId || "",
+          targetVolumeMax: item?.targetVolumeMax ?? item?.target_volume_max ?? 0,
+          summaryAr: msgInfo?.summaryAr || (item?.capabilitySlug ? `استخراج بيانات ${item.capabilitySlug}` : undefined),
+        };
       }
       setQuotes(qMap);
 
@@ -178,7 +200,11 @@ export default function RequestsPage() {
 
   const openFile = (job: JobDoc, retry = false) => {
     const c = quotes[job.$id]?.conversationId;
-    router.push(c ? `/dashboard/chat?c=${c}${retry ? "&retry=1" : ""}` : "/dashboard/chat");
+    const query = new URLSearchParams();
+    query.set("jobId", job.$id);
+    if (c) query.set("c", c);
+    if (retry) query.set("retry", "1");
+    router.push(`/dashboard/chat?${query.toString()}`);
   };
 
   return (
@@ -215,8 +241,8 @@ export default function RequestsPage() {
           const k = kindOf(j.status);
           const st = STATUS[k];
           const q = quotes[j.$id];
-          const title = (q && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params);
-          const requested = q?.targetVolumeMax;
+          const title = (q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || (j.templateSlug ? `طلب ${platformOf(j.templateSlug)}` : "طلب بحث");
+          const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."

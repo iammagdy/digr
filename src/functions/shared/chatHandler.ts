@@ -694,6 +694,10 @@ export class ChatHandler {
       let conversationId = input.conversationId;
       let totalConvTokens = 0;
       const tSbConvStart = Date.now();
+      let userBalance = input.userBalance;
+      let userProfile: any = undefined;
+      let convBriefFromDb: any = undefined;
+      let assistantMsgId = "";
 
       if (!conversationId) {
         conversationId = ID.unique();
@@ -737,6 +741,10 @@ export class ChatHandler {
             throw authErr;
           }
 
+          if (conv?.brief && typeof conv.brief === "object") {
+            convBriefFromDb = conv.brief;
+          }
+
           if (!conv) {
             conversationId = ID.unique();
             const { error: convCreateErr } = await sb.from("conversations").insert({
@@ -775,7 +783,6 @@ export class ChatHandler {
 
       // 2. Fetch User Points Balance from Ledger
       currentStep = "balance_fetch";
-      let userBalance = input.userBalance;
       if (userBalance === undefined) {
         const tSbBalStart = Date.now();
         userBalance = await getBalance(this.tables, userId);
@@ -784,7 +791,6 @@ export class ChatHandler {
 
       // 2b. Fetch User Profile for Dynamic Persona Context
       currentStep = "profile_fetch";
-      let userProfile: any = undefined;
       const tSbProfStart = Date.now();
       try {
         if (sb) {
@@ -806,20 +812,32 @@ export class ChatHandler {
       }
       supabaseMs += Date.now() - tSbProfStart;
 
-      // 3. Save User Message in DB
-      currentStep = "user_message_insert";
+      // 3. Save User Message & 4. Assistant Placeholder
       const userMsgId = ID.unique();
+      assistantMsgId = ID.unique();
       const tSbMsgStart = Date.now();
+
       if (sb) {
-        const { error: userMsgErr } = await sb.from("messages").insert({
-          id: userMsgId,
-          conversation_id: conversationId,
-          user_id: userId,
-          role: "user",
-          content_ar: message,
-          created_at: nowIso,
-        });
-        if (userMsgErr) throw userMsgErr;
+        const [uRes, aRes] = await Promise.all([
+          sb.from("messages").insert({
+            id: userMsgId,
+            conversation_id: conversationId,
+            user_id: userId,
+            role: "user",
+            content_ar: message,
+            created_at: nowIso,
+          }),
+          sb.from("messages").insert({
+            id: assistantMsgId,
+            conversation_id: conversationId,
+            user_id: userId,
+            role: "assistant",
+            content_ar: "جاري التفكير وتحليل طلبك...",
+            created_at: new Date().toISOString(),
+          }),
+        ]);
+        if (uRes?.error) throw uRes.error;
+        if (aRes?.error) throw aRes.error;
       } else {
         await this.tables.createRow({
           databaseId: "digr",
@@ -834,22 +852,6 @@ export class ChatHandler {
             createdAt: nowIso,
           },
         });
-      }
-
-      // 4. Create Thinking Assistant Placeholder (for Progressive Realtime Streaming)
-      currentStep = "assistant_placeholder_insert";
-      const assistantMsgId = ID.unique();
-      if (sb) {
-        const { error: asstPlaceholderErr } = await sb.from("messages").insert({
-          id: assistantMsgId,
-          conversation_id: conversationId,
-          user_id: userId,
-          role: "assistant",
-          content_ar: "جاري التفكير وتحليل طلبك...",
-          created_at: new Date().toISOString(),
-        });
-        if (asstPlaceholderErr) throw asstPlaceholderErr;
-      } else {
         await this.tables.createRow({
           databaseId: "digr",
           tableId: "messages",
@@ -869,7 +871,7 @@ export class ChatHandler {
       // 5. Research Brief & Two-Phase Routing
       currentStep = "brief_resolution";
       const tSbBriefStart = Date.now();
-      const currentBrief = await getConversationBrief(this.tables, conversationId);
+      const currentBrief = convBriefFromDb || await getConversationBrief(this.tables, conversationId);
       let brief = extractBriefFromMessage(message, currentBrief);
 
     if ((input as any).answers) {
@@ -942,9 +944,53 @@ export class ChatHandler {
       researchIntent.entityType.value === "companies" ||
       extractEntityType(message).entityType === "companies";
 
+    if (isGreeting) {
+      const greetingReply = "أهلاً بك! أنا مساعد Diger لأبحاث واستخراج البيانات من المنصات والسجلات العامة. كيف يمكنني مساعدتك اليوم؟";
+      if (sb) {
+        await sb.from("messages").update({ content_ar: greetingReply }).eq("id", assistantMsgId);
+      } else {
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: assistantMsgId,
+          data: { content: greetingReply, status: "ready" },
+        });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        outputType: "answer_question",
+        intent: "chat",
+        contentAr: greetingReply,
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+      };
+    }
+
+    if (isGeneralQuestion) {
+      const generalReply = "أنا مساعد Diger الذكي لأبحاث واستخراج البيانات العامة. أساعدك في صياغة خطة بحث دقيقة، استخراج السجلات من المنصات والسجلات العامة، وتجهيزها في ملفات Excel و CSV و PDF.";
+      if (sb) {
+        await sb.from("messages").update({ content_ar: generalReply }).eq("id", assistantMsgId);
+      } else {
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: assistantMsgId,
+          data: { content: generalReply, status: "ready" },
+        });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        outputType: "answer_question",
+        intent: "chat",
+        contentAr: generalReply,
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+      };
+    }
+
     if (isTestSearchScenario) {
-      isPhase2 = false;
-    } else if (isGreeting || isGeneralQuestion) {
       isPhase2 = false;
     } else if (discoveryDecision.action === "CLARIFY" && discoveryDecision.missingCrucialFields.includes("exclusion_file")) {
       const q = discoveryDecision.questions[0];

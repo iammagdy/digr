@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
-import { verifyCronSecret } from "../../../../lib/server/cronAuth";
+import {
+  verifyCronSecret,
+  resolveInternalBaseUrl,
+  createInternalWorkerAuthHeaders,
+} from "../../../../lib/server/cronAuth";
 import {
   defaultTregAdapter,
   getInjectedProviderAdapter,
@@ -28,14 +32,8 @@ export const maxDuration = 60; // Vercel Hobby maximum
 // Fallback in-memory partial step store used ONLY when unit-test mock storage omits .download()
 const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
-function getWorkerBaseUrl(): string {
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/+$/, "");
-  }
-  return "http://127.0.0.1:3000";
+function getWorkerBaseUrl(req?: NextRequest): string {
+  return resolveInternalBaseUrl(req);
 }
 
 function scheduleNextChunkWithWaitUntil(task: () => Promise<void>): void {
@@ -954,23 +952,27 @@ export async function POST(req: NextRequest) {
     }
 
     // 13. Not finished: chain next chunk via waitUntil (after from next/server) with cronAuth headers
-    if (process.env.CRON_SECRET && (!useMockProvider || !body?.disableSelfChain)) {
-      const nextUrl = `${getWorkerBaseUrl()}/api/worker/chunk`;
-      const cronSecret = process.env.CRON_SECRET.trim();
+    if (!useMockProvider || !body?.disableSelfChain) {
+      const nextUrl = `${getWorkerBaseUrl(req)}/api/worker/chunk`;
+      const authHeaders = createInternalWorkerAuthHeaders(jobId);
       const nextStep = currentStep + 1;
       scheduleNextChunkWithWaitUntil(async () => {
-        await fetch(nextUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${cronSecret}`,
-            "x-cron-secret": cronSecret,
-          },
-          body: JSON.stringify({
-            jobId,
-            expectedStep: nextStep,
-          }),
-        });
+        try {
+          const res = await fetch(nextUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...authHeaders,
+            },
+            body: JSON.stringify({
+              jobId,
+              expectedStep: nextStep,
+            }),
+          });
+          console.log(`[worker:chunk_chained] jobId=${jobId} nextStep=${nextStep} status=${res.status}`);
+        } catch (chainErr: any) {
+          console.error(`[worker:chunk_chain_failed] jobId=${jobId} nextStep=${nextStep} error=${chainErr?.message || chainErr}`);
+        }
       });
     }
 

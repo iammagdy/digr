@@ -1,8 +1,9 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
 import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
+import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -98,25 +99,28 @@ export async function POST(req: NextRequest) {
       console.warn("[accept-quote:job_events_insert_warning]", evtErr?.message || "");
     }
 
-    // Trigger initial chunk execution (Hobby Design B)
-    if (process.env.CRON_SECRET) {
-      const baseUrl = process.env.VERCEL_URL
-        ? `https://${process.env.VERCEL_URL}`
-        : (process.env.NEXT_PUBLIC_SITE_URL || "http://127.0.0.1:3000").replace(/\/+$/, "");
-      fetch(`${baseUrl}/api/worker/chunk`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.CRON_SECRET}`,
-        },
-        body: JSON.stringify({
-          jobId: acceptRes.jobId,
-          expectedStep: 0,
-        }),
-      }).catch((chunkErr) => {
-        console.error("Worker trigger on quote accept failed:", chunkErr);
-      });
-    }
+    // Trigger initial chunk execution via after() to ensure worker starts immediately
+    const acceptedJobId = acceptRes.jobId;
+    after(async () => {
+      try {
+        const baseUrl = resolveInternalBaseUrl(req);
+        const authHeaders = createInternalWorkerAuthHeaders(acceptedJobId);
+        const res = await fetch(`${baseUrl}/api/worker/chunk`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders,
+          },
+          body: JSON.stringify({
+            jobId: acceptedJobId,
+            expectedStep: 0,
+          }),
+        });
+        console.log(`[accept-quote:worker_triggered] jobId=${acceptedJobId} status=${res.status}`);
+      } catch (chunkErr: any) {
+        console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} error=${chunkErr?.message || chunkErr}`);
+      }
+    });
 
     return NextResponse.json({
       success: true,

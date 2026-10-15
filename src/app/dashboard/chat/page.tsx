@@ -26,6 +26,7 @@ import EmptyChat from "./components/EmptyChat";
 import { FailureBox, FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
 import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
+import { getJobIdForQuote } from "@/lib/md5";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -42,13 +43,22 @@ async function getAccessToken(): Promise<string | undefined> {
 }
 
 function mapJobEvents(rows: any[] | null | undefined): JobEvent[] {
-  return (rows || []).map((e: any) => ({
-    $id: String(e.id || e.$id || `ev_${Date.now()}`),
-    textAr: e.message || e.text_ar || e.textAr || "",
-    count: typeof e.units === "number" ? e.units : (typeof e.count === "number" ? e.count : undefined),
-    kind: (e.event_type || e.kind || "info") as JobEvent["kind"],
-    createdAt: e.created_at || e.createdAt || new Date().toISOString(),
-  }));
+  const seen = new Set<string>();
+  const events: JobEvent[] = [];
+  for (const e of rows || []) {
+    const rawId = e.id || e.$id;
+    const dedupeKey = rawId ? String(rawId) : `${e.created_at || ""}_${e.message || e.text_ar || ""}_${e.units ?? ""}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    events.push({
+      $id: String(rawId || `ev_${dedupeKey}`),
+      textAr: e.message || e.text_ar || e.textAr || "",
+      count: typeof e.units === "number" ? e.units : (typeof e.count === "number" ? e.count : undefined),
+      kind: (e.event_type || e.kind || "info") as JobEvent["kind"],
+      createdAt: e.created_at || e.createdAt || new Date().toISOString(),
+    });
+  }
+  return events;
 }
 
 interface MessageItem {
@@ -265,10 +275,11 @@ export default function ChatWorkspacePage() {
           return {
             ...prev,
             status: jobDoc.status,
-            rowsCollected: jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
+            rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
             chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
             reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
-            errorAr: jobDoc.error_ar ?? jobDoc.errorAr,
+            requestedRows: jobDoc.target_volume_max ?? prev.requestedRows,
+            errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
             // Latest events first from the server, restored to reading order for display.
             events: chronological(mapJobEvents(eventsRes.data)),
           };
@@ -486,7 +497,7 @@ export default function ChatWorkspacePage() {
     }
   }
 
-  async function handleOpenConversation(id: string) {
+  async function handleOpenConversation(id: string, targetJobId?: string) {
     if (!user || loading || conversationLoading) return;
     const sequence = ++conversationLoadSequence.current;
     setConversationLoading(true);
@@ -542,16 +553,42 @@ export default function ChatWorkspacePage() {
           createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
         })));
 
-      // Restore the run (progress / files) of the conversation's accepted quote, if any.
-      const { data: acceptedRows } = await supabase
-        .from("plans_quotes")
-        .select("*")
-        .eq("conversation_id", id)
-        .eq("status", "accepted")
-        .order("created_at", orderDesc)
-        .limit(1);
-      const quote: any = acceptedRows?.[0];
-      const quoteJobId = quote?.job_id || quote?.jobId;
+      // Restore the run (progress / files) of the conversation's accepted quote or active job
+      let quoteJobId = targetJobId;
+      let quoteTargetMax: number | undefined;
+      let quoteTemplateSlug: string | undefined;
+
+      // 1. Look for quote in loaded messages
+      if (!quoteJobId) {
+        for (const doc of documents) {
+          const qId = doc.quote?.quoteId || doc.quote?.id;
+          if (qId) {
+            quoteJobId = getJobIdForQuote(qId);
+            quoteTargetMax = doc.quote?.targetVolumeMax;
+            quoteTemplateSlug = doc.quote?.items?.[0]?.capabilitySlug;
+            break;
+          }
+          if (doc.payload?.jobId || doc.jobId) {
+            quoteJobId = doc.payload?.jobId || doc.jobId;
+            break;
+          }
+        }
+      }
+
+      // 2. Fallback: check recent queued or running job for this user
+      if (!quoteJobId) {
+        const { data: recentJobs } = await supabase
+          .from("jobs")
+          .select("id, status")
+          .eq("user_id", user.id)
+          .in("status", ["queued", "running"])
+          .order("created_at", orderDesc)
+          .limit(1);
+        if (recentJobs && recentJobs[0]?.id) {
+          quoteJobId = recentJobs[0].id;
+        }
+      }
+
       if (quoteJobId && sequence === conversationLoadSequence.current) {
         const [jobRes, eventsRes] = await Promise.all([
           supabase.from("jobs").select("*").eq("id", quoteJobId).maybeSingle(),
@@ -563,23 +600,17 @@ export default function ChatWorkspacePage() {
             .limit(EVENT_HISTORY_LIMIT),
         ]);
         const jobDoc: any = jobRes.data;
-        if (jobDoc) {
-          let items: any[] = [];
-          try {
-            items = Array.isArray(quote.items_json)
-              ? quote.items_json
-              : JSON.parse(quote.items_json || quote.itemsJson || "[]");
-          } catch { /* keep empty */ }
+        if (jobDoc && sequence === conversationLoadSequence.current) {
           const jId = jobDoc.id || jobDoc.$id;
           setActiveJob({
             jobId: jId,
             status: jobDoc.status,
-            templateSlug: items[0]?.capabilitySlug || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
-            rowsCollected: jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
+            templateSlug: quoteTemplateSlug || jobDoc.endpoint_id || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
+            rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
             chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
             reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
-            errorAr: jobDoc.error_ar ?? jobDoc.errorAr,
-            requestedRows: quote.target_volume_max ?? quote.targetVolumeMax,
+            errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
+            requestedRows: quoteTargetMax ?? jobDoc.target_volume_max ?? undefined,
             events: chronological(mapJobEvents(eventsRes.data)),
           });
           if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
@@ -968,19 +999,62 @@ export default function ChatWorkspacePage() {
   const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
   sendRef.current = handleSendMessage;
 
-  // Deep link from «طلباتي» / the wallet return: /dashboard/chat?c=<conversationId>
+  // Deep link from «طلباتي» / the wallet return: /dashboard/chat?c=<conversationId>&jobId=<jobId>
   const deepLinkHandled = useRef(false);
   useEffect(() => {
     if (!user || deepLinkHandled.current) return;
-    const id = new URLSearchParams(window.location.search).get("c");
-    if (!id || !/^[A-Za-z0-9_-]{1,36}$/.test(id)) return;
+    const search = new URLSearchParams(window.location.search);
+    const convId = search.get("c");
+    const jobId = search.get("jobId");
+    const retry = search.get("retry") === "1";
+
+    if (!convId && !jobId) return;
     deepLinkHandled.current = true;
-    const retry = new URLSearchParams(window.location.search).get("retry") === "1";
-    void handleOpenConversation(id).then(() => {
-      // «إعادة المحاولة» from طلباتي: ask for a fresh quote on the same plan.
-      // (sendRef always points at the latest closure, which already knows the opened conversation id.)
-      if (retry) setTimeout(() => void sendRef.current("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ."), 350);
-    });
+
+    if (convId && /^[A-Za-z0-9_-]{1,64}$/.test(convId)) {
+      void handleOpenConversation(convId, jobId || undefined).then(() => {
+        if (retry) setTimeout(() => void sendRef.current("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ."), 350);
+      });
+    } else if (jobId) {
+      // Direct job link without conversation ID in query param
+      void (async () => {
+        try {
+          const supabase = createClient();
+          const [jobRes, eventsRes, msgRes] = await Promise.all([
+            supabase.from("jobs").select("*").eq("id", jobId).maybeSingle(),
+            supabase.from("job_events").select("*").eq("job_id", jobId).order("created_at", orderDesc).limit(EVENT_HISTORY_LIMIT),
+            supabase.from("messages").select("conversation_id, quote").eq("user_id", user.id).not("quote", "is", null).order("created_at", orderDesc).limit(50),
+          ]);
+          const jobDoc: any = jobRes.data;
+          if (jobDoc) {
+            const jId = jobDoc.id || jobDoc.$id;
+            setActiveJob({
+              jobId: jId,
+              status: jobDoc.status,
+              templateSlug: jobDoc.endpoint_id || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
+              rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
+              chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
+              reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
+              errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
+              requestedRows: jobDoc.target_volume_max ?? undefined,
+              events: chronological(mapJobEvents(eventsRes.data)),
+            });
+            if (jobDoc.status === "done" || jobDoc.status === "cancelled") await loadJobResults(jId);
+
+            // If we can find the matching conversation from messages, open it too!
+            for (const m of (msgRes.data || []) as any[]) {
+              const qId = m.quote?.quoteId || m.quote?.id;
+              if (qId && getJobIdForQuote(qId) === jobId && m.conversation_id) {
+                void handleOpenConversation(m.conversation_id, jobId);
+                break;
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("Failed to load direct job link:", err);
+        }
+      })();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
