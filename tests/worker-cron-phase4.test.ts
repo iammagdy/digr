@@ -397,6 +397,8 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
     });
 
     it("should enforce nudge rate limiting: rapid successive calls return 429", async () => {
+      const originalVercelEnv = process.env.VERCEL_ENV;
+      process.env.VERCEL_ENV = "development";
       const nudgeRoute = await import("../src/app/api/jobs/[id]/nudge/route");
       const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
         new Response(JSON.stringify({ success: true, claimed: true }), { status: 200 })
@@ -423,6 +425,8 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       expect(json2.error).toContain("تم تنشيط المهمة مؤخراً");
       expect(fetchSpy).toHaveBeenCalledTimes(1);
       fetchSpy.mockRestore();
+      if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = originalVercelEnv;
     });
 
     it("atomically releases a queued zero-attempt reservation after 60 seconds", async () => {
@@ -515,8 +519,10 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
     it("successfully runs a 2-chunk job through the POST /api/worker/chunk route handler to settlement", async () => {
       const originalNodeEnv = process.env.NODE_ENV;
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
+      const originalVercelEnv = process.env.VERCEL_ENV;
       try {
         (process.env as any).NODE_ENV = "test";
+        process.env.VERCEL_ENV = "development";
         process.env.ENABLE_MOCK_PROVIDER = "true";
 
         mockWorkerDb.step = 0;
@@ -570,6 +576,8 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       } finally {
         (process.env as any).NODE_ENV = originalNodeEnv;
         process.env.ENABLE_MOCK_PROVIDER = originalEnableMock;
+        if (originalVercelEnv === undefined) delete process.env.VERCEL_ENV;
+        else process.env.VERCEL_ENV = originalVercelEnv;
       }
     });
 

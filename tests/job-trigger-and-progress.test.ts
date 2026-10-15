@@ -50,6 +50,23 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
       expect(resolveInternalBaseUrl(req)).toBe("https://diger.tech");
     });
 
+    it("never uses possibly stale production URL environment values without a request origin", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      process.env.VERCEL = "1";
+      process.env.VERCEL_ENV = "production";
+      process.env.APP_URL = "https://stale.example";
+      process.env.VERCEL_PROJECT_PRODUCTION_URL = "stale.vercel.app";
+      expect(() => resolveInternalBaseUrl()).toThrow("internal worker origin is invalid");
+    });
+
+    it("rejects a non-public or malformed production origin", () => {
+      vi.stubEnv("NODE_ENV", "production");
+      process.env.VERCEL = "1";
+      process.env.VERCEL_ENV = "production";
+      const req = new NextRequest("https://127.0.0.1:3000/api/chat/accept-quote");
+      expect(() => resolveInternalBaseUrl(req)).toThrow("internal worker origin is invalid");
+    });
+
     it("falls back to request headers or VERCEL_PROJECT_PRODUCTION_URL when APP_URL is absent", () => {
       delete process.env.APP_URL;
       process.env.VERCEL_PROJECT_PRODUCTION_URL = "diger.tech";

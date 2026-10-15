@@ -3,7 +3,7 @@ import { createServerSideClient, createAdminClient } from "../../../../lib/supab
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
 import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
-import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
+import { InvalidInternalOriginError, resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
 
 export const dynamic = "force-dynamic";
@@ -119,6 +119,39 @@ export async function POST(req: NextRequest) {
       }
     } catch (chunkErr: any) {
       console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} error=${chunkErr?.message || chunkErr}`);
+      if (chunkErr instanceof InvalidInternalOriginError) {
+        const { data: released, error: releaseError } = await adminClient.rpc("release_job_atomic", {
+          p_job_id: acceptedJobId,
+          p_error_message: "تعذر بدء التنفيذ بسبب إعداد غير صالح. تم إلغاء الطلب وإرجاع النقاط المحجوزة.",
+        });
+        if (releaseError || released?.success !== true) {
+          console.error(`[accept-quote:invalid_origin_release_failed] jobId=${acceptedJobId} code=${releaseError?.code || "rpc_failed"}`);
+          return NextResponse.json(
+            { success: false, jobId: acceptedJobId, error: "تعذر بدء البحث. لم نتمكن من تأكيد إرجاع النقاط، وسيُعاد التحقق تلقائياً." },
+            { status: 503 }
+          );
+        }
+        try {
+          await adminClient.from("job_events").insert({
+            job_id: acceptedJobId,
+            user_id: user.id,
+            message: "تعذر بدء التنفيذ بسبب إعداد غير صالح. تم إلغاء الطلب وإرجاع النقاط المحجوزة.",
+            units: 0,
+            event_type: "error",
+          });
+        } catch (eventError: any) {
+          console.warn(`[accept-quote:invalid_origin_event_failed] jobId=${acceptedJobId} code=${eventError?.code || "unknown"}`);
+        }
+        return NextResponse.json(
+          {
+            success: false,
+            jobId: acceptedJobId,
+            releasedCredits: released.released_credits,
+            error: "تعذر بدء البحث بسبب إعداد غير صالح. أُعيدت النقاط المحجوزة إلى رصيدك.",
+          },
+          { status: 503 }
+        );
+      }
     }
 
     return NextResponse.json({

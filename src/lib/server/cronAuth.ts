@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import crypto from "node:crypto";
+import { isIP } from "node:net";
 
 /**
  * Resolves the canonical internal base URL for server-to-server worker calls.
@@ -14,40 +15,61 @@ export function resolveInternalBaseUrl(req?: NextRequest): string {
   // request. APP_URL can accidentally contain a local development URL, which
   // turns internal worker dispatches into requests to 127.0.0.1 on Vercel.
   if (req) {
-    const proto = isProduction
-      ? req.nextUrl?.protocol?.replace(":", "") || "https"
-      : req.headers.get("x-forwarded-proto") || req.nextUrl?.protocol?.replace(":", "") || "https";
-    const host = isProduction
-      ? req.nextUrl?.host
-      : req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl?.host;
-    if (host && (!isProduction || proto === "https")) {
-      return `${proto}://${host}`;
-    }
+    const origin = isProduction
+      ? req.nextUrl?.origin
+      : (() => {
+          const proto = req.headers.get("x-forwarded-proto") || req.nextUrl?.protocol?.replace(":", "") || "https";
+          const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || req.nextUrl?.host;
+          return host ? `${proto}://${host}` : undefined;
+        })();
+    if (origin) return validateInternalOrigin(origin, isProduction);
   }
 
-  if (isProduction && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/\/+$/, "")}`;
-  }
+  // A production dispatch must always use the actual request origin. Do not
+  // fall back to deployment metadata or APP_URL, which may be stale.
+  if (isProduction) throw new InvalidInternalOriginError();
 
   if (process.env.APP_URL) {
-    const configuredUrl = process.env.APP_URL.replace(/\/+$/, "");
-    const isLoopback = /^https?:\/\/(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?$/i.test(configuredUrl);
-    if (!isProduction || !isLoopback) return configuredUrl;
+    return validateInternalOrigin(process.env.APP_URL, false);
   }
 
   if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/+$/, "");
+    return validateInternalOrigin(process.env.NEXT_PUBLIC_SITE_URL, false);
   }
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.replace(/\/+$/, "")}`;
+    return validateInternalOrigin(`https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`, false);
   }
   if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL.replace(/\/+$/, "")}`;
-  }
-  if (isProduction) {
-    throw new Error("No production origin is available for the internal worker trigger.");
+    return validateInternalOrigin(`https://${process.env.VERCEL_URL}`, false);
   }
   return "http://127.0.0.1:3000";
+}
+
+export class InvalidInternalOriginError extends Error {
+  constructor() {
+    super("The internal worker origin is invalid.");
+    this.name = "InvalidInternalOriginError";
+  }
+}
+
+function validateInternalOrigin(value: string, requireHttps: boolean): string {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname.toLowerCase();
+    const isLoopback = hostname === "localhost" || hostname.endsWith(".localhost") ||
+      hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      (requireHttps && url.protocol !== "https:") ||
+      !url.hostname || url.username || url.password || (requireHttps && (isLoopback || isIP(hostname) !== 0)) ||
+      url.pathname !== "/" || url.search || url.hash
+    ) {
+      throw new InvalidInternalOriginError();
+    }
+    return url.origin;
+  } catch {
+    throw new InvalidInternalOriginError();
+  }
 }
 
 function getWorkerSigningSecret(): string {
