@@ -61,27 +61,54 @@ export async function POST(
       .eq("id", methChgId)
       .maybeSingle();
 
+    let chargedPoints = 0;
+    let currentBalance = 0;
+
     if (!existingMeth) {
-      // BLOCKER 3: Direct independent ledger inserts (res_meth_, rel_meth_, chg_meth_) are forbidden.
-      // On-demand methodology purchase requires atomic RPC (purchase_methodology_atomic)
-      // which is pending owner approval.
-      return NextResponse.json(
+      const { data: purchaseRes, error: purchaseErr } = await adminClient.rpc(
+        "purchase_methodology_atomic",
         {
-          success: false,
-          blocked: true,
-          error: "خاصية شراء صياغة المنهجية عند الطلب معلقة بانتظار اعتماد التخصيص المالي الذري (purchase_methodology_atomic).",
-          reason: "methodology_charging_pending_owner_approval",
-        },
-        { status: 409 }
+          p_user_id: verifiedUserId,
+          p_job_id: jobId,
+          p_amount: METHODOLOGY_DEFAULT_POINTS,
+          p_note: `شراء صياغة المنهجية الأكاديمية للطلب ${jobId}`,
+        }
       );
+
+      if (purchaseErr) {
+        return NextResponse.json(
+          { success: false, error: "فشل استقطاع رصيد المنهجية: " + purchaseErr.message },
+          { status: 500 }
+        );
+      }
+
+      if (!purchaseRes?.success) {
+        if (purchaseRes?.error === "insufficient_balance") {
+          return NextResponse.json(
+            {
+              success: false,
+              insufficient_balance: true,
+              balance: purchaseRes?.balance ?? 0,
+              required: METHODOLOGY_DEFAULT_POINTS,
+              error: "رصيد النقاط غير كافٍ لشراء صياغة المنهجية الأكاديمية (المطلوب: ١٠ نقاط).",
+            },
+            { status: 402 }
+          );
+        }
+        return NextResponse.json(
+          { success: false, error: purchaseRes?.error || "تعذر إتمام عملية شراء المنهجية." },
+          { status: 400 }
+        );
+      }
+      chargedPoints = METHODOLOGY_DEFAULT_POINTS;
+      currentBalance = Number(purchaseRes?.balance ?? 0);
+    } else {
+      const { data: ledgerRows } = await adminClient
+        .from("credit_ledger")
+        .select("delta")
+        .eq("user_id", verifiedUserId);
+      currentBalance = (ledgerRows || []).reduce((sum, r) => sum + (Number(r.delta) || 0), 0);
     }
-
-    const { data: ledgerRows } = await adminClient
-      .from("credit_ledger")
-      .select("delta")
-      .eq("user_id", verifiedUserId);
-
-    const currentBalance = (ledgerRows || []).reduce((sum, r) => sum + (Number(r.delta) || 0), 0);
 
     // 5. Read real run facts from server storage
     let rawParsed: any = null;
@@ -160,9 +187,9 @@ export async function POST(
       methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
 
 1. أصل ومصدر البيانات (Data Provenance & Collection Strategy):
-تم استخراج بيانات هذه الدراسة بصورة مؤتمتة ومطابقة للأصول المنهجية عبر منصة Diger للبيانات العامة، استناداً إلى واجهات البيانات العامة المتاحة لمنصة ${normalized.metadata.platform}.
+تم استخراج بيانات هذه الدراسة بصورة مؤتمتة ومطابقة للأصول المنهجية عبر منصة Diger للبحث والاستقصاء الميداني، استناداً إلى واجهات المصادر المتاحة لمنصة ${normalized.metadata.platform}.
 - موضوع / نطاق البحث: ${normalized.metadata.title}
-- نوع الكيانات المستخرجة: ${normalized.metadata.entityType === "posts" ? "منشورات وتغريدات عامة" : normalized.metadata.entityType === "comments" ? "سلاسل تعليقات وردود تفاعلية" : "سجلات بيانات عامة"}
+- نوع الكيانات المستخرجة: ${normalized.metadata.entityType === "posts" ? "منشورات وتغريدات" : normalized.metadata.entityType === "comments" ? "سلاسل تعليقات وردود تفاعلية" : "سجلات مستخرجة"}
 - إجمالي السجلات المستخلصة بعد تدقيق التكرار: ${k.totalRecords} سجل
 - السجلات المكررة التي تم استبعادها آلياً: ${k.duplicatesRemoved} سجل
 
@@ -176,15 +203,14 @@ export async function POST(
 
 3. النزاهة المنهجية ومحددات التحليل (Methodological Integrity & Limitations):
 - نقل المؤشرات: جرى نقل النصوص والمقاييس الرقمية بدقة دون أي تحوير أو ترجيح إحصائي أو توليد اصطناعي.
-- طبيعة العينة: تمثل هذه البيانات عينة رصدية عامة محددة بضوابط ومعايير الاستعلام المعتمدة، ولا تشكل بالضرورة عينة احتمالية عشوائية تمثيلية لكافة مجتمع المنصة.
-- أخلاقيات البحث: اقتصر الجمع على المحتوى المنشور علناً دون الالتفاف على أي قيود خصوصية.`;
+- طبيعة العينة: تمثل هذه البيانات عينة رصدية محددة بضوابط ومعايير الاستعلام المعتمدة، ولا تشكل بالضرورة عينة احتمالية عشوائية تمثيلية لكافة مجتمع المنصة.
+- أخلاقيات البحث: اقتصر الجمع على المحتوى المنشور علناً في المصادر المتاحة دون الالتفاف على أي قيود خصوصية.`;
     }
 
-    const remainingBalance = currentBalance;
     return NextResponse.json({
       success: true,
       jobId,
-      chargedPoints: 0,
+      chargedPoints,
       remainingBalance: currentBalance,
       methodologyText: methodologyStatement,
     });

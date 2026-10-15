@@ -19,6 +19,7 @@ import OnboardingModal from "./components/OnboardingModal";
 import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
+import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
@@ -762,6 +763,11 @@ export default function ChatWorkspacePage() {
     setExtractedRecords([]);
     setExtractedProfile(null);
     loadedResultJobs.current.clear();
+    setCanvasOpen(false);
+    try {
+      sessionStorage.removeItem("diger_active_job_id");
+      sessionStorage.removeItem("diger_canvas_open");
+    } catch {}
   }
 
   // Save Direct Plan Edits
@@ -769,7 +775,9 @@ export default function ChatWorkspacePage() {
     currentQuote: PlanQuoteData,
     newLimit: number,
     newParam: string,
-    newFormats: string[]
+    newFormats: string[],
+    newCountry?: string,
+    newIndustry?: string
   ) {
     const primaryItem = currentQuote.items?.[0] || { capabilitySlug: "company-research", params: {} };
     const slug = primaryItem.capabilitySlug;
@@ -799,11 +807,23 @@ export default function ChatWorkspacePage() {
           key: "search",
           value: cleanVal,
         });
+
+        const countryInfo = detectCountryFromText(newCountry || cleanVal);
+        const industryInfo = detectIndustryFromText(newIndustry || cleanVal);
+        const structuredQuery: Record<string, any> = {
+          keyword: { include: [cleanVal] },
+        };
+        if (countryInfo?.canonicalEnglish) {
+          structuredQuery.location = { include: [countryInfo.canonicalEnglish] };
+        }
+        if (industryInfo?.exactTaxonomy && industryInfo.exactTaxonomy.length > 0) {
+          structuredQuery.industry = { include: industryInfo.exactTaxonomy };
+        }
         operations.push({
           action: "set_param",
           capabilitySlug: slug,
           key: "query",
-          value: { keyword: { include: [cleanVal] } },
+          value: structuredQuery,
         });
       } else if (isPostOrUrl && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
         const urlKey = slug.includes("youtube") ? "videoUrl" : slug.includes("reddit") ? "postUrl" : "url";
@@ -1060,7 +1080,15 @@ export default function ChatWorkspacePage() {
   async function handleApplyRevisionQuote(revQuote: RevisionQuoteData) {
     const targetJobId = revQuote.jobId && revQuote.jobId !== "current" ? revQuote.jobId : activeJob?.jobId;
     if (!targetJobId) {
-      alert("لم يتم العثور على مهمة مكتملة لتعديلها.");
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err_rev_${Date.now()}`,
+          role: "assistant",
+          content: "لم يتم العثور على مهمة مكتملة لتعديلها.",
+          createdAt: new Date().toISOString(),
+        },
+      ]);
       return;
     }
     if (!activeJob) {
@@ -1090,7 +1118,15 @@ export default function ChatWorkspacePage() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        alert(data.error || "فشل توليد التوثيق المنهجي");
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `err_meth_${Date.now()}`,
+            role: "assistant",
+            content: data.error || "فشل توليد التوثيق المنهجي.",
+            createdAt: new Date().toISOString(),
+          },
+        ]);
         return;
       }
 
@@ -1102,9 +1138,17 @@ export default function ChatWorkspacePage() {
       };
       setMessages((prev) => [...prev, methodologyMsg]);
       loadBalance();
-      alert(methodologyAlertText(data.chargedPoints));
+      const _alertMsg = methodologyAlertText(data.chargedPoints);
     } catch (err: any) {
-      alert("تعذر طلب صياغة المنهجية: " + err.message);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `err_meth_${Date.now()}`,
+          role: "assistant",
+          content: "تعذر طلب صياغة المنهجية: " + (err.message || "خطأ غير متوقع"),
+          createdAt: new Date().toISOString(),
+        },
+      ]);
     }
   }
 

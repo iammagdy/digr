@@ -94,4 +94,58 @@ describe("Country & Industry Detection and Matching", () => {
     expect(isCompanyRowMatchingConstraints(oerlikon, "Liechtenstein", "صناعة الصواريخ والفضاء")).toBe(true);
     expect(isCompanyRowMatchingConstraints(cairoChemicals, "Liechtenstein", "صناعة الصواريخ والفضاء")).toBe(false);
   });
+
+  it("strictly separates contracting/construction from real estate developers, interior design, oil & gas and wood", async () => {
+    const { evaluateDeterministicRelevance } = await import("../src/lib/server/relevanceValidationLayer");
+
+    const realEstate = {
+      company_name: "Palm Hills Developments",
+      location: "Cairo, Egypt",
+      industry: "Real Estate",
+      description: "Leading real estate developer building luxury residential communities in Egypt",
+    };
+
+    const interiorDesign = {
+      company_name: "Style Interior Design Studio",
+      location: "Giza, Egypt",
+      industry: "Interior Design",
+      description: "Interior design and decoration office",
+    };
+
+    const oilGas = {
+      company_name: "Petro Drilling Services",
+      location: "Alexandria, Egypt",
+      industry: "Oil & Energy",
+      description: "Oil and gas exploration and drilling support services",
+    };
+
+    const woodTrading = {
+      company_name: "Egyptian Wood Products",
+      location: "Damietta, Egypt",
+      industry: "Wood Products",
+      description: "Import and manufacturing of lumber and wood supplies",
+    };
+
+    const emptyIndustry = {
+      company_name: "Vague Services Co",
+      location: "Cairo, Egypt",
+      industry: "",
+      description: "General trade and services",
+    };
+
+    const genuineContractor = {
+      company_name: "The Arab Contractors (Osman Ahmed Osman)",
+      location: "Cairo, Egypt",
+      industry: "Construction",
+      description: "General contracting, civil engineering, bridges, and infrastructure building",
+    };
+
+    // Contracting/construction evaluations
+    expect(evaluateDeterministicRelevance(realEstate, "Egypt", "المقاولات والتشييد").decision).toBe("no_match");
+    expect(evaluateDeterministicRelevance(interiorDesign, "Egypt", "المقاولات والتشييد").decision).toBe("no_match");
+    expect(evaluateDeterministicRelevance(oilGas, "Egypt", "المقاولات والتشييد").decision).toBe("no_match");
+    expect(evaluateDeterministicRelevance(woodTrading, "Egypt", "المقاولات والتشييد").decision).toBe("no_match");
+    expect(evaluateDeterministicRelevance(emptyIndustry, "Egypt", "المقاولات والتشييد").decision).toBe("uncertain");
+    expect(evaluateDeterministicRelevance(genuineContractor, "Egypt", "المقاولات والتشييد").decision).toBe("match");
+  });
 });

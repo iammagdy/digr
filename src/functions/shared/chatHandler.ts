@@ -424,14 +424,16 @@ export function buildAutoPlanProposal(
   const detectedCountry = detectCountryFromText(message);
   const detectedIndustry = detectIndustryFromText(message);
 
+  const countryNameAr = detectedCountry ? detectedCountry.arabicLabel : "مصر (افتراضي)";
   const stepParams: Record<string, any> = isCompanySearch
     ? {
         query: {
           keyword: { include: detectedIndustry.englishKeywords },
-          ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
+          location: { include: [detectedCountry ? detectedCountry.canonicalEnglish : "Egypt"] },
         },
-        search: topicLabel,
-        ...(detectedCountry ? { country: detectedCountry.canonicalEnglish, location: detectedCountry.canonicalEnglish } : {}),
+        search: `${detectedIndustry.arabicLabel} في ${countryNameAr}`,
+        country: detectedCountry ? detectedCountry.canonicalEnglish : "Egypt",
+        location: detectedCountry ? detectedCountry.canonicalEnglish : "Egypt",
         industry: detectedIndustry.arabicLabel,
         pagination: { size: Math.min(volume, 100) },
       }
@@ -458,7 +460,7 @@ export function buildAutoPlanProposal(
   };
 
   const summaryAr = isCompanySearch
-    ? `استخراج بيانات ${volume} سجل من شركات ${topicLabel}`
+    ? `استخراج بيانات ${volume} سجل من شركات ${detectedIndustry.arabicLabel} في ${countryNameAr}`
     : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
@@ -562,7 +564,7 @@ export function buildPlanFixPrompt(
 }
 
 const TOPIC_STOPWORDS = new Set(
-  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome شكرا شكراً تمام ماشي فندم باشا يا".split(
+  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome شكرا شكراً تمام ماشي فندم باشا يا حتى سجل سجلاً سجلات شركة شركات مؤسسة مؤسسات استخرج استخراج اريد أريد مجال تخصص نشاط فقط حجم عدد خمس خمسة ست ستة سبع سبعة ثمانية تمانية تسع تسعة عشر عشرة عشرين ثلاثين أربعين خمسين ستين سبعين ثمانين تسعين مية مائة ألف need want companies company records".split(
     " ",
   ),
 );
@@ -719,13 +721,16 @@ export class ChatHandler {
       let convBriefFromDb: any = undefined;
       let assistantMsgId = "";
 
+      const isGreetingMsg = isGreetingOrGeneralQuestion(message).isGreeting;
+      const initialTitle = isGreetingMsg ? "محادثة استخراج" : (message.slice(0, 50) || "محادثة استخراج");
+
       if (!conversationId) {
         conversationId = ID.unique();
         if (sb) {
           const { error: convCreateErr } = await sb.from("conversations").insert({
             id: conversationId,
             user_id: userId,
-            title: message.slice(0, 50) || "محادثة جديدة",
+            title: initialTitle,
             status: "active",
             created_at: nowIso,
             updated_at: nowIso,
@@ -738,7 +743,7 @@ export class ChatHandler {
             rowId: conversationId,
             data: {
               userId,
-              title: message.slice(0, 50) || "محادثة جديدة",
+              title: initialTitle,
               status: "active",
               totalTokens: 0,
               costUsd: 0.0,
@@ -751,7 +756,7 @@ export class ChatHandler {
         try {
           const { data: conv } = await sb
             .from("conversations")
-            .select("id, user_id, status, brief")
+            .select("id, user_id, status, brief, title")
             .eq("id", conversationId)
             .maybeSingle();
 
@@ -770,12 +775,15 @@ export class ChatHandler {
             const { error: convCreateErr } = await sb.from("conversations").insert({
               id: conversationId,
               user_id: userId,
-              title: message.slice(0, 50) || "محادثة جديدة",
+              title: initialTitle,
               status: "active",
               created_at: nowIso,
               updated_at: nowIso,
             });
             if (convCreateErr) throw convCreateErr;
+          } else if (!isGreetingMsg && (!conv.title || conv.title === "محادثة استخراج" || conv.title === "محادثة جديدة" || isGreetingOrGeneralQuestion(conv.title).isGreeting)) {
+            const updatedTitle = message.slice(0, 50);
+            await sb.from("conversations").update({ title: updatedTitle, updated_at: nowIso }).eq("id", conversationId);
           }
         } catch (convErr) {
           throw convErr;
