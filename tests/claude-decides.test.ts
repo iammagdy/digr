@@ -14,23 +14,26 @@ const mockedSearchCatalog = vi.mocked(searchCatalog);
 const mockedGetCachedCatalogEndpoints = vi.mocked(getCachedCatalogEndpoints);
 
 const FB_SEARCH_ENDPOINT: any = {
-  slug: "facebook-hashtag-search",
-  id: "treg-facebook-hashtag-search-v1",
+  slug: "facebook-post-search",
+  id: "treg-facebook-post-search-v1",
   nameAr: "البحث في منشورات فيسبوك العامة",
-  nameEn: "Facebook Hashtag Search",
+  nameEn: "Facebook Public Post Search",
   platform: "facebook",
+  category: "facebook",
+  status: "verified",
+  enabled: true,
   summaryAr: "البحث عن منشورات عامة في فيسبوك",
-  billingUnit: "search",
-  catalogPriceUsd: 0.002,
-  pointsPerUnit: 12,
+  billingUnit: "call",
+  catalogPriceUsd: 0.03,
+  pointsPerUnit: 18,
   pagination: { type: "cursor", maxLimit: 50 },
   observedSuccessRate: 0.95,
   method: "GET",
-  paramsSchema: {
+  paramsSchema: JSON.stringify({
     type: "object",
     properties: { query: { type: "string" }, maxResults: { type: "integer" } },
     required: ["query"],
-  },
+  }),
 };
 
 const FB_COMMENTS_ENDPOINT: any = {
@@ -39,6 +42,9 @@ const FB_COMMENTS_ENDPOINT: any = {
   nameAr: "استخراج تعليقات منشورات فيسبوك العامة",
   nameEn: "Facebook Post Comments",
   platform: "facebook",
+  category: "facebook",
+  status: "verified",
+  enabled: true,
   summaryAr: "جمع التعليقات العامة على منشورات فيسبوك",
   billingUnit: "page",
   catalogPriceUsd: 0.0019,
@@ -46,11 +52,11 @@ const FB_COMMENTS_ENDPOINT: any = {
   pagination: { type: "cursor", maxLimit: 50 },
   observedSuccessRate: 0.9,
   method: "GET",
-  paramsSchema: {
+  paramsSchema: JSON.stringify({
     type: "object",
     properties: { postUrl: { type: "string" }, maxPages: { type: "integer" } },
     required: ["postUrl"],
-  },
+  }),
 };
 
 function makeMockTables() {
@@ -59,6 +65,8 @@ function makeMockTables() {
     if (!store.has(name)) store.set(name, new Map());
     return store.get(name)!;
   };
+  table("capability_registry").set(FB_SEARCH_ENDPOINT.slug, { $id: FB_SEARCH_ENDPOINT.slug, ...FB_SEARCH_ENDPOINT });
+  table("capability_registry").set(FB_COMMENTS_ENDPOINT.slug, { $id: FB_COMMENTS_ENDPOINT.slug, ...FB_COMMENTS_ENDPOINT });
   const parseEqual = (q: string): [string, string[]] | null => {
     const m = /^equal\("([^"]+)",\s*(\[.*\]|".*")\)$/.exec(q.trim());
     if (!m) return null;
@@ -127,6 +135,16 @@ describe("fix/claude-decides: Claude decides, keyword inference & question pruni
 
   it("(a) complete Arabic wedding message produces plan immediately with 0 questions, inferred keywords & volume calc", async () => {
     const tables = makeMockTables();
+    await tables.createRow({
+      tableId: "capability_registry",
+      rowId: "facebook-hashtag-search",
+      data: { ...FB_SEARCH_ENDPOINT, status: "verified", enabled: true },
+    });
+    await tables.createRow({
+      tableId: "capability_registry",
+      rowId: "facebook-post-comments",
+      data: { ...FB_COMMENTS_ENDPOINT, status: "verified", enabled: true },
+    });
     const weddingMessage =
       "أريد خطة لجمع المنشورات العامة والتعليقات على فيسبوك حول قائمة المنقولات وتكاليف الزواج في مصر خلال الفترة من 1 يناير 2026 إلى 30 سبتمبر 2026 بحد أقصى 10 منشورات و50 تعليقاً لكل منشور.";
 

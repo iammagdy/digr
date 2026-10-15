@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { extractParamDisplayString } from "../src/lib/planParameters";
 import {
   computePublicCalculatorQuote,
@@ -260,4 +260,78 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     expect(calcResult.reservedPoints).toBe(18);
     expect(calcResult.chargedPoints).toBe(15);
   });
+
+  it("regression: earlier greetings like 'ازيك' never override the research topic during plan editing", () => {
+    // Scenario: params previously contained greeting or had include: ['ازيك']
+    const greetingParams = {
+      query: { keyword: { include: ["ازيك"] } },
+      search: "ازيك",
+    };
+    // With summaryAr giving actual topic context
+    const displayWithSummary = extractParamDisplayString(
+      greetingParams,
+      "خطة بحث واستخراج بيانات الشركات عن شركات مقاولات في مصر"
+    );
+    expect(displayWithSummary).not.toBe("ازيك");
+    expect(displayWithSummary).toBe("شركات مقاولات في مصر");
+
+    // Pure search parameter with real topic
+    const realParams = {
+      query: { keyword: { include: ["شركات سياحة في القاهرة"] } },
+      search: "شركات سياحة في القاهرة",
+    };
+    expect(extractParamDisplayString(realParams)).toBe("شركات سياحة في القاهرة");
+  });
+
+  it("regression: validatePlanPlatformMatch rejects unverified platforms like Facebook with honest Arabic refusal", async () => {
+    const { validatePlanPlatformMatch, UNVERIFIED_PLATFORM_MESSAGE_AR } = await import(
+      "../src/functions/shared/capabilityRegistry"
+    );
+
+    const userMessage = "عايز 5 تعليقات من فيسبوك على منشور معين";
+    const planItems = [{ capabilitySlug: "facebook-post-comments" }];
+
+    const check = validatePlanPlatformMatch(userMessage, planItems, APPROVED_CAPABILITY_CATALOG);
+    expect(check.valid).toBe(false);
+    expect(check.errorAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
+  });
+
+  it("regression: acceptQuoteSupabase server-side rejects unverified capabilities before reserving credits", async () => {
+    const { acceptQuoteSupabase } = await import("../src/lib/supabase/quoteAccept");
+
+    const mockAdminClient: any = {
+      from: vi.fn((table: string) => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            single: async () => ({
+              data: {
+                quote_hash: "hash_fb_unverified",
+                items: [
+                  {
+                    capabilitySlug: "facebook-post-comments",
+                    endpointId: "anyapi.facebook.company_ads",
+                    reservedPoints: 41,
+                  },
+                ],
+              },
+              error: null,
+            }),
+          })),
+        })),
+      })),
+      rpc: vi.fn(async () => ({ data: { success: true }, error: null })),
+    };
+
+    const res = await acceptQuoteSupabase(mockAdminClient, {
+      userId: "user-1",
+      quoteId: "quote-fb-unverified",
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.statusCode).toBe(400);
+    expect(res.errorAr).toContain("غير متاحة حالياً");
+    // rpc accept_quote_atomic was NEVER called
+    expect(mockAdminClient.rpc).not.toHaveBeenCalled();
+  });
 });
+

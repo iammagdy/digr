@@ -101,10 +101,11 @@ export async function POST(req: NextRequest) {
 
     // Trigger initial chunk execution via after() to ensure worker starts immediately
     const acceptedJobId = acceptRes.jobId;
+    const baseUrl = resolveInternalBaseUrl(req);
+    const authHeaders = createInternalWorkerAuthHeaders(acceptedJobId);
+
     after(async () => {
       try {
-        const baseUrl = resolveInternalBaseUrl(req);
-        const authHeaders = createInternalWorkerAuthHeaders(acceptedJobId);
         const res = await fetch(`${baseUrl}/api/worker/chunk`, {
           method: "POST",
           headers: {

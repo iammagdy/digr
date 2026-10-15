@@ -355,27 +355,42 @@ export function extractBriefFromMessage(
   }
 
   // 5. Topics
-  const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);
-  if (topicMatch) {
-    let rawMatch = topicMatch[1].trim();
-    rawMatch = rawMatch
-      .replace(/(?:خلال الفترة|خلال|من الفترة|بحد أقصى|بحد اقصى|عدد|آخر شهر|آخر أسبوع).*$/i, "")
-      .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة)\b/gi, "")
-      .trim();
-    if (rawMatch.length > 1 && !brief.topics.includes(rawMatch)) {
-      brief.topics.push(rawMatch);
-    }
-  }
+  const isGreetingWord = (w: string) => {
+    const trimmed = (w || "").trim();
+    if (!trimmed) return true;
+    return isGreetingOrGeneralQuestion(trimmed).isGreeting || /^(ازيك|ازيكوا|ازيكم|مرحبا|مرحباً|أهلاً|أهلا|اهلا|صباح الخير|مساء الخير|سلام عليكم|السلام عليكم|هلا|hello|hi|شكرا|تمام)$/i.test(trimmed);
+  };
 
-  const chips = extractTopicChips(userMessage);
-  for (const c of chips) {
-    if (!brief.topics.includes(c)) {
-      brief.topics.push(c);
+  // Strip any old greetings that might have been stored in brief.topics
+  brief.topics = (brief.topics || []).filter((t) => !isGreetingWord(t));
+
+  const { isGreeting: msgIsGreeting } = isGreetingOrGeneralQuestion(userMessage);
+
+  if (!msgIsGreeting) {
+    const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);
+    if (topicMatch) {
+      let rawMatch = topicMatch[1].trim();
+      rawMatch = rawMatch
+        .replace(/(?:خلال الفترة|خلال|من الفترة|بحد أقصى|بحد اقصى|عدد|آخر شهر|آخر أسبوع).*$/i, "")
+        .replace(/\b(فيسبوك|تويتر|تيك توك|انستغرام|إنستغرام|يوتيوب|ريديت|منصة)\b/gi, "")
+        .trim();
+      if (rawMatch.length > 1 && !isGreetingWord(rawMatch) && !brief.topics.includes(rawMatch)) {
+        brief.topics.push(rawMatch);
+      }
+    }
+
+    const chips = extractTopicChips(userMessage).filter((c) => !isGreetingWord(c));
+    for (const c of chips) {
+      if (!brief.topics.includes(c)) {
+        brief.topics.push(c);
+      }
     }
   }
 
   // 6. Infer 5 to 10 relevant Arabic keywords
-  const primaryTopic = brief.topics[0] || userMessage;
+  const primaryTopic = (brief.topics && brief.topics.length > 0)
+    ? brief.topics[0]
+    : (!msgIsGreeting ? userMessage : "البيانات العامة المطلوبة");
   const inferred = inferRelatedKeywords(primaryTopic, userMessage);
   if (!brief.keywords || brief.keywords.length === 0) {
     brief.keywords = inferred;

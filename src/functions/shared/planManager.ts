@@ -367,7 +367,7 @@ export interface LiveCatalogIssue {
   itemIndex: number;
   /** Arabic display name for user-facing text — never an internal slug. */
   nameAr: string;
-  kind: "not_found" | "missing_params" | "over_limit" | "missing_cost" | "private_scope";
+  kind: "not_found" | "missing_params" | "over_limit" | "missing_cost" | "private_scope" | "unverified";
   missingParams?: string[];
 }
 
@@ -413,6 +413,12 @@ export function validatePlanAgainstLiveCatalog(
         (c) => c.slug === it.capabilitySlug || (c as any).tregEndpointId === it.capabilitySlug || (it.endpointId && (c.slug === it.endpointId || (c as any).tregEndpointId === it.endpointId))
       );
       if (regCap) {
+        if (regCap.status !== "verified" || regCap.enabled === false || (regCap as any).tregEndpointId?.startsWith("internal-")) {
+          const nameAr = displayName(it.capabilitySlug, undefined);
+          errors.push(`الخدمة "${nameAr}" غير متاحة حالياً وجاري التحقق منها`);
+          issues.push({ itemIndex: index, nameAr, kind: "unverified" });
+          return;
+        }
         ep = {
           id: regCap.tregEndpointId || regCap.slug,
           slug: regCap.slug,
@@ -443,6 +449,12 @@ export function validatePlanAgainstLiveCatalog(
     if (!ep) {
       errors.push(`الخدمة "${nameAr}" غير متوفرة في نتائج البحث الحالية`);
       issues.push({ itemIndex: index, nameAr, kind: "not_found" });
+      return;
+    }
+
+    if (ep.id?.startsWith("internal-")) {
+      errors.push(`الخدمة "${nameAr}" غير متاحة حالياً وجاري التحقق منها`);
+      issues.push({ itemIndex: index, nameAr, kind: "unverified" });
       return;
     }
 

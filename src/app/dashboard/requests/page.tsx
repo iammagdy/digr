@@ -53,6 +53,36 @@ function targetOf(params?: string): string {
   return "طلب بحث";
 }
 
+function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
+  if (!rawError) {
+    return `لم تتوفر سجلات عامة كافية — رجعت ${formatAr(reservedCredits)} نقطة كاملة لرصيدك.`;
+  }
+  let cleaned = rawError
+    .replace(/مراقب\s*المهام\s*\(?Watchdog\)?/gi, "")
+    .replace(/watchdog/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (
+    cleaned.includes("لتجاوز المهلة الزمنية") ||
+    cleaned.includes("لتأخر التنفيذ") ||
+    cleaned.includes("تلقائياً")
+  ) {
+    cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم إرجاع كامل نقاطك المحجوزة لرصيدك.";
+  }
+
+  if (
+    cleaned.includes("رجعت") ||
+    cleaned.includes("استرجاع") ||
+    cleaned.includes("إرجاع") ||
+    cleaned.includes("استرداد")
+  ) {
+    return cleaned;
+  }
+
+  return `${cleaned} — رجعت ${formatAr(reservedCredits)} نقطة كاملة لرصيدك.`;
+}
+
 const DL_ICON = "M12 4v11M7 10l5 5 5-5M5 20h14";
 
 export default function RequestsPage() {
@@ -246,7 +276,7 @@ export default function RequestsPage() {
           const rows = j.rowsCollected ?? 0;
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
-            : k === "refunded" ? `${j.errorAr ? `${j.errorAr} ` : "لم تتوفر سجلات عامة كافية — "}رجعت ${formatAr(j.reservedCredits || 0)} نقطة كاملة لرصيدك.` : "";
+            : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0) : "";
           return (
             <article key={j.$id} className="flex flex-col gap-3.5 rounded-3xl border border-ln bg-sf p-[18px]" style={{ animation: "up .35s both" }}>
               <div className="flex items-start justify-between gap-3">

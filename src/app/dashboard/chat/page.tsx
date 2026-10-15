@@ -839,6 +839,14 @@ export default function ChatWorkspacePage() {
       });
       setCanvasOpen(true);
 
+      // Trigger immediate worker execution via client-side nudge
+      if (data.jobId) {
+        fetch(`/api/jobs/${data.jobId}/nudge`, {
+          method: "POST",
+          headers,
+        }).catch(() => {});
+      }
+
       setMessages((prev) => [
         ...prev,
         {

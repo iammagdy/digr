@@ -359,7 +359,7 @@ export function buildAutoPlanProposal(
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = (brief.platforms && brief.platforms.length > 0)
     ? brief.platforms[0]
-    : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "facebook"));
+    : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "tiktok"));
   const platformNorm = platform.toLowerCase();
 
   // Find matching capability in validationCaps
@@ -381,9 +381,25 @@ export function buildAutoPlanProposal(
     ? brief.targetVolume
     : (brief.postCount && brief.commentsPerPost ? brief.postCount * brief.commentsPerPost : 500);
 
-  const topicLabel = (brief.topics && brief.topics.length > 0)
-    ? brief.topics[0]
-    : "البيانات العامة المطلوبة";
+  // Filter out any greetings or conversational fillers from topics
+  const isGreetingWord = (w: string) => {
+    const trimmed = (w || "").trim();
+    if (!trimmed) return true;
+    return isGreetingOrGeneralQuestion(trimmed).isGreeting || /^(ازيك|ازيكوا|ازيكم|مرحبا|مرحباً|أهلاً|أهلا|اهلا|صباح الخير|مساء الخير|سلام عليكم|السلام عليكم|هلا|hello|hi)$/i.test(trimmed);
+  };
+
+  const cleanTopics = (brief.topics || []).filter((t) => !isGreetingWord(t));
+
+  // Extract explicit research topic from the current message if present
+  let extractedCurrentTopic = "";
+  const currentMsgChips = extractTopicChips(message, 4).filter((w) => !isGreetingWord(w));
+  if (currentMsgChips.length > 0) {
+    extractedCurrentTopic = currentMsgChips.join(" ");
+  }
+
+  const topicLabel =
+    extractedCurrentTopic ||
+    (cleanTopics.length > 0 ? cleanTopics[cleanTopics.length - 1] : "البيانات العامة المطلوبة");
 
   const isCompanySearch =
     platformNorm === "companies" ||
@@ -418,10 +434,6 @@ export function buildAutoPlanProposal(
 
   if (isProfileCapability || isExplicitHandle) {
     stepParams.username = topicLabel.replace(/^@/, "").trim();
-  }
-
-  if (matchedCap.slug.includes("post-comments") || matchedCap.slug.includes("comment")) {
-    stepParams.postUrl = "https://www.facebook.com/post/1";
   }
 
   if (brief.dateRange && !isCompanySearch) {
@@ -543,7 +555,7 @@ export function buildPlanFixPrompt(
 }
 
 const TOPIC_STOPWORDS = new Set(
-  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم".split(
+  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome شكرا شكراً تمام ماشي فندم باشا يا".split(
     " ",
   ),
 );
@@ -987,7 +999,7 @@ export class ChatHandler {
       if (brief.platforms.length === 0) {
         brief.platforms = researchIntent.platforms.value.length > 0
           ? [...researchIntent.platforms.value]
-          : (isCompanyIntent ? ["companies"] : ["facebook"]);
+          : (isCompanyIntent ? ["companies"] : ["tiktok"]);
       }
       if (brief.topics.length === 0) {
         brief.topics = researchIntent.topic.value ? [researchIntent.topic.value] : ["البيانات المطلوبة"];
@@ -1001,7 +1013,7 @@ export class ChatHandler {
       if (brief.platforms.length === 0) {
         brief.platforms = researchIntent.platforms.value.length > 0
           ? [...researchIntent.platforms.value]
-          : (isCompanyIntent ? ["companies"] : ["facebook"]);
+          : (isCompanyIntent ? ["companies"] : ["tiktok"]);
       }
       if (brief.topics.length === 0 && researchIntent.topic.value) {
         brief.topics = [researchIntent.topic.value];
@@ -1038,7 +1050,7 @@ export class ChatHandler {
         isPhase2 = false;
       }
     } else if (isCardAnswer) {
-      if (brief.platforms.length === 0) brief.platforms.push("facebook");
+      if (brief.platforms.length === 0) brief.platforms.push("tiktok");
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
       if (!brief.targetVolume || brief.targetVolume <= 0) {
         brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 500;
@@ -1704,30 +1716,35 @@ export class ChatHandler {
           }
         }
 
-        if (!platformCheck.valid) {
+        if (testScenario === "plan_ghost_then_stall") {
+          console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
+          const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
+          clarificationQuestionsList = planFallback.items.map((item) => item.text);
+          clarificationItemsList = planFallback.items;
+          finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: planFallback.items,
+            questionsAr: clarificationQuestionsList,
+          } as any;
+        } else if (!platformCheck.valid) {
           const closest = getClosestVerifiedCapability(capabilities);
           console.warn("[chat:platform_check_invalid]", { message, planItems });
           finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+          output = {
+            type: "answer_question",
+            answerAr: finalContentAr,
+          } as any;
+          planOutput = null;
         } else if (!planValidation.valid || !planOutput) {
           if (userComplained) {
-            const matchedPlatform = brief.platforms[0] || "facebook";
+            const matchedPlatform = brief.platforms[0] || "tiktok";
             finalContentAr = `أقوم بمراجعة وتعديل خطة جمع البيانات لمنصة ${getPlatformLabelAr(matchedPlatform)} حسب طلبك (${brief.topics.join("، ")}).`;
             output = {
               type: "answer_question",
               answerAr: finalContentAr,
-            } as any;
-          } else if (testScenario === "plan_ghost_then_stall") {
-            console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
-            const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
-            clarificationQuestionsList = planFallback.items.map((item) => item.text);
-            clarificationItemsList = planFallback.items;
-            finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
-            output = {
-              type: "ask_clarification",
-              reasonAr: finalContentAr,
-              intro: finalContentAr,
-              questions: planFallback.items,
-              questionsAr: clarificationQuestionsList,
             } as any;
           } else {
             console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });

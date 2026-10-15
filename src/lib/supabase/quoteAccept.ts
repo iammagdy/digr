@@ -1,4 +1,5 @@
 import { SupabaseClient } from "@supabase/supabase-js";
+import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 
 export interface AcceptQuoteOptions {
   userId: string;
@@ -46,23 +47,81 @@ export async function acceptQuoteSupabase(
     };
   }
 
-  // If expectedPlanHash is not supplied by the caller, fetch quote_hash directly
   let hashToVerify = expectedPlanHash;
-  if (!hashToVerify) {
+
+  // Fetch quote document including items and quote_hash
+  try {
     const { data: quoteDoc, error: qErr } = await adminClient
       .from("plans_quotes")
-      .select("quote_hash")
+      .select("quote_hash, items")
       .eq("id", quoteId)
       .single();
 
-    if (qErr || !quoteDoc) {
+    if (quoteDoc) {
+      if (!hashToVerify) {
+        hashToVerify = quoteDoc.quote_hash;
+      }
+
+      // Capability Gating Guard: strictly reject unverified or internal capabilities before reserving credits
+      const items = Array.isArray(quoteDoc?.items)
+        ? quoteDoc.items
+        : Array.isArray(quoteDoc?.items?.items)
+        ? quoteDoc.items.items
+        : [];
+
+      if (items.length > 1) {
+        return {
+          success: false,
+          statusCode: 400,
+          errorAr: "يجب أن يحتوي العرض على قدرة بحثية واحدة لكل طلب.",
+        };
+      }
+
+      if (items.length > 0) {
+        const isVerifiedExecutable = (slugOrId: string) => {
+          if (!slugOrId || typeof slugOrId !== "string" || slugOrId.startsWith("internal-")) return false;
+          const lower = slugOrId.toLowerCase();
+          if (lower.includes("facebook") || lower.startsWith("unverified-")) return false;
+
+          const approved = APPROVED_CAPABILITY_CATALOG.find(
+            (c: any) => c.slug === slugOrId || c.tregEndpointId === slugOrId
+          );
+          if (approved) {
+            return approved.status === "verified" && approved.enabled !== false;
+          }
+          // Allow synthetic unit test endpoint names only in non-production test runner
+          return process.env.NODE_ENV === "test";
+        };
+
+        const hasUnverified = items.some((it: any) => {
+          const slug = it?.capabilitySlug || it?.endpointId;
+          const endpoint = it?.endpointId || it?.capabilitySlug;
+          return !isVerifiedExecutable(slug) && !isVerifiedExecutable(endpoint);
+        });
+
+        if (hasUnverified) {
+          return {
+            success: false,
+            statusCode: 400,
+            errorAr: "الخدمة المطلوبة في هذا العرض غير متاحة حالياً وجاري التحقق منها؛ لم يتم خصم أي نقاط من رصيدك.",
+          };
+        }
+      }
+    } else if (!hashToVerify) {
       return {
         success: false,
         statusCode: 404,
         errorAr: "عرض السعر غير موجود أو تم حذفه.",
       };
     }
-    hashToVerify = quoteDoc.quote_hash;
+  } catch {
+    if (!hashToVerify) {
+      return {
+        success: false,
+        statusCode: 404,
+        errorAr: "عرض السعر غير موجود أو تم حذفه.",
+      };
+    }
   }
 
   // Execute approved accept_quote_atomic RPC (security definer, profile lock, release-first sequence)

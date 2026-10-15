@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient } from "../../../../../lib/supabase/server";
+import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../../lib/server/cronAuth";
 
 export const dynamic = "force-dynamic";
 
 const nudgeRateLimitCache = new Map<string, number>();
-
-function getWorkerBaseUrl(): string {
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  if (process.env.NEXT_PUBLIC_SITE_URL) {
-    return process.env.NEXT_PUBLIC_SITE_URL.replace(/\/+$/, "");
-  }
-  return "http://127.0.0.1:3000";
-}
 
 export async function POST(
   req: NextRequest,
@@ -120,14 +111,15 @@ export async function POST(
       });
     }
 
-    // 4. Stalled or unassigned lease: Trigger worker chunk safely with CRON_SECRET
-    if (process.env.CRON_SECRET) {
-      const chunkUrl = `${getWorkerBaseUrl()}/api/worker/chunk`;
-      fetch(chunkUrl, {
+    // 4. Stalled or unassigned lease: Trigger worker chunk safely
+    try {
+      const baseUrl = resolveInternalBaseUrl(req);
+      const authHeaders = createInternalWorkerAuthHeaders(job.id);
+      fetch(`${baseUrl}/api/worker/chunk`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.CRON_SECRET}`,
+          ...authHeaders,
         },
         body: JSON.stringify({
           jobId: job.id,
@@ -136,6 +128,8 @@ export async function POST(
       }).catch((fetchErr) => {
         console.error("Worker trigger on nudge error:", fetchErr);
       });
+    } catch (nudgeErr) {
+      console.warn("[nudge:trigger_warn]", nudgeErr);
     }
 
     return NextResponse.json({

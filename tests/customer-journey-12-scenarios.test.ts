@@ -203,6 +203,38 @@ describe("12-Scenario End-to-End Customer Journey Regression Suite", () => {
   // =========================================================================
   it("Scenario 4: Facebook posts/comments request constructs valid plan and preserves parent IDs", async () => {
     const mockDb = createMockDb();
+    await mockDb.createRow({
+      tableId: "capability_registry",
+      rowId: "facebook-post-search",
+      data: {
+        slug: "facebook-post-search",
+        nameAr: "البحث في منشورات فيسبوك العامة",
+        platform: "facebook",
+        category: "facebook",
+        status: "verified",
+        enabled: true,
+        unitCostUsd: 0.03,
+        tregEndpointId: "treg.facebook.posts",
+        pricingUnit: "call",
+        paramsSchema: JSON.stringify({ type: "object", properties: { query: { type: "string" } }, required: ["query"] }),
+      },
+    });
+    await mockDb.createRow({
+      tableId: "capability_registry",
+      rowId: "facebook-post-comments",
+      data: {
+        slug: "facebook-post-comments",
+        nameAr: "استخراج تعليقات فيسبوك",
+        platform: "facebook",
+        category: "facebook",
+        status: "verified",
+        enabled: true,
+        unitCostUsd: 0.0019,
+        tregEndpointId: "treg.facebook.comments",
+        pricingUnit: "page",
+        paramsSchema: JSON.stringify({ type: "object", properties: { postUrl: { type: "string" } }, required: ["postUrl"] }),
+      },
+    });
     const handler = new ChatHandler(mockDb as any);
 
     const res = await handler.handleUserMessage({

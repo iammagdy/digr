@@ -141,6 +141,21 @@ export async function POST(req: NextRequest) {
         verifiedUserId = existingGuestId;
       } else if (tables.auth?.admin?.createUser) {
         try {
+          // Hard safety limit: cap guest users to protect MAU limits and prune oldest guest if needed
+          const MAX_CONCURRENT_GUESTS = 500;
+          if (typeof tables.auth.admin.listUsers === "function") {
+            try {
+              const { data: oldGuests } = await tables.auth.admin.listUsers({ page: 1, perPage: 10 });
+              const guestUsers = (oldGuests?.users || []).filter((u: any) => u.user_metadata?.is_guest);
+              if (guestUsers.length >= MAX_CONCURRENT_GUESTS) {
+                const oldest = guestUsers[0];
+                if (oldest?.id) {
+                  await tables.auth.admin.deleteUser(oldest.id).catch(() => {});
+                }
+              }
+            } catch {}
+          }
+
           const { data: newGuestUser, error: createGuestErr } = await tables.auth.admin.createUser({
             email: `guest_${crypto.randomUUID().replace(/-/g, "")}@diger.tech`,
             password: crypto.randomUUID(),

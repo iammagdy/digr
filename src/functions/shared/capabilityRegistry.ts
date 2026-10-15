@@ -159,7 +159,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
     unitCostUsd: 0.0019,
     maxRows: 500,
     paginationType: "cursor",
-    enabled: true,
+    enabled: false,
   },
   {
     id: "facebook-post-search",
@@ -723,7 +723,29 @@ export function validatePlanPlatformMatch(
     return { valid: true, userPlatforms, planPlatforms };
   }
 
-  // Every platform in the proposed plan must be one the user asked for,
+  // 1. Every platform requested by the user must have an enabled, verified capability available
+  const unverifiedUserPlatforms = userPlatforms.filter((plat) => {
+    return !capabilities.some((c) => {
+      const p = (c.platform || c.category || "").toLowerCase();
+      return (
+        (p === plat.toLowerCase() || c.slug.includes(plat.toLowerCase())) &&
+        c.status === "verified" &&
+        c.enabled !== false
+      );
+    });
+  });
+
+  if (unverifiedUserPlatforms.length > 0) {
+    const askedLabels = unverifiedUserPlatforms.map(getPlatformLabelAr).join("، ");
+    return {
+      valid: false,
+      userPlatforms,
+      planPlatforms,
+      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels}).`,
+    };
+  }
+
+  // 2. Every platform in the proposed plan must be one the user asked for,
   // and every platform the user asked for must be represented if only 1 platform was requested
   const hasUnrequestedPlatform = planPlatforms.some((p) => !userPlatforms.includes(p));
   const missingRequestedPlatform =
@@ -739,6 +761,24 @@ export function validatePlanPlatformMatch(
     };
   }
 
+  // 3. Every plan item capability must itself be verified and enabled
+  const hasUnverifiedPlanItem = planItems.some((item) => {
+    const cap = capabilities.find(
+      (c) => c.slug === item.capabilitySlug || (c as any).tregEndpointId === item.capabilitySlug
+    );
+    return !cap || cap.status !== "verified" || cap.enabled === false;
+  });
+
+  if (hasUnverifiedPlanItem) {
+    const askedLabels = userPlatforms.map(getPlatformLabelAr).join("، ");
+    return {
+      valid: false,
+      userPlatforms,
+      planPlatforms,
+      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels || "الخدمة المطلوبة"}).`,
+    };
+  }
+
   return { valid: true, userPlatforms, planPlatforms };
 }
 
@@ -746,7 +786,8 @@ export function getClosestVerifiedCapability(
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG
 ): Capability {
   return (
-    capabilities.find((c) => c.status === "verified" || c.enabled) ||
+    capabilities.find((c) => c.status === "verified" && c.enabled !== false) ||
+    APPROVED_CAPABILITY_CATALOG.find((c) => c.status === "verified" && c.enabled !== false) ||
     APPROVED_CAPABILITY_CATALOG[0]
   );
 }

@@ -19,17 +19,38 @@ export async function GET(req: NextRequest) {
 
   try {
     // 2. Query stale jobs (> 30 minutes in queued or running without lease progress)
-    const { data: staleJobs, error: queryErr } = await adminClient
-      .from("jobs")
-      .select("id, user_id, status, step, lease_until, updated_at")
-      .in("status", ["queued", "running"])
-      .or(`lease_until.lt.${thirtyMinutesAgo},and(lease_until.is.null,updated_at.lt.${thirtyMinutesAgo})`);
+    // Or target a specific job ID if requested
+    const targetJobId = req.nextUrl.searchParams.get("jobId");
+    let staleJobs: any[] = [];
 
-    if (queryErr) {
-      return NextResponse.json(
-        { success: false, error: queryErr.message },
-        { status: 500 }
-      );
+    if (targetJobId) {
+      const { data: specificJob, error: specificErr } = await adminClient
+        .from("jobs")
+        .select("id, user_id, status, step, lease_until, updated_at")
+        .eq("id", targetJobId)
+        .in("status", ["queued", "running"])
+        .maybeSingle();
+
+      if (specificErr) {
+        return NextResponse.json({ success: false, error: specificErr.message }, { status: 500 });
+      }
+      if (specificJob) {
+        staleJobs = [specificJob];
+      }
+    } else {
+      const { data, error: queryErr } = await adminClient
+        .from("jobs")
+        .select("id, user_id, status, step, lease_until, updated_at")
+        .in("status", ["queued", "running"])
+        .or(`lease_until.lt.${thirtyMinutesAgo},and(lease_until.is.null,updated_at.lt.${thirtyMinutesAgo})`);
+
+      if (queryErr) {
+        return NextResponse.json(
+          { success: false, error: queryErr.message },
+          { status: 500 }
+        );
+      }
+      staleJobs = data || [];
     }
 
     const releasedJobs: any[] = [];
@@ -155,6 +176,29 @@ export async function GET(req: NextRequest) {
       console.error("Watchdog purge step error:", purgeErr);
     }
 
+    // 5. Automatic cleanup of old unmigrated guest users (> 7 days old)
+    let cleanedGuestsCount = 0;
+    try {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      if (typeof adminClient.auth?.admin?.listUsers === "function") {
+        const { data: guestList } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 50 });
+        for (const u of guestList?.users || []) {
+          if (
+            u.user_metadata?.is_guest === true &&
+            u.created_at &&
+            new Date(u.created_at) < new Date(sevenDaysAgo)
+          ) {
+            try {
+              await adminClient.auth.admin.deleteUser(u.id);
+              cleanedGuestsCount++;
+            } catch {}
+          }
+        }
+      }
+    } catch (guestPurgeErr) {
+      console.warn("[watchdog:guest_purge_warning]", guestPurgeErr);
+    }
+
     return NextResponse.json({
       success: true,
       scannedAt: new Date().toISOString(),
@@ -162,6 +206,7 @@ export async function GET(req: NextRequest) {
       releasedCount: releasedJobs.length,
       releasedJobs,
       purgedAccountsCount,
+      cleanedGuestsCount,
     });
   } catch (err: any) {
     console.error("Watchdog execution failed:", err);
