@@ -2429,7 +2429,10 @@ export class LlmClient {
         }
         if (Array.isArray(scrubbedPayload.capabilities)) {
           for (const cap of scrubbedPayload.capabilities) {
-            if (!cap.capabilitySlug) {
+            if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
+              cap.capabilitySlug = "icypeas-companies-search";
+              cap.endpointId = "icypeas.companies.search";
+            } else if (!cap.capabilitySlug) {
               cap.capabilitySlug =
                 cap.endpointId ||
                 cap.slug ||
@@ -2627,7 +2630,10 @@ export class LlmClient {
         }
         if (Array.isArray(parsedResult.capabilities)) {
           for (const cap of parsedResult.capabilities) {
-            if (!cap.capabilitySlug) {
+            if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
+              cap.capabilitySlug = "icypeas-companies-search";
+              cap.endpointId = "icypeas.companies.search";
+            } else if (!cap.capabilitySlug) {
               cap.capabilitySlug =
                 cap.endpointId ||
                 cap.slug ||
