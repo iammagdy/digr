@@ -321,12 +321,6 @@ export function normalizeIcypeasCompanyParams(
     finalQuery.industry = { include: detectedIndustry.englishKeywords };
   }
 
-  // Preserve extracted constraints for delivery verification
-  finalQuery._expectedCountry = detectedCountry?.canonicalEnglish || null;
-  finalQuery._expectedCountryAr = detectedCountry?.arabicLabel || null;
-  finalQuery._expectedIndustryAr = detectedIndustry.arabicLabel;
-  finalQuery._expectedKeywords = detectedIndustry.englishKeywords;
-
   const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
   const paginationObj: Record<string, any> = {
     size: effectiveSize,
