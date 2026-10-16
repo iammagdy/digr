@@ -429,9 +429,14 @@ export function extractInterpretedParameters(
   params: Record<string, any> | undefined | null,
   summaryAr?: string
 ): { countryAr: string; countryCanonical: string; industryAr: string; isDefaultCountry: boolean } {
+  const explicitIndustry = (typeof params?.industry === "string" && params.industry.trim())
+    ? detectIndustryFromText(params.industry)
+    : null;
+
   const fullText = [
+    params?.industry,
     params?.search,
-    params?.query,
+    typeof params?.query === "string" ? params?.query : (params?.query ? JSON.stringify(params.query) : ""),
     params?.keyword,
     params?.topic,
     params?.location,
@@ -446,7 +451,7 @@ export function extractInterpretedParameters(
     detectCountryFromText(params?.location || "") ||
     detectCountryFromText(fullText);
 
-  const industry = detectIndustryFromText(fullText);
+  const industry = explicitIndustry || detectIndustryFromText(fullText);
 
   if (explicitCountry) {
     return {

@@ -808,6 +808,24 @@ export default function ChatWorkspacePage() {
           value: cleanVal,
         });
 
+        if (newCountry && typeof newCountry === "string" && newCountry.trim()) {
+          operations.push({
+            action: "set_param",
+            capabilitySlug: slug,
+            key: "country",
+            value: newCountry.trim(),
+          });
+        }
+
+        if (newIndustry && typeof newIndustry === "string" && newIndustry.trim()) {
+          operations.push({
+            action: "set_param",
+            capabilitySlug: slug,
+            key: "industry",
+            value: newIndustry.trim(),
+          });
+        }
+
         const countryInfo = detectCountryFromText(newCountry || cleanVal);
         const industryInfo = detectIndustryFromText(newIndustry || cleanVal);
         const structuredQuery: Record<string, any> = {

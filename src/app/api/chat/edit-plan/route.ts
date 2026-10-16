@@ -118,6 +118,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Update summaryAr on updatedPlan if parameters were edited
+    const primaryItem = updatedPlan.items[0];
+    if (primaryItem) {
+      const { extractInterpretedParameters } = await import("@/lib/planParameters");
+      const interp = extractInterpretedParameters(primaryItem.params, updatedPlan.summaryAr);
+      updatedPlan.summaryAr = `خطة حصر حتى ${primaryItem.targetVolumeMax || 50} سجل: ${interp.industryAr} في ${interp.countryAr}`;
+    }
+
     // 6. Generate NEW quote (supersedes old quote and recalculates price)
     const userBalance = await calculateBalance(adminClient, verifiedUserId);
     const newQuote = await createAndSaveManagedQuote(adminClient as any, {
@@ -127,6 +135,31 @@ export async function POST(req: NextRequest) {
       userBalance,
       capabilities: allCapabilities,
     });
+
+    // 7. Persist updated quote to the messages table so reloads reflect the edited quote
+    if (quoteDoc.conversation_id) {
+      try {
+        const { data: convMsgs } = await adminClient
+          .from("messages")
+          .select("id, quote")
+          .eq("conversation_id", quoteDoc.conversation_id);
+
+        for (const m of convMsgs || []) {
+          const qId = m.quote?.quoteId || m.quote?.id;
+          if (qId === quoteId) {
+            await adminClient
+              .from("messages")
+              .update({
+                quote: newQuote,
+                content_ar: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${newQuote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${newQuote.quotedPoints} نقطة`,
+              })
+              .eq("id", m.id);
+          }
+        }
+      } catch (msgSyncErr) {
+        console.warn("Could not sync message quote update:", msgSyncErr);
+      }
+    }
 
     return NextResponse.json({
       success: true,
