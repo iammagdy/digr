@@ -10,8 +10,8 @@ interface StarterItem {
 
 const STARTERS: StarterItem[] = [
   {
-    label: "شركات ومؤسسات (Excel)",
-    prompt: "ابحث لي عن 5 شركات [المقاولات/نوع النشاط] في [مصر/الدولة] في ملف Excel",
+    label: "شركات ومؤسسات (إكسل)",
+    prompt: "ابحث لي عن ٥ شركات [المقاولات/نوع النشاط] في [مصر/الدولة] في ملف إكسل",
     iconPath: "M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 3h6v4H9z",
   },
   {

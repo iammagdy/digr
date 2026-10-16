@@ -489,9 +489,9 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     expect(csvString).toContain("شركة النيل للمقاولات الكهروميكانيكية");
     expect(csvString).not.toContain("أوراسكوم للإنشاءات,");
 
-    // 5. Methodology text references exclusion file
+    // 5. Customer methodology omits internal exclusion-file names
     const methodology = generateMethodologyText(reportPayload);
-    expect(methodology).toContain("mep_contractors_baseline.xlsx");
+    expect(methodology).not.toContain("mep_contractors_baseline.xlsx");
 
     // -------------------------------------------------------------
     // Part B: YouTube Request Without Attachment

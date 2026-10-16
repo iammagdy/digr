@@ -9,6 +9,7 @@ import { dayLabel } from "@/lib/dayLabel";
 import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
+import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 
 interface JobDoc {
   $id: string;
@@ -51,20 +52,6 @@ const TABS: Array<["all" | "done" | "running" | "refunded", string]> = [
   ["running", "قيد التنفيذ"],
   ["refunded", "مستردة"],
 ];
-
-function platformOf(slug: string): string {
-  const s = slug.toLowerCase();
-  if (s.includes("tiktok")) return "تيك توك";
-  if (s.includes("instagram")) return "إنستجرام";
-  if (s.includes("youtube")) return "يوتيوب";
-  if (s.includes("facebook")) return "فيسبوك";
-  if (s.includes("linkedin")) return "لينكدإن";
-  if (s.includes("reddit")) return "ريديت";
-  if (s.startsWith("x-") || s.includes("twitter")) return "إكس";
-  if (s.includes("people") || s.includes("contact") || s.includes("lead") || s.includes("decision")) return "صناع القرار والمسؤولين";
-  if (s.includes("company") || s.includes("companies") || s.includes("b2b")) return "قواعد بيانات الشركات";
-  return "الأبحاث والبيانات المعتمدة";
-}
 
 function targetOf(params?: string): string {
   try {
@@ -211,7 +198,7 @@ export default function RequestsPage() {
         qMap[jId] = {
           conversationId: msgInfo?.conversationId || "",
           targetVolumeMax: item?.targetVolumeMax ?? item?.target_volume_max ?? 0,
-          summaryAr: msgInfo?.summaryAr || (item?.capabilitySlug ? `استخراج بيانات ${item.capabilitySlug}` : undefined),
+          summaryAr: msgInfo?.summaryAr || customerFacingQuoteSummary(item?.capabilitySlug),
         };
       }
       setQuotes(qMap);
@@ -345,7 +332,7 @@ export default function RequestsPage() {
           const k = kindOfJob(j);
           const st = STATUS[k];
           const q = quotes[j.$id];
-          const title = (q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || (j.templateSlug ? `طلب ${platformOf(j.templateSlug)}` : "طلب بحث");
+          const title = (q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`;
           const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
@@ -367,7 +354,7 @@ export default function RequestsPage() {
                   >
                     {title}
                   </button>
-                  <p className="mb-0 mt-1 text-xs text-fnt">{platformOf(j.templateSlug)} · {dayLabel(j.createdAt)}</p>
+                  <p className="mb-0 mt-1 text-xs text-fnt">{customerFacingCapabilityLabel(j.templateSlug)} · {dayLabel(j.createdAt)}</p>
                 </div>
                 <span className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium" style={{ background: `color-mix(in oklab, ${st.tint} 13%, transparent)`, color: st.fg }}>{st.label}</span>
               </div>
