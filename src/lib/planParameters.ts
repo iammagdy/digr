@@ -509,7 +509,8 @@ export function getMissingCompanyResearchRequirements(text: string): Array<"coun
   }
   industryText = industryText
     .replace(/\b\d+\b/g, " ")
-    .replace(/عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|بيانات|سجلات|سجل|قطاع|نشاط|بحث|ابحث|عن|في|من|مطلوب|القطاع|الشركات/gi, " ")
+    .replace(/للتواصل التجاري|التواصل التجاري|تواصل تجاري|commercial outreach|business development/gi, " ")
+    .replace(/عايز|اريد|أريد|قائمة|تضم|شركات|شركة|مؤسسات|مؤسسة|بيانات|سجلات|سجل|قطاع|نشاط|بحث|ابحث|عن|في|من|مطلوب|القطاع|الشركات/gi, " ")
     .replace(/\b(?:companies|company|business|find|need|want|search|for|in|of|the)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();

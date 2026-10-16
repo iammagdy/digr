@@ -1268,6 +1268,17 @@ export class ChatHandler {
       }
       supabaseMs += Date.now() - tSbHistStart;
 
+      // Clarification card answers arrive as a small JSON payload. Keep the
+      // original user request in scope so explicit counts and company filters
+      // survive the answer turn instead of being replaced by model defaults.
+      const conversationRequestText = [
+        ...messagesContext.filter((entry) => entry.role === "user").map((entry) => entry.content),
+        message,
+        ...(brief.topics || []),
+        ...(brief.keywords || []),
+        brief.notes || "",
+      ].join(" ");
+
       // 7. Execute LLM Turn
       let parsedPurposes: string[] = [];
       if (userProfile?.purposes) {
@@ -1644,7 +1655,7 @@ export class ChatHandler {
           persona: userProfile?.persona,
           userMessage: message,
         });
-        const companyRequirementsText = [message, ...(brief.topics || []), ...(brief.keywords || []), brief.notes || ""].join(" ");
+        const companyRequirementsText = conversationRequestText;
         const missingCompanyRequirements = isCompanyIntent && !isPeopleSearchRequest(companyRequirementsText)
           ? getMissingCompanyResearchRequirements(companyRequirementsText)
           : [];
@@ -1712,10 +1723,10 @@ export class ChatHandler {
         finalContentAr = (output as any).answerAr;
       } else if (output.type === "propose_plan") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
-        const explicitCountry = detectCountryFromText(message);
+        const explicitCountry = detectCountryFromText(conversationRequestText);
         const explicitRequestedVolume = researchIntent.sampleSize.provenance === "EXPLICIT"
           ? researchIntent.sampleSize.value
-          : undefined;
+          : (isCardAnswer ? brief.targetVolume : undefined);
         const mapPlanItems = (out: any) =>
           ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
             const itemParams = { ...(c.params || {}) };
@@ -1724,7 +1735,7 @@ export class ChatHandler {
             const requestedRecordVolume = isRecordSearchCapability && explicitRequestedVolume && explicitRequestedVolume > 0
               ? explicitRequestedVolume
               : undefined;
-            const detectedIndustry = detectIndustryFromText(message);
+            const detectedIndustry = detectIndustryFromText(conversationRequestText);
             if (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0)) {
               itemParams.query = {
                 ...(detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
@@ -1777,7 +1788,7 @@ export class ChatHandler {
         const peoplePlan = planItems.some((item: any) =>
           /people/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
         );
-        const requiredFieldsText = [message, ...(brief.topics || []), ...(brief.keywords || []), brief.notes || ""].join(" ");
+        const requiredFieldsText = conversationRequestText;
         const missingCompanyFields = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
           ? getMissingCompanyResearchRequirements(requiredFieldsText)
           : [];

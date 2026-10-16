@@ -107,6 +107,7 @@ describe("Country & Industry Detection and Matching", () => {
   it("requires both country and industry instead of interpreting unstated company-search defaults", () => {
     expect(getMissingCompanyResearchRequirements("Find 100 companies")).toEqual(["country", "industry"]);
     expect(getMissingCompanyResearchRequirements("أريد قائمة تضم ١٠٠ شركة")).toEqual(["country", "industry"]);
+    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم 100 شركة للتواصل التجاري.")).toEqual(["country", "industry"]);
     expect(getMissingCompanyResearchRequirements("Find 100 solar companies in Germany")).toEqual([]);
     expect(getMissingCompanyResearchRequirements("Find 100 solar companies")).toEqual(["country"]);
     expect(getMissingCompanyResearchRequirements("Find 100 companies in Germany")).toEqual(["industry"]);
