@@ -206,6 +206,18 @@ export function extractBriefFromCardAnswers(
 
     const valToUse = rawVal.trim();
 
+    // Company-search clarification chips are part of the requirements brief,
+    // not generic conversation notes. Preserve answers so the server's final
+    // quote guard can verify country, industry and outreach scope on the next turn.
+    if (qId === "company_country_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `الدولة المطلوبة: ${valToUse}`;
+    } else if (qId === "company_industry_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `المجال المطلوب: ${valToUse}`;
+    } else if (qId === "company_outreach_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `إجابة هدف التواصل: ${valToUse}`;
+    }
+    if (qId.startsWith("company_")) continue;
+
     // 1. Platform
     if (qId.includes("platform") || qText.includes("منصة")) {
       const plats = detectMentionedPlatforms(valToUse);

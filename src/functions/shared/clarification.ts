@@ -289,9 +289,15 @@ export function normalizeClarificationQuestions(
     const sourceOptions = bankOptions.length ? bankOptions : modelOptions;
     const options = unique(sourceOptions.map((option) => sanitizeClarificationText(option, 40))).slice(0, 4);
     const requestedDefault = sanitizeClarificationText(questionItem.defaultOption, 40);
-    const defaultOption = requestedDefault && options.includes(requestedDefault)
-      ? requestedDefault
-      : defaultForParameter(parameterType, options, context.persona);
+    // Company scope fields are mandatory user decisions. Never preselect Egypt
+    // or a sector on those questions, even if a generic option bank has a default.
+    const isRequiredScopeField = typeof questionItem.id === "string" &&
+      (questionItem.id.startsWith("company_") || questionItem.id === "people_country_required");
+    const defaultOption = isRequiredScopeField
+      ? undefined
+      : requestedDefault && options.includes(requestedDefault)
+        ? requestedDefault
+        : defaultForParameter(parameterType, options, context.persona);
     const questionType = z.enum(["single", "multi", "free"]).safeParse(questionItem.type);
     const type = questionType.success ? questionType.data : options.length ? "single" : "free";
     const question: NormalizedClarificationQuestion = {

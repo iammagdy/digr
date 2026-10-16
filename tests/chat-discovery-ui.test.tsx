@@ -61,6 +61,7 @@ describe("chat discovery clarification UI", () => {
 
     const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(cardSource).toContain("أخرى");
+    expect(cardSource).toContain('if (option === "أخرى" && q.allowOther)');
     expect(cardSource).toContain("تخطّى واستخدم الافتراضي");
     expect(cardSource).toContain("completedAnswers?.length");
     expect(cardSource).not.toMatch(/dangerouslySetInnerHTML/i);

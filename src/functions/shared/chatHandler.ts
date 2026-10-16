@@ -51,7 +51,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -569,14 +569,15 @@ export function routeCompanySearchRequest(
 
   const missing = getMissingCompanyResearchRequirements(requestText);
   if (missing.length > 0) {
-    const missingLabels = missing.map((field) => field === "country" ? "الدولة" : "القطاع");
-    const question = `ما ${missingLabels.join(" و")} المطلوب؟`;
+    const items = getCompanyRequirementItems(missing, requestText);
+    const questions = items.map((item) => item.text);
+    const intro = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
     return {
       type: "ask_clarification",
-      reasonAr: `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`,
-      intro: `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`,
-      questions: [{ id: "company_required_fields", question, type: "free", allowOther: true }],
-      questionsAr: [question],
+      reasonAr: intro,
+      intro,
+      questions: items,
+      questionsAr: questions,
     };
   }
 
@@ -1084,7 +1085,8 @@ export class ChatHandler {
 
     const isCompanyIntent =
       researchIntent.entityType.value === "companies" ||
-      extractEntityType(message).entityType === "companies";
+      extractEntityType(message).entityType === "companies" ||
+      /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسات|مؤسسة/.test(message.toLowerCase());
 
     if (isTestSearchScenario) {
       isPhase2 = false;
@@ -1775,19 +1777,9 @@ export class ChatHandler {
           (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
         );
         if (missingCompanyRequirements.length > 0) {
-          const missingLabels = missingCompanyRequirements.map((field) => field === "country" ? "الدولة" : "القطاع");
-          const requiredQuestion = missingLabels.length > 1
-            ? `ما ${missingLabels.join(" و")} المطلوبان؟`
-            : `ما ${missingLabels[0]} المطلوب؟`;
-          clarificationItemsList = [{
-            id: "company_required_fields",
-            text: requiredQuestion,
-            question: requiredQuestion,
-            type: "free",
-            options: [],
-            allowOther: true,
-          }];
-          finalContentAr = `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`;
+          clarificationItemsList = getCompanyRequirementItems(missingCompanyRequirements, companyRequirementsText);
+          clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+          finalContentAr = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
         } else {
           clarificationItemsList = hasPlatformOrTopic
             ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
@@ -1907,18 +1899,11 @@ export class ChatHandler {
         const missingPeopleCountry = peoplePlan && !detectCountryFromText(requiredFieldsText) ? ["country" as const] : [];
         const missingRequiredFields = [...missingCompanyFields, ...missingPeopleCountry];
         if (missingRequiredFields.length > 0) {
-          const missingLabels = missingRequiredFields.map((field) => field === "country" ? "الدولة" : "القطاع");
-          const question = `ما ${missingLabels.join(" و")} المطلوب؟`;
-          finalContentAr = `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`;
-          clarificationQuestionsList = [question];
-          clarificationItemsList = [{
-            id: "company_required_fields",
-            text: question,
-            question,
-            type: "free",
-            options: [],
-            allowOther: true,
-          } as any];
+          finalContentAr = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+          clarificationItemsList = companyPlan
+            ? getCompanyRequirementItems(missingCompanyFields, requiredFieldsText)
+            : [{ id: "people_country_required", text: "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟", question: "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true }];
+          clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
           output = {
             type: "ask_clarification",
             reasonAr: finalContentAr,

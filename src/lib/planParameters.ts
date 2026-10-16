@@ -501,7 +501,9 @@ export function extractInterpretedParameters(
 }
 
 /** Return the required company-search fields the user has not supplied. */
-export function getMissingCompanyResearchRequirements(text: string): Array<"country" | "industry"> {
+export type CompanyResearchRequirement = "country" | "industry" | "outreach_details";
+
+export function getMissingCompanyResearchRequirements(text: string): CompanyResearchRequirement[] {
   const country = detectCountryFromText(text || "");
   let industryText = (text || "").toLowerCase();
   if (country) {
@@ -510,10 +512,13 @@ export function getMissingCompanyResearchRequirements(text: string): Array<"coun
       .replace(new RegExp(country.arabicLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
   }
   industryText = industryText
-    .replace(/\b\d+\b/g, " ")
-    .replace(/للتواصل التجاري|التواصل التجاري|تواصل تجاري|commercial outreach|business development/gi, " ")
+    // Quantities often arrive in Arabic-Indic digits or Arabic words. Leaving
+    // them in the residual text can make "١٠٠ شركة" look like an industry.
+    .replace(/[0-9٠-٩۰-۹]+/g, " ")
+    .replace(/(?<![\p{L}\p{N}])(?:واحد|واحدة|واحده|اتنين|اثنين|اثنان|تلاتة|تلاته|ثلاثة|ثلاثه|ثلاث|أربعة|اربعة|أربعه|اربعه|خمسة|خمسه|خمس|ستة|سته|سبعة|سبعه|ثمانية|تمانية|تسعة|تسعه|عشرة|عشر|حداشر|اتناشر|تلتاشر|اربعتاشر|خمستاشر|ستاشر|سبعتاشر|تمنتاشر|تسعتاشر|عشرين|عشرون|تلاتين|ثلاثين|أربعين|اربعين|خمسين|ستين|سبعين|تمانين|ثمانين|تسعين|مية|ميه|مائة|مئة|ميتين|ألفين|الفين|ألف|الف|مليون|مليونين)(?![\p{L}\p{N}])/giu, " ")
+    .replace(/للتواصل التجاري|التواصل التجاري|تواصل تجاري|للتواصل|التواصل|تواصل|التجاري|تجاري|commercial outreach|business development|outreach|commercial/gi, " ")
     .replace(/عايز|اريد|أريد|قائمة|تضم|شركات|شركة|مؤسسات|مؤسسة|بيانات|سجلات|سجل|قطاع|نشاط|بحث|ابحث|عن|في|من|مطلوب|القطاع|الشركات/gi, " ")
-    .replace(/\b(?:companies|company|business|find|need|want|search|for|in|of|the)\b/gi, " ")
+    .replace(/\b(?:companies|company|business|find|need|want|search|for|in|of|the|up|to|records?|list)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
   const industry = detectIndustryFromText(industryText);
@@ -521,10 +526,51 @@ export function getMissingCompanyResearchRequirements(text: string): Array<"coun
     industry.englishKeywords.length === 0 ||
     (!industry.exactTaxonomy?.length && industry.arabicLabel === industryText) ||
     industry.englishKeywords.every((keyword) => keyword === "contracting");
+  const asksForGenericOutreach = /للتواصل التجاري|التواصل التجاري|تواصل تجاري|commercial outreach|business development/i.test(text || "");
+  const givesOutreachDetails = /إجابة هدف التواصل:\s*\S+|اسم الشركة|اسم الشركات|موقع الشركة|الموقع الإلكتروني|website|بريد العمل|البريد المهني|work email|business email|الهاتف|رقم الهاتف|linkedin|لينكد.?إن|مورد|موردون|مشتري|شراكة|شركاء|توريد|مبيعات|بيع|شراء|عملاء محتملون|بحث سوقي|supplier|buyer|partnership|sales lead|market research/i.test(text || "");
   return [
     ...(!country ? ["country" as const] : []),
     ...(industryMissing ? ["industry" as const] : []),
+    ...(asksForGenericOutreach && !givesOutreachDetails ? ["outreach_details" as const] : []),
   ];
+}
+
+/** Ask for the unresolved company-search scope in one natural turn. */
+export function getCompanyRequirementQuestions(missing: CompanyResearchRequirement[]): string[] {
+  const questions: string[] = [];
+  if (missing.includes("country")) questions.push("ما الدولة التي تريد البحث عن الشركات فيها؟");
+  if (missing.includes("industry")) questions.push("ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟");
+  if (missing.includes("outreach_details")) {
+    questions.push("ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟");
+  }
+  return questions;
+}
+
+/** Compact, adaptive answer chips for the company-search details UI. The final
+ * chip always opens the custom-answer field, so suggestions never constrain
+ * what the customer can ask for. */
+export function getCompanyRequirementItems(
+  missing: CompanyResearchRequirement[],
+  requestText = "",
+): Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> {
+  const items: Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> = [];
+  if (missing.includes("country")) {
+    const text = "ما الدولة التي تريد البحث عن الشركات فيها؟";
+    items.push({ id: "company_country_required", text, question: text, type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true });
+  }
+  if (missing.includes("industry")) {
+    const text = "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
+    const lower = requestText.toLowerCase();
+    const options = /تواصل|outreach|تجاري|business/i.test(lower)
+      ? ["تقنية وبرمجيات", "خدمات مالية وFinTech", "أغذية ومطاعم", "أخرى"]
+      : ["تقنية وبرمجيات", "تصنيع", "خدمات مالية وFinTech", "أخرى"];
+    items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
+  }
+  if (missing.includes("outreach_details")) {
+    const text = "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
+    items.push({ id: "company_outreach_required", text, question: text, type: "single", options: ["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"], allowOther: true });
+  }
+  return items;
 }
 
 export function isPeopleSearchRequest(text: string): boolean {

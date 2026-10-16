@@ -4,7 +4,7 @@ import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
-import { detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
 
 // ================= Schema Definitions =================
 
@@ -1033,6 +1033,10 @@ export class LlmClient {
       };
     }
     const lastUserMsg = [...options.messages].reverse().find((m) => m.role === "user")?.content || "";
+    const requestHistoryText = options.messages
+      .filter((entry) => entry.role === "user")
+      .map((entry) => entry.content)
+      .join(" ");
     const promptLower = lastUserMsg.toLowerCase();
 
     // A. Injection & Security Attacks detection
@@ -1264,7 +1268,26 @@ export class LlmClient {
 
       const fallbackCountry = detectCountryFromText(lastUserMsg);
       const fallbackIndustry = detectIndustryFromText(lastUserMsg);
-      const missingCompanyRequirements = getMissingCompanyResearchRequirements(lastUserMsg);
+      const missingCompanyRequirements = getMissingCompanyResearchRequirements(requestHistoryText);
+      if (isCompanySearch && missingCompanyRequirements.length > 0) {
+        const items = getCompanyRequirementItems(missingCompanyRequirements, requestHistoryText);
+        const questions = items.map((item) => item.text);
+        const intro = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+        return {
+          output: {
+            type: "ask_clarification",
+            intro,
+            reasonAr: intro,
+            questions: items,
+            questionsAr: questions,
+          },
+          inputTokens: 600,
+          outputTokens: 90,
+          costUsd: (600 * 0.10 + 90 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
       const hasExplicitCompanyIndustry = !missingCompanyRequirements.includes("industry");
       const fallbackScope = [
         hasExplicitCompanyIndustry ? fallbackIndustry.arabicLabel : undefined,
@@ -2031,10 +2054,7 @@ export class LlmClient {
     }
 
     // I.1 Route contact and decision-maker requests to the people capability.
-    const userHistoryText = options.messages
-      .filter((entry) => entry.role === "user")
-      .map((entry) => entry.content)
-      .join(" ");
+    const userHistoryText = requestHistoryText;
     if (isPeopleSearchRequest(userHistoryText)) {
       const parsedVolume = extractTargetVolume(userHistoryText);
       const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
@@ -2082,18 +2102,16 @@ export class LlmClient {
       const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
       const missingRequirements = getMissingCompanyResearchRequirements(userHistoryText);
       if (missingRequirements.length > 0) {
-        const missing = missingRequirements.map((field) => field === "country" ? "الدولة" : "القطاع");
+        const items = getCompanyRequirementItems(missingRequirements, userHistoryText);
+        const questions = items.map((item) => item.text);
+        const intro = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
         return {
           output: {
             type: "ask_clarification",
-            reasonAr: `يرجى تحديد ${missing.join(" و")} قبل إعداد عرض السعر حتى لا أفترض معلومات غير مذكورة.`,
-            questions: [{
-              id: "company_required_fields",
-              question: `ما ${missing.join(" وال")} المطلوب؟`,
-              type: "free",
-              allowOther: true,
-            }],
-            questionsAr: [`ما ${missing.join(" وال")} المطلوب؟`],
+            intro,
+            reasonAr: intro,
+            questions: items,
+            questionsAr: questions,
           },
           inputTokens: 600,
           outputTokens: 70,

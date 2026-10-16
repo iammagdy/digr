@@ -64,6 +64,10 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
     setOpenId(null);
   }
   function pick(q: DiscoveryQuestion, option: string) {
+    if (option === "أخرى" && q.allowOther) {
+      setDraft("");
+      return;
+    }
     if (q.type === "multi") {
       const prev = answers[q.id]?.value;
       const cur = Array.isArray(prev) ? prev : [];

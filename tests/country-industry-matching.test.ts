@@ -6,6 +6,7 @@ import {
   isCompanyRowMatchingConstraints,
   extractInterpretedParameters,
   getMissingCompanyResearchRequirements,
+  getCompanyRequirementQuestions,
   extractParamDisplayString,
   industryDisplayLabelAr,
   isPeopleSearchRequest,
@@ -116,7 +117,14 @@ describe("Country & Industry Detection and Matching", () => {
   it("requires both country and industry instead of interpreting unstated company-search defaults", () => {
     expect(getMissingCompanyResearchRequirements("Find 100 companies")).toEqual(["country", "industry"]);
     expect(getMissingCompanyResearchRequirements("أريد قائمة تضم ١٠٠ شركة")).toEqual(["country", "industry"]);
-    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم 100 شركة للتواصل التجاري.")).toEqual(["country", "industry"]);
+    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم ١٠٠ شركة للتواصل التجاري.")).toEqual(["country", "industry", "outreach_details"]);
+    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم مية شركة للتواصل التجاري.")).toEqual(["country", "industry", "outreach_details"]);
+    expect(getMissingCompanyResearchRequirements("أريد ٥٠ شركة تقنية مالية في ألمانيا مع الاسم والموقع الإلكتروني وبريد العمل والهاتف")).toEqual([]);
+    expect(getCompanyRequirementQuestions(["country", "industry", "outreach_details"])).toEqual([
+      "ما الدولة التي تريد البحث عن الشركات فيها؟",
+      "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟",
+      "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟",
+    ]);
     expect(getMissingCompanyResearchRequirements("Find 100 solar companies in Germany")).toEqual([]);
     expect(getMissingCompanyResearchRequirements("Find 100 solar companies")).toEqual(["country"]);
     expect(getMissingCompanyResearchRequirements("Find 100 companies in Germany")).toEqual(["industry"]);
