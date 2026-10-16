@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { getQuoteApprovalState } from "@/lib/quoteApprovalState";
+import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -121,7 +122,9 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
-  const isPeoplePlan = (primaryItem?.capabilitySlug || "").toLowerCase().includes("people");
+  const capabilitySlug = (primaryItem?.capabilitySlug || "").toLowerCase();
+  const isPeoplePlan = capabilitySlug.includes("people");
+  const isCompanyPlan = /compan|b2b/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const displayIndustry = isPeoplePlan ? interpreted.industryAr : industryDisplayLabelAr(interpreted.industryAr);
@@ -299,7 +302,7 @@ export default function PlanQuoteCard({
       </div>
 
       <p className="mb-0 mt-[14px] border-t border-ln pt-3 text-[13px] font-light leading-[1.9] text-ink2">
-        المنهجية: {isPeoplePlan ? "البحث في المصادر المهنية المتاحة، مع بيان الحقول الموجودة أو غير الموجودة لكل سجل. وجود البريد لا يعني التحقق من صحته." : quote.methodologyNotes || "جمع وتوثيق البيانات العامة وفق المعايير المعتمدة وفصل ملف البيانات عن توثيق المنهجية."}
+        المنهجية: {getCustomerMethodologyNote(isPeoplePlan, isCompanyPlan)}
       </p>
 
       {isEditing && !locked && (
