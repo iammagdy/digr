@@ -357,7 +357,11 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationQuestions?.join(" ")).toMatch(/الدولة.*القطاع|القطاع.*الدولة/);
   });
 
-  it("keeps an explicit company count when the plan proposal returns a different volume", async () => {
+  it.each([
+    ["Arabic digits", "أريد ٥٠ شركة في ألمانيا في مجال التقنية المالية"],
+    ["English digits", "Find 50 companies in Germany's FinTech industry"],
+    ["Arabic number words", "أريد خمسين شركة في ألمانيا في مجال التقنية المالية"],
+  ])("keeps an explicit company count when the proposal changes it (%s)", async (_label, message) => {
     const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
     mockedSearchCatalog.mockResolvedValue([{
       slug: companyCap.slug,
@@ -398,7 +402,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
     const res = await handler.handleUserMessage({
       userId: "user_explicit_company_count",
-      message: "أريد ٥٠ شركة في ألمانيا في مجال التقنية المالية",
+      message,
       userBalance: 500,
       testScenario: "phase2_plan",
     });

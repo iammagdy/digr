@@ -259,7 +259,9 @@ export function detectIndustryFromText(text: string): IndustryMapping {
 
   const cleaned = t
     .replace(/[^\w\s\u0600-\u06FF]/g, " ")
-    .replace(/\b(عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
+    .replace(/[٠-٩0-9]/g, " ")
+    .replace(/\b(عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
+    .replace(/عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|خطة|استخراج|ملف|في|داخل|بـ/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -267,7 +269,7 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return { englishKeywords: [cleaned], arabicLabel: cleaned };
   }
 
-  return { englishKeywords: ["contracting"], arabicLabel: "قواعد بيانات الشركات" };
+  return { englishKeywords: [], arabicLabel: "يلزم تحديد النشاط" };
 }
 
 /** Customer-facing industry label for recognized English taxonomy names. */
@@ -437,7 +439,8 @@ export function isCompanyRowMatchingConstraints(
 
 /**
  * Extracts interpreted parameters (country, industry, volume) for customer display.
- * When no country is specified, returns "مصر (افتراضي)".
+ * When no country or industry is specified, marks it as required instead of
+ * inserting a geographic or industry default into the customer-facing plan.
  */
 export function extractInterpretedParameters(
   params: Record<string, any> | undefined | null,
@@ -466,7 +469,6 @@ export function extractInterpretedParameters(
     params?.country,
     queryCountry,
     queryIndustry,
-    summaryAr,
   ]
     .filter((v) => typeof v === "string" && v.trim().length > 0)
     .join(" ");
@@ -491,8 +493,8 @@ export function extractInterpretedParameters(
   }
 
   return {
-    countryAr: "مصر (افتراضي)",
-    countryCanonical: "Egypt",
+    countryAr: "يلزم تحديد الدولة",
+    countryCanonical: "",
     industryAr: industry.arabicLabel,
     isDefaultCountry: true,
   };

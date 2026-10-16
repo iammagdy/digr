@@ -410,7 +410,7 @@ export default function ResultsCanvas({
                 <div className="flex justify-between gap-2">
                   <dt>المصدر</dt>
                   <dd className="font-semibold text-ink-800" dir="auto">
-                    {profile?.username ? `بيانات عامة (@${profile.username})` : "قواعد بيانات الشركات والأعمال العامة"}
+                    {profile?.username ? `مصادر متاحة (@${profile.username})` : "مصادر الشركات والأعمال المتاحة"}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2"><dt>تاريخ الجمع</dt><dd className="font-semibold text-ink-800">{profile?.collectedDate || (records[0]?.extractedAt as string) || "غير متاح"}</dd></div>

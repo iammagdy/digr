@@ -492,7 +492,11 @@ export default function ChatWorkspacePage() {
 
       if (data.conversationId) {
         setConversationId(data.conversationId);
-        setConversationTitle((title) => title || textToSend.slice(0, 50));
+        setConversationTitle((title) =>
+          !title || customerFacingConversationTitle(title) === "محادثة جديدة"
+            ? customerFacingConversationTitle(textToSend).slice(0, 50)
+            : title
+        );
         if (user) loadConversations();
       }
 

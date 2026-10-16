@@ -54,7 +54,7 @@ export function sanitizeActivityError(text: string): string {
 export function formatActivityStep(step: ActivityStepKind | string): string {
   if (step === "search_posts") return "البحث عن المنشورات...";
   if (step === "collect_comments") return "جمع التعليقات...";
-  if (step === "verify_profile") return "التحقق من الحساب وجلب البيانات العامة...";
+  if (step === "verify_profile") return "التحقق من الحساب وجلب المعلومات المتاحة...";
   return sanitizeActivityText(step);
 }
 

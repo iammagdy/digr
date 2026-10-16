@@ -71,7 +71,7 @@ describe("Country & Industry Detection and Matching", () => {
     expect(paramsNoCountry.query.keyword).toBeUndefined();
   });
 
-  it("extracts interpreted parameters with explicit country and default fallback", () => {
+  it("extracts explicit parameters and marks unstated scope as required", () => {
     // Explicit country
     const interpLi = extractInterpretedParameters(
       { search: "عايز 5 شركات صناعة الصواريخ في ليختنشتاين" },
@@ -80,12 +80,14 @@ describe("Country & Industry Detection and Matching", () => {
     expect(interpLi.countryAr).toBe("ليختنشتاين");
     expect(interpLi.isDefaultCountry).toBe(false);
 
-    // Unstated country defaults to مصر (افتراضي)
+    // Unstated country and industry must remain visibly required.
     const interpDefault = extractInterpretedParameters(
-      { search: "عايز 5 شركات مقاولات" },
-      "خطة استخراج شركات مقاولات"
+      { search: "عايز 5 شركات" },
+      "خطة استخراج شركات"
     );
-    expect(interpDefault.countryAr).toBe("مصر (افتراضي)");
+    expect(interpDefault.countryAr).toBe("يلزم تحديد الدولة");
+    expect(interpDefault.countryCanonical).toBe("");
+    expect(interpDefault.industryAr).toBe("يلزم تحديد النشاط");
     expect(interpDefault.isDefaultCountry).toBe(true);
   });
 

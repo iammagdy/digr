@@ -292,7 +292,7 @@ export default function PlanQuoteCard({
       <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
         <p className="m-0 font-medium text-ink">نظام احتساب النقاط والضمان المالي:</p>
         <p className="m-0 mt-1">
-          عند الموافقة، يُحجز مؤقتاً <strong>{formatAr(quote.quotedPoints)} نقطة</strong> (يشمل هامش تأمين ١٥٪ لضمان التغطية). بعد الانتهاء، يتم <strong>الخصم الفعلي فقط</strong> على السجلات المطابقة المعتمدة المسلَّمة، ويُرد أي فرق تلقائياً وفوراً إلى رصيدك.
+          عند الموافقة، يُحجز داخلياً <strong>{formatAr(quote.quotedPoints)} نقطة</strong>، ويشمل الحجز هامشاً يصل إلى ١٥٪. بعد التسليم، تُسوّى تكلفة السجلات المطابقة المسلَّمة فقط، ويُرفع الحجز عن أي فرق تلقائياً؛ هذا الفرق ليس استرداداً أو رصيداً جديداً.
         </p>
         {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول")) && (
           <p className="m-0 mt-1.5 text-ink2 border-t border-ln pt-1.5">

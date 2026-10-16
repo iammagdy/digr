@@ -924,7 +924,7 @@ export async function executeMultiStepJob(
       jobId,
       collectedAt: new Date().toISOString(),
       rowsCount: deliveredUnits,
-      methodology: `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
+      methodology: `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: جُمعت النتائج من المصادر المتاحة.`,
     },
     rows: collectedRows.slice(0, deliveredUnits),
   };

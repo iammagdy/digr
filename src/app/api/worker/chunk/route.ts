@@ -515,7 +515,9 @@ export async function POST(req: NextRequest) {
 
       const reviews = await reviewCompanyBatch({
         customerRequest: fullText || spec.params?.search || "",
-        targetCountry: expectedCountry || "Egypt",
+        // An omitted country must stay omitted. Never silently classify the
+        // customer's request as Egypt when the brief has no geographic scope.
+        targetCountry: expectedCountry || "",
         targetIndustryAr: expectedIndustry.arabicLabel,
         rows: candidateRowsForReview,
       });

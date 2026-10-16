@@ -369,7 +369,7 @@ export async function generateExcelReport(
     ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية ولا تمثل حصراً شاملاً"],
     ["النطاق الزمني للرصد", timeRangeDesc, "الفترة الزمنية الفعلية لتواريخ النشر المستخرجة"],
     ["النزاهة المنهجية (Integrity)", "استخراج مباشر من الواجهات العامة المتاحة", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
-    ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية", "استخراج مقتصر على الواجهات والصفحات المتاحة علناً دون تجاوز"],
+    ["ضوابط الخصوصية (Privacy)", "مصادر متاحة علنًا", "استخراج مقتصر على الواجهات والصفحات المتاحة علناً دون تجاوز"],
   ];
 
   qualityData.forEach((q, idx) => {
@@ -430,11 +430,10 @@ export async function generateCompanyExcelReport(
   wb.title = reportTitle;
 
   const detectedTitleCountry = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
-  const targetCountry = (norm.metadata as any).country ||
-    detectedTitleCountry?.arabicLabel ||
-    (norm.metadata.platform && !["web", "companies", "b2b", "digr", "digr data platform"].includes(norm.metadata.platform.toLowerCase())
-      ? norm.metadata.platform
-      : "مصر");
+  const targetCountry = customerFacingCountry((norm.metadata as any).country || detectedTitleCountry?.arabicLabel);
+  const sourceProvider = String(
+    (norm.metadata as any).providerName || (norm.metadata as any).provider || (norm.metadata as any).sourceName || "غير متاح"
+  ).trim() || "غير متاح";
 
   // ================= Sheet 1: الملخص التنفيذي ومؤشرات السوق =================
   const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", {
@@ -452,7 +451,7 @@ export async function generateCompanyExcelReport(
   // Subtitle
   wsExec.mergeCells("A3:H3");
   const subCell = wsExec.getCell("A3");
-  subCell.value = `تقرير استخراج وتوثيق الشركات • النطاق: ${targetCountry} • تاريخ الاستخراج: ${norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10)}`;
+  subCell.value = `تقرير استخراج وتوثيق الشركات • المزود: ${sourceProvider} • النطاق: ${targetCountry} • تاريخ الاستخراج: ${norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10)}`;
   subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF334155" } };
   subCell.alignment = { horizontal: "center", vertical: "middle" };
 
@@ -504,17 +503,18 @@ export async function generateCompanyExcelReport(
   dirHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
   norm.rows.forEach((r, idx) => {
-    const city = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const extractedCity = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const city = extractedCity && extractedCity !== "غير محدد" ? extractedCity : "غير متاح";
     const website = r.website || r.website_url || r.domain || "غير متاح";
     const linkedin = r.linkedin_url || r.linkedin || r.url || "غير متاح";
-    const rawPhone = r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "غير متاح";
-    const phoneVal = typeof rawPhone === "string" ? rawPhone.replace(/^'/, "") : rawPhone;
+    const rawPhone = r.phone ?? r.phone_number ?? r.business_phone ?? "غير متاح";
+    const phoneVal = String(rawPhone).replace(/^'/, "");
     const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
 
     const row = wsDir.addRow([
       idx + 1,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.activity || r.sector || r.industry || r.category || "عام / غير مدرج",
+      r.activity || r.sector || r.industry || r.category || "غير متاح",
       website,
       linkedin,
       city,
@@ -560,21 +560,22 @@ export async function generateCompanyExcelReport(
   flatHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
   norm.rows.forEach((r, idx) => {
-    const city = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
-    const rawFlatPhone = r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "N/A";
-    const flatPhoneVal = typeof rawFlatPhone === "string" ? rawFlatPhone.replace(/^'/, "") : rawFlatPhone;
+    const extractedCity = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const city = extractedCity && extractedCity !== "غير محدد" ? extractedCity : "غير متاح";
+    const rawFlatPhone = r.phone ?? r.phone_number ?? r.business_phone ?? "غير متاح";
+    const flatPhoneVal = String(rawFlatPhone).replace(/^'/, "");
     const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
     const row = wsFlat.addRow([
       r.id || `comp_${idx + 1}`,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.website || r.website_url || r.domain || "N/A",
-      r.linkedin_url || r.linkedin || r.url || "N/A",
-      r.activity || r.sector || r.industry || r.category || "عام",
+      r.website || r.website_url || r.domain || "غير متاح",
+      r.linkedin_url || r.linkedin || r.url || "غير متاح",
+      r.activity || r.sector || r.industry || r.category || "غير متاح",
       city,
       flatPhoneVal,
       workEmail || "غير متاح",
       workEmail ? "موجود" : "غير موجود",
-      r._relevance_status || "مطابق معتمد",
+      r._relevance_status || "لم تُراجع الملاءمة",
     ]);
     row.font = { name: "Calibri", size: 9.5 };
     row.height = 20;
