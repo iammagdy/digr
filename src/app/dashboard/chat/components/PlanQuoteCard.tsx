@@ -80,7 +80,7 @@ export function formatExpiry(expiresAt: string): string {
   }
 }
 
-const FORMAT_LABEL: Record<string, string> = { xlsx: "Excel", pdf: "PDF", csv: "CSV" };
+const FORMAT_LABEL: Record<string, string> = { xlsx: "جدول بيانات", pdf: "دليل المنهجية", csv: "ملف بيانات نصي" };
 
 /** «ينتهي العرض خلال ٢٨ دقيقة» */
 function expiryShort(expiresAt: string, now: number): string {
@@ -99,7 +99,7 @@ const SECONDARY_BTN =
 const EDIT_PLAN_BTN_LABEL = "تعديل الخطة";
 export const _LEGACY_EDIT_BTN_LABEL = "تعديل";
 
-import { extractParamDisplayString, extractInterpretedParameters } from "@/lib/planParameters";
+import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr } from "@/lib/planParameters";
 export { extractParamDisplayString, extractInterpretedParameters };
 
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
@@ -121,9 +121,10 @@ export default function PlanQuoteCard({
   const isPeoplePlan = (primaryItem?.capabilitySlug || "").toLowerCase().includes("people");
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
+  const displayIndustry = isPeoplePlan ? interpreted.industryAr : industryDisplayLabelAr(interpreted.industryAr);
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editCountry, setEditCountry] = useState(interpreted.countryAr);
-  const [editIndustry, setEditIndustry] = useState(interpreted.industryAr);
+  const [editIndustry, setEditIndustry] = useState(displayIndustry);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -136,7 +137,7 @@ export default function PlanQuoteCard({
     const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
     setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
-    setEditIndustry(inter.industryAr);
+    setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   }, [quote]);
@@ -167,7 +168,7 @@ export default function PlanQuoteCard({
     const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
     setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
-    setEditIndustry(inter.industryAr);
+    setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
     setEditError("");
@@ -233,7 +234,7 @@ export default function PlanQuoteCard({
         <div className="flex items-center gap-1.5">
           <span className="text-mut">{isPeoplePlan ? "نوع البحث:" : "النشاط / التخصص:"}</span>
           <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
-            {interpreted.industryAr}
+            {displayIndustry}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -250,7 +251,7 @@ export default function PlanQuoteCard({
         <ul className="m-0 list-inside space-y-1 pr-1 font-light text-ink2">
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">١.</span>
-            <span>{isPeoplePlan ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.` : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${interpreted.industryAr}).`}</span>
+            <span>{isPeoplePlan ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.` : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٢.</span>
@@ -275,7 +276,7 @@ export default function PlanQuoteCard({
             key={fmt}
             className="inline-flex items-center gap-1 rounded-full border border-ln bg-sf2 px-2.5 py-1 text-ink text-[12px] font-medium"
           >
-            {fmt === "xlsx" ? "Excel (بيانات)" : fmt === "csv" ? "CSV (بيانات)" : "PDF (دليل المنهجية)"}
+            {fmt === "xlsx" ? "جدول بيانات" : fmt === "csv" ? "ملف بيانات نصي" : "دليل المنهجية"}
           </span>
         ))}
       </div>

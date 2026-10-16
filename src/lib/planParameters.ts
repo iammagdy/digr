@@ -270,6 +270,12 @@ export function detectIndustryFromText(text: string): IndustryMapping {
   return { englishKeywords: ["contracting"], arabicLabel: "قواعد بيانات الشركات" };
 }
 
+/** Customer-facing industry label for recognized English taxonomy names. */
+export function industryDisplayLabelAr(label: string): string {
+  if (label.trim().toLowerCase() === "fintech") return "التقنية المالية";
+  return label;
+}
+
 export function isCompanyRowMatchingLocation(row: Record<string, any>, expectedCountryCanonical?: string | null): boolean {
   if (!expectedCountryCanonical) return true;
   const targetLower = expectedCountryCanonical.toLowerCase().trim();

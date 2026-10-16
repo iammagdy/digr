@@ -7,6 +7,7 @@ import {
   extractInterpretedParameters,
   getMissingCompanyResearchRequirements,
   extractParamDisplayString,
+  industryDisplayLabelAr,
 } from "../src/lib/planParameters";
 import { normalizeIcypeasCompanyParams } from "../src/lib/server/tregAdapter";
 
@@ -20,6 +21,10 @@ describe("Country & Industry Detection and Matching", () => {
     expect(interpreted.industryAr).toBe("صناع القرار والمهنيون");
     expect(extractParamDisplayString(params, "بحث صناع القرار", true)).toBe("صناع القرار والمهنيون");
     expect(extractParamDisplayString(params, "بحث صناع القرار", true)).not.toContain("Germany");
+  });
+
+  it("localizes the English FinTech taxonomy in customer-facing cards", () => {
+    expect(industryDisplayLabelAr("FinTech")).toBe("التقنية المالية");
   });
 
   it("accurately detects countries from Arabic and English requests", () => {
