@@ -664,16 +664,42 @@ export default function ChatWorkspacePage() {
         offset += pageSize;
       }
 
+      const savedQuoteIds = Array.from(new Set(documents
+        .map((document) => document.quote?.quoteId || document.quote?.id)
+        .filter((quoteId): quoteId is string => typeof quoteId === "string" && quoteId.length > 0)));
+      const quoteStatusById = new Map<string, string>();
+      if (savedQuoteIds.length > 0) {
+        const { data: savedQuoteStatuses, error: quoteStatusError } = await supabase
+          .from("plans_quotes")
+          .select("id, status")
+          .eq("user_id", user.id)
+          .in("id", savedQuoteIds);
+        if (!quoteStatusError) {
+          for (const savedQuote of savedQuoteStatuses || []) {
+            if (typeof savedQuote.id === "string" && typeof savedQuote.status === "string") {
+              quoteStatusById.set(savedQuote.id, savedQuote.status);
+            }
+          }
+        }
+      }
+      if (sequence !== conversationLoadSequence.current) return;
+
       const restoredMessages: MessageItem[] = documents
         .filter((document) => (document.role === "user" || document.role === "assistant") && document.status !== "thinking")
-        .map((document) => ({
-          id: document.id || document.$id,
-          role: document.role as "user" | "assistant",
-          content: String(document.content_ar || document.content || "").slice(0, 20000),
-          clarificationItems: document.clarification_items,
-          planQuote: document.quote,
-          createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
-        }));
+        .map((document) => {
+          const savedQuote = document.quote;
+          const quoteId = savedQuote?.quoteId || savedQuote?.id;
+          return {
+            id: document.id || document.$id,
+            role: document.role as "user" | "assistant",
+            content: String(document.content_ar || document.content || "").slice(0, 20000),
+            clarificationItems: document.clarification_items,
+            planQuote: savedQuote
+              ? { ...savedQuote, status: quoteStatusById.get(quoteId) || "unknown" }
+              : null,
+            createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
+          };
+        });
       for (let index = 0; index < restoredMessages.length; index += 1) {
         const answers = parsePersistedClarificationAnswers(restoredMessages[index].content);
         if (!answers) continue;

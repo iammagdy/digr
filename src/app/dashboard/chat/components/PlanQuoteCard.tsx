@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
+import { getQuoteApprovalState } from "@/lib/quoteApprovalState";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -38,6 +39,8 @@ export interface PlanQuoteData {
   }>;
   outputFormats: string[];
   expiresAt: string;
+  /** Loaded from plans_quotes when a saved conversation is restored. */
+  status?: string;
   methodologyNotes?: string;
 }
 
@@ -147,7 +150,8 @@ export default function PlanQuoteCard({
     return () => clearInterval(t);
   }, []);
 
-  const expired = new Date(quote.expiresAt).getTime() <= now;
+  const approvalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
+  const expired = !approvalState.canApprove;
   const balance = available ?? quote.userBalance;
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
   const shortPts = Math.max(0, quote.quotedPoints - balance);
@@ -383,7 +387,17 @@ export default function PlanQuoteCard({
         </div>
       )}
 
-      {!locked && expired && (
+      {!locked && approvalState.inactiveStatus && (
+        <div role="status" className="mt-[18px] flex items-center rounded-[18px] bg-sf2 px-4 py-3.5">
+          <p className="m-0 text-sm leading-[1.8] text-ink">
+            {quote.status === "unknown"
+              ? "تعذر التأكد من صلاحية عرض السعر. أعد تحميل المحادثة قبل الموافقة."
+              : "هذا العرض لم يعد صالحاً للموافقة. استخدم أحدث عرض سعر في هذه المحادثة."}
+          </p>
+        </div>
+      )}
+
+      {!locked && approvalState.expiredByTime && !approvalState.inactiveStatus && (
         <div className="mt-[18px] flex flex-wrap items-center justify-between gap-3 rounded-[18px] bg-sf2 px-4 py-3.5" style={{ animation: "up .4s both" }}>
           <p className="m-0 text-sm leading-[1.8] text-ink">انتهت صلاحية عرض السعر. نحتاج تحديثه قبل الموافقة.</p>
           <button type="button" onClick={handleRefresh} disabled={refreshing} className={`${PRIMARY_BTN} min-h-11 whitespace-nowrap px-[18px] text-[13px]`}>
@@ -395,7 +409,7 @@ export default function PlanQuoteCard({
         </div>
       )}
 
-      {!locked && !low && !expired && (
+      {!locked && !low && approvalState.canApprove && (
         <>
           <div className="mt-[18px] flex flex-wrap gap-2">
             <button
