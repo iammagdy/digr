@@ -309,6 +309,22 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(routed.capabilities[0].params.industry).toBe("FinTech");
     expect(routed.summaryAr).toContain("التقنية المالية");
 
+    const unrelatedPlan = routeCompanySearchRequest(
+      {
+        type: "propose_plan",
+        capabilities: [
+          { capabilitySlug: "icypeas-companies-search", endpointId: "icypeas.companies.search", targetVolumeMax: 100 },
+          { capabilitySlug: "icypeas-companies-search", endpointId: "icypeas.companies.search", targetVolumeMax: 100 },
+        ],
+      },
+      brief,
+      RAW_SEED_CAPABILITIES as any,
+      companyRequest,
+    );
+    expect(unrelatedPlan.type).toBe("propose_plan");
+    expect(unrelatedPlan.capabilities).toHaveLength(1);
+    expect(unrelatedPlan.capabilities[0].targetVolumeMax).toBe(50);
+
     const clarification = routeCompanySearchRequest(
       suggestion,
       { platforms: [], topics: ["شركات"], targetVolume: 100 },

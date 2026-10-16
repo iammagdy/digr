@@ -580,14 +580,9 @@ export function routeCompanySearchRequest(
     };
   }
 
-  const proposedItems = Array.isArray(output?.capabilities)
-    ? output.capabilities
-    : Array.isArray(output?.steps) ? output.steps : [];
-  const alreadyCompanyPlan = output?.type === "propose_plan" && proposedItems.length > 0 && proposedItems.every((item: any) =>
-    /compan|b2b/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`),
-  );
-  if (alreadyCompanyPlan) return output;
-
+  // Company requests need a single, priceable company-search capability. The
+  // model may return a superficially relevant multi-step plan that later fails
+  // validation or inflates the requested volume, so rebuild it deterministically.
   return buildAutoPlanProposal(brief, capabilities, requestText);
 }
 
