@@ -115,7 +115,7 @@ export default function VerifyPage() {
       handled.current = true;
       const u = await refresh();
       setToast({ tone: "ok", text: "تم تأكيد بريدك بنجاح." });
-      if (u?.emailVerification) router.replace("/dashboard/chat");
+      if (u?.emailVerification) setTimeout(() => router.replace("/dashboard/chat"), 900);
     } catch {
       setToast({ tone: "bad", text: "تعذّر استخدام رابط التأكيد. قد يكون منتهيًا أو سبق استخدامه؛ اطلب رسالة جديدة." });
     } finally {
