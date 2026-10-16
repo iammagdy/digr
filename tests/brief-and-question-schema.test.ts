@@ -439,7 +439,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
   it("offers contextual commercial-outreach choices and a freeform other answer", () => {
     const items = getCompanyRequirementItems(["industry", "outreach_details"], "أريد شركات للتواصل التجاري");
-    expect(items[0].options).toContain("خدمات مالية وFinTech");
+    expect(items[0].options).toContain("التقنية المالية");
     expect(items[1].options).toEqual(["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"]);
     expect(items.every((item) => item.allowOther)).toBe(true);
     const ambiguous = getCompanyRequirementItems(["outreach_details"], "أريد أضم شركة تواصل التجاري");

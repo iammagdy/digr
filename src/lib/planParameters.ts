@@ -562,8 +562,8 @@ export function getCompanyRequirementItems(
     const text = "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
     const lower = requestText.toLowerCase();
     const options = /تواصل|outreach|تجاري|business/i.test(lower)
-      ? ["تقنية وبرمجيات", "خدمات مالية وFinTech", "أغذية ومطاعم", "أخرى"]
-      : ["تقنية وبرمجيات", "تصنيع", "خدمات مالية وFinTech", "أخرى"];
+      ? ["تقنية وبرمجيات", "التقنية المالية", "أغذية ومطاعم", "أخرى"]
+      : ["تقنية وبرمجيات", "تصنيع", "التقنية المالية", "أخرى"];
     items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
   }
   if (missing.includes("outreach_details")) {

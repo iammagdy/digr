@@ -64,7 +64,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
     setOpenId(null);
   }
   function pick(q: DiscoveryQuestion, option: string) {
-    if (option === "أخرى" && q.allowOther) {
+    if (option.trim() === "أخرى" && q.allowOther) {
       setDraft("");
       return;
     }
