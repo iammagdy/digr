@@ -38,4 +38,37 @@ describe("company workbook scope and field honesty", () => {
     expect(flat.getRow(2).getCell(7).value).toBe("491234567890");
     expect(flat.getRow(2).getCell(7).type).toBe(ExcelJS.ValueType.String);
   });
+
+  it("links source-provided branches to company IDs and adds data-only analysis counters", async () => {
+    const buffer = await generateCompanyExcelReport({
+      title: "Company research in Germany",
+      country: "Germany",
+      entityType: "companies",
+      rows: [
+        {
+          id: "company-1",
+          company_name: "Northstar",
+          industry: "Solar",
+          city: "Berlin",
+          email: "info@northstar.example",
+          branches: [{ id: "branch-1", name: "Berlin Office", city: "Berlin", address: "Musterstrasse 1" }],
+        },
+        { id: "company-2", company_name: "Southstar", industry: "Solar", city: "Munich" },
+      ],
+    });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+
+    const branches = workbook.getWorksheet("فروع الشركات")!;
+    expect(branches.getRow(2).getCell(1).value).toBe("branch-1");
+    expect(branches.getRow(2).getCell(2).value).toBe("company-1");
+    expect(branches.getRow(2).getCell(3).value).toBe("Northstar");
+    expect(workbook.getWorksheet("دليل الشركات المعتمد")!.getRow(2).getCell(11).value).toBe("company-1");
+
+    const analysis = workbook.getWorksheet("تحليل وتوزيع الشركات")!;
+    expect(analysis.getCell("B2").value).toBe(2);
+    expect(analysis.getCell("B3").value).toBe(1);
+    expect(analysis.getCell("B4").value).toBe(1);
+    expect(analysis.getCell("B5").value).toBe(1);
+  });
 });

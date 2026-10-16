@@ -495,6 +495,7 @@ export async function generateCompanyExcelReport(
     "بريد العمل (كما ورد من المصدر)",
     "توفر البريد المهني",
     "حالة التوفر في البيانات",
+    "معرّف الشركة",
   ];
   const dirHeaderRow = wsDir.addRow(dirHeaders);
   dirHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
@@ -522,6 +523,7 @@ export async function generateCompanyExcelReport(
       workEmail || "غير متاح",
       workEmail ? "موجود" : "غير موجود",
       "مدرجة في البيانات المستخرجة",
+      r.company_id || r.source_id || r.id || `comp_${idx + 1}`,
     ]);
     row.font = { name: "Calibri", size: 10 };
     row.height = 22;
@@ -546,6 +548,7 @@ export async function generateCompanyExcelReport(
     { width: 34 },
     { width: 20 },
     { width: 18 },
+    { width: 26 },
   ];
 
   // ================= Sheet 3: بيانات الشركات للتصفية =================
@@ -566,7 +569,7 @@ export async function generateCompanyExcelReport(
     const flatPhoneVal = String(rawFlatPhone).replace(/^'/, "");
     const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
     const row = wsFlat.addRow([
-      r.id || `comp_${idx + 1}`,
+      r.company_id || r.source_id || r.id || `comp_${idx + 1}`,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
       r.website || r.website_url || r.domain || "غير متاح",
       r.linkedin_url || r.linkedin || r.url || "غير متاح",
@@ -587,6 +590,81 @@ export async function generateCompanyExcelReport(
   });
   wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
   wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 34 }, { width: 20 }, { width: 18 }];
+
+  // ================= Sheet 4: فروع مرتبطة بمعرّف الشركة =================
+  // Branch data is included only when it is explicitly present in the source row.
+  const wsBranches = wb.addWorksheet("فروع الشركات", {
+    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+  });
+  const branchHeaders = ["معرّف الفرع", "معرّف الشركة", "اسم الشركة", "اسم الفرع", "المدينة", "العنوان", "الهاتف التجاري", "بريد العمل", "رابط المصدر"];
+  const branchHeaderRow = wsBranches.addRow(branchHeaders);
+  branchHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  branchHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  branchHeaderRow.height = 26;
+  branchHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+  let branchCount = 0;
+  norm.rows.forEach((company, companyIndex) => {
+    const companyId = String(company.company_id || company.source_id || company.id || `comp_${companyIndex + 1}`);
+    const companyName = company.company_name || company.name || company.title || `شركة #${companyIndex + 1}`;
+    let branches: any[] = Array.isArray(company.branches) ? company.branches : [];
+    if (!branches.length && typeof company.branches === "string") {
+      try {
+        const parsed = JSON.parse(company.branches);
+        if (Array.isArray(parsed)) branches = parsed;
+      } catch {
+        branches = [];
+      }
+    }
+    branches.forEach((branch: any, branchIndex: number) => {
+      const item = typeof branch === "string" ? { address: branch } : branch;
+      if (!item || typeof item !== "object") return;
+      branchCount += 1;
+      wsBranches.addRow([
+        String(item.id || item.branch_id || `${companyId}_branch_${branchIndex + 1}`),
+        companyId,
+        companyName,
+        item.name || item.branch_name || "غير متاح",
+        item.city || "غير متاح",
+        item.address || item.location || "غير متاح",
+        String(item.phone ?? item.phone_number ?? "غير متاح"),
+        item.work_email || item.email || "غير متاح",
+        item.source_url || item.url || "غير متاح",
+      ]);
+    });
+  });
+  if (!branchCount) wsBranches.addRow(["لا توجد بيانات فروع واردة من المصدر"]);
+  wsBranches.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, branchCount + 1), column: branchHeaders.length } };
+  wsBranches.columns = [{ width: 26 }, { width: 24 }, { width: 34 }, { width: 26 }, { width: 20 }, { width: 40 }, { width: 22 }, { width: 34 }, { width: 38 }];
+
+  // ================= Sheet 5: عدادات وتحليل الحقول المتاحة =================
+  const wsAnalysis = wb.addWorksheet("تحليل وتوزيع الشركات", { views: [{ rightToLeft: true }] });
+  wsAnalysis.addRow(["المؤشر", "العدد", "ملاحظة"]);
+  const availableEmailCount = norm.rows.filter((r) => String(r.work_email || r.workEmail || r.email || "").trim()).length;
+  const industryCounts = new Map<string, number>();
+  const cityCounts = new Map<string, number>();
+  norm.rows.forEach((r) => {
+    const industry = String(r.activity || r.sector || r.industry || r.category || "غير متاح").trim() || "غير متاح";
+    const city = String(r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry) || "غير متاح").trim() || "غير متاح";
+    industryCounts.set(industry, (industryCounts.get(industry) || 0) + 1);
+    cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
+  });
+  [
+    ["الشركات الواردة من المصدر", norm.rows.length, "عدد السجلات في ورقة دليل الشركات"],
+    ["الفروع الواردة من المصدر", branchCount, branchCount ? "عدد عناصر الفروع المرفقة صراحةً بالسجلات" : "لم ترد بيانات فروع من المصدر"],
+    ["سجلات تحتوي بريد عمل", availableEmailCount, "وجود البريد في المصدر لا يعني التحقق من صحته"],
+    ["سجلات بلا بريد عمل", norm.rows.length - availableEmailCount, "عداد وجود الحقل فقط"],
+  ].forEach((row) => wsAnalysis.addRow(row));
+  wsAnalysis.addRow([]);
+  wsAnalysis.addRow(["التوزيع حسب النشاط كما ورد", "العدد", ""]);
+  [...industryCounts.entries()].sort((a, b) => b[1] - a[1]).forEach(([label, count]) => wsAnalysis.addRow([label, count, "حسب قيمة النشاط الواردة من المصدر"]));
+  wsAnalysis.addRow([]);
+  wsAnalysis.addRow(["التوزيع حسب المدينة كما وردت أو استُخرجت من العنوان", "العدد", ""]);
+  [...cityCounts.entries()].sort((a, b) => b[1] - a[1]).forEach(([label, count]) => wsAnalysis.addRow([label, count, "لا تُنشأ مدينة عند غياب عنوان واضح"]));
+  wsAnalysis.columns = [{ width: 48 }, { width: 16 }, { width: 58 }];
+  wsAnalysis.getRow(1).font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  wsAnalysis.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  wsAnalysis.getRow(1).height = 26;
+  wsAnalysis.getRow(1).alignment = { horizontal: "center", vertical: "middle" };
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
