@@ -11,6 +11,7 @@ import {
 import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
+import { persistEditedQuoteMessage } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -126,6 +127,15 @@ export async function POST(req: NextRequest) {
       plan: updatedPlan,
       userBalance,
       capabilities: allCapabilities,
+    });
+
+    // The restored chat card is hydrated from messages.quote. Persist the
+    // replacement there as well as in plans_quotes so reloads show this quote.
+    await persistEditedQuoteMessage(adminClient, {
+      conversationId: quoteDoc.conversation_id || "",
+      userId: verifiedUserId,
+      previousQuoteId: quoteId,
+      quote: newQuote,
     });
 
     return NextResponse.json({
