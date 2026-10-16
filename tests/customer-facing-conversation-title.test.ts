@@ -5,6 +5,8 @@ describe("customer-facing conversation titles", () => {
   it("localizes the FinTech taxonomy label and uses Arabic-Indic digits", () => {
     expect(customerFacingConversationTitle("ابحث عن 50 شركة FinTech في ألمانيا"))
       .toBe("ابحث عن ٥٠ شركة التقنية المالية في ألمانيا");
+    expect(customerFacingConversationTitle("ابحث عن 50 شركة تقنية مالية (FinTech) في ألمانيا"))
+      .toBe("ابحث عن ٥٠ شركة التقنية المالية في ألمانيا");
   });
 
   it("preserves already localized titles", () => {
