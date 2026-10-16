@@ -13,6 +13,7 @@ import {
   extractTopicChips,
   buildAutoPlanProposal,
   routePeopleAlternative,
+  routeCompanySearchRequest,
   buildCodeDiscoveryFallback,
   filterQuestionsAlreadyInBrief,
   deduplicateIntroText,
@@ -293,6 +294,30 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(unavailable.type).toBe("refuse");
     expect(unavailable.reasonAr).toContain("خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً");
     expect(unavailable.reasonAr).not.toContain("تيك توك");
+  });
+
+  it("routes explicit company requests away from the generic alternative and asks when scope is missing", () => {
+    const brief: ResearchBrief = { platforms: [], topics: ["fintech"], targetVolume: 50 };
+    const companyRequest = "أريد ٥٠ شركة في قطاع التقنية المالية في ألمانيا";
+    const suggestion = { type: "suggest_alternative", explanationAr: "لا أستطيع إعداد الخطة" };
+
+    const routed = routeCompanySearchRequest(suggestion, brief, RAW_SEED_CAPABILITIES as any, companyRequest);
+    expect(routed.type).toBe("propose_plan");
+    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-companies-search");
+    expect(routed.capabilities[0].targetVolumeMax).toBe(50);
+    expect(routed.capabilities[0].params.country).toBe("Germany");
+    expect(routed.capabilities[0].params.industry).toBe("FinTech");
+    expect(routed.summaryAr).toContain("التقنية المالية");
+
+    const clarification = routeCompanySearchRequest(
+      suggestion,
+      { platforms: [], topics: ["شركات"], targetVolume: 100 },
+      RAW_SEED_CAPABILITIES as any,
+      "أريد قائمة تضم ١٠٠ شركة للتواصل التجاري",
+    );
+    expect(clarification.type).toBe("ask_clarification");
+    expect(clarification.questionsAr.join(" ")).toContain("الدولة");
+    expect(clarification.questionsAr.join(" ")).toContain("القطاع");
   });
 
   it("asks for a country before quoting a people search instead of defaulting to Egypt", async () => {

@@ -51,7 +51,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -496,7 +496,7 @@ export function buildAutoPlanProposal(
   const summaryAr = isPeopleCapability
     ? `بحث ${volume} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
     : isCompanySearch
-      ? `استخراج بيانات ${volume} سجل من شركات ${detectedIndustry.arabicLabel} في ${countryNameAr}`
+      ? `استخراج بيانات ${volume} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
       : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
@@ -540,6 +540,53 @@ export function routePeopleAlternative(
       questionsAr: [question],
     };
   }
+
+  return buildAutoPlanProposal(brief, capabilities, requestText);
+}
+
+/** Route explicit company-search intent to the verified company capability when
+ * the model stalls or suggests an unrelated service. Never quote without scope.
+ */
+export function routeCompanySearchRequest(
+  output: any,
+  brief: ResearchBrief,
+  capabilities: Capability[],
+  requestText: string,
+): any {
+  if (isPeopleSearchRequest(requestText)) return output;
+  const entity = extractEntityType(requestText);
+  if (entity.entityType !== "companies") return output;
+
+  const companyCapability = capabilities.find((capability) =>
+    /companies|company/i.test(`${capability.platform || ""} ${capability.category || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
+  );
+  if (!companyCapability) {
+    return {
+      type: "refuse",
+      reasonAr: "خدمة البحث عن الشركات غير متاحة حالياً.",
+    };
+  }
+
+  const missing = getMissingCompanyResearchRequirements(requestText);
+  if (missing.length > 0) {
+    const missingLabels = missing.map((field) => field === "country" ? "الدولة" : "القطاع");
+    const question = `ما ${missingLabels.join(" و")} المطلوب؟`;
+    return {
+      type: "ask_clarification",
+      reasonAr: `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`,
+      intro: `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`,
+      questions: [{ id: "company_required_fields", question, type: "free", allowOther: true }],
+      questionsAr: [question],
+    };
+  }
+
+  const proposedItems = Array.isArray(output?.capabilities)
+    ? output.capabilities
+    : Array.isArray(output?.steps) ? output.steps : [];
+  const alreadyCompanyPlan = output?.type === "propose_plan" && proposedItems.length > 0 && proposedItems.every((item: any) =>
+    /compan|b2b/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`),
+  );
+  if (alreadyCompanyPlan) return output;
 
   return buildAutoPlanProposal(brief, capabilities, requestText);
 }
@@ -1641,6 +1688,8 @@ export class ChatHandler {
       // The language model can incorrectly suggest an unrelated alternative for a
       // people-search request. Prefer the verified people capability when present.
       output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
+      // Explicit company requests receive the same deterministic routing guard.
+      output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
 
       // 8. Process Output Actions
       currentStep = "output_action";
