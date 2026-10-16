@@ -191,12 +191,13 @@ describe("Data Normalization Pipeline Suite", () => {
 
     it("documents contact-field statuses as presence only, not independent verification", () => {
       const codebook = generateDynamicCodebook(
-        ["work_email_presence_status", "job_title_presence_status"],
+        ["contact_name_presence_status", "work_email_presence_status", "job_title_presence_status"],
         [],
       );
       const descriptions = codebook.map((entry) => entry.descriptionAr).join(" ");
       expect(descriptions).toContain("لا يعني التحقق");
       expect(codebook.map((entry) => entry.titleAr)).toContain("توفر البريد المهني");
+      expect(codebook.map((entry) => entry.titleAr)).toContain("توفر اسم جهة الاتصال");
     });
   });
 

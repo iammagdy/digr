@@ -29,7 +29,9 @@ describe("People-search field presence wording", () => {
     ] });
 
     expect(rows[0].work_email_presence_status).toBe("موجود");
+    expect(rows[0].contact_name_presence_status).toBe("موجود");
     expect(rows[0].job_title_presence_status).toBe("موجود");
+    expect(rows[1].contact_name_presence_status).toBe("موجود");
     expect(rows[1].work_email_presence_status).toBe("غير موجود");
     expect(rows[1].job_title_presence_status).toBe("غير موجود");
     for (const row of rows) {

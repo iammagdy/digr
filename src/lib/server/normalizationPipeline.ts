@@ -125,6 +125,7 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   contact_name: { titleAr: "اسم جهة الاتصال", descAr: "اسم جهة الاتصال المهنية كما ورد في المصدر", type: "نص (String)" },
   job_title: { titleAr: "المسمى الوظيفي", descAr: "المسمى الوظيفي كما ورد في المصدر", type: "نص (String)" },
   work_email: { titleAr: "البريد المهني", descAr: "عنوان البريد المهني كما ورد في المصدر، دون تحقق مستقل", type: "نص (String)" },
+  contact_name_presence_status: { titleAr: "توفر اسم جهة الاتصال", descAr: "يوضح فقط ما إذا كان المصدر قد أعاد قيمة للاسم؛ ولا يعني التحقق منه", type: "نص (String)" },
   work_email_presence_status: { titleAr: "توفر البريد المهني", descAr: "يوضح فقط ما إذا كان المصدر قد أعاد قيمة للبريد المهني؛ ولا يعني التحقق من صحتها", type: "نص (String)" },
   job_title_presence_status: { titleAr: "توفر المسمى الوظيفي", descAr: "يوضح فقط ما إذا كان المصدر قد أعاد قيمة للمسمى الوظيفي؛ ولا يعني التحقق منه", type: "نص (String)" },
   industry: { titleAr: "مجال النشاط", descAr: "التخصص أو القطاع التجاري والصناعي", type: "نص (String)" },
