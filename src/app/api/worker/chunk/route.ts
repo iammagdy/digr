@@ -621,6 +621,7 @@ export async function POST(req: NextRequest) {
       batchUnits: acceptedRows.length,
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
+      uncertainRows,
       rawProfile: adapterResult.rawProfile || null,
       timestamp: new Date().toISOString(),
     };
@@ -722,6 +723,7 @@ export async function POST(req: NextRequest) {
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
     if (isDone) {
       const collectedRows: Record<string, any>[] = [];
+      const collectedUncertainRows: Record<string, any>[] = [];
       let firstRawProfile: Record<string, any> | null = null;
       const partialsBucket = adminClient.storage.from("partials");
 
@@ -777,6 +779,7 @@ export async function POST(req: NextRequest) {
         }
 
         collectedRows.push(...stepObj.rows);
+        if (Array.isArray(stepObj.uncertainRows)) collectedUncertainRows.push(...stepObj.uncertainRows);
         if (!firstRawProfile && stepObj.rawProfile) {
           firstRawProfile = stepObj.rawProfile;
         }
@@ -825,11 +828,11 @@ export async function POST(req: NextRequest) {
 
       const detectedCountry = detectCountryFromText(
         [spec.params?.country, spec.params?.location, spec.params?.search, spec.params?.query?.keyword?.include?.[0]].filter(Boolean).join(" ")
-      )?.arabicLabel || "مصر";
+      )?.arabicLabel || "";
 
       const methodologySummary = spec.params?.exclusionRules
-        ? `تم استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: تم الجمع والتحقق حصرياً من مصادر متاحة علناً.`
-        : `تم استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: تم الجمع والتحقق حصرياً من مصادر متاحة علناً.`;
+        ? `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr} بعد تطبيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`
+        : `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr}. ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`;
 
       const cleanTitle = isCompanyResearch
         ? `دليل الشركات والمؤسسات المعتمدة في ${detectedCountry}`
@@ -852,6 +855,7 @@ export async function POST(req: NextRequest) {
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,
+          uncertainRows: collectedUncertainRows,
       };
 
       const csvPath = `${userId}/${jobId}/result.csv`;

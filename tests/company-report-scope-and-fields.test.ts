@@ -71,4 +71,21 @@ describe("company workbook scope and field honesty", () => {
     expect(analysis.getCell("B4").value).toBe(1);
     expect(analysis.getCell("B5").value).toBe(1);
   });
+
+  it("keeps doubtful rows in a separate review sheet", async () => {
+    const buffer = await generateCompanyExcelReport(
+      { title: "Company research", entityType: "companies", rows: [{ id: "match-1", company_name: "Accepted Co", industry: "Solar", _relevance_status: "مطابق" }] },
+      [],
+      [{ id: "uncertain-1", company_name: "Maybe Co", industry: "Energy", _relevance_reason: "النشاط غير واضح" }],
+    );
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as any);
+
+    const main = workbook.getWorksheet("دليل الشركات المعتمد")!;
+    expect(main.rowCount).toBe(2);
+    expect(main.getRow(2).getCell(2).value).toBe("Accepted Co");
+    const review = workbook.getWorksheet("سجلات تحتاج مراجعة")!;
+    expect(review.getRow(2).getCell(2).value).toBe("Maybe Co");
+    expect(review.getRow(2).getCell(6).value).toBe("النشاط غير واضح");
+  });
 });

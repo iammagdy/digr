@@ -666,6 +666,29 @@ export async function generateCompanyExcelReport(
   wsAnalysis.getRow(1).height = 26;
   wsAnalysis.getRow(1).alignment = { horizontal: "center", vertical: "middle" };
 
+  const doubtfulRows = Array.isArray(_uncertainRows) ? _uncertainRows : [];
+  if (doubtfulRows.length) {
+    const wsUncertain = wb.addWorksheet("سجلات تحتاج مراجعة", { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
+    const uncertainHeaders = ["معرّف السجل", "اسم الشركة", "النشاط الوارد", "الموقع الوارد", "حالة الملاءمة", "سبب الإحالة للمراجعة"];
+    const header = wsUncertain.addRow(uncertainHeaders);
+    header.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+    header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+    header.height = 26;
+    header.alignment = { horizontal: "center", vertical: "middle" };
+    doubtfulRows.forEach((row: any, index: number) => {
+      wsUncertain.addRow([
+        escapeFormula(String(row.id || `uncertain_${index + 1}`)),
+        escapeFormula(String(row.company_name || row.name || row.title || "غير متاح")),
+        escapeFormula(String(row.activity || row.sector || row.industry || row.category || "غير متاح")),
+        escapeFormula(String(row.location || row.city || row.address || "غير متاح")),
+        "تحتاج مراجعة",
+        escapeFormula(String(row._relevance_reason || "لم يتأكد التطابق")),
+      ]);
+    });
+    wsUncertain.autoFilter = { from: { row: 1, column: 1 }, to: { row: doubtfulRows.length + 1, column: uncertainHeaders.length } };
+    wsUncertain.columns = [{ width: 24 }, { width: 34 }, { width: 30 }, { width: 32 }, { width: 20 }, { width: 52 }];
+  }
+
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }
@@ -721,7 +744,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       info: {
         Title: customerFacingTitle(norm.metadata.title),
         Author: "Diger",
-        Subject: "تقرير بيانات",
+        Subject: "منهجية جمع البيانات",
         Creator: "Diger",
       },
     });
@@ -753,9 +776,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     });
 
     doc.font("ArabicRegular").fontSize(8).fillColor("#CBD5E1");
-    const subTitle = isCompany
-      ? `وثيقة منهجية جمع البيانات • ${targetCountry} • تاريخ الجمع: ${dateStr}`
-      : `تقرير البيانات • ${customerFacingPlatform(norm.metadata.platform)} • تاريخ الجمع: ${dateStr}`;
+    const subTitle = `وثيقة منهجية جمع البيانات • ${isCompany ? targetCountry : customerFacingPlatform(norm.metadata.platform)} • تاريخ الجمع: ${dateStr}`;
     doc.text(formatArabicRtl(subTitle), 40, 52, {
       width: contentWidth - 20,
       align: "right",
@@ -846,52 +867,33 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     currentY += counterRows.length * 17 + 8;
 
-    // 4. Tabular Sample Overview (3 sample records)
-    doc.font("ArabicBold").fontSize(9.5).fillColor("#1B365D");
-    doc.text(formatArabicRtl(isCompany ? "عينة من الشركات المعروضة :" : "عينة من السجلات المعروضة :"), 30, currentY, {
-      width: contentWidth,
+    // 4. Methodology narrative only. The data and sample records belong in Excel/CSV.
+    doc.rect(30, currentY, contentWidth, 22).fill("#24436E");
+    doc.font("ArabicBold").fontSize(8.5).fillColor("#FFFFFF");
+    doc.text(formatArabicRtl("منهجية الجمع:"), 40, currentY + 6, {
+      width: contentWidth - 20,
       align: "right",
       wordSpacing: 2,
     });
-    currentY += 14;
-
-    const sampleRows = norm.rows.slice(0, 3);
-    const rowHeight = 32;
-
-    sampleRows.forEach((r, idx) => {
-      const ry = currentY + idx * rowHeight;
-      const bg = idx % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
-      doc.rect(30, ry, contentWidth, rowHeight).fillAndStroke(bg, "#CBD5E1");
-
-      const labelText = r.company_name || r.name || r.text || r.comment_text || r.display_name || r.author_name || `سجل #${idx + 1}`;
-      const metaParts = [
-        r.website || r.domain ? `موقع: ${r.website || r.domain}` : null,
-        r.activity || r.sector ? `نشاط: ${r.activity || r.sector}` : null,
-        r.city || r.governorate ? `مدينة: ${r.city || r.governorate}` : null,
-        r.phone ? `هاتف: ${r.phone}` : null,
-        r.username ? r.username : null,
-        r.likes_count ? `إعجابات: ${toArabicDigits(r.likes_count)}` : null,
-        r.views_count ? `مشاهدات: ${toArabicDigits(r.views_count)}` : null,
-      ].filter(Boolean);
-
-      doc.font("ArabicBold").fontSize(8).fillColor("#0F172A");
-      doc.text(formatArabicRtl(String(labelText).slice(0, 85)), 40, ry + 5, {
-        width: contentWidth - 20,
-        align: "right",
-        wordSpacing: 1.5,
-      });
-
-      if (metaParts.length > 0) {
-        doc.font("ArabicRegular").fontSize(7).fillColor("#64748B");
-        doc.text(formatArabicRtl(metaParts.join(" • ")), 40, ry + 18, {
-          width: contentWidth - 20,
-          align: "right",
-          wordSpacing: 1.5,
-        });
-      }
+    currentY += 22;
+    const methodologyText = String((norm.metadata as any).methodology || "جُمعت السجلات من المصادر المتاحة وفق نطاق البحث المحدد.")
+      .replace(/\s+/g, " ")
+      .slice(0, 1000);
+    doc.font("ArabicRegular").fontSize(8).fillColor("#334155");
+    const methodologyHeight = Math.min(120, Math.max(38, doc.heightOfString(formatArabicRtl(methodologyText), {
+      width: contentWidth - 20,
+      align: "right",
+      lineGap: 3,
+      wordSpacing: 1.2,
+    })));
+    doc.text(formatArabicRtl(methodologyText), 40, currentY + 6, {
+      width: contentWidth - 20,
+      height: methodologyHeight,
+      align: "right",
+      lineGap: 3,
+      wordSpacing: 1.2,
     });
-
-    currentY += sampleRows.length * rowHeight + 10;
+    currentY += methodologyHeight + 14;
 
     // 5. Methodological Limitations & Integrity Box
     doc.rect(30, currentY, contentWidth, 82).fillAndStroke("#FEF3C7", "#FDE68A");
@@ -918,7 +920,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     // 6. Footer (Single Page Safe)
     doc.font("ArabicRegular").fontSize(7).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج وتوثيق هذا التقرير عبر منصة Diger للأبحاث والبيانات • جميع الحقوق محفوظة"), 30, 800, {
+    doc.text(formatArabicRtl("وثيقة منهجية جمع البيانات عبر منصة Diger • جميع الحقوق محفوظة"), 30, 800, {
       width: contentWidth,
       align: "center",
       wordSpacing: 2,
