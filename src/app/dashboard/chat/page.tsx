@@ -21,6 +21,7 @@ import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
+import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
@@ -868,7 +869,7 @@ export default function ChatWorkspacePage() {
     if (isCompany) {
       const params = (primaryItem.params || {}) as Record<string, unknown>;
       operations.push(...buildCompanyPlanEditOperations(slug, cleanVal, newCountry || "", newIndustry || "", {
-        keyword: typeof params.search === "string" ? params.search : "",
+        keyword: extractParamDisplayString(params, currentQuote.summaryAr, false),
         country: typeof params.country === "string" ? params.country : typeof params.location === "string" ? params.location : "",
         industry: typeof params.industry === "string" ? params.industry : "",
       }));
