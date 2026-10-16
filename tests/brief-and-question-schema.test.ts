@@ -371,7 +371,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationQuestions?.join(" ")).toContain("ما الدولة");
   });
 
-  it("asks for unstated country and industry before creating a company quote", async () => {
+  it("asks one adaptive question at a time when company scope is unstated", async () => {
     const tables = makeMockTables();
     const res = await new ChatHandler(tables as any).handleUserMessage({
       userId: "user_company_required_fields",
@@ -382,10 +382,11 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.outputType).toBe("ask_clarification");
     expect(res.planQuote).toBeUndefined();
     expect(res.clarificationQuestions?.join(" ")).toContain("الدولة");
-    expect(res.clarificationQuestions?.join(" ")).toContain("القطاع");
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationItems?.[0]?.id).toBe("company_country_required");
   });
 
-  it("asks for country, industry, and specific outreach needs instead of treating outreach as an industry", async () => {
+  it("starts commercial-outreach clarification with the missing country", async () => {
     const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
       userId: "user_commercial_outreach_required_fields",
       message: "أريد قائمة تضم 100 شركة للتواصل التجاري.",
@@ -394,10 +395,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
     expect(res.outputType).toBe("ask_clarification");
     expect(res.planQuote).toBeUndefined();
-    const questions = res.clarificationQuestions?.join(" ") || "";
-    expect(questions).toMatch(/الدولة.*القطاع|القطاع.*الدولة/);
-    expect(questions).toContain("التواصل التجاري");
-    expect(questions).toContain("بيانات الشركات التي تحتاجها");
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationQuestions?.[0]).toContain("الدولة");
+    expect(res.clarificationItems?.[0]?.id).toBe("company_country_required");
   });
 
   it("keeps a company search in clarification until the user supplies the scope and outreach details", async () => {
@@ -411,12 +411,57 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
     expect(first.outputType).toBe("ask_clarification");
     expect(first.planQuote).toBeUndefined();
-    expect(first.clarificationQuestions).toHaveLength(3);
+    expect(first.clarificationQuestions).toHaveLength(1);
+    expect(first.clarificationItems?.[0]?.id).toBe("company_country_required");
+
+    const industryFollowup = await handler.handleUserMessage({
+      userId: "user_company_outreach_discovery",
+      conversationId: first.conversationId,
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{ questionId: "company_country_required", question: "ما الدولة؟", value: "ألمانيا" }],
+      }),
+      answers: [{ questionId: "company_country_required", question: "ما الدولة؟", value: "ألمانيا" }],
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(industryFollowup.outputType).toBe("ask_clarification");
+    expect(industryFollowup.clarificationItems).toHaveLength(1);
+    expect(industryFollowup.clarificationItems?.[0]?.id).toBe("company_industry_required");
+
+    const outreachFollowup = await handler.handleUserMessage({
+      userId: "user_company_outreach_discovery",
+      conversationId: first.conversationId,
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{ questionId: "company_industry_required", question: "ما المجال؟", value: "التقنية المالية" }],
+      }),
+      answers: [{ questionId: "company_industry_required", question: "ما المجال؟", value: "التقنية المالية" }],
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(outreachFollowup.outputType).toBe("ask_clarification");
+    expect(outreachFollowup.clarificationItems).toHaveLength(1);
+    expect(outreachFollowup.clarificationItems?.[0]?.id).toBe("company_outreach_required");
 
     const next = await handler.handleUserMessage({
       userId: "user_company_outreach_discovery",
       conversationId: first.conversationId,
-      message: "ألمانيا، التقنية المالية، أريد التواصل لعرض خدماتنا، وأحتاج اسم الشركة وموقعها وبريد العمل والهاتف.",
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{
+          questionId: "company_outreach_required",
+          question: "ما هدف التواصل والبيانات المطلوبة؟",
+          value: "عملاء محتملون، اسم الشركة وموقعها وبريد العمل والهاتف",
+        }],
+      }),
+      answers: [{
+        questionId: "company_outreach_required",
+        question: "ما هدف التواصل والبيانات المطلوبة؟",
+        value: "عملاء محتملون، اسم الشركة وموقعها وبريد العمل والهاتف",
+      }],
       userBalance: 500,
       testScenario: "phase2_plan",
     });
@@ -625,11 +670,10 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.outputType).toBe("ask_clarification");
     expect(res.planQuote).toBeUndefined();
     expect(res.clarificationQuestions?.join(" ")).toContain("الدولة");
-    expect(res.clarificationQuestions?.join(" ")).toContain("القطاع");
-    expect(res.clarificationItems).toEqual(expect.arrayContaining([
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationItems).toEqual([
       expect.objectContaining({ id: "company_country_required", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true }),
-      expect.objectContaining({ id: "company_industry_required", type: "single", options: expect.arrayContaining(["أخرى"]), allowOther: true }),
-    ]));
+    ]);
     expect(res.clarificationItems?.every((item: any) => item.defaultOption === undefined)).toBe(true);
   });
 

@@ -67,6 +67,8 @@ describe("chat discovery clarification UI", () => {
     expect(cardSource).toContain('role="group" aria-labelledby={`clarification-${current.id}`}');
     expect(cardSource).toContain("customInputOpen || current.type === \"free\"");
     expect(cardSource).toContain("تخطّي السؤال");
+    expect(cardSource).toContain("إجابة ومتابعة");
+    expect(cardSource).toContain("onComplete([skippedAnswer])");
     expect(cardSource).toContain("completedAnswers?.length");
     expect(cardSource).not.toMatch(/dangerouslySetInnerHTML/i);
     expect(cardSource).toContain("min-h-11");
@@ -139,6 +141,17 @@ describe("chat discovery clarification UI", () => {
     expect(MAX_CLARIFICATION_QUESTIONS).toBeGreaterThan(3);
     expect(ACTION_RESULT_JSON_SCHEMA.properties.questions.maxItems).toBe(MAX_CLARIFICATION_QUESTIONS);
     expect(ACTION_RESULT_JSON_SCHEMA.properties.questionsAr.maxItems).toBe(MAX_CLARIFICATION_QUESTIONS);
+  });
+
+  it("submits each clarification answer before the assistant decides whether to ask another question", () => {
+    const chatHandler = readFileSync("src/functions/shared/chatHandler.ts", "utf8");
+    const finalResponse = chatHandler.slice(chatHandler.indexOf("// Ask one question per turn"));
+    expect(finalResponse).toContain("clarificationItemsList = clarificationItemsList.slice(0, 1)");
+    expect(finalResponse).toContain("clarificationQuestionsList = clarificationItemsList.map((item) => item.text)");
+
+    const prompt = readFileSync("src/functions/shared/systemPrompt.ts", "utf8");
+    expect(prompt).toContain("Ask only the single most useful unanswered question in each turn");
+    expect(prompt).toContain("after the user answers, reassess the request");
   });
 });
 

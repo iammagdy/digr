@@ -2500,6 +2500,15 @@ export class ChatHandler {
         clarificationItemsList = undefined;
       }
 
+      // Ask one question per turn so the next clarification can be chosen from
+      // the customer's latest answer instead of presenting a fixed questionnaire.
+      if (clarificationItemsList?.length) {
+        clarificationItemsList = clarificationItemsList.slice(0, 1);
+        clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+      } else if (clarificationQuestionsList?.length) {
+        clarificationQuestionsList = clarificationQuestionsList.slice(0, 1);
+      }
+
       return {
         conversationId,
         messageId: assistantMsgId,

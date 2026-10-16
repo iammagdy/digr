@@ -66,7 +66,12 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
   }
 
   function skipCurrent() {
-    setAnswers((previous) => ({ ...previous, [current.id]: { questionId: current.id, question: current.text, skipped: true } }));
+    const skippedAnswer = { questionId: current.id, question: current.text, skipped: true } satisfies DiscoveryAnswer;
+    if (qs.length === 1) {
+      onComplete([skippedAnswer]);
+      return;
+    }
+    setAnswers((previous) => ({ ...previous, [current.id]: skippedAnswer }));
     if (step < qs.length - 1) moveTo(step + 1);
   }
 
@@ -102,12 +107,16 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
   return (
     <section className="mt-3.5 rounded-2xl border border-ln bg-sf p-4" aria-label="أسئلة توضيح الطلب" dir="rtl">
       <p className="m-0 text-[14px] leading-7 text-ink">{displayIntro}</p>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-xs text-mut">سؤال {toArabicDigits(step + 1)} من {toArabicDigits(qs.length)}</span>
-        <div className="flex flex-1 flex-row-reverse gap-1" aria-hidden="true">
-          {qs.map((q, index) => <span key={q.id} className="h-1 flex-1 rounded-full" style={{ background: index <= step ? "var(--gold)" : "var(--ln)" }} />)}
+      {qs.length > 1 ? (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-xs text-mut">سؤال {toArabicDigits(step + 1)} من {toArabicDigits(qs.length)}</span>
+          <div className="flex flex-1 flex-row-reverse gap-1" aria-hidden="true">
+            {qs.map((q, index) => <span key={q.id} className="h-1 flex-1 rounded-full" style={{ background: index <= step ? "var(--gold)" : "var(--ln)" }} />)}
+          </div>
         </div>
-      </div>
+      ) : (
+        <p className="mb-0 mt-3 text-xs text-mut">سؤال توضيحي</p>
+      )}
 
       <div key={current.id} className="mt-4" role="group" aria-labelledby={`clarification-${current.id}`}>
         <h3 id={`clarification-${current.id}`} className="m-0 text-base font-medium leading-7 text-ink">{current.text}</h3>
@@ -115,27 +124,27 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
           <div className="mt-3 flex flex-wrap gap-2">
             {current.options.map((option) => {
               const isSelected = selected.includes(option);
-              return <button key={option} type="button" aria-pressed={isSelected} onClick={() => choose(option)} className="min-h-11 cursor-pointer rounded-full px-3.5 text-[13px] text-ink transition-colors" style={{ border: `1px solid ${isSelected ? "var(--gold)" : "var(--ln)"}`, background: isSelected ? "var(--sf2)" : "var(--bg)" }}>{option}</button>;
+              return <button key={option} type="button" aria-pressed={isSelected} disabled={disabled} onClick={() => choose(option)} className="min-h-11 cursor-pointer rounded-full px-3.5 text-[13px] text-ink transition-colors disabled:cursor-not-allowed disabled:opacity-50" style={{ border: `1px solid ${isSelected ? "var(--gold)" : "var(--ln)"}`, background: isSelected ? "var(--sf2)" : "var(--bg)" }}>{option}</button>;
             })}
-            {current.allowOther && !current.options.includes("أخرى") && <button type="button" onClick={() => { setCustomInputOpen(true); setDraft(""); }} className="min-h-11 cursor-pointer rounded-full border border-dashed border-ln2 bg-transparent px-3.5 text-[13px] text-ink">أخرى</button>}
+            {current.allowOther && !current.options.includes("أخرى") && <button type="button" disabled={disabled} onClick={() => { setCustomInputOpen(true); setDraft(""); }} className="min-h-11 cursor-pointer rounded-full border border-dashed border-ln2 bg-transparent px-3.5 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-50">أخرى</button>}
           </div>
         )}
 
         {(customInputOpen || current.type === "free" || current.options.length === 0 || current.parameterType === "volume" || current.id.includes("volume")) && (
           <form onSubmit={submitCustom} className="mt-3 flex items-center gap-2">
-            <input value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={200} type={current.parameterType === "volume" || current.id.includes("volume") ? "number" : "text"} inputMode={current.parameterType === "volume" || current.id.includes("volume") ? "numeric" : "text"} min={current.parameterType === "volume" || current.id.includes("volume") ? 1 : undefined} max={current.parameterType === "volume" || current.id.includes("volume") ? 5000 : undefined} placeholder={current.options.length ? "اكتب اختيارك" : "اكتب إجابتك"} className="min-h-11 min-w-0 flex-1 rounded-full border border-ln bg-bg px-4 text-base text-ink outline-none focus:border-ln2" />
-            <button type="submit" disabled={!draft.trim()} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac disabled:opacity-40">إضافة</button>
+            <input value={draft} onChange={(event) => setDraft(event.target.value)} disabled={disabled} maxLength={200} type={current.parameterType === "volume" || current.id.includes("volume") ? "number" : "text"} inputMode={current.parameterType === "volume" || current.id.includes("volume") ? "numeric" : "text"} min={current.parameterType === "volume" || current.id.includes("volume") ? 1 : undefined} max={current.parameterType === "volume" || current.id.includes("volume") ? 5000 : undefined} placeholder={current.options.length ? "اكتب اختيارك" : "اكتب إجابتك"} className="min-h-11 min-w-0 flex-1 rounded-full border border-ln bg-bg px-4 text-base text-ink outline-none focus:border-ln2 disabled:opacity-50" />
+            <button type="submit" disabled={disabled || !draft.trim()} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">إضافة</button>
           </form>
         )}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex gap-2">
-          <button type="button" disabled={step === 0} onClick={() => moveTo(step - 1)} className="min-h-11 cursor-pointer rounded-full border border-ln px-4 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-40">السابق</button>
+          <button type="button" disabled={disabled || step === 0} onClick={() => moveTo(step - 1)} className="min-h-11 cursor-pointer rounded-full border border-ln px-4 text-[13px] text-ink disabled:cursor-not-allowed disabled:opacity-40">السابق</button>
           {step < qs.length - 1 ? (
-            <button type="button" disabled={!currentAnswered} onClick={() => moveTo(step + 1)} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">التالي</button>
+            <button type="button" disabled={disabled || !currentAnswered} onClick={() => moveTo(step + 1)} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">التالي</button>
           ) : (
-            <button type="button" onClick={submitAll} disabled={disabled || !ready} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">متابعة وحساب التكلفة</button>
+            <button type="button" onClick={submitAll} disabled={disabled || !ready} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">{qs.length === 1 ? "إجابة ومتابعة" : "متابعة وحساب التكلفة"}</button>
           )}
         </div>
         <button type="button" onClick={skipCurrent} disabled={disabled} className="min-h-11 cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-mut">تخطّي السؤال</button>
