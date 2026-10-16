@@ -22,6 +22,15 @@ interface StoredRow {
 }
 
 describe("People-search field presence wording", () => {
+  it("does not invent a contact person from a company name", () => {
+    const { rows } = parseIcypeasCompaniesResponse({ leads: [{
+      name: "Solar Sunlight GmbH", industry: "Renewables & Environment", location: "Germany",
+    }] });
+    expect(rows[0].company_name).toBe("Solar Sunlight GmbH");
+    expect(rows[0].contact_name).toBe("");
+    expect(rows[0].contact_name_presence_status).toBe("غير موجود");
+    expect(rows[0].job_title_presence_status).toBe("غير موجود");
+  });
   it("reports presence only and never labels inferred field presence as verification", () => {
     const { rows } = parseIcypeasCompaniesResponse({ leads: [
       { firstname: "Rana", lastname: "Ali", currentJobTitle: "CFO", workEmail: "rana@example.com" },
