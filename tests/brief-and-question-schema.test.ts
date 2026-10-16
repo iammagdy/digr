@@ -273,6 +273,56 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationQuestions?.join(" ")).toMatch(/الدولة.*القطاع|القطاع.*الدولة/);
   });
 
+  it("keeps an explicit company count when the plan proposal returns a different volume", async () => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: companyCap.slug,
+      id: companyCap.tregEndpointId,
+      nameAr: companyCap.nameAr,
+      nameEn: companyCap.nameEn,
+      platform: companyCap.platform,
+      summaryAr: companyCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(companyCap.paramsSchema),
+    } as any]);
+
+    const handler = new ChatHandler(makeMockTables() as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات شركات",
+        capabilities: [{
+          capabilitySlug: "icypeas-companies-search",
+          endpointId: "icypeas.companies.search",
+          params: { query: {} },
+          targetVolumeMin: 1,
+          targetVolumeMax: 374,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId: "user_explicit_company_count",
+      message: "أريد ٥٠ شركة في ألمانيا في مجال التقنية المالية",
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.targetVolumeMax).toBe(50);
+  });
+
   // (d) a submitted card answer is stored in the brief and the same question is not asked again
   it("(d) a submitted card answer is stored in the brief and the same question is not asked again", () => {
     let currentBrief: ResearchBrief = { platforms: [], topics: [] };

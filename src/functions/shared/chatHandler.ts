@@ -1693,9 +1693,17 @@ export class ChatHandler {
       } else if (output.type === "propose_plan") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         const explicitCountry = detectCountryFromText(message);
+        const explicitRequestedVolume = researchIntent.sampleSize.provenance === "EXPLICIT"
+          ? researchIntent.sampleSize.value
+          : undefined;
         const mapPlanItems = (out: any) =>
           ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
             const itemParams = { ...(c.params || {}) };
+            const capabilityId = c.capabilitySlug || c.endpointId || "";
+            const isCompanyCapability = /compan|b2b/i.test(capabilityId);
+            const requestedCompanyVolume = isCompanyCapability && explicitRequestedVolume && explicitRequestedVolume > 0
+              ? explicitRequestedVolume
+              : undefined;
             const detectedIndustry = detectIndustryFromText(message);
             if (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0)) {
               itemParams.query = {
@@ -1710,9 +1718,15 @@ export class ChatHandler {
                 itemParams.query.location = { include: [explicitCountry.canonicalEnglish] };
               }
             }
+            if (requestedCompanyVolume && itemParams.pagination && typeof itemParams.pagination === "object") {
+              const currentPageSize = Number(itemParams.pagination.size);
+              if (!Number.isFinite(currentPageSize) || currentPageSize > requestedCompanyVolume) {
+                itemParams.pagination.size = requestedCompanyVolume;
+              }
+            }
             return {
               stepId: c.stepId,
-              capabilitySlug: c.capabilitySlug || c.endpointId,
+              capabilitySlug: capabilityId,
               endpointId: c.endpointId || c.capabilitySlug,
               paginationStrategy: c.paginationStrategy,
               params: {
@@ -1728,8 +1742,10 @@ export class ChatHandler {
                     }
                   : {}),
               },
-              targetVolumeMin: c.targetVolumeMin || 1,
-              targetVolumeMax: c.targetVolumeMax,
+              targetVolumeMin: requestedCompanyVolume
+                ? Math.min(c.targetVolumeMin || 1, requestedCompanyVolume)
+                : c.targetVolumeMin || 1,
+              targetVolumeMax: requestedCompanyVolume || c.targetVolumeMax,
             };
           });
 
