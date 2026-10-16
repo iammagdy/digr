@@ -4,6 +4,7 @@ import {
   extractAndFlattenRows,
   flattenRow,
   generateMethodologyText,
+  parseIcypeasCompaniesResponse,
 } from "../src/functions/shared/multiStepWorker";
 import {
   reserveCredits,
@@ -19,6 +20,25 @@ interface StoredRow {
   data: Record<string, any>;
   permissions: any[];
 }
+
+describe("People-search field presence wording", () => {
+  it("reports presence only and never labels inferred field presence as verification", () => {
+    const { rows } = parseIcypeasCompaniesResponse({ leads: [
+      { firstname: "Rana", lastname: "Ali", currentJobTitle: "CFO", workEmail: "rana@example.com" },
+      { firstname: "Omar", lastname: "Kamal" },
+    ] });
+
+    expect(rows[0].work_email_presence_status).toBe("موجود");
+    expect(rows[0].job_title_presence_status).toBe("موجود");
+    expect(rows[1].work_email_presence_status).toBe("غير موجود");
+    expect(rows[1].job_title_presence_status).toBe("غير موجود");
+    for (const row of rows) {
+      expect(row).not.toHaveProperty("verification_status");
+      expect(row).not.toHaveProperty("email_verification_status");
+      expect(row).not.toHaveProperty("title_verification_status");
+    }
+  });
+});
 
 class MockTablesDB {
   public rows: Map<string, StoredRow> = new Map();

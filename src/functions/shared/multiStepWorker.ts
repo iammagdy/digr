@@ -180,9 +180,8 @@ export function parseIcypeasCompaniesResponse(data: any): { rows: Record<string,
       description: String(lead.description || lead.headline || lead.slogan || "").trim(),
       work_email: rawEmail,
       phone: phone,
-      email_verification_status: rawEmail ? "متحقق" : "غير متاح",
-      title_verification_status: jobTitle ? "متحقق" : "غير متوفر",
-      verification_status: "متحقق",
+      work_email_presence_status: rawEmail ? "موجود" : "غير موجود",
+      job_title_presence_status: jobTitle ? "موجود" : "غير موجود",
       founded_year: lead.foundedYear != null ? String(lead.foundedYear) : "",
     };
   });

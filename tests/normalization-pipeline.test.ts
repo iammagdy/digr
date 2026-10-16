@@ -188,6 +188,16 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(codebook.find((c) => c.field === "likes_count")?.titleAr).toBe("عدد الإعجابات");
       expect(codebook.find((c) => c.field === "custom_metric")?.dataType).toContain("Integer");
     });
+
+    it("documents contact-field statuses as presence only, not independent verification", () => {
+      const codebook = generateDynamicCodebook(
+        ["work_email_presence_status", "job_title_presence_status"],
+        [],
+      );
+      const descriptions = codebook.map((entry) => entry.descriptionAr).join(" ");
+      expect(descriptions).toContain("لا يعني التحقق");
+      expect(codebook.map((entry) => entry.titleAr)).toContain("توفر البريد المهني");
+    });
   });
 
   describe("7. End-to-End Dataset Normalization", () => {

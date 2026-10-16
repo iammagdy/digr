@@ -292,7 +292,7 @@ export async function generateExcelReport(
 
   // ================= Sheet 4: جودة البيانات =================
   const wsQuality = wb.addWorksheet("جودة البيانات", { views: [{ rightToLeft: true }] });
-  const qTitle = wsQuality.addRow(["تقرير جودة وتدقيق البيانات (Data Quality & Verification Audit)"]);
+  const qTitle = wsQuality.addRow(["تقرير جودة البيانات (Data Quality Audit)"]);
   qTitle.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
   wsQuality.addRow([]);
 
@@ -445,7 +445,7 @@ export async function generateCompanyExcelReport(
     "رابط لينكد إن",
     "المدينة / المحافظة",
     "الهاتف التجاري",
-    "حالة التحقق",
+    "حالة التوفر في البيانات",
   ];
   const dirHeaderRow = wsDir.addRow(dirHeaders);
   dirHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
@@ -468,7 +468,7 @@ export async function generateCompanyExcelReport(
       linkedin,
       city,
       phoneVal,
-      "معتمدة مستقلة",
+      "مدرجة في البيانات المستخرجة",
     ]);
     row.font = { name: "Calibri", size: 10 };
     row.height = 22;
@@ -690,7 +690,6 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       { label: "السجلات المطابقة المعتمدة بعد المراجعة (Validated Matched)", val: `${rowsCount}` },
       { label: "السجلات المستبعدة للتكرار أو عدم المطابقة (Excluded)", val: `${dups}` },
       { label: "نسبة اكتمال حقول السجلات (Field Completeness)", val: `${norm.kpis.dataCompletenessPct}%` },
-      { label: "معدل التحقق المنهجي (Methodological Verification)", val: "فحص تطابق وتدقيق آلي متعدد المراحل" },
     ];
 
     counterRows.forEach((item, idx) => {
@@ -773,7 +772,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     const limitationsText = [
       "• مصادر البيانات: تم استخراج البيانات مباشرة من المصادر المتاحة علناً دون أي التفاف على سياسات الخصوصية.",
       "• طبيعة العينة: تمثل البيانات لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة في تاريخ الجمع؛ ونظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية.",
-      "• النزاهة العلمية: تم تطبيق تدقيق الملاءمة واستبعاد التكرار والتحقق من النطاقات المعلنة بأمانة منهجية تامة.",
+      "• النزاهة العلمية: تم تطبيق تدقيق الملاءمة واستبعاد التكرار وفق النطاقات المعلنة.",
       "• حدود المسؤولية: لا نضمن الحصر الشامل لكافة الكيانات بالسوق أو حداثة أرقام الاتصال لتغيرها الدوري في مصادرها المعلنة.",
     ].join("\n");
 
