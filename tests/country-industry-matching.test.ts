@@ -8,6 +8,7 @@ import {
   getMissingCompanyResearchRequirements,
   extractParamDisplayString,
   industryDisplayLabelAr,
+  isPeopleSearchRequest,
 } from "../src/lib/planParameters";
 import { normalizeIcypeasCompanyParams } from "../src/lib/server/tregAdapter";
 
@@ -25,6 +26,12 @@ describe("Country & Industry Detection and Matching", () => {
 
   it("localizes the English FinTech taxonomy in customer-facing cards", () => {
     expect(industryDisplayLabelAr("FinTech")).toBe("التقنية المالية");
+  });
+
+  it("does not route a company list with work email to people search, but does route decision makers", () => {
+    expect(isPeopleSearchRequest("٥٠ شركة تقنية مالية في ألمانيا مع بريد العمل والهاتف" )).toBe(false);
+    expect(isPeopleSearchRequest("٢٠ من صناع القرار في شركات التقنية المالية مع الاسم والمسمى وبريد العمل")).toBe(true);
+    expect(isPeopleSearchRequest("Find people in Germany with work emails")).toBe(true);
   });
 
   it("accurately detects countries from Arabic and English requests", () => {

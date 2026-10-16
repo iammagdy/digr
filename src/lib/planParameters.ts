@@ -529,7 +529,15 @@ export function getMissingCompanyResearchRequirements(text: string): Array<"coun
 
 export function isPeopleSearchRequest(text: string): boolean {
   const normalized = (text || "").toLowerCase();
-  return /decision[\s-]*makers?|executives?|people search|work emails?|professional emails?|job titles?|contacts?\b|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|بريد العمل|البريد المهني|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص/.test(normalized);
+  const explicitPeopleIntent = /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
+  if (explicitPeopleIntent) return true;
+
+  // A work email can be a company field. Do not reinterpret an explicit
+  // company list as a people search solely because it asks for business email.
+  const explicitCompanyIntent = /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسة|مؤسسات|مصنع|مصانع/.test(normalized);
+  if (explicitCompanyIntent) return false;
+
+  return /work emails?|professional emails?|بريد العمل|البريد المهني/.test(normalized);
 }
 
 /**
