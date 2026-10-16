@@ -1201,15 +1201,28 @@ export class LlmClient {
         m.content.includes("propose_plan"),
     );
     if (hasPhase2PlanInstruction || options.testScenario === "phase2_plan") {
+      const isPeoplePrompt =
+        promptLower.includes("صناع القرار") ||
+        promptLower.includes("صانعي القرار") ||
+        promptLower.includes("الرئيس التنفيذي") ||
+        promptLower.includes("رئيس تنفيذي") ||
+        promptLower.includes("بريده المهني") ||
+        promptLower.includes("بريد مهني") ||
+        promptLower.includes("decision maker") ||
+        promptLower.includes("people");
+
       const isCompanyPrompt =
-        promptLower.includes("شركات") ||
+        !isPeoplePrompt &&
+        (promptLower.includes("شركات") ||
         promptLower.includes("شركة") ||
         promptLower.includes("مؤسسات") ||
         promptLower.includes("مؤسسة") ||
         promptLower.includes("companies") ||
-        promptLower.includes("b2b");
+        promptLower.includes("b2b"));
 
-      const targetPlatform = isCompanyPrompt
+      const targetPlatform = isPeoplePrompt
+        ? "people"
+        : isCompanyPrompt
         ? "compan"
         : promptLower.includes("فيسبوك") || promptLower.includes("facebook")
         ? "facebook"
@@ -1228,9 +1241,9 @@ export class LlmClient {
       const matchedCap = (options.sanitizedCapabilities || []).find((c: any) =>
         (c.platform || c.slug || c.category || c.id || "").toLowerCase().includes(targetPlatform)
       ) || options.sanitizedCapabilities?.[0] || {
-        slug: isCompanyPrompt ? "icypeas-companies-search" : "facebook-post-comments",
-        id: isCompanyPrompt ? "icypeas.companies.search" : "facebook-post-comments",
-        nameAr: isCompanyPrompt ? "بحث واستخراج بيانات الشركات" : "استخراج تعليقات فيسبوك",
+        slug: isPeoplePrompt ? "icypeas-people-search" : (isCompanyPrompt ? "icypeas-companies-search" : "facebook-post-comments"),
+        id: isPeoplePrompt ? "icypeas.people.search" : (isCompanyPrompt ? "icypeas.companies.search" : "facebook-post-comments"),
+        nameAr: isPeoplePrompt ? "استخراج بيانات صناع القرار والمسؤولين" : (isCompanyPrompt ? "بحث واستخراج بيانات الشركات" : "استخراج تعليقات فيسبوك"),
       };
 
       let volume = 100;
@@ -2433,18 +2446,32 @@ export class LlmClient {
           .join(" ")
           .toLowerCase();
 
+        const isPeoplePrompt =
+          userPromptLower.includes("صناع القرار") ||
+          userPromptLower.includes("صانعي القرار") ||
+          userPromptLower.includes("الرئيس التنفيذي") ||
+          userPromptLower.includes("رئيس تنفيذي") ||
+          userPromptLower.includes("بريده المهني") ||
+          userPromptLower.includes("بريد مهني") ||
+          userPromptLower.includes("decision maker") ||
+          userPromptLower.includes("people");
+
         const isCompanyPrompt =
-          userPromptLower.includes("شركات") ||
+          !isPeoplePrompt &&
+          (userPromptLower.includes("شركات") ||
           userPromptLower.includes("شركة") ||
           userPromptLower.includes("مؤسسات") ||
           userPromptLower.includes("مؤسسة") ||
           userPromptLower.includes("companies") ||
           userPromptLower.includes("company") ||
-          userPromptLower.includes("b2b");
+          userPromptLower.includes("b2b"));
 
         if (Array.isArray(scrubbedPayload.capabilities)) {
           for (const cap of scrubbedPayload.capabilities) {
-            if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
+            if (isPeoplePrompt || cap.capabilitySlug?.includes("people") || cap.endpointId?.includes("people")) {
+              cap.capabilitySlug = "icypeas-people-search";
+              cap.endpointId = "icypeas.people.search";
+            } else if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
               cap.capabilitySlug = "icypeas-companies-search";
               cap.endpointId = "icypeas.companies.search";
             } else if (!cap.capabilitySlug) {
@@ -2649,18 +2676,32 @@ export class LlmClient {
           .join(" ")
           .toLowerCase();
 
+        const isPeoplePrompt =
+          userPromptLower.includes("صناع القرار") ||
+          userPromptLower.includes("صانعي القرار") ||
+          userPromptLower.includes("الرئيس التنفيذي") ||
+          userPromptLower.includes("رئيس تنفيذي") ||
+          userPromptLower.includes("بريده المهني") ||
+          userPromptLower.includes("بريد مهني") ||
+          userPromptLower.includes("decision maker") ||
+          userPromptLower.includes("people");
+
         const isCompanyPrompt =
-          userPromptLower.includes("شركات") ||
+          !isPeoplePrompt &&
+          (userPromptLower.includes("شركات") ||
           userPromptLower.includes("شركة") ||
           userPromptLower.includes("مؤسسات") ||
           userPromptLower.includes("مؤسسة") ||
           userPromptLower.includes("companies") ||
           userPromptLower.includes("company") ||
-          userPromptLower.includes("b2b");
+          userPromptLower.includes("b2b"));
 
         if (Array.isArray(parsedResult.capabilities)) {
           for (const cap of parsedResult.capabilities) {
-            if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
+            if (isPeoplePrompt || cap.capabilitySlug?.includes("people") || cap.endpointId?.includes("people")) {
+              cap.capabilitySlug = "icypeas-people-search";
+              cap.endpointId = "icypeas.people.search";
+            } else if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
               cap.capabilitySlug = "icypeas-companies-search";
               cap.endpointId = "icypeas.companies.search";
             } else if (!cap.capabilitySlug) {
