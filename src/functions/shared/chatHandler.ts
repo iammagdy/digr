@@ -25,6 +25,7 @@ import {
   validatePlanAgainstSchemas,
   validatePlanAgainstLiveCatalog,
   LiveCatalogIssue,
+  PlanItem,
   PlanState,
 } from "./planManager";
 import { getBalance } from "./ledger";
@@ -53,6 +54,7 @@ import {
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
+import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -1944,7 +1946,7 @@ export class ChatHandler {
           });
 
         let planOutput: any = output;
-        let planItems = mapPlanItems(planOutput);
+        let planItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(planOutput));
         const companyPlan = planItems.some((item: any) =>
           /compan|b2b/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
         );
@@ -1996,7 +1998,7 @@ export class ChatHandler {
           await repeatTurn();
           if (output.type === "propose_plan") {
             planOutput = output;
-            planItems = mapPlanItems(planOutput);
+            planItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(planOutput));
             platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
             if (platformCheck.valid) {
               planValidation = validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities);
@@ -2055,7 +2057,7 @@ export class ChatHandler {
               } as any;
             } else {
               const autoPlan = buildAutoPlanProposal(brief, validationCaps, message);
-              const autoPlanItems = mapPlanItems(autoPlan);
+              const autoPlanItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(autoPlan));
               const autoCheck = validatePlanAgainstLiveCatalog(autoPlanItems, turnEndpoints, allCapabilities);
               if (autoCheck.valid) {
                 planOutput = autoPlan;

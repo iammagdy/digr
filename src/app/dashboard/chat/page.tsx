@@ -866,7 +866,12 @@ export default function ChatWorkspacePage() {
     const isProfile = slug.includes("profile") || slug.includes("user");
     const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
     if (isCompany) {
-      operations.push(...buildCompanyPlanEditOperations(slug, cleanVal, newCountry || "", newIndustry || ""));
+      const params = (primaryItem.params || {}) as Record<string, unknown>;
+      operations.push(...buildCompanyPlanEditOperations(slug, cleanVal, newCountry || "", newIndustry || "", {
+        keyword: typeof params.search === "string" ? params.search : "",
+        country: typeof params.country === "string" ? params.country : typeof params.location === "string" ? params.location : "",
+        industry: typeof params.industry === "string" ? params.industry : "",
+      }));
     } else if (cleanVal && cleanVal !== "[object Object]") {
       const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
 

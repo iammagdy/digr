@@ -22,9 +22,18 @@ import {
 } from "../src/functions/shared/planManager";
 import { DEFAULT_PRICING_SETTINGS, calculateCapabilityUnitPricePoints } from "../src/functions/shared/quotes";
 import { buildCompanyPlanEditOperations } from "../src/lib/companyPlanEdits";
+import { dedupeRecordSearchItems } from "../src/lib/recordSearchPlanItems";
 import { extractInterpretedParameters } from "../src/lib/planParameters";
 
 describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
+  it("does not quote the same company search twice for one requested country", () => {
+    const items = [
+      { capabilitySlug: "icypeas-companies-search", params: { country: "ألمانيا", query: { keyword: { include: ["solar"] }, location: { include: ["Germany"] } } }, targetVolumeMax: 20 },
+      { capabilitySlug: "icypeas-companies-search", params: { country: "Germany", query: { keyword: { include: ["solar", "renewable energy"] }, location: { include: ["Germany"] } } }, targetVolumeMax: 20 },
+    ];
+    expect(dedupeRecordSearchItems(items)).toHaveLength(1);
+    expect(dedupeRecordSearchItems(items)[0].targetVolumeMax).toBe(20);
+  });
   it("extractParamDisplayString safely unpacks company query object without returning [object Object]", () => {
     // Exact shape from buildAutoPlanProposal for company research
     const companyParams = {
@@ -170,6 +179,33 @@ describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
       industryAr: "الأغذية والمطاعم",
       isDefaultCountry: false,
     });
+  });
+
+  it("replaces an untouched old-scope keyword when country and industry change", () => {
+    const initialPlan: PlanState = {
+      summaryAr: "FinTech في ألمانيا",
+      items: [{
+        capabilitySlug: "icypeas-companies-search",
+        params: {
+          search: "FinTech في ألمانيا",
+          country: "Germany",
+          industry: "FinTech",
+          query: { keyword: { include: ["FinTech في ألمانيا"] }, location: { include: ["Germany"] } },
+        },
+        targetVolumeMin: 1,
+        targetVolumeMax: 50,
+      }],
+      outputFormats: ["xlsx", "pdf"],
+    };
+    const operations = buildCompanyPlanEditOperations(
+      "icypeas-companies-search", "FinTech في ألمانيا", "United Arab Emirates", "الأغذية والمطاعم",
+      { keyword: "FinTech في ألمانيا", country: "Germany", industry: "FinTech" },
+    );
+    const params = applyPlanOperations(initialPlan, operations as any).items[0].params;
+    expect(params.search).not.toContain("FinTech");
+    expect(JSON.stringify(params.query.keyword)).not.toContain("Germany");
+    expect(params.query.location.include).toEqual(["United Arab Emirates"]);
+    expect(params.query.industry.include).toContain("Food & Beverages");
   });
 });
 

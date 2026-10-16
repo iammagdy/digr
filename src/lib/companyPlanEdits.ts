@@ -9,14 +9,24 @@ export function buildCompanyPlanEditOperations(
   keyword: string,
   country: string,
   industry: string,
+  previous?: { keyword?: string; country?: string; industry?: string },
 ): CompanyPlanEditOperation[] {
   const operations: CompanyPlanEditOperation[] = [];
   const cleanKeyword = keyword.trim();
   const countryInfo = detectCountryFromText(country);
   const industryInfo = detectIndustryFromText(industry);
   const query: Record<string, any> = {};
+  const previousCountry = previous?.country ? detectCountryFromText(previous.country) : null;
+  const previousIndustry = previous?.industry ? detectIndustryFromText(previous.industry) : null;
+  const scopeChanged = Boolean(previous && (
+    previousCountry?.canonicalEnglish !== countryInfo?.canonicalEnglish ||
+    previousIndustry?.arabicLabel !== industryInfo.arabicLabel
+  ));
+  const staleInferredKeyword = scopeChanged && cleanKeyword === (previous?.keyword || "").trim();
 
-  if (cleanKeyword && cleanKeyword !== "[object Object]") {
+  if (staleInferredKeyword) {
+    operations.push({ action: "set_param", capabilitySlug, key: "search", value: industryInfo.arabicLabel });
+  } else if (cleanKeyword && cleanKeyword !== "[object Object]") {
     query.keyword = { include: [cleanKeyword] };
     operations.push({ action: "set_param", capabilitySlug, key: "search", value: cleanKeyword });
   }
