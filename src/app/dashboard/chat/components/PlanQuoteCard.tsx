@@ -118,8 +118,9 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
-  const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr);
-  const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr);
+  const isPeoplePlan = (primaryItem?.capabilitySlug || "").toLowerCase().includes("people");
+  const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
+  const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editCountry, setEditCountry] = useState(interpreted.countryAr);
   const [editIndustry, setEditIndustry] = useState(interpreted.industryAr);
@@ -131,8 +132,9 @@ export default function PlanQuoteCard({
 
   useEffect(() => {
     const pItem = quote.items?.[0];
-    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr);
-    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
+    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
+    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
     setEditIndustry(inter.industryAr);
     setEditLimit(quote.targetVolumeMax || 1);
@@ -161,8 +163,9 @@ export default function PlanQuoteCard({
 
   function handleOpenEdit() {
     const pItem = quote.items?.[0];
-    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr);
-    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
+    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
+    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
     setEditIndustry(inter.industryAr);
     setEditLimit(quote.targetVolumeMax || 1);
@@ -228,7 +231,7 @@ export default function PlanQuoteCard({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-mut">النشاط / التخصص:</span>
+          <span className="text-mut">{isPeoplePlan ? "نوع البحث:" : "النشاط / التخصص:"}</span>
           <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
             {interpreted.industryAr}
           </span>
@@ -247,15 +250,15 @@ export default function PlanQuoteCard({
         <ul className="m-0 list-inside space-y-1 pr-1 font-light text-ink2">
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">١.</span>
-            <span>استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد ({interpreted.countryAr} · {interpreted.industryAr}).</span>
+            <span>{isPeoplePlan ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.` : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${interpreted.industryAr}).`}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٢.</span>
-            <span>تدقيق الملاءمة الذكي ومراجعة كل شركة واستبعاد الأنشطة غير المطابقة.</span>
+            <span>{isPeoplePlan ? "تنظيم الأسماء والمسميات الوظيفية وبيانات بريد العمل عند توافرها." : "تدقيق الملاءمة الذكي ومراجعة كل شركة واستبعاد الأنشطة غير المطابقة."}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٣.</span>
-            <span>إزالة التكرار والتحقق من هواتف النطاق وبيانات التواصل المتاحة.</span>
+            <span>{isPeoplePlan ? "توضيح ما إذا كانت حقول الاسم والمسمى والبريد موجودة في السجل؛ لا يعني ذلك تحققًا مستقلًا منها." : "إزالة التكرار والتحقق من هواتف النطاق وبيانات التواصل المتاحة."}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٤.</span>
@@ -291,7 +294,7 @@ export default function PlanQuoteCard({
       </div>
 
       <p className="mb-0 mt-[14px] border-t border-ln pt-3 text-[13px] font-light leading-[1.9] text-ink2">
-        المنهجية: {quote.methodologyNotes || "جمع وتوثيق البيانات العامة وفق المعايير المعتمدة وفصل ملف البيانات عن توثيق المنهجية."}
+        المنهجية: {isPeoplePlan ? "البحث في المصادر المهنية المتاحة، مع بيان الحقول الموجودة أو غير الموجودة لكل سجل. وجود البريد لا يعني التحقق من صحته." : quote.methodologyNotes || "جمع وتوثيق البيانات العامة وفق المعايير المعتمدة وفصل ملف البيانات عن توثيق المنهجية."}
       </p>
 
       {isEditing && !locked && (
@@ -305,7 +308,7 @@ export default function PlanQuoteCard({
               />
             </div>
             <div>
-              <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">النشاط / التخصص الرئيسي</label>
+              <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "نوع البحث" : "النشاط / التخصص الرئيسي"}</label>
               <input
                 id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto"
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
@@ -313,7 +316,7 @@ export default function PlanQuoteCard({
             </div>
           </div>
           <div>
-            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الكلمات المفتاحية / الاستعلام</label>
+            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : "الكلمات المفتاحية / الاستعلام"}</label>
             <input
               id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
               className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"

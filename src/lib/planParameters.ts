@@ -435,7 +435,8 @@ export function isCompanyRowMatchingConstraints(
  */
 export function extractInterpretedParameters(
   params: Record<string, any> | undefined | null,
-  summaryAr?: string
+  summaryAr?: string,
+  isPeopleSearch = false
 ): { countryAr: string; countryCanonical: string; industryAr: string; isDefaultCountry: boolean } {
   const query = params?.query && typeof params.query === "object" ? params.query : {};
   const firstIncluded = (value: any): string | undefined =>
@@ -445,7 +446,7 @@ export function extractInterpretedParameters(
         ? value.include[0]
         : undefined;
   const queryCountry = firstIncluded(query.location) || firstIncluded(query.country);
-  const queryIndustry = firstIncluded(query.keyword) || firstIncluded(query.industry);
+  const queryIndustry = isPeopleSearch ? "" : firstIncluded(query.keyword) || firstIncluded(query.industry);
   const fullText = [
     params?.search,
     params?.query,
@@ -466,7 +467,9 @@ export function extractInterpretedParameters(
     detectCountryFromText(params?.location || "") ||
     detectCountryFromText(fullText);
 
-  const industry = detectIndustryFromText(queryIndustry || params?.industry || fullText);
+  const industry = isPeopleSearch
+    ? { arabicLabel: "صناع القرار والمهنيون", canonicalEnglish: "", englishKeywords: [] }
+    : detectIndustryFromText(queryIndustry || params?.industry || fullText);
 
   if (explicitCountry) {
     return {
@@ -520,9 +523,13 @@ export function isPeopleSearchRequest(text: string): boolean {
  */
 export function extractParamDisplayString(
   params: Record<string, any> | undefined | null,
-  summaryAr?: string
+  summaryAr?: string,
+  isPeopleSearch = false
 ): string {
   if (!params || typeof params !== "object") return "";
+  // Provider query keywords may contain the customer's full natural-language prompt.
+  // Never echo that raw English prompt into a customer-facing people-search card.
+  if (isPeopleSearch) return "صناع القرار والمهنيون";
 
   const candidates: string[] = [];
 

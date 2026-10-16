@@ -6,10 +6,22 @@ import {
   isCompanyRowMatchingConstraints,
   extractInterpretedParameters,
   getMissingCompanyResearchRequirements,
+  extractParamDisplayString,
 } from "../src/lib/planParameters";
 import { normalizeIcypeasCompanyParams } from "../src/lib/server/tregAdapter";
 
 describe("Country & Industry Detection and Matching", () => {
+  it("keeps people-search quote display in Arabic and does not treat the prompt as industry", () => {
+    const rawPrompt = "Find 20 decision makers Germany Germany with name title and verified work emails";
+    const params = { query: { keyword: { include: [rawPrompt] }, location: { include: ["Germany"] } } };
+    const interpreted = extractInterpretedParameters(params, "بحث صناع القرار", true);
+
+    expect(interpreted.countryAr).toBe("ألمانيا");
+    expect(interpreted.industryAr).toBe("صناع القرار والمهنيون");
+    expect(extractParamDisplayString(params, "بحث صناع القرار", true)).toBe("صناع القرار والمهنيون");
+    expect(extractParamDisplayString(params, "بحث صناع القرار", true)).not.toContain("Germany");
+  });
+
   it("accurately detects countries from Arabic and English requests", () => {
     expect(detectCountryFromText("عايز 5 شركات صناعة الصواريخ في ليختنشتاين")?.canonicalEnglish).toBe("Liechtenstein");
     expect(detectCountryFromText("شركات مقاولات في مصر")?.canonicalEnglish).toBe("Egypt");

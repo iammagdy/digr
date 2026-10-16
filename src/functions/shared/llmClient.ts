@@ -2042,7 +2042,9 @@ export class LlmClient {
         String(c.slug || c.platform || c.category || c.id || "").toLowerCase().includes("people")
       ) || { slug: "icypeas-people-search", id: "icypeas.people.search", nameAr: "بحث صناع القرار والمهنيين" };
       const country = detectCountryFromText(userHistoryText);
-      const query: Record<string, any> = { keyword: { include: [userHistoryText] } };
+      // Keep the provider query scoped to the people capability. The full customer
+      // prompt is not a keyword/industry and must not leak into the quote card.
+      const query: Record<string, any> = { keyword: { include: ["decision makers"] } };
       if (country) query.location = { include: [country.canonicalEnglish] };
 
       return {
