@@ -325,15 +325,15 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(excelBuf as any);
 
-    // All 6 company worksheets must be present
-    expect(wb.worksheets.length).toBe(6);
+    // Per Rule 4: Excel is data-only (no audit/methodology/field-dictionary sheets)
+    expect(wb.worksheets.length).toBe(3);
     const sheetNames = wb.worksheets.map((ws) => ws.name);
     expect(sheetNames).toContain("الملخص التنفيذي ومؤشرات السوق");
     expect(sheetNames).toContain("دليل الشركات المعتمد");
     expect(sheetNames).toContain("بيانات الشركات للتصفية");
-    expect(sheetNames).toContain("سجل تدقيق الاستبعاد والمطابقة");
-    expect(sheetNames).toContain("جودة البيانات ومحددات الحصر");
-    expect(sheetNames).toContain("دليل الحقول");
+    expect(sheetNames).not.toContain("سجل تدقيق الاستبعاد والمطابقة");
+    expect(sheetNames).not.toContain("جودة البيانات ومحددات الحصر");
+    expect(sheetNames).not.toContain("دليل الحقول");
 
     // CSV and PDF must also generate without throwing
     const csvBuf = generateCsvReport(payload);
@@ -474,7 +474,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     const checkWb = new ExcelJS.Workbook();
     await checkWb.xlsx.load(finalExcel as any);
-    expect(checkWb.worksheets.length).toBe(6);
+    expect(checkWb.worksheets.length).toBe(3);
     checkWb.worksheets.forEach((ws) => {
       // All sheets must have RTL view
       expect(ws.views?.[0]?.rightToLeft).toBe(true);

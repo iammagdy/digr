@@ -268,6 +268,16 @@ export function isCompanyRowMatchingLocation(row: Record<string, any>, expectedC
   return rowLoc.includes(targetLower) || rowDesc.includes(targetLower);
 }
 
+function extractAllStrings(val: any): string[] {
+  if (!val) return [];
+  if (typeof val === "string") return [val];
+  if (Array.isArray(val)) return val.flatMap(extractAllStrings);
+  if (typeof val === "object") {
+    return Object.values(val).flatMap(extractAllStrings);
+  }
+  return [];
+}
+
 /**
  * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
  * POST /find-companies with { query: { location, keyword, industry }, pagination: { size, token } }
@@ -278,29 +288,12 @@ export function normalizeIcypeasCompanyParams(
   pageSize: number,
   cursor?: string | null
 ): Record<string, any> {
-  const queryObj: Record<string, any> = (rawParams?.query && typeof rawParams.query === "object")
-    ? { ...rawParams.query }
-    : {};
-
-  const fullPromptText = [
-    rawParams?.search,
-    rawParams?.query,
-    rawParams?.keyword,
-    rawParams?.topic,
-    rawParams?.location,
-    rawParams?.country,
-    rawParams?.city,
-    queryObj?.keyword?.include?.[0],
-    queryObj?.location?.include?.[0],
-  ]
-    .filter((v) => typeof v === "string" && v.trim().length > 0)
-    .join(" ");
+  const fullPromptText = extractAllStrings(rawParams).join(" ");
 
   // 1. Detect Country without hidden default
   let detectedCountry =
     detectCountryFromText(rawParams?.country || "") ||
     detectCountryFromText(rawParams?.location || "") ||
-    detectCountryFromText(queryObj?.location?.include?.[0] || "") ||
     detectCountryFromText(fullPromptText);
 
   // 2. Detect Industry
@@ -346,30 +339,11 @@ export function normalizeIcypeasPeopleParams(
   pageSize: number,
   cursor?: string | null
 ): Record<string, any> {
-  const queryObj: Record<string, any> = (rawParams?.query && typeof rawParams.query === "object")
-    ? { ...rawParams.query }
-    : {};
-
-  const fullPromptText = [
-    rawParams?.search,
-    rawParams?.query,
-    rawParams?.keyword,
-    rawParams?.topic,
-    rawParams?.location,
-    rawParams?.country,
-    rawParams?.city,
-    rawParams?.jobTitle,
-    rawParams?.title,
-    queryObj?.keyword?.include?.[0],
-    queryObj?.location?.include?.[0],
-  ]
-    .filter((v) => typeof v === "string" && v.trim().length > 0)
-    .join(" ");
+  const fullPromptText = extractAllStrings(rawParams).join(" ");
 
   const detectedCountry =
     detectCountryFromText(rawParams?.country || "") ||
     detectCountryFromText(rawParams?.location || "") ||
-    detectCountryFromText(queryObj?.location?.include?.[0] || "") ||
     detectCountryFromText(fullPromptText);
 
   const finalQuery: Record<string, any> = {};
@@ -386,6 +360,8 @@ export function normalizeIcypeasPeopleParams(
     title = "CEO";
   } else if (t.includes("cto") || t.includes("مدير تقني") || t.includes("المدير التقني")) {
     title = "CTO";
+  } else if (t.includes("cfo") || t.includes("مدير مالي") || t.includes("المدير المالي")) {
+    title = "CFO";
   } else if (t.includes("founder") || t.includes("مؤسس")) {
     title = "Founder";
   } else if (t.includes("director") || t.includes("مدير")) {
@@ -393,6 +369,16 @@ export function normalizeIcypeasPeopleParams(
   }
 
   finalQuery.currentJobTitle = { include: [title] };
+
+  const detectedIndustry = detectIndustryFromText(fullPromptText);
+  if (
+    detectedIndustry &&
+    detectedIndustry.englishKeywords &&
+    detectedIndustry.englishKeywords.length > 0 &&
+    (t.includes("تقنية") || t.includes("تكنولوجيا") || t.includes("برمجيات") || t.includes("tech") || t.includes("software") || t.includes("it") || t.includes("مقاولات"))
+  ) {
+    finalQuery.keyword = { include: detectedIndustry.englishKeywords };
+  }
 
   const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
   const paginationObj: Record<string, any> = {
