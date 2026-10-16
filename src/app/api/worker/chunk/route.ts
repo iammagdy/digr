@@ -877,8 +877,8 @@ export async function POST(req: NextRequest) {
         : `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr}. ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`;
 
       const cleanTitle = isCompanyResearch
-        ? `دليل الشركات والمؤسسات المعتمدة في ${detectedCountry}`
-        : "تقرير البيانات المعتمدة والتحقق المنهجي";
+        ? `دليل الشركات التي أعادتها المصادر في ${detectedCountry}`
+        : "تقرير بيانات من المصادر المتاحة";
 
       const finalPayload: any = {
         metadata: {
@@ -954,7 +954,7 @@ export async function POST(req: NextRequest) {
         const resultsBucket = adminClient.storage.from("results");
 
         // 1. CSV Report
-        try {
+        if (spec.outputFormats.includes("csv")) try {
           const csvBuf = generateCsvReport(finalPayload);
           const csvUp = await resultsBucket.upload(csvPath, csvBuf, {
             contentType: "text/csv",
@@ -972,7 +972,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 2. Excel (.xlsx) Report
-        try {
+        if (spec.outputFormats.includes("xlsx")) try {
           const xlsxBuf = await generateExcelReport(finalPayload);
           const xlsxUp = await resultsBucket.upload(xlsxPath, xlsxBuf, {
             contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -990,7 +990,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 3. PDF Report
-        try {
+        if (spec.outputFormats.includes("pdf")) try {
           const pdfBuf = await generatePdfReport(finalPayload);
           const pdfUp = await resultsBucket.upload(pdfPath, pdfBuf, {
             contentType: "application/pdf",

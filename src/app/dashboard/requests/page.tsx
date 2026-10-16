@@ -338,9 +338,8 @@ export default function RequestsPage() {
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
             : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0) : "";
-          const pdfCanBeGenerated = k === "done" || k === "partial";
           const availableFormats = (["xlsx", "pdf", "csv"] as const).filter(
-            (ext) => Boolean(j.fileIds[ext]) || (ext === "pdf" && pdfCanBeGenerated),
+            (ext) => Boolean(j.fileIds[ext]),
           );
           const hasFiles = availableFormats.length > 0;
           return (

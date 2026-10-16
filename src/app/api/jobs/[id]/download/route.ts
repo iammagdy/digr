@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
@@ -56,19 +57,41 @@ export async function GET(
       return NextResponse.json({ success: false, error: "غير مصرح لك بتحميل نتائج هذا الطلب." }, { status: 403 });
     }
 
+    // Respect the formats selected in the approved quote. Legacy jobs without a
+    // matching quote keep their historical on-demand download behavior.
+    let requestedFormats: string[] | null = null;
+    try {
+      const { data: quoteRows } = await adminClient
+        .from("plans_quotes")
+        .select("id, output_formats")
+        .eq("user_id", job.user_id)
+        .eq("status", "accepted");
+      const quote = (quoteRows || []).find((row: any) => {
+        const quoteId = String(row?.id || "");
+        return quoteId && (`job_quote_${createHash("md5").update(quoteId).digest("hex")}` === jobId || quoteId === jobId);
+      });
+      if (quote && Array.isArray(quote.output_formats)) requestedFormats = quote.output_formats;
+    } catch {
+      // Existing artifact links remain available when quote history is unavailable.
+    }
+
     // 3. Format and filename selection
     const format = (req.nextUrl.searchParams.get("format") || "csv").toLowerCase();
     const allowedFormats = ["csv", "xlsx", "pdf", "json"];
     if (!allowedFormats.includes(format)) {
       return NextResponse.json({ success: false, error: "صيغة الملف غير مدعومة" }, { status: 400 });
     }
+    if (requestedFormats && ["xlsx", "pdf", "csv"].includes(format) && !requestedFormats.includes(format)) {
+      return NextResponse.json({ success: false, error: "هذه الصيغة لم تكن ضمن الملفات المختارة في الخطة." }, { status: 409 });
+    }
 
-    let country = "مصر";
-    let industry = "شركات";
+    let country = "الدولة غير محددة";
+    let industry = "النشاط غير محدد";
     const count = job.delivered_units || job.rows_collected || job.target_volume_max || 1;
     const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
 
-    const sourceText = `${job.brief || ""} ${job.search_query || ""} ${job.template_slug || ""}`;
+    const paramsText = typeof job.params === "string" ? job.params : JSON.stringify(job.params || {});
+    const sourceText = `${job.brief || ""} ${job.search_query || ""} ${paramsText} ${job.template_slug || ""}`;
     const detectedC = detectCountryFromText(sourceText);
     if (detectedC?.arabicLabel) {
       country = detectedC.arabicLabel;
