@@ -161,8 +161,8 @@ export function parseIcypeasCompaniesResponse(data: any): { rows: Record<string,
   }
 
   const rows = rawLeads.map((lead: any, idx: number) => {
-    const contactName = lead.firstname ? `${lead.firstname} ${lead.lastname || ""}`.trim() : String(lead.fullName || lead.name || "").trim();
-    const jobTitle = String(lead.currentJobTitle || lead.lastJobTitle || lead.headline || lead.jobTitle || "").trim();
+    const contactName = lead.firstname ? `${lead.firstname} ${lead.lastname || ""}`.trim() : String(lead.fullName || "").trim();
+    const jobTitle = String(lead.currentJobTitle || lead.lastJobTitle || lead.jobTitle || "").trim();
     const companyName = String(lead.currentCompanyName || lead.lastCompanyName || lead.name || lead.company_name || `شركة #${idx + 1}`).trim();
     const website = String(lead.currentCompanyWebsite || lead.lastCompanyWebsite || lead.website || lead.url || "").trim();
     const rawEmail = String(lead.email || lead.workEmail || lead.work_email || lead.corporateEmail || "").trim();
