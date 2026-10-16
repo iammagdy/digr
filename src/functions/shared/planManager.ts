@@ -739,17 +739,35 @@ export async function createAndSaveManagedQuote(
   const nowIso = new Date().toISOString();
   const quoteUnitPricePoints = plan.items[0]?.unitPricePoints || effectiveUnitPrice;
 
-  // 2. Invalidate / supersede previous proposed quotes for this conversation
+  // 2. Invalidate previous proposed quotes that belong to this conversation.
   const anyTables = tables as any;
   if (anyTables && typeof anyTables.from === "function") {
     try {
-      await anyTables
-        .from("plans_quotes")
-        .update({ status: "expired" })
+      const { data: quoteMessages, error: messageReadError } = await anyTables
+        .from("messages")
+        .select("quote")
         .eq("user_id", userId)
-        .eq("status", "quoted");
+        .eq("conversation_id", conversationId)
+        .not("quote", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1000);
+
+      if (messageReadError) throw messageReadError;
+
+      const previousQuoteIds = Array.from(new Set((quoteMessages || [])
+        .map((row: any) => row?.quote?.quoteId || row?.quote?.id)
+        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0)));
+
+      if (previousQuoteIds.length > 0) {
+        await anyTables
+          .from("plans_quotes")
+          .update({ status: "expired" })
+          .eq("user_id", userId)
+          .in("id", previousQuoteIds)
+          .eq("status", "quoted");
+      }
     } catch (err: any) {
-      console.warn("Could not supersede old quotes in Supabase:", err.message);
+      console.warn("Could not supersede prior quotes for this conversation:", err.message);
     }
     await anyTables.from("plans_quotes").insert({
       id: quoteId,
