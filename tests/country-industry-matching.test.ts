@@ -170,6 +170,16 @@ describe("Country & Industry Detection and Matching", () => {
     expect(getMissingCompanyResearchRequirements(`${answered} | المجال المطلوب: تقنية مالية`)).not.toContain("industry");
   });
 
+  it("does not repeat named-company disambiguation after the user chooses a company list", () => {
+    const request = "أريد أن أضم شركة تواصل التجاري إلى القائمة.";
+    const answered = `${request} | إجابة المقصود: قائمة شركات للتواصل التجاري`;
+    const missing = getMissingCompanyResearchRequirements(answered);
+    const items = getCompanyRequirementItems(missing, answered);
+
+    expect(items[0]?.id).toBe("company_country_required");
+    expect(items.some((item) => item.text.includes("هل تقصد شركة محددة"))).toBe(false);
+  });
+
   it("does not infer Egypt or CEO for an unscoped people search", async () => {
     const { normalizeIcypeasPeopleParams } = await import("../src/lib/server/tregAdapter");
     const params = normalizeIcypeasPeopleParams({ query: { keyword: { include: ["decision makers"] } } }, 20);

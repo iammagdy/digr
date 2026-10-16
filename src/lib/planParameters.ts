@@ -582,7 +582,8 @@ export function getCompanyRequirementItems(
   requestText = "",
 ): Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> {
   const items: Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> = [];
-  const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
+  const hasResolvedAsCompanyList = /قائمة\s+(?:من\s+)?شركات?\s+للتواصل\s+التجاري|قائمة\s+الشركات\s+للتواصل\s+التجاري|\b(?:company list|list of companies)\b/i.test(requestText);
+  const ambiguousNamedEntity = hasResolvedAsCompanyList ? null : getAmbiguousCompanyReference(requestText);
   if (ambiguousNamedEntity && missing.includes("outreach_details")) {
     const text = `هل تقصد شركة محددة باسم «${ambiguousNamedEntity.slice(0, 36)}» أم قائمة شركات للتواصل التجاري؟`;
     items.push({
