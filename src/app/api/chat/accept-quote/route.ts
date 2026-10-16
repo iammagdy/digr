@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
-import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
+import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
 import { InvalidInternalOriginError, resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
@@ -56,7 +56,8 @@ export async function POST(req: NextRequest) {
     }
 
     // A1 Safety Guard: Do not silently accept a quote and start fake work when live provider is disabled
-    const gateStatus = getLiveProviderGateStatus();
+    const adminClient = createAdminClient();
+    const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);
     const isTestMockAllowed =
       process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true";
 
@@ -73,7 +74,6 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Accept Quote & Reserve Credits atomically via Service Role
-    const adminClient = createAdminClient();
     const acceptRes = await acceptQuoteSupabase(adminClient, {
       userId: user.id,
       quoteId,

@@ -77,6 +77,45 @@ export function getLiveProviderGateStatus(): ProviderGateStatus {
 }
 
 /**
+ * Resolve the non-secret live switch from shared application settings before
+ * evaluating the gate. Vercel runs route handlers in separate functions, so a
+ * process.env mutation made by the admin route is not shared with the accept
+ * or worker routes. The switch is stored in settings_private; provider tokens
+ * remain environment-only and are never read from that row.
+ */
+export async function getLiveProviderGateStatusFromSettings(source: any): Promise<ProviderGateStatus> {
+  let savedLive: unknown;
+
+  try {
+    if (typeof source?.getRow === "function") {
+      const row = await source.getRow({
+        databaseId: "digr",
+        tableId: "settings_private",
+        rowId: "providers",
+      });
+      savedLive = row?.TREG_LIVE ?? row?.value?.TREG_LIVE;
+    } else if (typeof source?.from === "function") {
+      const { data, error } = await source
+        .from("settings_private")
+        .select("value")
+        .eq("key", "providers")
+        .maybeSingle();
+      if (!error) savedLive = data?.value?.TREG_LIVE;
+    }
+  } catch {
+    // If shared settings are unavailable, retain the deployment env fallback.
+  }
+
+  if (typeof savedLive === "boolean") {
+    process.env.TREG_LIVE = savedLive ? "true" : "false";
+  } else if (typeof savedLive === "string" && /^(true|false)$/i.test(savedLive.trim())) {
+    process.env.TREG_LIVE = savedLive.trim().toLowerCase();
+  }
+
+  return getLiveProviderGateStatus();
+}
+
+/**
  * Boolean-only convenience check.
  */
 export function isLiveProviderConfigured(): boolean {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin, Query } from "@/lib/server/adminAuth";
 import { getLlmStatusSnapshot } from "@/functions/shared/llmClient";
 import { LLM_KEY_ENV, LLM_MODEL_ENV, last4 } from "@/lib/server/providerEnv";
-import { isLiveProviderConfigured } from "@/lib/server/providerGate";
+import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
   const { tables } = auth.ctx;
+  const tregGate = await getLiveProviderGateStatusFromSettings(tables);
 
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   const since = startOfDay.toISOString();
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
       costTodayEgp: llmCostToday,
     },
     treg: {
-      live: isLiveProviderConfigured(),
+      live: tregGate.isReady,
       tokenConfigured: Boolean((process.env.TREG_TOKEN || process.env.TREG_API_KEY || "").trim()),
       tokenLast4: last4(process.env.TREG_TOKEN || process.env.TREG_API_KEY),
       baseUrl: (process.env.TREG_BASE_URL || "https://treg.to").replace(/\/$/, ""),
@@ -96,5 +97,5 @@ export async function POST(req: NextRequest) {
     await auth.ctx.audit(kind, label, target, { targetType: "env", targetId: u.key });
   }
 
-  return NextResponse.json({ success: results.some((r) => r.ok), results, needsRestart: true });
+  return NextResponse.json({ success: results.every((r) => r.ok), results, needsRestart: false });
 }

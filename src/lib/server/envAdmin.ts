@@ -38,7 +38,7 @@ export async function applyEnvUpdates(
 
   // 2. Persist non-sensitive configuration to Supabase settings_private.
   // CRITICAL SECURITY GUARD: Secrets (API keys / tokens) must NEVER be persisted in DB tables.
-  if (tables && typeof tables.from === "function") {
+  if (tables && (typeof tables.from === "function" || typeof tables.getRow === "function")) {
     try {
       const updatesMap: Record<string, string> = {};
       for (const u of safeUpdates) {
@@ -46,7 +46,7 @@ export async function applyEnvUpdates(
           updatesMap[u.key] = u.value.trim();
         }
       }
-      if (Object.keys(updatesMap).length > 0) {
+      if (Object.keys(updatesMap).length > 0 && typeof tables.from === "function") {
         const { data: existing } = await tables
           .from("settings_private")
           .select("value")
@@ -65,6 +65,37 @@ export async function applyEnvUpdates(
           value: merged,
           updated_at: new Date().toISOString(),
         });
+        results.push({ target: "supabase:settings_private", ok: true, message: "تم حفظ الإعدادات غير الحساسة في Supabase" });
+      } else if (Object.keys(updatesMap).length > 0 && typeof tables.getRow === "function") {
+        let existing: any = null;
+        try {
+          existing = await tables.getRow({
+            databaseId: "digr",
+            tableId: "settings_private",
+            rowId: "providers",
+          });
+        } catch {
+          // The row may not exist yet.
+        }
+
+        const existingVal = existing?.value && typeof existing.value === "object"
+          ? existing.value
+          : existing && typeof existing === "object" ? existing : {};
+        const cleanExisting: Record<string, any> = {};
+        for (const [k, v] of Object.entries(existingVal)) {
+          if (!SECRET_KEYS.has(k) && !["key", "$id", "updatedAt", "updated_at"].includes(k)) {
+            cleanExisting[k] = v;
+          }
+        }
+        const merged = { ...cleanExisting, ...updatesMap };
+        const row = {
+          databaseId: "digr",
+          tableId: "settings_private",
+          rowId: "providers",
+          data: merged,
+        };
+        if (existing) await tables.updateRow(row);
+        else await tables.createRow(row);
         results.push({ target: "supabase:settings_private", ok: true, message: "تم حفظ الإعدادات غير الحساسة في Supabase" });
       }
     } catch {

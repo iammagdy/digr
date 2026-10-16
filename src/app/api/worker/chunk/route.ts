@@ -10,7 +10,7 @@ import {
   getInjectedProviderAdapter,
   createBuiltInMockAdapter,
 } from "../../../../lib/server/tregAdapter";
-import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
+import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
@@ -292,7 +292,7 @@ export async function POST(req: NextRequest) {
         process.env.ENABLE_MOCK_PROVIDER === "true"
     );
 
-    const gateStatus = getLiveProviderGateStatus();
+    const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);
     const isLiveProviderReady = gateStatus.isReady;
 
     // A1 Safety Guard: when neither live provider nor non-production test adapter is active,

@@ -56,9 +56,13 @@ export default function AdminProvidersPage() {
     if (busy) return false;
     setBusy(true);
     try {
-      const res = await adminFetch<{ results: Array<{ ok: boolean; message: string }> }>("/api/admin/providers", { method: "POST", body: JSON.stringify({ updates }) });
+      const res = await adminFetch<{ success?: boolean; results: Array<{ ok: boolean; message: string }> }>("/api/admin/providers", { method: "POST", body: JSON.stringify({ updates }) });
       const failed = res.results.filter((r) => !r.ok);
-      toast(failed.length ? `${done} — لكن: ${failed[0].message}` : `${done} — يسري بعد إعادة تشغيل الدوال`);
+      if (failed.length || res.success === false) {
+        toast(`تعذر حفظ الإعداد — ${failed[0]?.message || "حاول مرة أخرى"}`);
+        return false;
+      }
+      toast(`${done} — يسري على الطلبات الجديدة`);
       refresh();
       return true;
     } catch (e) {

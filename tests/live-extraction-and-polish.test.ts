@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   getLiveProviderGateStatus,
+  getLiveProviderGateStatusFromSettings,
   isLiveProviderConfigured,
   getSanitizedProviderToken,
   mapProviderReasonToUserMessage,
@@ -72,6 +73,40 @@ describe("Live Data Extraction Gate & Provider Diagnostics", () => {
     process.env.TREG_TOKEN = "'primary-token-abc'";
     expect(getSanitizedProviderToken()).toBe("primary-token-abc");
     expect(isLiveProviderConfigured()).toBe(true);
+  });
+
+  it("loads the persisted non-secret live switch for serverless routes while keeping tokens env-only", async () => {
+    delete process.env.TREG_LIVE;
+    process.env.TREG_TOKEN = "env-only-test-token";
+
+    const source = {
+      from: vi.fn(() => ({
+        select: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => ({ data: { value: { TREG_LIVE: "true", TREG_TOKEN: "must-not-be-used" } }, error: null })),
+          })),
+        })),
+      })),
+    };
+
+    const status = await getLiveProviderGateStatusFromSettings(source);
+    expect(status.isReady).toBe(true);
+    expect(process.env.TREG_LIVE).toBe("true");
+    expect(source.from).toHaveBeenCalledWith("settings_private");
+    expect(getLiveProviderGateStatus().reasonCode).toBe("ok");
+  });
+
+  it("honors a persisted off switch even when a deployment env flag is on", async () => {
+    process.env.TREG_LIVE = "true";
+    process.env.TREG_TOKEN = "env-only-test-token";
+    const source = {
+      getRow: vi.fn(async () => ({ TREG_LIVE: false })),
+    };
+
+    const status = await getLiveProviderGateStatusFromSettings(source);
+    expect(status.isReady).toBe(false);
+    expect(status.reasonCode).toBe("flag_off");
+    expect(process.env.TREG_LIVE).toBe("false");
   });
 
   it("maps provider reason codes to safe Arabic messages without leaking provider names", () => {
