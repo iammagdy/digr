@@ -36,6 +36,14 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     expect(card).toContain("أوافق وابدأ البحث");
   });
 
+  it("PlanQuoteCard describes people fields as present or absent without claiming verification", () => {
+    const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
+    expect(card).toContain("موجودًا أو غير موجود في السجل");
+    expect(card).toContain("وجود البريد لا يعني التحقق من صحته");
+    expect(card).not.toContain("متحقق / غير متاح");
+    expect(card).not.toContain("حالة التحقق لكل حقل");
+  });
+
   it("4. The details sentence has no counters, progress bar or badges", () => {
     const discovery = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(discovery).not.toContain("answeredCount");
