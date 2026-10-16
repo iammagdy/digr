@@ -10,8 +10,9 @@ import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
+import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
-import type { DiscoveryAnswer } from "./components/discoveryQuestions";
+import { parsePersistedClarificationAnswers, type DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 
@@ -19,7 +20,9 @@ import OnboardingModal from "./components/OnboardingModal";
 import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
-import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
+import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
+import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
+import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
@@ -93,6 +96,7 @@ interface MessageItem {
   revisionQuote?: RevisionQuoteData;
   clarificationQuestions?: string[];
   clarificationItems?: unknown;
+  clarificationIntro?: string;
   completedClarificationAnswers?: DiscoveryAnswer[];
   suggestedAlternative?: any;
   refusalReason?: string;
@@ -136,6 +140,7 @@ export default function ChatWorkspacePage() {
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
 
@@ -238,7 +243,7 @@ export default function ChatWorkspacePage() {
   // Shell integration: header title + «سؤال بحثي جديد» from the sidebar.
   const shell = useShell();
   useEffect(() => {
-    shell.setTitle(conversationTitle || "محادثة جديدة");
+    shell.setTitle(customerFacingConversationTitle(conversationTitle || "محادثة جديدة"));
   }, [shell, conversationTitle]);
   const startNewChatRef = useRef<() => void>(() => {});
   startNewChatRef.current = handleStartNewChat;
@@ -247,6 +252,16 @@ export default function ChatWorkspacePage() {
     window.addEventListener("diger:new-chat", on);
     return () => window.removeEventListener("diger:new-chat", on);
   }, []);
+
+  useEffect(() => {
+    const showHistory = () => {
+      setHistoryOpen(true);
+      void loadConversations();
+    };
+    window.addEventListener("diger:show-history", showHistory);
+    if (new URLSearchParams(window.location.search).get("history") === "1") showHistory();
+    return () => window.removeEventListener("diger:show-history", showHistory);
+  }, [loadConversations]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -490,7 +505,11 @@ export default function ChatWorkspacePage() {
 
       if (data.conversationId) {
         setConversationId(data.conversationId);
-        setConversationTitle((title) => title || textToSend.slice(0, 50));
+        setConversationTitle((title) =>
+          !title || customerFacingConversationTitle(title) === "محادثة جديدة"
+            ? customerFacingConversationTitle(textToSend).slice(0, 50)
+            : title
+        );
         if (user) loadConversations();
       }
 
@@ -504,6 +523,7 @@ export default function ChatWorkspacePage() {
         revisionQuote: data.revisionQuote,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
+        clarificationIntro: data.clarificationIntro,
         suggestedAlternative: data.suggestedAlternative,
         refusalReason: data.refusalReason,
         createdAt: new Date().toISOString(),
@@ -591,6 +611,7 @@ export default function ChatWorkspacePage() {
           revisionQuote: data.revisionQuote,
           clarificationQuestions: data.clarificationQuestions,
           clarificationItems: data.clarificationItems,
+          clarificationIntro: data.clarificationIntro,
           suggestedAlternative: data.suggestedAlternative,
           refusalReason: data.refusalReason,
           createdAt: new Date().toISOString(),
@@ -619,10 +640,20 @@ export default function ChatWorkspacePage() {
     }
   }
 
+  function closeHistoryPanel() {
+    setHistoryOpen(false);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("history")) {
+      url.searchParams.delete("history");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
   async function handleOpenConversation(id: string, targetJobId?: string) {
     if (!user || loading || conversationLoading) return;
     const sequence = ++conversationLoadSequence.current;
     setConversationLoading(true);
+    closeHistoryPanel();
     setConversationLoadError(false);
     setConversationId(id);
     setConversationTitle(conversationsList.find((item) => item.$id === id)?.title ?? "");
@@ -664,16 +695,59 @@ export default function ChatWorkspacePage() {
         offset += pageSize;
       }
 
-      setMessages(documents
+      const savedQuoteIds = Array.from(new Set(documents
+        .map((document) => document.quote?.quoteId || document.quote?.id)
+        .filter((quoteId): quoteId is string => typeof quoteId === "string" && quoteId.length > 0)));
+      const quoteStatusById = new Map<string, string>();
+      if (savedQuoteIds.length > 0) {
+        const { data: savedQuoteStatuses, error: quoteStatusError } = await supabase
+          .from("plans_quotes")
+          .select("id, status")
+          .eq("user_id", user.id)
+          .in("id", savedQuoteIds);
+        if (!quoteStatusError) {
+          for (const savedQuote of savedQuoteStatuses || []) {
+            if (typeof savedQuote.id === "string" && typeof savedQuote.status === "string") {
+              quoteStatusById.set(savedQuote.id, savedQuote.status);
+            }
+          }
+        }
+      }
+      if (sequence !== conversationLoadSequence.current) return;
+
+      const restoredMessages: MessageItem[] = documents
         .filter((document) => (document.role === "user" || document.role === "assistant") && document.status !== "thinking")
-        .map((document) => ({
-          id: document.id || document.$id,
-          role: document.role as "user" | "assistant",
-          content: String(document.content_ar || document.content || "").slice(0, 20000),
-          clarificationItems: document.clarification_items,
-          planQuote: document.quote,
-          createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
-        })));
+        .map((document) => {
+          const savedQuote = document.quote;
+          const quoteId = savedQuote?.quoteId || savedQuote?.id;
+          return {
+            id: document.id || document.$id,
+            role: document.role as "user" | "assistant",
+            content: String(document.content_ar || document.content || "").slice(0, 20000),
+            clarificationItems: document.clarification_items,
+            planQuote: savedQuote
+              ? { ...savedQuote, status: quoteStatusById.get(quoteId) || "unknown" }
+              : null,
+            createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
+          };
+        });
+      for (let index = 0; index < restoredMessages.length; index += 1) {
+        const answers = parsePersistedClarificationAnswers(restoredMessages[index].content);
+        if (!answers) continue;
+        // Card submissions are stored as structured JSON. Keep the serialized payload out of chat.
+        restoredMessages[index].hidden = true;
+        restoredMessages[index].content = answers
+          .map((answer) => `${answer.question}: ${Array.isArray(answer.value) ? answer.value.join("، ") : answer.value || "سيُطلب منك الاختيار"}`)
+          .join(" · ");
+        for (let previous = index - 1; previous >= 0; previous -= 1) {
+          const message = restoredMessages[previous];
+          if (message.role === "assistant" && message.clarificationItems) {
+            message.completedClarificationAnswers = answers;
+            break;
+          }
+        }
+      }
+      setMessages(restoredMessages);
 
       // Restore the run (progress / files) of the conversation's accepted quote or active job
       let quoteJobId = targetJobId;
@@ -764,6 +838,7 @@ export default function ChatWorkspacePage() {
     setExtractedProfile(null);
     loadedResultJobs.current.clear();
     setCanvasOpen(false);
+    setHistoryOpen(false);
     try {
       sessionStorage.removeItem("diger_active_job_id");
       sessionStorage.removeItem("diger_canvas_open");
@@ -788,9 +863,16 @@ export default function ChatWorkspacePage() {
     ];
 
     const cleanVal = typeof newParam === "string" ? newParam.trim() : "";
-    if (cleanVal && cleanVal !== "[object Object]") {
-      const isProfile = slug.includes("profile") || slug.includes("user");
-      const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
+    const isProfile = slug.includes("profile") || slug.includes("user");
+    const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
+    if (isCompany) {
+      const params = (primaryItem.params || {}) as Record<string, unknown>;
+      operations.push(...buildCompanyPlanEditOperations(slug, cleanVal, newCountry || "", newIndustry || "", {
+        keyword: typeof params.search === "string" ? params.search : "",
+        country: typeof params.country === "string" ? params.country : typeof params.location === "string" ? params.location : "",
+        industry: typeof params.industry === "string" ? params.industry : "",
+      }));
+    } else if (cleanVal && cleanVal !== "[object Object]") {
       const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
 
       if (isProfile) {
@@ -799,49 +881,6 @@ export default function ChatWorkspacePage() {
           capabilitySlug: slug,
           key: "username",
           value: cleanVal.replace(/^@/, "").trim(),
-        });
-      } else if (isCompany) {
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: "search",
-          value: cleanVal,
-        });
-
-        if (newCountry && typeof newCountry === "string" && newCountry.trim()) {
-          operations.push({
-            action: "set_param",
-            capabilitySlug: slug,
-            key: "country",
-            value: newCountry.trim(),
-          });
-        }
-
-        if (newIndustry && typeof newIndustry === "string" && newIndustry.trim()) {
-          operations.push({
-            action: "set_param",
-            capabilitySlug: slug,
-            key: "industry",
-            value: newIndustry.trim(),
-          });
-        }
-
-        const countryInfo = detectCountryFromText(newCountry || cleanVal);
-        const industryInfo = detectIndustryFromText(newIndustry || cleanVal);
-        const structuredQuery: Record<string, any> = {
-          keyword: { include: [cleanVal] },
-        };
-        if (countryInfo?.canonicalEnglish) {
-          structuredQuery.location = { include: [countryInfo.canonicalEnglish] };
-        }
-        if (industryInfo?.exactTaxonomy && industryInfo.exactTaxonomy.length > 0) {
-          structuredQuery.industry = { include: industryInfo.exactTaxonomy };
-        }
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: "query",
-          value: structuredQuery,
         });
       } else if (isPostOrUrl && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
         const urlKey = slug.includes("youtube") ? "videoUrl" : slug.includes("reddit") ? "postUrl" : "url";
@@ -1163,7 +1202,7 @@ export default function ChatWorkspacePage() {
         {
           id: `err_meth_${Date.now()}`,
           role: "assistant",
-          content: "تعذر طلب صياغة المنهجية: " + (err.message || "خطأ غير متوقع"),
+          content: "تعذر طلب صياغة المنهجية حالياً. يرجى المحاولة لاحقاً.",
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -1321,20 +1360,15 @@ export default function ChatWorkspacePage() {
 
   /* ── derived document state ───────────────────────────────────────── */
   const isClarification = (m: MessageItem) =>
-    m.outputType === "ask_clarification" || (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems);
+    m.outputType === "ask_clarification" ||
+    (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems) ||
+    (Array.isArray(m.clarificationQuestions) ? m.clarificationQuestions.length > 0 : !!m.clarificationQuestions);
   const isResearchActive = Boolean(
     activeJob ||
-    messages.some((m) =>
-      m.planQuote ||
-      (m.clarificationQuestions && m.clarificationQuestions.length > 0) ||
-      isClarification(m) ||
-      m.outputType === "propose_plan" ||
-      m.outputType === "ask_clarification" ||
-      m.intent === "research"
-    )
+    messages.some((m) => m.planQuote || Boolean(m.jobId))
   );
   const firstUserIdx = messages.findIndex((m) => m.role === "user");
-  const question = conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : "");
+  const question = customerFacingConversationTitle(conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : ""));
   const startIdx = messages.findIndex((m) => !!m.jobId);
   const lastPlanIdx = messages.reduce((acc, m, i) => (m.planQuote ? i : acc), -1);
   const lastClarIdx = messages.reduce((acc, m, i) => (isClarification(m) ? i : acc), -1);
@@ -1374,9 +1408,22 @@ export default function ChatWorkspacePage() {
         </div>
       );
     }
+    if (isClarification(m)) {
+      return (
+        <div key={m.id}>
+          <DetailsBlanks
+            questions={m.clarificationItems || m.clarificationQuestions || []}
+            intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}
+            completedAnswers={m.completedClarificationAnswers}
+            disabled={loading}
+            onComplete={(answers) => handleSubmitClarification(m.id, answers)}
+          />
+        </div>
+      );
+    }
     return (
       <div key={m.id}>
-        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>}
+        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
         {m.revisionQuote && (
           <RevisionQuoteCard
             quote={m.revisionQuote}
@@ -1416,6 +1463,7 @@ export default function ChatWorkspacePage() {
               <div className="mt-3.5">
                 <DetailsBlanks
                   questions={m.clarificationItems || m.clarificationQuestions || []}
+                  intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}
                   completedAnswers={m.completedClarificationAnswers}
                   disabled={loading}
                   onComplete={(answers) => handleSubmitClarification(m.id, answers)}
@@ -1510,6 +1558,32 @@ export default function ChatWorkspacePage() {
 
   return (
     <div className="flex min-h-0 w-full flex-1 overflow-hidden bg-bg font-sans text-ink">
+      {historyOpen && (
+        <>
+          <button type="button" aria-label="إغلاق سجل المحادثات" onClick={closeHistoryPanel} className="fixed inset-0 z-[44] cursor-default border-0 bg-black/30" />
+          <aside role="dialog" aria-label="سجل المحادثات" className="fixed inset-y-0 left-0 z-[45] flex w-[min(90vw,380px)] flex-col border-r border-ln bg-sf shadow-2xl" dir="rtl">
+            <div className="flex min-h-16 items-center justify-between border-b border-ln px-4">
+              <h2 className="m-0 text-base font-semibold text-ink">سجل المحادثات</h2>
+              <button type="button" aria-label="إغلاق" onClick={closeHistoryPanel} className="h-10 w-10 cursor-pointer rounded-full border-0 bg-transparent text-lg text-mut hover:bg-sf2">×</button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              {conversationsList.length === 0 ? (
+                <p className="m-0 px-3 py-8 text-center text-sm text-mut">لا توجد محادثات محفوظة بعد.</p>
+              ) : conversationsList.map((item) => (
+                <button
+                  key={item.$id}
+                  type="button"
+                  onClick={() => void handleOpenConversation(item.$id)}
+                  className={`mb-1 flex min-h-14 w-full cursor-pointer flex-col items-start justify-center rounded-xl border-0 px-3 text-right hover:bg-sf2 ${conversationId === item.$id ? "bg-sf2" : "bg-transparent"}`}
+                >
+                  <span className="w-full truncate text-sm font-medium text-ink">{customerFacingConversationTitle(item.title)}</span>
+                  <span className="mt-1 text-[11px] text-fnt">{dayLabel(item.updatedAt)}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+        </>
+      )}
       {/* 1. Onboarding (existing first-run persona step) */}
       <OnboardingModal
         isOpen={showOnboarding}

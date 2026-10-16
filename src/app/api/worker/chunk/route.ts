@@ -10,7 +10,7 @@ import {
   getInjectedProviderAdapter,
   createBuiltInMockAdapter,
 } from "../../../../lib/server/tregAdapter";
-import { getLiveProviderGateStatus } from "../../../../lib/server/providerGate";
+import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
@@ -37,6 +37,7 @@ import {
 } from "../../../../lib/planParameters";
 import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
+import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -291,7 +292,7 @@ export async function POST(req: NextRequest) {
         process.env.ENABLE_MOCK_PROVIDER === "true"
     );
 
-    const gateStatus = getLiveProviderGateStatus();
+    const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);
     const isLiveProviderReady = gateStatus.isReady;
 
     // A1 Safety Guard: when neither live provider nor non-production test adapter is active,
@@ -432,6 +433,7 @@ export async function POST(req: NextRequest) {
     const rawRows = adapterResult.ok ? (adapterResult.rows || []) : [];
 
     let filteredRows = rawRows;
+    let duplicateExcludedCount = 0;
     if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
       const rules = spec.params.exclusionRules;
       const baselineRecords: EntityRecord[] = [
@@ -457,6 +459,7 @@ export async function POST(req: NextRequest) {
       const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
       filteredRows = dedupResult.delivered;
       const excludedCount = dedupResult.confirmedDuplicates?.length || 0;
+      duplicateExcludedCount = excludedCount;
       if (excludedCount > 0) {
         try {
           await adminClient.from("job_events").insert({
@@ -479,6 +482,8 @@ export async function POST(req: NextRequest) {
       spec.endpointId.includes("icypeas");
 
     let uncertainRows: any[] = [];
+    let relevanceExcludedCount = 0;
+    let relevanceSkipReasons: string[] = [];
 
     if (isCompanyCapability && Array.isArray(filteredRows) && filteredRows.length > 0) {
       const fullText = [
@@ -515,7 +520,9 @@ export async function POST(req: NextRequest) {
 
       const reviews = await reviewCompanyBatch({
         customerRequest: fullText || spec.params?.search || "",
-        targetCountry: expectedCountry || "Egypt",
+        // An omitted country must stay omitted. Never silently classify the
+        // customer's request as Egypt when the brief has no geographic scope.
+        targetCountry: expectedCountry || "",
         targetIndustryAr: expectedIndustry.arabicLabel,
         rows: candidateRowsForReview,
       });
@@ -533,6 +540,8 @@ export async function POST(req: NextRequest) {
           excludedRows.push({ ...originalRow, _relevance_status: "غير مطابق", _relevance_reason: rev.reasonAr });
         }
       });
+      relevanceExcludedCount = excludedRows.length;
+      relevanceSkipReasons = [...new Set(excludedRows.map((row) => String(row._relevance_reason || "غير مطابق")))].slice(0, 2);
 
       filteredRows = matchedRows;
 
@@ -619,6 +628,7 @@ export async function POST(req: NextRequest) {
       batchUnits: acceptedRows.length,
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
+      uncertainRows,
       rawProfile: adapterResult.rawProfile || null,
       timestamp: new Date().toISOString(),
     };
@@ -665,6 +675,41 @@ export async function POST(req: NextRequest) {
     }
 
     const recordedDeliveredUnits: number = compData.delivered_units;
+
+    // One concise customer event per provider page with source, accepted counts,
+    // explicit exclusions, and the main reasons; never include row-level PII.
+    try {
+      if (!compData.already_completed) {
+        const sourceLabel = customerFacingCapabilityLabel(spec.capabilitySlug);
+        const parts = [
+          `المصدر: ${sourceLabel}`,
+          `الصفحة ${toArabicDigits(currentStep + 1)}`,
+          `وصل ${toArabicDigits(rawRows.length)} سجل`,
+          `جديد ومقبول ${toArabicDigits(acceptedRows.length)}`,
+          duplicateExcludedCount ? `تكرار أو قائمة استبعاد ${toArabicDigits(duplicateExcludedCount)}` : null,
+          relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
+          uncertainRows.length ? `يحتاج مراجعة ${toArabicDigits(uncertainRows.length)}` : null,
+        ].filter(Boolean);
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: parts.join(" · "),
+          units: recordedDeliveredUnits,
+          event_type: "progress",
+        });
+        if (relevanceSkipReasons.length) {
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: `أسباب الاستبعاد في هذه الصفحة: ${relevanceSkipReasons.join("، ")}`,
+            units: recordedDeliveredUnits,
+            event_type: "info",
+          });
+        }
+      }
+    } catch (evtErr: any) {
+      console.warn("[worker:page_summary_event_warning]", evtErr?.message || "");
+    }
 
     // Record real progress in job_events
     try {
@@ -720,6 +765,7 @@ export async function POST(req: NextRequest) {
     // 12. If finished: assemble all rows, generate CSV/XLSX/PDF + methodology, upload to results/{userId}/{jobId}/result.{format}, write artifact_versions, and ONLY THEN settle_job_atomic
     if (isDone) {
       const collectedRows: Record<string, any>[] = [];
+      const collectedUncertainRows: Record<string, any>[] = [];
       let firstRawProfile: Record<string, any> | null = null;
       const partialsBucket = adminClient.storage.from("partials");
 
@@ -775,6 +821,7 @@ export async function POST(req: NextRequest) {
         }
 
         collectedRows.push(...stepObj.rows);
+        if (Array.isArray(stepObj.uncertainRows)) collectedUncertainRows.push(...stepObj.uncertainRows);
         if (!firstRawProfile && stepObj.rawProfile) {
           firstRawProfile = stepObj.rawProfile;
         }
@@ -823,15 +870,15 @@ export async function POST(req: NextRequest) {
 
       const detectedCountry = detectCountryFromText(
         [spec.params?.country, spec.params?.location, spec.params?.search, spec.params?.query?.keyword?.include?.[0]].filter(Boolean).join(" ")
-      )?.arabicLabel || "مصر";
+      )?.arabicLabel || "";
 
       const methodologySummary = spec.params?.exclusionRules
-        ? `تم استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح بتاريخ ${dateStr} مع تطبيق وتدقيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: تم الجمع والتحقق حصرياً من مصادر متاحة علناً.`
-        : `تم استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: تم الجمع والتحقق حصرياً من مصادر متاحة علناً.`;
+        ? `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr} بعد تطبيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`
+        : `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr}. ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`;
 
       const cleanTitle = isCompanyResearch
-        ? `دليل الشركات والمؤسسات المعتمدة في ${detectedCountry}`
-        : "تقرير البيانات المعتمدة والتحقق المنهجي";
+        ? `دليل الشركات التي أعادتها المصادر في ${detectedCountry}`
+        : "تقرير بيانات من المصادر المتاحة";
 
       const finalPayload: any = {
         metadata: {
@@ -850,6 +897,7 @@ export async function POST(req: NextRequest) {
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,
+          uncertainRows: collectedUncertainRows,
       };
 
       const csvPath = `${userId}/${jobId}/result.csv`;
@@ -906,7 +954,7 @@ export async function POST(req: NextRequest) {
         const resultsBucket = adminClient.storage.from("results");
 
         // 1. CSV Report
-        try {
+        if (spec.outputFormats.includes("csv")) try {
           const csvBuf = generateCsvReport(finalPayload);
           const csvUp = await resultsBucket.upload(csvPath, csvBuf, {
             contentType: "text/csv",
@@ -924,7 +972,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 2. Excel (.xlsx) Report
-        try {
+        if (spec.outputFormats.includes("xlsx")) try {
           const xlsxBuf = await generateExcelReport(finalPayload);
           const xlsxUp = await resultsBucket.upload(xlsxPath, xlsxBuf, {
             contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -942,7 +990,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 3. PDF Report
-        try {
+        if (spec.outputFormats.includes("pdf")) try {
           const pdfBuf = await generatePdfReport(finalPayload);
           const pdfUp = await resultsBucket.upload(pdfPath, pdfBuf, {
             contentType: "application/pdf",

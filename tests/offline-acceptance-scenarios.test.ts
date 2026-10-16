@@ -126,17 +126,17 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
     expect(sheetNames.some((n) => n.includes("جودة البيانات"))).toBe(false);
     expect(sheetNames.some((n) => n.includes("دليل الحقول"))).toBe(false);
 
-    // Check methodology text transparency: honest coverage statement
+    // Check methodology text transparency: measured counts and explicit coverage limit
     const methodology = generateMethodologyText(payload, {
       rawCollected: summary.rawCollectedCount,
       uniqueDelivered: summary.uniqueDeliveredCount,
       duplicatesRemoved: summary.duplicatesRemovedCount,
       deduplicationCount: summary.duplicatesRemovedCount,
     });
-    expect(methodology).toContain("نسبة التغطية غير متاحة (مجتمع البحث غير محصور)");
-    expect(methodology).toContain("إجمالي السجلات الخام المستخرجة: 5");
-    expect(methodology).toContain("السجلات المستبعدة والمكررة: 2");
-    expect(methodology).toContain("السجلات الفريدة المعتمدة: 3");
+    expect(methodology).toContain("تغطية المجتمع المستهدف: لم تُقَس.");
+    expect(methodology).toContain("السجلات المستلمة من المصادر: ٥");
+    expect(methodology).toContain("السجلات المزالة بوصفها مكررة: ٢");
+    expect(methodology).toContain("عدد السجلات المعروضة: ٣");
   });
 
   // Scenario C: X/Twitter Public Sentiment Research

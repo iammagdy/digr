@@ -29,9 +29,6 @@ export default function LegalPage({ tab, title, sections }: { tab: "terms" | "pr
           <h1 className="m-0 font-display font-medium leading-[1.15] text-ink" style={{ fontSize: "clamp(36px,6cqi,52px)" }}>{title}</h1>
           <p className="mb-0 mt-2 text-[13px] text-fnt">آخر تحديث: ١١ أكتوبر ٢٠٢٦</p>
         </div>
-        <p className="m-0 rounded-2xl px-4 py-3 text-xs leading-[1.8] text-goldT" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)" }}>
-          مسودة للتصميم — يجب مراجعة النص النهائي مع مستشار قانوني قبل النشر.
-        </p>
         {sections.map(([h, p]) => (
           <section key={h} className="border-b border-ln pb-3.5 pt-1.5">
             <h2 className="m-0 text-[17px] font-semibold text-ink">{h}</h2>

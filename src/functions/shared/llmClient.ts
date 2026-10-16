@@ -2,9 +2,9 @@ import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
-import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
+import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
-import { detectCountryFromText, detectIndustryFromText } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
 
 // ================= Schema Definitions =================
 
@@ -22,9 +22,9 @@ export const ClarificationQuestionItemSchema = z.object({
 export const AskClarificationSchema = z.object({
   type: z.literal("ask_clarification"),
   intro: z.string().optional(),
-  questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
-  questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
-  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
+  questions: z.array(ClarificationQuestionItemSchema).min(1).max(MAX_CLARIFICATION_QUESTIONS).optional(),
+  questionsAr: z.array(z.string().trim().min(1)).min(1).max(MAX_CLARIFICATION_QUESTIONS).optional(),
+  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(MAX_CLARIFICATION_QUESTIONS).optional(),
   reasonAr: z.string().min(1),
   intent: z.enum(["chat", "research"]).optional(),
 }).passthrough();
@@ -34,20 +34,20 @@ export const AskQuestionsSchema = z.object({
   intro: z.string().optional(),
   questions: z.preprocess((val) => {
     if (val && typeof val === "object" && !Array.isArray(val)) return [val];
-    if (Array.isArray(val)) return val.slice(0, 3);
+    if (Array.isArray(val)) return val.slice(0, MAX_CLARIFICATION_QUESTIONS);
     return [];
-  }, z.array(ClarificationQuestionItemSchema).max(3)).optional(),
+  }, z.array(ClarificationQuestionItemSchema).max(MAX_CLARIFICATION_QUESTIONS)).optional(),
   questionsAr: z.preprocess((val) => {
     if (typeof val === "string") return [val];
-    if (Array.isArray(val)) return val.filter((x): x is string => typeof x === "string").slice(0, 3);
+    if (Array.isArray(val)) return val.filter((x): x is string => typeof x === "string").slice(0, MAX_CLARIFICATION_QUESTIONS);
     return undefined;
-  }, z.array(z.string().trim().min(1)).max(3)).optional(),
+  }, z.array(z.string().trim().min(1)).max(MAX_CLARIFICATION_QUESTIONS)).optional(),
   optionsAr: z.preprocess((val) => {
     if (Array.isArray(val)) {
       return val.map((row) => (Array.isArray(row) ? row.filter((x): x is string => typeof x === "string").slice(0, 4) : []));
     }
     return undefined;
-  }, z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3)).optional(),
+  }, z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(MAX_CLARIFICATION_QUESTIONS)).optional(),
   reasonAr: z.preprocess((val) => {
     if (typeof val === "string" && val.trim().length > 0) return val;
     return "تحديد تفاصيل الطلب بدقة";
@@ -443,10 +443,10 @@ export const ACTION_RESULT_JSON_SCHEMA = {
     query: { type: "string" },
     platform: { type: "string" },
     intro: { type: "string" },
-    questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
+    questionsAr: { type: "array", maxItems: MAX_CLARIFICATION_QUESTIONS, items: { type: "string" } },
     questions: {
       type: "array",
-      maxItems: 3,
+      maxItems: MAX_CLARIFICATION_QUESTIONS,
       items: {
         type: "object",
         properties: {
@@ -1033,6 +1033,10 @@ export class LlmClient {
       };
     }
     const lastUserMsg = [...options.messages].reverse().find((m) => m.role === "user")?.content || "";
+    const requestHistoryText = options.messages
+      .filter((entry) => entry.role === "user")
+      .map((entry) => entry.content)
+      .join(" ");
     const promptLower = lastUserMsg.toLowerCase();
 
     // A. Injection & Security Attacks detection
@@ -1202,15 +1206,7 @@ export class LlmClient {
         m.content.includes("propose_plan"),
     );
     if (hasPhase2PlanInstruction || options.testScenario === "phase2_plan") {
-      const isPeoplePrompt =
-        promptLower.includes("صناع القرار") ||
-        promptLower.includes("صانعي القرار") ||
-        promptLower.includes("الرئيس التنفيذي") ||
-        promptLower.includes("رئيس تنفيذي") ||
-        promptLower.includes("بريده المهني") ||
-        promptLower.includes("بريد مهني") ||
-        promptLower.includes("decision maker") ||
-        promptLower.includes("people");
+      const isPeoplePrompt = isPeopleSearchRequest(promptLower);
 
       const isCompanyPrompt =
         !isPeoplePrompt &&
@@ -1265,20 +1261,54 @@ export class LlmClient {
       }
 
       const isCompanySearch =
-        isCompanyPrompt ||
+        (!isPeoplePrompt && isCompanyPrompt) ||
         (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("compan") ||
         (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("b2b") ||
-        (matchedCap.id || "").includes("icypeas");
+        (!isPeoplePrompt && (matchedCap.id || "").includes("icypeas"));
 
-      const params = isCompanySearch
+      const fallbackCountry = detectCountryFromText(lastUserMsg);
+      const fallbackIndustry = detectIndustryFromText(lastUserMsg);
+      const missingCompanyRequirements = getMissingCompanyResearchRequirements(requestHistoryText);
+      if (isCompanySearch && missingCompanyRequirements.length > 0) {
+        const items = getCompanyRequirementItems(missingCompanyRequirements, requestHistoryText);
+        const questions = items.map((item) => item.text);
+        const intro = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+        return {
+          output: {
+            type: "ask_clarification",
+            intro,
+            reasonAr: intro,
+            questions: items,
+            questionsAr: questions,
+          },
+          inputTokens: 600,
+          outputTokens: 90,
+          costUsd: (600 * 0.10 + 90 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+      const hasExplicitCompanyIndustry = !missingCompanyRequirements.includes("industry");
+      const fallbackScope = [
+        hasExplicitCompanyIndustry ? fallbackIndustry.arabicLabel : undefined,
+        fallbackCountry?.arabicLabel,
+      ].filter(Boolean).join(" في ");
+      const params = isPeoplePrompt
+        ? { query: { keyword: { include: [lastUserMsg] } } }
+        : isCompanySearch
         ? {
-            query: { keyword: { include: ["contracting", "construction"] }, location: { include: ["Egypt"] } },
+            query: {
+              ...(hasExplicitCompanyIndustry ? { keyword: { include: fallbackIndustry.englishKeywords } } : {}),
+              ...(fallbackCountry ? { location: { include: [fallbackCountry.canonicalEnglish] } } : {}),
+            },
             pagination: { size: volume },
           }
         : { query: lastUserMsg.slice(0, 50), postUrl: "https://www.facebook.com/post/123" };
 
-      const summaryAr = isCompanySearch
-        ? `استخراج بيانات ${volume} سجل من شركات مقاولات في مصر`
+      const summaryAr = isPeoplePrompt
+        ? `استخراج بيانات ${volume} من صناع القرار والمهنيين وفق معايير الطلب`
+        : isCompanySearch
+        ? `استخراج بيانات ${volume} سجل من الشركات${fallbackScope ? ` في ${fallbackScope}` : " بعد تحديد الدولة والقطاع"}`
         : `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`;
 
       return {
@@ -1293,7 +1323,7 @@ export class LlmClient {
               params,
               targetVolumeMin: 1,
               targetVolumeMax: volume,
-              paginationStrategy: isCompanySearch ? "none" : "cursor",
+              paginationStrategy: isCompanySearch || isPeoplePrompt ? "none" : "cursor",
             },
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
@@ -2023,23 +2053,77 @@ export class LlmClient {
       };
     }
 
+    // I.1 Route contact and decision-maker requests to the people capability.
+    const userHistoryText = requestHistoryText;
+    if (isPeopleSearchRequest(userHistoryText)) {
+      const parsedVolume = extractTargetVolume(userHistoryText);
+      const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
+      const peopleCap = (options.sanitizedCapabilities || []).find((c: any) =>
+        String(c.slug || c.platform || c.category || c.id || "").toLowerCase().includes("people")
+      ) || { slug: "icypeas-people-search", id: "icypeas.people.search", nameAr: "بحث صناع القرار والمهنيين" };
+      const country = detectCountryFromText(userHistoryText);
+      // Keep the provider query scoped to the people capability. The full customer
+      // prompt is not a keyword/industry and must not leak into the quote card.
+      const query: Record<string, any> = { keyword: { include: ["decision makers"] } };
+      if (country) query.location = { include: [country.canonicalEnglish] };
+
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: `استخراج بيانات ${targetVolume} من صناع القرار والمهنيين وفق معايير الطلب`,
+          capabilities: [{
+            stepId: "people_search",
+            capabilitySlug: peopleCap.slug,
+            endpointId: peopleCap.id || "icypeas.people.search",
+            params: { query },
+            targetVolumeMin: 1,
+            targetVolumeMax: targetVolume,
+            paginationStrategy: "none",
+          }],
+          outputFormats: ["xlsx", "pdf", "csv"],
+          methodologyNotes: "البحث عن جهات الاتصال المهنية بحسب الكلمات والمسمى الوظيفي والدولة المذكورة في الطلب.",
+        },
+        inputTokens: 700,
+        outputTokens: 120,
+        costUsd: (700 * 0.10 + 120 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
     // I. Companies / B2B research plan proposal
     if (
-      promptLower.includes("شركات") ||
-      promptLower.includes("شركة") ||
-      promptLower.includes("مؤسسات") ||
-      promptLower.includes("مؤسسة") ||
-      promptLower.includes("companies") ||
-      promptLower.includes("business")
+      !isPeopleSearchRequest(userHistoryText) &&
+      /(شركات|شركة|مؤسسات|مؤسسة|companies|\bcompany\b|\bbusiness\b)/i.test(userHistoryText)
     ) {
-      const detectedCountry = detectCountryFromText(lastUserMsg);
-      const detectedIndustry = detectIndustryFromText(lastUserMsg);
-      const parsedVolume = extractTargetVolume(lastUserMsg);
+      const detectedCountry = detectCountryFromText(userHistoryText);
+      const detectedIndustry = detectIndustryFromText(userHistoryText);
+      const parsedVolume = extractTargetVolume(userHistoryText);
       const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
-      const countryEn = detectedCountry ? detectedCountry.canonicalEnglish : "Egypt";
-      const countryAr = detectedCountry ? detectedCountry.arabicLabel : "مصر (افتراضي)";
-      const industryKeywords = detectedIndustry.englishKeywords.length > 0 ? detectedIndustry.englishKeywords : ["companies"];
-      const industryAr = detectedIndustry.arabicLabel || "الشركات";
+      const missingRequirements = getMissingCompanyResearchRequirements(userHistoryText);
+      if (missingRequirements.length > 0) {
+        const items = getCompanyRequirementItems(missingRequirements, userHistoryText);
+        const questions = items.map((item) => item.text);
+        const intro = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+        return {
+          output: {
+            type: "ask_clarification",
+            intro,
+            reasonAr: intro,
+            questions: items,
+            questionsAr: questions,
+          },
+          inputTokens: 600,
+          outputTokens: 70,
+          costUsd: (600 * 0.10 + 70 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+      const countryEn = detectedCountry!.canonicalEnglish;
+      const countryAr = detectedCountry!.arabicLabel;
+      const industryKeywords = detectedIndustry.englishKeywords;
+      const industryAr = detectedIndustry.arabicLabel;
 
       const cap = (options.sanitizedCapabilities || []).find(
         (c: any) =>
@@ -2249,7 +2333,7 @@ export class LlmClient {
       return null;
     })
     .filter(Boolean)
-    .slice(0, 3);
+    .slice(0, MAX_CLARIFICATION_QUESTIONS);
 }
 
   /**
@@ -2453,15 +2537,7 @@ export class LlmClient {
           .join(" ")
           .toLowerCase();
 
-        const isPeoplePrompt =
-          userPromptLower.includes("صناع القرار") ||
-          userPromptLower.includes("صانعي القرار") ||
-          userPromptLower.includes("الرئيس التنفيذي") ||
-          userPromptLower.includes("رئيس تنفيذي") ||
-          userPromptLower.includes("بريده المهني") ||
-          userPromptLower.includes("بريد مهني") ||
-          userPromptLower.includes("decision maker") ||
-          userPromptLower.includes("people");
+        const isPeoplePrompt = isPeopleSearchRequest(userPromptLower);
 
         const isCompanyPrompt =
           !isPeoplePrompt &&
@@ -2683,15 +2759,7 @@ export class LlmClient {
           .join(" ")
           .toLowerCase();
 
-        const isPeoplePrompt =
-          userPromptLower.includes("صناع القرار") ||
-          userPromptLower.includes("صانعي القرار") ||
-          userPromptLower.includes("الرئيس التنفيذي") ||
-          userPromptLower.includes("رئيس تنفيذي") ||
-          userPromptLower.includes("بريده المهني") ||
-          userPromptLower.includes("بريد مهني") ||
-          userPromptLower.includes("decision maker") ||
-          userPromptLower.includes("people");
+        const isPeoplePrompt = isPeopleSearchRequest(userPromptLower);
 
         const isCompanyPrompt =
           !isPeoplePrompt &&

@@ -159,7 +159,7 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
       expect(responses[0].body.status).toBe("failed");
       expect(responses[0].body.released).toBe(true);
       expect(memTables.jobsMap.get("job_stuck_5pts").status).toBe("failed");
-      expect(memTables.jobsMap.get("job_stuck_5pts").errorAr).toContain("استرجاع كامل الرصيد المحجوز");
+      expect(memTables.jobsMap.get("job_stuck_5pts").errorAr).toContain("إرجاع النقاط المحجوزة");
 
       const relRow = memTables.ledgerMap.get("rel_job_stuck_5pts");
       expect(relRow).toBeDefined();

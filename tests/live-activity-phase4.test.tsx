@@ -6,12 +6,24 @@ import {
   formatItemsCollectedProgress,
   formatPointsSpentVsReserved,
   formatCapReachedMessage,
+  sanitizeActivityError,
   sanitizeActivityText,
   deriveLiveActivitySnapshot,
+  estimateRemainingSecondsFromBatches,
   ThrottledActivityEmitter,
 } from "../src/functions/shared/liveActivityFeed";
 
 describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, Cap Stops)", () => {
+  it("estimates remaining time from measured cumulative batch timestamps and waits for enough samples", () => {
+    const events = [
+      { kind: "progress", count: 100, createdAt: "2026-10-16T10:00:00.000Z" },
+      { kind: "progress", count: 200, createdAt: "2026-10-16T10:00:10.000Z" },
+    ];
+    expect(estimateRemainingSecondsFromBatches(events, 200, 400)).toBe(20);
+    expect(estimateRemainingSecondsFromBatches(events.slice(0, 1), 100, 400)).toBeNull();
+    expect(estimateRemainingSecondsFromBatches(events, 400, 400)).toBeNull();
+  });
+
   it("formats current step, current post, items collected, and points spent vs reserved in Arabic and points only", () => {
     expect(formatActivityStep("search_posts")).toBe("البحث عن المنشورات...");
     expect(formatActivityStep("collect_comments")).toBe("جمع التعليقات...");
@@ -27,6 +39,19 @@ describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, 
     const clean = sanitizeActivityText(dirty);
     expect(clean).not.toContain("$");
     expect(clean).not.toMatch(/usd|treg|tikhub/i);
+  });
+
+  it("replaces internal job diagnostics with customer-safe Arabic error messages", () => {
+    expect(sanitizeActivityError("مزود البيانات الحقيقي معطل حالياً في البيئة (TREG_LIVE!=true)."))
+      .toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+    expect(sanitizeActivityError("تعذر معالجة مدخلات الطلب لدى المزود (422): icypeas.companies.search Parameter url is required"))
+      .toBe("تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.");
+    expect(sanitizeActivityError("خطأ من icypeas.companies.search أثناء المعالجة"))
+      .toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+    expect(sanitizeActivityError("تم بلوغ الحد اليومي لمزود البيانات ($0.80 USD)."))
+      .toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+    expect(sanitizeActivityError("المصدر مشغول حالياً (429 Rate Limit)."))
+      .toBe("تعذر إكمال البحث حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
   });
 
   it("throttles page progress updates to at most every 2-3 seconds and emits one summary event per post (never one DB row per page)", async () => {

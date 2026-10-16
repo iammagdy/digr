@@ -19,9 +19,9 @@ const markazi = Markazi_Text({
   display: "swap",
 });
 
-const TITLE = "Diger — بيانات عامة جاهزة للتحليل";
+const TITLE = "Diger — مصادر متاحة جاهزة للتحليل";
 const DESCRIPTION =
-  "منصة عربية ذكية لاستخراج مجموعات البيانات العامة وتجهيزها للتحليل في ملفات Excel و PDF مع دليل المتغيرات ومنهجية الجمع.";
+  "منصة عربية ذكية لاستخراج مجموعات البيانات من المصادر المتاحة وتجهيزها للتحليل في ملفات Excel و PDF مع دليل المتغيرات ومنهجية الجمع.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),

@@ -1,6 +1,7 @@
 "use client";
 
 import { formatAr } from "@/lib/arabicDigits";
+import { sanitizeActivityError } from "@/functions/shared/liveActivityFeed";
 
 const FILES = [
   { ext: "xlsx" as const, name: "Excel", desc: "البيانات + الدليل المنهجي" },
@@ -67,7 +68,7 @@ export function FailureBox({
     >
       <p className="m-0 text-[13px] font-semibold text-ink">تعذّر إكمال البحث</p>
       <p className="m-0 text-[13px] leading-[1.9] text-ink2">
-        {providerMessage ? `${providerMessage} ` : "توقف مزود البيانات أثناء الجمع. "}
+        {providerMessage ? `${sanitizeActivityError(providerMessage)} ` : "تعذر إكمال البحث حالياً. "}
         لم يُخصم شيء{typeof refunded === "number" && refunded > 0 && <>: رجعت <strong className="text-goldT">{formatAr(refunded)} {pointsWord(refunded)}</strong> كاملة لرصيدك</>}.
       </p>
       <div className="flex flex-wrap gap-2">

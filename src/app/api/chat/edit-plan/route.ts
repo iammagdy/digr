@@ -11,6 +11,7 @@ import {
 import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
+import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -90,6 +91,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The production plans_quotes schema does not contain conversation_id.
+    // Resolve the owning conversation from the saved message before creating a
+    // replacement quote, so superseding and message persistence use the same id.
+    const conversationId = await resolveQuoteConversationId(adminClient, {
+      userId: verifiedUserId,
+      quoteId,
+      fallbackConversationId: quoteDoc.conversation_id,
+    });
+
     // 4. Construct current plan state and apply operations
     const currentItems = Array.isArray(quoteDoc.items)
       ? quoteDoc.items
@@ -129,42 +139,30 @@ export async function POST(req: NextRequest) {
     // 6. Generate NEW quote (supersedes old quote and recalculates price)
     const userBalance = await calculateBalance(adminClient, verifiedUserId);
     const newQuote = await createAndSaveManagedQuote(adminClient as any, {
-      conversationId: quoteDoc.conversation_id || "",
+      conversationId,
       userId: verifiedUserId,
       plan: updatedPlan,
       userBalance,
       capabilities: allCapabilities,
     });
+    // Supabase stores live quotes as `quoted`, while the shared quote builder
+    // returns the Appwrite-era `proposed` label. The editor immediately swaps
+    // the current card with this response, so return the status the DB saved.
+    const currentQuote = markEditedQuoteCurrent(newQuote);
 
-    // 7. Persist updated quote to the messages table so reloads reflect the edited quote
-    if (quoteDoc.conversation_id) {
-      try {
-        const { data: convMsgs } = await adminClient
-          .from("messages")
-          .select("id, quote")
-          .eq("conversation_id", quoteDoc.conversation_id);
-
-        for (const m of convMsgs || []) {
-          const qId = m.quote?.quoteId || m.quote?.id;
-          if (qId === quoteId) {
-            await adminClient
-              .from("messages")
-              .update({
-                quote: newQuote,
-                content_ar: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${newQuote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${newQuote.quotedPoints} نقطة`,
-              })
-              .eq("id", m.id);
-          }
-        }
-      } catch (msgSyncErr) {
-        console.warn("Could not sync message quote update:", msgSyncErr);
-      }
-    }
+    // The restored chat card is hydrated from messages.quote. Persist the
+    // replacement there as well as in plans_quotes so reloads show this quote.
+    await persistEditedQuoteMessage(adminClient, {
+      conversationId,
+      userId: verifiedUserId,
+      previousQuoteId: quoteId,
+      quote: currentQuote,
+    });
 
     return NextResponse.json({
       success: true,
-      quote: newQuote,
-      planQuote: newQuote,
+      quote: currentQuote,
+      planQuote: currentQuote,
       messageAr: "تم تحديث الخطة وإعادة احتساب عرض السعر بنجاح!",
     });
   } catch (err: any) {

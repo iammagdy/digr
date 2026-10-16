@@ -11,6 +11,9 @@ import { searchCatalog } from "../src/functions/shared/catalogClient";
 import {
   ChatHandler,
   extractTopicChips,
+  buildAutoPlanProposal,
+  routePeopleAlternative,
+  routeCompanySearchRequest,
   buildCodeDiscoveryFallback,
   filterQuestionsAlreadyInBrief,
   deduplicateIntroText,
@@ -22,6 +25,7 @@ import {
 import {
   extractBriefFromMessage,
   extractBriefFromCardAnswers,
+  saveConversationBrief,
   isBriefComplete,
   isRepetitionComplaint,
   clearBriefCacheForTesting,
@@ -38,6 +42,8 @@ import {
   getLastLlmFallbackDetail,
 } from "../src/functions/shared/llmClient";
 import { formatNumber } from "../src/lib/honestDisplay";
+import { RAW_SEED_CAPABILITIES } from "../src/functions/shared/capabilityRegistry";
+import { getCompanyRequirementItems } from "../src/lib/planParameters";
 
 const mockedSearchCatalog = vi.mocked(searchCatalog);
 
@@ -228,6 +234,667 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.outputType).toBe("propose_plan");
     expect(res.clarificationItems).toBeUndefined();
     expect(mockedSearchCatalog).toHaveBeenCalled();
+  });
+
+  it("routes decision-maker requests to the people catalog capability with query parameters", async () => {
+    const message = "Find 20 solar industry decision-makers (CEOs) in Germany with names, job titles, work emails, and email verification status";
+    expect(RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-people-search")?.tregEndpointId)
+      .toBe("icypeas.people.search");
+
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_people_route",
+      message,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.items?.[0]?.capabilitySlug).toBe("icypeas-people-search");
+    expect(res.planQuote?.items?.[0]?.params?.query).toBeDefined();
+    expect(res.planQuote?.items?.[0]?.params?.query?.postUrl).toBeUndefined();
+  });
+
+  it("builds a people-search fallback from the people capability instead of the nearest unrelated service", () => {
+    const request = "Find 20 solar industry decision-makers in Germany with names, job titles, and work emails";
+    const brief: ResearchBrief = {
+      platforms: [],
+      topics: ["solar industry decision-makers"],
+      targetVolume: 20,
+    };
+
+    const proposal = buildAutoPlanProposal(brief, RAW_SEED_CAPABILITIES as any, request);
+    const peopleStep = proposal.capabilities[0];
+
+    expect(peopleStep.capabilitySlug).toBe("icypeas-people-search");
+    expect(peopleStep.targetVolumeMax).toBe(20);
+    expect(peopleStep.params.query.location.include).toEqual(["Germany"]);
+    expect(peopleStep.params.query.jobTitle.include).toContain("CEO");
+    expect(proposal.summaryAr).toContain("ألمانيا");
+    expect(proposal.summaryAr).not.toContain("تيك توك");
+  });
+
+  it("replaces an unrelated model alternative with a scoped people plan or asks for country", () => {
+    const suggestion = {
+      type: "suggest_alternative",
+      unsupportedService: "decision-makers",
+      explanationAr: "هذه الخدمة غير متاحة",
+      closestAlternative: "تيك توك",
+      canRequestFeature: true,
+    };
+    const brief: ResearchBrief = { platforms: [], topics: ["solar decision-makers"], targetVolume: 20 };
+    const request = "Find 20 solar decision-makers in Germany with job titles and work emails";
+
+    const routed = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, request);
+    expect(routed.type).toBe("propose_plan");
+    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-people-search");
+
+    const clarification = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, "Find 20 decision-makers with work emails");
+    expect(clarification.type).toBe("ask_clarification");
+    expect(clarification.questionsAr.join(" ")).toContain("الدولة");
+
+    const unavailable = routePeopleAlternative(suggestion, brief, [], request);
+    expect(unavailable.type).toBe("refuse");
+    expect(unavailable.reasonAr).toContain("خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً");
+    expect(unavailable.reasonAr).not.toContain("تيك توك");
+  });
+
+  it("replaces a generic company plan when the customer explicitly asked for decision-makers", () => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    const companyPlan = {
+      type: "propose_plan",
+      summaryAr: "استخراج بيانات شركات",
+      capabilities: [{ capabilitySlug: companyCap.slug, endpointId: companyCap.tregEndpointId, params: { country: "Egypt", industry: "IT" } }],
+      outputFormats: ["xlsx"],
+    };
+    const request = "ابحث عن نحو 20 من صناع القرار في شركات التقنية المالية في ألمانيا، مع الاسم والمسمى الوظيفي وبريد العمل";
+    const brief: ResearchBrief = { platforms: ["companies"], topics: ["FinTech"], targetVolume: 20 };
+
+    const routed = routePeopleAlternative(companyPlan, brief, RAW_SEED_CAPABILITIES as any, request);
+
+    expect(routed.type).toBe("propose_plan");
+    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-people-search");
+    expect(routed.capabilities[0].params.query.location.include).toEqual(["Germany"]);
+    expect(routed.capabilities[0].params.query.keyword.include).toContain("financial technology");
+    expect(routed.capabilities[0].params.query.jobTitle.include.length).toBeGreaterThan(0);
+    expect(routed.summaryAr).toContain("ألمانيا");
+  });
+
+  it("routes explicit company requests away from the generic alternative and asks when scope is missing", () => {
+    const brief: ResearchBrief = { platforms: [], topics: ["fintech"], targetVolume: 50 };
+    const companyRequest = "أريد ٥٠ شركة في قطاع التقنية المالية في ألمانيا";
+    const suggestion = { type: "suggest_alternative", explanationAr: "لا أستطيع إعداد الخطة" };
+
+    const routed = routeCompanySearchRequest(suggestion, brief, RAW_SEED_CAPABILITIES as any, companyRequest);
+    expect(routed.type).toBe("propose_plan");
+    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-companies-search");
+    expect(routed.capabilities[0].targetVolumeMax).toBe(50);
+    expect(routed.capabilities[0].params.country).toBe("Germany");
+    expect(routed.capabilities[0].params.industry).toBe("FinTech");
+    expect(routed.summaryAr).toContain("التقنية المالية");
+
+    const unrelatedPlan = routeCompanySearchRequest(
+      {
+        type: "propose_plan",
+        capabilities: [
+          { capabilitySlug: "icypeas-companies-search", endpointId: "icypeas.companies.search", targetVolumeMax: 100 },
+          { capabilitySlug: "icypeas-companies-search", endpointId: "icypeas.companies.search", targetVolumeMax: 100 },
+        ],
+      },
+      brief,
+      RAW_SEED_CAPABILITIES as any,
+      companyRequest,
+    );
+    expect(unrelatedPlan.type).toBe("propose_plan");
+    expect(unrelatedPlan.capabilities).toHaveLength(1);
+    expect(unrelatedPlan.capabilities[0].targetVolumeMax).toBe(50);
+
+    const clarification = routeCompanySearchRequest(
+      suggestion,
+      { platforms: [], topics: ["شركات"], targetVolume: 100 },
+      RAW_SEED_CAPABILITIES as any,
+      "أريد قائمة تضم ١٠٠ شركة للتواصل التجاري",
+    );
+    expect(clarification.type).toBe("ask_clarification");
+    expect(clarification.questionsAr.join(" ")).toContain("الدولة");
+    expect(clarification.questionsAr.join(" ")).toContain("القطاع");
+    expect(clarification.questionsAr.join(" ")).toContain("التواصل التجاري");
+  });
+
+  it("asks for a country before quoting a people search instead of defaulting to Egypt", async () => {
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_people_country_required",
+      message: "Find 20 decision-makers with names, job titles, and work emails",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions?.join(" ")).toContain("ما الدولة");
+  });
+
+  it("asks one adaptive question at a time when company scope is unstated", async () => {
+    const tables = makeMockTables();
+    const res = await new ChatHandler(tables as any).handleUserMessage({
+      userId: "user_company_required_fields",
+      message: "Find 100 companies",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions?.join(" ")).toContain("الدولة");
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationItems?.[0]?.id).toBe("company_country_required");
+  });
+
+  it("starts commercial-outreach clarification with the missing country", async () => {
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_commercial_outreach_required_fields",
+      message: "أريد قائمة تضم 100 شركة للتواصل التجاري.",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationQuestions?.[0]).toContain("الدولة");
+    expect(res.clarificationItems?.[0]?.id).toBe("company_country_required");
+  });
+
+  it("clarifies an ambiguous company name before asking for country or industry", async () => {
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_ambiguous_tawasol_company",
+      message: "أريد أن أضم شركة تواصل التجاري إلى القائمة.",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationItems).toHaveLength(1);
+    expect(res.clarificationItems?.[0]).toMatchObject({
+      id: "company_outreach_required",
+      text: expect.stringContaining("قائمة شركات للتواصل التجاري"),
+      options: expect.arrayContaining(["شركة محددة بهذا الاسم", "قائمة شركات للتواصل التجاري", "أخرى"]),
+    });
+  });
+
+  it("keeps a company search in clarification until the user supplies the scope and outreach details", async () => {
+    const handler = new ChatHandler(makeMockTables() as any);
+    const first = await handler.handleUserMessage({
+      userId: "user_company_outreach_discovery",
+      message: "أريد قائمة تضم ١٠٠ شركة للتواصل التجاري.",
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(first.outputType).toBe("ask_clarification");
+    expect(first.planQuote).toBeUndefined();
+    expect(first.clarificationQuestions).toHaveLength(1);
+    expect(first.clarificationItems?.[0]?.id).toBe("company_country_required");
+
+    const industryFollowup = await handler.handleUserMessage({
+      userId: "user_company_outreach_discovery",
+      conversationId: first.conversationId,
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{ questionId: "company_country_required", question: "ما الدولة؟", value: "ألمانيا" }],
+      }),
+      answers: [{ questionId: "company_country_required", question: "ما الدولة؟", value: "ألمانيا" }],
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(industryFollowup.outputType).toBe("ask_clarification");
+    expect(industryFollowup.clarificationItems).toHaveLength(1);
+    expect(industryFollowup.clarificationItems?.[0]?.id).toBe("company_industry_required");
+
+    const outreachFollowup = await handler.handleUserMessage({
+      userId: "user_company_outreach_discovery",
+      conversationId: first.conversationId,
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{ questionId: "company_industry_required", question: "ما المجال؟", value: "التقنية المالية" }],
+      }),
+      answers: [{ questionId: "company_industry_required", question: "ما المجال؟", value: "التقنية المالية" }],
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(outreachFollowup.outputType).toBe("ask_clarification");
+    expect(outreachFollowup.clarificationItems).toHaveLength(1);
+    expect(outreachFollowup.clarificationItems?.[0]?.id).toBe("company_outreach_required");
+
+    const next = await handler.handleUserMessage({
+      userId: "user_company_outreach_discovery",
+      conversationId: first.conversationId,
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{
+          questionId: "company_outreach_required",
+          question: "ما هدف التواصل والبيانات المطلوبة؟",
+          value: "عملاء محتملون، اسم الشركة وموقعها وبريد العمل والهاتف",
+        }],
+      }),
+      answers: [{
+        questionId: "company_outreach_required",
+        question: "ما هدف التواصل والبيانات المطلوبة؟",
+        value: "عملاء محتملون، اسم الشركة وموقعها وبريد العمل والهاتف",
+      }],
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(next.outputType).toBe("propose_plan");
+    expect(next.planQuote?.targetVolumeMax).toBe(100);
+    expect(next.planQuote?.items?.[0]?.params?.query?.location?.include).toEqual(["Germany"]);
+    expect(next.planQuote?.items?.[0]?.params?.query?.keyword?.include).toEqual(["fintech", "financial technology"]);
+  });
+
+  it("does not treat model-inferred topics or serialized clarification metadata as explicit industry", async () => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: companyCap.slug,
+      id: companyCap.tregEndpointId,
+      nameAr: companyCap.nameAr,
+      nameEn: companyCap.nameEn,
+      platform: companyCap.platform,
+      summaryAr: companyCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(companyCap.paramsSchema),
+    } as any]);
+
+    const userId = "user_company_country_only_answer";
+    const conversationId = "conversation_company_country_only_answer";
+    const tables = makeMockTables();
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "conversations",
+      rowId: conversationId,
+      data: { userId, status: "active" },
+    });
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "messages",
+      rowId: "initial-company-outreach-request",
+      data: {
+        conversationId,
+        userId,
+        role: "user",
+        content: "أريد قائمة تضم ١٠٠ شركة للتواصل التجاري.",
+        status: "ready",
+        createdAt: "2026-10-16T10:00:00.000Z",
+      },
+    });
+    await saveConversationBrief(tables, conversationId, userId, {
+      platforms: ["companies"],
+      topics: ["FinTech"],
+      targetVolume: 100,
+    });
+
+    const handler = new ChatHandler(tables as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات شركات",
+        capabilities: [{
+          capabilitySlug: "icypeas-companies-search",
+          endpointId: "icypeas.companies.search",
+          params: { query: {} },
+          targetVolumeMin: 1,
+          targetVolumeMax: 100,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId,
+      conversationId,
+      message: JSON.stringify({
+        type: "clarification_answers",
+        answers: [{ questionId: "company_country_required", question: "ما الدولة المطلوبة؟", value: "ألمانيا" }],
+      }),
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "company_industry_required" }),
+    ]));
+    expect(res.clarificationItems?.some((item) => item.id === "company_country_required")).toBe(false);
+  });
+
+  it("asks for the actual industry after a named-company request gets only country and sales-purpose answers", async () => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: companyCap.slug,
+      id: companyCap.tregEndpointId,
+      nameAr: companyCap.nameAr,
+      nameEn: companyCap.nameEn,
+      platform: companyCap.platform,
+      summaryAr: companyCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(companyCap.paramsSchema),
+    } as any]);
+
+    const userId = "user_tawasol_ambiguous_industry";
+    const conversationId = "conversation_tawasol_ambiguous_industry";
+    const tables = makeMockTables();
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "conversations",
+      rowId: conversationId,
+      data: { userId, status: "active" },
+    });
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "messages",
+      rowId: "initial-tawasol-request",
+      data: {
+        conversationId,
+        userId,
+        role: "user",
+        content: "أريد أن أضم شركة تواصل التجاري إلى القائمة.",
+        status: "ready",
+        createdAt: "2026-10-16T10:00:00.000Z",
+      },
+    });
+    await saveConversationBrief(tables, conversationId, userId, {
+      platforms: ["companies"],
+      topics: [],
+      targetVolume: 50,
+    });
+
+    const handler = new ChatHandler(tables as any);
+    const executeTurn = vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات شركات",
+        capabilities: [{
+          capabilitySlug: "icypeas-companies-search",
+          endpointId: "icypeas.companies.search",
+          params: { query: { keyword: { include: ["clarification_answers"] } } },
+          targetVolumeMin: 1,
+          targetVolumeMax: 50,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+    const answers = [
+      { questionId: "company_country_required", question: "ما الدولة؟", value: "مصر" },
+      { questionId: "company_outreach_required", question: "ما الهدف؟", value: "عملاء محتملون / مبيعات" },
+    ];
+    const res = await handler.handleUserMessage({
+      userId,
+      conversationId,
+      message: JSON.stringify({ type: "clarification_answers", answers }),
+      answers,
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "company_industry_required", text: expect.stringContaining("تواصل التجاري") }),
+    ]));
+    const modelMessages = (executeTurn as any).mock.calls[0]?.[0]?.messages || [];
+    expect(modelMessages.some((entry: any) => entry.content.includes("clarification_answers"))).toBe(false);
+    expect(modelMessages.some((entry: any) => entry.content.includes("هدف التواصل والبيانات المطلوبة: عملاء محتملون / مبيعات"))).toBe(true);
+  });
+
+  it("replaces a sector-only clarification with country and sector when both are missing", async () => {
+    const handler = new ChatHandler(makeMockTables() as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "ask_clarification",
+        questions: [{ id: "industry", question: "ما القطاع أو المجال الذي تريد الشركات منه؟", type: "free" }],
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId: "user_company_country_and_industry_required",
+      message: "أريد قائمة تضم ١٠٠ شركة",
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions?.join(" ")).toContain("الدولة");
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationItems).toEqual([
+      expect.objectContaining({ id: "company_country_required", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true }),
+    ]);
+    expect(res.clarificationItems?.every((item: any) => item.defaultOption === undefined)).toBe(true);
+  });
+
+  it("offers contextual commercial-outreach choices and a freeform other answer", () => {
+    const items = getCompanyRequirementItems(["industry", "outreach_details"], "أريد شركات للتواصل التجاري");
+    expect(items[0].options).toContain("التقنية المالية");
+    expect(items[1].options).toEqual(["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"]);
+    expect(items.every((item) => item.allowOther)).toBe(true);
+    const ambiguous = getCompanyRequirementItems(["outreach_details"], "أريد أضم شركة تواصل التجاري");
+    expect(ambiguous[0].text).toContain("شركة محددة باسم");
+    expect(ambiguous[0].options).toContain("شركة محددة بهذا الاسم");
+  });
+
+  it.each([
+    ["Arabic digits", "أريد ٥٠ شركة في ألمانيا في مجال التقنية المالية"],
+    ["English digits", "Find 50 companies in Germany's FinTech industry"],
+    ["Arabic number words", "أريد خمسين شركة في ألمانيا في مجال التقنية المالية"],
+  ])("keeps an explicit company count when the proposal changes it (%s)", async (_label, message) => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: companyCap.slug,
+      id: companyCap.tregEndpointId,
+      nameAr: companyCap.nameAr,
+      nameEn: companyCap.nameEn,
+      platform: companyCap.platform,
+      summaryAr: companyCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(companyCap.paramsSchema),
+    } as any]);
+
+    const handler = new ChatHandler(makeMockTables() as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات شركات",
+        capabilities: [{
+          capabilitySlug: "icypeas-companies-search",
+          endpointId: "icypeas.companies.search",
+          params: { query: {} },
+          targetVolumeMin: 1,
+          targetVolumeMax: 374,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId: "user_explicit_company_count",
+      message,
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.targetVolumeMax).toBe(50);
+  });
+
+  it("preserves an explicit company count and country/industry across a freeform clarification answer", async () => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: companyCap.slug,
+      id: companyCap.tregEndpointId,
+      nameAr: companyCap.nameAr,
+      nameEn: companyCap.nameEn,
+      platform: companyCap.platform,
+      summaryAr: companyCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(companyCap.paramsSchema),
+    } as any]);
+
+    const userId = "user_company_clarification_answer";
+    const conversationId = "conversation_company_clarification_answer";
+    const tables = makeMockTables();
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "conversations",
+      rowId: conversationId,
+      data: { userId, status: "active" },
+    });
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "messages",
+      rowId: "initial-company-request",
+      data: {
+        conversationId,
+        userId,
+        role: "user",
+        content: "أريد قائمة تضم 100 شركة للتواصل التجاري.",
+        status: "ready",
+        createdAt: "2026-10-16T10:00:00.000Z",
+      },
+    });
+    await saveConversationBrief(tables, conversationId, userId, {
+      platforms: ["companies"],
+      topics: [],
+      targetVolume: 100,
+    });
+
+    const handler = new ChatHandler(tables as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات شركات",
+        capabilities: [{
+          capabilitySlug: "icypeas-companies-search",
+          endpointId: "icypeas.companies.search",
+          params: { query: {} },
+          targetVolumeMin: 1,
+          targetVolumeMax: 374,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const answer = JSON.stringify({
+      type: "clarification_answers",
+      answers: [
+        { questionId: "company_country_required", question: "ما الدولة المطلوبة؟", value: "ألمانيا" },
+        { questionId: "company_industry_required", question: "ما القطاع أو المجال؟", value: "خدمات مالية وFinTech" },
+        { questionId: "company_outreach_required", question: "ما المقصود بالتواصل التجاري؟", value: "عملاء محتملون / مبيعات" },
+      ],
+    });
+    const res = await handler.handleUserMessage({
+      userId,
+      conversationId,
+      message: answer,
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.targetVolumeMax).toBe(100);
+    expect(res.planQuote?.items?.[0]?.params?.query?.location?.include).toEqual(["Germany"]);
+    expect(res.planQuote?.items?.[0]?.params?.query?.keyword?.include).toEqual(["fintech", "financial technology"]);
+  });
+
+  it("keeps an explicit decision-maker count when the plan proposal returns a different volume", async () => {
+    const peopleCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-people-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: peopleCap.slug,
+      id: peopleCap.tregEndpointId,
+      nameAr: peopleCap.nameAr,
+      nameEn: peopleCap.nameEn,
+      platform: peopleCap.platform,
+      summaryAr: peopleCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(peopleCap.paramsSchema),
+    } as any]);
+
+    const handler = new ChatHandler(makeMockTables() as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات صناع قرار",
+        capabilities: [{
+          capabilitySlug: "icypeas-people-search",
+          endpointId: "icypeas.people.search",
+          params: { query: { keyword: { include: ["decision makers"] }, location: { include: ["Germany"] } } },
+          targetVolumeMin: 1,
+          targetVolumeMax: 374,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId: "user_explicit_people_count",
+      message: "ابحث عن ٢٠ من صناع القرار في ألمانيا مع الاسم والمسمى الوظيفي وبريد العمل",
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.targetVolumeMax).toBe(20);
   });
 
   // (d) a submitted card answer is stored in the brief and the same question is not asked again

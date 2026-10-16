@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { normalizeDiscoveryQuestions } from "../src/app/dashboard/chat/components/discoveryQuestions";
 import { buildClarificationPresentation } from "../src/functions/shared/chatHandler";
-import { LlmClient } from "../src/functions/shared/llmClient";
+import { MAX_CLARIFICATION_QUESTIONS } from "../src/functions/shared/clarification";
+import { ACTION_RESULT_JSON_SCHEMA, LlmClient } from "../src/functions/shared/llmClient";
 
 describe("chat discovery clarification UI", () => {
   it("normalizes a legacy question once and retains the current Arabic intro", () => {
@@ -47,7 +48,7 @@ describe("chat discovery clarification UI", () => {
     });
 
     const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(chatPage.split("<DetailsBlanks")).toHaveLength(2);
+    expect(chatPage.split("<DetailsBlanks")).toHaveLength(3);
     expect(chatPage).toContain("questions={m.clarificationItems || m.clarificationQuestions || []}");
     expect(chatPage).toContain("onComplete={(answers) => handleSubmitClarification(m.id, answers)}");
     expect(chatPage).toContain('clarificationAnswers: { type: "clarification_answers", answers }');
@@ -61,7 +62,13 @@ describe("chat discovery clarification UI", () => {
 
     const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(cardSource).toContain("أخرى");
-    expect(cardSource).toContain("تخطّى واستخدم الافتراضي");
+    expect(cardSource).toContain('option.trim() === "أخرى" && current.allowOther');
+    expect(cardSource).toContain("setCustomInputOpen(true)");
+    expect(cardSource).toContain('role="group" aria-labelledby={`clarification-${current.id}`}');
+    expect(cardSource).toContain("customInputOpen || current.type === \"free\"");
+    expect(cardSource).toContain("تخطّي السؤال");
+    expect(cardSource).toContain("إجابة ومتابعة");
+    expect(cardSource).toContain("onComplete([skippedAnswer])");
     expect(cardSource).toContain("completedAnswers?.length");
     expect(cardSource).not.toMatch(/dangerouslySetInnerHTML/i);
     expect(cardSource).toContain("min-h-11");
@@ -114,10 +121,37 @@ describe("chat discovery clarification UI", () => {
     }
   });
 
-  it("renders at most three underlined words (one sentence), never a counter or progress bar", () => {
+  it("renders one Arabic question at a time with dynamic progress and back, next, skip, and other-answer controls", () => {
     const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
-    expect(cardSource).not.toContain("answeredCount");
-    expect(cardSource).toContain("underline");
+    expect(cardSource).toContain("سؤال {toArabicDigits(step + 1)} من {toArabicDigits(qs.length)}");
+    expect(cardSource).toContain("السابق");
+    expect(cardSource).toContain("التالي");
+    expect(cardSource).toContain("تخطّي السؤال");
+    expect(cardSource).toContain("ملخص طلبك");
+    expect(cardSource).toContain('option.trim() === "أخرى"');
+    expect(readFileSync("src/app/dashboard/chat/components/discoveryQuestions.ts", "utf8")).toContain("MAX_DISCOVERY_QUESTIONS = 8");
+    expect(cardSource).not.toContain("underline");
+
+    const pageSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    expect(pageSource).toContain("messages.some((m) => m.planQuote || Boolean(m.jobId))");
+    expect(pageSource).toContain("intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}");
+  });
+
+  it("lets the model ask more than three adaptive questions when the request needs them", () => {
+    expect(MAX_CLARIFICATION_QUESTIONS).toBeGreaterThan(3);
+    expect(ACTION_RESULT_JSON_SCHEMA.properties.questions.maxItems).toBe(MAX_CLARIFICATION_QUESTIONS);
+    expect(ACTION_RESULT_JSON_SCHEMA.properties.questionsAr.maxItems).toBe(MAX_CLARIFICATION_QUESTIONS);
+  });
+
+  it("submits each clarification answer before the assistant decides whether to ask another question", () => {
+    const chatHandler = readFileSync("src/functions/shared/chatHandler.ts", "utf8");
+    const finalResponse = chatHandler.slice(chatHandler.indexOf("// Ask one question per turn"));
+    expect(finalResponse).toContain("clarificationItemsList = clarificationItemsList.slice(0, 1)");
+    expect(finalResponse).toContain("clarificationQuestionsList = clarificationItemsList.map((item) => item.text)");
+
+    const prompt = readFileSync("src/functions/shared/systemPrompt.ts", "utf8");
+    expect(prompt).toContain("Ask only the single most useful unanswered question in each turn");
+    expect(prompt).toContain("after the user answers, reassess the request");
   });
 });
 

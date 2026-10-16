@@ -6,6 +6,7 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
+import { getMissingCompanyResearchRequirements } from "../planParameters";
 
 /**
  * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
@@ -308,22 +309,21 @@ export function normalizeIcypeasCompanyParams(
 
   // 2. Detect Industry
   const detectedIndustry = detectIndustryFromText(fullPromptText);
+  const missingRequirements = getMissingCompanyResearchRequirements(fullPromptText);
 
   const finalQuery: Record<string, any> = {};
 
-  if (detectedCountry) {
+  if (detectedCountry && !missingRequirements.includes("country")) {
     finalQuery.location = { include: [detectedCountry.canonicalEnglish] };
-  } else {
-    // If no country was specified by the user, default explicitly to Egypt
-    detectedCountry = { canonicalEnglish: "Egypt", arabicLabel: "مصر (افتراضي)" };
-    finalQuery.location = { include: ["Egypt"] };
   }
 
-  if (detectedIndustry.exactTaxonomy && detectedIndustry.exactTaxonomy.length > 0) {
+  if (!missingRequirements.includes("industry") && detectedIndustry.exactTaxonomy && detectedIndustry.exactTaxonomy.length > 0) {
     finalQuery.industry = { include: detectedIndustry.exactTaxonomy };
   }
 
-  finalQuery.keyword = { include: detectedIndustry.englishKeywords };
+  if (!missingRequirements.includes("industry")) {
+    finalQuery.keyword = { include: detectedIndustry.englishKeywords };
+  }
 
   const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
   const paginationObj: Record<string, any> = {
@@ -360,11 +360,9 @@ export function normalizeIcypeasPeopleParams(
 
   if (detectedCountry) {
     finalQuery.location = { include: [detectedCountry.canonicalEnglish] };
-  } else {
-    finalQuery.location = { include: ["Egypt"] };
   }
 
-  let title = "CEO";
+  let title = "";
   const t = fullPromptText.toLowerCase();
   if (t.includes("ceo") || t.includes("رئيس تنفيذي") || t.includes("الرئيس التنفيذي")) {
     title = "CEO";
@@ -378,15 +376,10 @@ export function normalizeIcypeasPeopleParams(
     title = "Director";
   }
 
-  finalQuery.currentJobTitle = { include: [title] };
+  if (title) finalQuery.currentJobTitle = { include: [title] };
 
   const detectedIndustry = detectIndustryFromText(fullPromptText);
-  if (
-    detectedIndustry &&
-    detectedIndustry.englishKeywords &&
-    detectedIndustry.englishKeywords.length > 0 &&
-    (t.includes("تقنية") || t.includes("تكنولوجيا") || t.includes("برمجيات") || t.includes("tech") || t.includes("software") || t.includes("it") || t.includes("مقاولات"))
-  ) {
+  if (detectedIndustry.exactTaxonomy?.length) {
     finalQuery.keyword = { include: detectedIndustry.englishKeywords };
   }
 

@@ -50,8 +50,8 @@ const COLUMN_LABELS: Record<string, string> = {
   count: "العدد", averageFollowers: "متوسط المتابعين",
   company_name: "اسم الشركة / المؤسسة", contact_name: "اسم المسؤول / جهة الاتصال",
   job_title: "المسمى الوظيفي", work_email: "البريد الإلكتروني المهني",
-  email_verification_status: "حالة البريد", title_verification_status: "حالة المسمى",
-  verification_status: "حالة التحقق", website: "الموقع الإلكتروني",
+  email_verification_status: "توفر البريد", title_verification_status: "توفر المسمى الوظيفي",
+  verification_status: "الحالة المسجلة", website: "الموقع الإلكتروني",
   industry: "النشاط / التخصص", activity: "النشاط الرئيسي",
   location: "المدينة / المحافظة", city: "المدينة", phone: "الهاتف التجاري",
   headcount: "حجم العمالة", founded_year: "سنة التأسيس",
@@ -348,15 +348,15 @@ export default function ResultsCanvas({
                   <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.6}><path strokeLinecap="round" strokeLinejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
                 </span>
                 <div>
-                  <h3 className="text-sm font-bold text-ink-900">تقرير نتائج جمع البيانات (PDF)</h3>
+                  <h3 className="text-sm font-bold text-ink-900">تقرير نتائج جمع البيانات (بي دي إف)</h3>
                   <p className="mt-1 text-xs leading-relaxed text-sand-600">يعكس محتوى الملفات المولّدة لهذا الطلب — متاح للمعاينة والطباعة.</p>
                 </div>
                 <Button onClick={() => onDownload("pdf")} disabled={downloadingKey === "pdf"} className="w-full">
-                  {downloadingKey === "pdf" ? "جاري التجهيز..." : "فتح وتحميل تقرير PDF"}
+                  {downloadingKey === "pdf" ? "جاري التجهيز..." : "فتح وتحميل تقرير بي دي إف"}
                 </Button>
               </div>
             ) : (
-              <p className="text-xs text-sand-500">يبدأ توليد تقرير PDF بعد اكتمال طلب جمع البيانات.</p>
+              <p className="text-xs text-sand-500">يبدأ توليد تقرير بي دي إف بعد اكتمال طلب جمع البيانات.</p>
             )}
           </div>
         )}
@@ -381,13 +381,13 @@ export default function ResultsCanvas({
         {tab === "files" && (
           <div className="space-y-3">
             {[
-              { ext: "xlsx" as const, title: "ملف Excel كامل (.xlsx)", desc: "جدول البيانات + دليل المتغيرات + صفحة المنهجية." },
-              { ext: "pdf" as const, title: "تقرير ملخص (.pdf)", desc: "صياغة موثقة مع مقاييس التغطية." },
-              { ext: "csv" as const, title: "بيانات خام (.csv)", desc: "بيانات جدولية — للتحليل الإحصائي والبرمجي." },
+              { ext: "xlsx" as const, label: "إكسل", title: "ملف إكسل كامل", desc: "جدول البيانات ودليل الحقول." },
+              { ext: "pdf" as const, label: "بي دي إف", title: "تقرير المنهجية", desc: "منهجية الجمع وحدود البيانات." },
+              { ext: "csv" as const, label: "سي إس في", title: "بيانات جدولية", desc: "للاستخدام في التحليل." },
             ].map((f) => (
               <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">
                 <div className="flex min-w-0 items-center gap-3">
-                  <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ac text-xs font-semibold text-onac uppercase">{f.ext}</span>
+                  <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ac text-xs font-semibold text-onac">{f.label}</span>
                   <div className="min-w-0">
                     <p className="text-xs font-bold text-ink-900">{f.title}</p>
                     <p className="mt-0.5 text-xs text-sand-500">{f.desc}</p>
@@ -410,7 +410,7 @@ export default function ResultsCanvas({
                 <div className="flex justify-between gap-2">
                   <dt>المصدر</dt>
                   <dd className="font-semibold text-ink-800" dir="auto">
-                    {profile?.username ? `بيانات عامة (@${profile.username})` : "قواعد بيانات الشركات والأعمال العامة"}
+                    {profile?.username ? `مصادر متاحة (@${profile.username})` : "مصادر الشركات والأعمال المتاحة"}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2"><dt>تاريخ الجمع</dt><dd className="font-semibold text-ink-800">{profile?.collectedDate || (records[0]?.extractedAt as string) || "غير متاح"}</dd></div>

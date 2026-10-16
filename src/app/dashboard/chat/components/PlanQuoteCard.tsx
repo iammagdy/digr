@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
+import { getQuoteApprovalState } from "@/lib/quoteApprovalState";
+import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -38,6 +40,8 @@ export interface PlanQuoteData {
   }>;
   outputFormats: string[];
   expiresAt: string;
+  /** Loaded from plans_quotes when a saved conversation is restored. */
+  status?: string;
   methodologyNotes?: string;
 }
 
@@ -80,7 +84,7 @@ export function formatExpiry(expiresAt: string): string {
   }
 }
 
-const FORMAT_LABEL: Record<string, string> = { xlsx: "Excel", pdf: "PDF", csv: "CSV" };
+const FORMAT_LABEL: Record<string, string> = { xlsx: "جدول بيانات", pdf: "دليل المنهجية", csv: "ملف بيانات نصي" };
 
 /** «ينتهي العرض خلال ٢٨ دقيقة» */
 function expiryShort(expiresAt: string, now: number): string {
@@ -99,7 +103,7 @@ const SECONDARY_BTN =
 const EDIT_PLAN_BTN_LABEL = "تعديل الخطة";
 export const _LEGACY_EDIT_BTN_LABEL = "تعديل";
 
-import { extractParamDisplayString, extractInterpretedParameters } from "@/lib/planParameters";
+import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr } from "@/lib/planParameters";
 export { extractParamDisplayString, extractInterpretedParameters };
 
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
@@ -118,11 +122,15 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
-  const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr);
-  const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr);
+  const capabilitySlug = (primaryItem?.capabilitySlug || "").toLowerCase();
+  const isPeoplePlan = capabilitySlug.includes("people");
+  const isCompanyPlan = /compan|b2b/.test(capabilitySlug);
+  const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
+  const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
+  const displayIndustry = isPeoplePlan ? interpreted.industryAr : industryDisplayLabelAr(interpreted.industryAr);
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editCountry, setEditCountry] = useState(interpreted.countryAr);
-  const [editIndustry, setEditIndustry] = useState(interpreted.industryAr);
+  const [editIndustry, setEditIndustry] = useState(displayIndustry);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   const [savingEdit, setSavingEdit] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -131,10 +139,11 @@ export default function PlanQuoteCard({
 
   useEffect(() => {
     const pItem = quote.items?.[0];
-    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr);
-    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
+    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
+    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
-    setEditIndustry(inter.industryAr);
+    setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   }, [quote]);
@@ -144,7 +153,8 @@ export default function PlanQuoteCard({
     return () => clearInterval(t);
   }, []);
 
-  const expired = new Date(quote.expiresAt).getTime() <= now;
+  const approvalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
+  const expired = !approvalState.canApprove;
   const balance = available ?? quote.userBalance;
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
   const shortPts = Math.max(0, quote.quotedPoints - balance);
@@ -161,10 +171,11 @@ export default function PlanQuoteCard({
 
   function handleOpenEdit() {
     const pItem = quote.items?.[0];
-    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr);
-    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr));
+    const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
+    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
+    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
-    setEditIndustry(inter.industryAr);
+    setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
     setEditError("");
@@ -228,9 +239,9 @@ export default function PlanQuoteCard({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-mut">النشاط / التخصص:</span>
+          <span className="text-mut">{isPeoplePlan ? "نوع البحث:" : "النشاط / التخصص:"}</span>
           <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
-            {interpreted.industryAr}
+            {displayIndustry}
           </span>
         </div>
         <div className="flex items-center gap-1.5">
@@ -247,15 +258,15 @@ export default function PlanQuoteCard({
         <ul className="m-0 list-inside space-y-1 pr-1 font-light text-ink2">
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">١.</span>
-            <span>استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد ({interpreted.countryAr} · {interpreted.industryAr}).</span>
+            <span>{isPeoplePlan ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.` : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٢.</span>
-            <span>تدقيق الملاءمة الذكي ومراجعة كل شركة واستبعاد الأنشطة غير المطابقة.</span>
+            <span>{isPeoplePlan ? "تنظيم الأسماء والمسميات الوظيفية وبيانات بريد العمل عند توافرها." : "تدقيق الملاءمة الذكي ومراجعة كل شركة واستبعاد الأنشطة غير المطابقة."}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٣.</span>
-            <span>إزالة التكرار والتحقق من هواتف النطاق وبيانات التواصل المتاحة.</span>
+            <span>{isPeoplePlan ? "توضيح ما إذا كانت حقول الاسم والمسمى والبريد موجودة في السجل؛ لا يعني ذلك تحققًا مستقلًا منها." : "إزالة التكرار والتحقق من هواتف النطاق وبيانات التواصل المتاحة."}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٤.</span>
@@ -272,7 +283,7 @@ export default function PlanQuoteCard({
             key={fmt}
             className="inline-flex items-center gap-1 rounded-full border border-ln bg-sf2 px-2.5 py-1 text-ink text-[12px] font-medium"
           >
-            {fmt === "xlsx" ? "Excel (بيانات)" : fmt === "csv" ? "CSV (بيانات)" : "PDF (دليل المنهجية)"}
+            {fmt === "xlsx" ? "جدول بيانات" : fmt === "csv" ? "ملف بيانات نصي" : "دليل المنهجية"}
           </span>
         ))}
       </div>
@@ -281,17 +292,17 @@ export default function PlanQuoteCard({
       <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
         <p className="m-0 font-medium text-ink">نظام احتساب النقاط والضمان المالي:</p>
         <p className="m-0 mt-1">
-          عند الموافقة، يُحجز مؤقتاً <strong>{formatAr(quote.quotedPoints)} نقطة</strong> (يشمل هامش تأمين ١٥٪ لضمان التغطية). بعد الانتهاء، يتم <strong>الخصم الفعلي فقط</strong> على السجلات المطابقة المعتمدة المسلَّمة، ويُرد أي فرق تلقائياً وفوراً إلى رصيدك.
+          عند الموافقة، يُحجز داخلياً <strong>{formatAr(quote.quotedPoints)} نقطة</strong>، ويشمل الحجز هامشاً يصل إلى ١٥٪. بعد التسليم، تُسوّى تكلفة السجلات المطابقة المسلَّمة فقط، ويُرفع الحجز عن أي فرق تلقائياً؛ هذا الفرق ليس استرداداً أو رصيداً جديداً.
         </p>
         {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("صناع") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول") || quote.summaryAr?.includes("مدير")) && (
           <p className="m-0 mt-1.5 text-ink2 border-t border-ln pt-1.5">
-            تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع بيان حالة التحقق لكل حقل (متحقق / غير متاح). البريد الإلكتروني المهني قد لا يكون متاحاً لجميع المسؤولين. لا يتم فرض أي رسوم على الحقول غير المتوفرة (الخصم يتم على السجلات المعتمدة فقط دون رسوم للحقول الناقصة).
+            تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع توضيح ما إذا كان كل حقل موجودًا أو غير موجود في السجل. وجود البريد لا يعني التحقق من صحته. لا يُحاسب العميل على أي حقل غير متوفر.
           </p>
         )}
       </div>
 
       <p className="mb-0 mt-[14px] border-t border-ln pt-3 text-[13px] font-light leading-[1.9] text-ink2">
-        المنهجية: {quote.methodologyNotes || "جمع وتوثيق البيانات العامة وفق المعايير المعتمدة وفصل ملف البيانات عن توثيق المنهجية."}
+        المنهجية: {getCustomerMethodologyNote(isPeoplePlan, isCompanyPlan)}
       </p>
 
       {isEditing && !locked && (
@@ -305,7 +316,7 @@ export default function PlanQuoteCard({
               />
             </div>
             <div>
-              <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">النشاط / التخصص الرئيسي</label>
+              <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "نوع البحث" : "النشاط / التخصص الرئيسي"}</label>
               <input
                 id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto"
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
@@ -313,7 +324,7 @@ export default function PlanQuoteCard({
             </div>
           </div>
           <div>
-            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الكلمات المفتاحية / الاستعلام</label>
+            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : "الكلمات المفتاحية / الاستعلام"}</label>
             <input
               id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
               className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
@@ -392,7 +403,17 @@ export default function PlanQuoteCard({
         </div>
       )}
 
-      {!locked && expired && (
+      {!locked && approvalState.inactiveStatus && (
+        <div role="status" className="mt-[18px] flex items-center rounded-[18px] bg-sf2 px-4 py-3.5">
+          <p className="m-0 text-sm leading-[1.8] text-ink">
+            {quote.status === "unknown"
+              ? "تعذر التأكد من صلاحية عرض السعر. أعد تحميل المحادثة قبل الموافقة."
+              : "هذا العرض لم يعد صالحاً للموافقة. استخدم أحدث عرض سعر في هذه المحادثة."}
+          </p>
+        </div>
+      )}
+
+      {!locked && approvalState.expiredByTime && !approvalState.inactiveStatus && (
         <div className="mt-[18px] flex flex-wrap items-center justify-between gap-3 rounded-[18px] bg-sf2 px-4 py-3.5" style={{ animation: "up .4s both" }}>
           <p className="m-0 text-sm leading-[1.8] text-ink">انتهت صلاحية عرض السعر. نحتاج تحديثه قبل الموافقة.</p>
           <button type="button" onClick={handleRefresh} disabled={refreshing} className={`${PRIMARY_BTN} min-h-11 whitespace-nowrap px-[18px] text-[13px]`}>
@@ -404,7 +425,7 @@ export default function PlanQuoteCard({
         </div>
       )}
 
-      {!locked && !low && !expired && (
+      {!locked && !low && approvalState.canApprove && (
         <>
           <div className="mt-[18px] flex flex-wrap gap-2">
             <button

@@ -180,9 +180,9 @@ export function parseIcypeasCompaniesResponse(data: any): { rows: Record<string,
       description: String(lead.description || lead.headline || lead.slogan || "").trim(),
       work_email: rawEmail,
       phone: phone,
-      email_verification_status: rawEmail ? "متحقق" : "غير متاح",
-      title_verification_status: jobTitle ? "متحقق" : "غير متوفر",
-      verification_status: "متحقق",
+      contact_name_presence_status: contactName ? "موجود" : "غير موجود",
+      work_email_presence_status: rawEmail ? "موجود" : "غير موجود",
+      job_title_presence_status: jobTitle ? "موجود" : "غير موجود",
       founded_year: lead.foundedYear != null ? String(lead.foundedYear) : "",
     };
   });
@@ -374,7 +374,7 @@ export async function executeMultiStepJob(
 
   // STRICT GUARD 1: Refuse fake/mock execution in production
   if (isProduction && !isLive) {
-    const errorAr = "لا يُسمح باستخدام بيانات تجريبية في بيئة الإنتاج. تم استرجاع كامل الرصيد المحجوز.";
+    const errorAr = "تعذر بدء الطلب. تم إرجاع النقاط المحجوزة إلى رصيدك.";
     await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء واسترجاع كامل الرصيد: منع البيانات التجريبية في الإنتاج");
     await tables.updateRow({
       databaseId: "digr",
@@ -398,9 +398,9 @@ export async function executeMultiStepJob(
     };
   }
 
-  // TREG_LIVE Verification Guard: Fail safely with clear Arabic refusal if TREG_LIVE is not 'true'
+  // Live data guard: keep deployment configuration details out of customer-facing job state.
   if (!fetchPageFn && process.env.TREG_LIVE !== "true") {
-    const errorAr = "مزود البيانات الحقيقي معطل حالياً في البيئة (TREG_LIVE!=true). تم استرجاع كامل الرصيد المحجوز إلى محفظتك.";
+    const errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
     const relRes = await releaseReservation(
       tables,
       userId,
@@ -695,7 +695,7 @@ export async function executeMultiStepJob(
         const spendCapCheck = await checkProviderDailySpendCap(0.01, tables);
         if (!spendCapCheck.allowed) {
           if (collectedRows.length === 0) {
-            const errorAr = "تم بلوغ الحد اليومي لمزود البيانات ($0.80 USD). تم إيقاف الطلب واسترجاع الرصيد المحجوز.";
+            const errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
             await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع الرصيد لبلوغ الحد اليومي للمزود");
             await tables.updateRow({
               databaseId: "digr",
@@ -715,7 +715,7 @@ export async function executeMultiStepJob(
               errorAr,
             };
           }
-          await emitProgress("تم بلوغ الحد اليومي لمزود البيانات ($0.80 USD). تم حفظ السجلات المستخرجة.", collectedRows.length, "warning");
+          await emitProgress("توقف الجمع مؤقتاً بعد الوصول إلى الحد المتاح. تم حفظ السجلات التي جُمعت.", collectedRows.length, "warning");
           break;
         }
 
@@ -775,17 +775,15 @@ export async function executeMultiStepJob(
           if (collectedRows.length === 0) {
             let errorAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
             if (callResult.isRouteMaxCost) {
-              errorAr = "تجاوز الطلب سقف التكلفة المسموح به للمصدر ($0.05).";
+              errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
             } else if (callResult.isPlatformBalanceLow) {
               errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
             } else if (callResult.httpStatus === 404) {
               errorAr = "الهدف المطلوب غير موجود أو محمي.";
             } else if (callResult.httpStatus === 422) {
-              errorAr = callResult.detail
-                ? `تعذر معالجة مدخلات الطلب لدى المزود (422): ${callResult.detail}`
-                : "تعذر معالجة مدخلات الطلب لدى المزود (422).";
+              errorAr = "تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.";
             } else if (callResult.httpStatus === 429) {
-              errorAr = "المصدر مشغول حالياً (429 Rate Limit) بعد استنفاد محاولات الإعادة.";
+              errorAr = "تعذر إكمال البحث حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
             }
 
             await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لفشل الاستخراج من المصدر");
@@ -926,7 +924,7 @@ export async function executeMultiStepJob(
       jobId,
       collectedAt: new Date().toISOString(),
       rowsCount: deliveredUnits,
-      methodology: `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: هذه البيانات عامة ومتاحة علناً.`,
+      methodology: `تم استخراج ${deliveredUnits} سجل بنجاح بتاريخ ${dateStr}. ملاحظة منهجية: جُمعت النتائج من المصادر المتاحة.`,
     },
     rows: collectedRows.slice(0, deliveredUnits),
   };

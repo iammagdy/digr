@@ -42,16 +42,16 @@ export default function Composer({
     if (ext !== "xlsx" && ext !== "csv") {
       const isMediaOrDoc = ["pdf", "jpg", "jpeg", "png", "webp", "doc", "docx", "gif"].includes(ext || "");
       if (isMediaOrDoc) {
-        setFileError("ملفات PDF والمستندات المصورة غير مدعومة حالياً. يدعم ديجر حصرياً ملفات استبعاد الكيانات بصيغة جداول البيانات Excel (.xlsx) أو CSV (.csv).");
+        setFileError("ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا. يدعم ديجر ملفات استبعاد بصيغتي إكسل وسي إس في فقط.");
       } else {
-        setFileError("صيغة الملف غير مدعومة. يرجى رفع ملف استبعاد بصيغة جداول البيانات Excel (.xlsx) أو CSV (.csv).");
+        setFileError("صيغة الملف غير مدعومة. يرجى رفع ملف استبعاد بصيغة إكسل أو سي إس في.");
       }
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
-      setFileError("حجم الملف يتجاوز الحد الأقصى المسموح به (5 ميجابايت).");
+      setFileError("حجم الملف يتجاوز الحد الأقصى المسموح به (٥ ميجابايت).");
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
     }
@@ -169,7 +169,7 @@ export default function Composer({
             onChange={handleFileChange}
             className="hidden"
             id="chat-file-attachment"
-            aria-label="رفع ملف استبعاد (Excel أو CSV)"
+            aria-label="رفع ملف استبعاد بصيغة إكسل أو سي إس في"
           />
 
           {/* Attachment Paperclip Button */}
@@ -178,8 +178,8 @@ export default function Composer({
             disabled={disabled}
             onClick={() => fileInputRef.current?.click()}
             className="flex h-[46px] w-[46px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-mut hover:text-ac hover:bg-sf2 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
-            aria-label="إرفاق ملف استبعاد (Excel أو CSV)"
-            title="إرفاق ملف استبعاد (Excel أو CSV)"
+            aria-label="إرفاق ملف استبعاد بصيغة إكسل أو سي إس في"
+            title="إرفاق ملف استبعاد بصيغة إكسل أو سي إس في"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -214,7 +214,7 @@ export default function Composer({
           </button>
         </form>
         <p className="m-0 mt-1 text-center text-[11px] font-light text-mut">
-          يدعم إرفاق ملفات الاستبعاد (Excel و CSV حتى ٥ ميجابايت). ملفات PDF والمستندات المصورة غير مدعومة حالياً.
+          يدعم إرفاق ملفات الاستبعاد بصيغتي إكسل وسي إس في حتى ٥ ميجابايت. ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا.
         </p>
       </div>
     </div>

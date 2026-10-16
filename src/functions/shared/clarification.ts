@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { Capability } from "./capabilityRegistry";
 
+export const MAX_CLARIFICATION_QUESTIONS = 8;
+
 export const ClarificationParameterTypeSchema = z.enum([
   "platform",
   "time_window",
@@ -47,10 +49,10 @@ export const AskClarificationSchema = z
   .object({
     type: z.literal("ask_clarification"),
     intro: z.string().trim().max(200).optional(),
-    questions: z.array(ClarificationQuestionInputSchema).min(1).max(3).optional(),
+    questions: z.array(ClarificationQuestionInputSchema).min(1).max(MAX_CLARIFICATION_QUESTIONS).optional(),
     // Legacy fields are accepted only as compatibility inputs and normalized server-side.
-    questionsAr: z.array(z.string().trim().min(1).max(120)).min(1).max(3).optional(),
-    optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
+    questionsAr: z.array(z.string().trim().min(1).max(120)).min(1).max(MAX_CLARIFICATION_QUESTIONS).optional(),
+    optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(MAX_CLARIFICATION_QUESTIONS).optional(),
     reasonAr: z.string().trim().max(200).optional(),
   })
   .strict()
@@ -66,7 +68,7 @@ export type ClarificationParameterType = z.infer<typeof ClarificationParameterTy
 /**
  * Discovery question priority: topic keywords first, then number of posts,
  * then comments per post, then date range. Never comments-per-post before
- * number of posts. Used to order questions before the max-3 slice.
+ * number of posts. Used to order questions before the bounded dynamic-question slice.
  */
 export function discoveryQuestionPriority(q: { text?: string; parameterType?: string }): number {
   const text = (q.text || "").toLowerCase();
@@ -135,7 +137,7 @@ export function sanitizeModelClarificationOutput(input: unknown): unknown {
   if (typeof result.intro === "string") result.intro = sanitizeClarificationText(result.intro, 200);
   if (typeof result.reasonAr === "string") result.reasonAr = sanitizeClarificationText(result.reasonAr, 200);
   if (Array.isArray(result.questions)) {
-    result.questions = result.questions.slice(0, 3).map((rawQuestion) => {
+    result.questions = result.questions.slice(0, MAX_CLARIFICATION_QUESTIONS).map((rawQuestion) => {
       if (!rawQuestion || typeof rawQuestion !== "object" || Array.isArray(rawQuestion)) return rawQuestion;
       const question = { ...(rawQuestion as Record<string, unknown>) };
       if (typeof question.text === "string") question.text = sanitizeClarificationText(question.text, 120);
@@ -150,10 +152,10 @@ export function sanitizeModelClarificationOutput(input: unknown): unknown {
     });
   }
   if (Array.isArray(result.questionsAr)) {
-    result.questionsAr = result.questionsAr.slice(0, 3).map((question) => sanitizeClarificationText(question, 120));
+    result.questionsAr = result.questionsAr.slice(0, MAX_CLARIFICATION_QUESTIONS).map((question) => sanitizeClarificationText(question, 120));
   }
   if (Array.isArray(result.optionsAr)) {
-    result.optionsAr = result.optionsAr.slice(0, 3).map((options) => Array.isArray(options)
+    result.optionsAr = result.optionsAr.slice(0, MAX_CLARIFICATION_QUESTIONS).map((options) => Array.isArray(options)
       ? unique(options.filter((option): option is string => typeof option === "string")
           .map((option) => sanitizeClarificationText(option, 40))).slice(0, 4)
       : []);
@@ -253,7 +255,7 @@ export function normalizeClarificationQuestions(
         options: legacyOptions[index],
       }));
 
-  // Order questions before the max-3 cut so the most important ones survive.
+  // Order questions before the bounded dynamic-question cut so the most important ones survive.
   const ordered = questions
     .map((item, index) => ({ item, index }))
     .sort((a, b) => {
@@ -266,7 +268,7 @@ export function normalizeClarificationQuestions(
       return discoveryQuestionPriority({ text: ta }) - discoveryQuestionPriority({ text: tb }) || a.index - b.index;
     })
     .map(({ item }) => item);
-  return ordered.slice(0, 3).flatMap((item, index) => {
+  return ordered.slice(0, MAX_CLARIFICATION_QUESTIONS).flatMap((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) return [];
     const questionItem = item as Record<string, unknown>;
     const rawQuestion = questionItem.text ?? questionItem.question ?? "";
@@ -289,9 +291,15 @@ export function normalizeClarificationQuestions(
     const sourceOptions = bankOptions.length ? bankOptions : modelOptions;
     const options = unique(sourceOptions.map((option) => sanitizeClarificationText(option, 40))).slice(0, 4);
     const requestedDefault = sanitizeClarificationText(questionItem.defaultOption, 40);
-    const defaultOption = requestedDefault && options.includes(requestedDefault)
-      ? requestedDefault
-      : defaultForParameter(parameterType, options, context.persona);
+    // Company scope fields are mandatory user decisions. Never preselect Egypt
+    // or a sector on those questions, even if a generic option bank has a default.
+    const isRequiredScopeField = typeof questionItem.id === "string" &&
+      (questionItem.id.startsWith("company_") || questionItem.id === "people_country_required");
+    const defaultOption = isRequiredScopeField
+      ? undefined
+      : requestedDefault && options.includes(requestedDefault)
+        ? requestedDefault
+        : defaultForParameter(parameterType, options, context.persona);
     const questionType = z.enum(["single", "multi", "free"]).safeParse(questionItem.type);
     const type = questionType.success ? questionType.data : options.length ? "single" : "free";
     const question: NormalizedClarificationQuestion = {
@@ -333,7 +341,7 @@ export const StructuredClarificationAnswerSchema = z
           }),
       )
       .min(1)
-      .max(3),
+      .max(MAX_CLARIFICATION_QUESTIONS),
   })
   .strict();
 
@@ -385,4 +393,36 @@ export function formatStructuredClarificationAnswers(answer: StructuredClarifica
       return { questionId, question, value };
     }),
   });
+}
+
+/** Convert a stored answer payload into clear customer-authored text before
+ * it is sent back to the model. Keeping internal question IDs out of the model
+ * prompt prevents them from being copied into a search keyword or quote. */
+export function formatClarificationMessageForAssistant(message: string): string {
+  const trimmed = (message || "").trim();
+  if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) return message;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return message;
+
+    const labels: Record<string, string> = {
+      company_country_required: "الدولة المطلوبة",
+      company_industry_required: "المجال المطلوب",
+      company_outreach_required: "هدف التواصل والبيانات المطلوبة",
+      people_country_required: "دولة صناع القرار المطلوبة",
+    };
+    return parsed.answers.map((answer: any) => {
+      const label = labels[answer?.questionId] || `إجابة عن ${sanitizeClarificationText(String(answer?.question || "السؤال"), 120)}`;
+      const values = Array.isArray(answer?.value)
+        ? answer.value.filter((value: unknown) => typeof value === "string").map((value: string) => sanitizeClarificationText(value, 40))
+        : typeof answer?.value === "string"
+          ? [sanitizeClarificationText(answer.value, 200)]
+          : [];
+      if (values.length > 0) return `${label}: ${values.join("، ")}`;
+      return `لم يحدد المستخدم ${label}؛ اسأله عنها ولا تفترض إجابة.`;
+    }).filter(Boolean).join("\n");
+  } catch {
+    return message;
+  }
 }

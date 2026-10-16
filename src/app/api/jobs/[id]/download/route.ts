@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
+import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 
 export const dynamic = "force-dynamic";
 
@@ -55,19 +57,41 @@ export async function GET(
       return NextResponse.json({ success: false, error: "غير مصرح لك بتحميل نتائج هذا الطلب." }, { status: 403 });
     }
 
+    // Respect the formats selected in the approved quote. Legacy jobs without a
+    // matching quote keep their historical on-demand download behavior.
+    let requestedFormats: string[] | null = null;
+    try {
+      const { data: quoteRows } = await adminClient
+        .from("plans_quotes")
+        .select("id, output_formats")
+        .eq("user_id", job.user_id)
+        .eq("status", "accepted");
+      const quote = (quoteRows || []).find((row: any) => {
+        const quoteId = String(row?.id || "");
+        return quoteId && (`job_quote_${createHash("md5").update(quoteId).digest("hex")}` === jobId || quoteId === jobId);
+      });
+      if (quote && Array.isArray(quote.output_formats)) requestedFormats = quote.output_formats;
+    } catch {
+      // Existing artifact links remain available when quote history is unavailable.
+    }
+
     // 3. Format and filename selection
     const format = (req.nextUrl.searchParams.get("format") || "csv").toLowerCase();
     const allowedFormats = ["csv", "xlsx", "pdf", "json"];
     if (!allowedFormats.includes(format)) {
       return NextResponse.json({ success: false, error: "صيغة الملف غير مدعومة" }, { status: 400 });
     }
+    if (requestedFormats && ["xlsx", "pdf", "csv"].includes(format) && !requestedFormats.includes(format)) {
+      return NextResponse.json({ success: false, error: "هذه الصيغة لم تكن ضمن الملفات المختارة في الخطة." }, { status: 409 });
+    }
 
-    let country = "مصر";
-    let industry = "شركات";
+    let country = "الدولة غير محددة";
+    let industry = "النشاط غير محدد";
     const count = job.delivered_units || job.rows_collected || job.target_volume_max || 1;
     const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
 
-    const sourceText = `${job.brief || ""} ${job.search_query || ""} ${job.template_slug || ""}`;
+    const paramsText = typeof job.params === "string" ? job.params : JSON.stringify(job.params || {});
+    const sourceText = `${job.brief || ""} ${job.search_query || ""} ${paramsText} ${job.template_slug || ""}`;
     const detectedC = detectCountryFromText(sourceText);
     if (detectedC?.arabicLabel) {
       country = detectedC.arabicLabel;
@@ -97,6 +121,7 @@ export async function GET(
         .from("artifact_versions")
         .select("file_id_xlsx, file_id_pdf, file_id_csv")
         .eq("job_id", jobId)
+        .eq("user_id", job.user_id)
         .order("version_number", { ascending: false })
         .limit(1);
 
@@ -130,6 +155,7 @@ export async function GET(
     }
 
     let signedUrl: string | null = null;
+    let resolvedStoragePath: string | null = null;
 
     // Check existing candidate files
     for (const path of candidatePaths) {
@@ -139,6 +165,7 @@ export async function GET(
 
       if (!signErr && signed?.signedUrl) {
         signedUrl = signed.signedUrl;
+        resolvedStoragePath = path;
         break;
       }
     }
@@ -191,47 +218,19 @@ export async function GET(
 
           if (fileBuf) {
             const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
-            await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
+            const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
               contentType: mimeType,
               upsert: true,
             });
+            if (uploadError) throw uploadError;
 
-            // Keep artifact_versions permanently in sync with the generated artifact
-            try {
-              const fieldToUpdate = format === "pdf" ? "file_id_pdf" : format === "xlsx" ? "file_id_xlsx" : "file_id_csv";
-              const { data: existingAv } = await adminClient
-                .from("artifact_versions")
-                .select("id")
-                .eq("job_id", jobId)
-                .maybeSingle();
-
-              if (existingAv?.id) {
-                await adminClient
-                  .from("artifact_versions")
-                  .update({ [fieldToUpdate]: uploadPath })
-                  .eq("id", existingAv.id);
-              } else {
-                await adminClient
-                  .from("artifact_versions")
-                  .insert({
-                    id: `ver_${jobId.replace(/^job_quote_/, "").slice(0, 20)}_1`,
-                    job_id: jobId,
-                    user_id: job.user_id,
-                    version_number: 1,
-                    [fieldToUpdate]: uploadPath,
-                    created_at: new Date().toISOString(),
-                  });
-              }
-            } catch (syncErr) {
-              console.warn("Could not sync artifact_versions on demand:", syncErr);
-            }
-
-            const { data: newlySigned } = await adminClient.storage
+            const { data: newlySigned, error: signError } = await adminClient.storage
               .from("results")
               .createSignedUrl(uploadPath, 300, { download: downloadFileName });
 
-            if (newlySigned?.signedUrl) {
+            if (!signError && newlySigned?.signedUrl) {
               signedUrl = newlySigned.signedUrl;
+              resolvedStoragePath = uploadPath;
             }
           }
         } catch (genErr) {
@@ -245,6 +244,10 @@ export async function GET(
         { success: false, error: "الملف المطلوب غير جاهز للتحميل بعد أو انتهت صلاحيته." },
         { status: 404 }
       );
+    }
+
+    if ((format === "pdf" || format === "xlsx" || format === "csv") && resolvedStoragePath) {
+      await linkArtifactVersion(adminClient, job.user_id, jobId, format, resolvedStoragePath);
     }
 
     // If caller requested direct redirect

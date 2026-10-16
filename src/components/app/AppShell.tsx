@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { HELP_CENTER_URL, SUPPORT_URL } from "@/lib/constants";
 import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
+import { startNewResearch } from "@/lib/newResearchNavigation";
 import { Icon, UI } from "./icons";
 
 /* ── shell context: pages set their header title, anyone can open the drawer / start a new question ── */
@@ -65,11 +66,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   const notifs = useNotifications(user?.$id);
 
   const [drawer, setDrawer] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [acctOpen, setAcctOpen] = useState(false);
   const [notifsOpen, setNotifsOpen] = useState(false);
   const [title, setTitleState] = useState("");
   const [running, setRunning] = useState(0);
   const acctRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try { setSidebarCollapsed(localStorage.getItem("diger_sidebar_collapsed") === "1"); } catch { /* keep expanded */ }
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem("diger_sidebar_collapsed", sidebarCollapsed ? "1" : "0"); } catch { /* non-blocking preference */ }
+  }, [sidebarCollapsed]);
 
   const isAdmin = user?.app_metadata?.role === "admin" || (Array.isArray(user?.labels) && user.labels.includes("admin"));
   const isChat = pathname === "/dashboard/chat";
@@ -113,7 +122,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const newQuestion = useCallback(() => {
     setDrawer(false);
     if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:new-chat"));
-    else router.push("/dashboard/chat");
+    else startNewResearch(() => router.push("/dashboard/chat"));
   }, [pathname, router]);
 
   const setTitle = useCallback((t: string) => setTitleState(t), []);
@@ -134,14 +143,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!user && !isChat) return null;
 
   const navItems: Array<{ id: string; label: string; icon: string; href?: string; meta?: string; badge?: number; active: boolean; onClick?: () => void }> = user ? [
-    { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
+    { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
+      setDrawer(false);
+      if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:show-history"));
+      else router.push("/dashboard/chat?history=1");
+    } },
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
     { id: "notifs", label: "الإشعارات", icon: UI.bell, badge: notifs.unread, active: notifsOpen, onClick: () => { setNotifsOpen((v) => !v); setDrawer(false); setAcctOpen(false); } },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
-    { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
+    { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
+      setDrawer(false);
+      if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:show-history"));
+      else router.push("/dashboard/chat?history=1");
+    } },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
   ];
 
@@ -174,12 +191,23 @@ export function AppShell({ children }: { children: ReactNode }) {
             className="z-[41] flex shrink-0 flex-col border-ln bg-sf"
             style={{
               position: mobile ? "absolute" : "relative", insetBlock: 0, insetInlineStart: 0,
-              width: mobile ? "min(86%,320px)" : 272, borderInlineEnd: "1px solid var(--ln)",
+              width: mobile ? "min(86%,320px)" : sidebarCollapsed ? 76 : 272, borderInlineEnd: "1px solid var(--ln)",
               boxShadow: mobile ? "var(--shadow)" : "none", animation: mobile ? "drawer .4s cubic-bezier(.2,.7,.2,1) both" : "none",
+              transition: mobile ? undefined : "width .2s ease",
             }}
           >
             <div className="flex min-h-16 items-center justify-between gap-2 px-4">
-              <Link href="/dashboard/chat" aria-label="ديجر"><Logo height={26} /></Link>
+              {sidebarCollapsed && !mobile
+                ? <Link href="/dashboard/chat" aria-label="ديجر" className="font-display text-lg font-semibold text-ink">D</Link>
+                : <Link href="/dashboard/chat" aria-label="ديجر"><Logo height={26} /></Link>}
+              {!mobile && <button
+                type="button"
+                onClick={() => setSidebarCollapsed((value) => !value)}
+                aria-label={sidebarCollapsed ? "توسيع القائمة الجانبية" : "تصغير القائمة الجانبية"}
+                aria-expanded={!sidebarCollapsed}
+                title={sidebarCollapsed ? "توسيع القائمة" : "تصغير القائمة"}
+                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-mut hover:bg-sf2 hover:text-ink"
+              >{sidebarCollapsed ? "‹" : "›"}</button>}
               {mobile && (
                 <button type="button" onClick={() => setDrawer(false)} aria-label="إغلاق القائمة" className="h-11 w-11 cursor-pointer rounded-full border-0 bg-transparent text-xl text-mut">×</button>
               )}
@@ -187,38 +215,39 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="px-3">
               <button
                 type="button" onClick={newQuestion}
-                className="flex min-h-12 w-full cursor-pointer items-center gap-2.5 rounded-[14px] border border-ln2 bg-bg px-2 text-sm font-medium text-ink transition-[border-color,box-shadow] duration-200 hover:border-gold hover:shadow-[var(--shadow)]"
+                title={sidebarCollapsed && !mobile ? "سؤال بحثي جديد" : undefined}
+                className={`flex min-h-12 w-full cursor-pointer items-center gap-2.5 rounded-[14px] border border-ln2 bg-bg px-2 text-sm font-medium text-ink transition-[border-color,box-shadow] duration-200 hover:border-gold hover:shadow-[var(--shadow)] ${sidebarCollapsed && !mobile ? "justify-center" : ""}`}
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ac text-onac"><Icon d={UI.plus} size={16} /></span>
-                <span className="flex-1 text-right">سؤال بحثي جديد</span>
+                <span className={sidebarCollapsed && !mobile ? "sr-only" : "flex-1 text-right"}>سؤال بحثي جديد</span>
               </button>
             </div>
             <nav aria-label="التنقل" className="no-scrollbar flex min-h-0 shrink flex-col gap-0.5 overflow-y-auto px-2 pb-1 pt-2.5">
               {navItems.map((n) => {
-                const cls = `relative flex min-h-[44px] shrink-0 cursor-pointer items-center gap-3 rounded-xl border-0 px-3 text-right text-sm transition-colors hover:bg-sf2 ${n.active ? "bg-sf2 font-semibold text-ink" : "bg-transparent font-normal text-mut"}`;
+                const cls = `relative flex min-h-[44px] shrink-0 cursor-pointer items-center gap-3 rounded-xl border-0 px-3 text-right text-sm transition-colors hover:bg-sf2 ${sidebarCollapsed && !mobile ? "justify-center px-2" : ""} ${n.active ? "bg-sf2 font-semibold text-ink" : "bg-transparent font-normal text-mut"}`;
                 const inner = (
                   <>
                     <Icon d={n.icon} />
-                    <span className="flex-1">{n.label}</span>
-                    {n.meta && <span className="text-xs font-medium text-goldT">{n.meta}</span>}
+                    <span className={sidebarCollapsed && !mobile ? "sr-only" : "flex-1"}>{n.label}</span>
+                    {n.meta && <span className={`text-xs font-medium text-goldT ${sidebarCollapsed && !mobile ? "sr-only" : ""}`}>{n.meta}</span>}
                     {!!n.badge && n.badge > 0 && (
                       <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-gold px-1.5 text-[11px] font-bold text-white">{toArabicDigits(n.badge)}</span>
                     )}
                   </>
                 );
                 return n.href ? (
-                  <Link key={n.id} href={n.href} aria-current={n.active ? "page" : undefined} className={cls}>{inner}</Link>
+                  <Link key={n.id} href={n.href} title={sidebarCollapsed && !mobile ? n.label : undefined} aria-current={n.active ? "page" : undefined} className={cls}>{inner}</Link>
                 ) : (
-                  <button key={n.id} type="button" onClick={n.onClick} aria-expanded={n.active} className={cls}>{inner}</button>
+                  <button key={n.id} type="button" title={sidebarCollapsed && !mobile ? n.label : undefined} onClick={n.onClick} aria-expanded={n.active} className={cls}>{inner}</button>
                 );
               })}
             </nav>
-            <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-3 pb-3 pt-1">
+            <div className={`flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto ${sidebarCollapsed && !mobile ? "px-2" : "px-3"} pb-3 pt-1`}>
               <div className="mt-auto flex flex-col gap-0.5">
-                <p className="mx-1 mb-1 mt-0 text-[11px] font-medium text-fnt">المساعدة</p>
+                <p className={`mx-1 mb-1 mt-0 text-[11px] font-medium text-fnt ${sidebarCollapsed && !mobile ? "sr-only" : ""}`}>المساعدة</p>
                 {helpLinks.map((h) => (
-                  <Link key={h.label} href={h.href} className="flex min-h-[44px] items-center gap-2.5 rounded-[10px] px-2 text-right text-[13px] text-mut transition-colors hover:bg-sf2 hover:text-ink">
-                    <Icon d={h.icon} size={16} />{h.label}
+                  <Link key={h.label} href={h.href} title={sidebarCollapsed && !mobile ? h.label : undefined} className={`flex min-h-[44px] items-center gap-2.5 rounded-[10px] px-2 text-right text-[13px] text-mut transition-colors hover:bg-sf2 hover:text-ink ${sidebarCollapsed && !mobile ? "justify-center" : ""}`}>
+                    <Icon d={h.icon} size={16} /><span className={sidebarCollapsed && !mobile ? "sr-only" : ""}>{h.label}</span>
                   </Link>
                 ))}
               </div>
@@ -242,17 +271,18 @@ export function AppShell({ children }: { children: ReactNode }) {
             {user ? (
               <button
                 type="button" onClick={() => { setAcctOpen((v) => !v); setNotifsOpen(false); }} aria-haspopup="menu" aria-expanded={acctOpen}
-                className={`flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border-0 px-1.5 text-right transition-colors hover:bg-sf2 ${acctOpen ? "bg-sf2" : "bg-transparent"}`}
+                title={sidebarCollapsed && !mobile ? (user.name || user.email) : undefined}
+                className={`flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border-0 px-1.5 text-right transition-colors hover:bg-sf2 ${sidebarCollapsed && !mobile ? "justify-center" : ""} ${acctOpen ? "bg-sf2" : "bg-transparent"}`}
               >
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ac text-[13px] font-semibold text-onac">{initials(user.name || user.email)}</span>
-                <span className="min-w-0 flex-1">
+                <span className={`min-w-0 flex-1 ${sidebarCollapsed && !mobile ? "sr-only" : ""}`}>
                   <span className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
                     <span className="truncate">{user.name || "حسابي"}</span>
                     <span className="rounded-full bg-sf2 px-[7px] py-px text-[10px] font-medium text-mut">باحث</span>
                   </span>
                   <span dir="ltr" className="block truncate text-right text-[11px] text-fnt">{user.email}</span>
                 </span>
-                <span className="text-xs text-fnt transition-transform duration-200" style={{ transform: `rotate(${acctOpen ? 0 : 180}deg)` }}>⌃</span>
+                {!sidebarCollapsed || mobile ? <span className="text-xs text-fnt transition-transform duration-200" style={{ transform: `rotate(${acctOpen ? 0 : 180}deg)` }}>⌃</span> : null}
               </button>
             ) : (
               <div className="flex flex-col gap-1.5 p-1">

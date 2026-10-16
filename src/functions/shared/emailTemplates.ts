@@ -53,7 +53,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </td></tr>
 <tr><td dir="rtl" style="padding:20px 8px 0;text-align:right;font-family:Tahoma, Arial, Helvetica, sans-serif;font-size:12px;line-height:20px;color:#8A8880">
 تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C;text-decoration:underline">غيّر تفضيلاتك</a>.<br>
-ديجر (Diger) — بيانات عامة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
+ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -88,7 +88,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </td></tr>
 <tr><td dir="rtl" style="padding:20px 8px 0;text-align:right;font-family:Tahoma, Arial, Helvetica, sans-serif;font-size:12px;line-height:20px;color:#8A8880">
 تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C;text-decoration:underline">غيّر تفضيلاتك</a>.<br>
-ديجر (Diger) — بيانات عامة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
+ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -123,7 +123,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </td></tr>
 <tr><td dir="rtl" style="padding:20px 8px 0;text-align:right;font-family:Tahoma, Arial, Helvetica, sans-serif;font-size:12px;line-height:20px;color:#8A8880">
 تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C;text-decoration:underline">غيّر تفضيلاتك</a>.<br>
-ديجر (Diger) — بيانات عامة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
+ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -158,7 +158,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </td></tr>
 <tr><td dir="rtl" style="padding:20px 8px 0;text-align:right;font-family:Tahoma, Arial, Helvetica, sans-serif;font-size:12px;line-height:20px;color:#8A8880">
 تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C;text-decoration:underline">غيّر تفضيلاتك</a>.<br>
-ديجر (Diger) — بيانات عامة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
+ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -193,7 +193,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </td></tr>
 <tr><td dir="rtl" style="padding:20px 8px 0;text-align:right;font-family:Tahoma, Arial, Helvetica, sans-serif;font-size:12px;line-height:20px;color:#8A8880">
 تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C;text-decoration:underline">غيّر تفضيلاتك</a>.<br>
-ديجر (Diger) — بيانات عامة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
+ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->
@@ -228,7 +228,7 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </td></tr>
 <tr><td dir="rtl" style="padding:20px 8px 0;text-align:right;font-family:Tahoma, Arial, Helvetica, sans-serif;font-size:12px;line-height:20px;color:#8A8880">
 تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C;text-decoration:underline">غيّر تفضيلاتك</a>.<br>
-ديجر (Diger) — بيانات عامة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
+ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:#6F716C;text-decoration:underline">support@diger.tech</a>
 </td></tr>
 </table>
 <!--[if mso]></td></tr></table><![endif]-->

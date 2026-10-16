@@ -11,6 +11,7 @@ export interface ResolvedJobExecutionSpec {
   pricingUnit: "call" | "item" | "page";
   unitCostUsd: number;
   pageSize: number;
+  outputFormats: Array<"xlsx" | "pdf" | "csv">;
 }
 
 export async function resolveJobExecutionSpec(
@@ -28,6 +29,7 @@ export async function resolveJobExecutionSpec(
   let pricingUnit: "call" | "item" | "page" = "call";
   let unitCostUsd: number | undefined;
   let itemTargetVolumeMax = 0;
+  let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx", "pdf", "csv"];
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
   try {
@@ -41,6 +43,11 @@ export async function resolveJobExecutionSpec(
           return `job_quote_${digest}` === jobId || q.id === jobId;
         });
         if (matched) {
+          const selectedFormats = Array.isArray(matched.output_formats)
+            ? matched.output_formats.filter((format: unknown): format is "xlsx" | "pdf" | "csv" =>
+                format === "xlsx" || format === "pdf" || format === "csv")
+            : [];
+          if (selectedFormats.length > 0) outputFormats = Array.from(new Set(selectedFormats));
           const items = Array.isArray(matched.items)
             ? matched.items
             : Array.isArray(matched.items?.items)
@@ -240,5 +247,6 @@ export async function resolveJobExecutionSpec(
     pricingUnit,
     unitCostUsd: resolvedUnitCostUsd,
     pageSize,
+    outputFormats,
   };
 }

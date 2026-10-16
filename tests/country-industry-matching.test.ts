@@ -5,10 +5,38 @@ import {
   isCompanyRowMatchingLocation,
   isCompanyRowMatchingConstraints,
   extractInterpretedParameters,
+  getMissingCompanyResearchRequirements,
+  getCompanyRequirementQuestions,
+  getCompanyRequirementItems,
+  getAmbiguousCompanyReference,
+  extractParamDisplayString,
+  industryDisplayLabelAr,
+  isPeopleSearchRequest,
 } from "../src/lib/planParameters";
 import { normalizeIcypeasCompanyParams } from "../src/lib/server/tregAdapter";
 
 describe("Country & Industry Detection and Matching", () => {
+  it("keeps people-search quote display in Arabic and does not treat the prompt as industry", () => {
+    const rawPrompt = "Find 20 decision makers Germany Germany with name title and verified work emails";
+    const params = { query: { keyword: { include: [rawPrompt] }, location: { include: ["Germany"] } } };
+    const interpreted = extractInterpretedParameters(params, "بحث صناع القرار", true);
+
+    expect(interpreted.countryAr).toBe("ألمانيا");
+    expect(interpreted.industryAr).toBe("صناع القرار والمهنيون");
+    expect(extractParamDisplayString(params, "بحث صناع القرار", true)).toBe("صناع القرار والمهنيون");
+    expect(extractParamDisplayString(params, "بحث صناع القرار", true)).not.toContain("Germany");
+  });
+
+  it("localizes the English FinTech taxonomy in customer-facing cards", () => {
+    expect(industryDisplayLabelAr("FinTech")).toBe("التقنية المالية");
+  });
+
+  it("does not route a company list with work email to people search, but does route decision makers", () => {
+    expect(isPeopleSearchRequest("٥٠ شركة تقنية مالية في ألمانيا مع بريد العمل والهاتف" )).toBe(false);
+    expect(isPeopleSearchRequest("٢٠ من صناع القرار في شركات التقنية المالية مع الاسم والمسمى وبريد العمل")).toBe(true);
+    expect(isPeopleSearchRequest("Find people in Germany with work emails")).toBe(true);
+  });
+
   it("accurately detects countries from Arabic and English requests", () => {
     expect(detectCountryFromText("عايز 5 شركات صناعة الصواريخ في ليختنشتاين")?.canonicalEnglish).toBe("Liechtenstein");
     expect(detectCountryFromText("شركات مقاولات في مصر")?.canonicalEnglish).toBe("Egypt");
@@ -44,15 +72,16 @@ describe("Country & Industry Detection and Matching", () => {
     expect(paramsDe.query.location.include).toEqual(["Germany"]);
     expect(paramsDe.query.keyword.include).toContain("solar");
 
-    // 3. Unstated country defaults to Egypt
+    // 3. Unstated country remains absent; the chat flow asks instead of assuming Egypt
     const paramsNoCountry = normalizeIcypeasCompanyParams(
-      { search: "عايز 5 شركات مقاولات" },
+      { search: "عايز 5 شركات" },
       5
     );
-    expect(paramsNoCountry.query.location.include).toEqual(["Egypt"]);
+    expect(paramsNoCountry.query.location).toBeUndefined();
+    expect(paramsNoCountry.query.keyword).toBeUndefined();
   });
 
-  it("extracts interpreted parameters with explicit country and default fallback", () => {
+  it("extracts explicit parameters and marks unstated scope as required", () => {
     // Explicit country
     const interpLi = extractInterpretedParameters(
       { search: "عايز 5 شركات صناعة الصواريخ في ليختنشتاين" },
@@ -61,13 +90,101 @@ describe("Country & Industry Detection and Matching", () => {
     expect(interpLi.countryAr).toBe("ليختنشتاين");
     expect(interpLi.isDefaultCountry).toBe(false);
 
-    // Unstated country defaults to مصر (افتراضي)
+    // Unstated country and industry must remain visibly required.
     const interpDefault = extractInterpretedParameters(
-      { search: "عايز 5 شركات مقاولات" },
-      "خطة استخراج شركات مقاولات"
+      { search: "عايز 5 شركات" },
+      "خطة استخراج شركات"
     );
-    expect(interpDefault.countryAr).toBe("مصر (افتراضي)");
+    expect(interpDefault.countryAr).toBe("يلزم تحديد الدولة");
+    expect(interpDefault.countryCanonical).toBe("");
+    expect(interpDefault.industryAr).toBe("يلزم تحديد النشاط");
     expect(interpDefault.isDefaultCountry).toBe(true);
+  });
+
+  it("reads the saved Germany and FinTech values from the structured company query", () => {
+    const interpreted = extractInterpretedParameters({
+      query: {
+        keyword: { include: ["FinTech"] },
+        location: { include: ["Germany"] },
+        industry: { include: ["Financial Services", "Banking"] },
+      },
+    }, "Old quote summary for Egypt IT companies");
+
+    expect(interpreted.countryCanonical).toBe("Germany");
+    expect(interpreted.countryAr).toBe("ألمانيا");
+    expect(interpreted.industryAr).toBe("FinTech");
+    expect(interpreted.isDefaultCountry).toBe(false);
+  });
+
+  it("requires both country and industry instead of interpreting unstated company-search defaults", () => {
+    expect(getMissingCompanyResearchRequirements("Find 100 companies")).toEqual(["country", "industry"]);
+    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم ١٠٠ شركة")).toEqual(["country", "industry"]);
+    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم ١٠٠ شركة للتواصل التجاري.")).toEqual(["country", "industry", "outreach_details"]);
+    expect(getMissingCompanyResearchRequirements("أريد قائمة تضم مية شركة للتواصل التجاري.")).toEqual(["country", "industry", "outreach_details"]);
+    expect(getMissingCompanyResearchRequirements("أريد ٥٠ شركة تقنية مالية في ألمانيا مع الاسم والموقع الإلكتروني وبريد العمل والهاتف")).toEqual([]);
+    expect(getCompanyRequirementQuestions(["country", "industry", "outreach_details"])).toEqual([
+      "ما الدولة التي تريد البحث عن الشركات فيها؟",
+      "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟",
+      "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟",
+    ]);
+    expect(getMissingCompanyResearchRequirements("Find 100 solar companies in Germany")).toEqual([]);
+    expect(getMissingCompanyResearchRequirements("Find 100 solar companies")).toEqual(["country"]);
+    expect(getMissingCompanyResearchRequirements("Find 100 companies in Germany")).toEqual(["industry"]);
+  });
+
+  it("asks what a possibly named company means instead of treating it as a generic outreach request", () => {
+    const request = "أريدك تضم شركة تواصل التجاري، وأحتاج بيانات للتواصل معها";
+    expect(getAmbiguousCompanyReference(request)).toBe("تواصل التجاري");
+    expect(getAmbiguousCompanyReference("أريد أن أضم شركة تواصل التجاري إلى القائمة.")).toBe("تواصل التجاري");
+    const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
+    const outreach = items.find((item) => item.id === "company_outreach_required");
+    expect(items[0]).toBe(outreach);
+    expect(outreach?.text).toContain("شركة محددة باسم");
+    expect(outreach?.text).toContain("قائمة شركات للتواصل التجاري");
+    expect(outreach?.text).toContain("تواصل التجاري");
+    expect(outreach?.text.length).toBeLessThanOrEqual(120);
+    expect(outreach?.options).toContain("شركة محددة بهذا الاسم");
+    expect(outreach?.options.at(-1)).toBe("أخرى");
+    expect(getAmbiguousCompanyReference("أريد قائمة تضم ١٠٠ شركة")).toBeNull();
+    expect(getMissingCompanyResearchRequirements(`${request} إجابة هدف التواصل: شركة محددة بهذا الاسم`)).not.toContain("outreach_details");
+  });
+
+  it("does not mistake a location and ordinary wording after company for a company name", () => {
+    const request = "أريد قائمة تضم ٥٠ شركة في ألمانيا تعمل في مجال التقنية المالية (FinTech)، للتواصل التجاري.";
+
+    expect(getAmbiguousCompanyReference(request)).toBeNull();
+    const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
+    expect(items.find((item) => item.id === "company_outreach_required")?.text)
+      .toBe("ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟");
+  });
+
+  it("keeps industry required when an ambiguous company gets only country and sales-purpose answers", () => {
+    const request = "أريد أن أضم شركة تواصل التجاري إلى القائمة.";
+    const answered = `${request} الدولة المطلوبة: مصر | إجابة هدف التواصل: عملاء محتملون / مبيعات`;
+    const missing = getMissingCompanyResearchRequirements(answered);
+
+    expect(missing).toContain("industry");
+    const industryQuestion = getCompanyRequirementItems(missing, answered).find((item) => item.id === "company_industry_required");
+    expect(industryQuestion?.text).toContain("تواصل التجاري");
+    expect(industryQuestion?.options).toContain("أخرى");
+    expect(getMissingCompanyResearchRequirements(`${answered} | المجال المطلوب: تقنية مالية`)).not.toContain("industry");
+  });
+
+  it("does not repeat named-company disambiguation after the user chooses a company list", () => {
+    const request = "أريد أن أضم شركة تواصل التجاري إلى القائمة.";
+    const answered = `${request} | إجابة المقصود: قائمة شركات للتواصل التجاري`;
+    const missing = getMissingCompanyResearchRequirements(answered);
+    const items = getCompanyRequirementItems(missing, answered);
+
+    expect(items[0]?.id).toBe("company_country_required");
+    expect(items.some((item) => item.text.includes("هل تقصد شركة محددة"))).toBe(false);
+  });
+
+  it("does not infer Egypt or CEO for an unscoped people search", async () => {
+    const { normalizeIcypeasPeopleParams } = await import("../src/lib/server/tregAdapter");
+    const params = normalizeIcypeasPeopleParams({ query: { keyword: { include: ["decision makers"] } } }, 20);
+    expect(params.query.location).toBeUndefined();
+    expect(params.query.currentJobTitle).toBeUndefined();
   });
 
   it("validates company rows strictly against target country and industry", () => {

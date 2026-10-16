@@ -269,7 +269,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
       },
     });
 
-    // Turn 2: User says "تمام جهز الخطة" without re-uploading file
+    // Turn 2: User provides the required company scope and says "تمام جهز الخطة" without re-uploading file
     const req = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",
       headers: {
@@ -278,7 +278,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
       },
       body: JSON.stringify({
         conversationId: "conv_turn_2_test",
-        message: "تمام جهز الخطة وابدأ التنفيذ مع استبعاد نفس الملف",
+        message: "تمام جهز الخطة لمقاولات كهروميكانيكية في مصر وابدأ التنفيذ مع استبعاد نفس الملف",
       }),
     });
 
@@ -287,8 +287,8 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
-    // Should NOT ask for the file again!
-    expect(data.outputType).not.toBe("ask_clarification");
+    // A remaining scope question is valid, but the uploaded file must not be requested again.
+    expect(JSON.stringify(data.clarificationItems || [])).not.toContain("ارفع الملف");
   });
 
   it("7. Deliverables generation profile: generates 6-sheet corporate Excel when entityType is companies", async () => {
@@ -325,12 +325,14 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(excelBuf as any);
 
-    // Per Rule 4: Excel is data-only (no audit/methodology/field-dictionary sheets)
-    expect(wb.worksheets.length).toBe(3);
+    // Excel is data-only and includes linked company/branch rows and data counters.
+    expect(wb.worksheets.length).toBe(5);
     const sheetNames = wb.worksheets.map((ws) => ws.name);
     expect(sheetNames).toContain("الملخص التنفيذي ومؤشرات السوق");
     expect(sheetNames).toContain("دليل الشركات المعتمد");
     expect(sheetNames).toContain("بيانات الشركات للتصفية");
+    expect(sheetNames).toContain("فروع الشركات");
+    expect(sheetNames).toContain("تحليل وتوزيع الشركات");
     expect(sheetNames).not.toContain("سجل تدقيق الاستبعاد والمطابقة");
     expect(sheetNames).not.toContain("جودة البيانات ومحددات الحصر");
     expect(sheetNames).not.toContain("دليل الحقول");
@@ -398,7 +400,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     expect(resMep.status).toBe(200);
     expect(dataMep.success).toBe(true);
-    expect(dataMep.outputType).not.toBe("ask_clarification");
+    expect(JSON.stringify(dataMep.clarificationItems || [])).not.toContain("ارفع الملف");
 
     // 1. Verify exclusion parsing & privacy boundary in conversation brief
     const convMepKey = dataMep.conversationId || "conv_mep_realistic_acceptance";
@@ -474,7 +476,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     const checkWb = new ExcelJS.Workbook();
     await checkWb.xlsx.load(finalExcel as any);
-    expect(checkWb.worksheets.length).toBe(3);
+    expect(checkWb.worksheets.length).toBe(5);
     checkWb.worksheets.forEach((ws) => {
       // All sheets must have RTL view
       expect(ws.views?.[0]?.rightToLeft).toBe(true);
@@ -489,9 +491,9 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     expect(csvString).toContain("شركة النيل للمقاولات الكهروميكانيكية");
     expect(csvString).not.toContain("أوراسكوم للإنشاءات,");
 
-    // 5. Methodology text references exclusion file
+    // 5. Customer methodology omits internal exclusion-file names
     const methodology = generateMethodologyText(reportPayload);
-    expect(methodology).toContain("mep_contractors_baseline.xlsx");
+    expect(methodology).not.toContain("mep_contractors_baseline.xlsx");
 
     // -------------------------------------------------------------
     // Part B: YouTube Request Without Attachment

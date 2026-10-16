@@ -20,6 +20,34 @@ export interface DiscoveryAnswer {
   resolvedDefault?: boolean;
 }
 
+export const MAX_DISCOVERY_QUESTIONS = 8;
+
+/** Recover structured clarification answers stored as JSON in older conversation messages. */
+export function parsePersistedClarificationAnswers(message: string): DiscoveryAnswer[] | null {
+  if (!message.trimStart().startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(message);
+    if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return null;
+    const answers = parsed.answers.flatMap((answer: any) => {
+      if (typeof answer?.questionId !== "string" || typeof answer?.question !== "string") return [];
+      const value = typeof answer.value === "string"
+        ? sanitizeDiscoveryText(answer.value, 200)
+        : Array.isArray(answer.value)
+          ? answer.value.map((item: unknown) => sanitizeDiscoveryText(item, 40)).filter(Boolean).slice(0, 4)
+          : undefined;
+      return [{
+        questionId: answer.questionId.slice(0, 80),
+        question: sanitizeDiscoveryText(answer.question, 120),
+        ...(value !== undefined ? { value } : {}),
+        ...(answer.skipped === true ? { skipped: true } : {}),
+      } satisfies DiscoveryAnswer];
+    });
+    return answers.length > 0 ? answers : null;
+  } catch {
+    return null;
+  }
+}
+
 export function sanitizeDiscoveryText(value: unknown, maxLength: number): string {
   if (typeof value !== "string") return "";
   return value
@@ -66,7 +94,7 @@ function normalizeOptions(input: unknown): string[] {
 export function normalizeDiscoveryQuestions(input: unknown): DiscoveryQuestion[] {
   if (!Array.isArray(input)) return [];
 
-  return input.slice(0, 3).flatMap((entry: unknown, index) => {
+  return input.slice(0, MAX_DISCOVERY_QUESTIONS).flatMap((entry: unknown, index) => {
     if (typeof entry === "string") {
       const text = sanitizeDiscoveryText(entry, 120);
       if (!text) return [];

@@ -32,6 +32,8 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
     expect(prompt).toContain("NO EMOJI");
     expect(prompt).toContain("NO LEGALITY OR ACADEMIC-VALIDITY PROMISES");
     expect(prompt).toContain("allowOther");
+    expect(prompt).toContain("Company research: country and industry are required");
+    expect(prompt).toContain("never assume Egypt or manufacturing");
     expect(prompt).not.toMatch(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}]/u);
     expect(prompt).not.toMatch(/tikhub|serpapi|tregEndpointId/i);
 

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
-import { normalizeDataset, detectPlatform } from "@/lib/server/normalizationPipeline";
-import { toArabicDigits } from "@/lib/arabicDigits";
+import { generateMethodologyText } from "@/functions/shared/fileGenerators";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +77,7 @@ export async function POST(
 
       if (purchaseErr) {
         return NextResponse.json(
-          { success: false, error: "فشل استقطاع رصيد المنهجية: " + purchaseErr.message },
+          { success: false, error: "تعذر إتمام طلب صياغة المنهجية حالياً." },
           { status: 500 }
         );
       }
@@ -97,7 +96,7 @@ export async function POST(
           );
         }
         return NextResponse.json(
-          { success: false, error: purchaseRes?.error || "تعذر إتمام عملية شراء المنهجية." },
+          { success: false, error: "تعذر إتمام طلب صياغة المنهجية حالياً." },
           { status: 400 }
         );
       }
@@ -138,101 +137,19 @@ export async function POST(
       // Fallback
     }
 
-    const isCompanyJob =
-      rawParsed?.metadata?.entityType === "companies" ||
-      jobDoc.endpoint_id?.includes("compan") ||
-      jobDoc.platform === "companies";
-
-    const cleanTitle =
-      rawParsed?.metadata?.title && !rawParsed.metadata.title.includes(".")
-        ? rawParsed.metadata.title
-        : isCompanyJob
-          ? "دليل واستخراج بيانات الشركات والمؤسسات المعتمدة"
-          : (jobDoc.template_slug && !jobDoc.template_slug.includes("."))
-            ? jobDoc.template_slug
-            : "تقرير البيانات والأبحاث الميدانية المعتمدة";
-
-    const cleanPlatform =
-      rawParsed?.metadata?.platform === "web" || jobDoc.platform === "web" || !jobDoc.platform
-        ? "المصادر الرقمية المتاحة على شبكة الإنترنت"
-        : rawParsed?.metadata?.platform || jobDoc.platform;
-
-    const normalized = normalizeDataset(rawParsed || { profile: null, rows: [] }, {
-      platform: cleanPlatform,
-      title: cleanTitle,
-      jobId,
-    });
-
-    const isProfileMode = Boolean(
-      normalized.profile &&
-      (normalized.metadata.entityType === "profile" || normalized.rows.length <= 1)
-    );
-
-    let methodologyStatement = "";
-
-    if (isProfileMode) {
-      const p = normalized.profile!;
-      const facts = {
-        platform: cleanPlatform,
-        account: p.username || `@${jobDoc.template_slug || "account"}`,
-        displayName: p.display_name || "",
-        verifiedStatus: p.verified ? "موثق رسمياً" : "غير موثق",
-        followers: toArabicDigits(p.followers_count || 0),
-        likes: toArabicDigits(p.likes_count || 0),
-        videosCount: toArabicDigits(p.posts_count || 0),
-        date: (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0],
-        recordsCount: toArabicDigits(normalized.rows.length || 1),
-      };
-
-      methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
-
-1. مصدر البيانات وأصلها (Data Provenance):
-تم جمع بيانات هذه الدراسة بصورة آلية ومباشرة عبر منصة Diger من المصدر العلني المتاح عبر (${facts.platform}) للحساب (${facts.account})${facts.displayName ? ` - [${facts.displayName}]` : ""}، وحالة التوثيق (${facts.verifiedStatus}).
-
-2. النطاق الزمني والتغطية (Temporal Bounds & Coverage):
-أُجريت عملية الاستخراج بتاريخ ${facts.date}. وتمثل المؤشرات الرقمية لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للحساب في تاريخ الجمع:
-- إجمالي عدد المتابعين: ${facts.followers}
-- إجمالي عدد الإعجابات: ${facts.likes}
-- إجمالي عدد المقاطع المنشورة: ${facts.videosCount}
-- إجمالي السجلات المستخرجة: ${facts.recordsCount} سجل
-
-3. النزاهة المنهجية ومحددات التحليل (Integrity & Methodological Constraints):
-- سلامة المؤشرات: نُقلت الأرقام كما هي معلنة دون أي معالجة أو تقريب أو ترجيح إحصائي اصطناعي.
-- حدود العينة: هذه البيانات مستخلصة لحساب فردي محدد وتصلح لأغراض دراسة الحالة (Case Study) والتحليل المقارن، ولا تمثل عينة احتمالية عشوائية لعموم مستخدمي المنصة.`;
-    } else {
-      const k = normalized.kpis;
-      const dateStr = (jobDoc.finished_at || jobDoc.created_at || new Date().toISOString()).split("T")[0];
-      const timeRange = k.earliestDate && k.latestDate ? `من ${k.earliestDate} إلى ${k.latestDate}` : `بتاريخ ${dateStr}`;
-      const entityTypeName = isCompanyJob
-        ? "شركات ومؤسسات تجارية معتمدة"
-        : normalized.metadata.entityType === "posts"
-          ? "منشورات وتدوينات"
-          : normalized.metadata.entityType === "comments"
-            ? "سلاسل تعليقات وردود تفاعلية"
-            : "سجلات مستخرجة";
-
-      methodologyStatement = `### توثيق المنهجية الأكاديمية (Academic Methodology Statement)
-
-1. أصل ومصدر البيانات (Data Provenance & Collection Strategy):
-تم استخراج بيانات هذه الدراسة بصورة مؤتمتة ومطابقة للأصول المنهجية عبر منصة Diger للبحث والاستقصاء الميداني، استناداً إلى (${cleanPlatform}).
-- موضوع / نطاق البحث: ${cleanTitle}
-- نوع الكيانات المستخرجة: ${entityTypeName}
-- إجمالي السجلات المستخلصة بعد تدقيق التكرار: ${toArabicDigits(k.totalRecords)} سجل
-- السجلات المكررة التي تم استبعادها آلياً: ${toArabicDigits(k.duplicatesRemoved)} سجل
-
-2. النطاق الزمني ومؤشرات التفاعل المرصودة (Temporal Bounds & Engagement Metrics):
-تم حصر البيانات للفترة الزمنية (${timeRange})، وتلخص المؤشرات الإجمالية التالية التفاعل العام المرصود:
-- إجمالي المشاهدات المسجلة: ${toArabicDigits(k.totalViews)}
-- إجمالي الإعجابات والتفاعلات: ${toArabicDigits(k.totalLikes)}
-- إجمالي إعادة النشر والمشاركات: ${toArabicDigits(k.totalShares)}
-- إجمالي الردود والتعليقات: ${toArabicDigits(k.totalComments)}
-- نسبة اكتمال الحقول الخالية من القيم المفقودة: ${toArabicDigits(k.dataCompletenessPct)}%
-
-3. النزاهة المنهجية ومحددات التحليل (Methodological Integrity & Limitations):
-- نقل المؤشرات: جرى نقل النصوص والمقاييس الرقمية بدقة دون أي تحوير أو ترجيح إحصائي أو توليد اصطناعي.
-- طبيعة العينة: تمثل هذه البيانات عينة رصدية محددة بضوابط ومعايير الاستعلام المعتمدة، ولا تشكل بالضرورة عينة احتمالية عشوائية تمثيلية لكافة مجتمع المنصة.
-- أخلاقيات البحث: اقتصر الجمع على المحتوى المنشور علناً في المصادر المتاحة دون الالتفاف على أي قيود خصوصية.`;
-    }
+    const reportPayload = rawParsed && typeof rawParsed === "object"
+      ? {
+          ...rawParsed,
+          metadata: {
+            ...(rawParsed.metadata || {}),
+            collectedAt: rawParsed.metadata?.collectedAt || jobDoc.finished_at || jobDoc.created_at,
+          },
+        }
+      : {
+          metadata: { collectedAt: jobDoc.finished_at || jobDoc.created_at },
+          rows: [],
+        };
+    const methodologyStatement = generateMethodologyText(reportPayload);
 
     return NextResponse.json({
       success: true,
@@ -244,7 +161,7 @@ export async function POST(
   } catch (err: any) {
     console.error("Error in /api/jobs/[id]/methodology:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ أثناء إعداد توثيق المنهجية." },
+      { success: false, error: "تعذر إعداد التوثيق المنهجي حالياً. يرجى المحاولة لاحقاً." },
       { status: 500 }
     );
   }

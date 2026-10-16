@@ -8,9 +8,9 @@ describe("Composer & Activity Feed Integrity", () => {
     // Acceptance strictly limited to XLSX and CSV
     expect(composerCode).toContain(".xlsx,.csv");
     // Clear disclosure of unsupported PDF / image / media formats
-    expect(composerCode).toContain("ملفات PDF والمستندات المصورة غير مدعومة حالياً");
+    expect(composerCode).toContain("ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا");
     // Helper text visible to users below the form
-    expect(composerCode).toContain("يدعم إرفاق ملفات الاستبعاد (Excel و CSV حتى ٥ ميجابايت). ملفات PDF والمستندات المصورة غير مدعومة حالياً.");
+    expect(composerCode).toContain("يدعم إرفاق ملفات الاستبعاد بصيغتي إكسل وسي إس في حتى ٥ ميجابايت.");
     // Size cap enforced at 5 MB
     expect(composerCode).toContain("5 * 1024 * 1024");
   });

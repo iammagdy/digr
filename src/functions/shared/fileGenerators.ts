@@ -59,6 +59,10 @@ function getBoldFontBuffer(): Buffer {
 export function formatArabicRtl(text: string): string {
   if (!text) return "";
 
+  // PDFKit renders an Arabic-only numeric token from right to left; reverse it so the
+  // visual sequence remains the normal Arabic-Indic number order in the generated PDF.
+  if (/^[٠-٩٬٫٪ .:-]+$/u.test(text)) return text.split("").reverse().join("");
+
   const hasArabic = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
   if (!hasArabic) return text;
 
@@ -114,6 +118,61 @@ const borderThin = {
   right: { style: "thin" as const, color: { argb: COLOR_BORDER } },
 };
 
+function customerFacingTitle(title: string): string {
+  const cleaned = String(title || "")
+    .replace(/\bicypeas(?:[-_. ]companies[-_. ]search)?\b/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*[•·:—-]\s*/g, " — ")
+    .replace(/(?:نتائج|بيانات)\s+(?:استخراج|بحث)\s*—?\s*$/u, "نتائج البحث")
+    .replace(/^(?:\s*[—–-]\s*)+|(?:\s*[—–-]\s*)+$/g, "")
+    .trim();
+  return cleaned || "نتائج البحث";
+}
+
+function customerFacingPlatform(platform: string): string {
+  const normalized = String(platform || "").toLowerCase();
+  if (/\b(twitter|tweets|\bx\b)/i.test(normalized)) return "منصة إكس";
+  if (normalized.includes("youtube")) return "يوتيوب";
+  if (normalized.includes("tiktok")) return "تيك توك";
+  if (normalized.includes("facebook")) return "فيسبوك";
+  if (normalized.includes("instagram")) return "إنستغرام";
+  if (normalized.includes("google") || normalized.includes("serp")) return "جوجل";
+  if (normalized.includes("telegram")) return "تيليجرام";
+  if (/company|companies|b2b|icypeas/i.test(normalized)) return "بيانات الشركات والأعمال";
+  return "مصادر متاحة";
+}
+
+function customerFacingEntityType(entityType: string): string {
+  const entityLabels: Record<string, string> = {
+    companies: "شركات",
+    posts: "منشورات",
+    comments: "تعليقات",
+    profile: "ملف شخصي",
+    search: "نتائج بحث",
+    tabular: "سجلات",
+  };
+  return entityLabels[String(entityType || "").toLowerCase()] || "سجلات";
+}
+
+function customerFacingCountry(country: unknown): string {
+  const value = String(country || "").trim();
+  if (!value) return "غير محدد";
+  if (/[\u0600-\u06FF]/.test(value)) return value;
+  const labels: Record<string, string> = {
+    egypt: "مصر",
+    germany: "ألمانيا",
+    "united arab emirates": "الإمارات العربية المتحدة",
+    uae: "الإمارات العربية المتحدة",
+    "saudi arabia": "السعودية",
+    france: "فرنسا",
+    "united kingdom": "المملكة المتحدة",
+    uk: "المملكة المتحدة",
+    "united states": "الولايات المتحدة",
+    usa: "الولايات المتحدة",
+  };
+  return labels[value.toLowerCase()] || "غير محدد";
+}
+
 /**
  * Generate a research-grade Excel (.xlsx) workbook with 5 sheets:
  * 1. لوحة المؤشرات العامة (Executive KPI Dashboard)
@@ -132,7 +191,8 @@ export async function generateExcelReport(
   }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  wb.title = norm.metadata.title;
+  const reportTitle = customerFacingTitle(norm.metadata.title);
+  wb.title = reportTitle;
 
   const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const rowsCount = norm.rows.length;
@@ -143,7 +203,7 @@ export async function generateExcelReport(
   // Title Block
   wsDash.mergeCells("A1:H1");
   const titleCell = wsDash.getCell("A1");
-  titleCell.value = norm.metadata.title;
+  titleCell.value = reportTitle;
   titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   titleCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -190,17 +250,6 @@ export async function generateExcelReport(
   });
 
   wsDash.addRow([]); // Blank row 6
-
-  // Methodology Statement Banner (Row 7 & 8)
-  wsDash.mergeCells("A7:H8");
-  const methCell = wsDash.getCell("A7");
-  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
-  methCell.font = { name: "Calibri", size: 9.5, color: { argb: "FF78350F" } };
-  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
-  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
-  methCell.border = borderThin;
-  wsDash.getRow(7).height = 24;
-  wsDash.getRow(8).height = 24;
 
   wsDash.columns = [
     { width: 16 }, { width: 18 }, { width: 22 }, { width: 22 },
@@ -291,7 +340,7 @@ export async function generateExcelReport(
 
   // ================= Sheet 4: جودة البيانات =================
   const wsQuality = wb.addWorksheet("جودة البيانات", { views: [{ rightToLeft: true }] });
-  const qTitle = wsQuality.addRow(["تقرير جودة وتدقيق البيانات (Data Quality & Verification Audit)"]);
+  const qTitle = wsQuality.addRow(["تقرير جودة البيانات (Data Quality Audit)"]);
   qTitle.font = { name: "Calibri", size: 13, bold: true, color: { argb: COLOR_NAVY_HEADER } };
   wsQuality.addRow([]);
 
@@ -320,7 +369,7 @@ export async function generateExcelReport(
     ["نسبة التغطية المنهجية (Coverage)", "نسبة التغطية غير متاحة (مجتمع البحث غير محصور)", "نظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية ولا تمثل حصراً شاملاً"],
     ["النطاق الزمني للرصد", timeRangeDesc, "الفترة الزمنية الفعلية لتواريخ النشر المستخرجة"],
     ["النزاهة المنهجية (Integrity)", "استخراج مباشر من الواجهات العامة المتاحة", "نُقلت البيانات كما هي معلنة دون أي ترجيح أو توليد اصطناعي"],
-    ["ضوابط الخصوصية (Privacy)", "بيانات عامة علنية", "استخراج مقتصر على الواجهات والصفحات المتاحة علناً دون تجاوز"],
+    ["ضوابط الخصوصية (Privacy)", "مصادر متاحة علنًا", "استخراج مقتصر على الواجهات والصفحات المتاحة علناً دون تجاوز"],
   ];
 
   qualityData.forEach((q, idx) => {
@@ -377,14 +426,14 @@ export async function generateCompanyExcelReport(
   const norm: NormalizedDataset = normalizeDataset(payload);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  wb.title = norm.metadata.title;
+  const reportTitle = customerFacingTitle(norm.metadata.title);
+  wb.title = reportTitle;
 
   const detectedTitleCountry = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
-  const targetCountry = (norm.metadata as any).country ||
-    detectedTitleCountry?.arabicLabel ||
-    (norm.metadata.platform && !["web", "companies", "b2b", "digr", "digr data platform"].includes(norm.metadata.platform.toLowerCase())
-      ? norm.metadata.platform
-      : "مصر");
+  const targetCountry = customerFacingCountry((norm.metadata as any).country || detectedTitleCountry?.arabicLabel);
+  const sourceProvider = String(
+    (norm.metadata as any).providerName || (norm.metadata as any).provider || (norm.metadata as any).sourceName || "غير متاح"
+  ).trim() || "غير متاح";
 
   // ================= Sheet 1: الملخص التنفيذي ومؤشرات السوق =================
   const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", {
@@ -394,15 +443,15 @@ export async function generateCompanyExcelReport(
   // Title Banner
   wsExec.mergeCells("A1:H2");
   const titleCell = wsExec.getCell("A1");
-  titleCell.value = norm.metadata.title;
-  titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: COLOR_WHITE } };
+  titleCell.value = reportTitle;
+  titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   titleCell.alignment = { horizontal: "center", vertical: "middle" };
 
   // Subtitle
   wsExec.mergeCells("A3:H3");
   const subCell = wsExec.getCell("A3");
-  subCell.value = `تقرير استخراج وتوثيق الشركات • النطاق: ${targetCountry} • تاريخ الاستخراج: ${norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10)}`;
+  subCell.value = `تقرير استخراج وتوثيق الشركات • المزود: ${sourceProvider} • النطاق: ${targetCountry} • تاريخ الاستخراج: ${norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10)}`;
   subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF334155" } };
   subCell.alignment = { horizontal: "center", vertical: "middle" };
 
@@ -431,15 +480,6 @@ export async function generateCompanyExcelReport(
     val.border = borderThin;
   });
 
-  wsExec.addRow([]); // Blank row 6
-  wsExec.mergeCells("A7:H8");
-  const methCell = wsExec.getCell("A7");
-  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
-  methCell.font = { name: "Calibri", size: 9.5, italic: true, color: { argb: "FF475569" } };
-  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
-  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
-  methCell.border = borderThin;
-
   // ================= Sheet 2: دليل الشركات المعتمد =================
   const wsDir = wb.addWorksheet("دليل الشركات المعتمد", {
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
@@ -452,7 +492,10 @@ export async function generateCompanyExcelReport(
     "رابط لينكد إن",
     "المدينة / المحافظة",
     "الهاتف التجاري",
-    "حالة التحقق",
+    "بريد العمل (كما ورد من المصدر)",
+    "توفر البريد المهني",
+    "حالة التوفر في البيانات",
+    "معرّف الشركة",
   ];
   const dirHeaderRow = wsDir.addRow(dirHeaders);
   dirHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
@@ -461,21 +504,26 @@ export async function generateCompanyExcelReport(
   dirHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
   norm.rows.forEach((r, idx) => {
-    const city = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const extractedCity = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const city = extractedCity && extractedCity !== "غير محدد" ? extractedCity : "غير متاح";
     const website = r.website || r.website_url || r.domain || "غير متاح";
     const linkedin = r.linkedin_url || r.linkedin || r.url || "غير متاح";
-    const rawPhone = r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "غير متاح";
-    const phoneVal = typeof rawPhone === "string" ? rawPhone.replace(/^'/, "") : rawPhone;
+    const rawPhone = r.phone ?? r.phone_number ?? r.business_phone ?? "غير متاح";
+    const phoneVal = String(rawPhone).replace(/^'/, "");
+    const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
 
     const row = wsDir.addRow([
       idx + 1,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.activity || r.sector || r.industry || r.category || "عام / غير مدرج",
+      r.activity || r.sector || r.industry || r.category || "غير متاح",
       website,
       linkedin,
       city,
       phoneVal,
-      "معتمدة مستقلة",
+      workEmail || "غير متاح",
+      workEmail ? "موجود" : "غير موجود",
+      "مدرجة في البيانات المستخرجة",
+      r.company_id || r.source_id || r.id || `comp_${idx + 1}`,
     ]);
     row.font = { name: "Calibri", size: 10 };
     row.height = 22;
@@ -497,14 +545,17 @@ export async function generateCompanyExcelReport(
     { width: 32 },
     { width: 20 },
     { width: 22 },
+    { width: 34 },
+    { width: 20 },
     { width: 18 },
+    { width: 26 },
   ];
 
   // ================= Sheet 3: بيانات الشركات للتصفية =================
   const wsFlat = wb.addWorksheet("بيانات الشركات للتصفية", {
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
   });
-  const flatHeaders = ["كود السجل", "اسم الشركة", "النطاق الرسمي", "رابط لينكد إن", "النشاط", "المدينة / المحافظة", "الهاتف الرسمي", "حالة الملاءمة"];
+  const flatHeaders = ["كود السجل", "اسم الشركة", "النطاق الرسمي", "رابط لينكد إن", "النشاط", "المدينة / المحافظة", "الهاتف الرسمي", "بريد العمل (كما ورد من المصدر)", "توفر البريد المهني", "حالة الملاءمة"];
   const flatHeaderRow = wsFlat.addRow(flatHeaders);
   flatHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
   flatHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
@@ -512,18 +563,22 @@ export async function generateCompanyExcelReport(
   flatHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
   norm.rows.forEach((r, idx) => {
-    const city = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
-    const rawFlatPhone = r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "N/A";
-    const flatPhoneVal = typeof rawFlatPhone === "string" ? rawFlatPhone.replace(/^'/, "") : rawFlatPhone;
+    const extractedCity = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const city = extractedCity && extractedCity !== "غير محدد" ? extractedCity : "غير متاح";
+    const rawFlatPhone = r.phone ?? r.phone_number ?? r.business_phone ?? "غير متاح";
+    const flatPhoneVal = String(rawFlatPhone).replace(/^'/, "");
+    const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
     const row = wsFlat.addRow([
-      r.id || `comp_${idx + 1}`,
+      r.company_id || r.source_id || r.id || `comp_${idx + 1}`,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
-      r.website || r.website_url || r.domain || "N/A",
-      r.linkedin_url || r.linkedin || r.url || "N/A",
-      r.activity || r.sector || r.industry || r.category || "عام",
+      r.website || r.website_url || r.domain || "غير متاح",
+      r.linkedin_url || r.linkedin || r.url || "غير متاح",
+      r.activity || r.sector || r.industry || r.category || "غير متاح",
       city,
       flatPhoneVal,
-      r._relevance_status || "مطابق معتمد",
+      workEmail || "غير متاح",
+      workEmail ? "موجود" : "غير موجود",
+      r._relevance_status || "لم تُراجع الملاءمة",
     ]);
     row.font = { name: "Calibri", size: 9.5 };
     row.height = 20;
@@ -534,7 +589,105 @@ export async function generateCompanyExcelReport(
     });
   });
   wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
-  wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 18 }];
+  wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 34 }, { width: 20 }, { width: 18 }];
+
+  // ================= Sheet 4: فروع مرتبطة بمعرّف الشركة =================
+  // Branch data is included only when it is explicitly present in the source row.
+  const wsBranches = wb.addWorksheet("فروع الشركات", {
+    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+  });
+  const branchHeaders = ["معرّف الفرع", "معرّف الشركة", "اسم الشركة", "اسم الفرع", "المدينة", "العنوان", "الهاتف التجاري", "بريد العمل", "رابط المصدر"];
+  const branchHeaderRow = wsBranches.addRow(branchHeaders);
+  branchHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  branchHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  branchHeaderRow.height = 26;
+  branchHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
+  let branchCount = 0;
+  norm.rows.forEach((company, companyIndex) => {
+    const companyId = String(company.company_id || company.source_id || company.id || `comp_${companyIndex + 1}`);
+    const companyName = company.company_name || company.name || company.title || `شركة #${companyIndex + 1}`;
+    let branches: any[] = Array.isArray(company.branches) ? company.branches : [];
+    if (!branches.length && typeof company.branches === "string") {
+      try {
+        const parsed = JSON.parse(company.branches);
+        if (Array.isArray(parsed)) branches = parsed;
+      } catch {
+        branches = [];
+      }
+    }
+    branches.forEach((branch: any, branchIndex: number) => {
+      const item = typeof branch === "string" ? { address: branch } : branch;
+      if (!item || typeof item !== "object") return;
+      branchCount += 1;
+      wsBranches.addRow([
+        String(item.id || item.branch_id || `${companyId}_branch_${branchIndex + 1}`),
+        companyId,
+        companyName,
+        item.name || item.branch_name || "غير متاح",
+        item.city || "غير متاح",
+        item.address || item.location || "غير متاح",
+        String(item.phone ?? item.phone_number ?? "غير متاح"),
+        item.work_email || item.email || "غير متاح",
+        item.source_url || item.url || "غير متاح",
+      ]);
+    });
+  });
+  if (!branchCount) wsBranches.addRow(["لا توجد بيانات فروع واردة من المصدر"]);
+  wsBranches.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, branchCount + 1), column: branchHeaders.length } };
+  wsBranches.columns = [{ width: 26 }, { width: 24 }, { width: 34 }, { width: 26 }, { width: 20 }, { width: 40 }, { width: 22 }, { width: 34 }, { width: 38 }];
+
+  // ================= Sheet 5: عدادات وتحليل الحقول المتاحة =================
+  const wsAnalysis = wb.addWorksheet("تحليل وتوزيع الشركات", { views: [{ rightToLeft: true }] });
+  wsAnalysis.addRow(["المؤشر", "العدد", "ملاحظة"]);
+  const availableEmailCount = norm.rows.filter((r) => String(r.work_email || r.workEmail || r.email || "").trim()).length;
+  const industryCounts = new Map<string, number>();
+  const cityCounts = new Map<string, number>();
+  norm.rows.forEach((r) => {
+    const industry = String(r.activity || r.sector || r.industry || r.category || "غير متاح").trim() || "غير متاح";
+    const city = String(r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry) || "غير متاح").trim() || "غير متاح";
+    industryCounts.set(industry, (industryCounts.get(industry) || 0) + 1);
+    cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
+  });
+  [
+    ["الشركات الواردة من المصدر", norm.rows.length, "عدد السجلات في ورقة دليل الشركات"],
+    ["الفروع الواردة من المصدر", branchCount, branchCount ? "عدد عناصر الفروع المرفقة صراحةً بالسجلات" : "لم ترد بيانات فروع من المصدر"],
+    ["سجلات تحتوي بريد عمل", availableEmailCount, "وجود البريد في المصدر لا يعني التحقق من صحته"],
+    ["سجلات بلا بريد عمل", norm.rows.length - availableEmailCount, "عداد وجود الحقل فقط"],
+  ].forEach((row) => wsAnalysis.addRow(row));
+  wsAnalysis.addRow([]);
+  wsAnalysis.addRow(["التوزيع حسب النشاط كما ورد", "العدد", ""]);
+  [...industryCounts.entries()].sort((a, b) => b[1] - a[1]).forEach(([label, count]) => wsAnalysis.addRow([label, count, "حسب قيمة النشاط الواردة من المصدر"]));
+  wsAnalysis.addRow([]);
+  wsAnalysis.addRow(["التوزيع حسب المدينة كما وردت أو استُخرجت من العنوان", "العدد", ""]);
+  [...cityCounts.entries()].sort((a, b) => b[1] - a[1]).forEach(([label, count]) => wsAnalysis.addRow([label, count, "لا تُنشأ مدينة عند غياب عنوان واضح"]));
+  wsAnalysis.columns = [{ width: 48 }, { width: 16 }, { width: 58 }];
+  wsAnalysis.getRow(1).font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+  wsAnalysis.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  wsAnalysis.getRow(1).height = 26;
+  wsAnalysis.getRow(1).alignment = { horizontal: "center", vertical: "middle" };
+
+  const doubtfulRows = Array.isArray(_uncertainRows) ? _uncertainRows : [];
+  if (doubtfulRows.length) {
+    const wsUncertain = wb.addWorksheet("سجلات تحتاج مراجعة", { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
+    const uncertainHeaders = ["معرّف السجل", "اسم الشركة", "النشاط الوارد", "الموقع الوارد", "حالة الملاءمة", "سبب الإحالة للمراجعة"];
+    const header = wsUncertain.addRow(uncertainHeaders);
+    header.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
+    header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+    header.height = 26;
+    header.alignment = { horizontal: "center", vertical: "middle" };
+    doubtfulRows.forEach((row: any, index: number) => {
+      wsUncertain.addRow([
+        escapeFormula(String(row.id || `uncertain_${index + 1}`)),
+        escapeFormula(String(row.company_name || row.name || row.title || "غير متاح")),
+        escapeFormula(String(row.activity || row.sector || row.industry || row.category || "غير متاح")),
+        escapeFormula(String(row.location || row.city || row.address || "غير متاح")),
+        "تحتاج مراجعة",
+        escapeFormula(String(row._relevance_reason || "لم يتأكد التطابق")),
+      ]);
+    });
+    wsUncertain.autoFilter = { from: { row: 1, column: 1 }, to: { row: doubtfulRows.length + 1, column: uncertainHeaders.length } };
+    wsUncertain.columns = [{ width: 24 }, { width: 34 }, { width: 30 }, { width: 32 }, { width: 20 }, { width: 52 }];
+  }
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
@@ -589,10 +742,10 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       size: "A4",
       margins: { top: 25, bottom: 25, left: 30, right: 30 },
       info: {
-        Title: norm.metadata.title,
+        Title: customerFacingTitle(norm.metadata.title),
         Author: "Diger",
-        Subject: "Data Report",
-        Creator: "Diger Data Platform",
+        Subject: "منهجية جمع البيانات",
+        Creator: "Diger",
       },
     });
 
@@ -605,31 +758,25 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     doc.on("error", reject);
 
     const contentWidth = 535;
-    const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const dateStr = toArabicDigits(norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10));
     const rowsCount = norm.rows.length;
     const isCompany = norm.metadata.entityType === "companies";
 
     const detectedTitleCountryPdf = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
-    const targetCountry = (norm.metadata as any).country ||
-      detectedTitleCountryPdf?.arabicLabel ||
-      (norm.metadata.platform && !["web", "companies", "b2b", "digr", "digr data platform"].includes(norm.metadata.platform.toLowerCase())
-        ? norm.metadata.platform
-        : "مصر");
+    const targetCountry = customerFacingCountry((norm.metadata as any).country || detectedTitleCountryPdf?.arabicLabel);
 
     // 1. Header Banner (Academic Navy)
     doc.rect(30, 24, contentWidth, 52).fill("#1B365D");
 
     doc.font("ArabicBold").fontSize(13.5).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl(norm.metadata.title), 40, 32, {
+    doc.text(formatArabicRtl(customerFacingTitle(norm.metadata.title)), 40, 32, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 3,
     });
 
     doc.font("ArabicRegular").fontSize(8).fillColor("#CBD5E1");
-    const subTitle = isCompany
-      ? `وثيقة المنهجية الأكاديمية وحصر البيانات • ${targetCountry} • تاريخ الاستخراج: ${dateStr}`
-      : `تقرير استخراج وتوثيق البيانات الأكاديمية • ${norm.metadata.platform} • تاريخ الاستخراج: ${dateStr}`;
+    const subTitle = `وثيقة منهجية جمع البيانات • ${isCompany ? targetCountry : customerFacingPlatform(norm.metadata.platform)} • تاريخ الجمع: ${dateStr}`;
     doc.text(formatArabicRtl(subTitle), 40, 52, {
       width: contentWidth - 20,
       align: "right",
@@ -645,16 +792,16 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     const cards = isCompany
       ? [
-          { label: "إجمالي المسلم المعتمد", val: `${rowsCount}` },
-          { label: "السجلات المطلوبة", val: `${norm.metadata.targetRequested || rowsCount}` },
-          { label: "نسبة اكتمال البيانات", val: `${norm.kpis.dataCompletenessPct}%` },
+          { label: "عدد السجلات المعروضة", val: toArabicDigits(rowsCount) },
+          { label: "العدد المطلوب", val: toArabicDigits(norm.metadata.targetRequested || rowsCount) },
+          { label: "اكتمال الحقول", val: `${toArabicDigits(norm.kpis.dataCompletenessPct)}٪` },
           { label: "النطاق الجغرافي", val: targetCountry.slice(0, 18) },
         ]
       : [
-          { label: "إجمالي السجلات", val: `${rowsCount}` },
-          { label: "التفاعل المرصود", val: `${(norm.kpis.totalViews || norm.kpis.totalLikes || norm.kpis.totalComments || 0).toLocaleString("en-US")}` },
-          { label: "نسبة الاكتمال", val: `${norm.kpis.dataCompletenessPct}%` },
-          { label: "المنصة المستهدفة", val: norm.metadata.platform.slice(0, 18) },
+          { label: "عدد السجلات", val: toArabicDigits(rowsCount) },
+          { label: "التفاعل المرصود", val: toArabicDigits((norm.kpis.totalViews || norm.kpis.totalLikes || norm.kpis.totalComments || 0).toLocaleString("en-US")) },
+          { label: "اكتمال الحقول", val: `${toArabicDigits(norm.kpis.dataCompletenessPct)}٪` },
+          { label: "المنصة", val: customerFacingPlatform(norm.metadata.platform).slice(0, 18) },
         ];
 
     cards.forEach((card, idx) => {
@@ -680,7 +827,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     // 3. جدول المطابقة والحصر الإحصائي (Reconciliation Counters Table)
     doc.rect(30, currentY, contentWidth, 22).fill("#24436E");
     doc.font("ArabicBold").fontSize(8.5).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl("جدول المطابقة والحصر الإحصائي (Reconciliation & Quality Audit) :"), 40, currentY + 6, {
+    doc.text(formatArabicRtl("ملخص الأعداد وجودة الحقول:"), 40, currentY + 6, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 2,
@@ -688,16 +835,15 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     currentY += 22;
 
     const rawCollected = (norm.metadata as any).rawCollected || (rowsCount + (norm.kpis.duplicatesRemoved || 0));
-    const targetRequested = norm.metadata.targetRequested != null ? `${norm.metadata.targetRequested}` : "غير محدد مسبقاً";
+    const targetRequested = norm.metadata.targetRequested != null ? toArabicDigits(norm.metadata.targetRequested) : "غير محدد";
     const dups = norm.kpis.duplicatesRemoved || 0;
 
     const counterRows = [
-      { label: "السجلات المستهدفة في الخطة (Target Requested)", val: targetRequested },
-      { label: "السجلات المستلمة أولياً من المصادر (Raw Collected)", val: `${rawCollected}` },
-      { label: "السجلات المطابقة المعتمدة بعد المراجعة (Validated Matched)", val: `${rowsCount}` },
-      { label: "السجلات المستبعدة للتكرار أو عدم المطابقة (Excluded)", val: `${dups}` },
-      { label: "نسبة اكتمال حقول السجلات (Field Completeness)", val: `${norm.kpis.dataCompletenessPct}%` },
-      { label: "معدل التحقق المنهجي (Methodological Verification)", val: "فحص تطابق وتدقيق آلي متعدد المراحل" },
+      { label: "العدد المطلوب في الخطة", val: targetRequested },
+      { label: "السجلات المستلمة من المصادر", val: toArabicDigits(rawCollected) },
+      { label: "السجلات المعروضة بعد إزالة التكرار", val: toArabicDigits(rowsCount) },
+      { label: "السجلات المزالة بوصفها مكررة", val: toArabicDigits(dups) },
+      { label: "اكتمال الحقول", val: `${toArabicDigits(norm.kpis.dataCompletenessPct)}٪` },
     ];
 
     counterRows.forEach((item, idx) => {
@@ -721,67 +867,47 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     currentY += counterRows.length * 17 + 8;
 
-    // 4. Tabular Sample Overview (3 sample records)
-    doc.font("ArabicBold").fontSize(9.5).fillColor("#1B365D");
-    doc.text(formatArabicRtl(isCompany ? "عينة من الشركات المعتمدة المسلمة :" : "عينة من السجلات المستخرجة :"), 30, currentY, {
-      width: contentWidth,
+    // 4. Methodology narrative only. The data and sample records belong in Excel/CSV.
+    doc.rect(30, currentY, contentWidth, 22).fill("#24436E");
+    doc.font("ArabicBold").fontSize(8.5).fillColor("#FFFFFF");
+    doc.text(formatArabicRtl("منهجية الجمع:"), 40, currentY + 6, {
+      width: contentWidth - 20,
       align: "right",
       wordSpacing: 2,
     });
-    currentY += 14;
-
-    const sampleRows = norm.rows.slice(0, 3);
-    const rowHeight = 32;
-
-    sampleRows.forEach((r, idx) => {
-      const ry = currentY + idx * rowHeight;
-      const bg = idx % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
-      doc.rect(30, ry, contentWidth, rowHeight).fillAndStroke(bg, "#CBD5E1");
-
-      const labelText = r.company_name || r.name || r.text || r.comment_text || r.display_name || r.author_name || `سجل #${idx + 1}`;
-      const metaParts = [
-        r.website || r.domain ? `موقع: ${r.website || r.domain}` : null,
-        r.activity || r.sector ? `نشاط: ${r.activity || r.sector}` : null,
-        r.city || r.governorate ? `مدينة: ${r.city || r.governorate}` : null,
-        r.phone ? `هاتف: ${r.phone}` : null,
-        r.username ? r.username : null,
-        r.likes_count ? `إعجابات: ${r.likes_count}` : null,
-        r.views_count ? `مشاهدات: ${r.views_count}` : null,
-      ].filter(Boolean);
-
-      doc.font("ArabicBold").fontSize(8).fillColor("#0F172A");
-      doc.text(formatArabicRtl(String(labelText).slice(0, 85)), 40, ry + 5, {
-        width: contentWidth - 20,
-        align: "right",
-        wordSpacing: 1.5,
-      });
-
-      if (metaParts.length > 0) {
-        doc.font("ArabicRegular").fontSize(7).fillColor("#64748B");
-        doc.text(formatArabicRtl(metaParts.join(" • ")), 40, ry + 18, {
-          width: contentWidth - 20,
-          align: "right",
-          wordSpacing: 1.5,
-        });
-      }
+    currentY += 22;
+    const methodologyText = String((norm.metadata as any).methodology || "جُمعت السجلات من المصادر المتاحة وفق نطاق البحث المحدد.")
+      .replace(/\s+/g, " ")
+      .slice(0, 1000);
+    doc.font("ArabicRegular").fontSize(8).fillColor("#334155");
+    const methodologyHeight = Math.min(120, Math.max(38, doc.heightOfString(formatArabicRtl(methodologyText), {
+      width: contentWidth - 20,
+      align: "right",
+      lineGap: 3,
+      wordSpacing: 1.2,
+    })));
+    doc.text(formatArabicRtl(methodologyText), 40, currentY + 6, {
+      width: contentWidth - 20,
+      height: methodologyHeight,
+      align: "right",
+      lineGap: 3,
+      wordSpacing: 1.2,
     });
-
-    currentY += sampleRows.length * rowHeight + 10;
+    currentY += methodologyHeight + 14;
 
     // 5. Methodological Limitations & Integrity Box
-    doc.rect(30, currentY, contentWidth, 75).fillAndStroke("#FEF3C7", "#FDE68A");
+    doc.rect(30, currentY, contentWidth, 82).fillAndStroke("#FEF3C7", "#FDE68A");
     doc.font("ArabicBold").fontSize(8).fillColor("#92400E");
-    doc.text(formatArabicRtl("محددات البحث وإخلاء المسؤولية العلمية والإحصائية :"), 40, currentY + 6, {
+    doc.text(formatArabicRtl("حدود ما يوضحه هذا التقرير:"), 40, currentY + 6, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 2,
     });
 
     const limitationsText = [
-      "• مصادر البيانات: تم استخراج البيانات مباشرة من المصادر المتاحة علناً دون أي التفاف على سياسات الخصوصية.",
-      "• طبيعة العينة: تمثل البيانات لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة في تاريخ الجمع؛ ونظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية.",
-      "• النزاهة العلمية: تم تطبيق تدقيق الملاءمة واستبعاد التكرار والتحقق من النطاقات المعلنة بأمانة منهجية تامة.",
-      "• حدود المسؤولية: لا نضمن الحصر الشامل لكافة الكيانات بالسوق أو حداثة أرقام الاتصال لتغيرها الدوري في مصادرها المعلنة.",
+      "• يعرض التقرير السجلات التي أعادتها المصادر المتاحة وقت الجمع، ولا يثبت شمول جميع الجهات في السوق.",
+      "• اكتمال الحقول هو قياس لوجود القيم في السجلات، وليس تحققاً من صحتها.",
+      "• لم تُقَس نسبة تغطية المجتمع المستهدف، ولم يُجرَ تحقق مستقل من بيانات الاتصال.",
     ].join("\n");
 
     doc.font("ArabicRegular").fontSize(6.8).fillColor("#78350F");
@@ -794,7 +920,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     // 6. Footer (Single Page Safe)
     doc.font("ArabicRegular").fontSize(7).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج وتوثيق هذا التقرير عبر منصة Diger للأبحاث والبيانات • جميع الحقوق محفوظة"), 30, 800, {
+    doc.text(formatArabicRtl("وثيقة منهجية جمع البيانات عبر منصة Diger • جميع الحقوق محفوظة"), 30, 800, {
       width: contentWidth,
       align: "center",
       wordSpacing: 2,
@@ -817,44 +943,34 @@ export function generateMethodologyText(
   }
 ): string {
   const norm: NormalizedDataset = normalizeDataset(payload);
-  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const dateStr = toArabicDigits(norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10));
   const rowsCount = options?.uniqueDelivered ?? norm.rows.length;
-  const jobId = norm.metadata.jobId || "N/A";
 
   const dedupCount = options?.duplicatesRemoved ?? options?.deduplicationCount ?? norm.kpis.duplicatesRemoved ?? 0;
   const rawCollected = options?.rawCollected ?? (norm.kpis.totalRecords + (norm.kpis.duplicatesRemoved || 0));
 
   return [
     "============================================================",
-    "             منصة Diger لاستخراج البيانات العامة             ",
-    "               وثيقة المنهجية الأكاديمية والنزاهة              ",
+    "                    منصة Diger للبيانات                    ",
+    "                   ملخص منهجية جمع البيانات                  ",
     "============================================================",
     "",
-    `معرّف الطلب (Job ID): ${jobId}`,
     `تاريخ الجمع: ${dateStr}`,
-    `المصدر / المنصة: ${norm.metadata.platform}`,
-    `نوع الكيان المستخرج: ${norm.metadata.entityType}`,
-    `إجمالي السجلات المستخرجة: ${rowsCount}`,
-    `إجمالي السجلات المستلمة (Raw Collected): ${rawCollected}`,
-    `إجمالي السجلات الخام المستخرجة: ${rawCollected}`,
-    `السجلات الفريدة المسلمة (Unique Delivered): ${rowsCount}`,
-    `السجلات الفريدة المعتمدة: ${rowsCount}`,
-    `السجلات المستبعدة للتكرار (Duplicates Removed): ${dedupCount}`,
-    `السجلات المستبعدة والمكررة: ${dedupCount}`,
-    `نسبة اكتمال الحقول (Completeness): ${norm.kpis.dataCompletenessPct}%`,
-    "نسبة التغطية المنهجية (Coverage): نسبة التغطية غير متاحة (مجتمع البحث غير محصور)",
-    "النزاهة المنهجية (Integrity): استخراج مباشر من المصادر المتاحة",
+    `المصدر: ${customerFacingPlatform(norm.metadata.platform)}`,
+    `نوع السجلات: ${customerFacingEntityType(norm.metadata.entityType)}`,
+    `عدد السجلات المعروضة: ${toArabicDigits(rowsCount)}`,
+    `السجلات المستلمة من المصادر: ${toArabicDigits(rawCollected)}`,
+    `السجلات المزالة بوصفها مكررة: ${toArabicDigits(dedupCount)}`,
+    `اكتمال الحقول: ${toArabicDigits(norm.kpis.dataCompletenessPct)}٪`,
+    "تغطية المجتمع المستهدف: لم تُقَس.",
     "",
     "------------------------------------------------------------",
-    "الملاحظات المنهجية ومعايير الجمع والنزاهة:",
+    "ملاحظات حول البيانات:",
     "------------------------------------------------------------",
-    norm.metadata.methodology,
-    "",
-    "إخلاء المسؤولية العلمية والإحصائية:",
-    "• تم استخراج هذه البيانات حصرياً من مصادر متاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
-    "• تمثل لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للبيانات المرصودة.",
-    "• نظراً لأن مجتمع البحث العام غير محصور، فإن العينة غير احتمالية ولا تمثل حصراً شاملاً.",
-    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية، ولا تتضمن جمع بيانات اتصال شخصية.",
+    "تعرض هذه الوثيقة الأعداد والحقول الموجودة في ملف التسليم. إزالة التكرار تعتمد على السجلات التي أمكن مطابقتها.",
+    "اكتمال الحقول يقيس وجود قيمة في الحقل فقط، ولا يعني التحقق من صحتها.",
+    "لم تُقَس نسبة تغطية المجتمع المستهدف، ولا يمكن استنتاج الشمول أو التمثيل الإحصائي من هذه الأعداد وحدها.",
+    "لم يُجرَ تحقق مستقل من بيانات الاتصال.",
     "",
     "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
     "============================================================",

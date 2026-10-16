@@ -36,6 +36,40 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     expect(card).toContain("أوافق وابدأ البحث");
   });
 
+  it("PlanQuoteCard describes people fields as present or absent without claiming verification", () => {
+    const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
+    expect(card).toContain("موجودًا أو غير موجود في السجل");
+    expect(card).toContain("وجود البريد لا يعني التحقق من صحته");
+    expect(card).not.toContain("متحقق / غير متاح");
+    expect(card).not.toContain("حالة التحقق لكل حقل");
+  });
+
+  it("people result columns use presence wording instead of verification claims", () => {
+    const results = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
+    expect(results).toContain('email_verification_status: "توفر البريد"');
+    expect(results).toContain('title_verification_status: "توفر المسمى الوظيفي"');
+    expect(results).toContain('verification_status: "الحالة المسجلة"');
+    expect(results).not.toContain('verification_status: "حالة التحقق"');
+  });
+
+  it("keeps visible starter, attachment, and format copy in Arabic", () => {
+    const emptyChat = readFileSync("src/app/dashboard/chat/components/EmptyChat.tsx", "utf8");
+    const composer = readFileSync("src/app/dashboard/chat/components/Composer.tsx", "utf8");
+    const results = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
+
+    expect(emptyChat).toContain("شركات ومؤسسات (إكسل)");
+    expect(emptyChat).toContain("ابحث لي عن ٥ شركات");
+    expect(emptyChat).not.toContain("Excel");
+    expect(composer).toContain('aria-label="رفع ملف استبعاد بصيغة إكسل أو سي إس في"');
+    expect(composer).toContain("ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا");
+    expect(composer).not.toContain("جداول البيانات Excel");
+    expect(results).toContain("تقرير نتائج جمع البيانات (بي دي إف)");
+    expect(results).toContain('label: "إكسل"');
+    expect(results).toContain('label: "سي إس في"');
+    expect(results).not.toContain("ملف Excel");
+    expect(results).not.toContain("تقرير PDF");
+  });
+
   it("4. The details sentence has no counters, progress bar or badges", () => {
     const discovery = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(discovery).not.toContain("answeredCount");

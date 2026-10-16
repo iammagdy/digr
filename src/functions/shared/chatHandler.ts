@@ -25,6 +25,7 @@ import {
   validatePlanAgainstSchemas,
   validatePlanAgainstLiveCatalog,
   LiveCatalogIssue,
+  PlanItem,
   PlanState,
 } from "./planManager";
 import { getBalance } from "./ledger";
@@ -32,6 +33,7 @@ import {
   discoveryQuestionPriority,
   normalizeClarificationQuestions,
   sanitizeClarificationText,
+  formatClarificationMessageForAssistant,
   type NormalizedClarificationQuestion,
   INTERNAL_DISCOVERY_KEYS,
 } from "./clarification";
@@ -51,7 +53,41 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
+import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
+
+function customerAuthoredRequirementText(message: string): string {
+  const trimmed = (message || "").trim();
+  if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return trimmed;
+    return parsed.answers
+      .flatMap((answer: any) => {
+        if (typeof answer?.value === "string") return [sanitizeClarificationText(answer.value, 200)];
+        if (Array.isArray(answer?.value)) {
+          return answer.value
+            .filter((value: unknown): value is string => typeof value === "string")
+            .map((value: string) => sanitizeClarificationText(value, 40));
+        }
+        return [];
+      })
+      .filter(Boolean)
+      .join(" ");
+  } catch {
+    return trimmed;
+  }
+}
+
+function explicitCompanyClarificationNotes(notes?: string): string[] {
+  const labels = ["الدولة المطلوبة:", "المجال المطلوب:", "إجابة هدف التواصل:"];
+  return (notes || "")
+    .split(/\s*\|\s*/)
+    .map((part) => part.trim())
+    .filter((part) => labels.some((label) => part.startsWith(label)))
+    .map((part) => part.slice(part.indexOf(":") + 1).trim())
+    .filter(Boolean);
+}
 
 export interface ChatHandlerInput {
   userId: string;
@@ -358,8 +394,14 @@ export function buildAutoPlanProposal(
   outputFormats: string[];
   methodologyNotes: string;
 } {
+  const requestText = [message, ...(brief.topics || []), ...(brief.keywords || []), brief.notes || ""]
+    .filter(Boolean)
+    .join(" ");
+  const peopleSearch = isPeopleSearchRequest(requestText);
   const mentionedPlats = detectMentionedPlatforms(message);
-  const platform = (brief.platforms && brief.platforms.length > 0)
+  const platform = peopleSearch
+    ? "people"
+    : (brief.platforms && brief.platforms.length > 0)
     ? brief.platforms[0]
     : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "tiktok"));
   const platformNorm = platform.toLowerCase();
@@ -369,6 +411,9 @@ export function buildAutoPlanProposal(
     const cPlat = (c.platform || c.category || "").toLowerCase();
     const cSlug = (c.slug || "").toLowerCase();
     const cId = (c.tregEndpointId || c.id || "").toLowerCase();
+    if (peopleSearch) {
+      return cPlat === "people" || cSlug.includes("people") || cId.includes("people");
+    }
     if (platformNorm === "companies" || platformNorm === "b2b") {
       return cPlat === "companies" || cPlat === "b2b" || cSlug.includes("companies") || cId.includes("companies");
     }
@@ -412,9 +457,12 @@ export function buildAutoPlanProposal(
     matchedCap.slug.includes("companies") ||
     Boolean(matchedCap.tregEndpointId && matchedCap.tregEndpointId.includes("companies"));
 
-  const platformLabel = isCompanySearch
-    ? "قواعد بيانات الشركات"
-    : getPlatformLabelAr(platformNorm);
+  const isPeopleCapability = peopleSearch || /people/i.test(`${matchedCap.slug} ${matchedCap.tregEndpointId || ""}`);
+  const platformLabel = isPeopleCapability
+    ? "صناع القرار والمهنيون"
+    : isCompanySearch
+      ? "قواعد بيانات الشركات"
+      : getPlatformLabelAr(platformNorm);
 
   const isProfileCapability =
     (matchedCap.pricingUnit as string) === "profile" ||
@@ -425,25 +473,43 @@ export function buildAutoPlanProposal(
     typeof topicLabel === "string" &&
     (topicLabel.startsWith("@") || (!topicLabel.includes(" ") && !topicLabel.includes("،") && /^[a-zA-Z0-9_.-]+$/.test(topicLabel)));
 
-  const detectedCountry = detectCountryFromText(message);
-  const detectedIndustry = detectIndustryFromText(message);
+  const detectedCountry = detectCountryFromText(requestText);
+  const detectedIndustry = detectIndustryFromText(requestText);
 
-  const countryNameAr = detectedCountry ? detectedCountry.arabicLabel : "مصر (افتراضي)";
-  const stepParams: Record<string, any> = isCompanySearch
+  const countryNameAr = detectedCountry?.arabicLabel;
+  const hasDetectedIndustry = detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" &&
+    detectedIndustry.englishKeywords.some((keyword) => keyword !== "contracting");
+  const companyQuery: Record<string, any> = {
+    ...(hasDetectedIndustry ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
+    ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
+  };
+  const peopleKeywords = hasDetectedIndustry
+    ? detectedIndustry.englishKeywords
+    : (topicLabel && topicLabel !== "البيانات العامة المطلوبة" &&
+       !isPeopleSearchRequest(topicLabel) && !detectCountryFromText(topicLabel)
+      ? [topicLabel]
+      : ["decision makers"]);
+  const stepParams: Record<string, any> = isPeopleCapability
     ? {
         query: {
-          keyword: { include: detectedIndustry.englishKeywords },
-          location: { include: [detectedCountry ? detectedCountry.canonicalEnglish : "Egypt"] },
+          keyword: { include: peopleKeywords },
+          jobTitle: { include: ["CEO", "CTO", "CFO", "Head", "Director", "VP"] },
+          ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
         },
-        search: `${detectedIndustry.arabicLabel} في ${countryNameAr}`,
-        country: detectedCountry ? detectedCountry.canonicalEnglish : "Egypt",
-        location: detectedCountry ? detectedCountry.canonicalEnglish : "Egypt",
-        industry: detectedIndustry.arabicLabel,
-        pagination: { size: Math.min(volume, 100) },
       }
-    : {
-        query: topicLabel,
-      };
+    : isCompanySearch
+      ? {
+        query: companyQuery,
+        search: [hasDetectedIndustry ? detectedIndustry.arabicLabel : "الشركات", countryNameAr]
+          .filter(Boolean)
+          .join(" في "),
+        ...(detectedCountry ? { country: detectedCountry.canonicalEnglish, location: detectedCountry.canonicalEnglish } : {}),
+        ...(hasDetectedIndustry ? { industry: detectedIndustry.arabicLabel } : {}),
+        pagination: { size: Math.min(volume, 100) },
+        }
+      : {
+          query: topicLabel,
+        };
 
   if (isProfileCapability || isExplicitHandle) {
     stepParams.username = topicLabel.replace(/^@/, "").trim();
@@ -463,17 +529,119 @@ export function buildAutoPlanProposal(
     paginationStrategy: matchedCap.paginationType || "cursor",
   };
 
-  const summaryAr = isCompanySearch
-    ? `استخراج بيانات ${volume} سجل من شركات ${detectedIndustry.arabicLabel} في ${countryNameAr}`
-    : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
+  const summaryAr = isPeopleCapability
+    ? `بحث ${volume} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
+    : isCompanySearch
+      ? `استخراج بيانات ${volume} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
+      : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
     type: "propose_plan",
     summaryAr,
     capabilities: [step],
     outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx", "pdf", "csv"],
-    methodologyNotes: `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
+    methodologyNotes: isPeopleCapability
+      ? "البحث عن صناع القرار والمهنيين بحسب المجال والدولة والمسمى الوظيفي؛ وجود أي حقل لا يعني التحقق المستقل من صحته."
+      : `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
   };
+}
+
+/** Keep people-search requests on the people capability, even if the model
+ * proposes a generic company plan or refuses while that capability is enabled. */
+export function routePeopleAlternative(
+  output: any,
+  brief: ResearchBrief,
+  capabilities: Capability[],
+  requestText: string,
+): any {
+  if (!isPeopleSearchRequest(requestText)) return output;
+
+  // Preserve an explicit adaptive clarification from the model. The code
+  // still enforces the required country below when a plan or alternative was
+  // proposed without it.
+  if (output?.type === "ask_clarification") return output;
+
+  const proposedPeopleCapability = output?.type === "propose_plan" &&
+    Array.isArray(output.capabilities) &&
+    output.capabilities.some((step: any) => /people/i.test(
+      `${step?.capabilitySlug || ""} ${step?.endpointId || ""}`,
+    ));
+  if (proposedPeopleCapability) return output;
+
+  if (![
+    "suggest_alternative",
+    "propose_plan",
+    "refuse",
+    "answer_question",
+    "search_catalog",
+  ].includes(output?.type)) return output;
+
+  const peopleCapability = capabilities.find((capability) =>
+    /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
+  );
+  if (!peopleCapability) {
+    return {
+      type: "refuse",
+      reasonAr: "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً.",
+    };
+  }
+
+  if (!detectCountryFromText(requestText)) {
+    const question = "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟";
+    const intro = "قبل إعداد عرض السعر، أحتاج تحديد الدولة حتى لا أفترضها.";
+    return {
+      type: "ask_clarification",
+      reasonAr: intro,
+      intro,
+      questions: [{ id: "people_country_required", question, type: "free", allowOther: true }],
+      questionsAr: [question],
+    };
+  }
+
+  return buildAutoPlanProposal(brief, capabilities, requestText);
+}
+
+/** Route explicit company-search intent to the verified company capability when
+ * the model stalls or suggests an unrelated service. Never quote without scope.
+ */
+export function routeCompanySearchRequest(
+  output: any,
+  brief: ResearchBrief,
+  capabilities: Capability[],
+  requestText: string,
+): any {
+  if (isPeopleSearchRequest(requestText)) return output;
+  const entity = extractEntityType(requestText);
+  if (entity.entityType !== "companies") return output;
+
+  const companyCapability = capabilities.find((capability) =>
+    /companies|company/i.test(`${capability.platform || ""} ${capability.category || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
+  );
+  if (!companyCapability) {
+    return {
+      type: "refuse",
+      reasonAr: "خدمة البحث عن الشركات غير متاحة حالياً.",
+    };
+  }
+
+  const missing = getMissingCompanyResearchRequirements(requestText);
+  if (missing.length > 0) {
+    const items = getCompanyRequirementItems(missing, requestText);
+    const questions = items.map((item) => item.text);
+    const intro = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+    return {
+      type: "ask_clarification",
+      reasonAr: intro,
+      intro,
+      questions: items,
+      questionsAr: questions,
+    };
+  }
+
+  // Company requests need a single, priceable company-search capability. The
+  // model may return a superficially relevant multi-step plan that later fails
+  // validation or inflates the requested volume, so rebuild it deterministically.
+  return buildAutoPlanProposal(brief, capabilities, requestText);
 }
 
 /**
@@ -956,11 +1124,12 @@ export class ChatHandler {
       ? [brief.exclusionFile]
       : [];
 
-    const researchIntent = extractResearchIntent(message, undefined, activeFiles);
+    const assistantFacingMessage = formatClarificationMessageForAssistant(message);
+    const researchIntent = extractResearchIntent(assistantFacingMessage, undefined, activeFiles);
     const discoveryDecision = evaluateDiscoveryDecision(researchIntent);
     let isPhase2 = false;
 
-    const mentionedPlats = detectMentionedPlatforms(message);
+    const mentionedPlats = detectMentionedPlatforms(assistantFacingMessage);
     const approvedSocialPlatforms = ["facebook", "x", "twitter", "youtube", "instagram", "tiktok", "reddit", "linkedin"];
     const hasApprovedPlatformInMessage = mentionedPlats.some((p) => approvedSocialPlatforms.includes(p.toLowerCase()));
     const hasApprovedPlatformInBrief = brief.platforms.some((p) => approvedSocialPlatforms.includes(p.toLowerCase()));
@@ -974,7 +1143,9 @@ export class ChatHandler {
 
     const isCompanyIntent =
       researchIntent.entityType.value === "companies" ||
-      extractEntityType(message).entityType === "companies";
+      extractEntityType(assistantFacingMessage).entityType === "companies" ||
+      /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسات|مؤسسة/.test(assistantFacingMessage.toLowerCase()) ||
+      brief.platforms.some((platform) => /compan|b2b|شركة/i.test(platform));
 
     if (isTestSearchScenario) {
       isPhase2 = false;
@@ -1242,7 +1413,9 @@ export class ChatHandler {
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
-            content: r.content_ar || "",
+            content: r.role === "user"
+              ? formatClarificationMessageForAssistant(r.content_ar || "")
+              : r.content_ar || "",
           }));
       } else {
         const historyRes = await this.tables.listRows({
@@ -1259,10 +1432,21 @@ export class ChatHandler {
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
-            content: r.content,
+            content: r.role === "user"
+              ? formatClarificationMessageForAssistant(r.content || "")
+              : r.content,
           }));
       }
       supabaseMs += Date.now() - tSbHistStart;
+
+      // Clarification card answers arrive as a small JSON payload. Keep the
+      // original user request in scope so explicit counts and company filters
+      // survive the answer turn instead of being replaced by model defaults.
+      const conversationRequestText = [
+        ...messagesContext.filter((entry) => entry.role === "user").map((entry) => customerAuthoredRequirementText(entry.content)),
+        customerAuthoredRequirementText(message),
+        ...explicitCompanyClarificationNotes(brief.notes),
+      ].filter(Boolean).join(" ");
 
       // 7. Execute LLM Turn
       let parsedPurposes: string[] = [];
@@ -1559,6 +1743,12 @@ export class ChatHandler {
         return out;
       })();
 
+      // The language model can incorrectly suggest an unrelated alternative for a
+      // people-search request. Prefer the verified people capability when present.
+      output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
+      // Explicit company requests receive the same deterministic routing guard.
+      output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
+
       // 8. Process Output Actions
       currentStep = "output_action";
       const stalledAnswerText =
@@ -1640,12 +1830,22 @@ export class ChatHandler {
           persona: userProfile?.persona,
           userMessage: message,
         });
+        const companyRequirementsText = conversationRequestText;
+        const missingCompanyRequirements = isCompanyIntent && !isPeopleSearchRequest(companyRequirementsText)
+          ? getMissingCompanyResearchRequirements(companyRequirementsText)
+          : [];
         const hasPlatformOrTopic = Boolean(
           (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
         );
-        clarificationItemsList = hasPlatformOrTopic
-          ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
-          : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+        if (missingCompanyRequirements.length > 0) {
+          clarificationItemsList = getCompanyRequirementItems(missingCompanyRequirements, companyRequirementsText);
+          clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+          finalContentAr = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+        } else {
+          clarificationItemsList = hasPlatformOrTopic
+            ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
+            : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+        }
         clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
         if (clarificationItemsList.length > 0) {
           finalContentAr = deduplicateIntroText(
@@ -1688,15 +1888,23 @@ export class ChatHandler {
         finalContentAr = (output as any).answerAr;
       } else if (output.type === "propose_plan") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
-        const explicitCountry = detectCountryFromText(message);
+        const explicitCountry = detectCountryFromText(conversationRequestText);
+        const explicitRequestedVolume = researchIntent.sampleSize.provenance === "EXPLICIT"
+          ? researchIntent.sampleSize.value
+          : (isCardAnswer ? brief.targetVolume : undefined);
         const mapPlanItems = (out: any) =>
           ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
             const itemParams = { ...(c.params || {}) };
-            const detectedIndustry = detectIndustryFromText(message);
+            const capabilityId = c.capabilitySlug || c.endpointId || "";
+            const isRecordSearchCapability = /compan|b2b|people/i.test(capabilityId);
+            const requestedRecordVolume = isRecordSearchCapability && explicitRequestedVolume && explicitRequestedVolume > 0
+              ? explicitRequestedVolume
+              : undefined;
+            const detectedIndustry = detectIndustryFromText(conversationRequestText);
             if (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0)) {
               itemParams.query = {
-                keyword: { include: detectedIndustry.englishKeywords },
-                location: { include: [explicitCountry ? explicitCountry.canonicalEnglish : "Egypt"] },
+                ...(detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
+                ...(explicitCountry ? { location: { include: [explicitCountry.canonicalEnglish] } } : {}),
               };
             }
             if (explicitCountry && !itemParams.country && !itemParams.location) {
@@ -1706,9 +1914,15 @@ export class ChatHandler {
                 itemParams.query.location = { include: [explicitCountry.canonicalEnglish] };
               }
             }
+            if (requestedRecordVolume && itemParams.pagination && typeof itemParams.pagination === "object") {
+              const currentPageSize = Number(itemParams.pagination.size);
+              if (!Number.isFinite(currentPageSize) || currentPageSize > requestedRecordVolume) {
+                itemParams.pagination.size = requestedRecordVolume;
+              }
+            }
             return {
               stepId: c.stepId,
-              capabilitySlug: c.capabilitySlug || c.endpointId,
+              capabilitySlug: capabilityId,
               endpointId: c.endpointId || c.capabilitySlug,
               paginationStrategy: c.paginationStrategy,
               params: {
@@ -1724,22 +1938,54 @@ export class ChatHandler {
                     }
                   : {}),
               },
-              targetVolumeMin: c.targetVolumeMin || 1,
-              targetVolumeMax: c.targetVolumeMax,
+              targetVolumeMin: requestedRecordVolume
+                ? Math.min(c.targetVolumeMin || 1, requestedRecordVolume)
+                : c.targetVolumeMin || 1,
+              targetVolumeMax: requestedRecordVolume || c.targetVolumeMax,
             };
           });
 
         let planOutput: any = output;
-        let planItems = mapPlanItems(planOutput);
+        let planItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(planOutput));
+        const companyPlan = planItems.some((item: any) =>
+          /compan|b2b/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
+        );
+        const peoplePlan = planItems.some((item: any) =>
+          /people/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
+        );
+        const requiredFieldsText = conversationRequestText;
+        const missingCompanyFields = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
+          ? getMissingCompanyResearchRequirements(requiredFieldsText)
+          : [];
+        const missingPeopleCountry = peoplePlan && !detectCountryFromText(requiredFieldsText) ? ["country" as const] : [];
+        const missingRequiredFields = [...missingCompanyFields, ...missingPeopleCountry];
+        if (missingRequiredFields.length > 0) {
+          finalContentAr = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
+          clarificationItemsList = companyPlan
+            ? getCompanyRequirementItems(missingCompanyFields, requiredFieldsText)
+            : [{ id: "people_country_required", text: "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟", question: "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true }];
+          clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: clarificationItemsList,
+            questionsAr: clarificationQuestionsList,
+          } as any;
+          planOutput = null;
+        }
 
         // Deterministic check: platform mentioned by user must match platform in proposed plan
         let platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
         let planValidation = platformCheck.valid
           ? validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities)
           : { valid: false, errors: [] as string[], issues: [] as LiveCatalogIssue[] };
+        if (missingRequiredFields.length > 0) {
+          planValidation = { valid: false, errors: ["missing-company-required-fields"], issues: [] as LiveCatalogIssue[] };
+        }
 
         let planRetries = 0;
-        while (platformCheck.valid && !planValidation.valid && planRetries < 3) {
+        while (missingRequiredFields.length === 0 && platformCheck.valid && !planValidation.valid && planRetries < 3) {
           if (planValidation.issues.some((i) => i.kind === "missing_cost")) {
             console.warn("[chat:plan_validation_missing_cost_abort_retry]", { issues: planValidation.issues });
             break;
@@ -1752,7 +1998,7 @@ export class ChatHandler {
           await repeatTurn();
           if (output.type === "propose_plan") {
             planOutput = output;
-            planItems = mapPlanItems(planOutput);
+            planItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(planOutput));
             platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
             if (platformCheck.valid) {
               planValidation = validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities);
@@ -1763,7 +2009,9 @@ export class ChatHandler {
           }
         }
 
-        if (testScenario === "plan_ghost_then_stall") {
+        if (missingRequiredFields.length > 0) {
+          // Keep the clarification response created above; no quote should be saved with inferred defaults.
+        } else if (testScenario === "plan_ghost_then_stall") {
           console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
           const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
           clarificationQuestionsList = planFallback.items.map((item) => item.text);
@@ -1809,7 +2057,7 @@ export class ChatHandler {
               } as any;
             } else {
               const autoPlan = buildAutoPlanProposal(brief, validationCaps, message);
-              const autoPlanItems = mapPlanItems(autoPlan);
+              const autoPlanItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(autoPlan));
               const autoCheck = validatePlanAgainstLiveCatalog(autoPlanItems, turnEndpoints, allCapabilities);
               if (autoCheck.valid) {
                 planOutput = autoPlan;
@@ -2254,6 +2502,15 @@ export class ChatHandler {
         clarificationItemsList = undefined;
       }
 
+      // Ask one question per turn so the next clarification can be chosen from
+      // the customer's latest answer instead of presenting a fixed questionnaire.
+      if (clarificationItemsList?.length) {
+        clarificationItemsList = clarificationItemsList.slice(0, 1);
+        clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+      } else if (clarificationQuestionsList?.length) {
+        clarificationQuestionsList = clarificationQuestionsList.slice(0, 1);
+      }
+
       return {
         conversationId,
         messageId: assistantMsgId,
@@ -2265,6 +2522,7 @@ export class ChatHandler {
         revisionQuote: revisionQuoteData,
         clarificationQuestions: clarificationQuestionsList,
         clarificationItems: clarificationItemsList,
+        clarificationIntro: clarificationItemsList?.length ? finalContentAr : undefined,
         suggestedAlternative: output.type === "suggest_alternative" ? output : undefined,
         refusalReason: output.type === "refuse" ? output.reasonAr : undefined,
         tokensUsed: {

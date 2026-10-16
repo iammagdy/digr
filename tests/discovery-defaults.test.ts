@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatClarificationMessageForAssistant,
   formatStructuredClarificationAnswers,
   normalizeClarificationQuestions,
   validateStructuredClarificationAnswers,
@@ -213,5 +214,24 @@ describe("structured answer validation", () => {
     const formatted = formatStructuredClarificationAnswers(parsed);
     expect(formatted).not.toMatch(/res_|rel_|chg_|top_|gwl_|ledger|quote|charge|reserve/i);
     expect(JSON.parse(formatted).answers).toHaveLength(2);
+  });
+
+  it("keeps stored clarification JSON and internal question IDs out of the model context", () => {
+    const payload = formatStructuredClarificationAnswers(validateStructuredClarificationAnswers({
+      type: "clarification_answers",
+      answers: [
+        { questionId: "company_country_required", question: "ما الدولة؟", value: "ألمانيا" },
+        { questionId: "company_industry_required", question: "ما المجال؟", value: "تقنية مالية" },
+        { questionId: "company_outreach_required", question: "ما الهدف؟", value: "عملاء محتملون / مبيعات" },
+      ],
+    })!);
+    const modelMessage = formatClarificationMessageForAssistant(payload);
+
+    expect(modelMessage).toContain("الدولة المطلوبة: ألمانيا");
+    expect(modelMessage).toContain("المجال المطلوب: تقنية مالية");
+    expect(modelMessage).toContain("هدف التواصل والبيانات المطلوبة: عملاء محتملون / مبيعات");
+    expect(modelMessage).not.toContain("clarification_answers");
+    expect(modelMessage).not.toContain("company_industry_required");
+    expect(modelMessage).not.toContain("questionId");
   });
 });

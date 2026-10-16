@@ -129,6 +129,14 @@ export function detectCountryFromText(text: string): CountryMapping | null {
 export function detectIndustryFromText(text: string): IndustryMapping {
   const t = (text || "").toLowerCase().trim();
 
+  if (t.includes("fintech") || t.includes("financial technology") || t.includes("التقنية المالية") || t.includes("التكنولوجيا المالية")) {
+    return {
+      englishKeywords: ["fintech", "financial technology"],
+      arabicLabel: "FinTech",
+      exactTaxonomy: ["Financial Services", "Banking", "Information Technology & Services"],
+    };
+  }
+
   if (t.includes("صواريخ") || t.includes("صاروخ") || t.includes("rocket") || t.includes("aerospace") || t.includes("فضاء")) {
     return {
       englishKeywords: ["aerospace", "rocket"],
@@ -251,7 +259,9 @@ export function detectIndustryFromText(text: string): IndustryMapping {
 
   const cleaned = t
     .replace(/[^\w\s\u0600-\u06FF]/g, " ")
-    .replace(/\b(عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
+    .replace(/[٠-٩0-9]/g, " ")
+    .replace(/\b(عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
+    .replace(/عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|خطة|استخراج|ملف|في|داخل|بـ/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 
@@ -259,7 +269,13 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return { englishKeywords: [cleaned], arabicLabel: cleaned };
   }
 
-  return { englishKeywords: ["contracting"], arabicLabel: "قواعد بيانات الشركات" };
+  return { englishKeywords: [], arabicLabel: "يلزم تحديد النشاط" };
+}
+
+/** Customer-facing industry label for recognized English taxonomy names. */
+export function industryDisplayLabelAr(label: string): string {
+  if (label.trim().toLowerCase() === "fintech") return "التقنية المالية";
+  return label;
 }
 
 export function isCompanyRowMatchingLocation(row: Record<string, any>, expectedCountryCanonical?: string | null): boolean {
@@ -423,16 +439,30 @@ export function isCompanyRowMatchingConstraints(
 
 /**
  * Extracts interpreted parameters (country, industry, volume) for customer display.
- * When no country is specified, returns "مصر (افتراضي)".
+ * When no country or industry is specified, marks it as required instead of
+ * inserting a geographic or industry default into the customer-facing plan.
  */
 export function extractInterpretedParameters(
   params: Record<string, any> | undefined | null,
-  summaryAr?: string
+  summaryAr?: string,
+  isPeopleSearch = false
 ): { countryAr: string; countryCanonical: string; industryAr: string; isDefaultCountry: boolean } {
+  const query = params?.query && typeof params.query === "object" ? params.query : {};
+  const firstIncluded = (value: any): string | undefined =>
+    typeof value === "string"
+      ? value
+      : Array.isArray(value?.include) && typeof value.include[0] === "string"
+        ? value.include[0]
+        : undefined;
+  const queryCountry = firstIncluded(query.location) || firstIncluded(query.country);
+  // Explicit industry fields must win over free-text keywords left over from
+  // the original plan after an edit.
+  const queryIndustry = isPeopleSearch
+    ? ""
+    : params?.industry || firstIncluded(query.keyword) || firstIncluded(query.industry);
   const explicitIndustry = (typeof params?.industry === "string" && params.industry.trim())
     ? detectIndustryFromText(params.industry)
     : null;
-
   const fullText = [
     params?.industry,
     params?.search,
@@ -441,17 +471,21 @@ export function extractInterpretedParameters(
     params?.topic,
     params?.location,
     params?.country,
-    summaryAr,
+    queryCountry,
+    queryIndustry,
   ]
     .filter((v) => typeof v === "string" && v.trim().length > 0)
     .join(" ");
 
   const explicitCountry =
+    detectCountryFromText(queryCountry || "") ||
     detectCountryFromText(params?.country || "") ||
     detectCountryFromText(params?.location || "") ||
     detectCountryFromText(fullText);
 
-  const industry = explicitIndustry || detectIndustryFromText(fullText);
+  const industry = isPeopleSearch
+    ? { arabicLabel: "صناع القرار والمهنيون", canonicalEnglish: "", englishKeywords: [] }
+    : explicitIndustry || detectIndustryFromText(queryIndustry || fullText);
 
   if (explicitCountry) {
     return {
@@ -463,11 +497,137 @@ export function extractInterpretedParameters(
   }
 
   return {
-    countryAr: "مصر (افتراضي)",
-    countryCanonical: "Egypt",
+    countryAr: "يلزم تحديد الدولة",
+    countryCanonical: "",
     industryAr: industry.arabicLabel,
     isDefaultCountry: true,
   };
+}
+
+/** Return the required company-search fields the user has not supplied. */
+export type CompanyResearchRequirement = "country" | "industry" | "outreach_details";
+
+export function getMissingCompanyResearchRequirements(text: string): CompanyResearchRequirement[] {
+  const country = detectCountryFromText(text || "");
+  let industryText = (text || "").toLowerCase();
+  if (country) {
+    industryText = industryText
+      .replace(new RegExp(country.canonicalEnglish.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ")
+      .replace(new RegExp(country.arabicLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+  }
+  industryText = industryText
+    // Quantities often arrive in Arabic-Indic digits or Arabic words. Leaving
+    // them in the residual text can make "١٠٠ شركة" look like an industry.
+    .replace(/[0-9٠-٩۰-۹]+/g, " ")
+    .replace(/(?<![\p{L}\p{N}])(?:واحد|واحدة|واحده|اتنين|اثنين|اثنان|تلاتة|تلاته|ثلاثة|ثلاثه|ثلاث|أربعة|اربعة|أربعه|اربعه|خمسة|خمسه|خمس|ستة|سته|سبعة|سبعه|ثمانية|تمانية|تسعة|تسعه|عشرة|عشر|حداشر|اتناشر|تلتاشر|اربعتاشر|خمستاشر|ستاشر|سبعتاشر|تمنتاشر|تسعتاشر|عشرين|عشرون|تلاتين|ثلاثين|أربعين|اربعين|خمسين|ستين|سبعين|تمانين|ثمانين|تسعين|مية|ميه|مائة|مئة|ميتين|ألفين|الفين|ألف|الف|مليون|مليونين)(?![\p{L}\p{N}])/giu, " ")
+    .replace(/للتواصل التجاري|التواصل التجاري|تواصل تجاري|للتواصل|التواصل|تواصل|التجاري|تجاري|commercial outreach|business development|outreach|commercial/gi, " ")
+    .replace(/عايز|اريد|أريد|قائمة|تضم|شركات|شركة|مؤسسات|مؤسسة|بيانات|سجلات|سجل|قطاع|نشاط|بحث|ابحث|عن|في|من|مطلوب|القطاع|الشركات/gi, " ")
+    .replace(/\b(?:companies|company|business|find|need|want|search|for|in|of|the|up|to|records?|list)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const industry = detectIndustryFromText(industryText);
+  const asksForGenericOutreach = /التواصل|تواصل|outreach|business development|commercial/i.test(text || "");
+  const givesOutreachDetails = /إجابة هدف التواصل:\s*\S+|شركة محددة بهذا الاسم|اسم الشركة|اسم الشركات|موقع الشركة|الموقع الإلكتروني|website|بريد العمل|البريد المهني|work email|business email|الهاتف|رقم الهاتف|linkedin|لينكد.?إن|مورد|موردون|مشتري|شراكة|شركاء|توريد|مبيعات|بيع|شراء|عملاء محتملون|بحث سوقي|supplier|buyer|partnership|sales lead|market research/i.test(text || "");
+  // Unknown residue (for example, an organization name plus a sales purpose)
+  // is not an industry. Accept a custom industry only when it is supplied as
+  // the answer to the industry field or explicitly introduced as a sector.
+  const hasExplicitIndustryAnswer = /(?:^|\|\s*)المجال المطلوب:\s*\S+/i.test(text || "");
+  const hasExplicitIndustryPhrase = /(?:في\s+(?:مجال|قطاع|نشاط)|\b(?:industry|sector)\s*:)\s*[\p{L}\p{N}]/iu.test(text || "");
+  const hasRecognizedIndustry = Boolean(industry.exactTaxonomy?.length) || industry.arabicLabel === "صيد الحيتان";
+  return [
+    ...(!country ? ["country" as const] : []),
+    ...(!hasExplicitIndustryAnswer && !hasExplicitIndustryPhrase && !hasRecognizedIndustry
+      ? ["industry" as const]
+      : []),
+    ...(asksForGenericOutreach && !givesOutreachDetails ? ["outreach_details" as const] : []),
+  ];
+}
+
+/** Ask for the unresolved company-search scope in one natural turn. */
+export function getCompanyRequirementQuestions(missing: CompanyResearchRequirement[]): string[] {
+  const questions: string[] = [];
+  if (missing.includes("country")) questions.push("ما الدولة التي تريد البحث عن الشركات فيها؟");
+  if (missing.includes("industry")) questions.push("ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟");
+  if (missing.includes("outreach_details")) {
+    questions.push("ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟");
+  }
+  return questions;
+}
+
+/** Pull out a likely named organization when a request mixes a company name
+ * with an unclear verb such as "include/add". This is a cue to ask what the
+ * user means; it is never treated as a verified company or industry. */
+export function getAmbiguousCompanyReference(text: string): string | null {
+  const match = (text || "").match(
+    /(?<![\p{L}\p{N}])(?:شركة|مؤسسة)(?![\p{L}\p{N}])\s+([\p{L}\p{N}][\p{L}\p{N}\s&'’.-]{1,48}?)(?=\s+(?:في|ضمن|للتواصل|وتضم|مع|أو|إلى|للقائمة)|[،.!؟]|$)/iu,
+  );
+  const candidate = match?.[1]?.replace(/\s+/g, " ").trim();
+  if (!candidate) return null;
+  if (/[0-9٠-٩]/u.test(candidate) || /(?:أريد|اريد|أضم|اضم|أضيف|اضيف|قائمة|تضم|شركة|شركات|مؤسسة|مؤسسات|ابحث|بحث|حتى|سجل)/iu.test(candidate)) return null;
+  // The loose phrase matcher can otherwise backtrack and treat a location or
+  // relative clause ("شركة في ألمانيا تعمل...") as the supposed company name.
+  // Only ask the named-company disambiguation when the candidate starts like
+  // an actual name, not a preposition or ordinary sentence continuation.
+  if (/^(?:في|ضمن|من|إلى|الى|على|ب|تعمل|يعمل|تقدم|يقدم|تضم|يشمل|تعمل\s+في|تعمل\s+ضمن|in|within|from|to|for|that|which|operating|based)(?:\s|$)/iu.test(candidate)) return null;
+  if (/^(?:للتواصل|للتعامل|للتسويق|للبيع|للشراء|للاستيراد|للتصدير)(?:\s|$)/iu.test(candidate)) return null;
+  if (/^(?:تقنية|تكنولوجيا|أغذية|مطاعم|تصنيع|مقاولات|برمجيات|شركات|مؤسسات)$/iu.test(candidate)) return null;
+  return candidate;
+}
+
+/** Compact, adaptive answer chips for the company-search details UI. The final
+ * chip always opens the custom-answer field, so suggestions never constrain
+ * what the customer can ask for. */
+export function getCompanyRequirementItems(
+  missing: CompanyResearchRequirement[],
+  requestText = "",
+): Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> {
+  const items: Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> = [];
+  const hasResolvedAsCompanyList = /قائمة\s+(?:من\s+)?شركات?\s+للتواصل\s+التجاري|قائمة\s+الشركات\s+للتواصل\s+التجاري|\b(?:company list|list of companies)\b/i.test(requestText);
+  const ambiguousNamedEntity = hasResolvedAsCompanyList ? null : getAmbiguousCompanyReference(requestText);
+  if (ambiguousNamedEntity && missing.includes("outreach_details")) {
+    const text = `هل تقصد شركة محددة باسم «${ambiguousNamedEntity.slice(0, 36)}» أم قائمة شركات للتواصل التجاري؟`;
+    items.push({
+      id: "company_outreach_required",
+      text,
+      question: text,
+      type: "single",
+      options: ["شركة محددة بهذا الاسم", "قائمة شركات للتواصل التجاري", "أخرى"],
+      allowOther: true,
+    });
+  }
+  if (missing.includes("country")) {
+    const text = "ما الدولة التي تريد البحث عن الشركات فيها؟";
+    items.push({ id: "company_country_required", text, question: text, type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true });
+  }
+  if (missing.includes("industry")) {
+    const text = ambiguousNamedEntity
+      ? `ما القطاع أو مجال «${ambiguousNamedEntity.slice(0, 36)}»، أو ما المجال المطلوب للشركات التي تبحث عنها؟`
+      : "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
+    const lower = requestText.toLowerCase();
+    const options = /تواصل|outreach|تجاري|business/i.test(lower)
+      ? ["تقنية وبرمجيات", "التقنية المالية", "أغذية ومطاعم", "أخرى"]
+      : ["تقنية وبرمجيات", "تصنيع", "التقنية المالية", "أخرى"];
+    items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
+  }
+  if (missing.includes("outreach_details") && !ambiguousNamedEntity) {
+    const text = "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
+    const options = ["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"];
+    items.push({ id: "company_outreach_required", text, question: text, type: "single", options, allowOther: true });
+  }
+  return items;
+}
+
+export function isPeopleSearchRequest(text: string): boolean {
+  const normalized = (text || "").toLowerCase();
+  const explicitPeopleIntent = /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
+  if (explicitPeopleIntent) return true;
+
+  // A work email can be a company field. Do not reinterpret an explicit
+  // company list as a people search solely because it asks for business email.
+  const explicitCompanyIntent = /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسة|مؤسسات|مصنع|مصانع/.test(normalized);
+  if (explicitCompanyIntent) return false;
+
+  return /work emails?|professional emails?|بريد العمل|البريد المهني/.test(normalized);
 }
 
 /**
@@ -475,9 +635,13 @@ export function extractInterpretedParameters(
  */
 export function extractParamDisplayString(
   params: Record<string, any> | undefined | null,
-  summaryAr?: string
+  summaryAr?: string,
+  isPeopleSearch = false
 ): string {
   if (!params || typeof params !== "object") return "";
+  // Provider query keywords may contain the customer's full natural-language prompt.
+  // Never echo that raw English prompt into a customer-facing people-search card.
+  if (isPeopleSearch) return "صناع القرار والمهنيون";
 
   const candidates: string[] = [];
 

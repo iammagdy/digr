@@ -14,6 +14,8 @@ const clock = (iso?: string) => {
 };
 import {
   deriveLiveActivitySnapshot,
+  estimateRemainingSecondsFromBatches,
+  sanitizeActivityError,
   sanitizeActivityText,
 } from "@/functions/shared/liveActivityFeed";
 
@@ -63,6 +65,14 @@ export default function ActivityTimeline({
   const spent = liveSnapshot.spentPoints ?? spentPoints ?? 0;
   const reserved = liveSnapshot.reservedPoints ?? reservedPoints;
   const pct = requestedRows && requestedRows > 0 ? Math.min(100, (rowsCollected / requestedRows) * 100) : status === "done" ? 100 : 0;
+  const remainingSeconds = status === "running" && requestedRows
+    ? estimateRemainingSecondsFromBatches(events || [], rowsCollected, requestedRows)
+    : null;
+  const remainingLabel = remainingSeconds === null
+    ? null
+    : remainingSeconds < 60
+      ? `نحو ${formatAr(remainingSeconds)} ثانية`
+      : `نحو ${formatAr(Math.ceil(remainingSeconds / 60))} دقيقة`;
 
   return (
     <div className="mt-4" style={{ animation: "up .5s both" }} aria-label="سجل نشاط التنفيذ" role="region">
@@ -83,6 +93,8 @@ export default function ActivityTimeline({
         </p>
       )}
 
+      {remainingLabel && <p className="mb-0 mt-2 text-xs text-mut">الوقت المتبقي التقريبي حسب زمن الدفعات المسجل: {remainingLabel}</p>}
+
       {(
         <div className="mt-4 flex flex-col gap-3">
           {hasEvents ? (
@@ -94,7 +106,7 @@ export default function ActivityTimeline({
               >
                 <time className="tnum min-w-10 text-fnt" dateTime={evt.createdAt}>{clock(evt.createdAt)}</time>
                 <span>
-                  {toArabicDigits(sanitizeActivityText(evt.textAr))}
+                  {toArabicDigits(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr))}
                   {evt.count !== undefined && <span className="tnum text-fnt"> · {formatAr(evt.count)}</span>}
                 </span>
               </p>
