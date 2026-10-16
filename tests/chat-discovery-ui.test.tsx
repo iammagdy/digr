@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { normalizeDiscoveryQuestions } from "../src/app/dashboard/chat/components/discoveryQuestions";
 import { buildClarificationPresentation } from "../src/functions/shared/chatHandler";
-import { LlmClient } from "../src/functions/shared/llmClient";
+import { MAX_CLARIFICATION_QUESTIONS } from "../src/functions/shared/clarification";
+import { ACTION_RESULT_JSON_SCHEMA, LlmClient } from "../src/functions/shared/llmClient";
 
 describe("chat discovery clarification UI", () => {
   it("normalizes a legacy question once and retains the current Arabic intro", () => {
@@ -132,6 +133,12 @@ describe("chat discovery clarification UI", () => {
     const pageSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
     expect(pageSource).toContain("messages.some((m) => m.planQuote || Boolean(m.jobId))");
     expect(pageSource).toContain("intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}");
+  });
+
+  it("lets the model ask more than three adaptive questions when the request needs them", () => {
+    expect(MAX_CLARIFICATION_QUESTIONS).toBeGreaterThan(3);
+    expect(ACTION_RESULT_JSON_SCHEMA.properties.questions.maxItems).toBe(MAX_CLARIFICATION_QUESTIONS);
+    expect(ACTION_RESULT_JSON_SCHEMA.properties.questionsAr.maxItems).toBe(MAX_CLARIFICATION_QUESTIONS);
   });
 });
 

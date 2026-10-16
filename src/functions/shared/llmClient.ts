@@ -443,10 +443,10 @@ export const ACTION_RESULT_JSON_SCHEMA = {
     query: { type: "string" },
     platform: { type: "string" },
     intro: { type: "string" },
-    questionsAr: { type: "array", maxItems: 3, items: { type: "string" } },
+    questionsAr: { type: "array", maxItems: MAX_CLARIFICATION_QUESTIONS, items: { type: "string" } },
     questions: {
       type: "array",
-      maxItems: 3,
+      maxItems: MAX_CLARIFICATION_QUESTIONS,
       items: {
         type: "object",
         properties: {
