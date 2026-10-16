@@ -32,6 +32,7 @@ import {
   discoveryQuestionPriority,
   normalizeClarificationQuestions,
   sanitizeClarificationText,
+  formatClarificationMessageForAssistant,
   type NormalizedClarificationQuestion,
   INTERNAL_DISCOVERY_KEYS,
 } from "./clarification";
@@ -1121,11 +1122,12 @@ export class ChatHandler {
       ? [brief.exclusionFile]
       : [];
 
-    const researchIntent = extractResearchIntent(message, undefined, activeFiles);
+    const assistantFacingMessage = formatClarificationMessageForAssistant(message);
+    const researchIntent = extractResearchIntent(assistantFacingMessage, undefined, activeFiles);
     const discoveryDecision = evaluateDiscoveryDecision(researchIntent);
     let isPhase2 = false;
 
-    const mentionedPlats = detectMentionedPlatforms(message);
+    const mentionedPlats = detectMentionedPlatforms(assistantFacingMessage);
     const approvedSocialPlatforms = ["facebook", "x", "twitter", "youtube", "instagram", "tiktok", "reddit", "linkedin"];
     const hasApprovedPlatformInMessage = mentionedPlats.some((p) => approvedSocialPlatforms.includes(p.toLowerCase()));
     const hasApprovedPlatformInBrief = brief.platforms.some((p) => approvedSocialPlatforms.includes(p.toLowerCase()));
@@ -1139,8 +1141,9 @@ export class ChatHandler {
 
     const isCompanyIntent =
       researchIntent.entityType.value === "companies" ||
-      extractEntityType(message).entityType === "companies" ||
-      /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسات|مؤسسة/.test(message.toLowerCase());
+      extractEntityType(assistantFacingMessage).entityType === "companies" ||
+      /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسات|مؤسسة/.test(assistantFacingMessage.toLowerCase()) ||
+      brief.platforms.some((platform) => /compan|b2b|شركة/i.test(platform));
 
     if (isTestSearchScenario) {
       isPhase2 = false;
@@ -1408,7 +1411,9 @@ export class ChatHandler {
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
-            content: r.content_ar || "",
+            content: r.role === "user"
+              ? formatClarificationMessageForAssistant(r.content_ar || "")
+              : r.content_ar || "",
           }));
       } else {
         const historyRes = await this.tables.listRows({
@@ -1425,7 +1430,9 @@ export class ChatHandler {
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
-            content: r.content,
+            content: r.role === "user"
+              ? formatClarificationMessageForAssistant(r.content || "")
+              : r.content,
           }));
       }
       supabaseMs += Date.now() - tSbHistStart;

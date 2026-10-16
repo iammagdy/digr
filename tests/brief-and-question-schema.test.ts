@@ -513,6 +513,95 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationItems?.some((item) => item.id === "company_country_required")).toBe(false);
   });
 
+  it("asks for the actual industry after a named-company request gets only country and sales-purpose answers", async () => {
+    const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: companyCap.slug,
+      id: companyCap.tregEndpointId,
+      nameAr: companyCap.nameAr,
+      nameEn: companyCap.nameEn,
+      platform: companyCap.platform,
+      summaryAr: companyCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(companyCap.paramsSchema),
+    } as any]);
+
+    const userId = "user_tawasol_ambiguous_industry";
+    const conversationId = "conversation_tawasol_ambiguous_industry";
+    const tables = makeMockTables();
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "conversations",
+      rowId: conversationId,
+      data: { userId, status: "active" },
+    });
+    await tables.createRow({
+      databaseId: "digr",
+      tableId: "messages",
+      rowId: "initial-tawasol-request",
+      data: {
+        conversationId,
+        userId,
+        role: "user",
+        content: "أريد أن أضم شركة تواصل التجاري إلى القائمة.",
+        status: "ready",
+        createdAt: "2026-10-16T10:00:00.000Z",
+      },
+    });
+    await saveConversationBrief(tables, conversationId, userId, {
+      platforms: ["companies"],
+      topics: [],
+      targetVolume: 50,
+    });
+
+    const handler = new ChatHandler(tables as any);
+    const executeTurn = vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات شركات",
+        capabilities: [{
+          capabilitySlug: "icypeas-companies-search",
+          endpointId: "icypeas.companies.search",
+          params: { query: { keyword: { include: ["clarification_answers"] } } },
+          targetVolumeMin: 1,
+          targetVolumeMax: 50,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+    const answers = [
+      { questionId: "company_country_required", question: "ما الدولة؟", value: "مصر" },
+      { questionId: "company_outreach_required", question: "ما الهدف؟", value: "عملاء محتملون / مبيعات" },
+    ];
+    const res = await handler.handleUserMessage({
+      userId,
+      conversationId,
+      message: JSON.stringify({ type: "clarification_answers", answers }),
+      answers,
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "company_industry_required", text: expect.stringContaining("تواصل التجاري") }),
+    ]));
+    const modelMessages = (executeTurn as any).mock.calls[0]?.[0]?.messages || [];
+    expect(modelMessages.some((entry: any) => entry.content.includes("clarification_answers"))).toBe(false);
+    expect(modelMessages.some((entry: any) => entry.content.includes("هدف التواصل والبيانات المطلوبة: عملاء محتملون / مبيعات"))).toBe(true);
+  });
+
   it("replaces a sector-only clarification with country and sector when both are missing", async () => {
     const handler = new ChatHandler(makeMockTables() as any);
     vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({

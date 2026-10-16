@@ -135,13 +135,27 @@ describe("Country & Industry Detection and Matching", () => {
   it("asks what a possibly named company means instead of treating it as a generic outreach request", () => {
     const request = "أريدك تضم شركة تواصل التجاري، وأحتاج بيانات للتواصل معها";
     expect(getAmbiguousCompanyReference(request)).toBe("تواصل التجاري");
+    expect(getAmbiguousCompanyReference("أريد أن أضم شركة تواصل التجاري إلى القائمة.")).toBe("تواصل التجاري");
     const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
     const outreach = items.find((item) => item.id === "company_outreach_required");
     expect(outreach?.text).toContain("تواصل التجاري");
     expect(outreach?.text.length).toBeLessThanOrEqual(120);
     expect(outreach?.options).toContain("شركة محددة بهذا الاسم");
     expect(outreach?.options.at(-1)).toBe("أخرى");
+    expect(getAmbiguousCompanyReference("أريد قائمة تضم ١٠٠ شركة")).toBeNull();
     expect(getMissingCompanyResearchRequirements(`${request} إجابة هدف التواصل: شركة محددة بهذا الاسم`)).not.toContain("outreach_details");
+  });
+
+  it("keeps industry required when an ambiguous company gets only country and sales-purpose answers", () => {
+    const request = "أريد أن أضم شركة تواصل التجاري إلى القائمة.";
+    const answered = `${request} الدولة المطلوبة: مصر | إجابة هدف التواصل: عملاء محتملون / مبيعات`;
+    const missing = getMissingCompanyResearchRequirements(answered);
+
+    expect(missing).toContain("industry");
+    const industryQuestion = getCompanyRequirementItems(missing, answered).find((item) => item.id === "company_industry_required");
+    expect(industryQuestion?.text).toContain("تواصل التجاري");
+    expect(industryQuestion?.options).toContain("أخرى");
+    expect(getMissingCompanyResearchRequirements(`${answered} | المجال المطلوب: تقنية مالية`)).not.toContain("industry");
   });
 
   it("does not infer Egypt or CEO for an unscoped people search", async () => {

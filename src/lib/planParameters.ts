@@ -526,15 +526,19 @@ export function getMissingCompanyResearchRequirements(text: string): CompanyRese
     .replace(/\s+/g, " ")
     .trim();
   const industry = detectIndustryFromText(industryText);
-  const industryMissing = !industryText || industry.arabicLabel === "قواعد بيانات الشركات" ||
-    industry.englishKeywords.length === 0 ||
-    (!industry.exactTaxonomy?.length && industry.arabicLabel === industryText) ||
-    industry.englishKeywords.every((keyword) => keyword === "contracting");
   const asksForGenericOutreach = /التواصل|تواصل|outreach|business development|commercial/i.test(text || "");
   const givesOutreachDetails = /إجابة هدف التواصل:\s*\S+|شركة محددة بهذا الاسم|اسم الشركة|اسم الشركات|موقع الشركة|الموقع الإلكتروني|website|بريد العمل|البريد المهني|work email|business email|الهاتف|رقم الهاتف|linkedin|لينكد.?إن|مورد|موردون|مشتري|شراكة|شركاء|توريد|مبيعات|بيع|شراء|عملاء محتملون|بحث سوقي|supplier|buyer|partnership|sales lead|market research/i.test(text || "");
+  // Unknown residue (for example, an organization name plus a sales purpose)
+  // is not an industry. Accept a custom industry only when it is supplied as
+  // the answer to the industry field or explicitly introduced as a sector.
+  const hasExplicitIndustryAnswer = /(?:^|\|\s*)المجال المطلوب:\s*\S+/i.test(text || "");
+  const hasExplicitIndustryPhrase = /(?:في\s+(?:مجال|قطاع|نشاط)|\b(?:industry|sector)\s*:)\s*[\p{L}\p{N}]/iu.test(text || "");
+  const hasRecognizedIndustry = Boolean(industry.exactTaxonomy?.length) || industry.arabicLabel === "صيد الحيتان";
   return [
     ...(!country ? ["country" as const] : []),
-    ...(industryMissing ? ["industry" as const] : []),
+    ...(!hasExplicitIndustryAnswer && !hasExplicitIndustryPhrase && !hasRecognizedIndustry
+      ? ["industry" as const]
+      : []),
     ...(asksForGenericOutreach && !givesOutreachDetails ? ["outreach_details" as const] : []),
   ];
 }
@@ -555,10 +559,11 @@ export function getCompanyRequirementQuestions(missing: CompanyResearchRequireme
  * user means; it is never treated as a verified company or industry. */
 export function getAmbiguousCompanyReference(text: string): string | null {
   const match = (text || "").match(
-    /(?<![\p{L}\p{N}])(?:شركة|مؤسسة)(?![\p{L}\p{N}])\s+([\p{L}\p{N}][\p{L}\p{N}\s&'’.-]{1,48}?)(?=\s+(?:في|ضمن|للتواصل|وتضم|مع|أو)|[،.!؟]|$)/iu,
+    /(?<![\p{L}\p{N}])(?:شركة|مؤسسة)(?![\p{L}\p{N}])\s+([\p{L}\p{N}][\p{L}\p{N}\s&'’.-]{1,48}?)(?=\s+(?:في|ضمن|للتواصل|وتضم|مع|أو|إلى|للقائمة)|[،.!؟]|$)/iu,
   );
   const candidate = match?.[1]?.replace(/\s+/g, " ").trim();
   if (!candidate) return null;
+  if (/[0-9٠-٩]/u.test(candidate) || /(?:أريد|اريد|أضم|اضم|أضيف|اضيف|قائمة|تضم|شركة|شركات|مؤسسة|مؤسسات|ابحث|بحث|حتى|سجل)/iu.test(candidate)) return null;
   if (/^(?:للتواصل|للتعامل|للتسويق|للبيع|للشراء|للاستيراد|للتصدير)(?:\s|$)/iu.test(candidate)) return null;
   if (/^(?:تقنية|تكنولوجيا|أغذية|مطاعم|تصنيع|مقاولات|برمجيات|شركات|مؤسسات)$/iu.test(candidate)) return null;
   return candidate;
@@ -577,7 +582,10 @@ export function getCompanyRequirementItems(
     items.push({ id: "company_country_required", text, question: text, type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true });
   }
   if (missing.includes("industry")) {
-    const text = "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
+    const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
+    const text = ambiguousNamedEntity
+      ? `ما القطاع أو مجال «${ambiguousNamedEntity.slice(0, 36)}»، أو ما المجال المطلوب للشركات التي تبحث عنها؟`
+      : "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
     const lower = requestText.toLowerCase();
     const options = /تواصل|outreach|تجاري|business/i.test(lower)
       ? ["تقنية وبرمجيات", "التقنية المالية", "أغذية ومطاعم", "أخرى"]

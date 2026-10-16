@@ -394,3 +394,35 @@ export function formatStructuredClarificationAnswers(answer: StructuredClarifica
     }),
   });
 }
+
+/** Convert a stored answer payload into clear customer-authored text before
+ * it is sent back to the model. Keeping internal question IDs out of the model
+ * prompt prevents them from being copied into a search keyword or quote. */
+export function formatClarificationMessageForAssistant(message: string): string {
+  const trimmed = (message || "").trim();
+  if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) return message;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return message;
+
+    const labels: Record<string, string> = {
+      company_country_required: "الدولة المطلوبة",
+      company_industry_required: "المجال المطلوب",
+      company_outreach_required: "هدف التواصل والبيانات المطلوبة",
+      people_country_required: "دولة صناع القرار المطلوبة",
+    };
+    return parsed.answers.map((answer: any) => {
+      const label = labels[answer?.questionId] || `إجابة عن ${sanitizeClarificationText(String(answer?.question || "السؤال"), 120)}`;
+      const values = Array.isArray(answer?.value)
+        ? answer.value.filter((value: unknown) => typeof value === "string").map((value: string) => sanitizeClarificationText(value, 40))
+        : typeof answer?.value === "string"
+          ? [sanitizeClarificationText(answer.value, 200)]
+          : [];
+      if (values.length > 0) return `${label}: ${values.join("، ")}`;
+      return `لم يحدد المستخدم ${label}؛ اسأله عنها ولا تفترض إجابة.`;
+    }).filter(Boolean).join("\n");
+  } catch {
+    return message;
+  }
+}
