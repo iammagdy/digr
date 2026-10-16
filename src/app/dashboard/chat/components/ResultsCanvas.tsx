@@ -48,6 +48,14 @@ const COLUMN_LABELS: Record<string, string> = {
   following: "المتابعَون", likes: "الإعجابات", videosCount: "المقاطع", verified: "موثّق",
   bio: "النبذة", bioLink: "رابط النبذة", profileUrl: "رابط الملف", collectedDate: "تاريخ الجمع",
   count: "العدد", averageFollowers: "متوسط المتابعين",
+  company_name: "اسم الشركة / المؤسسة", contact_name: "اسم المسؤول / جهة الاتصال",
+  job_title: "المسمى الوظيفي", work_email: "البريد الإلكتروني المهني",
+  email_verification_status: "حالة البريد", title_verification_status: "حالة المسمى",
+  verification_status: "حالة التحقق", website: "الموقع الإلكتروني",
+  industry: "النشاط / التخصص", activity: "النشاط الرئيسي",
+  location: "المدينة / المحافظة", city: "المدينة", phone: "الهاتف التجاري",
+  headcount: "حجم العمالة", founded_year: "سنة التأسيس",
+  linkedin_url: "رابط لينكد إن", description: "الوصف التعريفي",
 };
 
 const SEVERITY_TONE: Record<string, StatusTone> = {

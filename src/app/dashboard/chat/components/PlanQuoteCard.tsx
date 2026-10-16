@@ -277,6 +277,19 @@ export default function PlanQuoteCard({
         ))}
       </div>
 
+      {/* Financial Guarantee & Accounting Clarity Box */}
+      <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
+        <p className="m-0 font-medium text-ink">نظام احتساب النقاط والضمان المالي:</p>
+        <p className="m-0 mt-1">
+          عند الموافقة، يُحجز مؤقتاً <strong>{formatAr(quote.quotedPoints)} نقطة</strong> (يشمل هامش تأمين ١٥٪ لضمان التغطية). بعد الانتهاء، يتم <strong>الخصم الفعلي فقط</strong> على السجلات المطابقة المعتمدة المسلَّمة، ويُرد أي فرق تلقائياً وفوراً إلى رصيدك.
+        </p>
+        {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول")) && (
+          <p className="m-0 mt-1.5 text-ink2 border-t border-ln pt-1.5">
+            تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع بيان حالة التحقق لكل حقل (متحقق / غير متاح). لا يُحاسب العميل على أي حقل غير متوفر.
+          </p>
+        )}
+      </div>
+
       <p className="mb-0 mt-[14px] border-t border-ln pt-3 text-[13px] font-light leading-[1.9] text-ink2">
         المنهجية: {quote.methodologyNotes || "جمع وتوثيق البيانات العامة وفق المعايير المعتمدة وفصل ملف البيانات عن توثيق المنهجية."}
       </p>

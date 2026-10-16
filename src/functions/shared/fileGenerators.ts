@@ -371,16 +371,13 @@ export async function generateExcelReport(
  */
 export async function generateCompanyExcelReport(
   payload: any,
-  deduplicationAudit: any[] = [],
-  uncertainRows: any[] = []
+  _deduplicationAudit: any[] = [],
+  _uncertainRows: any[] = []
 ): Promise<Buffer> {
   const norm: NormalizedDataset = normalizeDataset(payload);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = norm.metadata.title;
-
-  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
-  const rowsCount = norm.rows.length;
 
   const detectedTitleCountry = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
   const targetCountry = (norm.metadata as any).country ||
@@ -390,35 +387,30 @@ export async function generateCompanyExcelReport(
       : "مصر");
 
   // ================= Sheet 1: الملخص التنفيذي ومؤشرات السوق =================
-  const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", { views: [{ rightToLeft: true }] });
-  wsExec.mergeCells("A1:H1");
+  const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", {
+    views: [{ showGridLines: true, rightToLeft: true }],
+  });
+
+  // Title Banner
+  wsExec.mergeCells("A1:H2");
   const titleCell = wsExec.getCell("A1");
   titleCell.value = norm.metadata.title;
-  titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
+  titleCell.font = { name: "Calibri", size: 14, bold: true, color: { argb: COLOR_WHITE } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   titleCell.alignment = { horizontal: "center", vertical: "middle" };
-  wsExec.getRow(1).height = 40;
 
-  wsExec.mergeCells("A2:H2");
-  const subCell = wsExec.getCell("A2");
-  subCell.value = `تقرير استقصاء وحصر الشركات المعتمدة • ${targetCountry} • تاريخ الاستخراج: ${dateStr}`;
-  subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF2D3748" } };
-  subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_LIGHT } };
+  // Subtitle
+  wsExec.mergeCells("A3:H3");
+  const subCell = wsExec.getCell("A3");
+  subCell.value = `تقرير استخراج وتوثيق الشركات • النطاق: ${targetCountry} • تاريخ الاستخراج: ${norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10)}`;
+  subCell.font = { name: "Calibri", size: 10, italic: true, color: { argb: "FF334155" } };
   subCell.alignment = { horizontal: "center", vertical: "middle" };
-  wsExec.getRow(2).height = 24;
 
-  wsExec.addRow([]); // Blank row 3
-  wsExec.getRow(4).height = 20;
-  wsExec.getRow(5).height = 32;
-
-  const dupsCount = deduplicationAudit.filter((a) => a.status === "CONFIRMED_DUPLICATE").length || norm.kpis.duplicatesRemoved || 0;
-  const ambigCount = deduplicationAudit.filter((a) => a.status === "POSSIBLE_DUPLICATE").length;
-  const uncertainCount = uncertainRows?.length || ambigCount || 0;
-
+  // KPI summary cards
   const kpis = [
-    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي الشركات المسلمة", val: `${toArabicDigits(rowsCount)} شركة` },
-    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "الشركات المستبعدة للتكرار", val: `${toArabicDigits(dupsCount)} شركة` },
-    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "سجلات قيد المراجعة والتدقيق", val: `${toArabicDigits(uncertainCount)} شركة` },
+    { colsLabel: "A4:B4", colsVal: "A5:B5", label: "إجمالي المسلم المعتمد", val: norm.rows.length },
+    { colsLabel: "C4:D4", colsVal: "C5:D5", label: "السجلات المطلوبة", val: norm.metadata.targetRequested || norm.rows.length },
+    { colsLabel: "E4:F4", colsVal: "E5:F5", label: "نسبة اكتمال البيانات", val: `${norm.kpis.dataCompletenessPct}%` },
     { colsLabel: "G4:H4", colsVal: "G5:H5", label: "النطاق الجغرافي", val: targetCountry },
   ];
 
@@ -543,36 +535,6 @@ export async function generateCompanyExcelReport(
   });
   wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
   wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 18 }];
-
-  // ================= Sheet 3: سجل المراجعة والتدقيق (Uncertain Data Rows Only) =================
-  if (uncertainRows && uncertainRows.length > 0) {
-    const wsReview = wb.addWorksheet("سجل المراجعة والتدقيق", {
-      views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
-    });
-    const reviewHeaders = ["م", "اسم الشركة المرشحة", "الموقع الإلكتروني", "المدينة / المحافظة", "النشاط المقترح", "سبب التدقيق المنهجي"];
-    const reviewHeaderRow = wsReview.addRow(reviewHeaders);
-    reviewHeaderRow.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
-    reviewHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
-    reviewHeaderRow.height = 25;
-    reviewHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
-
-    uncertainRows.forEach((u, i) => {
-      const row = wsReview.addRow([
-        i + 1,
-        u.company_name || u.name || `شركة #${i + 1}`,
-        u.website || u.domain || "—",
-        u.location || u.city || "—",
-        u.industry || u.activity || "—",
-        u._relevance_reason || "سجل قيد المراجعة لاشتباه في تداخل النشاط.",
-      ]);
-      row.font = { name: "Calibri", size: 9.5 };
-      row.height = 20;
-      row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF9C3" } };
-      row.eachCell((cell) => (cell.border = borderThin));
-    });
-    wsReview.autoFilter = { from: { row: 1, column: 1 }, to: { row: uncertainRows.length + 1, column: reviewHeaders.length } };
-    wsReview.columns = [{ width: 8 }, { width: 32 }, { width: 28 }, { width: 20 }, { width: 24 }, { width: 45 }];
-  }
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
@@ -735,7 +697,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       { label: "السجلات المطابقة المعتمدة بعد المراجعة (Validated Matched)", val: `${rowsCount}` },
       { label: "السجلات المستبعدة للتكرار أو عدم المطابقة (Excluded)", val: `${dups}` },
       { label: "نسبة اكتمال حقول السجلات (Field Completeness)", val: `${norm.kpis.dataCompletenessPct}%` },
-      { label: "معدل التحقق المنهجي (Methodological Verification)", val: "١٠٠٪ (فحص تطابق بالذكاء الاصطناعي)" },
+      { label: "معدل التحقق المنهجي (Methodological Verification)", val: "فحص تطابق وتدقيق آلي متعدد المراحل" },
     ];
 
     counterRows.forEach((item, idx) => {
@@ -832,7 +794,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     // 6. Footer (Single Page Safe)
     doc.font("ArabicRegular").fontSize(7).fillColor("#94A3B8");
-    doc.text(formatArabicRtl("تم استخراج وتوثيق هذا التقرير عبر منصة Diger للبيانات العامة • جميع الحقوق محفوظة"), 30, 800, {
+    doc.text(formatArabicRtl("تم استخراج وتوثيق هذا التقرير عبر منصة Diger للأبحاث والبيانات • جميع الحقوق محفوظة"), 30, 800, {
       width: contentWidth,
       align: "center",
       wordSpacing: 2,

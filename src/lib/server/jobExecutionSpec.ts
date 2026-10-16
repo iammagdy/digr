@@ -27,6 +27,7 @@ export async function resolveJobExecutionSpec(
   let paginationStrategy: "cursor" | "offset" | "page" | "none" | undefined;
   let pricingUnit: "call" | "item" | "page" = "call";
   let unitCostUsd: number | undefined;
+  let itemTargetVolumeMax = 0;
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
   try {
@@ -54,6 +55,9 @@ export async function resolveJobExecutionSpec(
             }
             if (firstItem.params && typeof firstItem.params === "object") {
               params = { ...firstItem.params };
+            }
+            if (typeof firstItem.targetVolumeMax === "number" && firstItem.targetVolumeMax > 0) {
+              itemTargetVolumeMax = firstItem.targetVolumeMax;
             }
             if (
               firstItem.paginationStrategy === "cursor" ||
@@ -213,8 +217,19 @@ export async function resolveJobExecutionSpec(
       ? unitCostUsd
       : Math.max(0.0001, Number(((Number(unitPricePoints) || 1) / 5500).toFixed(6)));
 
-  const rawPageSize = Number(params?.limit || params?.count || params?.per_page || 10);
-  const pageSize = Number.isFinite(rawPageSize) && rawPageSize > 0 ? Math.min(50, rawPageSize) : 10;
+  const isSearchDirectory =
+    capabilitySlug.includes("compan") ||
+    endpointId.includes("compan") ||
+    capabilitySlug.includes("people") ||
+    endpointId.includes("people") ||
+    endpointId.startsWith("icypeas.");
+
+  const defaultBatchSize = isSearchDirectory
+    ? Math.min(50, Math.max(10, itemTargetVolumeMax || 50))
+    : 10;
+
+  const rawPageSize = Number(params?.limit || params?.count || params?.per_page || params?.size || defaultBatchSize);
+  const pageSize = Number.isFinite(rawPageSize) && rawPageSize > 0 ? Math.min(50, rawPageSize) : defaultBatchSize;
 
   return {
     capabilitySlug,

@@ -89,7 +89,28 @@ export async function GET(
     downloadFileName = downloadFileName.replace(/[/\\?%*:|"<>]/g, "-").trim();
 
     // 4. Candidate file paths in results storage bucket
-    const candidatePaths = [
+    const candidatePaths: string[] = [];
+
+    // Query artifact_versions to link directly to stored artifacts
+    try {
+      const { data: avRows } = await adminClient
+        .from("artifact_versions")
+        .select("file_id_xlsx, file_id_pdf, file_id_csv")
+        .eq("job_id", jobId)
+        .order("version_number", { ascending: false })
+        .limit(1);
+
+      const latestAv = avRows?.[0];
+      if (latestAv) {
+        if (format === "pdf" && latestAv.file_id_pdf) candidatePaths.push(latestAv.file_id_pdf);
+        if (format === "xlsx" && latestAv.file_id_xlsx) candidatePaths.push(latestAv.file_id_xlsx);
+        if (format === "csv" && latestAv.file_id_csv) candidatePaths.push(latestAv.file_id_csv);
+      }
+    } catch {
+      // Non-blocking fallback to candidate paths
+    }
+
+    candidatePaths.push(
       `${job.user_id}/${jobId}/result.${format}`,
       `${user.id}/${jobId}/result.${format}`,
       `${jobId}/result.${format}`,
@@ -97,8 +118,8 @@ export async function GET(
       `${user.id}/${jobId}/data.${format}`,
       `${user.id}/${jobId}/${format}_${jobId}.${format}`,
       `${jobId}/data.${format}`,
-      `${jobId}/${format}_${jobId}.${format}`,
-    ];
+      `${jobId}/${format}_${jobId}.${format}`
+    );
 
     if (format === "pdf") {
       candidatePaths.push(
@@ -174,6 +195,36 @@ export async function GET(
               contentType: mimeType,
               upsert: true,
             });
+
+            // Keep artifact_versions permanently in sync with the generated artifact
+            try {
+              const fieldToUpdate = format === "pdf" ? "file_id_pdf" : format === "xlsx" ? "file_id_xlsx" : "file_id_csv";
+              const { data: existingAv } = await adminClient
+                .from("artifact_versions")
+                .select("id")
+                .eq("job_id", jobId)
+                .maybeSingle();
+
+              if (existingAv?.id) {
+                await adminClient
+                  .from("artifact_versions")
+                  .update({ [fieldToUpdate]: uploadPath })
+                  .eq("id", existingAv.id);
+              } else {
+                await adminClient
+                  .from("artifact_versions")
+                  .insert({
+                    id: `ver_${jobId.replace(/^job_quote_/, "").slice(0, 20)}_1`,
+                    job_id: jobId,
+                    user_id: job.user_id,
+                    version_number: 1,
+                    [fieldToUpdate]: uploadPath,
+                    created_at: new Date().toISOString(),
+                  });
+              }
+            } catch (syncErr) {
+              console.warn("Could not sync artifact_versions on demand:", syncErr);
+            }
 
             const { data: newlySigned } = await adminClient.storage
               .from("results")

@@ -1235,7 +1235,7 @@ export default function ChatWorkspacePage() {
     const convId = search.get("c");
     const retry = search.get("retry") === "1";
     let jobId = search.get("jobId");
-    if (!jobId && typeof window !== "undefined") {
+    if (!jobId && convId && typeof window !== "undefined") {
       try {
         jobId = sessionStorage.getItem("diger_active_job_id");
       } catch {}

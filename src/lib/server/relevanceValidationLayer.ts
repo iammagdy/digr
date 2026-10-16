@@ -106,7 +106,44 @@ export function evaluateDeterministicRelevance(
     };
   }
 
-  // B. IT & Software (تقنية المعلومات والبرمجيات)
+  // B. FinTech (التكنولوجيا المالية والمدفوعات)
+  if (indAr.includes("fintech") || indAr.includes("فينتك") || indAr.includes("تكنولوجيا مالية") || indAr.includes("تقنية مالية") || indAr.includes("مدفوعات")) {
+    const isExcluded =
+      rowInd.includes("construction") ||
+      rowInd.includes("real estate") ||
+      rowInd.includes("food") ||
+      rowInd.includes("furniture");
+
+    if (isExcluded) {
+      return {
+        decision: "no_match",
+        reasonAr: `النشاط (${row.industry || "غير مطابق"}) غير مرتبط بالتكنولوجيا المالية`,
+      };
+    }
+
+    const isMatch =
+      rowText.includes("fintech") ||
+      rowText.includes("financial technology") ||
+      rowText.includes("payment") ||
+      rowText.includes("banking") ||
+      rowText.includes("مدفوعات") ||
+      rowText.includes("تكنولوجيا مالية") ||
+      rowText.includes("تمويل");
+
+    if (isMatch) {
+      return {
+        decision: "match",
+        reasonAr: "شركة تكنولوجيا مالية ومدفوعات مطابقة للطلب",
+      };
+    }
+
+    return {
+      decision: "uncertain",
+      reasonAr: "تحتاج مراجعة لتأكيد تخصص التكنولوجيا المالية",
+    };
+  }
+
+  // C. IT & Software (تقنية المعلومات والبرمجيات)
   if (indAr.includes("تقنية") || indAr.includes("تكنولوجيا") || indAr.includes("برمجيات") || indAr.includes("معلومات")) {
     const isExcluded =
       rowInd.includes("construction") ||
