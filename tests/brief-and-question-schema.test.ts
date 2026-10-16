@@ -38,6 +38,7 @@ import {
   getLastLlmFallbackDetail,
 } from "../src/functions/shared/llmClient";
 import { formatNumber } from "../src/lib/honestDisplay";
+import { RAW_SEED_CAPABILITIES } from "../src/functions/shared/capabilityRegistry";
 
 const mockedSearchCatalog = vi.mocked(searchCatalog);
 
@@ -228,6 +229,48 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.outputType).toBe("propose_plan");
     expect(res.clarificationItems).toBeUndefined();
     expect(mockedSearchCatalog).toHaveBeenCalled();
+  });
+
+  it("routes decision-maker requests to the people catalog capability with query parameters", async () => {
+    const message = "Find 20 solar industry decision-makers (CEOs) in Germany with names, job titles, work emails, and email verification status";
+    expect(RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-people-search")?.tregEndpointId)
+      .toBe("icypeas.people.search");
+
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_people_route",
+      message,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.items?.[0]?.capabilitySlug).toBe("icypeas-people-search");
+    expect(res.planQuote?.items?.[0]?.params?.query).toBeDefined();
+    expect(res.planQuote?.items?.[0]?.params?.query?.postUrl).toBeUndefined();
+  });
+
+  it("asks for a country before quoting a people search instead of defaulting to Egypt", async () => {
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_people_country_required",
+      message: "Find 20 decision-makers with names, job titles, and work emails",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions?.join(" ")).toContain("الدولة");
+  });
+
+  it("asks for unstated country and industry before creating a company quote", async () => {
+    const tables = makeMockTables();
+    const res = await new ChatHandler(tables as any).handleUserMessage({
+      userId: "user_company_required_fields",
+      message: "Find 100 companies",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions?.join(" ")).toMatch(/الدولة.*القطاع|القطاع.*الدولة/);
   });
 
   // (d) a submitted card answer is stored in the brief and the same question is not asked again

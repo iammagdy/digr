@@ -129,6 +129,14 @@ export function detectCountryFromText(text: string): CountryMapping | null {
 export function detectIndustryFromText(text: string): IndustryMapping {
   const t = (text || "").toLowerCase().trim();
 
+  if (t.includes("fintech") || t.includes("financial technology") || t.includes("التقنية المالية") || t.includes("التكنولوجيا المالية")) {
+    return {
+      englishKeywords: ["fintech", "financial technology"],
+      arabicLabel: "FinTech",
+      exactTaxonomy: ["Financial Services", "Banking", "Information Technology & Services"],
+    };
+  }
+
   if (t.includes("صواريخ") || t.includes("صاروخ") || t.includes("rocket") || t.includes("aerospace") || t.includes("فضاء")) {
     return {
       englishKeywords: ["aerospace", "rocket"],
@@ -429,6 +437,15 @@ export function extractInterpretedParameters(
   params: Record<string, any> | undefined | null,
   summaryAr?: string
 ): { countryAr: string; countryCanonical: string; industryAr: string; isDefaultCountry: boolean } {
+  const query = params?.query && typeof params.query === "object" ? params.query : {};
+  const firstIncluded = (value: any): string | undefined =>
+    typeof value === "string"
+      ? value
+      : Array.isArray(value?.include) && typeof value.include[0] === "string"
+        ? value.include[0]
+        : undefined;
+  const queryCountry = firstIncluded(query.location) || firstIncluded(query.country);
+  const queryIndustry = firstIncluded(query.keyword) || firstIncluded(query.industry);
   const fullText = [
     params?.search,
     params?.query,
@@ -436,17 +453,20 @@ export function extractInterpretedParameters(
     params?.topic,
     params?.location,
     params?.country,
+    queryCountry,
+    queryIndustry,
     summaryAr,
   ]
     .filter((v) => typeof v === "string" && v.trim().length > 0)
     .join(" ");
 
   const explicitCountry =
+    detectCountryFromText(queryCountry || "") ||
     detectCountryFromText(params?.country || "") ||
     detectCountryFromText(params?.location || "") ||
     detectCountryFromText(fullText);
 
-  const industry = detectIndustryFromText(fullText);
+  const industry = detectIndustryFromText(queryIndustry || params?.industry || fullText);
 
   if (explicitCountry) {
     return {
@@ -463,6 +483,36 @@ export function extractInterpretedParameters(
     industryAr: industry.arabicLabel,
     isDefaultCountry: true,
   };
+}
+
+/** Return the required company-search fields the user has not supplied. */
+export function getMissingCompanyResearchRequirements(text: string): Array<"country" | "industry"> {
+  const country = detectCountryFromText(text || "");
+  let industryText = (text || "").toLowerCase();
+  if (country) {
+    industryText = industryText
+      .replace(new RegExp(country.canonicalEnglish.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ")
+      .replace(new RegExp(country.arabicLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), " ");
+  }
+  industryText = industryText
+    .replace(/\b\d+\b/g, " ")
+    .replace(/عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|بيانات|سجلات|سجل|قطاع|نشاط|بحث|ابحث|عن|في|من|مطلوب|القطاع|الشركات/gi, " ")
+    .replace(/\b(?:companies|company|business|find|need|want|search|for|in|of|the)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const industry = detectIndustryFromText(industryText);
+  const industryMissing = !industryText || industry.arabicLabel === "قواعد بيانات الشركات" ||
+    industry.englishKeywords.length === 0 ||
+    industry.englishKeywords.every((keyword) => keyword === "contracting");
+  return [
+    ...(!country ? ["country" as const] : []),
+    ...(industryMissing ? ["industry" as const] : []),
+  ];
+}
+
+export function isPeopleSearchRequest(text: string): boolean {
+  const normalized = (text || "").toLowerCase();
+  return /decision[\s-]*makers?|executives?|people search|work emails?|professional emails?|job titles?|contacts?\b|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|بريد العمل|البريد المهني|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص/.test(normalized);
 }
 
 /**

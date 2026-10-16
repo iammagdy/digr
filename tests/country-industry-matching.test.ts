@@ -5,6 +5,7 @@ import {
   isCompanyRowMatchingLocation,
   isCompanyRowMatchingConstraints,
   extractInterpretedParameters,
+  getMissingCompanyResearchRequirements,
 } from "../src/lib/planParameters";
 import { normalizeIcypeasCompanyParams } from "../src/lib/server/tregAdapter";
 
@@ -44,12 +45,13 @@ describe("Country & Industry Detection and Matching", () => {
     expect(paramsDe.query.location.include).toEqual(["Germany"]);
     expect(paramsDe.query.keyword.include).toContain("solar");
 
-    // 3. Unstated country defaults to Egypt
+    // 3. Unstated country remains absent; the chat flow asks instead of assuming Egypt
     const paramsNoCountry = normalizeIcypeasCompanyParams(
-      { search: "عايز 5 شركات مقاولات" },
+      { search: "عايز 5 شركات" },
       5
     );
-    expect(paramsNoCountry.query.location.include).toEqual(["Egypt"]);
+    expect(paramsNoCountry.query.location).toBeUndefined();
+    expect(paramsNoCountry.query.keyword).toBeUndefined();
   });
 
   it("extracts interpreted parameters with explicit country and default fallback", () => {
@@ -68,6 +70,35 @@ describe("Country & Industry Detection and Matching", () => {
     );
     expect(interpDefault.countryAr).toBe("مصر (افتراضي)");
     expect(interpDefault.isDefaultCountry).toBe(true);
+  });
+
+  it("reads the saved Germany and FinTech values from the structured company query", () => {
+    const interpreted = extractInterpretedParameters({
+      query: {
+        keyword: { include: ["FinTech"] },
+        location: { include: ["Germany"] },
+        industry: { include: ["Financial Services", "Banking"] },
+      },
+    }, "Old quote summary for Egypt IT companies");
+
+    expect(interpreted.countryCanonical).toBe("Germany");
+    expect(interpreted.countryAr).toBe("ألمانيا");
+    expect(interpreted.industryAr).toBe("FinTech");
+    expect(interpreted.isDefaultCountry).toBe(false);
+  });
+
+  it("requires both country and industry instead of interpreting unstated company-search defaults", () => {
+    expect(getMissingCompanyResearchRequirements("Find 100 companies")).toEqual(["country", "industry"]);
+    expect(getMissingCompanyResearchRequirements("Find 100 solar companies in Germany")).toEqual([]);
+    expect(getMissingCompanyResearchRequirements("Find 100 solar companies")).toEqual(["country"]);
+    expect(getMissingCompanyResearchRequirements("Find 100 companies in Germany")).toEqual(["industry"]);
+  });
+
+  it("does not infer Egypt or CEO for an unscoped people search", async () => {
+    const { normalizeIcypeasPeopleParams } = await import("../src/lib/server/tregAdapter");
+    const params = normalizeIcypeasPeopleParams({ query: { keyword: { include: ["decision makers"] } } }, 20);
+    expect(params.query.location).toBeUndefined();
+    expect(params.query.currentJobTitle).toBeUndefined();
   });
 
   it("validates company rows strictly against target country and industry", () => {

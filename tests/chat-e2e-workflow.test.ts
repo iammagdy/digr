@@ -269,7 +269,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
       },
     });
 
-    // Turn 2: User says "تمام جهز الخطة" without re-uploading file
+    // Turn 2: User provides the required company scope and says "تمام جهز الخطة" without re-uploading file
     const req = new NextRequest("http://localhost:3000/api/chat", {
       method: "POST",
       headers: {
@@ -278,7 +278,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
       },
       body: JSON.stringify({
         conversationId: "conv_turn_2_test",
-        message: "تمام جهز الخطة وابدأ التنفيذ مع استبعاد نفس الملف",
+        message: "تمام جهز الخطة لمقاولات كهروميكانيكية في مصر وابدأ التنفيذ مع استبعاد نفس الملف",
       }),
     });
 

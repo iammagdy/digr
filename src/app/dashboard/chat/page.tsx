@@ -19,7 +19,7 @@ import OnboardingModal from "./components/OnboardingModal";
 import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
-import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
+import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
@@ -788,9 +788,11 @@ export default function ChatWorkspacePage() {
     ];
 
     const cleanVal = typeof newParam === "string" ? newParam.trim() : "";
-    if (cleanVal && cleanVal !== "[object Object]") {
-      const isProfile = slug.includes("profile") || slug.includes("user");
-      const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
+    const isProfile = slug.includes("profile") || slug.includes("user");
+    const isCompany = slug.includes("companies") || slug.includes("company") || slug.includes("b2b");
+    if (isCompany) {
+      operations.push(...buildCompanyPlanEditOperations(slug, cleanVal, newCountry || "", newIndustry || ""));
+    } else if (cleanVal && cleanVal !== "[object Object]") {
       const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
 
       if (isProfile) {
@@ -799,31 +801,6 @@ export default function ChatWorkspacePage() {
           capabilitySlug: slug,
           key: "username",
           value: cleanVal.replace(/^@/, "").trim(),
-        });
-      } else if (isCompany) {
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: "search",
-          value: cleanVal,
-        });
-
-        const countryInfo = detectCountryFromText(newCountry || cleanVal);
-        const industryInfo = detectIndustryFromText(newIndustry || cleanVal);
-        const structuredQuery: Record<string, any> = {
-          keyword: { include: [cleanVal] },
-        };
-        if (countryInfo?.canonicalEnglish) {
-          structuredQuery.location = { include: [countryInfo.canonicalEnglish] };
-        }
-        if (industryInfo?.exactTaxonomy && industryInfo.exactTaxonomy.length > 0) {
-          structuredQuery.industry = { include: industryInfo.exactTaxonomy };
-        }
-        operations.push({
-          action: "set_param",
-          capabilitySlug: slug,
-          key: "query",
-          value: structuredQuery,
         });
       } else if (isPostOrUrl && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
         const urlKey = slug.includes("youtube") ? "videoUrl" : slug.includes("reddit") ? "postUrl" : "url";
