@@ -20,6 +20,7 @@ interface JobDoc {
   targetVolumeMax?: number;
   errorAr?: string;
   createdAt: string;
+  fileIds: { xlsx: string | null; pdf: string | null; csv: string | null };
 }
 interface QuoteInfo { conversationId: string; targetVolumeMax: number; summaryAr?: string }
 
@@ -73,14 +74,19 @@ function targetOf(params?: string): string {
 }
 
 function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
+  const refund = `${formatAr(reservedCredits)} نقطة كاملة`;
   if (!rawError) {
-    return `لم تتوفر سجلات عامة كافية — رجعت ${formatAr(reservedCredits)} نقطة كاملة لرصيدك.`;
+    return `لم تتوفر سجلات كافية — أُعيد ${refund} إلى رصيدك.`;
   }
   let cleaned = rawError
     .replace(/مراقب\s*المهام\s*\(?Watchdog\)?/gi, "")
     .replace(/watchdog/gi, "")
     .replace(/\s+/g, " ")
     .trim();
+
+  if (/cannot settle|chunk lease|job_quote_|settle_job|provider|endpoint|\bUSD\b|supabase|stack trace|internal error/i.test(cleaned)) {
+    return `تعذر إكمال البحث — أُعيد ${refund} إلى رصيدك.`;
+  }
 
   if (
     cleaned.includes("لتجاوز المهلة الزمنية") ||
@@ -120,7 +126,7 @@ export default function RequestsPage() {
     if (!user) return;
     try {
       const supabase = createClient();
-      const [jobsRes, quotesRes, convRes, msgsRes] = await Promise.all([
+      const [jobsRes, quotesRes, convRes, msgsRes, artifactsRes] = await Promise.all([
         supabase
           .from(JOBS_COLLECTION)
           .select("*")
@@ -147,8 +153,23 @@ export default function RequestsPage() {
           .not("quote", "is", null)
           .order("created_at", { ascending: false })
           .limit(100),
+        supabase
+          .from("artifact_versions")
+          .select("job_id, file_id_xlsx, file_id_pdf, file_id_csv, version_number")
+          .eq("user_id", user.id)
+          .order("version_number", { ascending: false })
+          .limit(100),
       ]);
       if (jobsRes.error) throw jobsRes.error;
+      const fileIdsByJob = new Map<string, JobDoc["fileIds"]>();
+      for (const artifact of artifactsRes.data || []) {
+        const fileIds = fileIdsByJob.get(artifact.job_id) || { xlsx: null, pdf: null, csv: null };
+        fileIds.xlsx ||= artifact.file_id_xlsx || null;
+        fileIds.pdf ||= artifact.file_id_pdf || null;
+        fileIds.csv ||= artifact.file_id_csv || null;
+        fileIdsByJob.set(artifact.job_id, fileIds);
+      }
+
       const mappedJobs: JobDoc[] = (jobsRes.data || []).map((r: any) => ({
         $id: r.id,
         templateSlug: r.endpoint_id || r.template_slug || r.templateSlug || "",
@@ -160,6 +181,11 @@ export default function RequestsPage() {
         targetVolumeMax: typeof r.target_volume_max === "number" ? r.target_volume_max : undefined,
         errorAr: r.error_message ?? r.error_ar ?? r.errorAr ?? undefined,
         createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+        fileIds: {
+          xlsx: fileIdsByJob.get(r.id)?.xlsx || (String(r.result_file_id || "").endsWith(".xlsx") ? r.result_file_id : null),
+          pdf: fileIdsByJob.get(r.id)?.pdf || (String(r.result_file_id || "").endsWith(".pdf") ? r.result_file_id : null),
+          csv: fileIdsByJob.get(r.id)?.csv || (String(r.result_file_id || "").endsWith(".csv") ? r.result_file_id : null),
+        },
       }));
       setJobs(mappedJobs);
 
@@ -314,7 +340,8 @@ export default function RequestsPage() {
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
             : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0) : "";
-          const hasFiles = k === "done" || k === "partial";
+          const availableFormats = (["xlsx", "pdf", "csv"] as const).filter((ext) => Boolean(j.fileIds[ext]));
+          const hasFiles = availableFormats.length > 0;
           return (
             <article key={j.$id} className="flex flex-col gap-3.5 rounded-3xl border border-ln bg-sf p-[18px]" style={{ animation: "up .35s both" }}>
               <div className="flex items-start justify-between gap-3">
@@ -333,12 +360,12 @@ export default function RequestsPage() {
               <div className="grid grid-cols-3 gap-2 border-t border-ln pt-3 text-xs text-mut">
                 <span>السجلات<br /><strong className="text-sm font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
                 <span>النقاط المخصومة<br /><strong className="text-sm font-semibold text-ink">{k === "running" ? "محجوز" : formatAr(j.chargedCredits ?? 0)}</strong></span>
-                <span>الملفات<br /><strong className="text-sm font-semibold text-ink">{hasFiles ? "٣" : "—"}</strong></span>
+                <span>الملفات<br /><strong className="text-sm font-semibold text-ink">{hasFiles ? formatAr(availableFormats.length) : "—"}</strong></span>
               </div>
               {k === "running" && <div className="h-1 overflow-hidden rounded bg-sf2"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>}
               {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{note}</p>}
               <div className="flex flex-wrap gap-2">
-                {hasFiles && (["xlsx", "pdf", "csv"] as const).map((ext) => (
+                {availableFormats.map((ext) => (
                   <button
                     key={ext} type="button" onClick={() => download(j, ext)} disabled={dl === `${j.$id}_${ext}`}
                     className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border border-ln2 bg-transparent px-3.5 text-xs text-ink disabled:opacity-60"

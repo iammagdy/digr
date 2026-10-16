@@ -283,7 +283,7 @@ export function HeroLens() {
       {/* front layer: protected zone */}
       <div data-lens-shield="1" className="relative z-[2] w-full max-w-[760px] text-center will-change-transform">
         <p className="m-0 inline-block rounded-full px-4 py-1.5 text-sm font-normal text-ink2" style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)", animation: "up 1s .1s both" }}>
-          بيانات عامة · منظّمة · جاهزة للتحليل
+          من مصادر متاحة · منظّمة · جاهزة للتحليل
         </p>
         <h1
           className="mt-[18px] mb-0 font-display text-ink"

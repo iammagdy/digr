@@ -114,6 +114,17 @@ const borderThin = {
   right: { style: "thin" as const, color: { argb: COLOR_BORDER } },
 };
 
+function customerFacingTitle(title: string): string {
+  const cleaned = String(title || "")
+    .replace(/\bicypeas(?:[-_. ]companies[-_. ]search)?\b/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*[•·:—-]\s*/g, " — ")
+    .replace(/(?:نتائج|بيانات)\s+(?:استخراج|بحث)\s*—?\s*$/u, "نتائج البحث")
+    .replace(/^(?:\s*[—–-]\s*)+|(?:\s*[—–-]\s*)+$/g, "")
+    .trim();
+  return cleaned || "نتائج البحث";
+}
+
 /**
  * Generate a research-grade Excel (.xlsx) workbook with 5 sheets:
  * 1. لوحة المؤشرات العامة (Executive KPI Dashboard)
@@ -132,7 +143,8 @@ export async function generateExcelReport(
   }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  wb.title = norm.metadata.title;
+  const reportTitle = customerFacingTitle(norm.metadata.title);
+  wb.title = reportTitle;
 
   const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const rowsCount = norm.rows.length;
@@ -143,7 +155,7 @@ export async function generateExcelReport(
   // Title Block
   wsDash.mergeCells("A1:H1");
   const titleCell = wsDash.getCell("A1");
-  titleCell.value = norm.metadata.title;
+  titleCell.value = reportTitle;
   titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   titleCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -190,17 +202,6 @@ export async function generateExcelReport(
   });
 
   wsDash.addRow([]); // Blank row 6
-
-  // Methodology Statement Banner (Row 7 & 8)
-  wsDash.mergeCells("A7:H8");
-  const methCell = wsDash.getCell("A7");
-  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
-  methCell.font = { name: "Calibri", size: 9.5, color: { argb: "FF78350F" } };
-  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFEF3C7" } };
-  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
-  methCell.border = borderThin;
-  wsDash.getRow(7).height = 24;
-  wsDash.getRow(8).height = 24;
 
   wsDash.columns = [
     { width: 16 }, { width: 18 }, { width: 22 }, { width: 22 },
@@ -377,7 +378,8 @@ export async function generateCompanyExcelReport(
   const norm: NormalizedDataset = normalizeDataset(payload);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  wb.title = norm.metadata.title;
+  const reportTitle = customerFacingTitle(norm.metadata.title);
+  wb.title = reportTitle;
 
   const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const rowsCount = norm.rows.length;
@@ -393,7 +395,7 @@ export async function generateCompanyExcelReport(
   const wsExec = wb.addWorksheet("الملخص التنفيذي ومؤشرات السوق", { views: [{ rightToLeft: true }] });
   wsExec.mergeCells("A1:H1");
   const titleCell = wsExec.getCell("A1");
-  titleCell.value = norm.metadata.title;
+  titleCell.value = reportTitle;
   titleCell.font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   titleCell.alignment = { horizontal: "center", vertical: "middle" };
@@ -438,15 +440,6 @@ export async function generateCompanyExcelReport(
     val.alignment = { horizontal: "center", vertical: "middle" };
     val.border = borderThin;
   });
-
-  wsExec.addRow([]); // Blank row 6
-  wsExec.mergeCells("A7:H8");
-  const methCell = wsExec.getCell("A7");
-  methCell.value = `ملاحظة منهجية وبيان النزاهة العلمية:\n${norm.metadata.methodology}`;
-  methCell.font = { name: "Calibri", size: 9.5, italic: true, color: { argb: "FF475569" } };
-  methCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF1F5F9" } };
-  methCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true };
-  methCell.border = borderThin;
 
   // ================= Sheet 2: دليل الشركات المعتمد =================
   const wsDir = wb.addWorksheet("دليل الشركات المعتمد", {
@@ -623,7 +616,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       size: "A4",
       margins: { top: 25, bottom: 25, left: 30, right: 30 },
       info: {
-        Title: norm.metadata.title,
+        Title: customerFacingTitle(norm.metadata.title),
         Author: "Diger",
         Subject: "Data Report",
         Creator: "Diger Data Platform",
@@ -654,7 +647,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     doc.rect(30, 24, contentWidth, 52).fill("#1B365D");
 
     doc.font("ArabicBold").fontSize(13.5).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl(norm.metadata.title), 40, 32, {
+    doc.text(formatArabicRtl(customerFacingTitle(norm.metadata.title)), 40, 32, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 3,

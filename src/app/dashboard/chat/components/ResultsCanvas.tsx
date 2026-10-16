@@ -373,8 +373,8 @@ export default function ResultsCanvas({
         {tab === "files" && (
           <div className="space-y-3">
             {[
-              { ext: "xlsx" as const, title: "ملف Excel كامل (.xlsx)", desc: "جدول البيانات + دليل المتغيرات + صفحة المنهجية." },
-              { ext: "pdf" as const, title: "تقرير ملخص (.pdf)", desc: "صياغة موثقة مع مقاييس التغطية." },
+              { ext: "xlsx" as const, title: "ملف Excel كامل (.xlsx)", desc: "جدول البيانات + دليل المتغيرات." },
+              { ext: "pdf" as const, title: "تقرير المنهجية (.pdf)", desc: "المنهجية ومقاييس التغطية وحدود البيانات." },
               { ext: "csv" as const, title: "بيانات خام (.csv)", desc: "بيانات جدولية — للتحليل الإحصائي والبرمجي." },
             ].map((f) => (
               <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">

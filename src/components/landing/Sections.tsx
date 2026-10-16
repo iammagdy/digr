@@ -111,7 +111,7 @@ export function FinalCta({ initialSignedIn }: { initialSignedIn?: boolean } = {}
       <Reveal as="h2" className="m-0 font-extralight text-ink" style={{ fontSize: "clamp(40px,7cqi,80px)" }}>سؤال واحد يكفي للبدء.</Reveal>
       <Link href={initialSignedIn ? "/dashboard/chat" : "/register"} className="mt-8 inline-flex min-h-14 items-center rounded-full bg-ac px-[34px] text-base text-onac">{initialSignedIn ? "لوحة التحكم" : "أنشئ حسابك"}</Link>
       <div className="mt-[72px] flex flex-wrap items-center justify-center gap-x-[18px] gap-y-1.5 text-xs font-light text-fnt">
-        <span>© ٢٠٢٦ ديجر — بيانات عامة فقط · موافقة صريحة قبل أي جمع</span>
+        <span>© ٢٠٢٦ ديجر — من مصادر متاحة · موافقة صريحة قبل أي جمع</span>
         <Link href="/calculator" className="flex min-h-11 items-center text-xs text-mut">حاسبة التكلفة</Link>
         <Link href="/legal/terms" className="flex min-h-11 items-center text-xs text-mut">الشروط والأحكام</Link>
         <Link href="/legal/privacy" className="flex min-h-11 items-center text-xs text-mut">سياسة الخصوصية</Link>
