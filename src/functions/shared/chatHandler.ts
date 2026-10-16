@@ -53,6 +53,39 @@ import { extractResearchIntent, extractEntityType } from "../../lib/server/resea
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
 
+function customerAuthoredRequirementText(message: string): string {
+  const trimmed = (message || "").trim();
+  if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return trimmed;
+    return parsed.answers
+      .flatMap((answer: any) => {
+        if (typeof answer?.value === "string") return [sanitizeClarificationText(answer.value, 200)];
+        if (Array.isArray(answer?.value)) {
+          return answer.value
+            .filter((value: unknown): value is string => typeof value === "string")
+            .map((value: string) => sanitizeClarificationText(value, 40));
+        }
+        return [];
+      })
+      .filter(Boolean)
+      .join(" ");
+  } catch {
+    return trimmed;
+  }
+}
+
+function explicitCompanyClarificationNotes(notes?: string): string[] {
+  const labels = ["الدولة المطلوبة:", "المجال المطلوب:", "إجابة هدف التواصل:"];
+  return (notes || "")
+    .split(/\s*\|\s*/)
+    .map((part) => part.trim())
+    .filter((part) => labels.some((label) => part.startsWith(label)))
+    .map((part) => part.slice(part.indexOf(":") + 1).trim())
+    .filter(Boolean);
+}
+
 export interface ChatHandlerInput {
   userId: string;
   conversationId?: string;
@@ -510,14 +543,35 @@ export function buildAutoPlanProposal(
   };
 }
 
-/** Replace an unrelated model suggestion with the people capability when intent is clear. */
+/** Keep people-search requests on the people capability, even if the model
+ * proposes a generic company plan or refuses while that capability is enabled. */
 export function routePeopleAlternative(
   output: any,
   brief: ResearchBrief,
   capabilities: Capability[],
   requestText: string,
 ): any {
-  if (output?.type !== "suggest_alternative" || !isPeopleSearchRequest(requestText)) return output;
+  if (!isPeopleSearchRequest(requestText)) return output;
+
+  // Preserve an explicit adaptive clarification from the model. The code
+  // still enforces the required country below when a plan or alternative was
+  // proposed without it.
+  if (output?.type === "ask_clarification") return output;
+
+  const proposedPeopleCapability = output?.type === "propose_plan" &&
+    Array.isArray(output.capabilities) &&
+    output.capabilities.some((step: any) => /people/i.test(
+      `${step?.capabilitySlug || ""} ${step?.endpointId || ""}`,
+    ));
+  if (proposedPeopleCapability) return output;
+
+  if (![
+    "suggest_alternative",
+    "propose_plan",
+    "refuse",
+    "answer_question",
+    "search_catalog",
+  ].includes(output?.type)) return output;
 
   const peopleCapability = capabilities.find((capability) =>
     /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
@@ -1380,12 +1434,10 @@ export class ChatHandler {
       // original user request in scope so explicit counts and company filters
       // survive the answer turn instead of being replaced by model defaults.
       const conversationRequestText = [
-        ...messagesContext.filter((entry) => entry.role === "user").map((entry) => entry.content),
-        message,
-        ...(brief.topics || []),
-        ...(brief.keywords || []),
-        brief.notes || "",
-      ].join(" ");
+        ...messagesContext.filter((entry) => entry.role === "user").map((entry) => customerAuthoredRequirementText(entry.content)),
+        customerAuthoredRequirementText(message),
+        ...explicitCompanyClarificationNotes(brief.notes),
+      ].filter(Boolean).join(" ");
 
       // 7. Execute LLM Turn
       let parsedPurposes: string[] = [];
