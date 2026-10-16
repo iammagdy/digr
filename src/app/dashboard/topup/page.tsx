@@ -11,6 +11,7 @@ import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/hones
 import { formatAr } from "@/lib/arabicDigits";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
+import { hasApprovedTopupTransition } from "@/lib/topupStatusTransition";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
@@ -154,14 +155,13 @@ export default function WalletPage() {
   }, [user, submitted?.status, topups, loadTopups]);
 
   useEffect(() => {
-    let approved = false;
+    const approved = hasApprovedTopupTransition(topups, knownTopupStatuses.current, submitted);
     for (const topup of topups) {
-      if (knownTopupStatuses.current.get(topup.$id) === "pending" && topup.status === "approved") approved = true;
       knownTopupStatuses.current.set(topup.$id, topup.status);
     }
     setSubmitted((current) => current ? topups.find((t) => t.$id === current.$id) || current : null);
     if (approved) { void refreshBalance(); void loadLedger(); }
-  }, [topups, refreshBalance, loadLedger]);
+  }, [topups, submitted, refreshBalance, loadLedger]);
 
   /* records delivered this month (for «خُصم هذا الشهر … على N سجلًا») */
   useEffect(() => {
@@ -322,7 +322,7 @@ export default function WalletPage() {
             loadingIpa={loadingIpa}
             pendingCount={pendingCount}
             maxPending={maxPending}
-            onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
+            onSubmitted={(t) => { knownTopupStatuses.current.set(t.$id, t.status); setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
           />
         ) : (
           <SubmittedCard topup={submitted} creditValue={creditValue} onBack={() => setSubmitted(null)} onContinue={() => router.push(returnTo.current)} />
