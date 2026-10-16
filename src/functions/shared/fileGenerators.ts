@@ -612,7 +612,11 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const norm: NormalizedDataset = normalizeDataset(payload);
 
+    const regularFontBuf = getRegularFontBuffer();
+    const boldFontBuf = getBoldFontBuffer();
+
     const doc = new PDFDocument({
+      font: regularFontBuf as any,
       size: "A4",
       margins: { top: 25, bottom: 25, left: 30, right: 30 },
       info: {
@@ -623,8 +627,8 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       },
     });
 
-    doc.registerFont("ArabicRegular", getRegularFontBuffer());
-    doc.registerFont("ArabicBold", getBoldFontBuffer());
+    doc.registerFont("ArabicRegular", regularFontBuf);
+    doc.registerFont("ArabicBold", boldFontBuf);
 
     const buffers: Buffer[] = [];
     doc.on("data", (chunk) => buffers.push(chunk));
