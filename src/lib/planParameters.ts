@@ -456,7 +456,7 @@ export function extractInterpretedParameters(
   // the original plan after an edit.
   const queryIndustry = isPeopleSearch
     ? ""
-    : params?.industry || firstIncluded(query.industry) || firstIncluded(query.keyword);
+    : params?.industry || firstIncluded(query.keyword) || firstIncluded(query.industry);
   const fullText = [
     params?.search,
     params?.query,
@@ -516,6 +516,7 @@ export function getMissingCompanyResearchRequirements(text: string): Array<"coun
   const industry = detectIndustryFromText(industryText);
   const industryMissing = !industryText || industry.arabicLabel === "قواعد بيانات الشركات" ||
     industry.englishKeywords.length === 0 ||
+    (!industry.exactTaxonomy?.length && industry.arabicLabel === industryText) ||
     industry.englishKeywords.every((keyword) => keyword === "contracting");
   return [
     ...(!country ? ["country" as const] : []),

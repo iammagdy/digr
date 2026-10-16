@@ -1644,12 +1644,32 @@ export class ChatHandler {
           persona: userProfile?.persona,
           userMessage: message,
         });
+        const companyRequirementsText = [message, ...(brief.topics || []), ...(brief.keywords || []), brief.notes || ""].join(" ");
+        const missingCompanyRequirements = isCompanyIntent && !isPeopleSearchRequest(companyRequirementsText)
+          ? getMissingCompanyResearchRequirements(companyRequirementsText)
+          : [];
         const hasPlatformOrTopic = Boolean(
           (brief.platforms && brief.platforms.length > 0) || (brief.topics && brief.topics.length > 0),
         );
-        clarificationItemsList = hasPlatformOrTopic
-          ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
-          : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+        if (missingCompanyRequirements.length > 0) {
+          const missingLabels = missingCompanyRequirements.map((field) => field === "country" ? "الدولة" : "القطاع");
+          const requiredQuestion = missingLabels.length > 1
+            ? `ما ${missingLabels.join(" و")} المطلوبان؟`
+            : `ما ${missingLabels[0]} المطلوب؟`;
+          clarificationItemsList = [{
+            id: "company_required_fields",
+            text: requiredQuestion,
+            question: requiredQuestion,
+            type: "free",
+            options: [],
+            allowOther: true,
+          }];
+          finalContentAr = `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`;
+        } else {
+          clarificationItemsList = hasPlatformOrTopic
+            ? filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief).slice(0, 1)
+            : filterQuestionsAlreadyInBrief(clarification.clarificationItems, brief);
+        }
         clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
         if (clarificationItemsList.length > 0) {
           finalContentAr = deduplicateIntroText(
@@ -1700,8 +1720,8 @@ export class ChatHandler {
           ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
             const itemParams = { ...(c.params || {}) };
             const capabilityId = c.capabilitySlug || c.endpointId || "";
-            const isCompanyCapability = /compan|b2b/i.test(capabilityId);
-            const requestedCompanyVolume = isCompanyCapability && explicitRequestedVolume && explicitRequestedVolume > 0
+            const isRecordSearchCapability = /compan|b2b|people/i.test(capabilityId);
+            const requestedRecordVolume = isRecordSearchCapability && explicitRequestedVolume && explicitRequestedVolume > 0
               ? explicitRequestedVolume
               : undefined;
             const detectedIndustry = detectIndustryFromText(message);
@@ -1718,10 +1738,10 @@ export class ChatHandler {
                 itemParams.query.location = { include: [explicitCountry.canonicalEnglish] };
               }
             }
-            if (requestedCompanyVolume && itemParams.pagination && typeof itemParams.pagination === "object") {
+            if (requestedRecordVolume && itemParams.pagination && typeof itemParams.pagination === "object") {
               const currentPageSize = Number(itemParams.pagination.size);
-              if (!Number.isFinite(currentPageSize) || currentPageSize > requestedCompanyVolume) {
-                itemParams.pagination.size = requestedCompanyVolume;
+              if (!Number.isFinite(currentPageSize) || currentPageSize > requestedRecordVolume) {
+                itemParams.pagination.size = requestedRecordVolume;
               }
             }
             return {
@@ -1742,10 +1762,10 @@ export class ChatHandler {
                     }
                   : {}),
               },
-              targetVolumeMin: requestedCompanyVolume
-                ? Math.min(c.targetVolumeMin || 1, requestedCompanyVolume)
+              targetVolumeMin: requestedRecordVolume
+                ? Math.min(c.targetVolumeMin || 1, requestedRecordVolume)
                 : c.targetVolumeMin || 1,
-              targetVolumeMax: requestedCompanyVolume || c.targetVolumeMax,
+              targetVolumeMax: requestedRecordVolume || c.targetVolumeMax,
             };
           });
 

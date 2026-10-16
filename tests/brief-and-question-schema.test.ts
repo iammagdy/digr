@@ -273,6 +273,31 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationQuestions?.join(" ")).toMatch(/الدولة.*القطاع|القطاع.*الدولة/);
   });
 
+  it("replaces a sector-only clarification with country and sector when both are missing", async () => {
+    const handler = new ChatHandler(makeMockTables() as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "ask_clarification",
+        questions: [{ id: "industry", question: "ما القطاع أو المجال الذي تريد الشركات منه؟", type: "free" }],
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId: "user_company_country_and_industry_required",
+      message: "أريد قائمة تضم ١٠٠ شركة",
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationQuestions?.join(" ")).toMatch(/الدولة.*القطاع|القطاع.*الدولة/);
+  });
+
   it("keeps an explicit company count when the plan proposal returns a different volume", async () => {
     const companyCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-companies-search")!;
     mockedSearchCatalog.mockResolvedValue([{
@@ -321,6 +346,56 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
     expect(res.outputType).toBe("propose_plan");
     expect(res.planQuote?.targetVolumeMax).toBe(50);
+  });
+
+  it("keeps an explicit decision-maker count when the plan proposal returns a different volume", async () => {
+    const peopleCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-people-search")!;
+    mockedSearchCatalog.mockResolvedValue([{
+      slug: peopleCap.slug,
+      id: peopleCap.tregEndpointId,
+      nameAr: peopleCap.nameAr,
+      nameEn: peopleCap.nameEn,
+      platform: peopleCap.platform,
+      summaryAr: peopleCap.descriptionAr,
+      billingUnit: "record",
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor", maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      method: "GET",
+      paramsSchema: JSON.parse(peopleCap.paramsSchema),
+    } as any]);
+
+    const handler = new ChatHandler(makeMockTables() as any);
+    vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج بيانات صناع قرار",
+        capabilities: [{
+          capabilitySlug: "icypeas-people-search",
+          endpointId: "icypeas.people.search",
+          params: { query: { keyword: { include: ["decision makers"] }, location: { include: ["Germany"] } } },
+          targetVolumeMin: 1,
+          targetVolumeMax: 374,
+        }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية البحث",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "test-model",
+    });
+
+    const res = await handler.handleUserMessage({
+      userId: "user_explicit_people_count",
+      message: "ابحث عن ٢٠ من صناع القرار في ألمانيا مع الاسم والمسمى الوظيفي وبريد العمل",
+      userBalance: 500,
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.targetVolumeMax).toBe(20);
   });
 
   // (d) a submitted card answer is stored in the brief and the same question is not asked again
