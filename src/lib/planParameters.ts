@@ -582,12 +582,23 @@ export function getCompanyRequirementItems(
   requestText = "",
 ): Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> {
   const items: Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> = [];
+  const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
+  if (ambiguousNamedEntity && missing.includes("outreach_details")) {
+    const text = `هل تقصد شركة محددة باسم «${ambiguousNamedEntity.slice(0, 36)}» أم قائمة شركات للتواصل التجاري؟`;
+    items.push({
+      id: "company_outreach_required",
+      text,
+      question: text,
+      type: "single",
+      options: ["شركة محددة بهذا الاسم", "قائمة شركات للتواصل التجاري", "أخرى"],
+      allowOther: true,
+    });
+  }
   if (missing.includes("country")) {
     const text = "ما الدولة التي تريد البحث عن الشركات فيها؟";
     items.push({ id: "company_country_required", text, question: text, type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true });
   }
   if (missing.includes("industry")) {
-    const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
     const text = ambiguousNamedEntity
       ? `ما القطاع أو مجال «${ambiguousNamedEntity.slice(0, 36)}»، أو ما المجال المطلوب للشركات التي تبحث عنها؟`
       : "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
@@ -597,14 +608,9 @@ export function getCompanyRequirementItems(
       : ["تقنية وبرمجيات", "تصنيع", "التقنية المالية", "أخرى"];
     items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
   }
-  if (missing.includes("outreach_details")) {
-    const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
-    const text = ambiguousNamedEntity
-      ? `هل «${ambiguousNamedEntity.slice(0, 36)}» اسم شركة محددة أم نوع الشركات؟ ما غرض التواصل والبيانات المطلوبة؟`
-      : "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
-    const options = ambiguousNamedEntity
-      ? ["شركة محددة بهذا الاسم", "عملاء محتملون / مبيعات", "موردون أو شركاء", "أخرى"]
-      : ["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"];
+  if (missing.includes("outreach_details") && !ambiguousNamedEntity) {
+    const text = "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
+    const options = ["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"];
     items.push({ id: "company_outreach_required", text, question: text, type: "single", options, allowOther: true });
   }
   return items;

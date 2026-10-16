@@ -138,6 +138,9 @@ describe("Country & Industry Detection and Matching", () => {
     expect(getAmbiguousCompanyReference("أريد أن أضم شركة تواصل التجاري إلى القائمة.")).toBe("تواصل التجاري");
     const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
     const outreach = items.find((item) => item.id === "company_outreach_required");
+    expect(items[0]).toBe(outreach);
+    expect(outreach?.text).toContain("شركة محددة باسم");
+    expect(outreach?.text).toContain("قائمة شركات للتواصل التجاري");
     expect(outreach?.text).toContain("تواصل التجاري");
     expect(outreach?.text.length).toBeLessThanOrEqual(120);
     expect(outreach?.options).toContain("شركة محددة بهذا الاسم");

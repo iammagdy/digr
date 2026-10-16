@@ -400,6 +400,23 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationItems?.[0]?.id).toBe("company_country_required");
   });
 
+  it("clarifies an ambiguous company name before asking for country or industry", async () => {
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_ambiguous_tawasol_company",
+      message: "أريد أن أضم شركة تواصل التجاري إلى القائمة.",
+      testScenario: "phase2_plan",
+    });
+
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationItems).toHaveLength(1);
+    expect(res.clarificationItems?.[0]).toMatchObject({
+      id: "company_outreach_required",
+      text: expect.stringContaining("قائمة شركات للتواصل التجاري"),
+      options: expect.arrayContaining(["شركة محددة بهذا الاسم", "قائمة شركات للتواصل التجاري", "أخرى"]),
+    });
+  });
+
   it("keeps a company search in clarification until the user supplies the scope and outreach details", async () => {
     const handler = new ChatHandler(makeMockTables() as any);
     const first = await handler.handleUserMessage({
@@ -683,7 +700,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(items[1].options).toEqual(["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"]);
     expect(items.every((item) => item.allowOther)).toBe(true);
     const ambiguous = getCompanyRequirementItems(["outreach_details"], "أريد أضم شركة تواصل التجاري");
-    expect(ambiguous[0].text).toContain("اسم شركة محددة");
+    expect(ambiguous[0].text).toContain("شركة محددة باسم");
     expect(ambiguous[0].options).toContain("شركة محددة بهذا الاسم");
   });
 
