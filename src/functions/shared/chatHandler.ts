@@ -1688,6 +1688,13 @@ export class ChatHandler {
         const mapPlanItems = (out: any) =>
           ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
             const itemParams = { ...(c.params || {}) };
+            const detectedIndustry = detectIndustryFromText(message);
+            if (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0)) {
+              itemParams.query = {
+                keyword: { include: detectedIndustry.englishKeywords },
+                location: { include: [explicitCountry ? explicitCountry.canonicalEnglish : "Egypt"] },
+              };
+            }
             if (explicitCountry && !itemParams.country && !itemParams.location) {
               itemParams.country = explicitCountry.canonicalEnglish;
               itemParams.location = explicitCountry.canonicalEnglish;

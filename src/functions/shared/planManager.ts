@@ -478,7 +478,17 @@ export function validatePlanAgainstLiveCatalog(
       it.params.postUrl = "https://www.facebook.com/post/1";
     }
 
-    const missing = required.filter((p) => it.params?.[p] === undefined || it.params?.[p] === null || it.params?.[p] === "");
+    if (
+      (it.capabilitySlug?.includes("icypeas") || it.endpointId?.includes("icypeas")) &&
+      required.includes("query") &&
+      (!it.params.query || (typeof it.params.query === "object" && Object.keys(it.params.query).length === 0))
+    ) {
+      it.params.query = { location: { include: ["Egypt"] } };
+    }
+
+    const missing = required
+      .filter((p) => p !== "page" && p !== "size")
+      .filter((p) => it.params?.[p] === undefined || it.params?.[p] === null || it.params?.[p] === "");
     if (missing.length > 0) {
       errors.push(`الخدمة "${nameAr}" تحتاج مدخلات إضافية: ${missing.join("، ")}`);
       issues.push({ itemIndex: index, nameAr, kind: "missing_params", missingParams: missing });
