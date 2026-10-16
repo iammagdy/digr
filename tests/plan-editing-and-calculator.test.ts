@@ -207,6 +207,22 @@ describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
     expect(params.query.location.include).toEqual(["United Arab Emirates"]);
     expect(params.query.industry.include).toContain("Food & Beverages");
   });
+
+  it("clears a keyword synthesized for the editor from an old country and sector", () => {
+    const previousParams = {
+      country: "Germany",
+      industry: "الطاقة الشمسية والمتجددة",
+      query: { keyword: { include: ["solar"] }, location: { include: ["Germany"] } },
+    };
+    const editorValue = extractParamDisplayString(previousParams, "20 solar companies in Germany");
+    const operations = buildCompanyPlanEditOperations(
+      "icypeas-companies-search", editorValue, "United Arab Emirates", "الأغذية والمطاعم",
+      { keyword: editorValue, country: previousParams.country, industry: previousParams.industry },
+    );
+    const query = operations.find((op) => op.key === "query")?.value;
+    expect(JSON.stringify(query)).not.toContain("solar");
+    expect(JSON.stringify(query)).not.toContain("Germany");
+  });
 });
 
 describe("Company Research Capability & Quote Math", () => {
