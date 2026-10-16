@@ -11,7 +11,7 @@ import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
-import type { DiscoveryAnswer } from "./components/discoveryQuestions";
+import { parsePersistedClarificationAnswers, type DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 
@@ -664,7 +664,7 @@ export default function ChatWorkspacePage() {
         offset += pageSize;
       }
 
-      setMessages(documents
+      const restoredMessages: MessageItem[] = documents
         .filter((document) => (document.role === "user" || document.role === "assistant") && document.status !== "thinking")
         .map((document) => ({
           id: document.id || document.$id,
@@ -673,7 +673,24 @@ export default function ChatWorkspacePage() {
           clarificationItems: document.clarification_items,
           planQuote: document.quote,
           createdAt: String(document.created_at || document.createdAt || new Date().toISOString()),
-        })));
+        }));
+      for (let index = 0; index < restoredMessages.length; index += 1) {
+        const answers = parsePersistedClarificationAnswers(restoredMessages[index].content);
+        if (!answers) continue;
+        // Card submissions are stored as structured JSON. Keep the serialized payload out of chat.
+        restoredMessages[index].hidden = true;
+        restoredMessages[index].content = answers
+          .map((answer) => `${answer.question}: ${Array.isArray(answer.value) ? answer.value.join("، ") : answer.value || "سيُطلب منك الاختيار"}`)
+          .join(" · ");
+        for (let previous = index - 1; previous >= 0; previous -= 1) {
+          const message = restoredMessages[previous];
+          if (message.role === "assistant" && message.clarificationItems) {
+            message.completedClarificationAnswers = answers;
+            break;
+          }
+        }
+      }
+      setMessages(restoredMessages);
 
       // Restore the run (progress / files) of the conversation's accepted quote or active job
       let quoteJobId = targetJobId;
@@ -1122,7 +1139,7 @@ export default function ChatWorkspacePage() {
         {
           id: `err_meth_${Date.now()}`,
           role: "assistant",
-          content: "تعذر طلب صياغة المنهجية: " + (err.message || "خطأ غير متوقع"),
+          content: "تعذر طلب صياغة المنهجية حالياً. يرجى المحاولة لاحقاً.",
           createdAt: new Date().toISOString(),
         },
       ]);

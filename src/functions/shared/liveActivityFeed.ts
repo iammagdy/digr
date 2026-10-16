@@ -19,8 +19,9 @@ export interface LiveActivitySnapshot {
   } | null;
 }
 
-const FORBIDDEN_PROVIDER_TERMS = /\b(?:treg|tikhub|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd)\b/gi;
+const FORBIDDEN_PROVIDER_TERMS = /\b(?:diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows|icypeas|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd)\b/gi;
 const DOLLAR_AMOUNT_PATTERN = /\$\s*\d+(?:\.\d+)?|\b\d+(?:\.\d+)?\s*(?:usd|dollars?|دولار)\b/gi;
+const INTERNAL_JOB_ERROR_PATTERN = /\b(?:treg_live|diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows|icypeas|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd|rate\s*limit|http\s*\d{3})\b|\$\s*\d|\b[a-z0-9_-]+\.(?:x|facebook|tiktok|instagram|youtube|linkedin|reddit|companies|people)\.[a-z0-9_.-]+\b|مزود البيانات|لدى المزود|\(\s*\d{3}\s*\)/i;
 
 /**
  * Scrubs any upstream provider name or dollar figure from activity text.
@@ -34,6 +35,17 @@ export function sanitizeActivityText(text: string): string {
     .replace(/\(\s*\)/g, "")
     .replace(/\s{2,}/g, " ")
     .trim();
+}
+
+/** Job failures may contain upstream diagnostics, which must never reach the customer UI. */
+export function sanitizeActivityError(text: string): string {
+  if (!text) return "";
+  if (INTERNAL_JOB_ERROR_PATTERN.test(text)) {
+    if (/422/.test(text)) return "تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.";
+    if (/429|rate\s*limit/i.test(text)) return "تعذر إكمال البحث حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+    return "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+  }
+  return sanitizeActivityText(text);
 }
 
 /**

@@ -78,7 +78,7 @@ export async function POST(
 
       if (purchaseErr) {
         return NextResponse.json(
-          { success: false, error: "فشل استقطاع رصيد المنهجية: " + purchaseErr.message },
+          { success: false, error: "تعذر إتمام طلب صياغة المنهجية حالياً." },
           { status: 500 }
         );
       }
@@ -97,7 +97,7 @@ export async function POST(
           );
         }
         return NextResponse.json(
-          { success: false, error: purchaseRes?.error || "تعذر إتمام عملية شراء المنهجية." },
+          { success: false, error: "تعذر إتمام طلب صياغة المنهجية حالياً." },
           { status: 400 }
         );
       }
@@ -244,7 +244,7 @@ export async function POST(
   } catch (err: any) {
     console.error("Error in /api/jobs/[id]/methodology:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ أثناء إعداد توثيق المنهجية." },
+      { success: false, error: "تعذر إعداد التوثيق المنهجي حالياً. يرجى المحاولة لاحقاً." },
       { status: 500 }
     );
   }

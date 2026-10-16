@@ -13,6 +13,7 @@ import { createClient } from "@/lib/supabase/client";
 import { HELP_CENTER_URL, SUPPORT_URL } from "@/lib/constants";
 import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
+import { startNewResearch } from "@/lib/newResearchNavigation";
 import { Icon, UI } from "./icons";
 
 /* ── shell context: pages set their header title, anyone can open the drawer / start a new question ── */
@@ -113,7 +114,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const newQuestion = useCallback(() => {
     setDrawer(false);
     if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:new-chat"));
-    else router.push("/dashboard/chat");
+    else startNewResearch(() => router.push("/dashboard/chat"));
   }, [pathname, router]);
 
   const setTitle = useCallback((t: string) => setTitleState(t), []);

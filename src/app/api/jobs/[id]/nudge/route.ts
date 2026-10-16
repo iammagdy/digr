@@ -204,7 +204,7 @@ export async function POST(
   } catch (err: any) {
     console.error("Nudge job route error:", err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ غير متوقع." },
+      { success: false, error: "تعذر تحديث حالة الطلب حالياً. ستتم إعادة المحاولة تلقائياً." },
       { status: 500 }
     );
   }

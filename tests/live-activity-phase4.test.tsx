@@ -6,6 +6,7 @@ import {
   formatItemsCollectedProgress,
   formatPointsSpentVsReserved,
   formatCapReachedMessage,
+  sanitizeActivityError,
   sanitizeActivityText,
   deriveLiveActivitySnapshot,
   ThrottledActivityEmitter,
@@ -27,6 +28,19 @@ describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, 
     const clean = sanitizeActivityText(dirty);
     expect(clean).not.toContain("$");
     expect(clean).not.toMatch(/usd|treg|tikhub/i);
+  });
+
+  it("replaces internal job diagnostics with customer-safe Arabic error messages", () => {
+    expect(sanitizeActivityError("مزود البيانات الحقيقي معطل حالياً في البيئة (TREG_LIVE!=true)."))
+      .toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+    expect(sanitizeActivityError("تعذر معالجة مدخلات الطلب لدى المزود (422): icypeas.companies.search Parameter url is required"))
+      .toBe("تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.");
+    expect(sanitizeActivityError("خطأ من icypeas.companies.search أثناء المعالجة"))
+      .toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+    expect(sanitizeActivityError("تم بلوغ الحد اليومي لمزود البيانات ($0.80 USD)."))
+      .toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+    expect(sanitizeActivityError("المصدر مشغول حالياً (429 Rate Limit)."))
+      .toBe("تعذر إكمال البحث حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
   });
 
   it("throttles page progress updates to at most every 2-3 seconds and emits one summary event per post (never one DB row per page)", async () => {

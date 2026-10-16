@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
+import { sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
 
 export interface TerminalEvent {
   $id: string;
@@ -227,7 +228,7 @@ export default function ActivityTerminal({
               </span>
               <span className={`h-2 w-2 rounded-full shrink-0 mt-1.5 ${dotColor}`} />
               <span className={`flex-1 break-words leading-relaxed ${isError ? "text-bad font-medium" : "text-ink"}`}>
-                {evt.textAr}
+                {toArabicDigits(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr))}
                 {typeof evt.count === "number" && evt.count > 0 && (
                   <span className="mr-1.5 rounded-full bg-sf2 border border-ln px-2 py-0.5 text-[11px] text-mut">
                     {formatAr(evt.count)}
@@ -240,7 +241,7 @@ export default function ActivityTerminal({
 
         {status === "failed" && errorAr && !displayEvents.some((e) => e.kind === "error" || (errorAr && (e.textAr.includes(errorAr) || errorAr.includes(e.textAr)))) && (
           <div className="mt-3 rounded-2xl border border-bad/30 bg-bad/5 p-3 text-xs text-bad leading-relaxed">
-            {errorAr}
+            {sanitizeActivityError(errorAr)}
           </div>
         )}
 

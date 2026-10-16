@@ -14,6 +14,7 @@ const clock = (iso?: string) => {
 };
 import {
   deriveLiveActivitySnapshot,
+  sanitizeActivityError,
   sanitizeActivityText,
 } from "@/functions/shared/liveActivityFeed";
 
@@ -94,7 +95,7 @@ export default function ActivityTimeline({
               >
                 <time className="tnum min-w-10 text-fnt" dateTime={evt.createdAt}>{clock(evt.createdAt)}</time>
                 <span>
-                  {toArabicDigits(sanitizeActivityText(evt.textAr))}
+                  {toArabicDigits(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr))}
                   {evt.count !== undefined && <span className="tnum text-fnt"> · {formatAr(evt.count)}</span>}
                 </span>
               </p>

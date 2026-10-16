@@ -121,7 +121,7 @@ export async function GET(
   } catch (err: any) {
     console.error(`Error in /api/jobs/[id]/data:`, err);
     return NextResponse.json(
-      { success: false, error: err.message || "حدث خطأ غير متوقع." },
+      { success: false, error: "تعذر تحميل بيانات الطلب حالياً. يرجى المحاولة لاحقاً." },
       { status: 500 }
     );
   }

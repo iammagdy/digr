@@ -8,6 +8,7 @@ import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
+import { startNewResearch } from "@/lib/newResearchNavigation";
 
 interface JobDoc {
   $id: string;
@@ -318,19 +319,7 @@ export default function RequestsPage() {
             <h2 className="m-0 font-display text-[40px] font-medium leading-[1.1] text-ink">طلباتي</h2>
             <p className="mb-0 mt-1.5 text-sm font-light text-mut">كل أبحاثك وملفاتها في مكان واحد — التحميل متاح لمدة ٩٠ يومًا.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              try {
-                sessionStorage.removeItem("diger_active_job_id");
-                sessionStorage.removeItem("diger_canvas_open");
-              } catch {}
-              router.push("/dashboard/chat");
-            }}
-            className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac"
-          >
-            + سؤال بحثي جديد
-          </button>
+          <button type="button" onClick={() => startNewResearch(() => router.push("/dashboard/chat"))} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac">+ سؤال بحثي جديد</button>
         </div>
 
         <div className="no-scrollbar flex max-w-full gap-1 self-start overflow-x-auto rounded-full bg-sf2 p-1" role="tablist">
