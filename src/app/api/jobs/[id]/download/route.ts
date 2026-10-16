@@ -1,41 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createHash } from "node:crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
+import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 
 export const dynamic = "force-dynamic";
-
-async function linkPdfArtifactVersion(adminClient: any, userId: string, jobId: string, storagePath: string) {
-  const table = adminClient.from("artifact_versions");
-  const { data: version, error: readError } = await table
-    .select("id")
-    .eq("job_id", jobId)
-    .eq("user_id", userId)
-    .eq("version_number", 1)
-    .maybeSingle();
-
-  if (readError) throw new Error("PDF_ARTIFACT_VERSION_READ_FAILED");
-
-  if (version?.id) {
-    const { error } = await table.update({ file_id_pdf: storagePath }).eq("id", version.id).eq("user_id", userId);
-    if (error) throw new Error("PDF_ARTIFACT_VERSION_UPDATE_FAILED");
-    return;
-  }
-
-  const id = `ver_${createHash("sha256").update(jobId).digest("hex").slice(0, 20)}_1`;
-  const { error } = await table.insert({
-    id,
-    job_id: jobId,
-    user_id: userId,
-    version_number: 1,
-    file_id_xlsx: null,
-    file_id_pdf: storagePath,
-    file_id_csv: null,
-    created_at: new Date().toISOString(),
-  });
-  if (error) throw new Error("PDF_ARTIFACT_VERSION_INSERT_FAILED");
-}
 
 /**
  * Download job results using short-lived signed URLs from the private results bucket.
@@ -129,6 +98,7 @@ export async function GET(
         .from("artifact_versions")
         .select("file_id_xlsx, file_id_pdf, file_id_csv")
         .eq("job_id", jobId)
+        .eq("user_id", job.user_id)
         .order("version_number", { ascending: false })
         .limit(1);
 
@@ -231,36 +201,6 @@ export async function GET(
             });
             if (uploadError) throw uploadError;
 
-            // Keep artifact_versions permanently in sync with the generated artifact
-            try {
-              const fieldToUpdate = format === "pdf" ? "file_id_pdf" : format === "xlsx" ? "file_id_xlsx" : "file_id_csv";
-              const { data: existingAv } = await adminClient
-                .from("artifact_versions")
-                .select("id")
-                .eq("job_id", jobId)
-                .maybeSingle();
-
-              if (existingAv?.id) {
-                await adminClient
-                  .from("artifact_versions")
-                  .update({ [fieldToUpdate]: uploadPath })
-                  .eq("id", existingAv.id);
-              } else {
-                await adminClient
-                  .from("artifact_versions")
-                  .insert({
-                    id: `ver_${jobId.replace(/^job_quote_/, "").slice(0, 20)}_1`,
-                    job_id: jobId,
-                    user_id: job.user_id,
-                    version_number: 1,
-                    [fieldToUpdate]: uploadPath,
-                    created_at: new Date().toISOString(),
-                  });
-              }
-            } catch (syncErr) {
-              console.warn("Could not sync artifact_versions on demand:", syncErr);
-            }
-
             const { data: newlySigned, error: signError } = await adminClient.storage
               .from("results")
               .createSignedUrl(uploadPath, 300, { download: downloadFileName });
@@ -283,8 +223,8 @@ export async function GET(
       );
     }
 
-    if (format === "pdf" && resolvedStoragePath) {
-      await linkPdfArtifactVersion(adminClient, job.user_id, jobId, resolvedStoragePath);
+    if ((format === "pdf" || format === "xlsx" || format === "csv") && resolvedStoragePath) {
+      await linkArtifactVersion(adminClient, job.user_id, jobId, format, resolvedStoragePath);
     }
 
     // If caller requested direct redirect
