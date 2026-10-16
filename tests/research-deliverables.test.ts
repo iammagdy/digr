@@ -5,6 +5,7 @@ import {
   generateCsvReport,
   generatePdfReport,
   generateMethodologyText,
+  formatArabicRtl,
 } from "../src/functions/shared/fileGenerators";
 
 describe("Research Deliverables Generator Suite", () => {
@@ -43,6 +44,10 @@ describe("Research Deliverables Generator Suite", () => {
       },
     ],
   };
+
+  it("preserves Arabic-Indic number order in RTL PDF text", () => {
+    expect(formatArabicRtl("٥٠")).toBe("٠٥");
+  });
 
   describe("1. Excel Report (.xlsx) Generation", () => {
     it("generates a multi-sheet research workbook with all 5 required sheets", async () => {
@@ -231,14 +236,17 @@ describe("Research Deliverables Generator Suite", () => {
   });
 
   describe("4. Academic Methodology Document Generation", () => {
-    it("generates a structured academic methodology statement with data provenance", () => {
+    it("generates an Arabic customer methodology summary without unsupported claims or internal ids", () => {
       const text = generateMethodologyText(sampleDataset);
 
-      expect(text).toContain("منصة Diger لاستخراج البيانات العامة");
-      expect(text).toContain("وثيقة المنهجية الأكاديمية والنزاهة");
-      expect(text).toContain("X (تويتر)");
-      expect(text).toContain("إجمالي السجلات المستخرجة: 2");
-      expect(text).toContain("Cross-sectional Snapshot");
+      expect(text).toContain("المصدر: منصة إكس");
+      expect(text).toContain("عدد السجلات المعروضة: ٢");
+      expect(text).toContain("تغطية المجتمع المستهدف: لم تُقَس.");
+      expect(text).toContain("لم يُجرَ تحقق مستقل من بيانات الاتصال.");
+      expect(text).not.toContain("job_wc_egypt_2026");
+      expect(text).not.toMatch(/\b(?:public|general|coverage|integrity|verified|Job ID|Cross-sectional)\b/i);
+      expect(text).not.toContain("البيانات العامة");
+      expect(text).not.toMatch(/[0-9]/);
 
       // Verify zero provider leaks
       expect(text.toLowerCase()).not.toContain("treg");

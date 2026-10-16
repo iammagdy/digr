@@ -59,6 +59,10 @@ function getBoldFontBuffer(): Buffer {
 export function formatArabicRtl(text: string): string {
   if (!text) return "";
 
+  // PDFKit renders an Arabic-only numeric token from right to left; reverse it so the
+  // visual sequence remains the normal Arabic-Indic number order in the generated PDF.
+  if (/^[٠-٩٬٫٪ .:-]+$/u.test(text)) return text.split("").reverse().join("");
+
   const hasArabic = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
   if (!hasArabic) return text;
 
@@ -123,6 +127,50 @@ function customerFacingTitle(title: string): string {
     .replace(/^(?:\s*[—–-]\s*)+|(?:\s*[—–-]\s*)+$/g, "")
     .trim();
   return cleaned || "نتائج البحث";
+}
+
+function customerFacingPlatform(platform: string): string {
+  const normalized = String(platform || "").toLowerCase();
+  if (/\b(twitter|tweets|\bx\b)/i.test(normalized)) return "منصة إكس";
+  if (normalized.includes("youtube")) return "يوتيوب";
+  if (normalized.includes("tiktok")) return "تيك توك";
+  if (normalized.includes("facebook")) return "فيسبوك";
+  if (normalized.includes("instagram")) return "إنستغرام";
+  if (normalized.includes("google") || normalized.includes("serp")) return "جوجل";
+  if (normalized.includes("telegram")) return "تيليجرام";
+  if (/company|companies|b2b|icypeas/i.test(normalized)) return "بيانات الشركات والأعمال";
+  return "مصادر متاحة";
+}
+
+function customerFacingEntityType(entityType: string): string {
+  const entityLabels: Record<string, string> = {
+    companies: "شركات",
+    posts: "منشورات",
+    comments: "تعليقات",
+    profile: "ملف شخصي",
+    search: "نتائج بحث",
+    tabular: "سجلات",
+  };
+  return entityLabels[String(entityType || "").toLowerCase()] || "سجلات";
+}
+
+function customerFacingCountry(country: unknown): string {
+  const value = String(country || "").trim();
+  if (!value) return "غير محدد";
+  if (/[\u0600-\u06FF]/.test(value)) return value;
+  const labels: Record<string, string> = {
+    egypt: "مصر",
+    germany: "ألمانيا",
+    "united arab emirates": "الإمارات العربية المتحدة",
+    uae: "الإمارات العربية المتحدة",
+    "saudi arabia": "السعودية",
+    france: "فرنسا",
+    "united kingdom": "المملكة المتحدة",
+    uk: "المملكة المتحدة",
+    "united states": "الولايات المتحدة",
+    usa: "الولايات المتحدة",
+  };
+  return labels[value.toLowerCase()] || "غير محدد";
 }
 
 /**
@@ -594,8 +642,8 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       info: {
         Title: customerFacingTitle(norm.metadata.title),
         Author: "Diger",
-        Subject: "Data Report",
-        Creator: "Diger Data Platform",
+        Subject: "تقرير بيانات",
+        Creator: "Diger",
       },
     });
 
@@ -608,16 +656,12 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     doc.on("error", reject);
 
     const contentWidth = 535;
-    const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+    const dateStr = toArabicDigits(norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10));
     const rowsCount = norm.rows.length;
     const isCompany = norm.metadata.entityType === "companies";
 
     const detectedTitleCountryPdf = detectCountryFromText(norm.metadata.title || (norm.metadata as any).description || "");
-    const targetCountry = (norm.metadata as any).country ||
-      detectedTitleCountryPdf?.arabicLabel ||
-      (norm.metadata.platform && !["web", "companies", "b2b", "digr", "digr data platform"].includes(norm.metadata.platform.toLowerCase())
-        ? norm.metadata.platform
-        : "مصر");
+    const targetCountry = customerFacingCountry((norm.metadata as any).country || detectedTitleCountryPdf?.arabicLabel);
 
     // 1. Header Banner (Academic Navy)
     doc.rect(30, 24, contentWidth, 52).fill("#1B365D");
@@ -631,8 +675,8 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     doc.font("ArabicRegular").fontSize(8).fillColor("#CBD5E1");
     const subTitle = isCompany
-      ? `وثيقة المنهجية الأكاديمية وحصر البيانات • ${targetCountry} • تاريخ الاستخراج: ${dateStr}`
-      : `تقرير استخراج وتوثيق البيانات الأكاديمية • ${norm.metadata.platform} • تاريخ الاستخراج: ${dateStr}`;
+      ? `وثيقة منهجية جمع البيانات • ${targetCountry} • تاريخ الجمع: ${dateStr}`
+      : `تقرير البيانات • ${customerFacingPlatform(norm.metadata.platform)} • تاريخ الجمع: ${dateStr}`;
     doc.text(formatArabicRtl(subTitle), 40, 52, {
       width: contentWidth - 20,
       align: "right",
@@ -648,16 +692,16 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     const cards = isCompany
       ? [
-          { label: "إجمالي المسلم المعتمد", val: `${rowsCount}` },
-          { label: "السجلات المطلوبة", val: `${norm.metadata.targetRequested || rowsCount}` },
-          { label: "نسبة اكتمال البيانات", val: `${norm.kpis.dataCompletenessPct}%` },
+          { label: "عدد السجلات المعروضة", val: toArabicDigits(rowsCount) },
+          { label: "العدد المطلوب", val: toArabicDigits(norm.metadata.targetRequested || rowsCount) },
+          { label: "اكتمال الحقول", val: `${toArabicDigits(norm.kpis.dataCompletenessPct)}٪` },
           { label: "النطاق الجغرافي", val: targetCountry.slice(0, 18) },
         ]
       : [
-          { label: "إجمالي السجلات", val: `${rowsCount}` },
-          { label: "التفاعل المرصود", val: `${(norm.kpis.totalViews || norm.kpis.totalLikes || norm.kpis.totalComments || 0).toLocaleString("en-US")}` },
-          { label: "نسبة الاكتمال", val: `${norm.kpis.dataCompletenessPct}%` },
-          { label: "المنصة المستهدفة", val: norm.metadata.platform.slice(0, 18) },
+          { label: "عدد السجلات", val: toArabicDigits(rowsCount) },
+          { label: "التفاعل المرصود", val: toArabicDigits((norm.kpis.totalViews || norm.kpis.totalLikes || norm.kpis.totalComments || 0).toLocaleString("en-US")) },
+          { label: "اكتمال الحقول", val: `${toArabicDigits(norm.kpis.dataCompletenessPct)}٪` },
+          { label: "المنصة", val: customerFacingPlatform(norm.metadata.platform).slice(0, 18) },
         ];
 
     cards.forEach((card, idx) => {
@@ -683,7 +727,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     // 3. جدول المطابقة والحصر الإحصائي (Reconciliation Counters Table)
     doc.rect(30, currentY, contentWidth, 22).fill("#24436E");
     doc.font("ArabicBold").fontSize(8.5).fillColor("#FFFFFF");
-    doc.text(formatArabicRtl("جدول المطابقة والحصر الإحصائي (Reconciliation & Quality Audit) :"), 40, currentY + 6, {
+    doc.text(formatArabicRtl("ملخص الأعداد وجودة الحقول:"), 40, currentY + 6, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 2,
@@ -691,15 +735,15 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     currentY += 22;
 
     const rawCollected = (norm.metadata as any).rawCollected || (rowsCount + (norm.kpis.duplicatesRemoved || 0));
-    const targetRequested = norm.metadata.targetRequested != null ? `${norm.metadata.targetRequested}` : "غير محدد مسبقاً";
+    const targetRequested = norm.metadata.targetRequested != null ? toArabicDigits(norm.metadata.targetRequested) : "غير محدد";
     const dups = norm.kpis.duplicatesRemoved || 0;
 
     const counterRows = [
-      { label: "السجلات المستهدفة في الخطة (Target Requested)", val: targetRequested },
-      { label: "السجلات المستلمة أولياً من المصادر (Raw Collected)", val: `${rawCollected}` },
-      { label: "السجلات المطابقة المعتمدة بعد المراجعة (Validated Matched)", val: `${rowsCount}` },
-      { label: "السجلات المستبعدة للتكرار أو عدم المطابقة (Excluded)", val: `${dups}` },
-      { label: "نسبة اكتمال حقول السجلات (Field Completeness)", val: `${norm.kpis.dataCompletenessPct}%` },
+      { label: "العدد المطلوب في الخطة", val: targetRequested },
+      { label: "السجلات المستلمة من المصادر", val: toArabicDigits(rawCollected) },
+      { label: "السجلات المعروضة بعد إزالة التكرار", val: toArabicDigits(rowsCount) },
+      { label: "السجلات المزالة بوصفها مكررة", val: toArabicDigits(dups) },
+      { label: "اكتمال الحقول", val: `${toArabicDigits(norm.kpis.dataCompletenessPct)}٪` },
     ];
 
     counterRows.forEach((item, idx) => {
@@ -725,7 +769,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
     // 4. Tabular Sample Overview (3 sample records)
     doc.font("ArabicBold").fontSize(9.5).fillColor("#1B365D");
-    doc.text(formatArabicRtl(isCompany ? "عينة من الشركات المعتمدة المسلمة :" : "عينة من السجلات المستخرجة :"), 30, currentY, {
+    doc.text(formatArabicRtl(isCompany ? "عينة من الشركات المعروضة :" : "عينة من السجلات المعروضة :"), 30, currentY, {
       width: contentWidth,
       align: "right",
       wordSpacing: 2,
@@ -747,8 +791,8 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
         r.city || r.governorate ? `مدينة: ${r.city || r.governorate}` : null,
         r.phone ? `هاتف: ${r.phone}` : null,
         r.username ? r.username : null,
-        r.likes_count ? `إعجابات: ${r.likes_count}` : null,
-        r.views_count ? `مشاهدات: ${r.views_count}` : null,
+        r.likes_count ? `إعجابات: ${toArabicDigits(r.likes_count)}` : null,
+        r.views_count ? `مشاهدات: ${toArabicDigits(r.views_count)}` : null,
       ].filter(Boolean);
 
       doc.font("ArabicBold").fontSize(8).fillColor("#0F172A");
@@ -771,19 +815,18 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     currentY += sampleRows.length * rowHeight + 10;
 
     // 5. Methodological Limitations & Integrity Box
-    doc.rect(30, currentY, contentWidth, 75).fillAndStroke("#FEF3C7", "#FDE68A");
+    doc.rect(30, currentY, contentWidth, 82).fillAndStroke("#FEF3C7", "#FDE68A");
     doc.font("ArabicBold").fontSize(8).fillColor("#92400E");
-    doc.text(formatArabicRtl("محددات البحث وإخلاء المسؤولية العلمية والإحصائية :"), 40, currentY + 6, {
+    doc.text(formatArabicRtl("حدود ما يوضحه هذا التقرير:"), 40, currentY + 6, {
       width: contentWidth - 20,
       align: "right",
       wordSpacing: 2,
     });
 
     const limitationsText = [
-      "• مصادر البيانات: تم استخراج البيانات مباشرة من المصادر المتاحة علناً دون أي التفاف على سياسات الخصوصية.",
-      "• طبيعة العينة: تمثل البيانات لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة في تاريخ الجمع؛ ونظراً لأن مجتمع البحث العام غير محصور فإن العينة غير احتمالية.",
-      "• النزاهة العلمية: تم تطبيق تدقيق الملاءمة واستبعاد التكرار وفق النطاقات المعلنة.",
-      "• حدود المسؤولية: لا نضمن الحصر الشامل لكافة الكيانات بالسوق أو حداثة أرقام الاتصال لتغيرها الدوري في مصادرها المعلنة.",
+      "• يعرض التقرير السجلات التي أعادتها المصادر المتاحة وقت الجمع، ولا يثبت شمول جميع الجهات في السوق.",
+      "• اكتمال الحقول هو قياس لوجود القيم في السجلات، وليس تحققاً من صحتها.",
+      "• لم تُقَس نسبة تغطية المجتمع المستهدف، ولم يُجرَ تحقق مستقل من بيانات الاتصال.",
     ].join("\n");
 
     doc.font("ArabicRegular").fontSize(6.8).fillColor("#78350F");
@@ -819,44 +862,34 @@ export function generateMethodologyText(
   }
 ): string {
   const norm: NormalizedDataset = normalizeDataset(payload);
-  const dateStr = norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const dateStr = toArabicDigits(norm.metadata.collectedAt?.slice(0, 10) || new Date().toISOString().slice(0, 10));
   const rowsCount = options?.uniqueDelivered ?? norm.rows.length;
-  const jobId = norm.metadata.jobId || "N/A";
 
   const dedupCount = options?.duplicatesRemoved ?? options?.deduplicationCount ?? norm.kpis.duplicatesRemoved ?? 0;
   const rawCollected = options?.rawCollected ?? (norm.kpis.totalRecords + (norm.kpis.duplicatesRemoved || 0));
 
   return [
     "============================================================",
-    "             منصة Diger لاستخراج البيانات العامة             ",
-    "               وثيقة المنهجية الأكاديمية والنزاهة              ",
+    "                    منصة Diger للبيانات                    ",
+    "                   ملخص منهجية جمع البيانات                  ",
     "============================================================",
     "",
-    `معرّف الطلب (Job ID): ${jobId}`,
     `تاريخ الجمع: ${dateStr}`,
-    `المصدر / المنصة: ${norm.metadata.platform}`,
-    `نوع الكيان المستخرج: ${norm.metadata.entityType}`,
-    `إجمالي السجلات المستخرجة: ${rowsCount}`,
-    `إجمالي السجلات المستلمة (Raw Collected): ${rawCollected}`,
-    `إجمالي السجلات الخام المستخرجة: ${rawCollected}`,
-    `السجلات الفريدة المسلمة (Unique Delivered): ${rowsCount}`,
-    `السجلات الفريدة المعتمدة: ${rowsCount}`,
-    `السجلات المستبعدة للتكرار (Duplicates Removed): ${dedupCount}`,
-    `السجلات المستبعدة والمكررة: ${dedupCount}`,
-    `نسبة اكتمال الحقول (Completeness): ${norm.kpis.dataCompletenessPct}%`,
-    "نسبة التغطية المنهجية (Coverage): نسبة التغطية غير متاحة (مجتمع البحث غير محصور)",
-    "النزاهة المنهجية (Integrity): استخراج مباشر من المصادر المتاحة",
+    `المصدر: ${customerFacingPlatform(norm.metadata.platform)}`,
+    `نوع السجلات: ${customerFacingEntityType(norm.metadata.entityType)}`,
+    `عدد السجلات المعروضة: ${toArabicDigits(rowsCount)}`,
+    `السجلات المستلمة من المصادر: ${toArabicDigits(rawCollected)}`,
+    `السجلات المزالة بوصفها مكررة: ${toArabicDigits(dedupCount)}`,
+    `اكتمال الحقول: ${toArabicDigits(norm.kpis.dataCompletenessPct)}٪`,
+    "تغطية المجتمع المستهدف: لم تُقَس.",
     "",
     "------------------------------------------------------------",
-    "الملاحظات المنهجية ومعايير الجمع والنزاهة:",
+    "ملاحظات حول البيانات:",
     "------------------------------------------------------------",
-    norm.metadata.methodology,
-    "",
-    "إخلاء المسؤولية العلمية والإحصائية:",
-    "• تم استخراج هذه البيانات حصرياً من مصادر متاحة علناً على شبكة الإنترنت بتاريخ الجمع.",
-    "• تمثل لقطة مقطعية (Cross-sectional Snapshot) لحظية دقيقة للبيانات المرصودة.",
-    "• نظراً لأن مجتمع البحث العام غير محصور، فإن العينة غير احتمالية ولا تمثل حصراً شاملاً.",
-    "• تقتصر النتائج على ما هو متاح علناً للمستخدمين دون أي تجاوز لسياسات الخصوصية، ولا تتضمن جمع بيانات اتصال شخصية.",
+    "تعرض هذه الوثيقة الأعداد والحقول الموجودة في ملف التسليم. إزالة التكرار تعتمد على السجلات التي أمكن مطابقتها.",
+    "اكتمال الحقول يقيس وجود قيمة في الحقل فقط، ولا يعني التحقق من صحتها.",
+    "لم تُقَس نسبة تغطية المجتمع المستهدف، ولا يمكن استنتاج الشمول أو التمثيل الإحصائي من هذه الأعداد وحدها.",
+    "لم يُجرَ تحقق مستقل من بيانات الاتصال.",
     "",
     "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
     "============================================================",
