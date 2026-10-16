@@ -44,6 +44,14 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     expect(card).not.toContain("حالة التحقق لكل حقل");
   });
 
+  it("people result columns use presence wording instead of verification claims", () => {
+    const results = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
+    expect(results).toContain('email_verification_status: "توفر البريد"');
+    expect(results).toContain('title_verification_status: "توفر المسمى الوظيفي"');
+    expect(results).toContain('verification_status: "الحالة المسجلة"');
+    expect(results).not.toContain('verification_status: "حالة التحقق"');
+  });
+
   it("4. The details sentence has no counters, progress bar or badges", () => {
     const discovery = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(discovery).not.toContain("answeredCount");
