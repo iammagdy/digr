@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
-import { isGreetingOrGeneralQuestion } from "./briefManager";
+import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
+import { detectCountryFromText, detectIndustryFromText } from "../../lib/planParameters";
 
 // ================= Schema Definitions =================
 
@@ -2031,12 +2032,15 @@ export class LlmClient {
       promptLower.includes("companies") ||
       promptLower.includes("business")
     ) {
-      const volumeMatch = lastUserMsg.match(/(\d+|[٠-٩]+)/);
-      let targetVolume = 5;
-      if (volumeMatch) {
-        const raw = volumeMatch[1].replace(/[٠-٩]/g, (d) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(d)]);
-        targetVolume = Math.max(1, parseInt(raw, 10) || 5);
-      }
+      const detectedCountry = detectCountryFromText(lastUserMsg);
+      const detectedIndustry = detectIndustryFromText(lastUserMsg);
+      const parsedVolume = extractTargetVolume(lastUserMsg);
+      const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
+      const countryEn = detectedCountry ? detectedCountry.canonicalEnglish : "Egypt";
+      const countryAr = detectedCountry ? detectedCountry.arabicLabel : "مصر (افتراضي)";
+      const industryKeywords = detectedIndustry.englishKeywords.length > 0 ? detectedIndustry.englishKeywords : ["companies"];
+      const industryAr = detectedIndustry.arabicLabel || "الشركات";
+
       const cap = (options.sanitizedCapabilities || []).find(
         (c: any) =>
           (c.platform || c.category || c.slug || "").toLowerCase().includes("compan") ||
@@ -2050,14 +2054,17 @@ export class LlmClient {
       return {
         output: {
           type: "propose_plan",
-          summaryAr: `استخراج بيانات ${targetVolume} سجل من شركات مقاولات في مصر`,
+          summaryAr: `استخراج بيانات ${targetVolume} سجل من شركات ${industryAr} في ${countryAr}`,
           capabilities: [
             {
               stepId: "plan_step_1",
               capabilitySlug: cap.slug || "icypeas-companies-search",
               endpointId: cap.id || cap.slug || "icypeas.companies.search",
               params: {
-                query: { keyword: { include: ["contracting", "construction"] }, location: { include: ["Egypt"] } },
+                query: { keyword: { include: industryKeywords }, location: { include: [countryEn] } },
+                country: countryEn,
+                location: countryEn,
+                industry: industryAr,
                 pagination: { size: targetVolume },
               },
               targetVolumeMin: 1,
@@ -2066,7 +2073,7 @@ export class LlmClient {
             },
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
-          methodologyNotes: "جمع وتوثيق البيانات العامة لمنصة قواعد بيانات الشركات وفق المعايير البحثية المعتمدة.",
+          methodologyNotes: `جمع وتوثيق البيانات العامة لمنصة قواعد بيانات الشركات (${industryAr} في ${countryAr}) وفق المعايير البحثية المعتمدة.`,
         },
         inputTokens: 800,
         outputTokens: 140,
