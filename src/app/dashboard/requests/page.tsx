@@ -59,8 +59,9 @@ function platformOf(slug: string): string {
   if (s.includes("linkedin")) return "لينكدإن";
   if (s.includes("reddit")) return "ريديت";
   if (s.startsWith("x-") || s.includes("twitter")) return "إكس";
+  if (s.includes("people") || s.includes("contact") || s.includes("lead") || s.includes("decision")) return "صناع القرار والمسؤولين";
   if (s.includes("company") || s.includes("companies") || s.includes("b2b")) return "قواعد بيانات الشركات";
-  return "الإنترنت العام";
+  return "الأبحاث والبيانات المعتمدة";
 }
 
 function targetOf(params?: string): string {
@@ -203,7 +204,16 @@ export default function RequestsPage() {
 
   useEffect(() => {
     void load();
-    const t = setInterval(() => { if (jobs.some((j) => j.status === "queued" || j.status === "running")) void load(); }, 4000);
+    const t = setInterval(() => {
+      const activeJobs = jobs.filter((j) => j.status === "queued" || j.status === "running");
+      if (activeJobs.length > 0) {
+        void load();
+        // Background progression support: nudge active jobs so they never stall even if chat tab is closed
+        activeJobs.forEach((aj) => {
+          void fetch(`/api/jobs/${aj.$id}/nudge`, { method: "POST" }).catch(() => {});
+        });
+      }
+    }, 4000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, jobs.length]);
@@ -245,7 +255,7 @@ export default function RequestsPage() {
       if (blobUrl) {
         const a = document.createElement("a");
         a.href = blobUrl;
-        a.download = payload.downloadFileName || `diger_${job.templateSlug || "dataset"}_${job.$id.slice(0, 8)}.${ext}`;
+        a.download = payload.downloadFileName || `diger_data_${job.$id.slice(0, 8)}.${ext}`;
         document.body.appendChild(a);
         a.click();
         setTimeout(() => { URL.revokeObjectURL(blobUrl!); a.remove(); }, 30000);
@@ -282,7 +292,19 @@ export default function RequestsPage() {
             <h2 className="m-0 font-display text-[40px] font-medium leading-[1.1] text-ink">طلباتي</h2>
             <p className="mb-0 mt-1.5 text-sm font-light text-mut">كل أبحاثك وملفاتها في مكان واحد — التحميل متاح لمدة ٩٠ يومًا.</p>
           </div>
-          <button type="button" onClick={() => router.push("/dashboard/chat")} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac">+ سؤال بحثي جديد</button>
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                sessionStorage.removeItem("diger_active_job_id");
+                sessionStorage.removeItem("diger_canvas_open");
+              } catch {}
+              router.push("/dashboard/chat");
+            }}
+            className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac"
+          >
+            + سؤال بحثي جديد
+          </button>
         </div>
 
         <div className="no-scrollbar flex max-w-full gap-1 self-start overflow-x-auto rounded-full bg-sf2 p-1" role="tablist">

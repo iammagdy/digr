@@ -121,6 +121,16 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم", exactTaxonomy: ["Food & Beverages", "Restaurants"] };
   }
   if (
+    t.includes("fintech") ||
+    t.includes("تكنولوجيا مالية") ||
+    t.includes("تقنية مالية") ||
+    t.includes("مدفوعات") ||
+    t.includes("فينتك") ||
+    t.includes("فنتك")
+  ) {
+    return { englishKeywords: ["fintech", "financial technology", "payments"], arabicLabel: "التكنولوجيا المالية (FinTech)", exactTaxonomy: ["Financial Services", "Banking"] };
+  }
+  if (
     t.includes("تقنية") ||
     t.includes("تكنولوجيا") ||
     t.includes("معلومات") ||
