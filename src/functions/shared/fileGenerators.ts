@@ -445,6 +445,8 @@ export async function generateCompanyExcelReport(
     "رابط لينكد إن",
     "المدينة / المحافظة",
     "الهاتف التجاري",
+    "بريد العمل (كما ورد من المصدر)",
+    "توفر البريد المهني",
     "حالة التوفر في البيانات",
   ];
   const dirHeaderRow = wsDir.addRow(dirHeaders);
@@ -459,6 +461,7 @@ export async function generateCompanyExcelReport(
     const linkedin = r.linkedin_url || r.linkedin || r.url || "غير متاح";
     const rawPhone = r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "غير متاح";
     const phoneVal = typeof rawPhone === "string" ? rawPhone.replace(/^'/, "") : rawPhone;
+    const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
 
     const row = wsDir.addRow([
       idx + 1,
@@ -468,6 +471,8 @@ export async function generateCompanyExcelReport(
       linkedin,
       city,
       phoneVal,
+      workEmail || "غير متاح",
+      workEmail ? "موجود" : "غير موجود",
       "مدرجة في البيانات المستخرجة",
     ]);
     row.font = { name: "Calibri", size: 10 };
@@ -490,6 +495,8 @@ export async function generateCompanyExcelReport(
     { width: 32 },
     { width: 20 },
     { width: 22 },
+    { width: 34 },
+    { width: 20 },
     { width: 18 },
   ];
 
@@ -497,7 +504,7 @@ export async function generateCompanyExcelReport(
   const wsFlat = wb.addWorksheet("بيانات الشركات للتصفية", {
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
   });
-  const flatHeaders = ["كود السجل", "اسم الشركة", "النطاق الرسمي", "رابط لينكد إن", "النشاط", "المدينة / المحافظة", "الهاتف الرسمي", "حالة الملاءمة"];
+  const flatHeaders = ["كود السجل", "اسم الشركة", "النطاق الرسمي", "رابط لينكد إن", "النشاط", "المدينة / المحافظة", "الهاتف الرسمي", "بريد العمل (كما ورد من المصدر)", "توفر البريد المهني", "حالة الملاءمة"];
   const flatHeaderRow = wsFlat.addRow(flatHeaders);
   flatHeaderRow.font = { name: "Calibri", size: 10.5, bold: true, color: { argb: COLOR_WHITE } };
   flatHeaderRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF334155" } };
@@ -508,6 +515,7 @@ export async function generateCompanyExcelReport(
     const city = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
     const rawFlatPhone = r.phone || (typeof r.phone_number === "string" ? r.phone_number : "") || r.business_phone || "N/A";
     const flatPhoneVal = typeof rawFlatPhone === "string" ? rawFlatPhone.replace(/^'/, "") : rawFlatPhone;
+    const workEmail = String(r.work_email || r.workEmail || r.email || "").trim();
     const row = wsFlat.addRow([
       r.id || `comp_${idx + 1}`,
       r.company_name || r.name || r.title || `شركة #${idx + 1}`,
@@ -516,6 +524,8 @@ export async function generateCompanyExcelReport(
       r.activity || r.sector || r.industry || r.category || "عام",
       city,
       flatPhoneVal,
+      workEmail || "غير متاح",
+      workEmail ? "موجود" : "غير موجود",
       r._relevance_status || "مطابق معتمد",
     ]);
     row.font = { name: "Calibri", size: 9.5 };
@@ -527,7 +537,7 @@ export async function generateCompanyExcelReport(
     });
   });
   wsFlat.autoFilter = { from: { row: 1, column: 1 }, to: { row: norm.rows.length + 1, column: flatHeaders.length } };
-  wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 18 }];
+  wsFlat.columns = [{ width: 14 }, { width: 35 }, { width: 28 }, { width: 28 }, { width: 26 }, { width: 18 }, { width: 20 }, { width: 34 }, { width: 20 }, { width: 18 }];
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
