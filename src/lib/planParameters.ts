@@ -452,7 +452,11 @@ export function extractInterpretedParameters(
         ? value.include[0]
         : undefined;
   const queryCountry = firstIncluded(query.location) || firstIncluded(query.country);
-  const queryIndustry = isPeopleSearch ? "" : firstIncluded(query.keyword) || firstIncluded(query.industry);
+  // Explicit industry fields must win over free-text keywords left over from
+  // the original plan after an edit.
+  const queryIndustry = isPeopleSearch
+    ? ""
+    : params?.industry || firstIncluded(query.industry) || firstIncluded(query.keyword);
   const fullText = [
     params?.search,
     params?.query,

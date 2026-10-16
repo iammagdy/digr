@@ -153,6 +153,24 @@ describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
       isDefaultCountry: false,
     });
   });
+
+  it("displays the edited industry ahead of a stale company keyword", () => {
+    const params = {
+      search: "FinTech في ألمانيا",
+      industry: "الأغذية والمطاعم",
+      query: {
+        keyword: { include: ["FinTech في ألمانيا"] },
+        industry: { include: ["Food & Beverages", "Food Production", "Restaurants"] },
+        location: { include: ["United Arab Emirates"] },
+      },
+    };
+
+    expect(extractInterpretedParameters(params, "FinTech companies in Germany")).toMatchObject({
+      countryCanonical: "United Arab Emirates",
+      industryAr: "الأغذية والمطاعم",
+      isDefaultCountry: false,
+    });
+  });
 });
 
 describe("Company Research Capability & Quote Math", () => {
