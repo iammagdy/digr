@@ -128,6 +128,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Update summaryAr on updatedPlan if parameters were edited
+    const primaryItem = updatedPlan.items[0];
+    if (primaryItem) {
+      const { extractInterpretedParameters } = await import("@/lib/planParameters");
+      const interp = extractInterpretedParameters(primaryItem.params, updatedPlan.summaryAr);
+      updatedPlan.summaryAr = `خطة حصر حتى ${primaryItem.targetVolumeMax || 50} سجل: ${interp.industryAr} في ${interp.countryAr}`;
+    }
+
     // 6. Generate NEW quote (supersedes old quote and recalculates price)
     const userBalance = await calculateBalance(adminClient, verifiedUserId);
     const newQuote = await createAndSaveManagedQuote(adminClient as any, {

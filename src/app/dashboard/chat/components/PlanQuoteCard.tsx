@@ -294,7 +294,7 @@ export default function PlanQuoteCard({
         <p className="m-0 mt-1">
           عند الموافقة، يُحجز داخلياً <strong>{formatAr(quote.quotedPoints)} نقطة</strong>، ويشمل الحجز هامشاً يصل إلى ١٥٪. بعد التسليم، تُسوّى تكلفة السجلات المطابقة المسلَّمة فقط، ويُرفع الحجز عن أي فرق تلقائياً؛ هذا الفرق ليس استرداداً أو رصيداً جديداً.
         </p>
-        {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول")) && (
+        {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("صناع") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول") || quote.summaryAr?.includes("مدير")) && (
           <p className="m-0 mt-1.5 text-ink2 border-t border-ln pt-1.5">
             تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع توضيح ما إذا كان كل حقل موجودًا أو غير موجود في السجل. وجود البريد لا يعني التحقق من صحته. لا يُحاسب العميل على أي حقل غير متوفر.
           </p>
@@ -375,16 +375,29 @@ export default function PlanQuoteCard({
             <button type="button" onClick={() => onTopupShort(shortEgp)} className={`${PRIMARY_BTN} min-h-11 min-w-[180px] flex-1 text-[13px]`}>
               شحن الرصيد ({formatAr(shortEgp)} ج.م) والبدء
             </button>
+            {quote.downscaledOffer && (
+              <button
+                type="button"
+                data-testid="edit-plan-downscaled-btn"
+                id={`edit-plan-downscaled-btn-${quote.quoteId}`}
+                aria-label={`البدء بـ ${formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط`}
+                onClick={() => onAcceptDownscaled && onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
+                disabled={quote.isDependent}
+                className={`${SECONDARY_BTN} min-h-11`}
+              >
+                البدء بـ {formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط
+              </button>
+            )}
             <button
               type="button"
-              data-testid="edit-plan-downscaled-btn"
-              id={`edit-plan-downscaled-btn-${quote.quoteId}`}
-              aria-label={quote.downscaledOffer ? `البدء بـ ${formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط` : "تعديل عدد السجلات"}
-              onClick={() => (quote.downscaledOffer && onAcceptDownscaled ? onAcceptDownscaled(quote.downscaledOffer.maxAffordableUnits) : setIsEditing(true))}
-              disabled={quote.isDependent && !quote.downscaledOffer}
+              data-testid="edit-plan-btn"
+              id={`edit-plan-btn-${quote.quoteId}`}
+              aria-label={isEditing ? "إلغاء التعديل" : "تعديل خطة البحث"}
+              onClick={handleOpenEdit}
+              disabled={quote.isDependent}
               className={`${SECONDARY_BTN} min-h-11`}
             >
-              {quote.downscaledOffer ? `البدء بـ ${formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط` : "تعديل عدد السجلات"}
+              {isEditing ? "إلغاء التعديل" : EDIT_PLAN_BTN_LABEL}
             </button>
           </div>
         </div>

@@ -460,9 +460,13 @@ export function extractInterpretedParameters(
   const queryIndustry = isPeopleSearch
     ? ""
     : params?.industry || firstIncluded(query.keyword) || firstIncluded(query.industry);
+  const explicitIndustry = (typeof params?.industry === "string" && params.industry.trim())
+    ? detectIndustryFromText(params.industry)
+    : null;
   const fullText = [
+    params?.industry,
     params?.search,
-    params?.query,
+    typeof params?.query === "string" ? params?.query : (params?.query ? JSON.stringify(params.query) : ""),
     params?.keyword,
     params?.topic,
     params?.location,
@@ -481,7 +485,7 @@ export function extractInterpretedParameters(
 
   const industry = isPeopleSearch
     ? { arabicLabel: "صناع القرار والمهنيون", canonicalEnglish: "", englishKeywords: [] }
-    : detectIndustryFromText(queryIndustry || params?.industry || fullText);
+    : explicitIndustry || detectIndustryFromText(queryIndustry || fullText);
 
   if (explicitCountry) {
     return {
