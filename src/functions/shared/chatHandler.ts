@@ -428,17 +428,21 @@ export function buildAutoPlanProposal(
   const detectedCountry = detectCountryFromText(message);
   const detectedIndustry = detectIndustryFromText(message);
 
-  const countryNameAr = detectedCountry ? detectedCountry.arabicLabel : "مصر (افتراضي)";
+  const countryNameAr = detectedCountry?.arabicLabel;
+  const hasDetectedIndustry = detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" &&
+    detectedIndustry.englishKeywords.some((keyword) => keyword !== "contracting");
+  const companyQuery: Record<string, any> = {
+    ...(hasDetectedIndustry ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
+    ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
+  };
   const stepParams: Record<string, any> = isCompanySearch
     ? {
-        query: {
-          keyword: { include: detectedIndustry.englishKeywords },
-          location: { include: [detectedCountry ? detectedCountry.canonicalEnglish : "Egypt"] },
-        },
-        search: `${detectedIndustry.arabicLabel} في ${countryNameAr}`,
-        country: detectedCountry ? detectedCountry.canonicalEnglish : "Egypt",
-        location: detectedCountry ? detectedCountry.canonicalEnglish : "Egypt",
-        industry: detectedIndustry.arabicLabel,
+        query: companyQuery,
+        search: [hasDetectedIndustry ? detectedIndustry.arabicLabel : "الشركات", countryNameAr]
+          .filter(Boolean)
+          .join(" في "),
+        ...(detectedCountry ? { country: detectedCountry.canonicalEnglish, location: detectedCountry.canonicalEnglish } : {}),
+        ...(hasDetectedIndustry ? { industry: detectedIndustry.arabicLabel } : {}),
         pagination: { size: Math.min(volume, 100) },
       }
     : {

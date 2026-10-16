@@ -1262,11 +1262,22 @@ export class LlmClient {
         (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("b2b") ||
         (!isPeoplePrompt && (matchedCap.id || "").includes("icypeas"));
 
+      const fallbackCountry = detectCountryFromText(lastUserMsg);
+      const fallbackIndustry = detectIndustryFromText(lastUserMsg);
+      const missingCompanyRequirements = getMissingCompanyResearchRequirements(lastUserMsg);
+      const hasExplicitCompanyIndustry = !missingCompanyRequirements.includes("industry");
+      const fallbackScope = [
+        hasExplicitCompanyIndustry ? fallbackIndustry.arabicLabel : undefined,
+        fallbackCountry?.arabicLabel,
+      ].filter(Boolean).join(" في ");
       const params = isPeoplePrompt
         ? { query: { keyword: { include: [lastUserMsg] } } }
         : isCompanySearch
         ? {
-            query: { keyword: { include: ["contracting", "construction"] }, location: { include: ["Egypt"] } },
+            query: {
+              ...(hasExplicitCompanyIndustry ? { keyword: { include: fallbackIndustry.englishKeywords } } : {}),
+              ...(fallbackCountry ? { location: { include: [fallbackCountry.canonicalEnglish] } } : {}),
+            },
             pagination: { size: volume },
           }
         : { query: lastUserMsg.slice(0, 50), postUrl: "https://www.facebook.com/post/123" };
@@ -1274,7 +1285,7 @@ export class LlmClient {
       const summaryAr = isPeoplePrompt
         ? `استخراج بيانات ${volume} من صناع القرار والمهنيين وفق معايير الطلب`
         : isCompanySearch
-        ? `استخراج بيانات ${volume} سجل من شركات مقاولات في مصر`
+        ? `استخراج بيانات ${volume} سجل من الشركات${fallbackScope ? ` في ${fallbackScope}` : " بعد تحديد الدولة والقطاع"}`
         : `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`;
 
       return {
