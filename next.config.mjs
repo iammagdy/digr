@@ -7,10 +7,14 @@ const __dirname = path.dirname(__filename);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // Keep PDFKit's package import map intact; Next's server bundle otherwise
+  // drops its #standard-fonts/* imports under the deployed Node runtime.
+  serverExternalPackages: ["pdfkit"],
   outputFileTracingIncludes: {
     "/api/**/*": [
       "./src/assets/fonts/**/*",
       "./node_modules/pdfkit/js/data/**/*",
+      "./node_modules/pdfkit/js/standard-fonts/**/*",
     ],
   },
   env: {

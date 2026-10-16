@@ -1,9 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 
 export const dynamic = "force-dynamic";
+
+async function linkPdfArtifactVersion(adminClient: any, userId: string, jobId: string, storagePath: string) {
+  const table = adminClient.from("artifact_versions");
+  const { data: version, error: readError } = await table
+    .select("id")
+    .eq("job_id", jobId)
+    .eq("user_id", userId)
+    .eq("version_number", 1)
+    .maybeSingle();
+
+  if (readError) throw new Error("PDF_ARTIFACT_VERSION_READ_FAILED");
+
+  if (version?.id) {
+    const { error } = await table.update({ file_id_pdf: storagePath }).eq("id", version.id).eq("user_id", userId);
+    if (error) throw new Error("PDF_ARTIFACT_VERSION_UPDATE_FAILED");
+    return;
+  }
+
+  const id = `ver_${createHash("sha256").update(jobId).digest("hex").slice(0, 20)}_1`;
+  const { error } = await table.insert({
+    id,
+    job_id: jobId,
+    user_id: userId,
+    version_number: 1,
+    file_id_xlsx: null,
+    file_id_pdf: storagePath,
+    file_id_csv: null,
+    created_at: new Date().toISOString(),
+  });
+  if (error) throw new Error("PDF_ARTIFACT_VERSION_INSERT_FAILED");
+}
 
 /**
  * Download job results using short-lived signed URLs from the private results bucket.
@@ -130,6 +162,7 @@ export async function GET(
     }
 
     let signedUrl: string | null = null;
+    let resolvedStoragePath: string | null = null;
 
     // Check existing candidate files
     for (const path of candidatePaths) {
@@ -139,6 +172,7 @@ export async function GET(
 
       if (!signErr && signed?.signedUrl) {
         signedUrl = signed.signedUrl;
+        resolvedStoragePath = path;
         break;
       }
     }
@@ -191,10 +225,11 @@ export async function GET(
 
           if (fileBuf) {
             const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
-            await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
+            const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
               contentType: mimeType,
               upsert: true,
             });
+            if (uploadError) throw uploadError;
 
             // Keep artifact_versions permanently in sync with the generated artifact
             try {
@@ -226,12 +261,13 @@ export async function GET(
               console.warn("Could not sync artifact_versions on demand:", syncErr);
             }
 
-            const { data: newlySigned } = await adminClient.storage
+            const { data: newlySigned, error: signError } = await adminClient.storage
               .from("results")
               .createSignedUrl(uploadPath, 300, { download: downloadFileName });
 
-            if (newlySigned?.signedUrl) {
+            if (!signError && newlySigned?.signedUrl) {
               signedUrl = newlySigned.signedUrl;
+              resolvedStoragePath = uploadPath;
             }
           }
         } catch (genErr) {
@@ -245,6 +281,10 @@ export async function GET(
         { success: false, error: "الملف المطلوب غير جاهز للتحميل بعد أو انتهت صلاحيته." },
         { status: 404 }
       );
+    }
+
+    if (format === "pdf" && resolvedStoragePath) {
+      await linkPdfArtifactVersion(adminClient, job.user_id, jobId, resolvedStoragePath);
     }
 
     // If caller requested direct redirect
