@@ -9,6 +9,36 @@ type PersistEditedQuoteInput = {
   };
 };
 
+/** plans_quotes intentionally has no conversation_id column; the saved assistant
+ * message is the authoritative relation between a quote and its conversation. */
+export async function resolveQuoteConversationId(
+  database: any,
+  input: { userId: string; quoteId: string; fallbackConversationId?: string | null },
+): Promise<string> {
+  if (input.fallbackConversationId?.trim()) return input.fallbackConversationId.trim();
+
+  for (const quoteKey of ["quote->>quoteId", "quote->>id"]) {
+    const { data, error } = await database
+      .from("messages")
+      .select("conversation_id")
+      .eq("user_id", input.userId)
+      .eq(quoteKey, input.quoteId)
+      .not("quote", "is", null)
+      .limit(2);
+
+    if (error) throw error;
+    const conversationIds = [...new Set(
+      (data || [])
+        .map((message: any) => message?.conversation_id)
+        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0),
+    )];
+    if (conversationIds.length === 1) return conversationIds[0];
+    if (conversationIds.length > 1) throw new Error("تعذر تحديد المحادثة المرتبطة بعرض السعر.");
+  }
+
+  throw new Error("تعذر العثور على المحادثة المرتبطة بعرض السعر.");
+}
+
 /**
  * Keep the saved assistant message in sync with the replacement quote row.
  * Conversation restore reads its quote card from messages.quote, so updating

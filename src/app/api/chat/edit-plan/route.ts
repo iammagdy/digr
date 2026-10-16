@@ -11,7 +11,7 @@ import {
 import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
-import { persistEditedQuoteMessage } from "@/functions/shared/quoteMessagePersistence";
+import { persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -91,6 +91,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The production plans_quotes schema does not contain conversation_id.
+    // Resolve the owning conversation from the saved message before creating a
+    // replacement quote, so superseding and message persistence use the same id.
+    const conversationId = await resolveQuoteConversationId(adminClient, {
+      userId: verifiedUserId,
+      quoteId,
+      fallbackConversationId: quoteDoc.conversation_id,
+    });
+
     // 4. Construct current plan state and apply operations
     const currentItems = Array.isArray(quoteDoc.items)
       ? quoteDoc.items
@@ -122,7 +131,7 @@ export async function POST(req: NextRequest) {
     // 6. Generate NEW quote (supersedes old quote and recalculates price)
     const userBalance = await calculateBalance(adminClient, verifiedUserId);
     const newQuote = await createAndSaveManagedQuote(adminClient as any, {
-      conversationId: quoteDoc.conversation_id || "",
+      conversationId,
       userId: verifiedUserId,
       plan: updatedPlan,
       userBalance,
@@ -132,7 +141,7 @@ export async function POST(req: NextRequest) {
     // The restored chat card is hydrated from messages.quote. Persist the
     // replacement there as well as in plans_quotes so reloads show this quote.
     await persistEditedQuoteMessage(adminClient, {
-      conversationId: quoteDoc.conversation_id || "",
+      conversationId,
       userId: verifiedUserId,
       previousQuoteId: quoteId,
       quote: newQuote,
