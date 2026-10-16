@@ -751,7 +751,8 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
 
       expect(result.success).toBe(false);
       expect(result.status).toBe("failed");
-      expect(result.errorAr).toContain("مزود البيانات الحقيقي معطل حالياً في البيئة");
+      expect(result.errorAr).toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+      expect(result.errorAr).not.toMatch(/treg|token|مزود البيانات الحقيقي/i);
       expect(result.deliveredUnits).toBe(0);
       expect(result.chargedCredits).toBe(0);
       expect(result.refundCredits).toBe(25);
@@ -772,7 +773,8 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         rowId: jobId,
       });
       expect(jobRow.status).toBe("failed");
-      expect(jobRow.errorAr).toContain("TREG_LIVE!=true");
+      expect(jobRow.errorAr).toBe("الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.");
+      expect(jobRow.errorAr).not.toMatch(/treg|token|مزود البيانات الحقيقي/i);
     });
   });
 });
