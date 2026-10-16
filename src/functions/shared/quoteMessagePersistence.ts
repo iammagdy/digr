@@ -9,6 +9,13 @@ type PersistEditedQuoteInput = {
   };
 };
 
+/** Supabase stores a proposed customer quote with the `quoted` status. Keep
+ * the client-side card in sync with that persisted status after editing; the
+ * older `proposed` status is used by the Appwrite adapter only. */
+export function markEditedQuoteCurrent<T extends { status?: string }>(quote: T): T & { status: "quoted" } {
+  return { ...quote, status: "quoted" };
+}
+
 /** plans_quotes intentionally has no conversation_id column; the saved assistant
  * message is the authoritative relation between a quote and its conversation. */
 export async function resolveQuoteConversationId(

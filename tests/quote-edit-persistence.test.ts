@@ -1,7 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
-import { persistEditedQuoteMessage, resolveQuoteConversationId } from "../src/functions/shared/quoteMessagePersistence";
+import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "../src/functions/shared/quoteMessagePersistence";
 
 describe("edited quote persistence", () => {
+  it("returns an edited Supabase quote as current so its card remains approvable", () => {
+    const editedQuote = markEditedQuoteCurrent({
+      quoteId: "replacement-quote",
+      status: "proposed",
+      quotedPoints: 156,
+      expiresAt: "2026-10-16T20:23:52.000Z",
+    });
+
+    expect(editedQuote).toMatchObject({
+      quoteId: "replacement-quote",
+      status: "quoted",
+      quotedPoints: 156,
+      expiresAt: "2026-10-16T20:23:52.000Z",
+    });
+  });
+
   it("resolves the conversation from the saved quote message when plans_quotes has no conversation_id", async () => {
     const filters: Array<[string, unknown]> = [];
     const query: any = {

@@ -564,6 +564,11 @@ export function getAmbiguousCompanyReference(text: string): string | null {
   const candidate = match?.[1]?.replace(/\s+/g, " ").trim();
   if (!candidate) return null;
   if (/[0-9٠-٩]/u.test(candidate) || /(?:أريد|اريد|أضم|اضم|أضيف|اضيف|قائمة|تضم|شركة|شركات|مؤسسة|مؤسسات|ابحث|بحث|حتى|سجل)/iu.test(candidate)) return null;
+  // The loose phrase matcher can otherwise backtrack and treat a location or
+  // relative clause ("شركة في ألمانيا تعمل...") as the supposed company name.
+  // Only ask the named-company disambiguation when the candidate starts like
+  // an actual name, not a preposition or ordinary sentence continuation.
+  if (/^(?:في|ضمن|من|إلى|الى|على|ب|تعمل|يعمل|تقدم|يقدم|تضم|يشمل|تعمل\s+في|تعمل\s+ضمن|in|within|from|to|for|that|which|operating|based)(?:\s|$)/iu.test(candidate)) return null;
   if (/^(?:للتواصل|للتعامل|للتسويق|للبيع|للشراء|للاستيراد|للتصدير)(?:\s|$)/iu.test(candidate)) return null;
   if (/^(?:تقنية|تكنولوجيا|أغذية|مطاعم|تصنيع|مقاولات|برمجيات|شركات|مؤسسات)$/iu.test(candidate)) return null;
   return candidate;

@@ -11,7 +11,7 @@ import {
 import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
-import { persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
+import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
 
@@ -145,6 +145,10 @@ export async function POST(req: NextRequest) {
       userBalance,
       capabilities: allCapabilities,
     });
+    // Supabase stores live quotes as `quoted`, while the shared quote builder
+    // returns the Appwrite-era `proposed` label. The editor immediately swaps
+    // the current card with this response, so return the status the DB saved.
+    const currentQuote = markEditedQuoteCurrent(newQuote);
 
     // The restored chat card is hydrated from messages.quote. Persist the
     // replacement there as well as in plans_quotes so reloads show this quote.
@@ -152,13 +156,13 @@ export async function POST(req: NextRequest) {
       conversationId,
       userId: verifiedUserId,
       previousQuoteId: quoteId,
-      quote: newQuote,
+      quote: currentQuote,
     });
 
     return NextResponse.json({
       success: true,
-      quote: newQuote,
-      planQuote: newQuote,
+      quote: currentQuote,
+      planQuote: currentQuote,
       messageAr: "تم تحديث الخطة وإعادة احتساب عرض السعر بنجاح!",
     });
   } catch (err: any) {

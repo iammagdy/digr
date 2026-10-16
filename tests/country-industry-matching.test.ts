@@ -146,6 +146,15 @@ describe("Country & Industry Detection and Matching", () => {
     expect(getMissingCompanyResearchRequirements(`${request} إجابة هدف التواصل: شركة محددة بهذا الاسم`)).not.toContain("outreach_details");
   });
 
+  it("does not mistake a location and ordinary wording after company for a company name", () => {
+    const request = "أريد قائمة تضم ٥٠ شركة في ألمانيا تعمل في مجال التقنية المالية (FinTech)، للتواصل التجاري.";
+
+    expect(getAmbiguousCompanyReference(request)).toBeNull();
+    const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
+    expect(items.find((item) => item.id === "company_outreach_required")?.text)
+      .toBe("ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟");
+  });
+
   it("keeps industry required when an ambiguous company gets only country and sales-purpose answers", () => {
     const request = "أريد أن أضم شركة تواصل التجاري إلى القائمة.";
     const answered = `${request} الدولة المطلوبة: مصر | إجابة هدف التواصل: عملاء محتملون / مبيعات`;
