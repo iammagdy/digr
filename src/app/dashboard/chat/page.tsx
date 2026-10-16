@@ -21,6 +21,7 @@ import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
+import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
@@ -239,7 +240,7 @@ export default function ChatWorkspacePage() {
   // Shell integration: header title + «سؤال بحثي جديد» from the sidebar.
   const shell = useShell();
   useEffect(() => {
-    shell.setTitle(conversationTitle || "محادثة جديدة");
+    shell.setTitle(customerFacingConversationTitle(conversationTitle || "محادثة جديدة"));
   }, [shell, conversationTitle]);
   const startNewChatRef = useRef<() => void>(() => {});
   startNewChatRef.current = handleStartNewChat;
@@ -1337,7 +1338,7 @@ export default function ChatWorkspacePage() {
     )
   );
   const firstUserIdx = messages.findIndex((m) => m.role === "user");
-  const question = conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : "");
+  const question = customerFacingConversationTitle(conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : ""));
   const startIdx = messages.findIndex((m) => !!m.jobId);
   const lastPlanIdx = messages.reduce((acc, m, i) => (m.planQuote ? i : acc), -1);
   const lastClarIdx = messages.reduce((acc, m, i) => (isClarification(m) ? i : acc), -1);
