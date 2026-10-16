@@ -11,6 +11,8 @@ import { searchCatalog } from "../src/functions/shared/catalogClient";
 import {
   ChatHandler,
   extractTopicChips,
+  buildAutoPlanProposal,
+  routePeopleAlternative,
   buildCodeDiscoveryFallback,
   filterQuestionsAlreadyInBrief,
   deduplicateIntroText,
@@ -247,6 +249,50 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.planQuote?.items?.[0]?.capabilitySlug).toBe("icypeas-people-search");
     expect(res.planQuote?.items?.[0]?.params?.query).toBeDefined();
     expect(res.planQuote?.items?.[0]?.params?.query?.postUrl).toBeUndefined();
+  });
+
+  it("builds a people-search fallback from the people capability instead of the nearest unrelated service", () => {
+    const request = "Find 20 solar industry decision-makers in Germany with names, job titles, and work emails";
+    const brief: ResearchBrief = {
+      platforms: [],
+      topics: ["solar industry decision-makers"],
+      targetVolume: 20,
+    };
+
+    const proposal = buildAutoPlanProposal(brief, RAW_SEED_CAPABILITIES as any, request);
+    const peopleStep = proposal.capabilities[0];
+
+    expect(peopleStep.capabilitySlug).toBe("icypeas-people-search");
+    expect(peopleStep.targetVolumeMax).toBe(20);
+    expect(peopleStep.params.query.location.include).toEqual(["Germany"]);
+    expect(peopleStep.params.query.jobTitle.include).toContain("CEO");
+    expect(proposal.summaryAr).toContain("ألمانيا");
+    expect(proposal.summaryAr).not.toContain("تيك توك");
+  });
+
+  it("replaces an unrelated model alternative with a scoped people plan or asks for country", () => {
+    const suggestion = {
+      type: "suggest_alternative",
+      unsupportedService: "decision-makers",
+      explanationAr: "هذه الخدمة غير متاحة",
+      closestAlternative: "تيك توك",
+      canRequestFeature: true,
+    };
+    const brief: ResearchBrief = { platforms: [], topics: ["solar decision-makers"], targetVolume: 20 };
+    const request = "Find 20 solar decision-makers in Germany with job titles and work emails";
+
+    const routed = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, request);
+    expect(routed.type).toBe("propose_plan");
+    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-people-search");
+
+    const clarification = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, "Find 20 decision-makers with work emails");
+    expect(clarification.type).toBe("ask_clarification");
+    expect(clarification.questionsAr.join(" ")).toContain("الدولة");
+
+    const unavailable = routePeopleAlternative(suggestion, brief, [], request);
+    expect(unavailable.type).toBe("refuse");
+    expect(unavailable.reasonAr).toContain("خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً");
+    expect(unavailable.reasonAr).not.toContain("تيك توك");
   });
 
   it("asks for a country before quoting a people search instead of defaulting to Egypt", async () => {

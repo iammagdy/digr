@@ -358,8 +358,14 @@ export function buildAutoPlanProposal(
   outputFormats: string[];
   methodologyNotes: string;
 } {
+  const requestText = [message, ...(brief.topics || []), ...(brief.keywords || []), brief.notes || ""]
+    .filter(Boolean)
+    .join(" ");
+  const peopleSearch = isPeopleSearchRequest(requestText);
   const mentionedPlats = detectMentionedPlatforms(message);
-  const platform = (brief.platforms && brief.platforms.length > 0)
+  const platform = peopleSearch
+    ? "people"
+    : (brief.platforms && brief.platforms.length > 0)
     ? brief.platforms[0]
     : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "tiktok"));
   const platformNorm = platform.toLowerCase();
@@ -369,6 +375,9 @@ export function buildAutoPlanProposal(
     const cPlat = (c.platform || c.category || "").toLowerCase();
     const cSlug = (c.slug || "").toLowerCase();
     const cId = (c.tregEndpointId || c.id || "").toLowerCase();
+    if (peopleSearch) {
+      return cPlat === "people" || cSlug.includes("people") || cId.includes("people");
+    }
     if (platformNorm === "companies" || platformNorm === "b2b") {
       return cPlat === "companies" || cPlat === "b2b" || cSlug.includes("companies") || cId.includes("companies");
     }
@@ -412,9 +421,12 @@ export function buildAutoPlanProposal(
     matchedCap.slug.includes("companies") ||
     Boolean(matchedCap.tregEndpointId && matchedCap.tregEndpointId.includes("companies"));
 
-  const platformLabel = isCompanySearch
-    ? "قواعد بيانات الشركات"
-    : getPlatformLabelAr(platformNorm);
+  const isPeopleCapability = peopleSearch || /people/i.test(`${matchedCap.slug} ${matchedCap.tregEndpointId || ""}`);
+  const platformLabel = isPeopleCapability
+    ? "صناع القرار والمهنيون"
+    : isCompanySearch
+      ? "قواعد بيانات الشركات"
+      : getPlatformLabelAr(platformNorm);
 
   const isProfileCapability =
     (matchedCap.pricingUnit as string) === "profile" ||
@@ -425,8 +437,8 @@ export function buildAutoPlanProposal(
     typeof topicLabel === "string" &&
     (topicLabel.startsWith("@") || (!topicLabel.includes(" ") && !topicLabel.includes("،") && /^[a-zA-Z0-9_.-]+$/.test(topicLabel)));
 
-  const detectedCountry = detectCountryFromText(message);
-  const detectedIndustry = detectIndustryFromText(message);
+  const detectedCountry = detectCountryFromText(requestText);
+  const detectedIndustry = detectIndustryFromText(requestText);
 
   const countryNameAr = detectedCountry?.arabicLabel;
   const hasDetectedIndustry = detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" &&
@@ -435,8 +447,22 @@ export function buildAutoPlanProposal(
     ...(hasDetectedIndustry ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
     ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
   };
-  const stepParams: Record<string, any> = isCompanySearch
+  const peopleKeywords = hasDetectedIndustry
+    ? detectedIndustry.englishKeywords
+    : (topicLabel && topicLabel !== "البيانات العامة المطلوبة" &&
+       !isPeopleSearchRequest(topicLabel) && !detectCountryFromText(topicLabel)
+      ? [topicLabel]
+      : ["decision makers"]);
+  const stepParams: Record<string, any> = isPeopleCapability
     ? {
+        query: {
+          keyword: { include: peopleKeywords },
+          jobTitle: { include: ["CEO", "CTO", "CFO", "Head", "Director", "VP"] },
+          ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
+        },
+      }
+    : isCompanySearch
+      ? {
         query: companyQuery,
         search: [hasDetectedIndustry ? detectedIndustry.arabicLabel : "الشركات", countryNameAr]
           .filter(Boolean)
@@ -444,10 +470,10 @@ export function buildAutoPlanProposal(
         ...(detectedCountry ? { country: detectedCountry.canonicalEnglish, location: detectedCountry.canonicalEnglish } : {}),
         ...(hasDetectedIndustry ? { industry: detectedIndustry.arabicLabel } : {}),
         pagination: { size: Math.min(volume, 100) },
-      }
-    : {
-        query: topicLabel,
-      };
+        }
+      : {
+          query: topicLabel,
+        };
 
   if (isProfileCapability || isExplicitHandle) {
     stepParams.username = topicLabel.replace(/^@/, "").trim();
@@ -467,17 +493,55 @@ export function buildAutoPlanProposal(
     paginationStrategy: matchedCap.paginationType || "cursor",
   };
 
-  const summaryAr = isCompanySearch
-    ? `استخراج بيانات ${volume} سجل من شركات ${detectedIndustry.arabicLabel} في ${countryNameAr}`
-    : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
+  const summaryAr = isPeopleCapability
+    ? `بحث ${volume} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
+    : isCompanySearch
+      ? `استخراج بيانات ${volume} سجل من شركات ${detectedIndustry.arabicLabel} في ${countryNameAr}`
+      : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
     type: "propose_plan",
     summaryAr,
     capabilities: [step],
     outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx", "pdf", "csv"],
-    methodologyNotes: `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
+    methodologyNotes: isPeopleCapability
+      ? "البحث عن صناع القرار والمهنيين بحسب المجال والدولة والمسمى الوظيفي؛ وجود أي حقل لا يعني التحقق المستقل من صحته."
+      : `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
   };
+}
+
+/** Replace an unrelated model suggestion with the people capability when intent is clear. */
+export function routePeopleAlternative(
+  output: any,
+  brief: ResearchBrief,
+  capabilities: Capability[],
+  requestText: string,
+): any {
+  if (output?.type !== "suggest_alternative" || !isPeopleSearchRequest(requestText)) return output;
+
+  const peopleCapability = capabilities.find((capability) =>
+    /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
+  );
+  if (!peopleCapability) {
+    return {
+      type: "refuse",
+      reasonAr: "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً.",
+    };
+  }
+
+  if (!detectCountryFromText(requestText)) {
+    const question = "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟";
+    const intro = "قبل إعداد عرض السعر، أحتاج تحديد الدولة حتى لا أفترضها.";
+    return {
+      type: "ask_clarification",
+      reasonAr: intro,
+      intro,
+      questions: [{ id: "people_country_required", question, type: "free", allowOther: true }],
+      questionsAr: [question],
+    };
+  }
+
+  return buildAutoPlanProposal(brief, capabilities, requestText);
 }
 
 /**
@@ -1573,6 +1637,10 @@ export class ChatHandler {
         }
         return out;
       })();
+
+      // The language model can incorrectly suggest an unrelated alternative for a
+      // people-search request. Prefer the verified people capability when present.
+      output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
 
       // 8. Process Output Actions
       currentStep = "output_action";
