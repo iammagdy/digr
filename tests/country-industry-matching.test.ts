@@ -5,6 +5,7 @@ import {
   isCompanyRowMatchingLocation,
   isCompanyRowMatchingConstraints,
   extractInterpretedParameters,
+  getMissingCompanyResearchRequirements,
 } from "../src/lib/planParameters";
 import { normalizeIcypeasCompanyParams } from "../src/lib/server/tregAdapter";
 
@@ -68,6 +69,28 @@ describe("Country & Industry Detection and Matching", () => {
     );
     expect(interpDefault.countryAr).toBe("مصر (افتراضي)");
     expect(interpDefault.isDefaultCountry).toBe(true);
+  });
+
+  it("reads the saved Germany and FinTech values from the structured company query", () => {
+    const interpreted = extractInterpretedParameters({
+      query: {
+        keyword: { include: ["FinTech"] },
+        location: { include: ["Germany"] },
+        industry: { include: ["Financial Services", "Banking"] },
+      },
+    }, "Old quote summary for Egypt IT companies");
+
+    expect(interpreted.countryCanonical).toBe("Germany");
+    expect(interpreted.countryAr).toBe("ألمانيا");
+    expect(interpreted.industryAr).toBe("FinTech");
+    expect(interpreted.isDefaultCountry).toBe(false);
+  });
+
+  it("requires both country and industry instead of interpreting unstated company-search defaults", () => {
+    expect(getMissingCompanyResearchRequirements("Find 100 companies")).toEqual(["country", "industry"]);
+    expect(getMissingCompanyResearchRequirements("Find 100 solar companies in Germany")).toEqual([]);
+    expect(getMissingCompanyResearchRequirements("Find 100 solar companies")).toEqual(["country"]);
+    expect(getMissingCompanyResearchRequirements("Find 100 companies in Germany")).toEqual(["industry"]);
   });
 
   it("validates company rows strictly against target country and industry", () => {

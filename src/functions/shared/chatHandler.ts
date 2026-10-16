@@ -51,7 +51,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
 
 export interface ChatHandlerInput {
   userId: string;
@@ -1695,8 +1695,8 @@ export class ChatHandler {
             const detectedIndustry = detectIndustryFromText(message);
             if (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0)) {
               itemParams.query = {
-                keyword: { include: detectedIndustry.englishKeywords },
-                location: { include: [explicitCountry ? explicitCountry.canonicalEnglish : "Egypt"] },
+                ...(detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
+                ...(explicitCountry ? { location: { include: [explicitCountry.canonicalEnglish] } } : {}),
               };
             }
             if (explicitCountry && !itemParams.country && !itemParams.location) {
@@ -1731,15 +1731,47 @@ export class ChatHandler {
 
         let planOutput: any = output;
         let planItems = mapPlanItems(planOutput);
+        const companyPlan = planItems.some((item: any) =>
+          /compan|b2b/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
+        );
+        const requiredFieldsText = [message, ...(brief.topics || []), ...(brief.keywords || []), brief.notes || ""].join(" ");
+        const missingCompanyFields = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
+          ? getMissingCompanyResearchRequirements(requiredFieldsText)
+          : [];
+        if (missingCompanyFields.length > 0) {
+          const missingLabels = missingCompanyFields.map((field) => field === "country" ? "الدولة" : "القطاع");
+          const question = `ما ${missingLabels.join(" و")} المطلوب؟`;
+          finalContentAr = `قبل إعداد عرض السعر، أحتاج تحديد ${missingLabels.join(" و")} حتى لا أفترض قيماً غير مذكورة.`;
+          clarificationQuestionsList = [question];
+          clarificationItemsList = [{
+            id: "company_required_fields",
+            text: question,
+            question,
+            type: "free",
+            options: [],
+            allowOther: true,
+          } as any];
+          output = {
+            type: "ask_clarification",
+            reasonAr: finalContentAr,
+            intro: finalContentAr,
+            questions: clarificationItemsList,
+            questionsAr: clarificationQuestionsList,
+          } as any;
+          planOutput = null;
+        }
 
         // Deterministic check: platform mentioned by user must match platform in proposed plan
         let platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
         let planValidation = platformCheck.valid
           ? validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities)
           : { valid: false, errors: [] as string[], issues: [] as LiveCatalogIssue[] };
+        if (missingCompanyFields.length > 0) {
+          planValidation = { valid: false, errors: ["missing-company-required-fields"], issues: [] as LiveCatalogIssue[] };
+        }
 
         let planRetries = 0;
-        while (platformCheck.valid && !planValidation.valid && planRetries < 3) {
+        while (missingCompanyFields.length === 0 && platformCheck.valid && !planValidation.valid && planRetries < 3) {
           if (planValidation.issues.some((i) => i.kind === "missing_cost")) {
             console.warn("[chat:plan_validation_missing_cost_abort_retry]", { issues: planValidation.issues });
             break;
@@ -1763,7 +1795,9 @@ export class ChatHandler {
           }
         }
 
-        if (testScenario === "plan_ghost_then_stall") {
+        if (missingCompanyFields.length > 0) {
+          // Keep the clarification response created above; no quote should be saved with inferred defaults.
+        } else if (testScenario === "plan_ghost_then_stall") {
           console.warn("[chat:plan_validation_invalid]", { errors: planValidation.errors });
           const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
           clarificationQuestionsList = planFallback.items.map((item) => item.text);

@@ -21,6 +21,8 @@ import {
   type PlanState,
 } from "../src/functions/shared/planManager";
 import { DEFAULT_PRICING_SETTINGS, calculateCapabilityUnitPricePoints } from "../src/functions/shared/quotes";
+import { buildCompanyPlanEditOperations } from "../src/lib/companyPlanEdits";
+import { extractInterpretedParameters } from "../src/lib/planParameters";
 
 describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
   it("extractParamDisplayString safely unpacks company query object without returning [object Object]", () => {
@@ -123,6 +125,33 @@ describe("Plan Editing & Parameter Handling (Regression Suite)", () => {
     const initialHash = computePlanHash(initialPlan.items, initialPlan.outputFormats);
     const updatedHash = computePlanHash(updatedPlan.items, updatedPlan.outputFormats);
     expect(updatedHash).not.toBe(initialHash);
+  });
+
+  it("saves country and industry edits even when the keyword field is empty", () => {
+    const initialPlan: PlanState = {
+      summaryAr: "Old summary: Egypt IT companies",
+      items: [{
+        capabilitySlug: "icypeas-companies-search",
+        params: { query: { keyword: { include: ["software"] }, location: { include: ["Egypt"] } } },
+        targetVolumeMin: 1,
+        targetVolumeMax: 20,
+      }],
+      outputFormats: ["xlsx", "pdf"],
+    };
+    const operations = buildCompanyPlanEditOperations("icypeas-companies-search", "", "Germany", "FinTech");
+    const updated = applyPlanOperations(initialPlan, operations as any);
+    const params = updated.items[0].params;
+
+    expect(params.country).toBe("Germany");
+    expect(params.location).toBe("Germany");
+    expect(params.industry).toBe("FinTech");
+    expect(params.query.location.include).toEqual(["Germany"]);
+    expect(params.query.industry.include).toContain("Financial Services");
+    expect(extractInterpretedParameters(params, initialPlan.summaryAr)).toMatchObject({
+      countryCanonical: "Germany",
+      industryAr: "FinTech",
+      isDefaultCountry: false,
+    });
   });
 });
 

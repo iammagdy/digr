@@ -4,7 +4,7 @@ import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
-import { detectCountryFromText, detectIndustryFromText } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
 
 // ================= Schema Definitions =================
 
@@ -1202,15 +1202,7 @@ export class LlmClient {
         m.content.includes("propose_plan"),
     );
     if (hasPhase2PlanInstruction || options.testScenario === "phase2_plan") {
-      const isPeoplePrompt =
-        promptLower.includes("صناع القرار") ||
-        promptLower.includes("صانعي القرار") ||
-        promptLower.includes("الرئيس التنفيذي") ||
-        promptLower.includes("رئيس تنفيذي") ||
-        promptLower.includes("بريده المهني") ||
-        promptLower.includes("بريد مهني") ||
-        promptLower.includes("decision maker") ||
-        promptLower.includes("people");
+      const isPeoplePrompt = isPeopleSearchRequest(promptLower);
 
       const isCompanyPrompt =
         !isPeoplePrompt &&
@@ -1265,19 +1257,23 @@ export class LlmClient {
       }
 
       const isCompanySearch =
-        isCompanyPrompt ||
+        (!isPeoplePrompt && isCompanyPrompt) ||
         (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("compan") ||
         (matchedCap.platform || matchedCap.category || matchedCap.slug || "").toLowerCase().includes("b2b") ||
-        (matchedCap.id || "").includes("icypeas");
+        (!isPeoplePrompt && (matchedCap.id || "").includes("icypeas"));
 
-      const params = isCompanySearch
+      const params = isPeoplePrompt
+        ? { query: { keyword: { include: [lastUserMsg] } } }
+        : isCompanySearch
         ? {
             query: { keyword: { include: ["contracting", "construction"] }, location: { include: ["Egypt"] } },
             pagination: { size: volume },
           }
         : { query: lastUserMsg.slice(0, 50), postUrl: "https://www.facebook.com/post/123" };
 
-      const summaryAr = isCompanySearch
+      const summaryAr = isPeoplePrompt
+        ? `استخراج بيانات ${volume} من صناع القرار والمهنيين وفق معايير الطلب`
+        : isCompanySearch
         ? `استخراج بيانات ${volume} سجل من شركات مقاولات في مصر`
         : `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`;
 
@@ -1293,7 +1289,7 @@ export class LlmClient {
               params,
               targetVolumeMin: 1,
               targetVolumeMax: volume,
-              paginationStrategy: isCompanySearch ? "none" : "cursor",
+              paginationStrategy: isCompanySearch || isPeoplePrompt ? "none" : "cursor",
             },
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
@@ -2023,23 +2019,80 @@ export class LlmClient {
       };
     }
 
+    // I.1 Route contact and decision-maker requests to the people capability.
+    const userHistoryText = options.messages
+      .filter((entry) => entry.role === "user")
+      .map((entry) => entry.content)
+      .join(" ");
+    if (isPeopleSearchRequest(userHistoryText)) {
+      const parsedVolume = extractTargetVolume(userHistoryText);
+      const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
+      const peopleCap = (options.sanitizedCapabilities || []).find((c: any) =>
+        String(c.slug || c.platform || c.category || c.id || "").toLowerCase().includes("people")
+      ) || { slug: "icypeas-people-search", id: "icypeas.people.search", nameAr: "بحث صناع القرار والمهنيين" };
+      const country = detectCountryFromText(userHistoryText);
+      const query: Record<string, any> = { keyword: { include: [userHistoryText] } };
+      if (country) query.location = { include: [country.canonicalEnglish] };
+
+      return {
+        output: {
+          type: "propose_plan",
+          summaryAr: `استخراج بيانات ${targetVolume} من صناع القرار والمهنيين وفق معايير الطلب`,
+          capabilities: [{
+            stepId: "people_search",
+            capabilitySlug: peopleCap.slug,
+            endpointId: peopleCap.id || "icypeas.people.search",
+            params: { query },
+            targetVolumeMin: 1,
+            targetVolumeMax: targetVolume,
+            paginationStrategy: "none",
+          }],
+          outputFormats: ["xlsx", "pdf", "csv"],
+          methodologyNotes: "البحث عن جهات الاتصال المهنية بحسب الكلمات والمسمى الوظيفي والدولة المذكورة في الطلب.",
+        },
+        inputTokens: 700,
+        outputTokens: 120,
+        costUsd: (700 * 0.10 + 120 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
     // I. Companies / B2B research plan proposal
     if (
-      promptLower.includes("شركات") ||
-      promptLower.includes("شركة") ||
-      promptLower.includes("مؤسسات") ||
-      promptLower.includes("مؤسسة") ||
-      promptLower.includes("companies") ||
-      promptLower.includes("business")
+      !isPeopleSearchRequest(userHistoryText) &&
+      /(شركات|شركة|مؤسسات|مؤسسة|companies|\bcompany\b|\bbusiness\b)/i.test(userHistoryText)
     ) {
-      const detectedCountry = detectCountryFromText(lastUserMsg);
-      const detectedIndustry = detectIndustryFromText(lastUserMsg);
-      const parsedVolume = extractTargetVolume(lastUserMsg);
+      const detectedCountry = detectCountryFromText(userHistoryText);
+      const detectedIndustry = detectIndustryFromText(userHistoryText);
+      const parsedVolume = extractTargetVolume(userHistoryText);
       const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
-      const countryEn = detectedCountry ? detectedCountry.canonicalEnglish : "Egypt";
-      const countryAr = detectedCountry ? detectedCountry.arabicLabel : "مصر (افتراضي)";
-      const industryKeywords = detectedIndustry.englishKeywords.length > 0 ? detectedIndustry.englishKeywords : ["companies"];
-      const industryAr = detectedIndustry.arabicLabel || "الشركات";
+      const missingRequirements = getMissingCompanyResearchRequirements(userHistoryText);
+      if (missingRequirements.length > 0) {
+        const missing = missingRequirements.map((field) => field === "country" ? "الدولة" : "القطاع");
+        return {
+          output: {
+            type: "ask_clarification",
+            reasonAr: `يرجى تحديد ${missing.join(" و")} قبل إعداد عرض السعر حتى لا أفترض معلومات غير مذكورة.`,
+            questions: [{
+              id: "company_required_fields",
+              question: `ما ${missing.join(" وال")} المطلوب؟`,
+              type: "free",
+              allowOther: true,
+            }],
+            questionsAr: [`ما ${missing.join(" وال")} المطلوب؟`],
+          },
+          inputTokens: 600,
+          outputTokens: 70,
+          costUsd: (600 * 0.10 + 70 * 0.50) / 1_000_000,
+          model: fakeModel,
+          promptVersion: PROMPT_VERSION,
+        };
+      }
+      const countryEn = detectedCountry!.canonicalEnglish;
+      const countryAr = detectedCountry!.arabicLabel;
+      const industryKeywords = detectedIndustry.englishKeywords;
+      const industryAr = detectedIndustry.arabicLabel;
 
       const cap = (options.sanitizedCapabilities || []).find(
         (c: any) =>
@@ -2453,15 +2506,7 @@ export class LlmClient {
           .join(" ")
           .toLowerCase();
 
-        const isPeoplePrompt =
-          userPromptLower.includes("صناع القرار") ||
-          userPromptLower.includes("صانعي القرار") ||
-          userPromptLower.includes("الرئيس التنفيذي") ||
-          userPromptLower.includes("رئيس تنفيذي") ||
-          userPromptLower.includes("بريده المهني") ||
-          userPromptLower.includes("بريد مهني") ||
-          userPromptLower.includes("decision maker") ||
-          userPromptLower.includes("people");
+        const isPeoplePrompt = isPeopleSearchRequest(userPromptLower);
 
         const isCompanyPrompt =
           !isPeoplePrompt &&
@@ -2683,15 +2728,7 @@ export class LlmClient {
           .join(" ")
           .toLowerCase();
 
-        const isPeoplePrompt =
-          userPromptLower.includes("صناع القرار") ||
-          userPromptLower.includes("صانعي القرار") ||
-          userPromptLower.includes("الرئيس التنفيذي") ||
-          userPromptLower.includes("رئيس تنفيذي") ||
-          userPromptLower.includes("بريده المهني") ||
-          userPromptLower.includes("بريد مهني") ||
-          userPromptLower.includes("decision maker") ||
-          userPromptLower.includes("people");
+        const isPeoplePrompt = isPeopleSearchRequest(userPromptLower);
 
         const isCompanyPrompt =
           !isPeoplePrompt &&
