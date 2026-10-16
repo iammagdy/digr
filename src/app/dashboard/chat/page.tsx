@@ -20,6 +20,7 @@ import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
+import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
@@ -1378,7 +1379,7 @@ export default function ChatWorkspacePage() {
     }
     return (
       <div key={m.id}>
-        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{m.content}</p>}
+        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
         {m.revisionQuote && (
           <RevisionQuoteCard
             quote={m.revisionQuote}
