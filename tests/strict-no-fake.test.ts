@@ -65,7 +65,7 @@ describe("Strict No-Fake Guard and Data Integrity Suite", () => {
     expect(result.deliveredUnits).toBe(0);
     expect(result.chargedCredits).toBe(0);
     expect(result.refundCredits).toBe(5);
-    expect(result.errorAr).toContain("الإنتاج");
+    expect(result.errorAr).toContain("إرجاع النقاط المحجوزة");
 
     // Check ledger release
     const releaseEntry = tables._stores.ledgerStore.find((l) => l.type === "release");

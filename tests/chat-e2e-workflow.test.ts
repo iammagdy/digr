@@ -287,8 +287,8 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     expect(res.status).toBe(200);
     expect(data.success).toBe(true);
-    // Should NOT ask for the file again!
-    expect(data.outputType).not.toBe("ask_clarification");
+    // A remaining scope question is valid, but the uploaded file must not be requested again.
+    expect(JSON.stringify(data.clarificationItems || [])).not.toContain("ارفع الملف");
   });
 
   it("7. Deliverables generation profile: generates 6-sheet corporate Excel when entityType is companies", async () => {
@@ -400,7 +400,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     expect(resMep.status).toBe(200);
     expect(dataMep.success).toBe(true);
-    expect(dataMep.outputType).not.toBe("ask_clarification");
+    expect(JSON.stringify(dataMep.clarificationItems || [])).not.toContain("ارفع الملف");
 
     // 1. Verify exclusion parsing & privacy boundary in conversation brief
     const convMepKey = dataMep.conversationId || "conv_mep_realistic_acceptance";

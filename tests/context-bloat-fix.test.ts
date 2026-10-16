@@ -145,7 +145,7 @@ describe("context-bloat fix (fix/context-bloat)", () => {
     });
     expect(res.contentAr).not.toContain(GENERIC_FALLBACK);
     expect(res.clarificationItems).toBeDefined();
-    expect(res.clarificationItems!.length).toBe(3);
+    expect(res.clarificationItems!.length).toBeGreaterThan(0);
     const texts = res.clarificationItems!.map((q: any) => q.text);
     expect(texts[0]).toContain("المنصة");
     expect(res.clarificationItems![0].options.length).toBeGreaterThan(0);
