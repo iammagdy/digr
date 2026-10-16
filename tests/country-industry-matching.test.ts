@@ -7,6 +7,8 @@ import {
   extractInterpretedParameters,
   getMissingCompanyResearchRequirements,
   getCompanyRequirementQuestions,
+  getCompanyRequirementItems,
+  getAmbiguousCompanyReference,
   extractParamDisplayString,
   industryDisplayLabelAr,
   isPeopleSearchRequest,
@@ -128,6 +130,17 @@ describe("Country & Industry Detection and Matching", () => {
     expect(getMissingCompanyResearchRequirements("Find 100 solar companies in Germany")).toEqual([]);
     expect(getMissingCompanyResearchRequirements("Find 100 solar companies")).toEqual(["country"]);
     expect(getMissingCompanyResearchRequirements("Find 100 companies in Germany")).toEqual(["industry"]);
+  });
+
+  it("asks what a possibly named company means instead of treating it as a generic outreach request", () => {
+    const request = "أريدك تضم شركة تواصل التجاري، وأحتاج بيانات للتواصل معها";
+    expect(getAmbiguousCompanyReference(request)).toBe("تواصل التجاري");
+    const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
+    const outreach = items.find((item) => item.id === "company_outreach_required");
+    expect(outreach?.text).toContain("تواصل التجاري");
+    expect(outreach?.options).toContain("شركة محددة بهذا الاسم");
+    expect(outreach?.options.at(-1)).toBe("أخرى");
+    expect(getMissingCompanyResearchRequirements(`${request} إجابة هدف التواصل: شركة محددة بهذا الاسم`)).not.toContain("outreach_details");
   });
 
   it("does not infer Egypt or CEO for an unscoped people search", async () => {

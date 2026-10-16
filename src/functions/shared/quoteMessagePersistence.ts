@@ -27,7 +27,7 @@ export async function resolveQuoteConversationId(
       .limit(2);
 
     if (error) throw error;
-    const conversationIds = [...new Set(
+    const conversationIds = [...new Set<string>(
       (data || [])
         .map((message: any) => message?.conversation_id)
         .filter((id: unknown): id is string => typeof id === "string" && id.length > 0),

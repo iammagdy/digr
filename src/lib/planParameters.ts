@@ -527,7 +527,7 @@ export function getMissingCompanyResearchRequirements(text: string): CompanyRese
     (!industry.exactTaxonomy?.length && industry.arabicLabel === industryText) ||
     industry.englishKeywords.every((keyword) => keyword === "contracting");
   const asksForGenericOutreach = /التواصل|تواصل|outreach|business development|commercial/i.test(text || "");
-  const givesOutreachDetails = /إجابة هدف التواصل:\s*\S+|اسم الشركة|اسم الشركات|موقع الشركة|الموقع الإلكتروني|website|بريد العمل|البريد المهني|work email|business email|الهاتف|رقم الهاتف|linkedin|لينكد.?إن|مورد|موردون|مشتري|شراكة|شركاء|توريد|مبيعات|بيع|شراء|عملاء محتملون|بحث سوقي|supplier|buyer|partnership|sales lead|market research/i.test(text || "");
+  const givesOutreachDetails = /إجابة هدف التواصل:\s*\S+|شركة محددة بهذا الاسم|اسم الشركة|اسم الشركات|موقع الشركة|الموقع الإلكتروني|website|بريد العمل|البريد المهني|work email|business email|الهاتف|رقم الهاتف|linkedin|لينكد.?إن|مورد|موردون|مشتري|شراكة|شركاء|توريد|مبيعات|بيع|شراء|عملاء محتملون|بحث سوقي|supplier|buyer|partnership|sales lead|market research/i.test(text || "");
   return [
     ...(!country ? ["country" as const] : []),
     ...(industryMissing ? ["industry" as const] : []),
@@ -544,6 +544,20 @@ export function getCompanyRequirementQuestions(missing: CompanyResearchRequireme
     questions.push("ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟");
   }
   return questions;
+}
+
+/** Pull out a likely named organization when a request mixes a company name
+ * with an unclear verb such as "include/add". This is a cue to ask what the
+ * user means; it is never treated as a verified company or industry. */
+export function getAmbiguousCompanyReference(text: string): string | null {
+  const match = (text || "").match(
+    /(?<![\p{L}\p{N}])(?:شركة|مؤسسة)(?![\p{L}\p{N}])\s+([\p{L}\p{N}][\p{L}\p{N}\s&'’.-]{1,48}?)(?=\s+(?:في|ضمن|للتواصل|وتضم|مع|أو)|[،.!؟]|$)/iu,
+  );
+  const candidate = match?.[1]?.replace(/\s+/g, " ").trim();
+  if (!candidate) return null;
+  if (/^(?:للتواصل|للتعامل|للتسويق|للبيع|للشراء|للاستيراد|للتصدير)(?:\s|$)/iu.test(candidate)) return null;
+  if (/^(?:تقنية|تكنولوجيا|أغذية|مطاعم|تصنيع|مقاولات|برمجيات|شركات|مؤسسات)$/iu.test(candidate)) return null;
+  return candidate;
 }
 
 /** Compact, adaptive answer chips for the company-search details UI. The final
@@ -567,9 +581,9 @@ export function getCompanyRequirementItems(
     items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
   }
   if (missing.includes("outreach_details")) {
-    const ambiguousNamedEntity = /شركة\s+تواصل\s+التجاري/i.test(requestText);
+    const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
     const text = ambiguousNamedEntity
-      ? "هل «تواصل التجاري» اسم شركة محددة أم تقصد شركات للتواصل معها؟ وإذا كان تواصلاً تجارياً، فما الغرض والبيانات المطلوبة؟"
+      ? `هل «${ambiguousNamedEntity}» اسم شركة محددة تريد إضافتها، أم تصف نوع الشركات التي تريد الوصول إليها؟ وما الغرض والبيانات المطلوبة؟`
       : "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
     const options = ambiguousNamedEntity
       ? ["شركة محددة بهذا الاسم", "عملاء محتملون / مبيعات", "موردون أو شركاء", "أخرى"]

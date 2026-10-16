@@ -34,6 +34,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
   const [answers, setAnswers] = useState<Record<string, DiscoveryAnswer>>({});
   const [openId, setOpenId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [customInputOpen, setCustomInputOpen] = useState<string | null>(null);
 
   if (qs.length === 0) return null;
 
@@ -66,6 +67,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
   function pick(q: DiscoveryQuestion, option: string) {
     if (option.trim() === "أخرى" && q.allowOther) {
       setDraft("");
+      setCustomInputOpen(q.id);
       return;
     }
     if (q.type === "multi") {
@@ -77,6 +79,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
     } else {
       put(q, option);
       setOpenId(null);
+      setCustomInputOpen(null);
     }
   }
   function submitDraft(q: DiscoveryQuestion) {
@@ -90,6 +93,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
       setOpenId(null);
     }
     setDraft("");
+    setCustomInputOpen(null);
   }
   function finish() {
     const out: DiscoveryAnswer[] = qs.map((q) => {
@@ -118,7 +122,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
               <button
                 type="button"
                 disabled={locked || disabled}
-                onClick={() => { setOpenId(openId === q.id ? null : q.id); setDraft(""); }}
+                onClick={() => { setOpenId(openId === q.id ? null : q.id); setDraft(""); setCustomInputOpen(null); }}
                 aria-expanded={openId === q.id}
                 className={WORD_CLS}
                 style={{ background: openId === q.id ? "var(--sf2)" : "transparent", opacity: w.set ? 1 : 0.7 }}
@@ -132,7 +136,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
       </p>
 
       {open && !locked && (
-        <div className="mt-3" style={{ animation: "up .3s both" }}>
+        <div role="dialog" aria-label={open.text} className="mt-3 rounded-2xl border border-ln bg-sf p-3" style={{ animation: "up .3s both" }}>
           <p className="m-0 mb-2 text-xs font-light text-fnt">{open.text}</p>
           <div className="flex flex-wrap gap-2">
             {open.options.map((o) => {
@@ -154,7 +158,7 @@ export default function DetailsBlanks({ questions, completedAnswers, disabled = 
               <button type="button" onClick={() => setOpenId(null)} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac">تم</button>
             )}
           </div>
-          {(open.allowOther || open.type === "free" || open.options.length === 0 || open.parameterType === "volume" || open.id.includes("volume")) && (
+          {((customInputOpen === open.id && open.allowOther) || open.type === "free" || open.options.length === 0 || open.parameterType === "volume" || open.id.includes("volume")) && (
             <form onSubmit={(e) => { e.preventDefault(); submitDraft(open); }} className="mt-2.5 flex items-center gap-2">
               <input
                 value={draft}
