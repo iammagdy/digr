@@ -2,7 +2,7 @@ import { z } from "zod";
 import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
-import { INTERNAL_DISCOVERY_KEYS } from "./clarification";
+import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
 
@@ -22,9 +22,9 @@ export const ClarificationQuestionItemSchema = z.object({
 export const AskClarificationSchema = z.object({
   type: z.literal("ask_clarification"),
   intro: z.string().optional(),
-  questions: z.array(ClarificationQuestionItemSchema).min(1).max(3).optional(),
-  questionsAr: z.array(z.string().trim().min(1)).min(1).max(3).optional(),
-  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3).optional(),
+  questions: z.array(ClarificationQuestionItemSchema).min(1).max(MAX_CLARIFICATION_QUESTIONS).optional(),
+  questionsAr: z.array(z.string().trim().min(1)).min(1).max(MAX_CLARIFICATION_QUESTIONS).optional(),
+  optionsAr: z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(MAX_CLARIFICATION_QUESTIONS).optional(),
   reasonAr: z.string().min(1),
   intent: z.enum(["chat", "research"]).optional(),
 }).passthrough();
@@ -34,20 +34,20 @@ export const AskQuestionsSchema = z.object({
   intro: z.string().optional(),
   questions: z.preprocess((val) => {
     if (val && typeof val === "object" && !Array.isArray(val)) return [val];
-    if (Array.isArray(val)) return val.slice(0, 3);
+    if (Array.isArray(val)) return val.slice(0, MAX_CLARIFICATION_QUESTIONS);
     return [];
-  }, z.array(ClarificationQuestionItemSchema).max(3)).optional(),
+  }, z.array(ClarificationQuestionItemSchema).max(MAX_CLARIFICATION_QUESTIONS)).optional(),
   questionsAr: z.preprocess((val) => {
     if (typeof val === "string") return [val];
-    if (Array.isArray(val)) return val.filter((x): x is string => typeof x === "string").slice(0, 3);
+    if (Array.isArray(val)) return val.filter((x): x is string => typeof x === "string").slice(0, MAX_CLARIFICATION_QUESTIONS);
     return undefined;
-  }, z.array(z.string().trim().min(1)).max(3)).optional(),
+  }, z.array(z.string().trim().min(1)).max(MAX_CLARIFICATION_QUESTIONS)).optional(),
   optionsAr: z.preprocess((val) => {
     if (Array.isArray(val)) {
       return val.map((row) => (Array.isArray(row) ? row.filter((x): x is string => typeof x === "string").slice(0, 4) : []));
     }
     return undefined;
-  }, z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(3)).optional(),
+  }, z.array(z.array(z.string().trim().min(1).max(40)).max(4)).max(MAX_CLARIFICATION_QUESTIONS)).optional(),
   reasonAr: z.preprocess((val) => {
     if (typeof val === "string" && val.trim().length > 0) return val;
     return "تحديد تفاصيل الطلب بدقة";
@@ -2333,7 +2333,7 @@ export class LlmClient {
       return null;
     })
     .filter(Boolean)
-    .slice(0, 3);
+    .slice(0, MAX_CLARIFICATION_QUESTIONS);
 }
 
   /**

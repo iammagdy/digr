@@ -47,7 +47,7 @@ describe("chat discovery clarification UI", () => {
     });
 
     const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(chatPage.split("<DetailsBlanks")).toHaveLength(2);
+    expect(chatPage.split("<DetailsBlanks")).toHaveLength(3);
     expect(chatPage).toContain("questions={m.clarificationItems || m.clarificationQuestions || []}");
     expect(chatPage).toContain("onComplete={(answers) => handleSubmitClarification(m.id, answers)}");
     expect(chatPage).toContain('clarificationAnswers: { type: "clarification_answers", answers }');
@@ -61,11 +61,11 @@ describe("chat discovery clarification UI", () => {
 
     const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
     expect(cardSource).toContain("أخرى");
-    expect(cardSource).toContain('if (option.trim() === "أخرى" && q.allowOther)');
-    expect(cardSource).toContain('setCustomInputOpen(q.id)');
-    expect(cardSource).toContain('role="dialog" aria-label={open.text}');
-    expect(cardSource).toContain('customInputOpen === open.id && open.allowOther');
-    expect(cardSource).toContain("تخطّى واستخدم الافتراضي");
+    expect(cardSource).toContain('option.trim() === "أخرى" && current.allowOther');
+    expect(cardSource).toContain("setCustomInputOpen(true)");
+    expect(cardSource).toContain('role="group" aria-labelledby={`clarification-${current.id}`}');
+    expect(cardSource).toContain("customInputOpen || current.type === \"free\"");
+    expect(cardSource).toContain("تخطّي السؤال");
     expect(cardSource).toContain("completedAnswers?.length");
     expect(cardSource).not.toMatch(/dangerouslySetInnerHTML/i);
     expect(cardSource).toContain("min-h-11");
@@ -118,10 +118,20 @@ describe("chat discovery clarification UI", () => {
     }
   });
 
-  it("renders at most three underlined words (one sentence), never a counter or progress bar", () => {
+  it("renders one Arabic question at a time with dynamic progress and back, next, skip, and other-answer controls", () => {
     const cardSource = readFileSync("src/app/dashboard/chat/components/DetailsBlanks.tsx", "utf8");
-    expect(cardSource).not.toContain("answeredCount");
-    expect(cardSource).toContain("underline");
+    expect(cardSource).toContain("سؤال {toArabicDigits(step + 1)} من {toArabicDigits(qs.length)}");
+    expect(cardSource).toContain("السابق");
+    expect(cardSource).toContain("التالي");
+    expect(cardSource).toContain("تخطّي السؤال");
+    expect(cardSource).toContain("ملخص طلبك");
+    expect(cardSource).toContain('option.trim() === "أخرى"');
+    expect(readFileSync("src/app/dashboard/chat/components/discoveryQuestions.ts", "utf8")).toContain("MAX_DISCOVERY_QUESTIONS = 8");
+    expect(cardSource).not.toContain("underline");
+
+    const pageSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    expect(pageSource).toContain("messages.some((m) => m.planQuote || Boolean(m.jobId))");
+    expect(pageSource).toContain("intro={customerFacingAssistantCopy(m.content || \"\")}");
   });
 });
 

@@ -1352,17 +1352,12 @@ export default function ChatWorkspacePage() {
 
   /* ── derived document state ───────────────────────────────────────── */
   const isClarification = (m: MessageItem) =>
-    m.outputType === "ask_clarification" || (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems);
+    m.outputType === "ask_clarification" ||
+    (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems) ||
+    (Array.isArray(m.clarificationQuestions) ? m.clarificationQuestions.length > 0 : !!m.clarificationQuestions);
   const isResearchActive = Boolean(
     activeJob ||
-    messages.some((m) =>
-      m.planQuote ||
-      (m.clarificationQuestions && m.clarificationQuestions.length > 0) ||
-      isClarification(m) ||
-      m.outputType === "propose_plan" ||
-      m.outputType === "ask_clarification" ||
-      m.intent === "research"
-    )
+    messages.some((m) => m.planQuote || Boolean(m.jobId))
   );
   const firstUserIdx = messages.findIndex((m) => m.role === "user");
   const question = customerFacingConversationTitle(conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : ""));
@@ -1402,6 +1397,19 @@ export default function ChatWorkspacePage() {
               <span className="text-[11px] text-mut">({Math.round(m.attachment.size / 1024)} ك.ب)</span>
             </div>
           )}
+        </div>
+      );
+    }
+    if (isClarification(m)) {
+      return (
+        <div key={m.id}>
+          <DetailsBlanks
+            questions={m.clarificationItems || m.clarificationQuestions || []}
+            intro={customerFacingAssistantCopy(m.content || "")}
+            completedAnswers={m.completedClarificationAnswers}
+            disabled={loading}
+            onComplete={(answers) => handleSubmitClarification(m.id, answers)}
+          />
         </div>
       );
     }
@@ -1447,6 +1455,7 @@ export default function ChatWorkspacePage() {
               <div className="mt-3.5">
                 <DetailsBlanks
                   questions={m.clarificationItems || m.clarificationQuestions || []}
+                  intro={customerFacingAssistantCopy(m.content || "")}
                   completedAnswers={m.completedClarificationAnswers}
                   disabled={loading}
                   onComplete={(answers) => handleSubmitClarification(m.id, answers)}

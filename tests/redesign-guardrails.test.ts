@@ -101,7 +101,7 @@ describe("accessibility foundations", () => {
 
   it("interactive discovery options expose checked state", () => {
     const card = src("src/app/dashboard/chat/components/DetailsBlanks.tsx");
-    expect(card).toContain("aria-checked");
+    expect(card).toContain("aria-pressed");
   });
 
   it("root layout keeps Arabic RTL", () => {

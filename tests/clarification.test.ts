@@ -46,6 +46,21 @@ describe("strict discovery clarification", () => {
     }).success).toBe(false);
   });
 
+  it("accepts adaptive clarification flows longer than three questions, with a safe upper bound", () => {
+    const questions = Array.from({ length: 5 }, (_, index) => ({ id: `q${index + 1}`, text: `ما التفصيل ${index + 1}؟` }));
+    const parsed = AskClarificationSchema.safeParse({ type: "ask_clarification", questions });
+    expect(parsed.success).toBe(true);
+    const normalized = normalizeClarificationQuestions({ questions }, { capabilities: [] });
+    expect(normalized).toHaveLength(5);
+
+    const answers = questions.map((question) => ({ questionId: question.id, question: question.text, value: "إجابة" }));
+    expect(validateStructuredClarificationAnswers({ type: "clarification_answers", answers })).not.toBeNull();
+    expect(AskClarificationSchema.safeParse({
+      type: "ask_clarification",
+      questions: Array.from({ length: 9 }, (_, index) => ({ id: `q${index + 1}`, text: `سؤال ${index + 1}` })),
+    }).success).toBe(false);
+  });
+
   it("uses only enabled platforms and supplies canonical known-parameter choices", () => {
     expect(getClarificationOptionBank("platform", { capabilities: [...capabilities] })).toEqual(["تيك توك"]);
     expect(getClarificationOptionBank("time_window", { capabilities: [] })).toEqual([

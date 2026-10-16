@@ -20,6 +20,8 @@ export interface DiscoveryAnswer {
   resolvedDefault?: boolean;
 }
 
+export const MAX_DISCOVERY_QUESTIONS = 8;
+
 /** Recover structured clarification answers stored as JSON in older conversation messages. */
 export function parsePersistedClarificationAnswers(message: string): DiscoveryAnswer[] | null {
   if (!message.trimStart().startsWith("{")) return null;
@@ -92,7 +94,7 @@ function normalizeOptions(input: unknown): string[] {
 export function normalizeDiscoveryQuestions(input: unknown): DiscoveryQuestion[] {
   if (!Array.isArray(input)) return [];
 
-  return input.slice(0, 3).flatMap((entry: unknown, index) => {
+  return input.slice(0, MAX_DISCOVERY_QUESTIONS).flatMap((entry: unknown, index) => {
     if (typeof entry === "string") {
       const text = sanitizeDiscoveryText(entry, 120);
       if (!text) return [];
