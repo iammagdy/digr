@@ -216,7 +216,7 @@ export function extractBriefFromCardAnswers(
     } else if (qId === "company_outreach_required") {
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `إجابة هدف التواصل: ${valToUse}`;
     }
-    if (qId.startsWith("company_")) continue;
+    if (qId === "company_country_required" || qId === "company_industry_required" || qId === "company_outreach_required") continue;
 
     // 1. Platform
     if (qId.includes("platform") || qText.includes("منصة")) {

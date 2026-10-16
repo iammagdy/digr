@@ -526,7 +526,7 @@ export function getMissingCompanyResearchRequirements(text: string): CompanyRese
     industry.englishKeywords.length === 0 ||
     (!industry.exactTaxonomy?.length && industry.arabicLabel === industryText) ||
     industry.englishKeywords.every((keyword) => keyword === "contracting");
-  const asksForGenericOutreach = /للتواصل التجاري|التواصل التجاري|تواصل تجاري|commercial outreach|business development/i.test(text || "");
+  const asksForGenericOutreach = /التواصل|تواصل|outreach|business development|commercial/i.test(text || "");
   const givesOutreachDetails = /إجابة هدف التواصل:\s*\S+|اسم الشركة|اسم الشركات|موقع الشركة|الموقع الإلكتروني|website|بريد العمل|البريد المهني|work email|business email|الهاتف|رقم الهاتف|linkedin|لينكد.?إن|مورد|موردون|مشتري|شراكة|شركاء|توريد|مبيعات|بيع|شراء|عملاء محتملون|بحث سوقي|supplier|buyer|partnership|sales lead|market research/i.test(text || "");
   return [
     ...(!country ? ["country" as const] : []),
@@ -567,8 +567,14 @@ export function getCompanyRequirementItems(
     items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
   }
   if (missing.includes("outreach_details")) {
-    const text = "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
-    items.push({ id: "company_outreach_required", text, question: text, type: "single", options: ["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"], allowOther: true });
+    const ambiguousNamedEntity = /شركة\s+تواصل\s+التجاري/i.test(requestText);
+    const text = ambiguousNamedEntity
+      ? "هل «تواصل التجاري» اسم شركة محددة أم تقصد شركات للتواصل معها؟ وإذا كان تواصلاً تجارياً، فما الغرض والبيانات المطلوبة؟"
+      : "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
+    const options = ambiguousNamedEntity
+      ? ["شركة محددة بهذا الاسم", "عملاء محتملون / مبيعات", "موردون أو شركاء", "أخرى"]
+      : ["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"];
+    items.push({ id: "company_outreach_required", text, question: text, type: "single", options, allowOther: true });
   }
   return items;
 }

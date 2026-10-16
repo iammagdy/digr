@@ -442,6 +442,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(items[0].options).toContain("خدمات مالية وFinTech");
     expect(items[1].options).toEqual(["عملاء محتملون / مبيعات", "موردون أو شركاء", "بحث سوقي", "أخرى"]);
     expect(items.every((item) => item.allowOther)).toBe(true);
+    const ambiguous = getCompanyRequirementItems(["outreach_details"], "أريد أضم شركة تواصل التجاري");
+    expect(ambiguous[0].text).toContain("اسم شركة محددة");
+    expect(ambiguous[0].options).toContain("شركة محددة بهذا الاسم");
   });
 
   it.each([
