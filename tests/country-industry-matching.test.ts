@@ -138,6 +138,7 @@ describe("Country & Industry Detection and Matching", () => {
     const items = getCompanyRequirementItems(getMissingCompanyResearchRequirements(request), request);
     const outreach = items.find((item) => item.id === "company_outreach_required");
     expect(outreach?.text).toContain("تواصل التجاري");
+    expect(outreach?.text.length).toBeLessThanOrEqual(120);
     expect(outreach?.options).toContain("شركة محددة بهذا الاسم");
     expect(outreach?.options.at(-1)).toBe("أخرى");
     expect(getMissingCompanyResearchRequirements(`${request} إجابة هدف التواصل: شركة محددة بهذا الاسم`)).not.toContain("outreach_details");

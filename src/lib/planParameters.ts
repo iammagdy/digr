@@ -583,7 +583,7 @@ export function getCompanyRequirementItems(
   if (missing.includes("outreach_details")) {
     const ambiguousNamedEntity = getAmbiguousCompanyReference(requestText);
     const text = ambiguousNamedEntity
-      ? `هل «${ambiguousNamedEntity}» اسم شركة محددة تريد إضافتها، أم تصف نوع الشركات التي تريد الوصول إليها؟ وما الغرض والبيانات المطلوبة؟`
+      ? `هل «${ambiguousNamedEntity.slice(0, 36)}» اسم شركة محددة أم نوع الشركات؟ ما غرض التواصل والبيانات المطلوبة؟`
       : "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";
     const options = ambiguousNamedEntity
       ? ["شركة محددة بهذا الاسم", "عملاء محتملون / مبيعات", "موردون أو شركاء", "أخرى"]
