@@ -46,6 +46,7 @@ import {
   getConversationBrief,
   saveConversationBrief,
   isRepetitionComplaint,
+  extractTargetVolume,
   type ResearchBrief,
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
@@ -378,9 +379,12 @@ export function buildAutoPlanProposal(
     matchedCap = getClosestVerifiedCapability(validationCaps);
   }
 
+  const msgVolume = extractTargetVolume(message);
   const volume = (brief.targetVolume && brief.targetVolume > 0)
     ? brief.targetVolume
-    : (brief.postCount && brief.commentsPerPost ? brief.postCount * brief.commentsPerPost : 500);
+    : (msgVolume && msgVolume > 0
+      ? msgVolume
+      : (brief.postCount && brief.commentsPerPost ? brief.postCount * brief.commentsPerPost : 10));
 
   // Filter out any greetings or conversational fillers from topics
   const isGreetingWord = (w: string) => {
