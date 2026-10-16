@@ -19,6 +19,34 @@ export interface LiveActivitySnapshot {
   } | null;
 }
 
+/** Estimate remaining time only after at least two measured cumulative batches. */
+export function estimateRemainingSecondsFromBatches(
+  events: Array<{ count?: number; createdAt?: string; kind?: string }>,
+  rowsCollected: number,
+  requestedRows: number,
+): number | null {
+  if (!Number.isFinite(rowsCollected) || !Number.isFinite(requestedRows) || requestedRows <= rowsCollected) return null;
+  const points = (events || [])
+    .filter((event) => event.kind === "progress" && Number.isFinite(event.count) && (event.count || 0) > 0 && event.createdAt)
+    .map((event) => ({ rows: Math.min(rowsCollected, Math.floor(event.count!)), at: Date.parse(event.createdAt!) }))
+    .filter((point) => Number.isFinite(point.at) && point.rows > 0)
+    .sort((a, b) => a.at - b.at);
+
+  const distinct: typeof points = [];
+  for (const point of points) {
+    const previous = distinct[distinct.length - 1];
+    if (previous && point.rows === previous.rows) distinct[distinct.length - 1] = point;
+    else if (!previous || point.rows > previous.rows) distinct.push(point);
+  }
+  const sample = distinct.slice(-4);
+  if (sample.length < 2) return null;
+  const elapsedSeconds = (sample[sample.length - 1].at - sample[0].at) / 1000;
+  const processedRows = sample[sample.length - 1].rows - sample[0].rows;
+  if (elapsedSeconds <= 0 || processedRows <= 0) return null;
+  const rowsPerSecond = processedRows / elapsedSeconds;
+  return Math.max(1, Math.ceil((requestedRows - rowsCollected) / rowsPerSecond));
+}
+
 const FORBIDDEN_PROVIDER_TERMS = /\b(?:diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows|icypeas|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd)\b/gi;
 const DOLLAR_AMOUNT_PATTERN = /\$\s*\d+(?:\.\d+)?|\b\d+(?:\.\d+)?\s*(?:usd|dollars?|دولار)\b/gi;
 const INTERNAL_JOB_ERROR_PATTERN = /\b(?:treg_live|diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows|icypeas|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd|rate\s*limit|http\s*\d{3})\b|\$\s*\d|\b[a-z0-9_-]+\.(?:x|facebook|tiktok|instagram|youtube|linkedin|reddit|companies|people)\.[a-z0-9_.-]+\b|مزود البيانات|لدى المزود|\(\s*\d{3}\s*\)/i;

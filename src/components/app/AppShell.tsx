@@ -143,14 +143,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!user && !isChat) return null;
 
   const navItems: Array<{ id: string; label: string; icon: string; href?: string; meta?: string; badge?: number; active: boolean; onClick?: () => void }> = user ? [
-    { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
+    { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
+      setDrawer(false);
+      if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:show-history"));
+      else router.push("/dashboard/chat?history=1");
+    } },
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
     { id: "notifs", label: "الإشعارات", icon: UI.bell, badge: notifs.unread, active: notifsOpen, onClick: () => { setNotifsOpen((v) => !v); setDrawer(false); setAcctOpen(false); } },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
-    { id: "chat", label: "المساعد البحثي", icon: UI.chat, href: "/dashboard/chat", active: pathname === "/dashboard/chat" },
+    { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
+      setDrawer(false);
+      if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:show-history"));
+      else router.push("/dashboard/chat?history=1");
+    } },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
   ];
 

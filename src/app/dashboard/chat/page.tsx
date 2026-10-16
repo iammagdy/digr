@@ -10,6 +10,7 @@ import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
+import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
 import { parsePersistedClarificationAnswers, type DiscoveryAnswer } from "./components/discoveryQuestions";
 import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions/shared/resultReview";
@@ -138,6 +139,7 @@ export default function ChatWorkspacePage() {
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
 
@@ -249,6 +251,16 @@ export default function ChatWorkspacePage() {
     window.addEventListener("diger:new-chat", on);
     return () => window.removeEventListener("diger:new-chat", on);
   }, []);
+
+  useEffect(() => {
+    const showHistory = () => {
+      setHistoryOpen(true);
+      void loadConversations();
+    };
+    window.addEventListener("diger:show-history", showHistory);
+    if (new URLSearchParams(window.location.search).get("history") === "1") showHistory();
+    return () => window.removeEventListener("diger:show-history", showHistory);
+  }, [loadConversations]);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -625,10 +637,20 @@ export default function ChatWorkspacePage() {
     }
   }
 
+  function closeHistoryPanel() {
+    setHistoryOpen(false);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("history")) {
+      url.searchParams.delete("history");
+      window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+  }
+
   async function handleOpenConversation(id: string, targetJobId?: string) {
     if (!user || loading || conversationLoading) return;
     const sequence = ++conversationLoadSequence.current;
     setConversationLoading(true);
+    closeHistoryPanel();
     setConversationLoadError(false);
     setConversationId(id);
     setConversationTitle(conversationsList.find((item) => item.$id === id)?.title ?? "");
@@ -813,6 +835,7 @@ export default function ChatWorkspacePage() {
     setExtractedProfile(null);
     loadedResultJobs.current.clear();
     setCanvasOpen(false);
+    setHistoryOpen(false);
     try {
       sessionStorage.removeItem("diger_active_job_id");
       sessionStorage.removeItem("diger_canvas_open");
@@ -1518,6 +1541,32 @@ export default function ChatWorkspacePage() {
 
   return (
     <div className="flex min-h-0 w-full flex-1 overflow-hidden bg-bg font-sans text-ink">
+      {historyOpen && (
+        <>
+          <button type="button" aria-label="إغلاق سجل المحادثات" onClick={closeHistoryPanel} className="fixed inset-0 z-[44] cursor-default border-0 bg-black/30" />
+          <aside role="dialog" aria-label="سجل المحادثات" className="fixed inset-y-0 left-0 z-[45] flex w-[min(90vw,380px)] flex-col border-r border-ln bg-sf shadow-2xl" dir="rtl">
+            <div className="flex min-h-16 items-center justify-between border-b border-ln px-4">
+              <h2 className="m-0 text-base font-semibold text-ink">سجل المحادثات</h2>
+              <button type="button" aria-label="إغلاق" onClick={closeHistoryPanel} className="h-10 w-10 cursor-pointer rounded-full border-0 bg-transparent text-lg text-mut hover:bg-sf2">×</button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              {conversationsList.length === 0 ? (
+                <p className="m-0 px-3 py-8 text-center text-sm text-mut">لا توجد محادثات محفوظة بعد.</p>
+              ) : conversationsList.map((item) => (
+                <button
+                  key={item.$id}
+                  type="button"
+                  onClick={() => void handleOpenConversation(item.$id)}
+                  className={`mb-1 flex min-h-14 w-full cursor-pointer flex-col items-start justify-center rounded-xl border-0 px-3 text-right hover:bg-sf2 ${conversationId === item.$id ? "bg-sf2" : "bg-transparent"}`}
+                >
+                  <span className="w-full truncate text-sm font-medium text-ink">{customerFacingConversationTitle(item.title)}</span>
+                  <span className="mt-1 text-[11px] text-fnt">{dayLabel(item.updatedAt)}</span>
+                </button>
+              ))}
+            </div>
+          </aside>
+        </>
+      )}
       {/* 1. Onboarding (existing first-run persona step) */}
       <OnboardingModal
         isOpen={showOnboarding}

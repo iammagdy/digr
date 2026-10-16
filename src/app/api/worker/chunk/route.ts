@@ -37,6 +37,7 @@ import {
 } from "../../../../lib/planParameters";
 import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
+import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -432,6 +433,7 @@ export async function POST(req: NextRequest) {
     const rawRows = adapterResult.ok ? (adapterResult.rows || []) : [];
 
     let filteredRows = rawRows;
+    let duplicateExcludedCount = 0;
     if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
       const rules = spec.params.exclusionRules;
       const baselineRecords: EntityRecord[] = [
@@ -457,6 +459,7 @@ export async function POST(req: NextRequest) {
       const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
       filteredRows = dedupResult.delivered;
       const excludedCount = dedupResult.confirmedDuplicates?.length || 0;
+      duplicateExcludedCount = excludedCount;
       if (excludedCount > 0) {
         try {
           await adminClient.from("job_events").insert({
@@ -479,6 +482,8 @@ export async function POST(req: NextRequest) {
       spec.endpointId.includes("icypeas");
 
     let uncertainRows: any[] = [];
+    let relevanceExcludedCount = 0;
+    let relevanceSkipReasons: string[] = [];
 
     if (isCompanyCapability && Array.isArray(filteredRows) && filteredRows.length > 0) {
       const fullText = [
@@ -535,6 +540,8 @@ export async function POST(req: NextRequest) {
           excludedRows.push({ ...originalRow, _relevance_status: "غير مطابق", _relevance_reason: rev.reasonAr });
         }
       });
+      relevanceExcludedCount = excludedRows.length;
+      relevanceSkipReasons = [...new Set(excludedRows.map((row) => String(row._relevance_reason || "غير مطابق")))].slice(0, 2);
 
       filteredRows = matchedRows;
 
@@ -668,6 +675,41 @@ export async function POST(req: NextRequest) {
     }
 
     const recordedDeliveredUnits: number = compData.delivered_units;
+
+    // One concise customer event per provider page with source, accepted counts,
+    // explicit exclusions, and the main reasons; never include row-level PII.
+    try {
+      if (!compData.already_completed) {
+        const sourceLabel = customerFacingCapabilityLabel(spec.capabilitySlug);
+        const parts = [
+          `المصدر: ${sourceLabel}`,
+          `الصفحة ${toArabicDigits(currentStep + 1)}`,
+          `وصل ${toArabicDigits(rawRows.length)} سجل`,
+          `جديد ومقبول ${toArabicDigits(acceptedRows.length)}`,
+          duplicateExcludedCount ? `تكرار أو قائمة استبعاد ${toArabicDigits(duplicateExcludedCount)}` : null,
+          relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
+          uncertainRows.length ? `يحتاج مراجعة ${toArabicDigits(uncertainRows.length)}` : null,
+        ].filter(Boolean);
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: parts.join(" · "),
+          units: recordedDeliveredUnits,
+          event_type: "progress",
+        });
+        if (relevanceSkipReasons.length) {
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: `أسباب الاستبعاد في هذه الصفحة: ${relevanceSkipReasons.join("، ")}`,
+            units: recordedDeliveredUnits,
+            event_type: "info",
+          });
+        }
+      }
+    } catch (evtErr: any) {
+      console.warn("[worker:page_summary_event_warning]", evtErr?.message || "");
+    }
 
     // Record real progress in job_events
     try {

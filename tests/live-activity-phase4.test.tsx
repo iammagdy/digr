@@ -9,10 +9,21 @@ import {
   sanitizeActivityError,
   sanitizeActivityText,
   deriveLiveActivitySnapshot,
+  estimateRemainingSecondsFromBatches,
   ThrottledActivityEmitter,
 } from "../src/functions/shared/liveActivityFeed";
 
 describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, Cap Stops)", () => {
+  it("estimates remaining time from measured cumulative batch timestamps and waits for enough samples", () => {
+    const events = [
+      { kind: "progress", count: 100, createdAt: "2026-10-16T10:00:00.000Z" },
+      { kind: "progress", count: 200, createdAt: "2026-10-16T10:00:10.000Z" },
+    ];
+    expect(estimateRemainingSecondsFromBatches(events, 200, 400)).toBe(20);
+    expect(estimateRemainingSecondsFromBatches(events.slice(0, 1), 100, 400)).toBeNull();
+    expect(estimateRemainingSecondsFromBatches(events, 400, 400)).toBeNull();
+  });
+
   it("formats current step, current post, items collected, and points spent vs reserved in Arabic and points only", () => {
     expect(formatActivityStep("search_posts")).toBe("البحث عن المنشورات...");
     expect(formatActivityStep("collect_comments")).toBe("جمع التعليقات...");
