@@ -2452,6 +2452,7 @@ export class ChatHandler {
         revisionQuote: revisionQuoteData,
         clarificationQuestions: clarificationQuestionsList,
         clarificationItems: clarificationItemsList,
+        clarificationIntro: clarificationItemsList?.length ? finalContentAr : undefined,
         suggestedAlternative: output.type === "suggest_alternative" ? output : undefined,
         refusalReason: output.type === "refuse" ? output.reasonAr : undefined,
         tokensUsed: {

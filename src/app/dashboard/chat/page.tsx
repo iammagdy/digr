@@ -96,6 +96,7 @@ interface MessageItem {
   revisionQuote?: RevisionQuoteData;
   clarificationQuestions?: string[];
   clarificationItems?: unknown;
+  clarificationIntro?: string;
   completedClarificationAnswers?: DiscoveryAnswer[];
   suggestedAlternative?: any;
   refusalReason?: string;
@@ -522,6 +523,7 @@ export default function ChatWorkspacePage() {
         revisionQuote: data.revisionQuote,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
+        clarificationIntro: data.clarificationIntro,
         suggestedAlternative: data.suggestedAlternative,
         refusalReason: data.refusalReason,
         createdAt: new Date().toISOString(),
@@ -609,6 +611,7 @@ export default function ChatWorkspacePage() {
           revisionQuote: data.revisionQuote,
           clarificationQuestions: data.clarificationQuestions,
           clarificationItems: data.clarificationItems,
+          clarificationIntro: data.clarificationIntro,
           suggestedAlternative: data.suggestedAlternative,
           refusalReason: data.refusalReason,
           createdAt: new Date().toISOString(),
@@ -1405,7 +1408,7 @@ export default function ChatWorkspacePage() {
         <div key={m.id}>
           <DetailsBlanks
             questions={m.clarificationItems || m.clarificationQuestions || []}
-            intro={customerFacingAssistantCopy(m.content || "")}
+            intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}
             completedAnswers={m.completedClarificationAnswers}
             disabled={loading}
             onComplete={(answers) => handleSubmitClarification(m.id, answers)}
@@ -1455,7 +1458,7 @@ export default function ChatWorkspacePage() {
               <div className="mt-3.5">
                 <DetailsBlanks
                   questions={m.clarificationItems || m.clarificationQuestions || []}
-                  intro={customerFacingAssistantCopy(m.content || "")}
+                  intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}
                   completedAnswers={m.completedClarificationAnswers}
                   disabled={loading}
                   onComplete={(answers) => handleSubmitClarification(m.id, answers)}

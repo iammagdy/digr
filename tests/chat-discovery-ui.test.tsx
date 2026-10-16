@@ -131,7 +131,7 @@ describe("chat discovery clarification UI", () => {
 
     const pageSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
     expect(pageSource).toContain("messages.some((m) => m.planQuote || Boolean(m.jobId))");
-    expect(pageSource).toContain("intro={customerFacingAssistantCopy(m.content || \"\")}");
+    expect(pageSource).toContain("intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}");
   });
 });
 
