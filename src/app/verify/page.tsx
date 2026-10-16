@@ -15,9 +15,11 @@ export default function VerifyPage() {
   const [toast, setToast] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [wait, setWait] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [pendingToken, setPendingToken] = useState<{ tokenHash: string; type: "signup" | "email" } | null>(null);
   const handled = useRef(false);
 
-  // Arriving from the email link: /verify?code=… or /verify?token_hash=… or /verify?userId=…&secret=…
+  // Token-hash links wait for a human click: mail scanners often follow links automatically.
+  // Keep PKCE/Appwrite compatibility for links already sent before the template change.
   useEffect(() => {
     if (handled.current) return;
     const q = new URLSearchParams(window.location.search);
@@ -26,7 +28,15 @@ export default function VerifyPage() {
     const type = (q.get("type") as any) || "signup";
     const userId = q.get("userId"), secret = q.get("secret");
 
-    if (!code && !tokenHash && (!userId || !secret)) return;
+    if (q.get("error")) {
+      setToast({ tone: "bad", text: "تعذّر فتح رابط التأكيد. اطلب رسالة جديدة ثم استخدم زر التأكيد داخل الصفحة." });
+    }
+
+    if (tokenHash) {
+      setPendingToken({ tokenHash, type: type === "email" ? "email" : "signup" });
+      return;
+    }
+    if (!code && (!userId || !secret)) return;
     handled.current = true;
 
     (async () => {
@@ -35,13 +45,14 @@ export default function VerifyPage() {
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) throw error;
-        } else if (tokenHash) {
-          const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-          if (error) throw error;
         }
         const u = await refresh();
-        setToast({ tone: "ok", text: "تم تأكيد بريدك بنجاح." });
-        if (u) setTimeout(() => router.replace("/dashboard/chat"), 900);
+        if (u?.emailVerification) {
+          setToast({ tone: "ok", text: "تم تأكيد بريدك بنجاح." });
+          setTimeout(() => router.replace("/dashboard/chat"), 900);
+        } else {
+          setToast({ tone: "bad", text: "لم نتمكن من تأكيد البريد. افتح الرسالة مجددًا أو اطلب رابطًا جديدًا." });
+        }
       } catch {
         setToast({ tone: "bad", text: "رابط التأكيد غير صالح أو منتهي. اطلب رسالة جديدة." });
       }
@@ -49,9 +60,16 @@ export default function VerifyPage() {
   }, [refresh, router]);
 
   useEffect(() => {
-    if (!loading && !user && !handled.current) router.replace("/login");
     if (!loading && user?.emailVerification && !handled.current) router.replace("/dashboard/chat");
   }, [user, loading, router]);
+
+  // A second tab may complete confirmation. Supabase emits cross-tab auth events,
+  // and this refresh also covers browsers that miss a storage event.
+  useEffect(() => {
+    if (loading || user?.emailVerification) return;
+    const timer = window.setInterval(() => { void refresh(); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [loading, user?.emailVerification, refresh]);
 
   useEffect(() => {
     if (wait <= 0) return;
@@ -86,6 +104,25 @@ export default function VerifyPage() {
     else setToast({ tone: "bad", text: "لم يصلنا التأكيد بعد. افتح الرسالة واضغط «تأكيد البريد»." });
   };
 
+  const confirmEmailLink = async () => {
+    if (!pendingToken || busy) return;
+    setBusy(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.verifyOtp({ token_hash: pendingToken.tokenHash, type: pendingToken.type });
+      if (error) throw error;
+      setPendingToken(null);
+      handled.current = true;
+      const u = await refresh();
+      setToast({ tone: "ok", text: "تم تأكيد بريدك بنجاح." });
+      if (u?.emailVerification) router.replace("/dashboard/chat");
+    } catch {
+      setToast({ tone: "bad", text: "تعذّر استخدام رابط التأكيد. قد يكون منتهيًا أو سبق استخدامه؛ اطلب رسالة جديدة." });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const changeEmail = async () => {
     await logout();
     router.replace("/register");
@@ -103,7 +140,8 @@ export default function VerifyPage() {
             <span dir="ltr" className="block truncate text-right text-[15px] font-medium text-ink">{user?.email ?? ""}</span>
           </span>
         </div>
-        <p className="m-0 text-sm font-light leading-[1.9] text-mut">افتح الرسالة واضغط «تأكيد البريد». لن تتمكن من شحن الرصيد أو بدء بحث قبل التأكيد. لم تجدها؟ راجع مجلد الرسائل غير المرغوب فيها.</p>
+        <p className="m-0 text-sm font-light leading-[1.9] text-mut">{pendingToken ? "وصلت إلى صفحة التأكيد. اضغط الزر لإكمال التحقق من بريدك." : "افتح الرسالة واضغط «تأكيد البريد». لن تتمكن من شحن الرصيد أو بدء بحث قبل التأكيد. لم تجدها؟ راجع مجلد الرسائل غير المرغوب فيها."}</p>
+        {pendingToken && <button type="button" onClick={confirmEmailLink} disabled={busy} className={`${authPrimaryBtn} min-h-[58px] text-[15px]`}>تأكيد البريد الإلكتروني</button>}
         <button type="button" onClick={done} disabled={busy} className={`${authPrimaryBtn} min-h-[58px] text-[15px]`}>أكّدت بريدي — متابعة</button>
         <div className="flex flex-wrap justify-center gap-x-[18px] gap-y-1">
           <button type="button" onClick={resend} disabled={wait > 0} className="min-h-11 cursor-pointer border-0 bg-transparent text-[13px]" style={{ color: wait > 0 ? "var(--fnt)" : "var(--ink)" }}>

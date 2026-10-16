@@ -48,6 +48,7 @@ export default function WalletPage() {
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
   const [amount, setAmount] = useState(100);
   const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
+  const knownTopupStatuses = useRef(new Map<string, string>());
   const [ipa, setIpa] = useState<string | null>(isIpaAvailable(ipaFromEnv) ? ipaFromEnv! : null);
   const [loadingIpa, setLoadingIpa] = useState(!isIpaAvailable(ipaFromEnv));
   const [maxPending, setMaxPending] = useState(3);
@@ -143,6 +144,24 @@ export default function WalletPage() {
   }, [user]);
 
   useEffect(() => { void loadLedger(); void loadTopups(); }, [loadLedger, loadTopups]);
+
+  // Realtime is the fast path. Poll while a review is pending so progress still
+  // updates if the websocket is unavailable or the table is not published yet.
+  useEffect(() => {
+    if (!user || !(submitted?.status === "pending" || topups.some((t) => t.status === "pending"))) return;
+    const timer = window.setInterval(() => { void loadTopups(); }, 12000);
+    return () => window.clearInterval(timer);
+  }, [user, submitted?.status, topups, loadTopups]);
+
+  useEffect(() => {
+    let approved = false;
+    for (const topup of topups) {
+      if (knownTopupStatuses.current.get(topup.$id) === "pending" && topup.status === "approved") approved = true;
+      knownTopupStatuses.current.set(topup.$id, topup.status);
+    }
+    setSubmitted((current) => current ? topups.find((t) => t.$id === current.$id) || current : null);
+    if (approved) { void refreshBalance(); void loadLedger(); }
+  }, [topups, refreshBalance, loadLedger]);
 
   /* records delivered this month (for «خُصم هذا الشهر … على N سجلًا») */
   useEffect(() => {
