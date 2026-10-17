@@ -271,3 +271,32 @@ describe("one chunk's provider spend estimate covers its worst case", () => {
     }
   });
 });
+
+describe("the public calculator and the quote writer price a social service identically", async () => {
+  const { computePublicCalculatorQuote, getPublicCalculatorOptions } = await import("../src/lib/calculatorPricing");
+  const { APPROVED_CAPABILITY_CATALOG } = await import("../src/functions/shared/capabilityRegistry");
+  const { calculateCapabilityUnitPricePoints, DEFAULT_PRICING_SETTINGS } = await import("../src/functions/shared/quotes");
+
+  for (const cap of SOCIAL_CAPABILITIES) {
+    it(`${cap.slug}: calculator unit price equals the quote writer's (customer rate when set, else cost basis)`, () => {
+      const seed = APPROVED_CAPABILITY_CATALOG.find((c) => c.slug === cap.slug)!;
+      const basis = seed.customerPriceUsdPerItem && seed.customerPriceUsdPerItem > 0 ? seed.customerPriceUsdPerItem : seed.unitCostUsd;
+      const expected = calculateCapabilityUnitPricePoints(basis, DEFAULT_PRICING_SETTINGS);
+      expect(computePublicCalculatorQuote(cap.slug, 10).unitPricePoints).toBe(expected);
+    });
+  }
+
+  it("the owner's comment rates still apply: 9 points a YouTube comment, 11 a Facebook comment", () => {
+    expect(computePublicCalculatorQuote("social-youtube-comments", 10).unitPricePoints).toBe(9);
+    expect(computePublicCalculatorQuote("social-facebook-comments", 10).unitPricePoints).toBe(11);
+  });
+
+  it("the calculator lists the social services with Arabic names only", () => {
+    const options = getPublicCalculatorOptions().filter((o) => o.slug.startsWith("social-"));
+    expect(options).toHaveLength(SOCIAL_CAPABILITIES.length);
+    for (const option of options) {
+      expect(option.nameAr).not.toMatch(/[A-Za-z]/);
+      expect(option.descriptionAr).not.toMatch(/[A-Za-z]/);
+    }
+  });
+});

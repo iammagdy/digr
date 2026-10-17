@@ -97,7 +97,8 @@ export function computePublicCalculatorQuote(
     capabilities.find((c) => (capabilitySlug.includes("compan") || capabilitySlug.includes("search")) && c.slug.includes("compan")) ||
     capabilities[0];
 
-  const unitPricePoints = calculateCapabilityUnitPricePoints(cap.unitCostUsd, settings);
+  // Same basis as the quote writer: the customer rate when the service has one, otherwise its cost basis.
+  const unitPricePoints = calculateCapabilityUnitPricePoints(cap.customerPriceUsdPerItem && cap.customerPriceUsdPerItem > 0 ? cap.customerPriceUsdPerItem : cap.unitCostUsd, settings);
   const rawPoints = safeTarget * unitPricePoints;
   const reservedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
 
