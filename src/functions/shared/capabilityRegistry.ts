@@ -751,14 +751,41 @@ export function inferCapabilityPlatform(
   capabilitySlug: string,
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG
 ): string {
-  const matched =
-    capabilities.find((c) => c.slug === capabilitySlug || c.id === capabilitySlug) ||
-    APPROVED_CAPABILITY_CATALOG.find((c) => c.slug === capabilitySlug || c.id === capabilitySlug);
+  const matched = resolveCapabilityReference(capabilitySlug, capabilities) ||
+    resolveCapabilityReference(capabilitySlug, APPROVED_CAPABILITY_CATALOG);
   if (matched) {
     return (matched.platform || matched.category).toLowerCase();
   }
-  const prefix = capabilitySlug.split("-")[0]?.toLowerCase() || "";
-  return prefix;
+  const embeddedPlatform = PLATFORM_PATTERNS.find((platform) => platform.regex.test(capabilitySlug));
+  return embeddedPlatform?.platform || capabilitySlug.split("-")[0]?.toLowerCase() || "";
+}
+
+function normalizeCapabilityReference(value: string): string {
+  return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Resolve exact IDs first, then an unambiguous fully-qualified slug embedded in a model label. */
+export function resolveCapabilityReference(
+  reference: string,
+  capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG,
+): Capability | undefined {
+  const raw = (reference || "").trim();
+  if (!raw) return undefined;
+  const exact = capabilities.find((capability) =>
+    capability.slug === raw || capability.id === raw || capability.tregEndpointId === raw,
+  );
+  if (exact) return exact;
+
+  const normalized = normalizeCapabilityReference(raw);
+  const matches = capabilities.filter((capability) => {
+    const identifiers = [capability.slug, capability.id, capability.tregEndpointId]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .map(normalizeCapabilityReference);
+    return identifiers.some((identifier) =>
+      identifier.length >= 10 && (normalized.includes(identifier) || identifier.includes(normalized)),
+    );
+  });
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /**
@@ -767,7 +794,7 @@ export function inferCapabilityPlatform(
  */
 export function validatePlanPlatformMatch(
   userMessage: string,
-  planItems: Array<{ capabilitySlug: string }>,
+  planItems: Array<{ capabilitySlug: string; endpointId?: string }>,
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG
 ): {
   valid: boolean;
@@ -779,7 +806,7 @@ export function validatePlanPlatformMatch(
   const planPlatforms = Array.from(
     new Set(
       planItems
-        .map((item) => inferCapabilityPlatform(item.capabilitySlug, capabilities))
+        .map((item) => inferCapabilityPlatform(item.capabilitySlug || item.endpointId || "", capabilities))
         .filter(Boolean)
     )
   );
@@ -828,9 +855,8 @@ export function validatePlanPlatformMatch(
 
   // 3. Every plan item capability must itself be verified and enabled
   const hasUnverifiedPlanItem = planItems.some((item) => {
-    const cap = capabilities.find(
-      (c) => c.slug === item.capabilitySlug || (c as any).tregEndpointId === item.capabilitySlug
-    );
+    const cap = resolveCapabilityReference(item.capabilitySlug, capabilities) ||
+      (item.endpointId ? resolveCapabilityReference(item.endpointId, capabilities) : undefined);
     return !cap || cap.status !== "verified" || cap.enabled === false;
   });
 

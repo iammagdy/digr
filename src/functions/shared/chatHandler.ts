@@ -16,6 +16,7 @@ import {
   UNAVAILABLE_CAPABILITY_SLUGS,
   RAW_SEED_CAPABILITIES,
   Capability,
+  resolveCapabilityReference,
 } from "./capabilityRegistry";
 import {
   calculateQuote,
@@ -2035,8 +2036,20 @@ export class ChatHandler {
             };
           });
 
+        const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
+          const capability = resolveCapabilityReference(item.capabilitySlug, validationCaps) ||
+            (item.endpointId ? resolveCapabilityReference(item.endpointId, validationCaps) : undefined);
+          return capability
+            ? {
+                ...item,
+                capabilitySlug: capability.slug || capability.id || item.capabilitySlug,
+                endpointId: capability.tregEndpointId || capability.id || capability.slug || item.endpointId || item.capabilitySlug,
+              }
+            : item;
+        });
+
         let planOutput: any = output;
-        let planItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(planOutput));
+        let planItems = dedupeRecordSearchItems<PlanItem>(canonicalizePlanItems(mapPlanItems(planOutput)));
         const companyPlan = planItems.some((item: any) =>
           /compan|b2b/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
         );
@@ -2088,7 +2101,7 @@ export class ChatHandler {
           await repeatTurn();
           if (output.type === "propose_plan") {
             planOutput = output;
-            planItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(planOutput));
+            planItems = dedupeRecordSearchItems<PlanItem>(canonicalizePlanItems(mapPlanItems(planOutput)));
             platformCheck = validatePlanPlatformMatch(message, planItems, validationCaps);
             if (platformCheck.valid) {
               planValidation = validatePlanAgainstLiveCatalog(planItems, turnEndpoints, allCapabilities);

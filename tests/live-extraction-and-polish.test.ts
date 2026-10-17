@@ -17,7 +17,7 @@ import {
 import {
   extractTargetVolume,
 } from "../src/functions/shared/briefManager";
-import { Capability } from "../src/functions/shared/capabilityRegistry";
+import { Capability, resolveCapabilityReference, validatePlanPlatformMatch } from "../src/functions/shared/capabilityRegistry";
 
 describe("Live Data Extraction Gate & Provider Diagnostics", () => {
   const originalEnv = process.env;
@@ -223,6 +223,35 @@ describe("Catalog Capability Schema Validation for Plan Editing", () => {
 
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it("resolves an unambiguous model label to its verified live capability", () => {
+    const tiktokCapability: Capability = {
+      id: "tiktok-search-videos",
+      slug: "tiktok-search-videos",
+      platform: "tiktok",
+      category: "tiktok",
+      status: "verified",
+      nameAr: "بحث فيديوهات تيك توك",
+      nameEn: "TikTok Video Search",
+      descriptionAr: "بحث فيديوهات تيك توك العامة",
+      paramsSchema: JSON.stringify({ type: "object", properties: { query: { type: "string" } } }),
+      tregEndpointId: "public.tiktok.search-videos",
+      tregMethod: "GET",
+      pricingUnit: "item",
+      unitCostUsd: 0.001,
+      maxRows: 500,
+      paginationType: "cursor",
+      enabled: true,
+    };
+    const modelLabel = "منصة Diger-tiktok-search-videos";
+
+    expect(resolveCapabilityReference(modelLabel, [tiktokCapability])).toBe(tiktokCapability);
+    expect(validatePlanPlatformMatch(
+      "اجمع فيديوهات تريند على تيك توك",
+      [{ capabilitySlug: modelLabel }],
+      [tiktokCapability],
+    ).valid).toBe(true);
   });
 
   it("fails validation cleanly without leaking provider names when parameters are invalid", () => {
