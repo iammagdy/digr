@@ -10,6 +10,8 @@ import {
   detectMentionedPlatforms,
   getPlatformLabelAr,
   getClosestVerifiedCapability,
+  getCustomerPriceUsdPerCatalogItem,
+  computeRegistryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
   Capability,
 } from "./capabilityRegistry";
@@ -682,6 +684,13 @@ export function summarizeConversationHistory(
  * model received). Used for validation and server-side pricing of turn results.
  */
 export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capability {
+  const customerPriceUsdPerItem = getCustomerPriceUsdPerCatalogItem({
+    id: ep.id,
+    slug: ep.slug,
+    platform: ep.platform,
+    nameEn: ep.nameEn,
+    nameAr: ep.nameAr,
+  });
   return {
     id: ep.slug,
     slug: ep.slug,
@@ -690,7 +699,10 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     status: "verified",
     unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
-    pointsPerUnit: ep.pointsPerUnit,
+    pointsPerUnit:
+      customerPriceUsdPerItem !== undefined
+        ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
+        : ep.pointsPerUnit,
     maxItemsPerCall: ep.pagination.maxLimit || 100,
     estimatedSuccessRate: ep.observedSuccessRate,
     nameAr: ep.nameAr,
@@ -699,8 +711,9 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     paramsSchema: JSON.stringify(ep.paramsSchema || {}),
     tregEndpointId: ep.id,
     tregMethod: ep.method,
-    pricingUnit: (ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
+    pricingUnit: (customerPriceUsdPerItem !== undefined ? "item" : ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
     unitCostUsd: ep.catalogPriceUsd,
+    customerPriceUsdPerItem,
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
     enabled: true,

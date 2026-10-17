@@ -6,6 +6,7 @@ import {
   validateCapabilityParams,
   getEnabledCapabilities,
   getRegistryPricingSettings,
+  getCustomerPriceUsdPerCatalogItem,
 } from "./capabilityRegistry";
 import {
   calculateQuote,
@@ -583,6 +584,13 @@ export async function createAndSaveManagedQuote(
           (it.endpointId && (e.id === it.endpointId || e.slug === it.endpointId))
       );
       if (cached) {
+        const customerPriceUsdPerItem = getCustomerPriceUsdPerCatalogItem({
+          id: cached.id,
+          slug: cached.slug,
+          platform: cached.platform,
+          nameEn: cached.nameEn,
+          nameAr: cached.nameAr,
+        });
         cap = {
           id: cached.id,
           slug: cached.slug,
@@ -596,7 +604,12 @@ export async function createAndSaveManagedQuote(
           maxRows: 5000,
           enabled: true,
           paramsSchema: typeof cached.paramsSchema === "string" ? cached.paramsSchema : JSON.stringify(cached.paramsSchema || {}),
-          pricingUnit: cached.billingUnit as any,
+          pricingUnit: (customerPriceUsdPerItem !== undefined
+            ? "item"
+            : cached.billingUnit === "call" || cached.billingUnit === "page"
+            ? cached.billingUnit
+            : "item") as any,
+          customerPriceUsdPerItem,
           paginationType: cached.pagination?.type as any,
           tregEndpointId: cached.id,
           tregMethod: cached.method,
@@ -619,7 +632,11 @@ export async function createAndSaveManagedQuote(
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
 
-    const unitPrice = calculateCapabilityUnitPricePoints(itemUnitCostUsd, effectivePricing);
+    const customerPriceUsdPerUnit =
+      typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0
+        ? cap.customerPriceUsdPerItem
+        : itemUnitCostUsd;
+    const unitPrice = calculateCapabilityUnitPricePoints(customerPriceUsdPerUnit, effectivePricing);
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
