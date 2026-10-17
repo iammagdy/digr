@@ -301,7 +301,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <span className={`min-w-0 flex-1 ${compactSidebar && !mobile ? "sr-only" : ""}`}>
                   <span className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
                     <span className="truncate">{user.name || "حسابي"}</span>
-                    <span className="rounded-full bg-sf2 px-[7px] py-px text-[10px] font-medium text-mut">{{ student: "طالب", researcher: "باحث", statistician: "محلل", marketer: "مسوّق", other: "عام" }[getPersonaConfig(user.user_metadata?.persona).key]}</span>
+                    <span className="rounded-full bg-sf2 px-[7px] py-px text-[10px] font-medium text-mut">{{ student: "طالب", researcher: "باحث", statistician: "محلل", marketer: "مسوّق", other: "عام" }[getPersonaConfig(user.user_metadata?.persona || "researcher").key]}</span>
                   </span>
                   <span dir="ltr" className="block truncate text-right text-[11px] text-fnt">{user.email}</span>
                 </span>
