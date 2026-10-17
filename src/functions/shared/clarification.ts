@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Capability } from "./capabilityRegistry";
+import { SOCIAL_TASK_QUESTION_IDS } from "../../lib/socialTasks";
 
 export const MAX_CLARIFICATION_QUESTIONS = 8;
 
@@ -277,14 +278,19 @@ export function normalizeClarificationQuestions(
 
     const parsedParameterType = ClarificationParameterTypeSchema.safeParse(questionItem.parameterType);
     const parameterType = parsedParameterType.success ? parsedParameterType.data : inferParameterType(text);
-    const bankOptions = parameterType && parameterType !== "topic"
+    const modelAskedFree = questionItem.type === "free";
+    const ownsItsOptions = typeof questionItem.id === "string" && SOCIAL_TASK_QUESTION_IDS.has(questionItem.id);
+    // A free-text question (an account name, a link) never carries chips, and a question built from the customer's own
+    // request keeps its own options: the topic words in its text (video, platform) must not turn it into a volume or
+    // platform question with someone else's choices.
+    const bankOptions = parameterType && parameterType !== "topic" && !modelAskedFree && !ownsItsOptions
       ? getClarificationOptionBank(parameterType, context)
       : [];
     // Never fall back to model-supplied options for a platform question when
     // the enabled-capability bank is empty: that would offer disabled or
     // unavailable platforms as available. Drop the question instead so the
     // assistant fails safely instead of presenting phantom options.
-    if (parameterType === "platform" && bankOptions.length === 0) return [];
+    if (parameterType === "platform" && bankOptions.length === 0 && !modelAskedFree && !ownsItsOptions) return [];
     const modelOptions = Array.isArray(questionItem.options)
       ? questionItem.options.filter((option): option is string => typeof option === "string")
       : [];

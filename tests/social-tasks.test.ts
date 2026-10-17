@@ -8,6 +8,7 @@ import {
   socialTaskQuestion,
 } from "../src/lib/socialTasks";
 import { getDeterministicDiscoveryQuestion } from "../src/functions/shared/chatHandler";
+import { normalizeClarificationQuestions } from "../src/functions/shared/clarification";
 import { mapSearchQueryToEnglish } from "../src/functions/shared/catalogClient";
 
 const brief: any = { platforms: [], topics: [] };
@@ -94,7 +95,7 @@ describe("only the missing input is asked, one question at a time, with tappable
 
   it("trending on a platform with no verified source says so and offers the two that have one", () => {
     const q = getDeterministicDiscoveryQuestion("ترند فيسبوك", brief);
-    expect(q?.id).toBe("social_trending_unsupported");
+    expect(q?.id).toBe("social_trending_platform_required");
     expect(q?.options).toEqual(["تيك توك", "يوتيوب"]);
     expect(q?.text).not.toMatch(/[A-Za-z]/);
   });
@@ -105,7 +106,7 @@ describe("only the missing input is asked, one question at a time, with tappable
   });
 
   it("customer questions are Arabic only", () => {
-    for (const id of ["social_comment_target_required", "social_trending_region_required", "social_trending_unsupported", "social_channel_required"] as const) {
+    for (const id of ["social_comment_target_required", "social_trending_region_required", "social_trending_platform_required", "social_channel_required"] as const) {
       const q = socialTaskQuestion(id);
       expect(q.text).not.toMatch(/[A-Za-z]/);
       expect(q.options.join(" ")).not.toMatch(/[A-Za-z]/);
@@ -117,5 +118,39 @@ describe("only the missing input is asked, one question at a time, with tappable
     expect(hasSocialSubject("هات ١٠٠ كومنت من فيديو")).toBe(false);
     expect(hasSocialSubject("كومنتات فيديوهات عن القهوة")).toBe(true);
     expect(hasSocialSubject("كومنتات #ريفيو_موبايل")).toBe(true);
+  });
+});
+
+describe("questions keep their own choices (a topic word in the text must not change what is offered)", () => {
+  const caps: any[] = [
+    { category: "tiktok", enabled: true, nameAr: "ملف", slug: "tiktok-profile" },
+    { category: "youtube", enabled: true, nameAr: "تعليقات", slug: "social-youtube-comments" },
+  ];
+  const normalize = (q: any) => normalizeClarificationQuestions({ questions: [q] } as any, { capabilities: caps, userBalancePoints: 5000 })[0];
+
+  it("the link question is free text with no chips, and the country question offers countries, not record counts", () => {
+    const link = normalize(socialTaskQuestion("social_comment_target_required"));
+    expect(link.type).toBe("free");
+    expect(link.options).toEqual([]);
+    const region = normalize(socialTaskQuestion("social_trending_region_required"));
+    expect(region.options).toEqual(["مصر", "السعودية", "الإمارات", "أخرى"]);
+    expect(region.defaultOption).toBeUndefined();
+  });
+
+  it("the unsupported-trending question offers the two platforms that have a trending feed and preselects none", () => {
+    const q = normalize(socialTaskQuestion("social_trending_platform_required"));
+    expect(q.options).toEqual(["تيك توك", "يوتيوب"]);
+    expect(q.defaultOption).toBeUndefined();
+  });
+
+  it("an account-name question is free text: it no longer shows platform chips", () => {
+    const q = normalize({ id: "social_account_required", text: "ما اسم الحساب أو رابطه على المنصة؟", type: "free", options: [], allowOther: true });
+    expect(q).toBeDefined();
+    expect(q.options).toEqual([]);
+  });
+
+  it("a platform question from the model is still limited to enabled services", () => {
+    const q = normalize({ id: "q1", text: "على أي منصة تريد البحث؟", type: "single", options: ["فيسبوك", "تيك توك"], allowOther: true });
+    expect(q.options).toEqual(["تيك توك", "يوتيوب"]);
   });
 });

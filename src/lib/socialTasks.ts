@@ -200,8 +200,16 @@ export function socialCatalogQuery(intent: SocialIntent): string | null {
 export type MissingSocialTaskInput =
   | "social_comment_target_required"
   | "social_trending_region_required"
-  | "social_trending_unsupported"
+  | "social_trending_platform_required"
   | "social_channel_required";
+
+/** Ids of the questions built here: their own options are final and are never replaced by a generic option bank. */
+export const SOCIAL_TASK_QUESTION_IDS: ReadonlySet<string> = new Set<MissingSocialTaskInput>([
+  "social_comment_target_required",
+  "social_trending_region_required",
+  "social_trending_platform_required",
+  "social_channel_required",
+]);
 
 /** Platforms the verified services can serve for each task. */
 export const SOCIAL_TASK_PLATFORMS: Record<SocialTask, SocialPlatformId[]> = {
@@ -264,7 +272,7 @@ export function getMissingSocialTaskInputs(text: string): MissingSocialTaskInput
 
   if (!SOCIAL_TASK_PLATFORMS[intent.task].includes(intent.platform)) {
     // Trending is the one customers expect everywhere; say plainly it is not served for this platform.
-    if (intent.task === "trending") return ["social_trending_unsupported"];
+    if (intent.task === "trending") return ["social_trending_platform_required"];
     return [];
   }
 
@@ -314,7 +322,7 @@ export function socialTaskQuestion(id: MissingSocialTaskInput): SocialTaskQuesti
       return socialQuestion(id, "ما رابط الفيديو أو المنشور الذي تريد تعليقاته؟ أو اكتب موضوعاً وسأبحث لك عن فيديوهات عنه.", "free");
     case "social_trending_region_required":
       return socialQuestion(id, "في أي دولة تريد الفيديوهات الرائجة؟", "single", ["مصر", "السعودية", "الإمارات", "أخرى"]);
-    case "social_trending_unsupported":
+    case "social_trending_platform_required":
       return socialQuestion(
         id,
         "الفيديوهات الرائجة غير متاحة على هذه المنصة حالياً. هل تريد الفيديوهات الرائجة على إحدى هاتين المنصتين؟",

@@ -2424,7 +2424,7 @@ export class ChatHandler {
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
             social_comment_target_required: socialTaskQuestion("social_comment_target_required"),
             social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
-            social_trending_unsupported: socialTaskQuestion("social_trending_unsupported"),
+            social_trending_platform_required: socialTaskQuestion("social_trending_platform_required"),
             social_channel_required: socialTaskQuestion("social_channel_required"),
           };
           clarificationItemsList = companyItem
