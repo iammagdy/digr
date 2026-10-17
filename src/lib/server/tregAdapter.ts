@@ -6,6 +6,7 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
+import { findProviderResultList, findProviderNextCursor } from "./providerRows";
 import { arabicVerificationStatus } from "../contactVerification";
 import {
   detectCountryFromText as detectInternationalCountryFromText,
@@ -359,16 +360,15 @@ function getTregPeopleArray(data: any): any[] {
   return [];
 }
 
-/** True only when the successful response has a recognized result envelope. */
-export function hasRecognizedProviderResultShape(value: unknown, depth = 0): boolean {
-  if (Array.isArray(value)) return true;
-  if (!value || typeof value !== "object" || depth > 4) return false;
+/** True only when the successful response has a recognized result envelope (a list, even an empty one). */
+export function hasRecognizedProviderResultShape(value: unknown): boolean {
+  if (findProviderResultList(value)) return true;
+  if (!value || typeof value !== "object") return false;
   const record = value as Record<string, any>;
-  const resultKeys = ["items", "results", "records", "leads", "companies", "posts", "tweets", "videos", "users", "people"];
-  for (const key of resultKeys) if (Array.isArray(record[key])) return true;
   if (record.success === true && typeof record.total === "number") return true;
   for (const key of ["data", "output", "raw", "response", "result", "payload"]) {
-    if (hasRecognizedProviderResultShape(record[key], depth + 1)) return true;
+    const inner = record[key];
+    if (inner && typeof inner === "object" && !Array.isArray(inner) && hasRecognizedProviderResultShape(inner)) return true;
   }
   return false;
 }
@@ -799,14 +799,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   if (rows.length > 0 && !isIcypeas) {
     if (input.paginationStrategy === "cursor" &&
         (supportsPaginationParam("cursor") || supportsPaginationParam("next_cursor"))) {
-      const candidateCursor =
-        callResult.data?.next_cursor ??
-        callResult.data?.cursor ??
-        callResult.data?.nextCursor ??
-        callResult.data?.pagination?.next_cursor ??
-        callResult.data?.meta?.next_cursor ??
-        callResult.data?.next_max_id ??
-        null;
+      const candidateCursor = findProviderNextCursor(callResult.data);
       if (
         candidateCursor !== null &&
         candidateCursor !== undefined &&

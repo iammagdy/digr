@@ -9,6 +9,7 @@ import {
   generateMethodologyText as buildMethodologyDoc,
 } from "./fileGenerators";
 import { executeTregCall, TregCallOptions, TregCallResult } from "./tregClient";
+import { findProviderResultList } from "../../lib/server/providerRows";
 import { parseStoredPlan } from "./planManager";
 import { getEndpointDetails, searchCatalog } from "./catalogClient";
 import {
@@ -249,6 +250,10 @@ export function flattenRow(row: any): Record<string, any> {
  */
 export function extractAndFlattenRows(rawResponse: any): Array<Record<string, any>> {
   if (!rawResponse) return [];
+
+  // One reader for every envelope (routed output, aggregator data, recipe rows, top-level lists).
+  const found = findProviderResultList(rawResponse);
+  if (found) return found.list.filter((item) => item && typeof item === "object").map(flattenRow);
 
   let candidates: any[] = [];
 
