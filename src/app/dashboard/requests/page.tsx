@@ -318,7 +318,7 @@ export default function RequestsPage() {
                 className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-full border-0 px-3.5 text-[13px] font-medium"
                 style={{ background: on ? "var(--sf)" : "transparent", color: on ? "var(--ink)" : "var(--mut)", boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
               >
-                {label} <span className="opacity-60">{formatAr(counts[id])}</span>
+                {label} <span className="opacity-60">{loading ? "…" : formatAr(counts[id])}</span>
               </button>
             );
           })}
