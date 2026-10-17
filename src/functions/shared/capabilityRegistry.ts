@@ -84,9 +84,25 @@ export interface Capability {
   tregMethod: "GET" | "POST";
   pricingUnit: "call" | "item" | "page";
   unitCostUsd: number;
+  /** Customer sale rate per delivered comment; provider cost remains unitCostUsd. */
+  customerPriceUsdPerItem?: number;
   maxRows: number;
   paginationType: "cursor" | "offset" | "none";
   enabled: boolean;
+}
+
+/**
+ * Diger's customer-facing comment rates, kept separate from live provider cost.
+ * These preserve the existing customer rates (11 FB / 9 YouTube points per
+ * comment at the default exchange, markup, and point value settings).
+ */
+export function getCustomerPriceUsdPerCatalogItem(
+  endpoint: { id?: string; slug?: string; platform?: string; nameEn?: string; nameAr?: string }
+): number | undefined {
+  const identity = `${endpoint.id || ""} ${endpoint.slug || ""} ${endpoint.nameEn || ""} ${endpoint.nameAr || ""}`.toLowerCase();
+  if (endpoint.platform?.toLowerCase() === "facebook" && /comment/.test(identity)) return 0.0019;
+  if (endpoint.platform?.toLowerCase() === "youtube" && /comment/.test(identity)) return 0.0015;
+  return undefined;
 }
 
 export interface SanitizedCapabilityForLlm {
