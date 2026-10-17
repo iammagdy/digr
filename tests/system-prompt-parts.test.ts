@@ -66,3 +66,17 @@ describe("system prompt: cacheable fixed rules, no hardcoded name", () => {
     expect(result.costUsd).toBeLessThan((13000 * pricing.inputCostPerMillion + 100 * pricing.outputCostPerMillion) / 1_000_000);
   });
 });
+
+describe("social research rules reach the model", () => {
+  it("the fixed rules name the verified services, the one-thing-per-plan-item rule and the honest limits", async () => {
+    const { buildSystemPromptParts } = await import("../src/functions/shared/systemPrompt");
+    const { staticText, dynamicText } = buildSystemPromptParts({ sanitizedCapabilities: [], userBalancePoints: 100 });
+    expect(staticText).toContain('"social-..."');
+    expect(staticText).toContain("كومنتس");
+    expect(staticText).toMatch(/exactly ONE thing to collect/);
+    expect(staticText).toMatch(/Facebook has no trending feed/);
+    expect(staticText).toMatch(/Never invent a link/);
+    // The part that changes every turn holds none of it, so the fixed block stays cacheable.
+    expect(dynamicText).not.toContain("SOCIAL RESEARCH");
+  });
+});
