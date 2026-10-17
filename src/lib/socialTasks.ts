@@ -192,7 +192,7 @@ export function socialCatalogQuery(intent: SocialIntent): string | null {
     trending: p === "youtube" ? "youtube trending shorts" : p === "tiktok" ? "tiktok trending feed" : `${p} trending`,
     channel_videos: p === "youtube" ? "youtube channel videos" : "tiktok user videos",
     video_search: p === "youtube" ? "youtube search videos" : "tiktok search videos",
-    page_posts: `${p} user posts`,
+    page_posts: intent.discover === "channel" ? `${p} user posts` : `${p} posts`,
   };
   return base[intent.task];
 }
