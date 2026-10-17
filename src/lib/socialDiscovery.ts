@@ -1,8 +1,10 @@
 import { detectMentionedPlatforms } from "../functions/shared/capabilityRegistry";
 import { extractNumberFromText } from "./arabicNumbers";
+import { COMMENT_WORDS_RE, TREND_WORDS_RE, hasSocialSubject } from "./socialTasks";
 
 /** Social-content requests (videos, posts, comments, trends) as opposed to an account lookup. */
-export const SOCIAL_CONTENT_WORDS_RE = /(?:فيديوهات?|مقاطع?|منشورات?|تعليقات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/iu;
+const BASE_SOCIAL_CONTENT_WORDS_RE = /(?:فيديوهات?|مقاطع?|منشورات?|تعليقات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/iu;
+export const SOCIAL_CONTENT_WORDS_RE = new RegExp(`${BASE_SOCIAL_CONTENT_WORDS_RE.source}|${COMMENT_WORDS_RE.source}|${TREND_WORDS_RE.source}`, "iu");
 
 /** Request for one public account's profile data rather than content search. */
 export const ACCOUNT_LOOKUP_RE = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i;
@@ -43,7 +45,7 @@ function stripToTopicTokens(text: string): string[] {
 export function hasSocialTopic(text: string): boolean {
   if (/(?:^|\s)[#@][\p{L}\p{N}_]{2,}/u.test(text || "")) return true;
   if (/موضوع البحث المطلوب\s*:\s*\S+/u.test(text || "")) return true;
-  return stripToTopicTokens(text).length >= 1;
+  return stripToTopicTokens(text).length >= 1 && hasSocialSubject(text);
 }
 
 export function hasSocialPlatform(text: string): boolean {

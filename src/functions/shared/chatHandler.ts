@@ -71,6 +71,7 @@ import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
+import { getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -141,6 +142,10 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     const missing = getMissingCompanyResearchRequirements(normalized);
     if (missing.length) return getCompanyRequirementItems(missing, normalized)[0] || null;
     if (!extractNumberFromText(normalized)) return { id: "company_count_required", text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true };
+  }
+  if (!isAccount && !isPeople && !isCompanies) {
+    const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
+    if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
   }
   if (isSocialTopic) {
     const missingSocial = getMissingSocialInputs(normalized);
