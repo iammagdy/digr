@@ -213,8 +213,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           >
             <div className="flex min-h-16 items-center justify-between gap-2 px-4">
               {compactSidebar && !mobile
-                ? <Link href="/dashboard/chat" aria-label="ديجر" className="font-display text-lg font-semibold text-ink">D</Link>
-                : <Link href="/dashboard/chat" aria-label="ديجر"><Logo height={26} /></Link>}
+                ? <Link href="/" aria-label="ديجر" className="font-display text-lg font-semibold text-ink">D</Link>
+                : <Link href="/" aria-label="ديجر"><Logo height={26} /></Link>}
               {!mobile && <button
                 type="button"
                 onClick={() => {
