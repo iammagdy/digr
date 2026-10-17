@@ -15,5 +15,9 @@ export function customerFacingConversationTitle(value: string): string {
   const localized = raw
     .replace(/(?:تقنية مالية|التقنية المالية)\s*\(\s*fintech\s*\)/gi, "التقنية المالية")
     .replace(/\bfintech\b/gi, "التقنية المالية");
-  return toArabicDigits(localized);
+  const title = toArabicDigits(localized);
+  if (title.length <= 50) return title;
+  const candidate = title.slice(0, 50);
+  const lastSpace = candidate.lastIndexOf(" ");
+  return `${(lastSpace >= 24 ? candidate.slice(0, lastSpace) : candidate).trimEnd()}…`;
 }

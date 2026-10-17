@@ -11,6 +11,8 @@ import {
   getPlatformLabelAr,
   getClosestVerifiedCapability,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
+  UNAVAILABLE_CAPABILITY_SLUGS,
+  RAW_SEED_CAPABILITIES,
   Capability,
 } from "./capabilityRegistry";
 import {
@@ -517,7 +519,9 @@ export function buildAutoPlanProposal(
   }
 
   if (brief.dateRange && !isCompanySearch) {
-    stepParams.dateFrom = "2026-01-01";
+    const dateFilters = dateFiltersFromHint(brief.dateRange);
+    if (dateFilters.from) stepParams.dateFrom = dateFilters.from;
+    if (dateFilters.to) stepParams.dateTo = dateFilters.to;
   }
 
   const step: any = {
@@ -545,6 +549,23 @@ export function buildAutoPlanProposal(
       ? "البحث عن صناع القرار والمهنيين بحسب المجال والدولة والمسمى الوظيفي؛ وجود أي حقل لا يعني التحقق المستقل من صحته."
       : `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
   };
+}
+
+function dateFiltersFromHint(hint: string, now = new Date()): { from?: string; to?: string } {
+  const dates = hint.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+  if (dates.length >= 2) return { from: dates[0], to: dates[1] };
+  if (dates.length === 1) return { from: dates[0], to: dates[0] };
+  const year = /\b((?:19|20)\d{2})\b/.exec(hint)?.[1];
+  if (year) return { from: `${year}-01-01`, to: `${year}-12-31` };
+  const relative = /(?:آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/i.exec(hint);
+  if (!relative) return {};
+  const count = Number((relative[1] || "1").replace(/[٠-٩]/g, (digit) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(digit)])) || 1;
+  const from = new Date(now);
+  if (/شهر/i.test(relative[2])) from.setMonth(from.getMonth() - count);
+  else if (/سنة|عام/i.test(relative[2])) from.setFullYear(from.getFullYear() - count);
+  else if (/أسبوع/i.test(relative[2])) from.setDate(from.getDate() - count * 7);
+  else from.setDate(from.getDate() - count);
+  return { from: from.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
 }
 
 /** Keep people-search requests on the people capability, even if the model
@@ -578,6 +599,7 @@ export function routePeopleAlternative(
   ].includes(output?.type)) return output;
 
   const peopleCapability = capabilities.find((capability) =>
+    !UNAVAILABLE_CAPABILITY_SLUGS.has(capability.slug) && capability.enabled !== false && capability.status === "verified" &&
     /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
   );
   if (!peopleCapability) {
@@ -645,6 +667,37 @@ export function routeCompanySearchRequest(
   return buildAutoPlanProposal(brief, capabilities, requestText);
 }
 
+export function routeUnavailablePlatformRequest(output: any, requestText: string): any {
+  if (isPeopleSearchRequest(requestText)) return output;
+  if (output?.type !== "propose_plan") return output;
+  const platform = detectMentionedPlatforms(requestText).find((item) => item !== "companies");
+  if (!platform) return output;
+  const entity = extractEntityType(requestText).entityType;
+  const slug = entity === "comments"
+    ? (platform === "youtube" ? "youtube-comments" : `${platform}-post-comments`)
+    : entity === "posts"
+      ? `${platform}-post-search`
+      : entity === "videos" && platform === "youtube"
+        ? "youtube-search"
+        : entity === "profiles"
+          ? `${platform}-profile`
+          : null;
+  if (!slug) return output;
+  const capability = RAW_SEED_CAPABILITIES.find((item) => item.slug === slug);
+  if (!capability || capability.enabled) return output;
+  const proposedService = (output?.capabilities || output?.steps || []).find((step: any) =>
+    step?.capabilitySlug === slug || step?.endpointId === slug,
+  );
+  if (!proposedService) return output;
+  if (proposedService?.endpointId && !String(proposedService.endpointId).startsWith("internal-")) return output;
+  const serviceName = entity === "comments" ? "جمع التعليقات" : entity === "videos" ? "البحث عن الفيديوهات" : entity === "posts" ? "البحث عن المنشورات" : "البحث عن الحسابات";
+  const platformLabel = getPlatformLabelAr(platform);
+  return {
+    type: "refuse",
+    reasonAr: `خدمة ${serviceName} على ${platformLabel} غير متاحة حاليًا، لذلك لا أستطيع تقديم عرض سعر أو بدء التنفيذ لهذا الطلب.`,
+  };
+}
+
 /**
  * Deterministic history compaction: keep the first message and the most recent
  * turns, replace the middle with a compact internal summary. The active plan
@@ -683,12 +736,14 @@ export function summarizeConversationHistory(
  * model received). Used for validation and server-side pricing of turn results.
  */
 export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capability {
+  const seeded = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === ep.slug);
+  const unavailable = UNAVAILABLE_CAPABILITY_SLUGS.has(ep.slug) || Boolean(ep.id?.startsWith("internal-"));
   return {
     id: ep.slug,
     slug: ep.slug,
     platform: ep.platform as any,
     category: ep.platform as any,
-    status: "verified",
+    status: unavailable ? (seeded?.status || "pending_verification") : "verified",
     unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
     pointsPerUnit: ep.pointsPerUnit,
@@ -704,7 +759,7 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     unitCostUsd: ep.catalogPriceUsd,
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
-    enabled: true,
+    enabled: !unavailable,
   };
 }
 
@@ -798,7 +853,9 @@ export function extractDateHint(userMessage: string): string | undefined {
     return rangeMatch[0].trim();
   }
   const m = /(آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/i.exec(userMessage);
-  return m ? m[0].trim() : undefined;
+  if (m) return m[0].trim();
+  const year = /(?:في|سنة|عام|خلال|منذ|since|during|in|year)\s+((?:19|20)\d{2})\b/i.exec(userMessage);
+  return year?.[1];
 }
 
 export function buildClarificationPresentation(
@@ -1453,9 +1510,16 @@ export class ChatHandler {
       // Clarification card answers arrive as a small JSON payload. Keep the
       // original user request in scope so explicit counts and company filters
       // survive the answer turn instead of being replaced by model defaults.
+      const priorUserRequirements = messagesContext
+        .filter((entry) => entry.role === "user")
+        .map((entry) => customerAuthoredRequirementText(entry.content));
+      const currentRequirement = customerAuthoredRequirementText(message);
+      // The current message was persisted before history was fetched. Avoid
+      // adding it twice to the deterministic routing text used for plans.
+      if (priorUserRequirements.at(-1) === currentRequirement) priorUserRequirements.pop();
       const conversationRequestText = [
-        ...messagesContext.filter((entry) => entry.role === "user").map((entry) => customerAuthoredRequirementText(entry.content)),
-        customerAuthoredRequirementText(message),
+        ...priorUserRequirements,
+        currentRequirement,
         ...explicitCompanyClarificationNotes(brief.notes),
       ].filter(Boolean).join(" ");
 
@@ -2089,6 +2153,18 @@ export class ChatHandler {
         }
 
         if (platformCheck.valid && planValidation.valid && planOutput) {
+          const peopleGate = routePeopleAlternative(planOutput, brief, validationCaps, conversationRequestText);
+          const platformGate = routeUnavailablePlatformRequest(planOutput, conversationRequestText);
+          const unavailableGate = peopleGate.type === "refuse" ? peopleGate : platformGate;
+          if (unavailableGate.type === "refuse") {
+            output = unavailableGate;
+            planOutput = null;
+            planValidation = { valid: false, errors: [unavailableGate.reasonAr], issues: [] };
+            finalContentAr = unavailableGate.reasonAr;
+          }
+        }
+
+        if (platformCheck.valid && planValidation.valid && planOutput) {
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
@@ -2372,6 +2448,12 @@ export class ChatHandler {
             finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n- التعديل المطلوب: ${desc}\n- التكلفة: 10 نقاط\n- سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
           }
         }
+      }
+
+      if (isPeopleSearchRequest(conversationRequestText) && !planQuoteData) {
+        const peopleUnavailableReason = "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً، لذلك لا أستطيع تقديم عرض سعر أو بدء التنفيذ لهذا الطلب.";
+        output = { type: "refuse", reasonAr: peopleUnavailableReason } as any;
+        finalContentAr = peopleUnavailableReason;
       }
 
       // 9. Update Assistant Message to 'ready'

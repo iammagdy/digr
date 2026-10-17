@@ -141,6 +141,7 @@ export default function ChatWorkspacePage() {
   const [userPersona, setUserPersona] = useState<PersonaType>("student");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
+  const [conversationsLoading, setConversationsLoading] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
@@ -158,6 +159,7 @@ export default function ChatWorkspacePage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationLoadSequence = useRef(0);
+  const sendInFlight = useRef(false);
 
   // Sync canvasOpen and activeJob to sessionStorage for reload persistence
   useEffect(() => {
@@ -210,7 +212,8 @@ export default function ChatWorkspacePage() {
 
   // 3. Load Conversations
   const loadConversations = useCallback(async () => {
-    if (!user) return;
+    if (!user) { setConversationsLoading(false); return; }
+    setConversationsLoading(true);
     try {
       const supabase = createClient();
       const { data: rows } = await supabase
@@ -219,15 +222,19 @@ export default function ChatWorkspacePage() {
         .eq("user_id", user.id)
         .order("updated_at", orderDesc)
         .limit(20);
-      setConversationsList(
-        (rows || []).map((d: any) => ({
+      const unique = new Map<string, ConversationItem>();
+      for (const d of rows || []) {
+        if (!unique.has(d.id)) unique.set(d.id, {
           $id: d.id,
           title: d.title || "محادثة استخراج",
           updatedAt: d.updated_at || new Date().toISOString(),
-        }))
-      );
+        });
+      }
+      setConversationsList(Array.from(unique.values()));
     } catch (err) {
       console.warn("Error loading conversations:", err);
+    } finally {
+      setConversationsLoading(false);
     }
   }, [user]);
 
@@ -263,6 +270,15 @@ export default function ChatWorkspacePage() {
     if (new URLSearchParams(window.location.search).get("history") === "1") showHistory();
     return () => window.removeEventListener("diger:show-history", showHistory);
   }, [loadConversations]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("onboarding") !== "1") return;
+    setShowOnboarding(true);
+    params.delete("onboarding");
+    const query = params.toString();
+    window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+  }, []);
 
   useEffect(() => {
     const viewport = window.visualViewport;
@@ -419,9 +435,10 @@ export default function ChatWorkspacePage() {
   }, [activeJob, loadBalance, extractedRecords.length]);
 
   // Send message
-  async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null) {
+  async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null): Promise<boolean> {
     const textToSend = messageContent.trim();
-    if ((!textToSend && !attachedFile) || loading || conversationLoading) return;
+    if ((!textToSend && !attachedFile) || loading || conversationLoading || sendInFlight.current) return false;
+    sendInFlight.current = true;
 
     if (!user && attachedFile) {
       setMessages((prev) => [
@@ -433,7 +450,8 @@ export default function ChatWorkspacePage() {
           createdAt: new Date().toISOString(),
         },
       ]);
-      return;
+      sendInFlight.current = false;
+      return false;
     }
 
     const userMsg: MessageItem = {
@@ -461,7 +479,6 @@ export default function ChatWorkspacePage() {
     );
     setLoadingStatusText(isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : (hasPriorResearch ? "يفكّر في سؤالك ويجهّز الخطوة التالية..." : "يكتب الرد..."));
     setMessages((prev) => [...prev, userMsg]);
-    setInputText("");
     setLoading(true);
 
     const controller = new AbortController();
@@ -508,7 +525,7 @@ export default function ChatWorkspacePage() {
         setConversationId(data.conversationId);
         setConversationTitle((title) =>
           !title || customerFacingConversationTitle(title) === "محادثة جديدة"
-            ? customerFacingConversationTitle(textToSend).slice(0, 50)
+            ? customerFacingConversationTitle(textToSend)
             : title
         );
         if (user) loadConversations();
@@ -531,6 +548,7 @@ export default function ChatWorkspacePage() {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      return true;
     } catch (err: any) {
       clearTimeout(timeoutId);
       const isTimeout = err.name === "AbortError";
@@ -548,8 +566,10 @@ export default function ChatWorkspacePage() {
           createdAt: new Date().toISOString(),
         },
       ]);
+      return false;
     } finally {
       clearTimeout(timeoutId);
+      sendInFlight.current = false;
       setLoading(false);
     }
   }
@@ -1210,6 +1230,20 @@ export default function ChatWorkspacePage() {
     }
   }
 
+  function handleExplainMethodology() {
+    const source = extractedProfile?.sourcePlatform ? String(extractedProfile.sourcePlatform) : "المصدر المحدد في الخطة";
+    const collectedAt = extractedProfile?.collectedDate || "وقت إتمام الطلب";
+    const methodology = typeof extractedProfile?.methodology === "string" && extractedProfile.methodology.trim()
+      ? extractedProfile.methodology.trim()
+      : "جُمعت الحقول التي أعادها المصدر، وطُبّعت أسماءها، مع إبقاء القيم غير المتاحة فارغة دون استنتاجها.";
+    setMessages((previous) => [...previous, {
+      id: `method_explain_${Date.now()}`,
+      role: "assistant",
+      content: `طريقة جمع البيانات\nالمصدر: ${source}\nتاريخ الجمع: ${collectedAt}\n\n${methodology}`,
+      createdAt: new Date().toISOString(),
+    }]);
+  }
+
   function handleKeepResult() {
     setMessages((previous) => [...previous, {
       id: `review_keep_${Date.now()}`,
@@ -1282,7 +1316,7 @@ export default function ChatWorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
-  const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
+  const sendRef = useRef<(text: string) => Promise<boolean>>(async () => false);
   sendRef.current = handleSendMessage;
 
   // Deep link from «طلباتي» / the wallet return: /dashboard/chat?c=<conversationId>&jobId=<jobId>
@@ -1568,7 +1602,11 @@ export default function ChatWorkspacePage() {
               <button type="button" aria-label="إغلاق" onClick={closeHistoryPanel} className="h-10 w-10 cursor-pointer rounded-full border-0 bg-transparent text-lg text-mut hover:bg-sf2">×</button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
-              {conversationsList.length === 0 ? (
+              {conversationsLoading ? (
+                <div role="status" aria-label="جاري تحميل المحادثات" className="space-y-2 p-3">
+                  {[0, 1, 2].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-sf2" />)}
+                </div>
+              ) : conversationsList.length === 0 ? (
                 <p className="m-0 px-3 py-8 text-center text-sm text-mut">لا توجد محادثات محفوظة بعد.</p>
               ) : conversationsList.map((item) => (
                 <button
@@ -1706,9 +1744,7 @@ export default function ChatWorkspacePage() {
               errorAr={activeJob?.errorAr}
               onDownload={handleDownload}
               downloadingKey={downloadingKey}
-              onExplainMethodology={() =>
-                handleSendMessage("اشرح لي كيف تم جمع البيانات وطريقة الحساب والتوثيق بالتفصيل")
-              }
+              onExplainMethodology={handleExplainMethodology}
               onRequestDocxMethodology={handleGenerateMethodology}
               onCloseMobile={() => setCanvasOpen(false)}
               onClose={() => setCanvasOpen(false)}

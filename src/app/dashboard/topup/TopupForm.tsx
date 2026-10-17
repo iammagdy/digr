@@ -19,6 +19,7 @@ export default function TopupForm({
   creditValue,
   ipa,
   loadingIpa = false,
+  ipaLoadFailed = false,
   onSubmitted,
   pendingCount,
   maxPending,
@@ -28,6 +29,7 @@ export default function TopupForm({
   creditValue: number;
   ipa: string | null;
   loadingIpa?: boolean;
+  ipaLoadFailed?: boolean;
   onSubmitted: (t: TopupRecord) => void;
   pendingCount: number;
   maxPending: number;
@@ -173,6 +175,8 @@ export default function TopupForm({
             <p className="mb-0 mt-1 animate-pulse text-sm text-mut">جاري تحميل بيانات الدفع...</p>
           ) : ipa ? (
             <p className="mb-0 mt-1 truncate text-base text-ink" dir="ltr">{ipa}</p>
+          ) : ipaLoadFailed ? (
+            <p role="alert" className="mb-0 mt-1 text-sm text-bad">تعذر تحميل بيانات الدفع الآن. أعد تحميل الصفحة أو تواصل مع الدعم.</p>
           ) : (
             <p className="mb-0 mt-1 text-sm text-mut">بيانات الدفع قيد التهيئة حالياً — يرجى التواصل مع فريق الدعم</p>
           )}
