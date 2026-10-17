@@ -2,6 +2,12 @@ import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 
+const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
+
+export function isValidRetryJobId(value: unknown): value is string {
+  return typeof value === "string" && RETRY_JOB_ID_PATTERN.test(value);
+}
+
 export interface ResolvedJobExecutionSpec {
   capabilitySlug: string;
   endpointId: string;
@@ -12,6 +18,8 @@ export interface ResolvedJobExecutionSpec {
   unitCostUsd: number;
   pageSize: number;
   outputFormats: Array<"xlsx" | "pdf" | "csv">;
+  /** Failed job whose collected rows this retry reuses (set only by the server when the retry quote was created). */
+  retryOfJobId?: string;
 }
 
 export async function resolveJobExecutionSpec(
@@ -30,6 +38,7 @@ export async function resolveJobExecutionSpec(
   let unitCostUsd: number | undefined;
   let itemTargetVolumeMax = 0;
   let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx", "pdf", "csv"];
+  let retryOfJobId: string | undefined;
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
   try {
@@ -61,7 +70,10 @@ export async function resolveJobExecutionSpec(
               method = firstItem.method;
             }
             if (firstItem.params && typeof firstItem.params === "object") {
-              params = { ...firstItem.params };
+              // The retry marker is an internal instruction; it must never reach the provider.
+              const { retryOfJobId: marker, ...providerParams } = firstItem.params as Record<string, any>;
+              params = { ...providerParams };
+              if (isValidRetryJobId(marker)) retryOfJobId = marker;
             }
             if (typeof firstItem.targetVolumeMax === "number" && firstItem.targetVolumeMax > 0) {
               itemTargetVolumeMax = firstItem.targetVolumeMax;
@@ -248,5 +260,6 @@ export async function resolveJobExecutionSpec(
     unitCostUsd: resolvedUnitCostUsd,
     pageSize,
     outputFormats,
+    ...(retryOfJobId ? { retryOfJobId } : {}),
   };
 }

@@ -65,6 +65,9 @@ import { customerFacingConversationTitle } from "../../lib/customerFacingConvers
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
+import { isRetrySamePlanMessage } from "../../lib/retryMessage";
+import { toArabicDigits } from "../../lib/arabicDigits";
+import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 
 function customerAuthoredRequirementText(message: string): string {
@@ -2448,6 +2451,26 @@ export class ChatHandler {
           }
         }
 
+        // Retry button: reuse the rows a failed run already collected, but only when this plan
+        // searches for exactly the same thing. The marker is part of the plan hash, so the
+        // customer approves exactly what is reused.
+        let reusedRowsForRetry = 0;
+        if (platformCheck.valid && planValidation.valid && planOutput && isRetrySamePlanMessage(message) && sb && planItems.length === 1) {
+          const retryJob = await findRetryableJob(sb, userId, conversationId);
+          const previousItem = retryJob ? await loadQuoteFirstItem(sb, userId, retryJob.quoteId) : null;
+          const candidateItem = planItems[0];
+          if (
+            retryJob && previousItem &&
+            planParamsSignature(previousItem.capabilitySlug, previousItem.params) === planParamsSignature(candidateItem.capabilitySlug, candidateItem.params)
+          ) {
+            const reusable = await readReusableRows(sb, retryJob.jobId, retryJob.step, Math.max(1, Number(candidateItem.targetVolumeMax) || 1));
+            if (reusable.rows.length > 0) {
+              planItems = [{ ...candidateItem, params: { ...candidateItem.params, retryOfJobId: retryJob.jobId } }];
+              reusedRowsForRetry = reusable.rows.length;
+            }
+          }
+        }
+
         if (platformCheck.valid && planValidation.valid && planOutput) {
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
@@ -2494,6 +2517,9 @@ export class ChatHandler {
           }
           if (isPeopleSearchRequest(conversationRequestText)) {
             planSummaryText += "\n- بيانات التواصل المتوقعة: البريد المهني ورقم الهاتف عند توفرهما، مع حالة التحقق لكل حقل.";
+          }
+          if (reusedRowsForRetry > 0) {
+            planSummaryText += `\n- إعادة استخدام: ${toArabicDigits(reusedRowsForRetry)} سجل جُمعت في المحاولة السابقة تُضاف إلى النتيجة، ويُجلب المتبقي فقط. السعر المعروض يغطي كامل العدد المطلوب، ولا يُخصم إلا ثمن السجلات المسلّمة فعلاً.`;
           }
           if (managedQuote.capacityConstrained) {
             planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;

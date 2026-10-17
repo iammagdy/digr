@@ -40,6 +40,7 @@ import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 import { estimateRemainingSecondsFromMeasuredPages } from "../../../../functions/shared/liveActivityFeed";
+import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -48,19 +49,7 @@ export const maxDuration = 60; // Vercel Hobby maximum
 const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
 function companyIdentity(row: any): string | null {
-  const sourceId = String(row?.company_id || row?.source_id || row?.id || "").trim().toLowerCase();
-  if (sourceId) return `id:${sourceId}`;
-  const website = String(row?.website || row?.website_url || row?.domain || "").trim().toLowerCase();
-  if (website) {
-    try {
-      const host = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`).hostname.replace(/^www\./, "");
-      if (host) return `domain:${host}`;
-    } catch { /* fall through to the company name */ }
-  }
-  const name = String(row?.company_name || row?.name || row?.title || "")
-    .normalize("NFKC").toLocaleLowerCase()
-    .replace(/[\p{P}\p{S}\s]+/gu, "").trim();
-  return name.length >= 3 ? `name:${name}` : null;
+  return rowIdentity(row);
 }
 
 function getWorkerBaseUrl(req?: NextRequest): string {
@@ -349,7 +338,42 @@ export async function POST(req: NextRequest) {
       Number(unitPrice) || 1
     );
 
-    const remainingUnits = Math.max(0, targetMax - currentDelivered);
+    // Retry reuse: rows the failed run already collected count as delivered by this
+    // job (they are in the delivered file and are charged like any delivered row),
+    // and the provider is asked only for the deficit.
+    const retrySeedResult = spec.retryOfJobId
+      ? await ensureRetrySeed(adminClient, {
+          newJobId: jobId,
+          userId,
+          retryOfJobId: spec.retryOfJobId,
+          currentStep,
+          targetMax,
+          newSpec: spec,
+          fallback: inMemoryPartialStepFallback,
+        })
+      : null;
+    const retrySeed = retrySeedResult && retrySeedResult.seed ? retrySeedResult.seed : null;
+    if (retrySeedResult && !retrySeedResult.seed && retrySeedResult.reason !== "not_requested") {
+      console.warn(`[worker:retry_reuse_skipped] jobId=${jobId} reason=${retrySeedResult.reason}`);
+    }
+    if (retrySeedResult && retrySeedResult.seed && retrySeedResult.created) {
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `أُعيد استخدام ${toArabicDigits(retrySeedResult.seed.rows.length)} سجل جُمعت في المحاولة السابقة، وسنجلب المتبقي فقط.`,
+          units: retrySeedResult.seed.rows.length,
+          event_type: "progress",
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+      }
+    }
+    // Seed units are added to the stored count only by the first chunk; later chunks read them back from the job.
+    const seededUnits = currentStep === 0 && retrySeed ? retrySeed.rows.length : 0;
+    const effectiveDelivered = currentDelivered + seededUnits;
+
+    const remainingUnits = Math.max(0, targetMax - effectiveDelivered);
     const effectivePageSize =
       useMockProvider && typeof body?.mockBatchSize === "number" && body.mockBatchSize > 0
         ? Math.min(50, Math.floor(body.mockBatchSize))
@@ -364,15 +388,16 @@ export async function POST(req: NextRequest) {
 
     // 6. Reserve provider spend BEFORE calling provider
     let spendCostId: number | null = null;
-    const { data: spendReserve, error: spendErr } = await adminClient.rpc(
-      "reserve_provider_spend_atomic",
-      {
-        p_job_id: jobId,
-        p_provider: "treg",
-        p_estimated_cost_usd: estimatedCostUsd,
-        p_daily_cap_usd: dailyCapUsd,
-      }
-    );
+    // A retried job whose reused rows already cover the target needs no provider call and reserves no provider spend.
+    const needsProvider = remainingUnits > 0 || !retrySeed;
+    const { data: spendReserve, error: spendErr } = needsProvider
+      ? await adminClient.rpc("reserve_provider_spend_atomic", {
+          p_job_id: jobId,
+          p_provider: "treg",
+          p_estimated_cost_usd: estimatedCostUsd,
+          p_daily_cap_usd: dailyCapUsd,
+        })
+      : { data: { allowed: true, cost_id: null }, error: null };
 
     if (spendErr || !spendReserve?.allowed) {
       const capErrorMsg =
@@ -413,7 +438,10 @@ export async function POST(req: NextRequest) {
           })
         : defaultTregAdapter;
 
-    const adapterResult = await activeAdapter({
+    const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
+      ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
+    };
+    const adapterResult = !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
       userId,
       step: currentStep,
@@ -429,7 +457,7 @@ export async function POST(req: NextRequest) {
       pageSize: effectivePageSize,
       remainingNeeded: remainingUnits,
       targetVolumeMax: targetMax,
-      deliveredSoFar: currentDelivered,
+      deliveredSoFar: effectiveDelivered,
     });
 
     const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
@@ -445,7 +473,7 @@ export async function POST(req: NextRequest) {
           job_id: jobId,
           user_id: userId,
           message: `تم استبعاد ${dateFiltered.excludedCount} سجل لوقوع تاريخه خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
-          units: currentDelivered,
+          units: effectiveDelivered,
           event_type: "progress",
         });
       } catch (evtErr: any) {
@@ -461,6 +489,11 @@ export async function POST(req: NextRequest) {
     let duplicateExcludedCount = 0;
     if (isCompanyCapability && rawRows.length) {
       const seen = new Set<string>();
+      // Rows reused from a failed earlier run are already accepted rows of this job.
+      for (const row of retrySeed?.rows || []) {
+        const identity = companyIdentity(row);
+        if (identity) seen.add(identity);
+      }
       // A provider may repeat its first page or return overlapping cursor pages.
       // De-duplicate against already accepted rows before validating or billing.
       const partials = adminClient.storage.from("partials");
@@ -483,6 +516,19 @@ export async function POST(req: NextRequest) {
         if (!identity) return true;
         if (seen.has(identity)) { duplicateExcludedCount += 1; return false; }
         seen.add(identity);
+        return true;
+      });
+    }
+
+    if (!isCompanyCapability && retrySeed && rawRows.length) {
+      const seededIdentities = new Set<string>();
+      for (const row of retrySeed.rows) {
+        const identity = rowIdentity(row);
+        if (identity) seededIdentities.add(identity);
+      }
+      rawRows = rawRows.filter((row: any) => {
+        const identity = rowIdentity(row);
+        if (identity && seededIdentities.has(identity)) { duplicateExcludedCount += 1; return false; }
         return true;
       });
     }
@@ -520,7 +566,7 @@ export async function POST(req: NextRequest) {
             job_id: jobId,
             user_id: userId,
             message: `تم تدقيق السجلات واستبعاد ${excludedCount} سجل مكرر.`,
-            units: currentDelivered,
+            units: effectiveDelivered,
             event_type: "progress",
           });
         } catch (evtErr: any) {
@@ -621,7 +667,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const newDeliveredUnits = currentDelivered + acceptedRows.length;
+    const newDeliveredUnits = effectiveDelivered + acceptedRows.length;
     const isShortLastPage =
       spec.paginationStrategy !== "none" &&
       acceptedRows.length < Math.min(effectivePageSize, remainingUnits) &&
@@ -808,6 +854,15 @@ export async function POST(req: NextRequest) {
       let baselineExcludedCount = 0;
       let relevanceExcludedCount = 0;
       const partialsBucket = adminClient.storage.from("partials");
+
+      // Rows reused from the failed earlier run come first; the stored delivered count already includes them.
+      if (retrySeed) {
+        collectedRows.push(...retrySeed.rows);
+        collectedUncertainRows.push(...retrySeed.uncertainRows);
+        rawRowsCollected += retrySeed.rawRowsCount;
+        baselineExcludedCount += retrySeed.baselineExcludedCount;
+        relevanceExcludedCount += retrySeed.relevanceExcludedCount;
+      }
 
       for (let s = 0; s <= currentStep; s++) {
         const stepKey = `${jobId}/step_${s}.json`;
@@ -1190,6 +1245,9 @@ export async function POST(req: NextRequest) {
       if (settleErr) {
         throw settleErr;
       }
+
+      // The retried job has settled, so the failed run's rows and this job's seed are no longer needed.
+      await cleanupRetrySources(adminClient, jobId, retrySeed, inMemoryPartialStepFallback);
 
       // Clean up temporary step files from partials only after successful settlement
       try {

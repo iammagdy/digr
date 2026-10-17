@@ -9,6 +9,7 @@ import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
+import { RETRY_SAME_PLAN_MESSAGE } from "@/lib/retryMessage";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
@@ -1378,7 +1379,7 @@ export default function ChatWorkspacePage() {
 
     if (convId && /^[A-Za-z0-9_-]{1,64}$/.test(convId)) {
       void handleOpenConversation(convId, jobId || undefined).then(() => {
-        if (retry) setTimeout(() => void sendRef.current("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ."), 350);
+        if (retry) setTimeout(() => void sendRef.current(RETRY_SAME_PLAN_MESSAGE), 350);
       });
     } else if (jobId) {
       // Direct job link without conversation ID in query param
@@ -1577,7 +1578,7 @@ export default function ChatWorkspacePage() {
       <FailureBox
         providerMessage={activeJob.errorAr}
         refunded={activeJob.reservedCredits}
-        onRetry={() => handleSendMessage("أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ.")}
+        onRetry={() => handleSendMessage(RETRY_SAME_PLAN_MESSAGE)}
         onGoRequests={() => router.push("/dashboard/requests")}
       />
     ) : (
