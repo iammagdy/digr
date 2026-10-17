@@ -47,3 +47,52 @@ ORDER BY p.oid;
 Raw result: `[]`.
 
 No database writes, quote approvals, job executions, migrations, or direct provider requests were made.
+
+## Follow-up database inspection — 2026-10-17 19:22 UTC
+
+The owner later reported that a decision-makers request had been approved. This follow-up used read-only SQL only. It found **no decision-makers job** in the live database at inspection time. The latest decision-makers quote found was still `quoted`, and its derived job, ledger, and provider-cost queries all returned empty arrays. No approval was submitted from this inspection.
+
+The latest matching quote row had quote id `3a4972a9cbd04cb9a4f1`, status `quoted`, `total_reserved_credits=600`, endpoint `treg.people.search`, requested limit `3`, country `EG`, requested fields `work_email` and `phone`, and unit prices `{basePerson:83, workEmail:55, phone:55}`. The associated `user_id` is omitted from this report. The account comparison against the previously specified test-account identity returned `false`; therefore this quote was not approved or executed by this agent.
+
+The plan arithmetic is `3 × (83 + 55 + 55) = 579` points. The 15% reserve would be `ceil(579 × 1.15) = ceil(665.85) = 666`, reduced by the 600-point cap to a 600-point quote reserve. Since there is no job, actual delivered field counts, settled charge, and release are **NOT RUN / NOT APPLICABLE**; no actual charge or release can be reported.
+
+### Raw read-only query results
+
+Latest jobs using the decision-makers endpoint:
+
+```json
+[]
+```
+
+Job row for the latest decision-makers quote's deterministic job id (`job_quote_` + `md5(quote id)`):
+
+```json
+[]
+```
+
+All ledger rows for that derived job id:
+
+```json
+[]
+```
+
+All provider-cost rows for that derived job id:
+
+```json
+[]
+```
+
+The quote inspection result, with the account UUID omitted:
+
+```json
+[{"quote_id":"3a4972a9cbd04cb9a4f1","status":"quoted","total_reserved_credits":"600","is_known_test_account":false,"endpoint_id":"treg.people.search","required_contact_fields":["work_email","phone"],"unit_prices":{"phone":55,"workEmail":55,"basePerson":83},"requested_limit":"3","country":"EG","created_at":"2026-10-17 19:10:17.15971+00","job_exists":false,"ledger_balance":"808"}]
+```
+
+### Delivery and cost result
+
+- Provider calls and recorded cost for this quote: **NOT FOUND**. No provider-cost row exists for its derived job id, so the recorded provider cost is unavailable rather than assumed to be zero.
+- People, field presence, verification statuses, email/phone shares, per-call costs, and price-to-real-cost comparison: **NOT RUN** because no job or provider result exists.
+- Excel download and inspection: **NOT RUN** because the quote has no job and no result file.
+- Reserve/charge/release ledger arithmetic: **no ledger rows**; no reserve, charge, or release transaction is associated with this quote.
+
+No data rows were written, no provider endpoint was called directly, and no UI controls were used during this follow-up.
