@@ -7,16 +7,16 @@ Date: 2026-10-17 (Africa/Cairo)
 - Draft PR: https://github.com/iammagdy/digr/pull/79
 - Branch: `codex/discovery-stage-fixes`
 - Commit: `64abfb22c4562d5705ae5b3404ebc76cf4b397b7`
-- Vercel deployment: `dpl_EfkcnVE9e8VpYuKUdcq1wxseNnQ8`
+- Vercel deployment: `dpl_EwWo8C2Adj5AnQhTvJjf9YZbuDaV`
 - Deployment state: `READY`; reported commit SHA exactly matches the branch commit.
-- Preview: `https://diger-6boqs9ecp-iam-magdy.vercel.app`
+- Preview: `https://diger-mx7soexnw-iam-magdy.vercel.app`
 - Database migrations: none added; no migration was applied.
 
 ## AUDIT / RESULT
 
 | Scenario | Result | Evidence / limitation |
 |---|---|---|
-| a. TikTok starter placeholder is fill-only, unchanged send is blocked, real handle gets account plan | **NOT RUN (UI flow)** | Preview API guard was exercised directly with the exact message `بيانات حساب [@اسم_الحساب] على تيك توك مع الإحصائيات العامة`. HTTP `400`, `success:false`, request id `req_b01359ba-c907-4b12-8e02-5770d00a5453`, elapsed `2149 ms`, Arabic response `استبدل النص الموجود بين الأقواس بالمعلومة المطلوبة، مثل اسم الحساب، ثم أرسل طلبك.` This demonstrates the server rejects the unresolved placeholder before auth/model work. Starter click/fill and real-handle plan were not exercised in an authenticated browser. |
+| a. TikTok starter placeholder is fill-only, unchanged send is blocked, real handle gets account plan | **NOT RUN (UI flow)** | Preview API guard was exercised directly on deployment `dpl_EwWo8C2Adj5AnQhTvJjf9YZbuDaV` with the exact message `بيانات حساب [@اسم_الحساب] على تيك توك مع الإحصائيات العامة`. HTTP `400`, `success:false`, request id `req_c8542bd2-fe09-49aa-bd84-670c3db2f51e`, elapsed `2059 ms`, Arabic response `استبدل النص الموجود بين الأقواس بالمعلومة المطلوبة، مثل اسم الحساب، ثم أرسل طلبك.` This demonstrates the server rejects the unresolved placeholder before auth/model work. Starter click/fill and real-handle plan were not exercised in an authenticated browser. |
 | b. `عايز خمس شركات في مجال الكهرباء` | **NOT RUN** | No authenticated browser session; no request sent. |
 | c. Five contracting companies in Egypt; inspect delivered and review rows | **NOT RUN** | No provider call or job approval; no rows to inspect. |
 | d. Ten IT companies in Saudi Arabia; inspect request body if empty | **NOT RUN** | No provider call; therefore no live request body or result. |
