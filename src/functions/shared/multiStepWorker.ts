@@ -10,7 +10,7 @@ import {
 } from "./fileGenerators";
 import { executeTregCall, TregCallOptions, TregCallResult } from "./tregClient";
 import { parseStoredPlan } from "./planManager";
-import { searchCatalog } from "./catalogClient";
+import { getEndpointDetails, searchCatalog } from "./catalogClient";
 import {
   checkProviderDailySpendCap,
   recordProviderCallSpend,
@@ -650,6 +650,19 @@ export async function executeMultiStepJob(
         }
       }
 
+      // TREG rejects undeclared fields on allowlisted endpoints. Load the live
+      // endpoint schema once per step and keep internal geography/search hints
+      // out of provider requests unless that endpoint explicitly accepts them.
+      let allowedParamKeys: string[] | undefined;
+      try {
+        const endpointDetails = await getEndpointDetails(endpointId);
+        const properties = endpointDetails?.paramsSchema?.properties;
+        if (properties && typeof properties === "object") {
+          const keys = Object.keys(properties);
+          if (keys.length > 0) allowedParamKeys = keys;
+        }
+      } catch {}
+
       const paginationStrategy = step.paginationStrategy || "none";
       const stepTargetVolume = step.targetVolumeMax || targetVolumeMax;
       const pageSize = Number(step.params?.limit || step.params?.count || step.params?.per_page || 20);
@@ -738,6 +751,7 @@ export async function executeMultiStepJob(
           endpointId,
           method: stepMethod,
           params: pageParams,
+          allowedParamKeys,
           userId,
           jobId,
           stepId: step.stepId,
@@ -778,6 +792,8 @@ export async function executeMultiStepJob(
               errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
             } else if (callResult.isPlatformBalanceLow) {
               errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
+            } else if (callResult.httpStatus === 400) {
+              errorAr = "رفض مصدر البيانات تفاصيل الطلب. تم إرجاع النقاط المحجوزة كاملة؛ راجع إعدادات البحث أو جرّب مرة أخرى.";
             } else if (callResult.httpStatus === 404) {
               errorAr = "الهدف المطلوب غير موجود أو محمي.";
             } else if (callResult.httpStatus === 422) {

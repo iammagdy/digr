@@ -36,6 +36,31 @@ describe("Fake TREG Server & TREG Client Integration", () => {
     expect(res.isPlatformBalanceLow).toBe(false);
   });
 
+  it("filters dynamic endpoint parameters against the live catalog allowlist", async () => {
+    let capturedBody = "";
+    const originalFetch = global.fetch;
+    global.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      capturedBody = String(init?.body || "");
+      return originalFetch(input, init);
+    };
+
+    try {
+      await executeTregCall({
+        baseUrl: fakeTreg.url,
+        endpointId: "crawl4ai.tiktok.search.videos",
+        method: "POST",
+        params: { query: "كرة القدم", limit: 5, country: "Egypt", location: "Egypt" },
+        allowedParamKeys: ["query", "limit"],
+        userId: "user_test_456",
+        jobId: "job_test_789",
+      });
+    } finally {
+      global.fetch = originalFetch;
+    }
+
+    expect(JSON.parse(capturedBody)).toEqual({ query: "كرة القدم", limit: 5 });
+  });
+
   it("should distinguish 402 route_max_cost error correctly", async () => {
     const res = await executeTregCall({
       baseUrl: fakeTreg.url,

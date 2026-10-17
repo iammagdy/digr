@@ -4,6 +4,7 @@ export interface TregCallOptions {
   endpointId: string;
   method?: "GET" | "POST";
   params?: Record<string, any>;
+  allowedParamKeys?: string[];
   userId: string;
   jobId: string;
   stepId?: string;
@@ -145,7 +146,7 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     "";
 
   // Clean and map params (strictly strip internal control metadata)
-  const cleanParams: Record<string, any> = serializeProviderParams(options.params || {});
+  const cleanParams: Record<string, any> = serializeProviderParams(options.params || {}, options.allowedParamKeys);
   if (options.endpointId === "tikhub.tiktok.user.profile") {
     if (cleanParams.username && !cleanParams.uniqueId) {
       cleanParams.uniqueId = cleanParams.username;
