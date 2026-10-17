@@ -997,7 +997,7 @@ export default function ChatWorkspacePage() {
         if (msg.planQuote?.quoteId === currentQuote.quoteId) {
           return {
             ...msg,
-            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${updatedQuote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${updatedQuote.quotedPoints} نقطة`,
+            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${formatAr(updatedQuote.targetVolumeMax)} سجل\n• التكلفة الإجمالية: ${formatAr(updatedQuote.quotedPoints)} نقطة`,
             planQuote: updatedQuote,
           };
         }
@@ -1576,7 +1576,7 @@ export default function ChatWorkspacePage() {
             conversationTitle={conversationTitle}
             onStart={handleStartExecution}
             onSaveEdit={handleSaveDirectEdit}
-            onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${units} سجل تناسب رصيدي المتاح`)}
+            onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
             isStarting={startingQuoteId === planMsg.planQuote.quoteId}
             available={balanceValue}
             creditValue={creditValue}

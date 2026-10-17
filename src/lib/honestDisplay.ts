@@ -247,7 +247,7 @@ export function methodologyMessageText(
 ): string {
   const charged = trustworthyAmount(chargedPoints);
   const balance = trustworthyAmount(remainingBalance);
-  const download = downloadUrl ? `\n\n[تحميل ملف المنهجية PDF](${downloadUrl})` : "";
+  const download = downloadUrl ? `\n\n[تحميل ملف المنهجية](${downloadUrl})` : "";
   if (charged === null || balance === null) {
     return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}${download}`;
   }

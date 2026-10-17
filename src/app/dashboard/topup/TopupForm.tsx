@@ -122,7 +122,7 @@ export default function TopupForm({
         id: data.topupId,
         amountEgp: amount,
         reference: data.reference || `rcpt_${data.topupId}`,
-        senderName: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "عميل Diger",
+        senderName: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "عميل ديجر",
         senderPhone: user.user_metadata?.phone || "غير مسجل",
         receiptFileId,
         status: "pending",
