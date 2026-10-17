@@ -523,6 +523,7 @@ export default function ChatWorkspacePage() {
 
       if (data.conversationId) {
         setConversationId(data.conversationId);
+        syncConversationUrl(data.conversationId);
         if (data.conversationTitle) setConversationTitle(customerFacingConversationTitle(data.conversationTitle));
         if (user) loadConversations();
       }
@@ -636,6 +637,7 @@ export default function ChatWorkspacePage() {
       ]);
       if (data.conversationId) {
         setConversationId(data.conversationId);
+        syncConversationUrl(data.conversationId);
         if (data.conversationTitle) setConversationTitle(customerFacingConversationTitle(data.conversationTitle));
       }
       loadConversations();
@@ -666,11 +668,22 @@ export default function ChatWorkspacePage() {
     }
   }
 
+  function syncConversationUrl(id: string | null, jobId?: string) {
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("c", id);
+    else url.searchParams.delete("c");
+    if (jobId) url.searchParams.set("jobId", jobId);
+    else url.searchParams.delete("jobId");
+    url.searchParams.delete("retry");
+    window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
+  }
+
   async function handleOpenConversation(id: string, targetJobId?: string) {
     if (!user || loading || conversationLoading) return;
     const sequence = ++conversationLoadSequence.current;
     setConversationLoading(true);
     closeHistoryPanel();
+    syncConversationUrl(id, targetJobId);
     setConversationLoadError(false);
     setConversationId(id);
     setConversationTitle(conversationsList.find((item) => item.$id === id)?.title ?? "");
@@ -856,6 +869,7 @@ export default function ChatWorkspacePage() {
     loadedResultJobs.current.clear();
     setCanvasOpen(false);
     setHistoryOpen(false);
+    syncConversationUrl(null);
     try {
       sessionStorage.removeItem("diger_active_job_id");
       sessionStorage.removeItem("diger_canvas_open");
