@@ -38,6 +38,7 @@ import {
 import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
+import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -430,7 +431,24 @@ export async function POST(req: NextRequest) {
     });
 
     const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
-    const rawRows = adapterResult.ok ? (adapterResult.rows || []) : [];
+    const providerRows = adapterResult.ok ? (adapterResult.rows || []) : [];
+    const requestedDateFrom = typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
+    const requestedDateTo = typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
+    const dateFiltered = filterRowsByDateRange(providerRows, requestedDateFrom, requestedDateTo);
+    const rawRows = dateFiltered.rows;
+    if (dateFiltered.excludedCount > 0) {
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: `تم استبعاد ${dateFiltered.excludedCount} سجل لوقوع تاريخه خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
+          units: currentDelivered,
+          event_type: "progress",
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+      }
+    }
 
     let filteredRows = rawRows;
     let duplicateExcludedCount = 0;

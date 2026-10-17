@@ -580,6 +580,15 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     }
   }
 
+  // Date filters are applied locally when a source only supports keyword
+  // search. Overfetch within the provider's safe limit so recent matches can
+  // still fill the requested sample after stale rows are removed.
+  const hasRequestedDateWindow =
+    typeof input.params?.dateFrom === "string" || typeof input.params?.dateTo === "string";
+  if (effectiveEndpointId === "crawl4ai.tiktok.search.videos" && hasRequestedDateWindow) {
+    pageParams.limit = Math.min(25, Math.max(input.pageSize, input.pageSize * 5));
+  }
+
   const isSingleAttemptCap =
     effectiveEndpointId === "tikhub.tiktok.user.profile" ||
     input.capabilitySlug === "tiktok-profile";
