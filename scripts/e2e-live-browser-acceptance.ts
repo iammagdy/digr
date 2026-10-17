@@ -1,7 +1,6 @@
 /**
  * Comprehensive End-to-End Live Browser Acceptance Test Suite for Diger
  * Live Target: https://diger.tech
- * Test User: iam.magdy@outlook.com / P@ssw0rd (UID: 47693c59-89f1-405d-bec1-e72271517870)
  *
  * Verifies all 10 acceptance criteria against the live production deployment:
  * 1. Greeting: name ("أهلاً يا مجدي") and points balance in < 4s (server) / < 8s (browser)
@@ -27,8 +26,8 @@ dotenv.config({ path: ".env.local" });
 import { createAdminClient } from "../src/lib/supabase/server";
 
 const BASE_URL = "https://diger.tech";
-const TEST_EMAIL = "iam.magdy@outlook.com";
-const TEST_PASSWORD = process.env.TEST_USER_PASSWORD || "P@ssw0rd";
+const TEST_EMAIL = process.env.DIGER_TEST_EMAIL || (() => { throw new Error("DIGER_TEST_EMAIL is required"); })();
+const TEST_PASSWORD = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
 const TEST_USER_ID = "47693c59-89f1-405d-bec1-e72271517870";
 const ARTIFACT_DIR = path.resolve("C:/Users/lenovo/.gemini/antigravity/brain/19ea4c3a-a1f7-4847-b3e0-723c199db4cf");
 const BROWSER_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
@@ -93,7 +92,6 @@ async function runAcceptanceSuite() {
   console.log("====================================================");
   console.log("🚀 Starting Diger Live E2E Acceptance Test Suite");
   console.log(`🌐 Target URL: ${BASE_URL}`);
-  console.log(`👤 Test Account: ${TEST_EMAIL}`);
   console.log(`🖥️ Browser Path: ${BROWSER_PATH}`);
   console.log(`📁 Artifacts Dir: ${ARTIFACT_DIR}`);
   console.log("====================================================\n");

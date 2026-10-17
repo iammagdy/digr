@@ -74,7 +74,7 @@ async function runPhase3Tests() {
   const emailUserA = `p3-user-a-${timestamp}@diger.test`;
   const emailUserB = `p3-user-b-${timestamp}@diger.test`;
   const emailAdmin = `p3-admin-${timestamp}@diger.test`;
-  const password = "Phase3SecurePassword123!";
+  const password = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
 
   let userAId = "";
   let userBId = "";

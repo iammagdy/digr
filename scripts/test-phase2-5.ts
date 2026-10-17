@@ -72,7 +72,7 @@ async function runPhase25Tests() {
   const emailUserA = `p25-user-a-${timestamp}@diger.test`;
   const emailUserB = `p25-user-b-${timestamp}@diger.test`;
   const emailAdmin = `p25-admin-${timestamp}@diger.test`;
-  const password = "Phase25SecurePassword123!";
+  const password = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
 
   let userAId = "";
   let userBId = "";
