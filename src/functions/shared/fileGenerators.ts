@@ -4,7 +4,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../lib/server/normalizationPipeline";
 import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
-import { extractCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
+import { localizeCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { arabicVerificationStatus } from "../../lib/contactVerification";
@@ -429,7 +429,7 @@ async function generateCompanyDataWorkbook(
     const rawCity = cleanCellText(r.city);
     const city = rawCity !== "غير متاح"
       ? localizeCityName(rawCity, String((norm.metadata as any).country || ""))
-      : extractCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || ""));
+      : localizeCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || ""));
     const website = r.website || r.website_url || r.domain || r.company_website || "";
     const linkedin = r.linkedin_url || r.linkedin || r.company_linkedin || "";
     const values: ExcelJS.CellValue[] = [
@@ -495,7 +495,7 @@ async function generateCompanyDataWorkbook(
         cleanCellText(branch.name || branch.title),
         branchCity !== "غير متاح"
           ? localizeCityName(branchCity, String((norm.metadata as any).country || ""))
-          : extractCityFromAddress(branchAddress === "غير متاح" ? "" : branchAddress, String((norm.metadata as any).country || "")),
+          : localizeCityFromAddress(branchAddress === "غير متاح" ? "" : branchAddress, String((norm.metadata as any).country || "")),
         branchAddress,
       ]);
     });

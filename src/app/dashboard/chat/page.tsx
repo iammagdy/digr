@@ -10,6 +10,7 @@ import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
 import { RETRY_SAME_PLAN_MESSAGE } from "@/lib/retryMessage";
+import { POST_APPROVAL_MESSAGE_AR } from "@/lib/postApproval";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
@@ -156,6 +157,15 @@ export default function ChatWorkspacePage() {
   const [extractedRecords, setExtractedRecords] = useState<ExtractedRecord[]>([]);
   const [extractedProfile, setExtractedProfile] = useState<any>(null);
   const loadedResultJobs = useRef(new Set<string>());
+  // The job currently on screen. Network replies for any other job (for example one started before «سؤال بحثي جديد») are dropped.
+  const activeJobIdRef = useRef<string | null>(null);
+  activeJobIdRef.current = activeJob?.jobId ?? null;
+  async function isStillActiveJob(jobId: string): Promise<boolean> {
+    if (activeJobIdRef.current === jobId) return true;
+    // Opening a finished file sets the job and loads its rows in the same tick; give the state one frame to settle.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    return activeJobIdRef.current === jobId;
+  }
   const lastNudgeAt = useRef(new Map<string, number>());
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [artifactEditing, setArtifactEditing] = useState(false);
@@ -320,10 +330,15 @@ export default function ChatWorkspacePage() {
         fetch(`/api/jobs/${jobId}/artifacts`),
       ]);
       const [dataJson, versionsJson] = await Promise.all([dataRes.json(), versionsRes.json()]);
+      if (!(await isStillActiveJob(jobId))) {
+        // The customer moved on (new research or another request): do not paint this job's rows into the new screen.
+        loadedResultJobs.current.delete(jobId);
+        return;
+      }
       if (dataJson.success) {
         if (dataJson.profile) setExtractedProfile(dataJson.profile);
         if (dataJson.rows && Array.isArray(dataJson.rows)) setExtractedRecords(dataJson.rows);
-        setActiveJob((previous) => previous ? {
+        setActiveJob((previous) => previous && previous.jobId === jobId ? {
           ...previous,
           review: dataJson.review || null,
           reviewSeverity: dataJson.runFacts?.severity,
@@ -331,7 +346,7 @@ export default function ChatWorkspacePage() {
           fileIds: dataJson.fileIds,
           versionHistory: versionsJson.success ? versionsJson.versions : [],
           artifactHistoryAvailable: versionsJson.success && versionsJson.historyAvailable,
-        } : null);
+        } : previous);
       }
     } catch (fetchErr) {
       console.warn("Failed to fetch real job data:", fetchErr);
@@ -393,7 +408,8 @@ export default function ChatWorkspacePage() {
         if (!jobDoc) return;
 
         setActiveJob((prev) => {
-          if (!prev) return null;
+          // A late reply for a job that is no longer the one on screen must not overwrite the current one.
+          if (!prev || prev.jobId !== activeJob.jobId) return prev;
           return {
             ...prev,
             status: toChatJobStatus(jobDoc.status),
@@ -1041,7 +1057,7 @@ export default function ChatWorkspacePage() {
         {
           id: `start_${Date.now()}`,
           role: "assistant",
-          content: "جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.",
+          content: POST_APPROVAL_MESSAGE_AR,
           jobId: data.jobId,
           createdAt: new Date().toISOString(),
         },

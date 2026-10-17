@@ -9,6 +9,7 @@ import { dayLabel } from "@/lib/dayLabel";
 import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
+import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 
@@ -35,27 +36,16 @@ interface RequestAttemptDoc {
   createdAt: string;
 }
 
-type Kind = "done" | "partial" | "running" | "refunded";
-const kindOfJob = (j: JobDoc): Kind => {
-  const s = String(j.status || "").toLowerCase();
-  const delivered = j.rowsCollected ?? 0;
-  if ((s === "failed" || s === "cancelled" || s === "refused") && delivered > 0) return "partial";
-  if (s === "failed" || s === "cancelled" || s === "refused") return "refunded";
-  if (s === "done" || s === "completed") {
-    const req = j.targetVolumeMax;
-    const delivered = j.rowsCollected ?? 0;
-    if (req && req > 0 && delivered < req) return "partial";
-    return "done";
-  }
-  return "running";
-};
+type Kind = RequestKind;
+const kindOfJob = (j: JobDoc): Kind =>
+  resolveRequestKind({ status: j.status, delivered: j.rowsCollected, requested: j.targetVolumeMax });
 const kindOfTab = (k: Kind): "done" | "running" | "refunded" => (k === "partial" ? "done" : k);
 
 const STATUS: Record<Kind, { label: string; fg: string; tint: string }> = {
-  done: { label: "مكتمل", fg: "var(--ok)", tint: "var(--ok)" },
-  partial: { label: "مكتمل جزئياً", fg: "var(--gold)", tint: "var(--gold)" },
-  running: { label: "قيد التنفيذ", fg: "var(--gold)", tint: "var(--gold)" },
-  refunded: { label: "تعذر التنفيذ · رصيدك مسترد", fg: "var(--mut)", tint: "var(--mut)" },
+  done: { label: REQUEST_STATUS_LABEL_AR.done, fg: "var(--ok)", tint: "var(--ok)" },
+  partial: { label: REQUEST_STATUS_LABEL_AR.partial, fg: "var(--gold)", tint: "var(--gold)" },
+  running: { label: REQUEST_STATUS_LABEL_AR.running, fg: "var(--gold)", tint: "var(--gold)" },
+  refunded: { label: REQUEST_STATUS_LABEL_AR.refunded, fg: "var(--mut)", tint: "var(--mut)" },
 };
 const TABS: Array<["all" | "done" | "running" | "refunded", string]> = [
   ["all", "الكل"],
@@ -282,14 +272,21 @@ export default function RequestsPage() {
   const jobStatusesKey = jobs.map((job) => `${job.$id}:${job.status}`).join("|");
   useEffect(() => {
     void load();
+    let ticks = 0;
     const t = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      ticks += 1;
       const activeJobs = jobs.filter((j) => j.status === "queued" || j.status === "running");
+      // Running requests refresh every 4 seconds; otherwise the list still refreshes every 16 seconds so a
+      // request started elsewhere (another tab, the chat) appears without a manual reload.
       if (activeJobs.length > 0) {
         void load();
         // Background progression support: nudge active jobs so they never stall even if chat tab is closed
         activeJobs.forEach((aj) => {
           void fetch(`/api/jobs/${aj.$id}/nudge`, { method: "POST" }).catch(() => {});
         });
+      } else if (ticks % 4 === 0) {
+        void load();
       }
     }, 4000);
     return () => clearInterval(t);
@@ -436,8 +433,8 @@ export default function RequestsPage() {
           const rows = j.rowsCollected ?? 0;
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
-            : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0)
-            : k === "partial" ? `توقف البحث بعد تسليم ${formatAr(rows)} من ${formatAr(requested || rows)} سجلاً؛ الخصم يقتصر على السجلات المسلّمة المطابقة.` : "";
+            : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
+            : k === "partial" ? partialDeliveryText(rows, requested || rows) : "";
           const availableFormats = (["xlsx", "pdf", "csv"] as const).filter(
             (ext) => Boolean(j.fileIds[ext]),
           );

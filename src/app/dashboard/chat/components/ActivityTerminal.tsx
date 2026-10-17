@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
+import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
 
 export interface TerminalEvent {
   $id: string;
@@ -116,7 +117,12 @@ export default function ActivityTerminal({
     }
   };
 
-  const phase = PHASE_LABELS[status] || PHASE_LABELS.running;
+  // A finished run is "مكتمل" only when the requested volume was delivered (shared with the requests list).
+  const finishedKind = status === "done" ? resolveRequestKind({ status, delivered: rowsCollected, requested: requestedRows }) : null;
+  const basePhase = PHASE_LABELS[status] || PHASE_LABELS.running;
+  const phase = finishedKind
+    ? { ...basePhase, label: REQUEST_STATUS_LABEL_AR[finishedKind], dotClass: finishedKind === "partial" ? "bg-gold" : basePhase.dotClass }
+    : basePhase;
 
   // Fallback initial event when events list is empty
   const displayEvents: TerminalEvent[] =
