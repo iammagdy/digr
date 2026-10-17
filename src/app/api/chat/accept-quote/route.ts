@@ -87,6 +87,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Replace the planning-history entry with the accepted job history entry.
+    try {
+      const { error: historyUpdateError } = await adminClient
+        .from("messages")
+        .update({ request_status: "accepted" })
+        .eq("user_id", user.id)
+        .eq("request_quote_id", quoteId);
+      if (historyUpdateError) throw historyUpdateError;
+    } catch (historyUpdateError: any) {
+      console.warn("[accept-quote:request_history_update_failed]", historyUpdateError?.message || "unknown_error");
+    }
+
     // Record initial activity event in job_events table
     try {
       await adminClient.from("job_events").insert({
