@@ -5,6 +5,8 @@ import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { getQuoteApprovalState } from "@/lib/quoteApprovalState";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
+import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
+import { socialSubjectForDisplay } from "@/lib/socialTasks";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -89,7 +91,7 @@ export function formatExpiry(expiresAt: string): string {
   }
 }
 
-const FORMAT_LABEL: Record<string, string> = { xlsx: "ملف Excel", pdf: "ملف PDF", csv: "ملف بيانات نصي" };
+const FORMAT_LABEL = CUSTOMER_FORMAT_LABEL_AR;
 
 /** «ينتهي العرض خلال ٢٨ دقيقة» */
 function expiryShort(expiresAt: string, now: number): string {
@@ -135,7 +137,9 @@ export default function PlanQuoteCard({
   const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
-  const titleTopic = socialContentTopicFromTitle(conversationTitle);
+  const titleTopic = isSocialContentPlan
+    ? socialSubjectForDisplay(conversationTitle, primaryItem?.params?.trending === true) || socialContentTopicFromTitle(conversationTitle)
+    : socialContentTopicFromTitle(conversationTitle);
   const displayIndustry = isPeoplePlan
     ? interpreted.industryAr
     : isSocialContentPlan
@@ -174,7 +178,7 @@ export default function PlanQuoteCard({
   const shortPts = Math.max(0, quote.quotedPoints - balance);
   const expectedPoints = quote.expectedPoints ?? Math.ceil(quote.unitPricePoints * quote.targetVolumeMax);
   const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
-  const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] ?? f.toUpperCase());
+  const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] || "ملف بيانات");
 
   function toggleFormat(fmt: string) {
     if (editFormats.includes(fmt)) {
@@ -284,7 +288,9 @@ export default function PlanQuoteCard({
             <span>{isPeoplePlan
               ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.`
               : isSocialContentPlan
-                ? `البحث عن ${isVideoPlan ? "الفيديوهات" : "المحتوى"} المنشور حول «${displayIndustry}» على المنصة المحددة.`
+                ? primaryItem?.params?.trending === true
+                  ? `البحث عن ${displayIndustry} على المنصة المحددة ضمن النطاق ${interpreted.countryAr}.`
+                  : `البحث عن ${isVideoPlan ? "الفيديوهات" : "المحتوى"} المنشور حول «${displayIndustry}» على المنصة المحددة.`
                 : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
           </li>
           <li className="flex items-start gap-2">
@@ -322,7 +328,7 @@ export default function PlanQuoteCard({
             key={fmt}
             className="inline-flex items-center gap-1 rounded-full border border-ln bg-sf2 px-2.5 py-1 text-ink text-[12px] font-medium"
           >
-            {FORMAT_LABEL[fmt] ?? fmt.toUpperCase()}
+            {FORMAT_LABEL[fmt] || "ملف بيانات"}
           </span>
         ))}
       </div>

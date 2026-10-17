@@ -34,6 +34,11 @@ describe("Country & Industry Detection and Matching", () => {
     expect(interpreted.isDefaultCountry).toBe(false);
   });
 
+  it("renders an explicit social region code as the plan country", () => {
+    const interpreted = extractInterpretedParameters({ query: "كرة السلة", region: "EG" }, "تعليقات عن كرة السلة");
+    expect(interpreted).toMatchObject({ countryAr: "مصر", countryCanonical: "Egypt", isDefaultCountry: false });
+  });
+
   it("localizes the English FinTech taxonomy in customer-facing cards", () => {
     expect(industryDisplayLabelAr("FinTech")).toBe("التقنية المالية");
   });

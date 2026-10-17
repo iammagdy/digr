@@ -4,6 +4,7 @@ import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager
 import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest, requiredProfessionalContactFields } from "../../lib/planParameters";
+import { customerConversationAnswer } from "../../lib/customerConversationCopy";
 
 // ================= Schema Definitions =================
 
@@ -1087,9 +1088,7 @@ export class LlmClient {
     // B2. Greetings & Casual Questions (Phase 1 fast path)
     const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(lastUserMsg);
     if (isGreeting || isGeneralQuestion) {
-      const answerText = isGreeting
-        ? "أهلاً بك! أنا مساعد Diger للبحث وجمع البيانات من المصادر المتاحة. كيف يمكنني مساعدتك اليوم؟"
-        : "أنا مساعد Diger، أساعدك في تصميم البحث وجمع البيانات من المصادر المتاحة وتسليمها في ملفات منظمة. كيف نبدأ؟";
+      const answerText = customerConversationAnswer(isGreeting);
       return {
         output: {
           type: "answer_question",

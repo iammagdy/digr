@@ -576,13 +576,14 @@ export function canonicalSocialParams(
 ): Record<string, any> {
   const params: Record<string, any> = {};
   const model = modelParams || {};
+  const country = detectCountryFromText(requestText);
+  const region = country ? isoCountryCodeFromName(country.canonicalEnglish) : undefined;
+  // Keep the customer's explicit country available to both region-aware routes and plan display.
+  if (region) params.region = region;
   if (intent.discover === "target" && intent.targetUrl) params.url = intent.targetUrl.url;
   else if (intent.discover === "channel" && intent.channelRef) params.channel = intent.channelRef;
   else if (intent.discover === "trending") {
     params.trending = true;
-    const country = detectCountryFromText(requestText);
-    const region = country ? isoCountryCodeFromName(country.canonicalEnglish) : undefined;
-    if (region) params.region = region;
   } else if (intent.discover === "keyword") {
     // The subject the customer named wins; a model-written query is only the fallback.
     const subject = socialSubjectText(requestText);
@@ -608,26 +609,30 @@ export function socialPlanSummaryAr(
   params: Record<string, any>,
   volume: number,
   formatNumber: (n: number) => string,
+  requestText?: string,
 ): string {
   const platform = PLATFORM_TITLE_AR[cap.platform] || "";
   const mode = resolveSocialMode(params);
   const what = cap.kind === "comments" ? "التعليقات" : cap.platform === "facebook" ? "المنشورات" : "الفيديوهات";
   const perVideo = Number(params.perVideo) > 0 ? Number(params.perVideo) : SOCIAL_COMMENTS_PER_VIDEO;
-  const per = cap.kind === "comments" && mode !== "url" ? `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو` : "";
+  const commentLimit = cap.kind === "comments" && mode !== "url"
+    ? `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو، و${formatNumber(volume)} تعليقاً إجمالاً`
+    : "";
+  const query = mode === "query" && requestText ? socialSubjectText(requestText) : String(params.query || "").trim();
   switch (mode) {
     case "url":
       return `سحب ${what} للرابط المحدد على ${platform}`;
     case "query":
       return cap.kind === "comments"
-        ? `سحب ${what} من فيديوهات ${platform} عن «${String(params.query).trim()}»${per}`
-        : `سحب ${what} على ${platform} عن «${String(params.query).trim()}»`;
+        ? `سحب ${what} من فيديوهات ${platform} عن «${query}»${commentLimit}`
+        : `سحب ${what} على ${platform} عن «${query}»`;
     case "channel":
       return cap.kind === "comments"
-        ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${per}`
+        ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${commentLimit}`
         : `سحب أحدث ${what} للقناة أو الصفحة المحددة على ${platform}`;
     case "trending":
       return cap.kind === "comments"
-        ? `سحب ${what} من الفيديوهات الرائجة على ${platform}${per}`
+        ? `سحب ${what} من الفيديوهات الرائجة على ${platform}${commentLimit}`
         : `سحب الفيديوهات الرائجة على ${platform}`;
     default:
       return `سحب ${what} من ${platform}`;

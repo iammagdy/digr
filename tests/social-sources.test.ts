@@ -17,7 +17,7 @@ import {
   tiktokVideoIdOf,
   type SocialSource,
 } from "../src/lib/socialSources";
-import { detectSocialIntent } from "../src/lib/socialTasks";
+import { detectSocialIntent, socialSubjectForDisplay } from "../src/lib/socialTasks";
 
 type CatalogEntry = { method: string; params: string[]; required: string[]; costUsd: number | null; okRate: number | null; samples: number | null };
 const live = catalog as Record<string, CatalogEntry>;
@@ -224,6 +224,8 @@ describe("a plan item says exactly one thing to collect", () => {
 
     const bySubject = detectSocialIntent("عايز ١٠٠ كومنت من فيديوهات عن القهوة على يوتيوب");
     expect(canonicalSocialParams(comments, bySubject, "عايز ١٠٠ كومنت من فيديوهات عن القهوة على يوتيوب", { query: "the whole sentence" })).toEqual({ query: "القهوة" });
+    const EgyptComments = detectSocialIntent("هات ١٠ كومنتس على فيديوهات تيك توك عن كرة السلة في مصر");
+    expect(canonicalSocialParams(comments, EgyptComments, "هات ١٠ كومنتس على فيديوهات تيك توك عن كرة السلة في مصر", {})).toMatchObject({ query: "كرة السلة", region: "EG" });
 
     const tiktok = getSocialCapability("social-tiktok-videos")!;
     const trending = detectSocialIntent("عايز ٢٠ فيديو ترند في السعودية على تيك توك");
@@ -259,6 +261,18 @@ describe("a plan item says exactly one thing to collect", () => {
     expect(lines[1]).toContain("«القهوة»");
     expect(lines[1]).toContain("٥٠");
     expect(lines[2]).toContain("الفيديوهات الرائجة");
+    const requestSummary = socialPlanSummaryAr(
+      getSocialCapability("social-tiktok-comments")!,
+      { query: "basketball Egypt", region: "EG" },
+      10,
+      fmt,
+      "هات ١٠ كومنتس على فيديوهات تيك توك عن كرة السلة في مصر",
+    );
+    expect(requestSummary).toContain("«كرة السلة»");
+    expect(requestSummary).toContain("١٠ تعليقاً إجمالاً");
+    expect(requestSummary).not.toContain("basketball");
+    expect(socialSubjectForDisplay("فيديوهات ترند تيك توك في مصر", true)).toBe("الفيديوهات الرائجة");
+    expect(socialSubjectForDisplay("تعليقات تيك توك عن كرة السلة في مصر")).toBe("كرة السلة");
   });
 });
 

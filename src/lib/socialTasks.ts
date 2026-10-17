@@ -334,3 +334,8 @@ export function socialSubjectText(text: string): string {
   if (hashtag) return hashtag.replace(/_/g, " ");
   return topicTokens(text).slice(0, 6).join(" ");
 }
+
+/** Customer-facing social subject; trending feeds are a task type rather than a keyword topic. */
+export function socialSubjectForDisplay(text: string, trending = false): string {
+  return trending ? "الفيديوهات الرائجة" : socialSubjectText(text);
+}

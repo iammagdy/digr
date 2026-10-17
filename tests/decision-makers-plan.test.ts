@@ -123,6 +123,11 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     expect(getDeterministicDiscoveryQuestion("5 شركات كهروميكانيكية مع صناع القرار وإيميلاتهم وأرقامهم", brief)?.id).toBe("people_country_required");
   });
 
+  it("does not ask for a company scope that is already named in plural Egyptian Arabic", () => {
+    const text = "عايز ٣ مديرين في شركات الطاقة في السعودية مع إيميلاتهم وأرقام مكاتبهم";
+    expect(getDeterministicDiscoveryQuestion(text, brief)).toBeNull();
+  });
+
   it("the plan card is created (never a refusal) and states which contact fields are expected and what is billed", async () => {
     const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
       userId: "user_dm",

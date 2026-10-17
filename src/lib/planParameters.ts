@@ -591,6 +591,7 @@ export function extractInterpretedParameters(
   const explicitCountry =
     detectCountryValue(queryCountry) ||
     detectCountryValue(params?.country) ||
+    detectCountryValue(params?.region) ||
     detectCountryValue(params?.location) ||
     detectCountryFromText(fullText);
 

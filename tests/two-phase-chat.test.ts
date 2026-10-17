@@ -172,7 +172,8 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
 
       expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
       expect(res.outputType).toBe("answer_question");
-      expect(res.contentAr).toContain("مساعد Diger");
+      expect(res.contentAr).toContain("مساعد ديجر");
+      expect(res.contentAr).not.toMatch(/[A-Za-z]/);
       expect(res.planQuote).toBeUndefined();
     });
   });

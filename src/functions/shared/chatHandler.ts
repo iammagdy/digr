@@ -120,6 +120,10 @@ function explicitCompanyClarificationNotes(notes?: string): string[] {
     .filter(Boolean);
 }
 
+function hasExplicitPeopleScope(text: string): boolean {
+  return /(?:نطاق صناع القرار\s*:|لدى|في\s+(?:شركة|شركات)|شركة محددة|اسم الشركات?|\b(?:company|companies|at)\s*[:=]?\s*)\s*\p{L}/iu.test(text);
+}
+
 export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
   const normalized = text || "";
   const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
@@ -133,7 +137,7 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
   }
   if (isPeople) {
     if (!detectCountryFromText(normalized)) return { id: "people_country_required", text: "في أي دولة تريد البحث عن صناع القرار؟", question: "في أي دولة تريد البحث عن صناع القرار؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true };
-    const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !/(?:نطاق صناع القرار\s*:|لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s*\p{L}/iu.test(normalized);
+    const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !hasExplicitPeopleScope(normalized);
     if (scopeMissing) return { id: "people_scope_required", text: "ما المجال أو الشركة التي تريد صناع القرار منها؟", question: "ما المجال أو الشركة التي تريد صناع القرار منها؟", type: "free", options: [], allowOther: true };
     if (!PEOPLE_ROLE_PATTERN.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
     if (!extractNumberFromText(normalized)) return { id: "people_count_required", text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true };
@@ -2357,7 +2361,7 @@ export class ChatHandler {
         const missingPeopleFields: string[] = [];
         if (peoplePlan) {
           if (!detectCountryFromText(requiredFieldsText)) missingPeopleFields.push("people_country_required");
-          const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !/\b(?:company|at)\s*[:=]|(?:لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s+\p{L}/iu.test(requiredFieldsText);
+          const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !hasExplicitPeopleScope(requiredFieldsText);
           if (scopeMissing) missingPeopleFields.push("people_scope_required");
           if (!PEOPLE_ROLE_PATTERN.test(requiredFieldsText)) {
             missingPeopleFields.push("people_roles_required");
@@ -2553,7 +2557,7 @@ export class ChatHandler {
         if (platformCheck.valid && planValidation.valid && planOutput) {
           if (verifiedSocialDef && planItems[0]) {
             // The goal line is written by the server so it always matches what will run.
-            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits);
+            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits, socialIntent.discover === "keyword" ? conversationRequestText : undefined);
           }
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
@@ -2621,7 +2625,7 @@ export class ChatHandler {
               planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
             }
           }
-          finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
+          finalContentAr = (!verifiedSocialDef && llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
             ? `${llmResult.textBlockAr}\n\n${planSummaryText}`
             : planSummaryText;
         }
