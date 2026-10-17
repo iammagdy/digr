@@ -60,7 +60,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, isoCountryCodeFromName, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
+import { PEOPLE_ROLE_PATTERN, detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, isoCountryCodeFromName, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
 import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
@@ -68,6 +68,7 @@ import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
+import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 
@@ -133,7 +134,7 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     if (!detectCountryFromText(normalized)) return { id: "people_country_required", text: "في أي دولة تريد البحث عن صناع القرار؟", question: "في أي دولة تريد البحث عن صناع القرار؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true };
     const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !/(?:نطاق صناع القرار\s*:|لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s*\p{L}/iu.test(normalized);
     if (scopeMissing) return { id: "people_scope_required", text: "ما المجال أو الشركة التي تريد صناع القرار منها؟", question: "ما المجال أو الشركة التي تريد صناع القرار منها؟", type: "free", options: [], allowOther: true };
-    if (!/\b(?:ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|presidents?|heads? of|vps?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة|مسؤول(?:ين)?/iu.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
+    if (!PEOPLE_ROLE_PATTERN.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
     if (!extractNumberFromText(normalized)) return { id: "people_count_required", text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true };
   }
   if (isCompanies) {
@@ -2297,7 +2298,7 @@ export class ChatHandler {
           if (!detectCountryFromText(requiredFieldsText)) missingPeopleFields.push("people_country_required");
           const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !/\b(?:company|at)\s*[:=]|(?:لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s+\p{L}/iu.test(requiredFieldsText);
           if (scopeMissing) missingPeopleFields.push("people_scope_required");
-          if (!/\b(?:ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|presidents?|heads? of|vps?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة|مسؤول(?:ين)?/iu.test(requiredFieldsText)) {
+          if (!PEOPLE_ROLE_PATTERN.test(requiredFieldsText)) {
             missingPeopleFields.push("people_roles_required");
           }
           if (!hasExplicitCount) missingPeopleFields.push("people_count_required");
@@ -2516,7 +2517,7 @@ export class ChatHandler {
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
             methodologyNotes: isPeopleSearchRequest(conversationRequestText)
-              ? `${planOutput.methodologyNotes || ""} البريد المهني ورقم الهاتف متوقعان عند توفرهما، وتظهر حالة التحقق لكل حقل. لا تُحتسب السجلات التي لا تتضمن بيانات التواصل المطلوبة.`.trim()
+              ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_BILLING_NOTE_AR}`.trim()
               : planOutput.methodologyNotes,
           };
 
@@ -2525,7 +2526,7 @@ export class ChatHandler {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
           if (isPeopleSearchRequest(conversationRequestText)) {
-            planSummaryText += "\n- بيانات التواصل المتوقعة: البريد المهني ورقم الهاتف عند توفرهما، مع حالة التحقق لكل حقل.";
+            planSummaryText += `\n- بيانات التواصل المتوقعة: ${CONTACT_EXPECTATION_AR}\n- ${CONTACT_BILLING_NOTE_AR}`;
           }
           if (reusedRowsForRetry > 0) {
             planSummaryText += `\n- إعادة استخدام: ${toArabicDigits(reusedRowsForRetry)} سجل جُمعت في المحاولة السابقة تُضاف إلى النتيجة، ويُجلب المتبقي فقط. السعر المعروض يغطي كامل العدد المطلوب، ولا يُخصم إلا ثمن السجلات المسلّمة فعلاً.`;

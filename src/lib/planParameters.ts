@@ -715,6 +715,12 @@ export function getCompanyRequirementItems(
   return items;
 }
 
+/**
+ * Decision-maker roles in a request: a specific title (CEO, مدير, مؤسس ...) or the generic phrase
+ * itself (صناع القرار, decision makers, executives), which already names who is wanted.
+ */
+export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع القرار|صانعي القرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
+
 export function isPeopleSearchRequest(text: string): boolean {
   const normalized = (text || "").toLowerCase();
   const explicitPeopleIntent = /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);

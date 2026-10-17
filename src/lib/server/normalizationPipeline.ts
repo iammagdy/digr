@@ -93,28 +93,28 @@ export function detectPlatform(text?: string): string {
     return "X (تويتر)";
   }
   if (str.includes("youtube")) {
-    return "يوتيوب (YouTube)";
+    return "يوتيوب";
   }
   if (str.includes("tiktok")) {
-    return "تيك توك (TikTok)";
+    return "تيك توك";
   }
   if (str.includes("facebook")) {
-    return "فيسبوك (Facebook)";
+    return "فيسبوك";
   }
   if (str.includes("instagram")) {
-    return "إنستغرام (Instagram)";
+    return "إنستغرام";
   }
   if (str.includes("google") || str.includes("serp")) {
-    return "جوجل (Google)";
+    return "جوجل";
   }
   if (str.includes("telegram")) {
-    return "تيليجرام (Telegram)";
+    return "تيليجرام";
   }
   if (str.includes("people") || str.includes("decision-maker") || str.includes("decision maker")) {
-    return "بيانات صناع القرار والمهنيين (People Search)";
+    return "بيانات صناع القرار والمهنيين";
   }
   if (str.includes("company") || str.includes("companies") || str.includes("b2b") || str.includes("icypeas")) {
-    return "قواعد بيانات الشركات والأعمال (B2B Databases)";
+    return "قواعد بيانات الشركات والأعمال";
   }
   return "مصادر متاحة";
 }
