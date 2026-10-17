@@ -18,7 +18,7 @@ import {
   extractTargetVolume,
 } from "../src/functions/shared/briefManager";
 import { Capability, resolveCapabilityReference, validatePlanPlatformMatch } from "../src/functions/shared/capabilityRegistry";
-import { socialContentTopicFromTitle } from "../src/lib/planParameters";
+import { socialContentTopicFromTitle, socialSearchQueryFromTitle } from "../src/lib/planParameters";
 
 describe("Live Data Extraction Gate & Provider Diagnostics", () => {
   const originalEnv = process.env;
@@ -33,6 +33,7 @@ describe("Live Data Extraction Gate & Provider Diagnostics", () => {
 
   it("derives a clean social search topic from the smart task title", () => {
     expect(socialContentTopicFromTitle("فيديوهات تريند كرة القدم على تيك توك", "مصر")).toBe("كرة القدم في مصر");
+    expect(socialSearchQueryFromTitle("فيديوهات تريند كرة القدم على تيك توك", "مصر")).toBe("football Egypt");
   });
 
   it("evaluates TREG_LIVE case-insensitively with trimming", () => {

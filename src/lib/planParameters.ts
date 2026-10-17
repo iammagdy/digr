@@ -294,6 +294,48 @@ export function socialContentTopicFromTitle(title: string, countryLabel?: string
   return topic;
 }
 
+/** TikTok's source search matches English terms much more reliably than Arabic. */
+export function socialSearchQueryFromTitle(title: string, countryLabel?: string): string {
+  const topic = socialContentTopicFromTitle(title, countryLabel);
+  if (!topic) return "";
+
+  const translations: Array<[RegExp, string]> = [
+    [/كرة\s*القدم|كورة\s*القدم|كوره\s*القدم|كرة\s*قدم/u, "football"],
+    [/كرة\s*السلة|باسكت/u, "basketball"],
+    [/كرة\s*الطائرة/u, "volleyball"],
+    [/رياضة|رياضي/u, "sports"],
+    [/طبخ|وصفات|مطبخ/u, "cooking recipes"],
+    [/ذكاء\s*اصطناعي|ذكاء\s*صناعي|الذكاء\s*الاصطناعي/u, "artificial intelligence"],
+    [/سيارات|عربيات/u, "cars"],
+    [/موضة|أزياء|ازياء/u, "fashion"],
+    [/موسيقى|اغاني|أغاني/u, "music"],
+    [/ألعاب|العاب|جيمينج|قيمنج/u, "gaming"],
+    [/سياحة|سفر|رحلات/u, "travel"],
+    [/تعليم|دراسة|دراسه/u, "education"],
+    [/تقنية|تكنولوجيا|برمجة|برمجه/u, "technology"],
+    [/أخبار|اخبار/u, "news"],
+  ];
+  const matched = translations.find(([pattern]) => pattern.test(topic));
+  if (!matched) return topic;
+
+  const countryEnglish: Record<string, string> = {
+    "مصر": "Egypt",
+    "المملكة العربية السعودية": "Saudi Arabia",
+    "الإمارات العربية المتحدة": "United Arab Emirates",
+    "المملكة المتحدة": "United Kingdom",
+    "الولايات المتحدة": "United States",
+    "ألمانيا": "Germany",
+    "فرنسا": "France",
+    "الكويت": "Kuwait",
+    "قطر": "Qatar",
+    "الأردن": "Jordan",
+    "البحرين": "Bahrain",
+    "سلطنة عمان": "Oman",
+  };
+  const englishCountry = countryLabel ? countryEnglish[countryLabel] : undefined;
+  return [matched[1], englishCountry].filter(Boolean).join(" ");
+}
+
 export function isCompanyRowMatchingLocation(row: Record<string, any>, expectedCountryCanonical?: string | null): boolean {
   if (!expectedCountryCanonical) return true;
   const targetLower = expectedCountryCanonical.toLowerCase().trim();

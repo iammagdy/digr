@@ -58,7 +58,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, socialContentTopicFromTitle } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, socialSearchQueryFromTitle } from "../../lib/planParameters";
 import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
@@ -2053,7 +2053,7 @@ export class ChatHandler {
             }
             if (schema?.properties?.query?.type === "string") {
               const requestCountry = detectCountryFromText(conversationRequestText);
-              const topic = socialContentTopicFromTitle(
+              const topic = socialSearchQueryFromTitle(
                 typeof planOutput.conversationTitle === "string" ? planOutput.conversationTitle : "",
                 requestCountry?.arabicLabel,
               );
