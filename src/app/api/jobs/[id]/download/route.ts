@@ -111,13 +111,13 @@ export async function GET(
     let country = "الدولة غير محددة";
     let industry = "النشاط غير محدد";
     const isUsefulIndustryLabel = (label?: string) => Boolean(
-      label && label !== "قواعد بيانات الشركات" && !/دليل|المصادر|مصادر متاحة|أعادت|التي|results?|dataset/i.test(label)
+      label && label !== "قواعد بيانات الشركات" && !/دليل|المصادر|مصادر متاحة|أعادت|التي|results?|dataset|icypeas|endpoint|provider|search/i.test(label)
     );
     const count = job.delivered_units || job.rows_collected || job.target_volume_max || 1;
     const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
 
     const paramsText = typeof job.params === "string" ? job.params : JSON.stringify(job.params || {});
-    const sourceText = `${originalRequestText} ${job.brief || ""} ${job.search_query || ""} ${paramsText} ${job.endpoint_id || ""} ${job.template_slug || ""}`;
+    const sourceText = `${originalRequestText} ${job.brief || ""} ${job.search_query || ""} ${paramsText}`;
     const detectedC = detectCountryFromText(sourceText);
     if (detectedC?.arabicLabel) {
       country = detectedC.arabicLabel;
@@ -215,8 +215,6 @@ export async function GET(
         const firstRow = Array.isArray(savedPayload?.rows) ? savedPayload.rows[0] : null;
         const metadataText = [
           originalRequestText,
-          metadata.title,
-          metadata.description,
           metadata.scope?.country,
           metadata.scope?.industry,
           metadata.country,
