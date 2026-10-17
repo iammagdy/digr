@@ -4,6 +4,7 @@ import { createServerSideClient, createAdminClient } from "@/lib/supabase/server
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
 import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
+import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,7 @@ export async function GET(
     // File formats can be generated later from the saved dataset, even when
     // the customer did not choose them before the search.
     let quoteSummary: string | null = null;
+    let originalRequestText = "";
     try {
       const { data: quoteRows } = await adminClient
         .from("plans_quotes")
@@ -71,6 +73,30 @@ export async function GET(
         return quoteId && (`job_quote_${createHash("md5").update(quoteId).digest("hex")}` === jobId || quoteId === jobId);
       });
       if (quote && typeof quote.summary_ar === "string") quoteSummary = quote.summary_ar;
+      if (quote?.id) {
+        const { data: quoteMessages } = await adminClient
+          .from("messages")
+          .select("conversation_id")
+          .eq("user_id", job.user_id)
+          .eq("quote->>quoteId", quote.id)
+          .not("quote", "is", null)
+          .limit(1);
+        const conversationId = quoteMessages?.[0]?.conversation_id;
+        if (conversationId) {
+        const { data: messages } = await adminClient
+          .from("messages")
+          .select("content_ar, role, created_at")
+          .eq("user_id", job.user_id)
+          .eq("conversation_id", conversationId)
+          .eq("role", "user")
+          .order("created_at", { ascending: true });
+        const originalMessage = (messages || []).find((message: any) =>
+          typeof message.content_ar === "string" &&
+          customerFacingConversationTitle(message.content_ar) !== "محادثة جديدة"
+        );
+        originalRequestText = typeof originalMessage?.content_ar === "string" ? originalMessage.content_ar : "";
+        }
+      }
     } catch {
       // Existing artifact links remain available when quote history is unavailable.
     }
@@ -88,7 +114,7 @@ export async function GET(
     const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
 
     const paramsText = typeof job.params === "string" ? job.params : JSON.stringify(job.params || {});
-    const sourceText = `${job.brief || ""} ${job.search_query || ""} ${paramsText} ${job.template_slug || ""}`;
+    const sourceText = `${originalRequestText} ${job.brief || ""} ${job.search_query || ""} ${paramsText} ${job.endpoint_id || ""} ${job.template_slug || ""}`;
     const detectedC = detectCountryFromText(sourceText);
     if (detectedC?.arabicLabel) {
       country = detectedC.arabicLabel;
@@ -99,11 +125,11 @@ export async function GET(
     }
 
     let isCompanyJob = /company|compan|companies|\bB2B\b|شركة|شركات|مقاولات|مؤسسات/i.test(
-      [job.platform, job.endpoint_id, job.capability_slug, job.template_slug, job.title, job.brief, job.search_query, paramsText, quoteSummary]
+      [originalRequestText, job.platform, job.endpoint_id, job.capability_slug, job.template_slug, job.title, job.brief, job.search_query, paramsText, quoteSummary]
         .filter(Boolean).join(" ")
     );
 
-    const titleSource = String(quoteSummary || job.title || job.brief || job.search_query || "نتائج البحث").trim();
+    const titleSource = String(originalRequestText || job.title || job.brief || job.search_query || quoteSummary || "نتائج البحث").trim();
     let downloadFileName = isCompanyJob
       ? `${industry} في ${country} - ${count} شركة - ${date}.${format}`
       : `${titleSource.slice(0, 64)} - ${count} سجل - ${date}.${format}`;
@@ -185,6 +211,7 @@ export async function GET(
         const metadata = savedPayload?.metadata || {};
         const firstRow = Array.isArray(savedPayload?.rows) ? savedPayload.rows[0] : null;
         const metadataText = [
+          originalRequestText,
           metadata.title,
           metadata.description,
           metadata.scope?.country,
@@ -197,7 +224,7 @@ export async function GET(
         );
         if (isCompanyJob) {
           const savedCountry = detectCountryFromText(metadataText);
-          const savedIndustry = detectIndustryFromText(metadataText);
+          const savedIndustry = detectIndustryFromText(originalRequestText || metadataText);
           if (savedCountry?.arabicLabel) country = savedCountry.arabicLabel;
           if (savedIndustry?.arabicLabel && savedIndustry.arabicLabel !== "قواعد بيانات الشركات") {
             industry = savedIndustry.arabicLabel;
