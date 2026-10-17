@@ -25,7 +25,7 @@ import { getCachedCatalogEndpoints } from "./catalogClient";
 import { getEndpointDetails } from "./catalogClient";
 import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "./providerSpend";
 import { callAtomicOrFallback } from "./atomicRpc";
-import { decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
+import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 
 // ================= Schemas for Strict Plan Editing =================
@@ -701,9 +701,7 @@ export async function createAndSaveManagedQuote(
         throw new Error("تعذر التحقق من أسعار السجل وحقول التواصل في كتالوج المصادر.");
       }
       const contactUnitPricesPoints: ContactUnitPricesPoints = {
-        basePerson: calculateCapabilityUnitPricePoints(baseCatalogPriceUsd, effectivePricing),
-        workEmail: calculateCapabilityUnitPricePoints(emailCatalog.catalogPriceUsd, effectivePricing),
-        phone: calculateCapabilityUnitPricePoints(phoneCatalog.catalogPriceUsd, effectivePricing),
+        ...DECISION_MAKER_UNIT_PRICES_POINTS,
       };
       effectiveItemUnitPrice = decisionMakerQuotePoints(
         1, requestedFields, contactUnitPricesPoints, 0, Number.MAX_SAFE_INTEGER,
@@ -775,20 +773,16 @@ export async function createAndSaveManagedQuote(
     }
   }
 
-  // Settlement is capped, so keep both the visible charge and the 15% reserve within that same cap.
-  // Scale all items proportionally, then shave any rounding overflow from the highest-priced item.
+  // Decision-maker quotes cap the customer charge first, then cap the buffered
+  // reserve. Other capabilities retain the existing reserve-based volume cap.
   let pointsCapConstrained = false;
-  const reservationTotal = () => plan.items.reduce((sum, item) => {
-    const raw = item.targetVolumeMax * (item.unitPricePoints || 1);
-    return sum + Math.max(1, Math.ceil(raw * (1 + effectivePricing.safetyBuffer)));
-  }, 0);
-  if (reservationTotal() > pointsCap) {
-    pointsCapConstrained = true;
-    const ratio = pointsCap / reservationTotal();
+  const rawChargeTotal = () => plan.items.reduce((sum, item) => sum + item.targetVolumeMax * (item.unitPricePoints || 1), 0);
+  const peopleOnlyPlan = plan.items.length === 1 && plan.items[0].capabilitySlug === "professional-people-search";
+  const resizeVolumeToRawCap = () => {
+    const ratio = pointsCap / rawChargeTotal();
     for (const item of plan.items) item.targetVolumeMax = Math.max(1, Math.floor(item.targetVolumeMax * ratio));
-    while (reservationTotal() > pointsCap) {
-      const reducible = plan.items
-        .filter((item) => item.targetVolumeMax > 1)
+    while (rawChargeTotal() > pointsCap) {
+      const reducible = plan.items.filter((item) => item.targetVolumeMax > 1)
         .sort((a, b) => (b.unitPricePoints || 1) - (a.unitPricePoints || 1))[0];
       if (!reducible) throw new Error("الحد الأدنى للخطة يتجاوز سقف النقاط للمهمة؛ يرجى تقليل عدد السجلات.");
       reducible.targetVolumeMax -= 1;
@@ -803,6 +797,47 @@ export async function createAndSaveManagedQuote(
       totalRawPoints += item.rawPoints;
       totalQuotedPoints += item.itemReservation;
       totalVolumeMax += item.targetVolumeMax;
+    }
+  };
+  if (peopleOnlyPlan) {
+    if (rawChargeTotal() > pointsCap) {
+      pointsCapConstrained = true;
+      resizeVolumeToRawCap();
+    }
+    if (totalQuotedPoints > pointsCap) {
+      pointsCapConstrained = true;
+      // One decision-maker item has one reserve field; cap that hold without
+      // reducing an otherwise affordable number of delivered people.
+      plan.items[0].itemReservation = pointsCap;
+      plan.items[0].reservedPoints = pointsCap;
+      totalQuotedPoints = pointsCap;
+    }
+  } else {
+    const reservationTotal = () => plan.items.reduce((sum, item) => {
+      const raw = item.targetVolumeMax * (item.unitPricePoints || 1);
+      return sum + Math.max(1, Math.ceil(raw * (1 + effectivePricing.safetyBuffer)));
+    }, 0);
+    if (reservationTotal() > pointsCap) {
+      pointsCapConstrained = true;
+      const ratio = pointsCap / reservationTotal();
+      for (const item of plan.items) item.targetVolumeMax = Math.max(1, Math.floor(item.targetVolumeMax * ratio));
+      while (reservationTotal() > pointsCap) {
+        const reducible = plan.items.filter((item) => item.targetVolumeMax > 1)
+          .sort((a, b) => (b.unitPricePoints || 1) - (a.unitPricePoints || 1))[0];
+        if (!reducible) throw new Error("الحد الأدنى للخطة يتجاوز سقف النقاط للمهمة؛ يرجى تقليل عدد السجلات.");
+        reducible.targetVolumeMax -= 1;
+      }
+      totalRawPoints = 0;
+      totalQuotedPoints = 0;
+      totalVolumeMax = 0;
+      for (const item of plan.items) {
+        item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
+        item.itemReservation = Math.max(1, Math.ceil(item.rawPoints * (1 + effectivePricing.safetyBuffer)));
+        item.reservedPoints = item.itemReservation;
+        totalRawPoints += item.rawPoints;
+        totalQuotedPoints += item.itemReservation;
+        totalVolumeMax += item.targetVolumeMax;
+      }
     }
   }
 

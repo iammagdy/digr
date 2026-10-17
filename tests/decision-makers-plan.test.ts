@@ -108,8 +108,8 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     expect(res.contentAr).not.toMatch(/لا أستطيع|غير متاحة حالياً/);
     expect(res.planQuote.items[0].capabilitySlug).toBe("professional-people-search");
     expect(res.planQuote.items[0].targetVolumeMax).toBeLessThanOrEqual(5);
-    expect(res.planQuote.items[0].contactUnitPricesPoints).toEqual({ basePerson: 28, workEmail: 28, phone: 28 });
-    expect(res.planQuote.items[0].unitPricePoints).toBe(84);
+    expect(res.planQuote.items[0].contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
+    expect(res.planQuote.items[0].unitPricePoints).toBe(193);
     expect(res.planQuote.items[0].params.country).toBe("EG");
     expect(res.planQuote.methodologyNotes).toContain(CONTACT_EXPECTATION_AR);
     // Customer text never names a provider, an endpoint, a currency in dollars or an English word.
@@ -125,6 +125,6 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     });
     const q = res.planQuote;
     expect(q.expectedPoints).toBe(q.unitPricePoints * q.targetVolumeMax);
-    expect(q.quotedPoints).toBe(Math.ceil(q.expectedPoints * 1.15));
+    expect(q.quotedPoints).toBe(Math.min(600, Math.ceil(q.expectedPoints * 1.15)));
   });
 });

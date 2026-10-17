@@ -5,6 +5,15 @@ export interface ContactUnitPricesPoints {
   phone: number;
 }
 
+/** Customer prices for the decision-maker capability, in points per delivered unit.
+ * Keep these prices independent from the lower-cost email/phone lookup routes.
+ */
+export const DECISION_MAKER_UNIT_PRICES_POINTS: Readonly<ContactUnitPricesPoints> = Object.freeze({
+  basePerson: 83,
+  workEmail: 55,
+  phone: 55,
+});
+
 export function decisionMakerDeliveredUnits(rows: Record<string, unknown>[], requestedFields: ContactField[]) {
   const requested = new Set(requestedFields);
   let baseUnits = 0;

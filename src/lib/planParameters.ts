@@ -39,6 +39,19 @@ const ISO_3166_ALPHA2_CODES = "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ B
 const countryNamesEn = new Intl.DisplayNames(["en"], { type: "region" });
 const countryNamesAr = new Intl.DisplayNames(["ar"], { type: "region" });
 
+function detectCountryValue(value: unknown): CountryMapping | null {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const named = detectCountryFromText(text);
+  if (named) return named;
+  if (!/^[A-Z]{2}$/i.test(text)) return null;
+  const code = text.toUpperCase();
+  const english = countryNamesEn.of(code);
+  const arabic = countryNamesAr.of(code);
+  if (!english || english.toUpperCase() === code || !arabic || arabic.toUpperCase() === code) return null;
+  return { canonicalEnglish: english, arabicLabel: arabic };
+}
+
 export function isoCountryCodeFromName(countryName: string): string | undefined {
   const normalized = String(countryName || "").trim().toLowerCase();
   return ISO_3166_ALPHA2_CODES.find((code) => countryNamesEn.of(code)?.toLowerCase() === normalized);
@@ -576,9 +589,9 @@ export function extractInterpretedParameters(
     .join(" ");
 
   const explicitCountry =
-    detectCountryFromText(queryCountry || "") ||
-    detectCountryFromText(params?.country || "") ||
-    detectCountryFromText(params?.location || "") ||
+    detectCountryValue(queryCountry) ||
+    detectCountryValue(params?.country) ||
+    detectCountryValue(params?.location) ||
     detectCountryFromText(fullText);
 
   const industry = isPeopleSearch

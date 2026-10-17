@@ -247,7 +247,9 @@ export default function PlanQuoteCard({
 
       {quote.pointsCapConstrained && (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
-          تم ضبط العدد من {formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى {formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف {formatAr(quote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.
+          {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
+            ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`
+            : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${formatAr(quote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`} يمكنك تقليل العدد أكثر إذا أردت.
         </p>
       )}
 
@@ -288,7 +290,7 @@ export default function PlanQuoteCard({
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٢.</span>
             <span>{isPeoplePlan
-              ? "تنظيم الأسماء والمسميات الوظيفية وبيانات بريد العمل عند توافرها."
+              ? "تنظيم الأسماء والمسميات الوظيفية والبريد الإلكتروني المهني والهاتف المكتبي عند توافر كل حقل."
               : isSocialContentPlan
                 ? `فرز النتائج حسب صلتها بموضوع «${displayIndustry}» والفترة الزمنية المطلوبة.`
                 : isCompanyPlan
@@ -298,7 +300,7 @@ export default function PlanQuoteCard({
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٣.</span>
             <span>{isPeoplePlan
-              ? "توضيح ما إذا كانت حقول الاسم والمسمى والبريد موجودة في السجل؛ لا يعني ذلك تحققًا مستقلًا منها."
+              ? "توضيح حالة توفر الاسم والمسمى والبريد الإلكتروني المهني والهاتف المكتبي؛ لا يعني ذلك تحققًا مستقلًا من الحقول."
               : isSocialContentPlan
                 ? "إزالة النتائج المكررة وتنظيم الروابط والتواريخ والبيانات المتاحة في المصدر."
                 : isCompanyPlan

@@ -116,6 +116,37 @@ describe("decision-maker settlement readiness", () => {
     }
   });
 
+  it("prices three people at 579 points and caps only the buffered reserve at 600", async () => {
+    const client = makeQuoteClient(async (name, args) => name === "settle_people_job_atomic"
+      ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
+      : { data: null, error: { code: "PGRST202", message: "Could not find the function" } });
+    const quote = await createAndSaveManagedQuote(client as any, {
+      conversationId: "offline-three-people",
+      userId: "offline-test-user",
+      plan: {
+        summaryAr: "ثلاثة صناع قرار في مصر",
+        items: [{
+          capabilitySlug: "professional-people-search",
+          endpointId: "treg.people.search",
+          params: { requiredContactFields: ["work_email", "phone"], country: "EG" },
+          targetVolumeMin: 3,
+          targetVolumeMax: 3,
+        }],
+        outputFormats: ["xlsx"],
+      },
+      userBalance: 1000,
+      capabilities: [peopleCapability],
+      pricingSettings: DEFAULT_PRICING_SETTINGS,
+    });
+    expect((quote.items[0] as any).contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
+    expect(quote.items[0].unitPricePoints).toBe(193);
+    expect(quote.expectedPoints).toBe(579);
+    expect(quote.targetVolumeMax).toBe(3);
+    expect(quote.quotedPoints).toBe(600);
+    expect(quote.pointsCapConstrained).toBe(true);
+    expect(client.insertedQuotes[0].total_reserved_credits).toBe(600);
+  });
+
   it("refuses to create a decision-maker quote before field settlement is installed", async () => {
     const client = makeQuoteClient(async () => ({
       data: null,

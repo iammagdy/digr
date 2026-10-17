@@ -40,6 +40,8 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
     expect(card).toContain("موجودًا أو غير موجود في السجل");
     expect(card).toContain("وجود البريد لا يعني التحقق من صحته");
+    expect(card).toContain("البريد الإلكتروني المهني والهاتف المكتبي");
+    expect(card).toContain("حالة توفر الاسم والمسمى والبريد الإلكتروني المهني والهاتف المكتبي");
     expect(card).not.toContain("متحقق / غير متاح");
     expect(card).not.toContain("حالة التحقق لكل حقل");
   });
