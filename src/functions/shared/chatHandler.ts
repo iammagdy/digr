@@ -58,7 +58,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, socialContentTopicFromTitle } from "../../lib/planParameters";
 import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
@@ -2045,11 +2045,27 @@ export class ChatHandler {
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
           const capability = resolveCapabilityReference(item.capabilitySlug, validationCaps) ||
             (item.endpointId ? resolveCapabilityReference(item.endpointId, validationCaps) : undefined);
+          let params = item.params;
+          if (capability && /tiktok.*search.*videos|videos.*search.*tiktok/i.test(`${capability.slug} ${capability.tregEndpointId || capability.id}`)) {
+            let schema: any = capability.paramsSchema;
+            if (typeof schema === "string") {
+              try { schema = JSON.parse(schema); } catch { schema = {}; }
+            }
+            if (schema?.properties?.query?.type === "string") {
+              const requestCountry = detectCountryFromText(conversationRequestText);
+              const topic = socialContentTopicFromTitle(
+                typeof planOutput.conversationTitle === "string" ? planOutput.conversationTitle : "",
+                requestCountry?.arabicLabel,
+              );
+              if (topic) params = { ...params, query: topic };
+            }
+          }
           return capability
             ? {
                 ...item,
                 capabilitySlug: capability.slug || capability.id || item.capabilitySlug,
                 endpointId: capability.tregEndpointId || capability.id || capability.slug || item.endpointId || item.capabilitySlug,
+                params,
               }
             : item;
         });

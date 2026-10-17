@@ -104,7 +104,7 @@ const SECONDARY_BTN =
 const EDIT_PLAN_BTN_LABEL = "تعديل الخطة";
 export const _LEGACY_EDIT_BTN_LABEL = "تعديل";
 
-import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr } from "@/lib/planParameters";
+import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr, socialContentTopicFromTitle } from "@/lib/planParameters";
 export { extractParamDisplayString, extractInterpretedParameters };
 
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
@@ -131,18 +131,14 @@ export default function PlanQuoteCard({
   const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
-  const titleTopic = conversationTitle
-    .replace(/^(?:فيديوهات?|مقاطع?|منشورات?|محتوى)\s*/u, "")
-    .replace(/^(?:تريند|ترند|رائجة|شائعة)\s*/u, "")
-    .replace(/\s+(?:على|في|من)\s+(?:تيك\s*توك|tiktok|يوتيوب|youtube|انستغرام|إنستغرام|instagram|فيسبوك|facebook|تويتر|twitter|reddit).*$/iu, "")
-    .trim();
+  const titleTopic = socialContentTopicFromTitle(conversationTitle);
   const displayIndustry = isPeoplePlan
     ? interpreted.industryAr
     : isSocialContentPlan
       ? (titleTopic || initialParam || "الموضوع المطلوب")
       : industryDisplayLabelAr(interpreted.industryAr);
   const scopeLabel = isPeoplePlan ? "نوع البحث:" : isSocialContentPlan ? "موضوع المحتوى:" : "النشاط / التخصص:";
-  const [editParamVal, setEditParamVal] = useState(initialParam);
+  const [editParamVal, setEditParamVal] = useState(isSocialContentPlan ? displayIndustry : initialParam);
   const [editCountry, setEditCountry] = useState(interpreted.countryAr);
   const [editIndustry, setEditIndustry] = useState(displayIndustry);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
@@ -155,7 +151,7 @@ export default function PlanQuoteCard({
     const pItem = quote.items?.[0];
     const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
     const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
-    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
+    setEditParamVal(isSocialContentPlan ? displayIndustry : extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
     setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
     setEditLimit(quote.targetVolumeMax || 1);
@@ -187,7 +183,7 @@ export default function PlanQuoteCard({
     const pItem = quote.items?.[0];
     const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
     const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
-    setEditParamVal(extractParamDisplayString(pItem?.params, quote.summaryAr, people));
+    setEditParamVal(isSocialContentPlan ? displayIndustry : extractParamDisplayString(pItem?.params, quote.summaryAr, people));
     setEditCountry(inter.countryAr);
     setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
     setEditLimit(quote.targetVolumeMax || 1);

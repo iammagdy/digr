@@ -278,6 +278,22 @@ export function industryDisplayLabelAr(label: string): string {
   return label;
 }
 
+/** Pull the searchable subject out of a generated social/video task title. */
+export function socialContentTopicFromTitle(title: string, countryLabel?: string): string {
+  let topic = String(title || "")
+    .replace(/^(?:اجمع|جمع|استخرج|هات|أظهر|ابحث\s+عن)\s+(?:[٠-٩0-9]+\s+)?/u, "")
+    .replace(/^(?:فيديوهات?|مقاطع?|منشورات?|محتوى)\s*/u, "")
+    .replace(/^(?:تريند|ترند|رائجة|شائعة)\s*/u, "")
+    .replace(/\s+(?:على|في|من)\s+(?:تيك\s*توك|tiktok|يوتيوب|youtube|انستغرام|إنستغرام|instagram|فيسبوك|facebook|تويتر|twitter|reddit).*$/iu, "")
+    .replace(/^(?:تيك\s*توك|tiktok|يوتيوب|youtube|انستغرام|إنستغرام|instagram|فيسبوك|facebook|تويتر|twitter|reddit)\s+/iu, "")
+    .trim();
+
+  if (countryLabel && topic && !topic.toLocaleLowerCase().includes(countryLabel.toLocaleLowerCase())) {
+    topic = `${topic} في ${countryLabel}`;
+  }
+  return topic;
+}
+
 export function isCompanyRowMatchingLocation(row: Record<string, any>, expectedCountryCanonical?: string | null): boolean {
   if (!expectedCountryCanonical) return true;
   const targetLower = expectedCountryCanonical.toLowerCase().trim();
