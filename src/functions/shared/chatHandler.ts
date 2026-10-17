@@ -117,7 +117,7 @@ function explicitCompanyClarificationNotes(notes?: string): string[] {
     .filter(Boolean);
 }
 
-function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
+export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
   const normalized = text || "";
   const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
   const isPeople = isPeopleSearchRequest(normalized);
