@@ -317,6 +317,12 @@ describe("Phase 6: Stuck 5-point reservation & watchdog recovery", () => {
     expect(memTables.createRowCalls).toHaveLength(0);
     expect(memTables.updateRowCalls).toHaveLength(0);
 
+    // The report must never tell anyone to write ledger rows by hand: money moves only through approved functions.
+    const steps = report.safeReleaseStepsAr.join("\n");
+    expect(steps).not.toMatch(/Custom Document ID|أنشئ صفًا|delta=/);
+    expect(steps).toContain("release_job_atomic");
+    expect(steps).toContain("لا تنشئ ولا تعدّل أي صف في credit_ledger يدويًا");
+
     const appwriteConfig = JSON.parse(readFileSync("appwrite.json", "utf8"));
     const jobWorkerFn = appwriteConfig.functions.find((f: any) => f.$id === "job-worker");
     expect(jobWorkerFn?.schedule).toBe("*/10 * * * *");
