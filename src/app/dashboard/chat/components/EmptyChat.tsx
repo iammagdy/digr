@@ -47,7 +47,7 @@ export default function EmptyChat({
       <img src="/brand/diger-app-icon.svg" alt="" className="block h-10 w-10 rounded-xl" />
       <div>
         <h2 className="m-0 font-display font-medium leading-[1.2] text-ink" style={{ fontSize: "clamp(26px,4cqi,34px)" }}>
-          أهلًا {firstName}، بماذا نبدأ؟
+          {firstName ? `أهلًا ${firstName}، بماذا نبدأ؟` : "أهلًا بك، بماذا نبدأ؟"}
         </h2>
         <p className="mb-0 mt-2.5 text-[15px] font-light leading-[1.9] text-mut">
           اختر قالباً للتعديل عليه أو اكتب سؤالك البحثي بالعربية، وسنحدد التفاصيل والسعر معًا قبل أي جمع.

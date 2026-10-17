@@ -138,7 +138,11 @@ describe("Data Normalization Pipeline Suite", () => {
       const norm = normalizeRecord(rawCustom, 0);
       expect(norm.company_name).toBe("Recycling Co");
       expect(norm.city).toBe("Cairo");
-      expect(norm.phone).toBe("'+201000000000"); // Sanitized because starts with +
+      // A plain phone number cannot be a formula, so it is delivered without a leading apostrophe (owner requirement).
+      expect(norm.phone).toBe("+201000000000");
+      // A value that could be a formula is still neutralized.
+      expect(normalizeRecord({ company_name: "=HYPERLINK(\"http://x\")", phone: "+cmd|calc" }, 1).company_name).toBe("'=HYPERLINK(\"http://x\")");
+      expect(normalizeRecord({ company_name: "A", phone: "+cmd|calc" }, 2).phone).toBe("'+cmd|calc");
       expect(norm.rating).toBe(4.8);
       expect(norm.leads_count).toBe(50);
     });

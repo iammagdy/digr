@@ -40,11 +40,17 @@ export interface NormalizedDataset {
 
 /**
  * Escapes formula injection in cell strings.
- * If a cell begins with '=', '+', '-', '@', '\t', or '\r', prefix with a single quote.
+ * If a cell begins with '=', '+', '-', '@', '\t', or '\r', prefix with a single quote,
+ * except for a plain phone number or account handle, which cannot be a formula.
  */
 export function escapeFormula(value: any): any {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
+  // A phone number (+20 100 123 4567) and a plain account handle (@name) cannot form a formula, so they
+  // are delivered untouched instead of showing a stray apostrophe in front of the value.
+  const digits = trimmed.replace(/\D/g, "").length;
+  if (/^\+?[\d\s().-]+$/.test(trimmed) && digits >= 6 && digits <= 15) return value;
+  if (/^@[A-Za-z0-9_.]{1,30}$/.test(trimmed)) return value;
   if (/^[=+\-@\t\r]/.test(value) || /^[=+\-@\t\r]/.test(trimmed)) {
     return `'${value}`;
   }

@@ -136,3 +136,18 @@ describe("customer name (owner decision D2)", () => {
     expect(await lastAssistantAskedForName(null, "u", "c")).toBe(false);
   });
 });
+
+import { readFileSync } from "node:fs";
+describe("welcome screen name (static checks)", () => {
+  const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+  const empty = readFileSync("src/app/dashboard/chat/components/EmptyChat.tsx", "utf8");
+
+  it("uses only the real profile name, never the e-mail prefix", () => {
+    expect(page).toContain("user?.user_metadata?.name || user?.user_metadata?.full_name");
+    expect(page).not.toMatch(/const firstName = \(user\?\.name/);
+  });
+
+  it("does not leave a stray comma when the name is unknown", () => {
+    expect(empty).toContain('"أهلًا بك، بماذا نبدأ؟"');
+  });
+});

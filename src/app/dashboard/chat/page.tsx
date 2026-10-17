@@ -1470,7 +1470,8 @@ export default function ChatWorkspacePage() {
   const dateLabel = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long", year: "numeric" })
     .format(new Date(messages[0]?.createdAt || Date.now()));
   const balanceValue = userBalance.status === "ready" ? userBalance.value : null;
-  const firstName = (user?.name || "").trim().split(/\s+/)[0] || "";
+  // The real profile name only. The e-mail prefix that the account hook falls back to is not a name (owner decision D2).
+  const firstName = String(user?.user_metadata?.name || user?.user_metadata?.full_name || "").trim().split(/\s+/)[0] || "";
   const chatEmpty = messages.length === 0 && !conversationLoading && !conversationLoadError;
 
   const renderNote = (m: MessageItem) => {
