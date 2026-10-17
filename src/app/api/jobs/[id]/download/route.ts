@@ -98,10 +98,10 @@ export async function GET(
       industry = detectedInd.arabicLabel;
     }
 
-    const isCompanyJob =
-      job.platform === "companies" ||
-      job.template_slug?.includes("compan") ||
-      job.template_slug?.includes("b2b");
+    const isCompanyJob = /company|compan|companies|\bB2B\b|شركة|شركات|مقاولات|مؤسسات/i.test(
+      [job.platform, job.template_slug, job.title, job.brief, job.search_query, paramsText, quoteSummary]
+        .filter(Boolean).join(" ")
+    );
 
     const titleSource = String(quoteSummary || job.title || job.brief || job.search_query || "نتائج البحث").trim();
     let downloadFileName = isCompanyJob
@@ -152,67 +152,88 @@ export async function GET(
       );
     }
 
+    // Prefer regenerating deliverable formats from the saved dataset. Existing
+    // artifacts can predate quality/layout fixes, and format downloads must
+    // never re-run the provider or return stale report layouts.
+    let jsonText = "";
+    const jsonCandidatePaths = [
+      `${job.user_id}/${jobId}/data.json`,
+      `${user.id}/${jobId}/data.json`,
+      `${jobId}/data.json`,
+      `partials/${jobId}/data.json`,
+      `${jobId}/step_0.json`,
+      `json_${jobId}`,
+    ];
+    for (const bucketName of ["results", "partials"]) {
+      if (jsonText) break;
+      const bucket = adminClient.storage?.from?.(bucketName);
+      if (!bucket || typeof bucket.download !== "function") continue;
+      for (const path of jsonCandidatePaths) {
+        const { data: blob, error: downloadError } = await bucket.download(path);
+        if (!downloadError && blob) {
+          jsonText = await blob.text();
+          break;
+        }
+      }
+    }
+
     let signedUrl: string | null = null;
     let resolvedStoragePath: string | null = null;
 
-    // Check existing candidate files
-    for (const path of candidatePaths) {
-      const { data: signed, error: signErr } = await adminClient.storage
-        .from("results")
-        .createSignedUrl(path, 300, { download: downloadFileName });
-
-      if (!signErr && signed?.signedUrl) {
-        signedUrl = signed.signedUrl;
-        resolvedStoragePath = path;
-        break;
+    if (jsonText && format !== "json") {
+      try {
+        const parsed = JSON.parse(jsonText);
+        let fileBuf: Buffer | null = null;
+        let mimeType = "application/octet-stream";
+        if (format === "xlsx") {
+          fileBuf = await generateExcelReport(parsed);
+          mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        } else if (format === "csv") {
+          fileBuf = generateCsvReport(parsed);
+          mimeType = "text/csv";
+        } else if (format === "pdf") {
+          fileBuf = await generatePdfReport(parsed);
+          mimeType = "application/pdf";
+        }
+        if (fileBuf) {
+          const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
+          const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
+            contentType: mimeType,
+            upsert: true,
+          });
+          if (uploadError) throw uploadError;
+          const { data: newlySigned, error: signError } = await adminClient.storage
+            .from("results")
+            .createSignedUrl(uploadPath, 300, { download: downloadFileName });
+          if (!signError && newlySigned?.signedUrl) {
+            signedUrl = newlySigned.signedUrl;
+            resolvedStoragePath = uploadPath;
+          }
+        }
+      } catch (genErr) {
+        console.error("Saved-data file regeneration error:", genErr);
       }
     }
 
     if (!signedUrl) {
-      // On-demand generation from data.json if specific format is missing
-      let jsonText = "";
-      const jsonCandidatePaths = [
-        `${job.user_id}/${jobId}/data.json`,
-        `${user.id}/${jobId}/data.json`,
-        `${jobId}/data.json`,
-        `partials/${jobId}/data.json`,
-        `${jobId}/step_0.json`,
-        `json_${jobId}`,
-      ];
-
-      for (const bucketName of ["partials", "results"]) {
-        if (jsonText) break;
-        const bucket = adminClient.storage?.from?.(bucketName);
-        if (!bucket || typeof bucket.download !== "function") continue;
-        for (const p of jsonCandidatePaths) {
-          const { data: blob, error: dlErr } = await bucket.download(p);
-          if (!dlErr && blob) {
-            jsonText = await blob.text();
-            break;
-          }
+      // Fall back to an existing artifact when the raw saved dataset is not
+      // available, or generate JSON from the saved payload on first request.
+      for (const path of candidatePaths) {
+        const { data: signed, error: signErr } = await adminClient.storage
+          .from("results")
+          .createSignedUrl(path, 300, { download: downloadFileName });
+        if (!signErr && signed?.signedUrl) {
+          signedUrl = signed.signedUrl;
+          resolvedStoragePath = path;
+          break;
         }
       }
 
-      if (jsonText) {
+      if (!signedUrl && jsonText) {
         try {
           const parsed = JSON.parse(jsonText);
-
-          let fileBuf: Buffer | null = null;
-          let mimeType = "application/octet-stream";
-
-          if (format === "xlsx") {
-            fileBuf = await generateExcelReport(parsed);
-            mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-          } else if (format === "csv") {
-            fileBuf = generateCsvReport(parsed);
-            mimeType = "text/csv";
-          } else if (format === "pdf") {
-            fileBuf = await generatePdfReport(parsed);
-            mimeType = "application/pdf";
-          } else if (format === "json") {
-            fileBuf = Buffer.from(JSON.stringify(parsed, null, 2), "utf-8");
-            mimeType = "application/json";
-          }
+          const fileBuf = Buffer.from(JSON.stringify(parsed, null, 2), "utf-8");
+          const mimeType = "application/json";
 
           if (fileBuf) {
             const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
