@@ -1533,6 +1533,7 @@ export default function ChatWorkspacePage() {
         <>
           <PlanQuoteCard
             quote={planMsg.planQuote}
+            conversationTitle={conversationTitle}
             onStart={handleStartExecution}
             onSaveEdit={handleSaveDirectEdit}
             onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${units} سجل تناسب رصيدي المتاح`)}

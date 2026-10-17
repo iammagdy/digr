@@ -47,6 +47,7 @@ export interface PlanQuoteData {
 
 interface PlanQuoteCardProps {
   quote: PlanQuoteData;
+  conversationTitle?: string;
   onStart: (quote: PlanQuoteData) => void;
   onSaveEdit: (
     quote: PlanQuoteData,
@@ -109,6 +110,7 @@ export { extractParamDisplayString, extractInterpretedParameters };
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
 export default function PlanQuoteCard({
   quote,
+  conversationTitle = "",
   onStart,
   onSaveEdit,
   onAcceptDownscaled,
@@ -129,10 +131,15 @@ export default function PlanQuoteCard({
   const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
+  const titleTopic = conversationTitle
+    .replace(/^(?:فيديوهات?|مقاطع?|منشورات?|محتوى)\s*/u, "")
+    .replace(/^(?:تريند|ترند|رائجة|شائعة)\s*/u, "")
+    .replace(/\s+(?:على|في|من)\s+(?:تيك\s*توك|tiktok|يوتيوب|youtube|انستغرام|إنستغرام|instagram|فيسبوك|facebook|تويتر|twitter|reddit).*$/iu, "")
+    .trim();
   const displayIndustry = isPeoplePlan
     ? interpreted.industryAr
     : isSocialContentPlan
-      ? (initialParam || "الموضوع المطلوب")
+      ? (titleTopic || initialParam || "الموضوع المطلوب")
       : industryDisplayLabelAr(interpreted.industryAr);
   const scopeLabel = isPeoplePlan ? "نوع البحث:" : isSocialContentPlan ? "موضوع المحتوى:" : "النشاط / التخصص:";
   const [editParamVal, setEditParamVal] = useState(initialParam);
@@ -293,7 +300,7 @@ export default function PlanQuoteCard({
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٤.</span>
-            <span>إعداد ملف البيانات المعتمد ({formats.join("، ")}) وتوثيق المنهجية الأكاديمية المستقلة.</span>
+            <span>تجهيز الملفات المطلوبة ({formats.join("، ")}) وتوضيح منهجية التنفيذ ومصادر البيانات وحدود التغطية.</span>
           </li>
         </ul>
       </div>
