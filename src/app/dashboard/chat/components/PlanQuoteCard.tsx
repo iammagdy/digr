@@ -84,7 +84,7 @@ export function formatExpiry(expiresAt: string): string {
   }
 }
 
-const FORMAT_LABEL: Record<string, string> = { xlsx: "جدول بيانات", pdf: "دليل المنهجية", csv: "ملف بيانات نصي" };
+const FORMAT_LABEL: Record<string, string> = { xlsx: "ملف Excel", pdf: "ملف PDF", csv: "ملف بيانات نصي" };
 
 /** «ينتهي العرض خلال ٢٨ دقيقة» */
 function expiryShort(expiresAt: string, now: number): string {
@@ -125,9 +125,16 @@ export default function PlanQuoteCard({
   const capabilitySlug = (primaryItem?.capabilitySlug || "").toLowerCase();
   const isPeoplePlan = capabilitySlug.includes("people");
   const isCompanyPlan = /compan|b2b/.test(capabilitySlug);
+  const isVideoPlan = /video|videos|tiktok|youtube|reels/.test(capabilitySlug);
+  const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
-  const displayIndustry = isPeoplePlan ? interpreted.industryAr : industryDisplayLabelAr(interpreted.industryAr);
+  const displayIndustry = isPeoplePlan
+    ? interpreted.industryAr
+    : isSocialContentPlan
+      ? (initialParam || "الموضوع المطلوب")
+      : industryDisplayLabelAr(interpreted.industryAr);
+  const scopeLabel = isPeoplePlan ? "نوع البحث:" : isSocialContentPlan ? "موضوع المحتوى:" : "النشاط / التخصص:";
   const [editParamVal, setEditParamVal] = useState(initialParam);
   const [editCountry, setEditCountry] = useState(interpreted.countryAr);
   const [editIndustry, setEditIndustry] = useState(displayIndustry);
@@ -239,7 +246,7 @@ export default function PlanQuoteCard({
           </span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-mut">{isPeoplePlan ? "نوع البحث:" : "النشاط / التخصص:"}</span>
+          <span className="text-mut">{scopeLabel}</span>
           <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
             {displayIndustry}
           </span>
@@ -258,15 +265,31 @@ export default function PlanQuoteCard({
         <ul className="m-0 list-inside space-y-1 pr-1 font-light text-ink2">
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">١.</span>
-            <span>{isPeoplePlan ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.` : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
+            <span>{isPeoplePlan
+              ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.`
+              : isSocialContentPlan
+                ? `البحث عن ${isVideoPlan ? "الفيديوهات" : "المحتوى"} المنشور حول «${displayIndustry}» على المنصة المحددة.`
+                : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٢.</span>
-            <span>{isPeoplePlan ? "تنظيم الأسماء والمسميات الوظيفية وبيانات بريد العمل عند توافرها." : "تدقيق الملاءمة الذكي ومراجعة كل شركة واستبعاد الأنشطة غير المطابقة."}</span>
+            <span>{isPeoplePlan
+              ? "تنظيم الأسماء والمسميات الوظيفية وبيانات بريد العمل عند توافرها."
+              : isSocialContentPlan
+                ? `فرز النتائج حسب صلتها بموضوع «${displayIndustry}» والفترة الزمنية المطلوبة.`
+                : isCompanyPlan
+                  ? "تدقيق الملاءمة ومراجعة الشركات واستبعاد الأنشطة غير المطابقة."
+                  : "مراجعة النتائج واستبعاد السجلات غير المرتبطة بموضوع البحث."}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٣.</span>
-            <span>{isPeoplePlan ? "توضيح ما إذا كانت حقول الاسم والمسمى والبريد موجودة في السجل؛ لا يعني ذلك تحققًا مستقلًا منها." : "إزالة التكرار والتحقق من هواتف النطاق وبيانات التواصل المتاحة."}</span>
+            <span>{isPeoplePlan
+              ? "توضيح ما إذا كانت حقول الاسم والمسمى والبريد موجودة في السجل؛ لا يعني ذلك تحققًا مستقلًا منها."
+              : isSocialContentPlan
+                ? "إزالة النتائج المكررة وتنظيم الروابط والتواريخ والبيانات المتاحة في المصدر."
+                : isCompanyPlan
+                  ? "إزالة التكرار ومراجعة بيانات التواصل المتاحة في المصدر."
+                  : "إزالة التكرار وتنظيم الحقول المتاحة في المصدر."}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٤.</span>
@@ -277,13 +300,13 @@ export default function PlanQuoteCard({
 
       {/* Deliverable format choices chips directly on the main card */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
-        <span className="text-mut text-[12px]">صيغ التسليم المعتمدة:</span>
+          <span className="text-mut text-[12px]">صيغ التسليم المعتمدة:</span>
         {(quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "csv", "pdf"]).map((fmt) => (
           <span
             key={fmt}
             className="inline-flex items-center gap-1 rounded-full border border-ln bg-sf2 px-2.5 py-1 text-ink text-[12px] font-medium"
           >
-            {fmt === "xlsx" ? "جدول بيانات" : fmt === "csv" ? "ملف بيانات نصي" : "دليل المنهجية"}
+            {FORMAT_LABEL[fmt] ?? fmt.toUpperCase()}
           </span>
         ))}
       </div>
@@ -315,16 +338,16 @@ export default function PlanQuoteCard({
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
               />
             </div>
-            <div>
+            {!isSocialContentPlan && <div>
               <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "نوع البحث" : "النشاط / التخصص الرئيسي"}</label>
               <input
                 id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto"
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
               />
-            </div>
+            </div>}
           </div>
           <div>
-            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : "الكلمات المفتاحية / الاستعلام"}</label>
+            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : isSocialContentPlan ? "موضوع المحتوى / الاستعلام" : "الكلمات المفتاحية / الاستعلام"}</label>
             <input
               id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
               className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"

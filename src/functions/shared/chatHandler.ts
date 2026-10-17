@@ -1988,11 +1988,17 @@ export class ChatHandler {
             const itemParams = { ...(c.params || {}) };
             const capabilityId = c.capabilitySlug || c.endpointId || "";
             const isRecordSearchCapability = /compan|b2b|people/i.test(capabilityId);
+            const isSocialContentCapability = /video|videos|tiktok|youtube|reels|posts?|social|instagram|facebook|reddit|twitter/i.test(capabilityId);
             const requestedRecordVolume = isRecordSearchCapability && explicitRequestedVolume && explicitRequestedVolume > 0
               ? explicitRequestedVolume
               : undefined;
             const detectedIndustry = detectIndustryFromText(conversationRequestText);
-            if (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0)) {
+            if (isSocialContentCapability && typeof itemParams.industry === "string") {
+              // Social/video plans have a topic, not a company-industry field.
+              // Models sometimes copy the complete natural-language request here.
+              delete itemParams.industry;
+            }
+            if (!isSocialContentCapability && (!itemParams.query || (typeof itemParams.query === "object" && Object.keys(itemParams.query).length === 0))) {
               itemParams.query = {
                 ...(detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
                 ...(explicitCountry ? { location: { include: [explicitCountry.canonicalEnglish] } } : {}),
