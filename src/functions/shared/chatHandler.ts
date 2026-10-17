@@ -10,6 +10,8 @@ import {
   detectMentionedPlatforms,
   getPlatformLabelAr,
   getClosestVerifiedCapability,
+  getCustomerPriceUsdPerCatalogItem,
+  computeRegistryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
   UNAVAILABLE_CAPABILITY_SLUGS,
   RAW_SEED_CAPABILITIES,
@@ -736,6 +738,13 @@ export function summarizeConversationHistory(
  * model received). Used for validation and server-side pricing of turn results.
  */
 export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capability {
+  const customerPriceUsdPerItem = getCustomerPriceUsdPerCatalogItem({
+    id: ep.id,
+    slug: ep.slug,
+    platform: ep.platform,
+    nameEn: ep.nameEn,
+    nameAr: ep.nameAr,
+  });
   const seeded = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === ep.slug);
   const unavailable = UNAVAILABLE_CAPABILITY_SLUGS.has(ep.slug) || Boolean(ep.id?.startsWith("internal-"));
   return {
@@ -746,7 +755,10 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     status: unavailable ? (seeded?.status || "pending_verification") : "verified",
     unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
-    pointsPerUnit: ep.pointsPerUnit,
+    pointsPerUnit:
+      customerPriceUsdPerItem !== undefined
+        ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
+        : ep.pointsPerUnit,
     maxItemsPerCall: ep.pagination.maxLimit || 100,
     estimatedSuccessRate: ep.observedSuccessRate,
     nameAr: ep.nameAr,
@@ -755,8 +767,9 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     paramsSchema: JSON.stringify(ep.paramsSchema || {}),
     tregEndpointId: ep.id,
     tregMethod: ep.method,
-    pricingUnit: (ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
+    pricingUnit: (customerPriceUsdPerItem !== undefined ? "item" : ep.billingUnit === "call" ? "call" : ep.billingUnit === "page" ? "page" : "item") as any,
     unitCostUsd: ep.catalogPriceUsd,
+    customerPriceUsdPerItem,
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
     enabled: !unavailable,

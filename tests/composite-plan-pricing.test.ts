@@ -159,6 +159,69 @@ describe("Composite Multi-Capability Research Plan Pricing & Execution Safety", 
     expect(mockDb.insertedQuotes[0].doc.total_reserved_credits).toBe(69);
   });
 
+  it("keeps Facebook provider cost separate from the 11-point customer rate per comment", async () => {
+    const mockDb = makeMockSupabase();
+    const liveFacebookComments: Capability = {
+      ...capFacebook,
+      slug: "scrapecreators-x-v1-facebook-post-comments",
+      tregEndpointId: "treg.facebook.post.comments",
+      pricingUnit: "item",
+      unitCostUsd: 0.00188,
+      customerPriceUsdPerItem: 0.0019,
+    };
+    const quote = await createAndSaveManagedQuote(mockDb as any, {
+      conversationId: "conv-live-fb-comments",
+      userId: "user-fb",
+      plan: {
+        summaryAr: "تعليقات فيسبوك",
+        items: [{ capabilitySlug: liveFacebookComments.slug, params: {}, targetVolumeMin: 10, targetVolumeMax: 10 }],
+        outputFormats: ["csv"],
+      },
+      userBalance: 1000,
+      capabilities: [liveFacebookComments],
+      pricingSettings: DEFAULT_PRICING_SETTINGS,
+    });
+
+    expect(quote.items[0].unitPricePoints).toBe(11);
+    expect(quote.items[0].unitCostUsd).toBe(0.00188);
+    expect(quote.items[0].pricingUnit).toBe("item");
+    expect(quote.items[0].rawPoints).toBe(110);
+    expect(quote.items[0].itemReservation).toBe(127);
+  });
+
+  it("keeps YouTube provider cost separate from the 9-point customer rate per comment", async () => {
+    const mockDb = makeMockSupabase();
+    const liveYoutubeComments: Capability = {
+      ...capFacebook,
+      slug: "youtube-video-comments",
+      category: "youtube",
+      platform: "youtube",
+      tregEndpointId: "treg.youtube.video.comments",
+      nameAr: "تعليقات يوتيوب",
+      pricingUnit: "item",
+      unitCostUsd: 0.0009,
+      customerPriceUsdPerItem: 0.0015,
+    };
+    const quote = await createAndSaveManagedQuote(mockDb as any, {
+      conversationId: "conv-live-youtube-comments",
+      userId: "user-youtube",
+      plan: {
+        summaryAr: "تعليقات يوتيوب",
+        items: [{ capabilitySlug: liveYoutubeComments.slug, params: {}, targetVolumeMin: 139, targetVolumeMax: 139 }],
+        outputFormats: ["csv"],
+      },
+      userBalance: 2000,
+      capabilities: [liveYoutubeComments],
+      pricingSettings: DEFAULT_PRICING_SETTINGS,
+    });
+
+    expect(quote.items[0].unitPricePoints).toBe(9);
+    expect(quote.items[0].unitCostUsd).toBe(0.0009);
+    expect(quote.items[0].pricingUnit).toBe("item");
+    expect(quote.items[0].rawPoints).toBe(1251);
+    expect(quote.items[0].itemReservation).toBe(1439);
+  });
+
   // 2. Two capabilities with different unit costs (IMPORTANT NUMERIC TEST)
   it("2. prices two capabilities independently with per-item rounding preservation (numeric test: 22+10=32 base -> 26+12=38 reserve)", async () => {
     const mockDb = makeMockSupabase();
