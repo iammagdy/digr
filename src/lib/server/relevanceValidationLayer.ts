@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isCompanyRowMatchingLocation } from "../planParameters";
+import { detectIndustryFromText, isCompanyRowMatchingLocation } from "../planParameters";
 
 export type RelevanceDecision = "match" | "no_match" | "uncertain";
 
@@ -67,15 +67,14 @@ export function evaluateDeterministicRelevance(
 
   // A. Construction / Contracting (مقاولات وتشيد)
   if (indAr.includes("مقاولات") || indAr.includes("تشييد") || indAr.includes("بناء")) {
+    // Sectors that are clearly not contracting stay excluded.
     const isExcludedUnrelated =
       (rowInd.includes("real estate") && !rowText.includes("general contracting") && !rowText.includes("مقاولات عامة")) ||
       rowInd.includes("interior design") ||
-      rowInd.includes("oil & energy") ||
-      rowInd.includes("oil and gas") ||
       rowInd.includes("wood") ||
-      rowInd.includes("machinery") ||
-      rowInd.includes("electronic") ||
-      rowInd.includes("furniture");
+      rowInd.includes("furniture") ||
+      // The row's own text describes oil and gas operations (not just an energy-sector label).
+      /drilling|exploration|petroleum|oil and gas|oil & gas|refiner/.test(rowText);
 
     if (isExcludedUnrelated) {
       return {
@@ -84,19 +83,46 @@ export function evaluateDeterministicRelevance(
       };
     }
 
-    const isMatch =
+    const hasContractingSignal =
       rowText.includes("construction") ||
       rowText.includes("contracting") ||
+      rowText.includes("contractor") ||
       rowText.includes("civil engineering") ||
       rowText.includes("general contracting") ||
       rowText.includes("مقاولات") ||
+      rowText.includes("مقاول") ||
       rowText.includes("تشييد") ||
       rowText.includes("بناء");
+    const isElectromechanicalRequest = indAr.includes("كهروميكانيك");
+    const hasElectromechanicalSignal =
+      rowText.includes("electromechanical") ||
+      /(?<![a-z0-9])mep(?![a-z0-9])/.test(rowText) ||
+      rowText.includes("mechanical and electrical") ||
+      rowText.includes("mechanical & electrical") ||
+      rowText.includes("كهروميكانيك");
 
-    if (isMatch) {
+    if (hasContractingSignal || (isElectromechanicalRequest && hasElectromechanicalSignal)) {
       return {
         decision: "match",
         reasonAr: "شركة مقاولات وتشييد مطابقة للطلب",
+      };
+    }
+
+    // Energy, electronics and machinery firms may be real electromechanical contractors that the
+    // source files under those labels, so they are never dropped on the label alone: they go to
+    // the review sheet and are neither delivered nor charged until reviewed.
+    const isAmbiguousEngineering =
+      rowInd.includes("oil & energy") ||
+      rowInd.includes("oil and gas") ||
+      rowInd.includes("machinery") ||
+      rowInd.includes("electronic") ||
+      rowInd.includes("electrical") ||
+      rowInd.includes("mechanical") ||
+      rowInd.includes("utilities");
+    if (isAmbiguousEngineering) {
+      return {
+        decision: "uncertain",
+        reasonAr: `النشاط المسجل في المصدر (${row.industry || "غير محدد"}) قد يشمل مقاولات؛ أُحيل السجل للمراجعة ولم يُحتسب`,
       };
     }
 
@@ -223,8 +249,18 @@ export function evaluateDeterministicRelevance(
     };
   }
 
-  // For custom sectors, do not turn a provider keyword hit into a match.
-  // The record remains reviewable until deterministic criteria are defined.
+  // Other recognized sectors: the source's own industry label must name the requested sector.
+  // A provider keyword hit alone is never a match; a label outside the sector goes to review.
+  const sector = detectIndustryFromText(targetIndustryAr);
+  const sectorLabels = (sector.exactTaxonomy || []).map((label) => label.toLowerCase());
+  if (sectorLabels.some((label) => rowInd === label || rowInd.includes(label))) {
+    return {
+      decision: "match",
+      reasonAr: `النشاط المسجل في المصدر (${row.industry}) يطابق المجال المطلوب`,
+    };
+  }
+
+  // For custom sectors there is no deterministic criterion, so the record stays reviewable.
   return {
     decision: "uncertain",
     reasonAr: "لا توجد قاعدة تحقق حاسمة لهذا المجال؛ أُحيل السجل للمراجعة",

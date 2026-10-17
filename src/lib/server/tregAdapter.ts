@@ -7,7 +7,11 @@ import {
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
 import { arabicVerificationStatus } from "../contactVerification";
-import { detectCountryFromText as detectInternationalCountryFromText, getMissingCompanyResearchRequirements } from "../planParameters";
+import {
+  detectCountryFromText as detectInternationalCountryFromText,
+  detectIndustryFromText as detectInternationalIndustryFromText,
+  getMissingCompanyResearchRequirements,
+} from "../planParameters";
 
 /**
  * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
@@ -110,92 +114,8 @@ export function detectCountryFromText(text: string): CountryMapping | null {
   return detectInternationalCountryFromText(text);
 }
 
-export function detectIndustryFromText(text: string): IndustryMapping {
-  const t = (text || "").toLowerCase().trim();
-
-  if (t.includes("صواريخ") || t.includes("صاروخ") || t.includes("rocket") || t.includes("aerospace") || t.includes("فضاء")) {
-    return { englishKeywords: ["aerospace", "rocket"], arabicLabel: "صناعة الصواريخ والفضاء", exactTaxonomy: ["Aviation & Aerospace", "Defense & Space"] };
-  }
-  if (t.includes("طاقة شمسية") || t.includes("شمسية") || t.includes("solar") || t.includes("طاقة متجددة") || t.includes("renewable")) {
-    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة", exactTaxonomy: ["Renewables & Environment"] };
-  }
-  if (t.includes("أغذية") || t.includes("اغذية") || t.includes("طعام") || t.includes("مطاعم") || t.includes("أطعمة") || t.includes("food") || t.includes("beverage")) {
-    return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم", exactTaxonomy: ["Food & Beverages", "Restaurants"] };
-  }
-  if (
-    t.includes("fintech") ||
-    t.includes("تكنولوجيا مالية") ||
-    t.includes("تقنية مالية") ||
-    t.includes("مدفوعات") ||
-    t.includes("فينتك") ||
-    t.includes("فنتك")
-  ) {
-    return { englishKeywords: ["fintech", "financial technology", "payments"], arabicLabel: "التكنولوجيا المالية (FinTech)", exactTaxonomy: ["Financial Services", "Banking"] };
-  }
-  if (
-    t.includes("تقنية") ||
-    t.includes("تكنولوجيا") ||
-    t.includes("معلومات") ||
-    t.includes("برمجيات") ||
-    t.includes("برمجة") ||
-    t.includes("software") ||
-    t.includes("tech") ||
-    t.includes("it")
-  ) {
-    return { englishKeywords: ["information technology", "software", "technology"], arabicLabel: "تقنية المعلومات والبرمجيات", exactTaxonomy: ["Information Technology & Services", "Computer Software"] };
-  }
-  if (
-    t.includes("مقاولات") ||
-    t.includes("تشييد") ||
-    t.includes("بناء") ||
-    t.includes("construction") ||
-    t.includes("contracting")
-  ) {
-    // Building Materials is a separate supplier category and pulls unrelated
-    // manufacturers into a construction-company search.
-    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد", exactTaxonomy: ["Construction"] };
-  }
-  if (t.includes("أثاث") || t.includes("اثاث") || t.includes("موبيليا") || t.includes("furniture") || t.includes("woodworking")) {
-    return { englishKeywords: ["furniture", "woodworking"], arabicLabel: "صناعة الأثاث", exactTaxonomy: ["Furniture"] };
-  }
-  if (t.includes("عقارات") || t.includes("تطوير عقاري") || t.includes("real estate")) {
-    return { englishKeywords: ["real estate"], arabicLabel: "التطوير العقاري", exactTaxonomy: ["Real Estate"] };
-  }
-  if (t.includes("أدوية") || t.includes("ادوية") || t.includes("صيدلة") || t.includes("pharma")) {
-    return { englishKeywords: ["pharmaceuticals", "healthcare"], arabicLabel: "الأدوية والرعاية الصحية", exactTaxonomy: ["Pharmaceuticals", "Hospital & Health Care"] };
-  }
-  if (t.includes("سيارات") || t.includes("automotive") || t.includes("vehicles")) {
-    return { englishKeywords: ["automotive", "vehicles"], arabicLabel: "السيارات والمركبات", exactTaxonomy: ["Automotive"] };
-  }
-  if (t.includes("تعليم") || t.includes("مدارس") || t.includes("education")) {
-    return { englishKeywords: ["education"], arabicLabel: "التعليم", exactTaxonomy: ["Education Management", "Primary/Secondary Education"] };
-  }
-  if (t.includes("سياحة") || t.includes("فنادق") || t.includes("tourism") || t.includes("hospitality")) {
-    return { englishKeywords: ["tourism", "hospitality"], arabicLabel: "السياحة والضيافة", exactTaxonomy: ["Hospitality", "Leisure, Travel & Tourism"] };
-  }
-  if (t.includes("شحن") || t.includes("لوجستيات") || t.includes("logistics") || t.includes("freight")) {
-    return { englishKeywords: ["logistics", "freight"], arabicLabel: "الشحن والخدمات اللوجستية", exactTaxonomy: ["Logistics & Supply Chain", "Transportation/Trucking/Railroad"] };
-  }
-  if (t.includes("صيد الحيتان") || t.includes("حيتان") || t.includes("whale hunting") || t.includes("whaling")) {
-    return { englishKeywords: ["whale hunting", "whaling"], arabicLabel: "صيد الحيتان", exactTaxonomy: ["Fishery"] };
-  }
-  if (t.includes("مصانع") || t.includes("تصنيع") || t.includes("صناعة") || t.includes("manufacturing") || t.includes("factory")) {
-    return { englishKeywords: ["manufacturing", "factory"], arabicLabel: "التصنيع والإنتاج الصناعي", exactTaxonomy: ["Mechanical or Industrial Engineering", "Electrical/Electronic Manufacturing"] };
-  }
-
-  // Fallback: clean words
-  const cleaned = t
-    .replace(/[^\w\s\u0600-\u06FF]/g, " ")
-    .replace(/\b(عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (cleaned.length > 0) {
-    return { englishKeywords: [cleaned], arabicLabel: cleaned };
-  }
-
-  return { englishKeywords: ["contracting"], arabicLabel: "قواعد بيانات الشركات" };
-}
+// One industry detector for planning, provider requests and relevance review, so the three can never disagree.
+export const detectIndustryFromText = detectInternationalIndustryFromText;
 
 /**
  * Validates whether a company record returned from provider genuinely matches requested location.

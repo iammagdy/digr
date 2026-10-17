@@ -243,7 +243,8 @@ export function extractResearchIntent(
   } else if (previousIntent && previousIntent.geographicScope.provenance === "EXPLICIT") {
     geoField = previousIntent.geographicScope;
   } else {
-    geoField = { value: "مصر والشرق الأوسط", provenance: "DEFAULT", confidence: 0.6 };
+    // Owner decision D1: no default country or region; an unstated scope stays unstated.
+    geoField = { value: "غير محدد", provenance: "DEFAULT", confidence: 0.6 };
   }
 
   // 4. Sample Size
