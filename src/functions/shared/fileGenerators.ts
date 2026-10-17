@@ -970,7 +970,9 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     const titleText = formatArabicRtl(customerFacingTitle(norm.metadata.title));
     let titleFontSize = 13.5;
     doc.font("ArabicBold").fillColor("#FFFFFF");
-    while (titleFontSize > 9 && doc.widthOfString(titleText, { size: titleFontSize }) > contentWidth - 36) {
+    while (titleFontSize > 9) {
+      doc.fontSize(titleFontSize);
+      if (doc.widthOfString(titleText) <= contentWidth - 36) break;
       titleFontSize -= 0.5;
     }
     doc.fontSize(titleFontSize);
@@ -985,7 +987,9 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
     const subTitleText = formatArabicRtl(subTitle);
     let subTitleFontSize = 8;
     doc.font("ArabicRegular").fillColor("#CBD5E1");
-    while (subTitleFontSize > 6 && doc.widthOfString(subTitleText, { size: subTitleFontSize }) > contentWidth - 36) {
+    while (subTitleFontSize > 6) {
+      doc.fontSize(subTitleFontSize);
+      if (doc.widthOfString(subTitleText) <= contentWidth - 36) break;
       subTitleFontSize -= 0.25;
     }
     doc.fontSize(subTitleFontSize);
@@ -1031,7 +1035,9 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       const valueText = formatArabicRtl(card.val);
       let valueFontSize = 10.5;
       doc.font("ArabicBold").fillColor("#1B365D");
-      while (valueFontSize > 7 && doc.widthOfString(valueText, { size: valueFontSize }) > boxWidth - 12) {
+      while (valueFontSize > 7) {
+        doc.fontSize(valueFontSize);
+        if (doc.widthOfString(valueText) <= boxWidth - 12) break;
         valueFontSize -= 0.5;
       }
       doc.fontSize(valueFontSize);
