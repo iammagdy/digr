@@ -626,6 +626,10 @@ export async function POST(req: NextRequest) {
       step: currentStep,
       cursor: adapterResult.nextCursor,
       batchUnits: acceptedRows.length,
+      rawRowsCount: rawRows.length,
+      baselineExcludedCount: duplicateExcludedCount,
+      relevanceExcludedCount,
+      uncertainRowsCount: uncertainRows.length,
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
       uncertainRows,
@@ -767,6 +771,9 @@ export async function POST(req: NextRequest) {
       const collectedRows: Record<string, any>[] = [];
       const collectedUncertainRows: Record<string, any>[] = [];
       let firstRawProfile: Record<string, any> | null = null;
+      let rawRowsCollected = 0;
+      let baselineExcludedCount = 0;
+      let relevanceExcludedCount = 0;
       const partialsBucket = adminClient.storage.from("partials");
 
       for (let s = 0; s <= currentStep; s++) {
@@ -822,6 +829,9 @@ export async function POST(req: NextRequest) {
 
         collectedRows.push(...stepObj.rows);
         if (Array.isArray(stepObj.uncertainRows)) collectedUncertainRows.push(...stepObj.uncertainRows);
+        rawRowsCollected += Number(stepObj.rawRowsCount ?? stepObj.rows.length) || 0;
+        baselineExcludedCount += Number(stepObj.baselineExcludedCount) || 0;
+        relevanceExcludedCount += Number(stepObj.relevanceExcludedCount) || 0;
         if (!firstRawProfile && stepObj.rawProfile) {
           firstRawProfile = stepObj.rawProfile;
         }
@@ -873,8 +883,46 @@ export async function POST(req: NextRequest) {
       )?.arabicLabel || "";
 
       const methodologySummary = spec.params?.exclusionRules
-        ? `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr} بعد تطبيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`
-        : `تم جمع ${toArabicDigits(finalRows.length)} سجل بتاريخ ${dateStr}. ملاحظة منهجية: جُمعت السجلات من مصادر متاحة علناً؛ وجود الحقول لا يعني التحقق المستقل منها.`;
+        ? `يعرض التقرير ${toArabicDigits(finalRows.length)} سجلًا أعادها المصدر بتاريخ ${dateStr} بعد تطبيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). وجود القيم في الحقول لا يثبت صحتها أو شمول النتائج.`
+        : `يعرض التقرير ${toArabicDigits(finalRows.length)} سجلًا أعادها المصدر بتاريخ ${dateStr} ضمن نطاق خطة البحث. وجود القيم في الحقول لا يثبت صحتها أو شمول النتائج.`;
+
+      const rawSearchTerms = [
+        spec.params?.search,
+        spec.params?.topic,
+        spec.params?.keyword,
+        ...(Array.isArray(spec.params?.query?.keyword?.include) ? spec.params.query.keyword.include : []),
+      ];
+      const searchTerms = [...new Set(rawSearchTerms
+        .filter((term): term is string => typeof term === "string")
+        .map((term) => term.trim())
+        .filter(Boolean))].slice(0, 10);
+      const reportContext = {
+        scope: {
+          country: detectedCountry || undefined,
+          location: typeof spec.params?.city === "string"
+            ? spec.params.city
+            : typeof spec.params?.location === "string"
+              ? spec.params.location
+              : undefined,
+          searchTerms,
+          dateFrom: typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined,
+          dateTo: typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined,
+          industry: typeof spec.params?.industry === "string" ? spec.params.industry : undefined,
+        },
+        collection: {
+          methodLabel: customerFacingCapabilityLabel(spec.capabilitySlug),
+          pagesFetched: currentStep + 1,
+          paginationStrategy: spec.paginationStrategy,
+          stopReason: finalRows.length >= targetMax ? "target_reached" : "source_exhausted",
+        },
+        counts: {
+          rawRows: rawRowsCollected,
+          acceptedRows: finalRows.length,
+          baselineExclusions: baselineExcludedCount,
+          relevanceExclusions: relevanceExcludedCount,
+          uncertainRows: collectedUncertainRows.length,
+        },
+      };
 
       const cleanTitle = isCompanyResearch
         ? `دليل الشركات التي أعادتها المصادر في ${detectedCountry}`
@@ -894,6 +942,7 @@ export async function POST(req: NextRequest) {
           entityType: isCompanyResearch ? "companies" : undefined,
           exclusionApplied: Boolean(spec.params?.exclusionRules),
           methodology: methodologySummary,
+          reportContext,
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,

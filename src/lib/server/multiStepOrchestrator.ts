@@ -498,6 +498,7 @@ export async function executeMultiStepPlanOffline(
   let rawCollected = 0;
   let uniqueDelivered = 0;
   let duplicatesRemoved = 0;
+  let baselineExclusionsRemoved = 0;
   let deduplicationAudit: DeduplicationAuditItem[] = [];
   const methodologyNotes: string[] = [
     `تم تنفيذ خطة البحث (${plan.titleAr}) عبر ${plan.steps.length} مراحل متتابعة.`,
@@ -643,6 +644,7 @@ export async function executeMultiStepPlanOffline(
       const dedupResult = deduplicateAgainstBaseline(candidates, baseline);
       deduplicationAudit = dedupResult.auditTrail;
       duplicatesRemoved += dedupResult.confirmedDuplicates.length;
+      baselineExclusionsRemoved += dedupResult.confirmedDuplicates.length;
       currentRows = dedupResult.delivered;
 
       stepResults.push({
@@ -692,6 +694,33 @@ export async function executeMultiStepPlanOffline(
     } else if (step.stepType === "report_generation") {
       // Real report generation execution: generates actual buffers, validates non-empty results
       try {
+        const searchTerms = [...new Set(plan.steps
+          .filter((candidate) => candidate.stepType === "data_collection" || candidate.stepType === "comment_threads")
+          .flatMap((candidate) => [candidate.params?.search, candidate.params?.topic, candidate.params?.keyword])
+          .filter((term): term is string => typeof term === "string")
+          .map((term) => term.trim())
+          .filter(Boolean))].slice(0, 10);
+        const country = plan.steps
+          .map((candidate) => candidate.params?.country || candidate.params?.location)
+          .find((value) => typeof value === "string" && value.trim());
+        const reportContext = {
+          scope: {
+            country: typeof country === "string" ? country : undefined,
+            searchTerms,
+          },
+          collection: {
+            methodLabel: plan.steps
+              .filter((candidate) => candidate.stepType === "data_collection" || candidate.stepType === "comment_threads")
+              .map((candidate) => candidate.stepNameAr)
+              .filter(Boolean)
+              .join("، ") || "تنفيذ خطة البحث المعتمدة",
+          },
+          counts: {
+            rawRows: rawCollected,
+            acceptedRows: currentRows.length,
+            baselineExclusions: baselineExclusionsRemoved,
+          },
+        };
         const payload = {
           metadata: {
             platform: plan.targetPlatform,
@@ -699,6 +728,9 @@ export async function executeMultiStepPlanOffline(
             entityType: plan.entityType,
             rowsCount: currentRows.length,
             collectedAt: new Date().toISOString(),
+            targetRequested: plan.maxTargetVolume,
+            reportContext,
+            methodology: "تعرض هذه المخرجات السجلات التي أعادتها خطوات خطة البحث المنفذة، بعد قواعد التنظيف والاستبعاد المسجلة. اكتمال الحقول لا يثبت صحة المعلومات أو شمول مجتمع البحث.",
           },
           rows: currentRows,
         };

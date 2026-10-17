@@ -29,6 +29,7 @@ export interface NormalizedDataset {
     methodology: string;
     entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies";
     targetRequested?: number | string | null;
+    reportContext?: Record<string, any>;
   };
   profile: Record<string, any> | null;
   rows: Array<Record<string, any>>;
@@ -583,7 +584,7 @@ export function normalizeDataset(
 
   const methodologyText =
     meta.methodology ||
-    `تم جمع هذه البيانات من مصادر عامة ومتاحة علناً عبر منصة Diger بتاريخ ${dateStr.slice(0, 10)}. إجمالي السجلات المستخرجة: ${uniqueRows.length}. تم تطبيق معايير النزاهة المنهجية وحذف التكرار وفحص جودة البيانات بنسبة اكتمال ${kpis.dataCompletenessPct}%. ملاحظة: تمثل هذه البيانات لقطة مقطعية (Cross-sectional Snapshot) لحظية لأغراض البحث الأكاديمي والاستقصائي.`;
+    "يعرض هذا التقرير السجلات التي أعادتها المصادر المتاحة ضمن نطاق البحث المحدد. تقيس نسبة اكتمال الحقول وجود القيم في السجلات، ولا تثبت صحتها أو شمول جميع الجهات في السوق.";
 
   return {
     metadata: {
@@ -595,6 +596,7 @@ export function normalizeDataset(
       methodology: methodologyText,
       entityType,
       targetRequested: options?.targetRequested !== undefined ? options.targetRequested : (meta.targetRequested !== undefined ? meta.targetRequested : null),
+      reportContext: meta.reportContext && typeof meta.reportContext === "object" ? meta.reportContext : undefined,
     },
     profile: cleanProfile,
     rows: uniqueRows,

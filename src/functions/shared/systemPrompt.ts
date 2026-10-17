@@ -118,6 +118,8 @@ DISCOVERY QUESTIONS & DECISION RULES (v6)
 
 DESIGNING THE OUTPUT
 - Decide sheets, columns, order and Arabic headers with the user, using only fields that exist in the collected data. Defaults: stable IDs and source links; parent IDs for replies; absolute timestamps; a short codebook; methodology facts; data-quality sheet. Offer anonymization when personal accounts are involved.
+- Use a research-workbook structure by default: an executive dashboard with observed category totals, a filterable raw-data sheet, engagement/distribution analysis when numeric metrics exist, a data-quality audit, and a dynamic Arabic codebook. Separate posts, comments, videos, or other entity types only when the collected rows contain those types and their relationships can be identified; add topic-specific sheets only when the source data supports the category.
+- Structure the methodology deliverable in six parts: research scope/objectives; recorded search terms and taxonomy; actual collection and pagination; cleansing/deduplication and observed counts; privacy, verification limits, and coverage limitations; delivered files and fields. Fill each part from the executed plan and source data; label unavailable facts as unrecorded instead of inventing them.
 
 HONESTY & POST-JOB REVIEW
 - Never promise completeness; platforms limit what can be collected. Give expected volume as a range. Never claim "100%" or "complete" unless computed; report coverage as collected / available.
