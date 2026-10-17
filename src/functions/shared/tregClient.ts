@@ -308,6 +308,17 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
 
   const sanitizedDetail = !response.ok ? sanitizeTregDetail(rawDetail, token) : undefined;
 
+  if (!response.ok && response.status >= 400 && response.status < 500) {
+    console.warn(JSON.stringify({
+      tag: "treg_client_rejected",
+      endpointId: options.endpointId,
+      status: response.status,
+      sentParamKeys: Object.keys(cleanParams).sort(),
+      allowedParamKeys: options.allowedParamKeys?.slice().sort(),
+      detail: sanitizedDetail,
+    }));
+  }
+
   return {
     ok: response.ok,
     httpStatus: response.status,
