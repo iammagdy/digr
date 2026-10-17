@@ -5,6 +5,7 @@ import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/pr
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
 import { InvalidInternalOriginError, resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -69,6 +70,28 @@ export async function POST(req: NextRequest) {
           error: gateStatus.messageAr,
           reasonCode: gateStatus.reasonCode,
         },
+        { status: 503 }
+      );
+    }
+
+    // Never reserve credits for a decision-maker quote unless its field-level
+    // settlement function is installed. The worker repeats this check before
+    // reserving provider spend as protection for already accepted jobs.
+    const { data: quoteForReadiness } = await adminClient
+      .from("plans_quotes")
+      .select("items")
+      .eq("id", quoteId)
+      .maybeSingle();
+    let readinessItems = quoteForReadiness?.items;
+    if (typeof readinessItems === "string") {
+      try { readinessItems = JSON.parse(readinessItems); } catch { readinessItems = []; }
+    }
+    const isPeopleQuote = Array.isArray(readinessItems) && readinessItems.some((item: any) =>
+      item?.capabilitySlug === "professional-people-search" || item?.endpointId === "treg.people.search"
+    );
+    if (isPeopleQuote && !(await requirePeopleSettlementRpc(adminClient))) {
+      return NextResponse.json(
+        { success: false, error: PEOPLE_SETTLEMENT_UNAVAILABLE_AR },
         { status: 503 }
       );
     }

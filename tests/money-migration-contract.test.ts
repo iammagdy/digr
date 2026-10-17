@@ -15,7 +15,9 @@ describe("money migration security contracts", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     const body = sql.slice(start, sql.indexOf("$$;", start) + 3);
     expect(body).toContain("security definer");
-    expect(body).toContain("set search_path = public");
+    expect(body).toContain(file === "20261017181000_settle_decision_maker_fields.sql"
+      ? "set search_path to 'public', 'pg_temp'"
+      : "set search_path = public");
     expect(body).toContain(lockClause);
     expect(sql).toContain(`revoke all on function public.${functionName}`);
     expect(sql).toContain(`grant execute on function public.${functionName}`);

@@ -91,6 +91,11 @@ function makeMockTables() {
     return m ? parseInt(m[1], 10) : null;
   };
   return {
+    async rpc(name: string, args: any) {
+      return name === "settle_people_job_atomic"
+        ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
+        : { data: null, error: { code: "PGRST202", message: `function ${name} not found` } };
+    },
     async createRow({ tableId, rowId, data }: any) {
       const id = rowId || `row_${Math.random().toString(36).slice(2)}`;
       const doc = { $id: id, ...data };

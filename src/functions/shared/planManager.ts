@@ -26,6 +26,7 @@ import { getEndpointDetails } from "./catalogClient";
 import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "./providerSpend";
 import { callAtomicOrFallback } from "./atomicRpc";
 import { decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -684,6 +685,9 @@ export async function createAndSaveManagedQuote(
     let effectiveItemUnitPrice = unitPrice;
     let itemProviderCostUsd = itemUnitCostUsd;
     if (cap.slug === "professional-people-search") {
+      if (!(await requirePeopleSettlementRpc(tables))) {
+        throw new Error(PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
+      }
       const requestedFields: ContactField[] = Array.isArray(it.params?.requiredContactFields)
         ? it.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
         : ["work_email", "phone"];

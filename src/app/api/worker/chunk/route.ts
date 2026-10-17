@@ -37,6 +37,7 @@ import {
 } from "../../../../lib/planParameters";
 import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
 import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
@@ -339,6 +340,26 @@ export async function POST(req: NextRequest) {
       rawEndpointId,
       Number(unitPrice) || 1
     );
+
+    // The provider is called and billed after this point. Refuse a people job
+    // until field-level settlement exists, and release its reserve through the
+    // approved atomic release path without making any provider calls.
+    if (spec.capabilitySlug === "professional-people-search" && !(await requirePeopleSettlementRpc(adminClient))) {
+      const rel = await executeReleaseConfirmation(adminClient, jobId, PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
+      if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
+      return NextResponse.json(
+        {
+          success: false,
+          released: true,
+          chargedCredits: 0,
+          deliveredUnits: 0,
+          jobId,
+          error: PEOPLE_SETTLEMENT_UNAVAILABLE_AR,
+          release: rel.data,
+        },
+        { status: 503 }
+      );
+    }
 
     // Retry reuse: rows the failed run already collected count as delivered by this
     // job (they are in the delivered file and are charged like any delivered row),
