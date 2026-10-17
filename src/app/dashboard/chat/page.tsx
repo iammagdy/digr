@@ -217,13 +217,34 @@ export default function ChatWorkspacePage() {
         .eq("user_id", user.id)
         .order("updated_at", orderDesc)
         .limit(20);
+      const conversationIds = (rows || []).map((row) => row.id).filter(Boolean);
+      const firstUserMessages = new Map<string, string>();
+      if (conversationIds.length) {
+        const { data: messages } = await supabase
+          .from("messages")
+          .select("conversation_id, content, role, created_at")
+          .eq("user_id", user.id)
+          .eq("role", "user")
+          .in("conversation_id", conversationIds)
+          .order("created_at", { ascending: true });
+        for (const message of messages || []) {
+          if (!firstUserMessages.has(message.conversation_id) && typeof message.content === "string") {
+            firstUserMessages.set(message.conversation_id, message.content);
+          }
+        }
+      }
       const unique = new Map<string, ConversationItem>();
       for (const d of rows || []) {
-        if (!unique.has(d.id)) unique.set(d.id, {
-          $id: d.id,
-          title: d.title || "محادثة استخراج",
-          updatedAt: d.updated_at || new Date().toISOString(),
-        });
+        if (!unique.has(d.id)) {
+          const savedTitle = customerFacingConversationTitle(d.title || "");
+          const firstMessageTitle = customerFacingConversationTitle(firstUserMessages.get(d.id) || "");
+          const title = savedTitle !== "محادثة جديدة" ? savedTitle : firstMessageTitle;
+          unique.set(d.id, {
+            $id: d.id,
+            title: title || "محادثة جديدة",
+            updatedAt: d.updated_at || new Date().toISOString(),
+          });
+        }
       }
       setConversationsList(Array.from(unique.values()));
     } catch (err) {

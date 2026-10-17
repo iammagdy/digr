@@ -3,6 +3,14 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 /** Localizes common English taxonomy labels and numerals in saved conversation titles. */
 export function customerFacingConversationTitle(value: string): string {
   const raw = String(value || "").trim();
+  // Card answers are stored as JSON message payloads in some older
+  // conversations. Never expose those internal payloads as a chat title.
+  if (raw.startsWith("{") && /\"(?:type|answers)\"/.test(raw)) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.type === "clarification_answers" || Array.isArray(parsed?.answers)) return "محادثة جديدة";
+    } catch { /* keep ordinary user text that happens to start with a brace */ }
+  }
   const greetingOnly = raw
     .replace(/[!！؟?.,،؛;]+/g, " ")
     .replace(/\s+/g, " ")
