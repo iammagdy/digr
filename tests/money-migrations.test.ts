@@ -4,6 +4,18 @@ import { describe, expect, it } from "vitest";
 const migration = (name: string) => readFileSync(`supabase/migrations/${name}`, "utf8");
 
 describe("review-only money migrations", () => {
+  it("removes stale registry endpoints and registers the six code-served social capabilities", () => {
+    const sql = migration("20261017175000_cleanup_capability_registry_social.sql");
+    for (const slug of [
+      "social-tiktok-comments", "social-youtube-comments", "social-facebook-comments",
+      "social-tiktok-videos", "social-youtube-videos", "social-facebook-posts",
+    ]) expect(sql).toContain(`'${slug}'`);
+    expect(sql).toContain("ON CONFLICT (slug) DO NOTHING");
+    expect(sql).toContain("'tikhub.tiktok.search.video'");
+    expect(sql).toContain("'internal-facebook-post-comments'");
+    expect(sql).toContain("CEIL(c.customer_usd*p.usd_to_egp*p.markup/p.point_value_egp)");
+  });
+
   it("defines quote creation as a service-role-only atomic function with cap and input checks", () => {
     const sql = migration("20261017180000_create_quote_atomic.sql");
     expect(sql).toContain("CREATE OR REPLACE FUNCTION public.create_quote_atomic(");
