@@ -62,7 +62,8 @@ describe("Country & Industry Detection and Matching", () => {
       5
     );
     expect(paramsLi.query.location.include).toEqual(["Liechtenstein"]);
-    expect(paramsLi.query.keyword.include).toContain("aerospace");
+    expect(paramsLi.query.industry.include).toEqual(["Aviation & Aerospace", "Defense & Space"]);
+    expect(paramsLi.query.keyword).toBeUndefined();
 
     // 2. Germany solar
     const paramsDe = normalizeIcypeasCompanyParams(
@@ -70,7 +71,8 @@ describe("Country & Industry Detection and Matching", () => {
       6
     );
     expect(paramsDe.query.location.include).toEqual(["Germany"]);
-    expect(paramsDe.query.keyword.include).toContain("solar");
+    expect(paramsDe.query.industry.include).toEqual(["Renewables & Environment"]);
+    expect(paramsDe.query.keyword).toBeUndefined();
 
     // 3. Unstated country remains absent; the chat flow asks instead of assuming Egypt
     const paramsNoCountry = normalizeIcypeasCompanyParams(

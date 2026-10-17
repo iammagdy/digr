@@ -15,6 +15,7 @@ import {
   UNVERIFIED_PLATFORM_MESSAGE_AR,
   UNAVAILABLE_CAPABILITY_SLUGS,
   RAW_SEED_CAPABILITIES,
+  APPROVED_CAPABILITY_CATALOG,
   Capability,
   resolveCapabilityReference,
 } from "./capabilityRegistry";
@@ -59,10 +60,11 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, isoCountryCodeFromName, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
 import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
+import { extractNumberFromText } from "../../lib/arabicNumbers";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -70,13 +72,27 @@ function customerAuthoredRequirementText(message: string): string {
   try {
     const parsed = JSON.parse(trimmed);
     if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return trimmed;
+    const labels: Record<string, string> = {
+      company_country_required: "الدولة المطلوبة",
+      company_industry_required: "المجال المطلوب",
+      company_count_required: "عدد الشركات المطلوب",
+      people_country_required: "دولة صناع القرار المطلوبة",
+      people_scope_required: "نطاق صناع القرار",
+      people_roles_required: "المسميات الوظيفية المطلوبة",
+      people_count_required: "عدد صناع القرار المطلوب",
+      social_account_required: "اسم الحساب المطلوب",
+      social_topic_required: "موضوع البحث المطلوب",
+      social_platform_required: "منصة البحث المطلوبة",
+      social_time_required: "الفترة المطلوبة",
+    };
     return parsed.answers
       .flatMap((answer: any) => {
-        if (typeof answer?.value === "string") return [sanitizeClarificationText(answer.value, 200)];
+        const label = labels[answer?.questionId] || "الإجابة";
+        if (typeof answer?.value === "string") return [`${label}: ${sanitizeClarificationText(answer.value, 200)}`];
         if (Array.isArray(answer?.value)) {
           return answer.value
             .filter((value: unknown): value is string => typeof value === "string")
-            .map((value: string) => sanitizeClarificationText(value, 40));
+            .map((value: string) => `${label}: ${sanitizeClarificationText(value, 40)}`);
         }
         return [];
       })
@@ -97,6 +113,37 @@ function explicitCompanyClarificationNotes(notes?: string): string[] {
     .filter(Boolean);
 }
 
+function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
+  const normalized = text || "";
+  const isAccount = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(normalized);
+  const isPeople = isPeopleSearchRequest(normalized);
+  const isCompanies = !isPeople && (/(?:\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسة|مؤسسات|مصنع|مصانع)/iu.test(normalized));
+  const isSocialTopic = !isAccount && !isPeople && !isCompanies && /(?:فيديوهات?|مقاطع?|منشورات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/iu.test(normalized);
+  const accountHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(normalized)?.[1];
+
+  if (isAccount && !accountHandle) {
+    return { id: "social_account_required", text: "ما اسم الحساب أو رابطه على المنصة؟", question: "ما اسم الحساب أو رابطه على المنصة؟", type: "free", options: [], allowOther: true };
+  }
+  if (isPeople) {
+    if (!detectCountryFromText(normalized)) return { id: "people_country_required", text: "في أي دولة تريد البحث عن صناع القرار؟", question: "في أي دولة تريد البحث عن صناع القرار؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true };
+    const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !/(?:نطاق صناع القرار\s*:|لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s*\p{L}/iu.test(normalized);
+    if (scopeMissing) return { id: "people_scope_required", text: "ما المجال أو الشركة التي تريد صناع القرار منها؟", question: "ما المجال أو الشركة التي تريد صناع القرار منها؟", type: "free", options: [], allowOther: true };
+    if (!/\b(?:ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|presidents?|heads? of|vps?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة|مسؤول(?:ين)?/iu.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
+    if (!extractNumberFromText(normalized)) return { id: "people_count_required", text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true };
+  }
+  if (isCompanies) {
+    const missing = getMissingCompanyResearchRequirements(normalized);
+    if (missing.length) return getCompanyRequirementItems(missing, normalized)[0] || null;
+    if (!extractNumberFromText(normalized)) return { id: "company_count_required", text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true };
+  }
+  if (isSocialTopic) {
+    if (!/(?:عن|حول|بشأن|كلمة|وسم|هاشتاج|هاشتاغ|موضوع البحث المطلوب\s*:)\s+\S+/iu.test(normalized)) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
+    if (!/(?:على|منصة|في|منصة البحث المطلوبة\s*:)\s*(?:تيك\s*توك|tiktok|يوتيوب|youtube|إنستغرام|انستغرام|instagram|فيسبوك|facebook|تويتر|twitter|منصة\s*x)/iu.test(normalized)) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
+    if (!/(?:آخر|اخر|خلال|منذ)\s*(?:[0-9٠-٩]+|واحد|واحدة|اتنين|اثنين|ثلاثة|ثلاث|أربعة|اربعة|خمسة|خمس|عشرة|عشرين|شهر|أسبوع|سنة|يوم)|\b20\d{2}-\d{2}-\d{2}\b/iu.test(normalized)) return { id: "social_time_required", text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true };
+  }
+  return null;
+}
+
 export interface ChatHandlerInput {
   userId: string;
   conversationId?: string;
@@ -106,7 +153,7 @@ export interface ChatHandlerInput {
   testScenario?: string;
   uploadedFiles?: any[];
   isGuest?: boolean;
-  personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown };
+  personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
 }
 
 export interface ChatHandlerResponse {
@@ -408,6 +455,8 @@ export function buildAutoPlanProposal(
     .filter(Boolean)
     .join(" ");
   const peopleSearch = isPeopleSearchRequest(requestText);
+  const isAccountProfileRequest = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(requestText);
+  const explicitHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(requestText)?.[1];
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = peopleSearch
     ? "people"
@@ -417,7 +466,9 @@ export function buildAutoPlanProposal(
   const platformNorm = platform.toLowerCase();
 
   // Find matching capability in validationCaps
-  let matchedCap = validationCaps.find((c) => {
+  let matchedCap = isAccountProfileRequest
+    ? validationCaps.find((c) => /profile|user/i.test(c.slug) && (!mentionedPlats.length || mentionedPlats.some((p) => c.slug.includes(p))))
+    : validationCaps.find((c) => {
     const cPlat = (c.platform || c.category || "").toLowerCase();
     const cSlug = (c.slug || "").toLowerCase();
     const cId = (c.tregEndpointId || c.id || "").toLowerCase();
@@ -428,14 +479,16 @@ export function buildAutoPlanProposal(
       return cPlat === "companies" || cPlat === "b2b" || cSlug.includes("companies") || cId.includes("companies");
     }
     return cPlat === platformNorm || cSlug.includes(platformNorm);
-  });
+    });
 
   if (!matchedCap) {
     matchedCap = getClosestVerifiedCapability(validationCaps);
   }
 
   const msgVolume = extractTargetVolume(message);
-  const volume = (brief.targetVolume && brief.targetVolume > 0)
+  const volume = isAccountProfileRequest
+    ? 1
+    : (brief.targetVolume && brief.targetVolume > 0)
     ? brief.targetVolume
     : (msgVolume && msgVolume > 0
       ? msgVolume
@@ -457,7 +510,9 @@ export function buildAutoPlanProposal(
     extractedCurrentTopic = currentMsgChips.join(" ");
   }
 
-  const topicLabel =
+  const topicLabel = isAccountProfileRequest && explicitHandle
+    ? `@${explicitHandle}`
+    :
     extractedCurrentTopic ||
     (cleanTopics.length > 0 ? cleanTopics[cleanTopics.length - 1] : "البيانات المطلوبة");
 
@@ -494,12 +549,7 @@ export function buildAutoPlanProposal(
     ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
   };
   const titleMatch = requestText.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/i);
-  const countryCode = detectedCountry ? ({
-    Egypt: "EG", "Saudi Arabia": "SA", "United Arab Emirates": "AE", Kuwait: "KW",
-    Qatar: "QA", Bahrain: "BH", Oman: "OM", Jordan: "JO", Germany: "DE",
-    Austria: "AT", France: "FR", Italy: "IT", Spain: "ES", Switzerland: "CH",
-    Netherlands: "NL", Turkey: "TR", "United Kingdom": "GB", "United States": "US",
-  } as Record<string, string>)[detectedCountry.canonicalEnglish] : undefined;
+  const countryCode = detectedCountry ? isoCountryCodeFromName(detectedCountry.canonicalEnglish) : undefined;
   const stepParams: Record<string, any> = isPeopleCapability
     ? {
         q: requestText.slice(0, 300),
@@ -508,6 +558,7 @@ export function buildAutoPlanProposal(
         ...(titleMatch ? { title: (titleMatch[1] || titleMatch[0]).replace(/s$/i, "") } : {}),
         ...(hasDetectedIndustry ? { keywords: detectedIndustry.englishKeywords } : {}),
         ...(requiredProfessionalContactFields(requestText).length ? { requiredContactFields: requiredProfessionalContactFields(requestText) } : {}),
+        contactFieldsToAttempt: ["work_email", "phone"],
       }
     : isCompanySearch
       ? {
@@ -528,7 +579,7 @@ export function buildAutoPlanProposal(
   }
 
   const dateRangeHint = brief.dateRange || message;
-  if (dateRangeHint && !isCompanySearch) {
+  if (dateRangeHint && !isCompanySearch && !isProfileCapability) {
     const dateFilters = dateFiltersFromHint(dateRangeHint);
     if (dateFilters.from) stepParams.dateFrom = dateFilters.from;
     if (dateFilters.to) stepParams.dateTo = dateFilters.to;
@@ -546,7 +597,9 @@ export function buildAutoPlanProposal(
 
   const summaryAr = isPeopleCapability
     ? `بحث ${volume} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
-    : isCompanySearch
+    : isAccountProfileRequest
+      ? `بيانات الحساب العام ${topicLabel} على ${platformLabel}`
+      : isCompanySearch
       ? `استخراج بيانات ${volume} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
       : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
 
@@ -554,7 +607,7 @@ export function buildAutoPlanProposal(
     type: "propose_plan",
     summaryAr,
     capabilities: [step],
-    outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx", "pdf", "csv"],
+    outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx"],
     methodologyNotes: isPeopleCapability
       ? "البحث عن صناع القرار والمهنيين بحسب المجال والدولة والمسمى الوظيفي؛ وجود أي حقل لا يعني التحقق المستقل من صحته."
       : `جمع وتوثيق البيانات من المصادر المتاحة عبر ${platformLabel} وفق نطاق البحث المحدد.`,
@@ -599,10 +652,14 @@ export function routePeopleAlternative(
     };
   }
 
-  // Preserve an explicit adaptive clarification from the model. The code
-  // still enforces the required country below when a plan or alternative was
-  // proposed without it.
-  if (output?.type === "ask_clarification") return output;
+  // Respect a model clarification only while a required field is still
+  // missing. Once the deterministic inputs are complete, do not let the model
+  // insert another question or stall the plan.
+  if (output?.type === "ask_clarification" || output?.type === "ask_questions") {
+    return getDeterministicDiscoveryQuestion(requestText, brief)
+      ? output
+      : buildAutoPlanProposal(brief, capabilities, requestText);
+  }
 
   const proposedPeopleCapability = output?.type === "propose_plan" &&
     Array.isArray(output.capabilities) &&
@@ -1099,6 +1156,8 @@ export class ChatHandler {
             purposes: input.personaProfile.purposes,
             topic: input.personaProfile.topic,
           }, userProfile || {}),
+          ...(typeof input.personaProfile.name === "string" ? { name: input.personaProfile.name } : {}),
+          ...(typeof input.personaProfile.full_name === "string" ? { full_name: input.personaProfile.full_name } : {}),
         };
       }
       supabaseMs += Date.now() - tSbProfStart;
@@ -1234,11 +1293,54 @@ export class ChatHandler {
       researchIntent.userExclusions.value.hasExclusionReference
     );
 
+    // Greetings never enter research discovery or spend an LLM turn. Ask for a
+    // missing name once per conversation, then use the persisted profile name.
+    if (isGreeting && !isTestSearchScenario) {
+      const displayName = [userProfile?.sender_name, userProfile?.name, userProfile?.full_name]
+        .find((value) => typeof value === "string" && value.trim())?.trim();
+      let alreadyAskedName = false;
+      if (!displayName && sb) {
+        try {
+          const { data: priorNamePrompts } = await sb.from("messages")
+            .select("id")
+            .eq("conversation_id", conversationId)
+            .eq("role", "assistant")
+            .ilike("content_ar", "%اسمك%")
+            .limit(2);
+          alreadyAskedName = Boolean(priorNamePrompts?.length);
+        } catch {}
+      }
+      const greeting = displayName
+        ? `أهلًا ${displayName}، كيف أساعدك اليوم؟`
+        : alreadyAskedName
+          ? "أهلًا بك، كيف أساعدك اليوم؟"
+          : "أهلًا بك، ما الاسم الذي تفضّل أن أناديك به؟";
+      if (sb) {
+        await Promise.all([
+          sb.from("messages").update({ content_ar: greeting }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+        ]);
+      } else {
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: greeting, status: "ready" } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: greeting,
+        outputType: "answer_question",
+        intent: "chat",
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+      };
+    }
+
     const isCompanyIntent =
       researchIntent.entityType.value === "companies" ||
       extractEntityType(assistantFacingMessage).entityType === "companies" ||
       /\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسات|مؤسسة/.test(assistantFacingMessage.toLowerCase()) ||
       brief.platforms.some((platform) => /compan|b2b|شركة/i.test(platform));
+    const requiresExplicitCount = isCompanyIntent || isPeopleSearchRequest(assistantFacingMessage);
 
     if (isTestSearchScenario) {
       isPhase2 = false;
@@ -1294,9 +1396,8 @@ export class ChatHandler {
       if (brief.topics.length === 0) {
         brief.topics = researchIntent.topic.value ? [researchIntent.topic.value] : ["البيانات المطلوبة"];
       }
-      if (!brief.targetVolume || brief.targetVolume <= 0) brief.targetVolume = 500;
-      if (!brief.dateRange) brief.dateRange = "آخر شهر";
-      if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx", "csv", "pdf"];
+      if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) brief.targetVolume = 10;
+      if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx"];
       await saveConversationBrief(this.tables, conversationId, userId, brief);
       isPhase2 = true;
     } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
@@ -1321,8 +1422,8 @@ export class ChatHandler {
         testScenario === "direct_plan";
 
       if (isReadyForInstantPlan) {
-        if (!brief.targetVolume || brief.targetVolume <= 0) {
-          brief.targetVolume = researchIntent.sampleSize.value || 500;
+        if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
+          brief.targetVolume = researchIntent.sampleSize.provenance === "EXPLICIT" ? researchIntent.sampleSize.value : 10;
         }
         const dateVal = researchIntent.dateRange?.value?.relative || (researchIntent.dateRange?.value?.from ? `${researchIntent.dateRange.value.from} إلى ${researchIntent.dateRange.value.to || ""}` : undefined);
         if (!brief.dateRange && dateVal) {
@@ -1331,7 +1432,7 @@ export class ChatHandler {
         if (!brief.formats || brief.formats.length === 0) {
           brief.formats = researchIntent.outputTypes?.value?.length > 0
             ? [...researchIntent.outputTypes.value]
-            : ["xlsx", "csv", "pdf"];
+            : ["xlsx"];
         }
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         isPhase2 = true;
@@ -1342,8 +1443,8 @@ export class ChatHandler {
     } else if (isCardAnswer) {
       if (brief.platforms.length === 0) brief.platforms.push("tiktok");
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
-      if (!brief.targetVolume || brief.targetVolume <= 0) {
-        brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 500;
+      if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
+        brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 10;
       }
       if (!brief.dateRange) brief.dateRange = "آخر شهر";
       if (!brief.language) brief.language = "العربية";
@@ -1351,27 +1452,20 @@ export class ChatHandler {
       isPhase2 = true;
     } else if (hasPlatform && hasTopic && ((brief.targetVolume !== undefined && brief.targetVolume > 0) || Boolean(brief.postCount && brief.commentsPerPost) || wantsPriceOrProceed || Boolean(brief.dateRange))) {
       // Platform & topic known with volume, plan intent, or dates: DECIDE, never interrogate! Apply sensible defaults
-      if (!brief.targetVolume || brief.targetVolume <= 0) {
-        brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 500;
-      }
-      if (!brief.dateRange) {
-        brief.dateRange = "آخر شهر";
+      if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
+        brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 10;
       }
       if (!brief.language) {
         brief.language = "العربية";
       }
       if (!brief.formats || brief.formats.length === 0) {
-        brief.formats = ["xlsx", "csv", "pdf"];
+        brief.formats = ["xlsx"];
       }
       await saveConversationBrief(this.tables, conversationId, userId, brief);
       isPhase2 = true;
     } else if (isComplete || (brief.platforms.length > 0 && brief.topics.length > 0 && brief.targetVolume && brief.dateRange)) {
       isPhase2 = true;
     } else if (wantsPriceOrProceed && brief.platforms.length > 0 && brief.topics.length > 0) {
-      if (!brief.targetVolume || brief.targetVolume <= 0) {
-        brief.targetVolume = 500;
-        brief.notes = (brief.notes ? brief.notes + " | " : "") + "تم تطبيق الحد الافتراضي (500 سجل) لحساب التكلفة التقديرية بناءً على طلبك";
-      }
       isPhase2 = true;
     } else if (testScenario === "search_then_plan" || testScenario === "direct_plan" || testScenario === "summary_then_plan" || testScenario === "multiplatform_plan" || testScenario === "phase2_plan") {
       isPhase2 = true;
@@ -1379,10 +1473,14 @@ export class ChatHandler {
 
       currentStep = "capabilities_load";
       const tSbCapsStart = Date.now();
-      const [capabilities, catalogCapabilities] = await Promise.all([
+      const [loadedCapabilities, catalogCapabilities] = await Promise.all([
         getEnabledCapabilities(this.tables),
         getCatalogCapabilities(this.tables),
       ]);
+      const peopleSearchSeed = APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search" && capability.enabled && capability.status === "verified");
+      const capabilities = peopleSearchSeed && !loadedCapabilities.some((capability) => capability.slug === peopleSearchSeed.slug)
+        ? [...loadedCapabilities, peopleSearchSeed]
+        : loadedCapabilities;
       supabaseMs += Date.now() - tSbCapsStart;
 
       let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
@@ -1555,6 +1653,38 @@ export class ChatHandler {
         ...explicitCompanyClarificationNotes(brief.notes),
       ].filter(Boolean).join(" ");
 
+      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief);
+      if (requiredDiscoveryQuestion) {
+        const intro = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+        const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
+          capabilities: allCapabilities,
+          userBalancePoints: userBalance,
+          persona: userProfile?.persona,
+        })[0] || requiredDiscoveryQuestion;
+        const textAr = `${intro}\n${normalizedQuestion.text || normalizedQuestion.question}`;
+        if (sb) {
+          await Promise.all([
+            sb.from("messages").update({ content_ar: textAr }).eq("id", assistantMsgId),
+            sb.from("messages").update({ request_status: "needs_input" }).eq("id", userMsgId),
+          ]);
+        } else {
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: textAr, status: "ready" } });
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "needs_input" } });
+        }
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: textAr,
+          outputType: "ask_clarification",
+          intent: "research",
+          clarificationIntro: intro,
+          clarificationQuestions: [normalizedQuestion.text || normalizedQuestion.question],
+          clarificationItems: [normalizedQuestion],
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        };
+      }
+
       // 7. Execute LLM Turn
       let parsedPurposes: string[] = [];
       if (userProfile?.purposes) {
@@ -1632,8 +1762,7 @@ export class ChatHandler {
         (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         (userProfile?.name && String(userProfile.name).trim()) ||
         (userProfile?.full_name && String(userProfile.full_name).trim()) ||
-        (userProfile?.email && String(userProfile.email).toLowerCase().includes("magdy") ? "مجدي" : "") ||
-        "مجدي";
+        "";
 
       let llmResult = await this.llm.executeTurn({
         messages: turnMessages,
@@ -1855,6 +1984,11 @@ export class ChatHandler {
       output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
       // Explicit company requests receive the same deterministic routing guard.
       output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
+      if (/(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(conversationRequestText)) {
+        // Profile requests have a distinct one-record plan with no country or
+        // date filters; don't let a generic social-content plan replace it.
+        output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
+      }
 
       // 8. Process Output Actions
       currentStep = "output_action";
@@ -1995,6 +2129,12 @@ export class ChatHandler {
         finalContentAr = (output as any).answerAr;
       } else if (output.type === "propose_plan") {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const selectedOutputFormats: Array<"xlsx" | "pdf" | "csv"> = brief.formats?.length
+          ? brief.formats.filter((format): format is "xlsx" | "pdf" | "csv" =>
+              format === "xlsx" || format === "pdf" || format === "csv",
+            )
+          : ["xlsx"];
+        (output as any).outputFormats = [...selectedOutputFormats];
         const explicitCountry = detectCountryFromText(conversationRequestText);
         const explicitRequestedVolume = researchIntent.sampleSize.provenance === "EXPLICIT"
           ? researchIntent.sampleSize.value
@@ -2040,19 +2180,16 @@ export class ChatHandler {
                 : conversationRequestText.slice(0, 300);
               itemParams.limit = Math.max(1, Math.min(50, Number(requestedRecordVolume || itemParams.limit || 10)));
               if (explicitCountry) {
-                const countryCodes: Record<string, string> = {
-                  Egypt: "EG", "Saudi Arabia": "SA", "United Arab Emirates": "AE", Kuwait: "KW",
-                  Qatar: "QA", Bahrain: "BH", Oman: "OM", Jordan: "JO", Germany: "DE",
-                  Austria: "AT", France: "FR", Italy: "IT", Spain: "ES", Switzerland: "CH",
-                  Netherlands: "NL", Turkey: "TR", "United Kingdom": "GB", "United States": "US",
-                };
-                itemParams.country = countryCodes[explicitCountry.canonicalEnglish] || explicitCountry.canonicalEnglish;
+                itemParams.country = isoCountryCodeFromName(explicitCountry.canonicalEnglish) || explicitCountry.canonicalEnglish;
               }
               const explicitTitle = conversationRequestText.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/i);
               if (!itemParams.title && explicitTitle) itemParams.title = (explicitTitle[1] || explicitTitle[0]).replace(/s$/i, "");
               if (!itemParams.keywords && detectedIndustry.englishKeywords.length) itemParams.keywords = detectedIndustry.englishKeywords;
-              const requiredContactFields = requiredProfessionalContactFields(conversationRequestText);
-              if (requiredContactFields.length) itemParams.requiredContactFields = requiredContactFields;
+              // Contact data is a required part of this B2B capability. The
+              // per-person rate covers these bounded enrichment attempts;
+              // incomplete rows are excluded before customer billing.
+              itemParams.contactFieldsToAttempt = ["work_email", "phone"];
+              itemParams.requiredContactFields = ["work_email", "phone"];
               delete itemParams.query;
               delete itemParams.pagination;
             }
@@ -2124,16 +2261,58 @@ export class ChatHandler {
           /people/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
         );
         const requiredFieldsText = conversationRequestText;
+        const isAccountProfileRequest = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(requiredFieldsText);
+        const isSocialTopicRequest = !isAccountProfileRequest && /(?:فيديوهات?|مقاطع?|منشورات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/i.test(requiredFieldsText);
+        const accountHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(requiredFieldsText)?.[1];
+        const hasExplicitCount = Boolean(extractNumberFromText(requiredFieldsText));
         const missingCompanyFields = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
           ? getMissingCompanyResearchRequirements(requiredFieldsText)
           : [];
-        const missingPeopleCountry = peoplePlan && !detectCountryFromText(requiredFieldsText) ? ["country" as const] : [];
-        const missingRequiredFields = [...missingCompanyFields, ...missingPeopleCountry];
+        const missingPeopleFields: string[] = [];
+        if (peoplePlan) {
+          if (!detectCountryFromText(requiredFieldsText)) missingPeopleFields.push("people_country_required");
+          const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !/\b(?:company|at)\s*[:=]|(?:لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s+\p{L}/iu.test(requiredFieldsText);
+          if (scopeMissing) missingPeopleFields.push("people_scope_required");
+          if (!/\b(?:ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|presidents?|heads? of|vps?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة|مسؤول(?:ين)?/iu.test(requiredFieldsText)) {
+            missingPeopleFields.push("people_roles_required");
+          }
+          if (!hasExplicitCount) missingPeopleFields.push("people_count_required");
+        }
+        const missingSocialFields: string[] = [];
+        if (isAccountProfileRequest && !accountHandle) missingSocialFields.push("social_account_required");
+        if (isSocialTopicRequest) {
+          if (!/(?:على|منصة|في)\s*(?:تيك\s*توك|tiktok|يوتيوب|youtube|إنستغرام|انستغرام|instagram|فيسبوك|facebook|تويتر|twitter|منصة\s*x)/iu.test(requiredFieldsText)) missingSocialFields.push("social_platform_required");
+          if (!/(?:آخر|اخر|خلال|منذ)\s*(?:[0-9٠-٩]+|واحد|واحدة|اتنين|اثنين|ثلاثة|ثلاث|أربعة|اربعة|خمسة|خمس|عشرة|عشرين|شهر|أسبوع|سنة|يوم)|\b20\d{2}-\d{2}-\d{2}\b/iu.test(requiredFieldsText)) missingSocialFields.push("social_time_required");
+          if (!/(?:عن|حول|بشأن|كلمة|وسم|هاشتاج|هاشتاغ)\s+\S+/iu.test(requiredFieldsText)) missingSocialFields.push("social_topic_required");
+        }
+        const missingCompanyCount = companyPlan && !isPeopleSearchRequest(requiredFieldsText) && !hasExplicitCount;
+        const missingRequiredFields = [
+          ...missingCompanyFields,
+          ...(missingCompanyCount ? ["company_count_required"] : []),
+          ...missingPeopleFields,
+          ...missingSocialFields,
+        ];
         if (missingRequiredFields.length > 0) {
-          finalContentAr = "قبل إعداد عرض السعر، أحتاج تحديد نطاق البحث وهدف التواصل حتى لا أخمّن تفاصيل قد تغيّر النتائج.";
-          clarificationItemsList = companyPlan
+          finalContentAr = "قبل إعداد عرض السعر، أحتاج معلومة واحدة حتى تكون الخطة مطابقة لطلبك.";
+          const firstMissing = missingRequiredFields[0];
+          const companyItems = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
             ? getCompanyRequirementItems(missingCompanyFields, requiredFieldsText)
-            : [{ id: "people_country_required", text: "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟", question: "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true }];
+            : [];
+          const companyItem = companyItems[0];
+          const questionByField: Record<string, any> = {
+            company_count_required: { id: firstMissing, text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true },
+            people_country_required: { id: firstMissing, text: "في أي دولة تريد البحث عن صناع القرار؟", question: "في أي دولة تريد البحث عن صناع القرار؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true },
+            people_scope_required: { id: firstMissing, text: "ما المجال أو الشركة التي تريد صناع القرار منها؟", question: "ما المجال أو الشركة التي تريد صناع القرار منها؟", type: "free", options: [], allowOther: true },
+            people_roles_required: { id: firstMissing, text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true },
+            people_count_required: { id: firstMissing, text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true },
+            social_account_required: { id: firstMissing, text: "ما اسم الحساب أو رابطه على تيك توك؟", question: "ما اسم الحساب أو رابطه على تيك توك؟", type: "free", options: [], allowOther: true },
+            social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
+            social_time_required: { id: firstMissing, text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true },
+            social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
+          };
+          clarificationItemsList = companyItem
+            ? [companyItem]
+            : [questionByField[firstMissing] || { id: "company_count_required", text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true }];
           clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
           output = {
             type: "ask_clarification",
@@ -2268,8 +2447,10 @@ export class ChatHandler {
             plan: {
               summaryAr: planOutput.summaryAr,
               items: planItems,
-              outputFormats: (planOutput.outputFormats as any) || ["xlsx", "pdf", "csv"],
-              methodologyNotes: planOutput.methodologyNotes,
+              outputFormats: selectedOutputFormats,
+            methodologyNotes: isPeopleSearchRequest(conversationRequestText)
+                ? `${planOutput.methodologyNotes || ""} سنحاول جمع البريد المهني ورقم الهاتف، ويُعرض كل حقل إذا ورد من المصادر المتاحة مع حالة التحقق التي أعادتها المصادر. لا تُحتسب السجلات التي لا تتضمن الحقلين المطلوبين.`.trim()
+                : planOutput.methodologyNotes,
             },
             userBalance: userBalance ?? 0,
             capabilities: validationCaps,
@@ -2292,12 +2473,17 @@ export class ChatHandler {
             capacityConstrained: managedQuote.capacityConstrained,
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
-            methodologyNotes: planOutput.methodologyNotes,
+            methodologyNotes: isPeopleSearchRequest(conversationRequestText)
+              ? `${planOutput.methodologyNotes || ""} البريد المهني ورقم الهاتف متوقعان عند توفرهما، وتظهر حالة التحقق لكل حقل. لا تُحتسب السجلات التي لا تتضمن بيانات التواصل المطلوبة.`.trim()
+              : planOutput.methodologyNotes,
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n- التكلفة المتوقعة: ${managedQuote.expectedPoints} نقطة`;
           if (brief.exclusionFile) {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
+          }
+          if (isPeopleSearchRequest(conversationRequestText)) {
+            planSummaryText += "\n- بيانات التواصل المتوقعة: البريد المهني ورقم الهاتف عند توفرهما، مع حالة التحقق لكل حقل.";
           }
           if (managedQuote.capacityConstrained) {
             planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
@@ -2545,12 +2731,6 @@ export class ChatHandler {
             finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n- التعديل المطلوب: ${desc}\n- التكلفة: 10 نقاط\n- سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
           }
         }
-      }
-
-      if (isPeopleSearchRequest(conversationRequestText) && !planQuoteData) {
-        const peopleUnavailableReason = "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً، لذلك لا أستطيع تقديم عرض سعر أو بدء التنفيذ لهذا الطلب.";
-        output = { type: "refuse", reasonAr: peopleUnavailableReason } as any;
-        finalContentAr = peopleUnavailableReason;
       }
 
       // 9. Update Assistant Message to 'ready'

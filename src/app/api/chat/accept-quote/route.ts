@@ -99,19 +99,6 @@ export async function POST(req: NextRequest) {
       console.warn("[accept-quote:request_history_update_failed]", historyUpdateError?.message || "unknown_error");
     }
 
-    // Record initial activity event in job_events table
-    try {
-      await adminClient.from("job_events").insert({
-        job_id: acceptRes.jobId,
-        user_id: user.id,
-        message: `تم قبول الطلب وجاري بدء التنفيذ (تم حجز ${acceptRes.reservedCredits} نقطة)`,
-        units: 0,
-        event_type: "info",
-      });
-    } catch (evtErr: any) {
-      console.warn("[accept-quote:job_events_insert_warning]", evtErr?.message || "");
-    }
-
     // Await the first bounded chunk so acceptance does not report a silent start
     // while the reserved job remains queued. Later chunks self-chain in worker.
     const acceptedJobId = acceptRes.jobId;

@@ -16,6 +16,7 @@ import { createServerSideClient, createAdminClient } from "../../../lib/supabase
 import { parseExclusionFile } from "../../../lib/server/exclusionFileParser";
 import { sanitizeCustomerErrorMessage } from "../../../functions/shared/catalogClient";
 import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../functions/shared/chatErrors";
+import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "../../../lib/researchPlaceholders";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -64,13 +65,21 @@ export async function POST(req: NextRequest) {
         { status: lengthCheck.statusCode || 400 }
       );
     }
+    // Reject unresolved starter-template slots before authentication side effects,
+    // persistence, rate-limit consumption, or any model call.
+    if (findUnresolvedResearchPlaceholder(message)) {
+      return NextResponse.json(
+        { success: false, requestId, error: unresolvedResearchPlaceholderMessageAr() },
+        { status: 400 },
+      );
+    }
 
     // 1. Authenticate user or initialize guest session
     currentStep = "authenticate_user";
     let verifiedUserId: string | null = null;
     let emailVerified = false;
     let isGuest = false;
-    let personaProfile: { persona?: unknown; purposes?: unknown; topic?: unknown } | undefined;
+    let personaProfile: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown } | undefined;
 
     let guestSessionCookie = req.cookies.get("guest_session_id")?.value || null;
     let newGuestCookieToSet: string | null = null;
@@ -99,6 +108,11 @@ export async function POST(req: NextRequest) {
       if (user) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
+        const explicitName = /^(?:أنا\s+)?اسمي\s+([\p{L}][\p{L}\s.'’-]{1,58})[.!؟?\s]*$/iu.exec(message.trim())?.[1]?.trim();
+        if (explicitName && explicitName.length >= 2 && explicitName.length <= 60) {
+          const { data: updated, error: nameError } = await supabase.auth.updateUser({ data: { name: explicitName, full_name: explicitName } });
+          if (!nameError && updated.user) user = updated.user;
+        }
         personaProfile = user.user_metadata;
       }
     } catch {

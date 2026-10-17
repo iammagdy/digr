@@ -12,10 +12,16 @@ vi.mock("../src/functions/shared/tregClient", () => ({
   executeTregCall: mocks.call,
 }));
 
-import { defaultTregAdapter, normalizeTregPeopleParams } from "../src/lib/server/tregAdapter";
+import { defaultTregAdapter, hasRecognizedProviderResultShape, normalizeTregPeopleParams } from "../src/lib/server/tregAdapter";
 import { requiredProfessionalContactFields } from "../src/lib/planParameters";
 
 describe("TREG people search and enrichment", () => {
+  it("distinguishes a valid empty result envelope from an invalid response object", () => {
+    expect(hasRecognizedProviderResultShape({ data: { results: [] }, total: 0 })).toBe(true);
+    expect(hasRecognizedProviderResultShape({ success: true, total: 0 })).toBe(true);
+    expect(hasRecognizedProviderResultShape({ error: "unexpected response" })).toBe(false);
+  });
+
   beforeEach(() => mocks.call.mockReset());
 
   it("converts legacy filters into TREG's routed search body", () => {

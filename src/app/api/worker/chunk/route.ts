@@ -39,6 +39,7 @@ import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLa
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
+import { estimateRemainingSecondsFromMeasuredPages } from "../../../../functions/shared/liveActivityFeed";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -361,21 +362,6 @@ export async function POST(req: NextRequest) {
         ? body.mockEstimatedCostUsd
         : Math.max(0.0001, Number((spec.unitCostUsd * estUnitsThisCall).toFixed(6)));
 
-    // Record step 0 event if beginning first chunk
-    if (currentStep === 0) {
-      try {
-        await adminClient.from("job_events").insert({
-          job_id: jobId,
-          user_id: userId,
-          message: `بدء استخراج البيانات (المستهدف حتى ${targetMax} سجل)...`,
-          units: 0,
-          event_type: "info",
-        });
-      } catch (evtErr: any) {
-        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
-      }
-    }
-
     // 6. Reserve provider spend BEFORE calling provider
     let spendCostId: number | null = null;
     const { data: spendReserve, error: spendErr } = await adminClient.rpc(
@@ -613,18 +599,6 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      // Record detailed event in job_events
-      try {
-        await adminClient.from("job_events").insert({
-          job_id: jobId,
-          user_id: userId,
-          message: `فحص ملاءمة الدفعة: ${matchedRows.length} مطابق، ${uncertainRows.length} قيد المراجعة، ${excludedRows.length} مستبعد (غير مطابق).`,
-          units: currentDelivered + matchedRows.length,
-          event_type: "progress",
-        });
-      } catch (evtErr: any) {
-        console.warn("[worker:relevance_event_warning]", evtErr?.message || "");
-      }
     }
 
     const acceptedRows = adapterResult.ok
@@ -742,20 +716,41 @@ export async function POST(req: NextRequest) {
 
     const recordedDeliveredUnits: number = compData.delivered_units;
 
-    // One concise customer event per provider page with source, accepted counts,
-    // explicit exclusions, and the main reasons; never include row-level PII.
+    // One concise customer event per real provider page with received,
+    // accepted, cumulative and skipped counts; never include row-level PII.
     try {
       if (!compData.already_completed) {
-        const sourceLabel = customerFacingCapabilityLabel(spec.capabilitySlug);
+        const skipReason = relevanceSkipReasons.length ? `سبب التخطي: ${relevanceSkipReasons.join("، ")}` : null;
+        const etaParts: string[] = [];
+        if (recordedDeliveredUnits < targetMax) {
+          const { data: previousPageEvents } = await adminClient.from("job_events")
+            .select("message, units, created_at")
+            .eq("job_id", jobId)
+            .eq("event_type", "progress")
+            .order("created_at", { ascending: true })
+            .limit(100);
+          const measuredPages = (previousPageEvents || [])
+            .filter((event: any) => typeof event.message === "string" && /^الصفحة\s/u.test(event.message))
+            .map((event: any) => ({ count: Number(event.units), createdAt: event.created_at, kind: "progress" as const }));
+          measuredPages.push({ count: recordedDeliveredUnits, createdAt: new Date().toISOString(), kind: "progress" });
+          const etaSeconds = estimateRemainingSecondsFromMeasuredPages(measuredPages, recordedDeliveredUnits, targetMax);
+          if (etaSeconds !== null) {
+            const etaValue = etaSeconds < 60
+              ? `نحو ${toArabicDigits(etaSeconds)} ثانية`
+              : `نحو ${toArabicDigits(Math.ceil(etaSeconds / 60))} دقيقة`;
+            etaParts.push(`الوقت المتوقع بحسب زمن الصفحات المسجل: ${etaValue}`);
+          }
+        }
         const parts = [
-          `المصدر: ${sourceLabel}`,
-          `الصفحة ${toArabicDigits(currentStep + 1)}`,
-          `وصل ${toArabicDigits(rawPageRowCount)} سجل`,
-          `جديد ومقبول ${toArabicDigits(acceptedRows.length)}`,
-          duplicateExcludedCount ? `تكرار أو قائمة استبعاد ${toArabicDigits(duplicateExcludedCount)}` : null,
+          `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
+          `الجديد ${toArabicDigits(acceptedRows.length)}`,
+          `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
+          duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
-          uncertainRows.length ? `يحتاج مراجعة ${toArabicDigits(uncertainRows.length)}` : null,
-        ].filter(Boolean);
+          uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
+          skipReason,
+          ...etaParts,
+        ].filter(Boolean) as string[];
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
@@ -763,33 +758,9 @@ export async function POST(req: NextRequest) {
           units: recordedDeliveredUnits,
           event_type: "progress",
         });
-        if (relevanceSkipReasons.length) {
-          await adminClient.from("job_events").insert({
-            job_id: jobId,
-            user_id: userId,
-            message: `أسباب الاستبعاد في هذه الصفحة: ${relevanceSkipReasons.join("، ")}`,
-            units: recordedDeliveredUnits,
-            event_type: "info",
-          });
-        }
       }
     } catch (evtErr: any) {
       console.warn("[worker:page_summary_event_warning]", evtErr?.message || "");
-    }
-
-    // Record real progress in job_events
-    try {
-      if (!compData.already_completed) {
-        await adminClient.from("job_events").insert({
-          job_id: jobId,
-          user_id: userId,
-          message: `تم استلام الدفعة ${currentStep + 1}: تم فحص وتدقيق السجلات وقبول ${acceptedRows.length} سجل جديد (الإجمالي المعتمد: ${recordedDeliveredUnits} من ${targetMax}).`,
-          units: recordedDeliveredUnits,
-          event_type: "progress",
-        });
-      }
-    } catch (evtErr: any) {
-      console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
     }
 
     if (compData.already_completed) {

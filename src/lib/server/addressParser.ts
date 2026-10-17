@@ -87,6 +87,52 @@ const CITY_ARABIC_MAP: Record<string, string> = {
   zurich: "زيورخ",
   geneva: "جنيف",
   amsterdam: "أمستردام",
+  tokyo: "طوكيو",
+  singapore: "سنغافورة",
+  "hong kong": "هونغ كونغ",
+  toronto: "تورونتو",
+  vancouver: "فانكوفر",
+  montreal: "مونتريال",
+  "new york": "نيويورك",
+  boston: "بوسطن",
+  chicago: "شيكاغو",
+  "los angeles": "لوس أنجلوس",
+  seattle: "سياتل",
+  austin: "أوستن",
+  san_francisco: "سان فرانسيسكو",
+  madrid: "مدريد",
+  barcelona: "برشلونة",
+  rome: "روما",
+  milan: "ميلانو",
+  lisbon: "لشبونة",
+  brussels: "بروكسل",
+  copenhagen: "كوبنهاغن",
+  stockholm: "ستوكهولم",
+  oslo: "أوسلو",
+  helsinki: "هلسنكي",
+  warsaw: "وارسو",
+  prague: "براغ",
+  budapest: "بودابست",
+  athens: "أثينا",
+  moscow: "موسكو",
+  kyiv: "كييف",
+  beijing: "بكين",
+  shanghai: "شنغهاي",
+  "new delhi": "نيودلهي",
+  mumbai: "مومباي",
+  bangalore: "بنغالور",
+  seoul: "سيول",
+  jakarta: "جاكرتا",
+  bangkok: "بانكوك",
+  kuala_lumpur: "كوالالمبور",
+  sydney: "سيدني",
+  melbourne: "ملبورن",
+  sao_paulo: "ساو باولو",
+  "mexico city": "مكسيكو سيتي",
+  johannesburg: "جوهانسبرغ",
+  cape_town: "كيب تاون",
+  lagos: "لاغوس",
+  nairobi: "نيروبي",
 };
 
 const COUNTRIES_AND_REGIONS = new Set([
@@ -155,4 +201,16 @@ export function extractCityFromAddress(rawLocation?: string | null, targetCountr
   }
 
   return "غير متاح";
+}
+
+/** Localize a provider's standalone city value; never leak an untranslated Latin city into Arabic deliverables. */
+export function localizeCityName(value?: string | null, targetCountry?: string | null): string {
+  if (!value || typeof value !== "string") return "غير متاح";
+  const trimmed = value.trim();
+  if (!trimmed) return "غير متاح";
+  if (/[\u0600-\u06FF]/u.test(trimmed)) return trimmed;
+  const normalized = trimmed.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (CITY_ARABIC_MAP[normalized]) return CITY_ARABIC_MAP[normalized];
+  const parsed = extractCityFromAddress(trimmed, targetCountry);
+  return parsed && parsed !== "غير متاح" && /[\u0600-\u06FF]/u.test(parsed) ? parsed : "غير متاح";
 }

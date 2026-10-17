@@ -35,6 +35,15 @@ export interface IndustryMapping {
   exactTaxonomy?: string[];
 }
 
+const ISO_3166_ALPHA2_CODES = "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW".split(" ");
+const countryNamesEn = new Intl.DisplayNames(["en"], { type: "region" });
+const countryNamesAr = new Intl.DisplayNames(["ar"], { type: "region" });
+
+export function isoCountryCodeFromName(countryName: string): string | undefined {
+  const normalized = String(countryName || "").trim().toLowerCase();
+  return ISO_3166_ALPHA2_CODES.find((code) => countryNamesEn.of(code)?.toLowerCase() === normalized);
+}
+
 export function detectCountryFromText(text: string): CountryMapping | null {
   if (!text || typeof text !== "string") return null;
   const t = text.toLowerCase().trim();
@@ -121,6 +130,20 @@ export function detectCountryFromText(text: string): CountryMapping | null {
   }
   if (t.includes("تركيا") || t.includes("turkey") || t.includes("türkiye") || t.includes("إسطنبول")) {
     return { canonicalEnglish: "Turkey", arabicLabel: "تركيا" };
+  }
+
+  // Resolve the rest of ISO country names through the runtime's standard
+  // localization data, so explicit countries anywhere in the world survive
+  // discovery and provider normalization without a regional allowlist.
+  for (const code of ISO_3166_ALPHA2_CODES) {
+    const english = countryNamesEn.of(code);
+    const arabic = countryNamesAr.of(code);
+    if (!english || !arabic || english === code || arabic === code) continue;
+    const englishIndex = t.indexOf(english.toLowerCase());
+    const before = englishIndex > 0 ? t[englishIndex - 1] : " ";
+    const after = englishIndex >= 0 ? t[englishIndex + english.length] || " " : " ";
+    const englishMatch = englishIndex >= 0 && !/[\\p{L}]/u.test(before) && !/[\\p{L}]/u.test(after);
+    if (englishMatch || t.includes(arabic.toLowerCase())) return { canonicalEnglish: english, arabicLabel: arabic };
   }
 
   return null;
