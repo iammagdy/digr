@@ -200,6 +200,8 @@ vi.mock("../src/lib/supabase/server", () => ({
                 status: mockWorkerDb.jobStatusOverride || "running",
                 charged_credits: 0,
                 delivered_units: mockWorkerDb.deliveredUnits,
+                current_cursor: mockWorkerDb.currentCursor,
+                target_volume_max: mockWorkerDb.targetVolumeMax,
               },
               error: null,
             };
