@@ -91,4 +91,136 @@ describe("TREG people search and enrichment", () => {
     ]);
     expect(mocks.call.mock.calls.slice(1).every(([call]) => call.routeMaxCostUsd === "0.005")).toBe(true);
   });
+
+  it("caps a three-person request at seven calls and disables retries for every people route", async () => {
+    mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
+      const endpointId = options?.endpointId || "";
+      if (endpointId === "treg.people.search") return {
+        ok: true, httpStatus: 200, tregCallId: "search_3", costMicro: 100,
+        data: { output: { people: [1, 2, 3].map((n) => ({
+          full_name: `Person ${n}`, title: "Director", company_name: `Company ${n}`,
+          company_domain: `company${n}.test`, linkedin_url: `https://linkedin.test/${n}`,
+        })) } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+      if (endpointId === "treg.people.email.find") return {
+        ok: true, httpStatus: 200, tregCallId: `email_${mocks.call.mock.calls.length}`, costMicro: 20,
+        data: { output: { work_email: "person@company.test" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+      return {
+        ok: true, httpStatus: 200, tregCallId: `phone_${mocks.call.mock.calls.length}`, costMicro: 30,
+        data: { output: { phone_number: "+201000000000" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+    });
+
+    const result = await defaultTregAdapter({
+      jobId: "job_people_three", userId: "user_people", step: 0,
+      endpointId: "treg.people.search", capabilitySlug: "professional-people-search",
+      method: "POST", params: { q: "directors in Egypt", limit: 3, requiredContactFields: ["work_email", "phone"] },
+      paginationStrategy: "none", cursor: null, pageSize: 3, remainingNeeded: 3,
+      targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.04,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.providerCallCount).toBe(7);
+    expect(result.costMicro).toBe(250);
+    expect(mocks.call).toHaveBeenCalledTimes(7);
+    expect(mocks.call.mock.calls.every(([call]) => call.routeMaxCostUsd === "0.005")).toBe(true);
+    expect(result.costMicro / 1_000_000).toBeLessThanOrEqual(0.035);
+  });
+
+  it("stops enriching at the per-job spend ceiling and leaves unavailable fields reviewable", async () => {
+    mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
+      const endpointId = options?.endpointId || "";
+      if (endpointId === "treg.people.search") return {
+        ok: true, httpStatus: 200, tregCallId: "search_budget", costMicro: 100,
+        data: { output: { people: [1, 2, 3].map((n) => ({
+          full_name: `Person ${n}`, title: "Director", company_name: `Company ${n}`,
+          company_domain: `company${n}.test`, linkedin_url: `https://linkedin.test/${n}`,
+        })) } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+      return {
+        ok: true, httpStatus: 200, tregCallId: "email_budget", costMicro: 20,
+        data: { output: { work_email: "person@company.test" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+    });
+
+    const result = await defaultTregAdapter({
+      jobId: "job_people_budget", userId: "user_people", step: 0,
+      endpointId: "treg.people.search", capabilitySlug: "professional-people-search",
+      method: "POST", params: { q: "directors in Egypt", limit: 3, requiredContactFields: ["work_email", "phone"] },
+      paginationStrategy: "none", cursor: null, pageSize: 3, remainingNeeded: 3,
+      targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.01,
+    });
+
+    expect(mocks.call).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(true);
+    expect(result.providerCallCount).toBe(2);
+    expect(result.nextCursor).toBeNull();
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[0]).toMatchObject({ work_email: "person@company.test", phone_presence_status: "غير موجود" });
+    expect(result.rows.slice(1).every((row) => row.work_email_presence_status === "غير موجود")).toBe(true);
+  });
+
+  it("records a failed contact lookup and keeps the person for field-level settlement", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
+      const endpointId = options?.endpointId || "";
+      if (endpointId === "treg.people.search") return {
+        ok: true, httpStatus: 200, tregCallId: "search_failure_case", costMicro: 100,
+        data: { output: { people: [{ full_name: "Person One", title: "Director", company_name: "Company One", company_domain: "company.test" }] } },
+        isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+      if (endpointId === "treg.people.email.find") return {
+        ok: false, httpStatus: 503, tregCallId: "email_failed", costMicro: 200,
+        data: null, error: "http_503", isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+      return {
+        ok: true, httpStatus: 200, tregCallId: "phone_success", costMicro: 30,
+        data: { output: { phone_number: "+201000000000" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
+    });
+
+    try {
+      const result = await defaultTregAdapter({
+        jobId: "job_people_failed_email", userId: "user_people", step: 0,
+        endpointId: "treg.people.search", capabilitySlug: "professional-people-search",
+        method: "POST", params: { q: "directors in Egypt", limit: 1, requiredContactFields: ["work_email", "phone"] },
+        paginationStrategy: "none", cursor: null, pageSize: 1, remainingNeeded: 1,
+        targetVolumeMax: 1, deliveredSoFar: 0,
+      });
+
+      expect(warning).toHaveBeenCalledWith("[decision_maker:contact_call_failed]", expect.objectContaining({
+        endpointId: "treg.people.email.find", status: 503, callId: "email_failed",
+      }));
+      expect(result.ok).toBe(true);
+      expect(result.providerCallCount).toBe(3);
+      expect(result.rows[0]).toMatchObject({
+        work_email_presence_status: "غير موجود",
+        phone: "+201000000000",
+      });
+      expect(result.rows[0].contact_review_status).toContain("لم يتوفر");
+    } finally {
+      warning.mockRestore();
+    }
+  });
+
+  it("does not retry a failed decision-maker search and returns its failure for worker release handling", async () => {
+    mocks.call.mockResolvedValue({
+      ok: false, httpStatus: 503, tregCallId: "search_failed", costMicro: 200,
+      data: null, error: "http_503", isRouteMaxCost: false, isPlatformBalanceLow: false,
+    });
+
+    const result = await defaultTregAdapter({
+      jobId: "job_people_failed_search", userId: "user_people", step: 0,
+      endpointId: "treg.people.search", capabilitySlug: "professional-people-search",
+      method: "POST", params: { q: "directors in Egypt", limit: 1 },
+      paginationStrategy: "none", cursor: null, pageSize: 1, remainingNeeded: 1,
+      targetVolumeMax: 1, deliveredSoFar: 0,
+    });
+
+    expect(mocks.call).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    expect(result.providerCallCount).toBe(1);
+    expect(result.costMicro).toBe(200);
+  });
 });

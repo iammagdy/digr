@@ -44,6 +44,12 @@ import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
+import {
+  DECISION_MAKER_ROUTE_COST_CAP_USD,
+  estimateDecisionMakerChunkSpendUsd,
+  readDecisionMakerSpendToDate,
+  remainingDecisionMakerSpendUsd,
+} from "../../../../lib/server/decisionMakerSpend";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -402,17 +408,27 @@ export async function POST(req: NextRequest) {
         ? Math.min(50, Math.floor(body.mockBatchSize))
         : spec.pageSize;
 
+    const isPeopleJob = spec.capabilitySlug === "professional-people-search";
+    const decisionMakerSpendBudgetUsd = isPeopleJob
+      ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId))
+      : undefined;
+
     const estUnitsThisCall =
       spec.pricingUnit === "item" ? Math.max(1, Math.min(effectivePageSize, remainingUnits)) : 1;
-    const estimatedCostUsd =
-      useMockProvider && typeof body?.mockEstimatedCostUsd === "number"
-        ? body.mockEstimatedCostUsd
-        : Math.max(0.0001, Number((spec.unitCostUsd * estUnitsThisCall).toFixed(6)));
+    const estimatedCostUsd = isPeopleJob
+      ? Math.max(0.0001, Math.min(
+          decisionMakerSpendBudgetUsd || 0,
+          estimateDecisionMakerChunkSpendUsd(Math.min(effectivePageSize, Math.max(1, remainingUnits))),
+        ))
+      : useMockProvider && typeof body?.mockEstimatedCostUsd === "number"
+      ? body.mockEstimatedCostUsd
+      : Math.max(0.0001, Number((spec.unitCostUsd * estUnitsThisCall).toFixed(6)));
 
     // 6. Reserve provider spend BEFORE calling provider
     let spendCostId: number | null = null;
     // A retried job whose reused rows already cover the target needs no provider call and reserves no provider spend.
-    const needsProvider = remainingUnits > 0 || !retrySeed;
+    const needsProvider = (remainingUnits > 0 || !retrySeed) &&
+      (!isPeopleJob || Number(decisionMakerSpendBudgetUsd) >= DECISION_MAKER_ROUTE_COST_CAP_USD);
     const { data: spendReserve, error: spendErr } = needsProvider
       ? await adminClient.rpc("reserve_provider_spend_atomic", {
           p_job_id: jobId,
@@ -481,6 +497,7 @@ export async function POST(req: NextRequest) {
       remainingNeeded: remainingUnits,
       targetVolumeMax: targetMax,
       deliveredSoFar: effectiveDelivered,
+      ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
     });
 
     const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
@@ -683,7 +700,9 @@ export async function POST(req: NextRequest) {
       await adminClient.rpc("commit_provider_spend", {
         p_cost_id: spendCostId,
         p_actual_cost_usd: actualCostUsd,
-        p_units: acceptedRows.length,
+        // DM units are provider call attempts, preserving a conservative
+        // per-job estimate from route caps across worker chunks.
+        p_units: isPeopleJob ? Number(adapterResult.providerCallCount) || 0 : acceptedRows.length,
       });
     }
 
@@ -1297,7 +1316,6 @@ export async function POST(req: NextRequest) {
 
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
       const primaryResultPath = savedCsvPath || savedXlsxPath || savedPdfPath || `${userId}/${jobId}/result.csv`;
-      const isPeopleJob = spec.capabilitySlug === "professional-people-search";
       const peopleUnits = isPeopleJob
         ? decisionMakerDeliveredUnits(finalRows, Array.isArray(spec.params?.requiredContactFields)
             ? spec.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
