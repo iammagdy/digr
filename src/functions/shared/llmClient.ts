@@ -119,7 +119,7 @@ export const ProposePlanSchema = z.object({
   executionOptions: ExecutionOptionsSchema.optional(),
   outputSpec: OutputSpecSchema.optional(),
   outputFormats: z.preprocess((val) => (typeof val === "string" ? [val] : val), z.array(z.enum(["xlsx", "pdf", "csv"])).default(["xlsx", "pdf", "csv"])),
-  methodologyNotes: z.string().default("تجميع وتوثيق البيانات العامة وفق المعايير البحثية المعتمدة"),
+  methodologyNotes: z.string().default("تجميع وتوثيق البيانات من المصادر المتاحة وفق نطاق البحث المحدد"),
   rationaleAr: z.string().optional(),
 }).passthrough();
 
@@ -1075,7 +1075,7 @@ export class LlmClient {
       return {
         output: {
           type: "refuse",
-          reasonAr: "المنصة مخصصة لجمع البيانات العامة والمتاحة علناً فقط، ولا تدعم الوصول لأي بيانات خاصة أو سرية.",
+          reasonAr: "يمكنني المساعدة في جمع البيانات من المصادر المتاحة، ولا أستطيع الوصول إلى بيانات خاصة أو سرية.",
         },
         inputTokens: 400,
         outputTokens: 40,
@@ -1089,8 +1089,8 @@ export class LlmClient {
     const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(lastUserMsg);
     if (isGreeting || isGeneralQuestion) {
       const answerText = isGreeting
-        ? "أهلاً بك! أنا مساعد Diger لجمع وتوثيق البيانات العامة من المنصات الرقمية. كيف يمكنني مساعدتك في بحثك اليوم؟"
-        : "أنا مساعد Diger المتخصص في تصميم وتنفيذ مهام جمع وتوثيق البيانات العامة من شبكات التواصل والمنصات الرقمية وتسليمها بملفات Excel وCSV وPDF موثقة. كيف تحب نبدأ؟";
+        ? "أهلاً بك! أنا مساعد Diger للبحث وجمع البيانات من المصادر المتاحة. كيف يمكنني مساعدتك اليوم؟"
+        : "أنا مساعد Diger، أساعدك في تصميم البحث وجمع البيانات من المصادر المتاحة وتسليمها في ملفات منظمة. كيف نبدأ؟";
       return {
         output: {
           type: "answer_question",
@@ -1329,8 +1329,8 @@ export class LlmClient {
           ],
           outputFormats: ["xlsx", "pdf", "csv"],
           methodologyNotes: isCompanySearch
-            ? "جمع وتوثيق البيانات العامة لمنصة قواعد بيانات الشركات وفق المعايير البحثية المعتمدة."
-            : "استخراج وتوثيق البيانات العامة وفق المعايير البحثية المعتمدة.",
+            ? "جمع وتوثيق البيانات من المصادر المتاحة وفق نطاق البحث المحدد."
+            : "جمع وتوثيق البيانات من المصادر المتاحة وفق نطاق البحث المحدد.",
         },
         inputTokens: 600,
         outputTokens: 120,
@@ -1385,7 +1385,7 @@ export class LlmClient {
         output: {
           type: "answer_question",
           intent: "chat",
-          answerAr: `أهلاً يا ${uName}، رصيدك ${uBalAr} نقطة. كيف يمكنني مساعدتك اليوم في استخراج البيانات العامة وتوثيقها؟`,
+          answerAr: `أهلاً يا ${uName}، رصيدك ${uBalAr} نقطة. كيف يمكنني مساعدتك اليوم في البحث من المصادر المتاحة؟`,
           topic: "greeting",
         },
         inputTokens: 300,
@@ -1408,7 +1408,7 @@ export class LlmClient {
       promptLower.includes("ما هي الملفات") ||
       promptLower.includes("كم يستغرق")
     ) {
-      let answerText = "تتيح لك منصة Diger استخراج البيانات العامة وتوثيقها بملفات Excel وCSV وPDF موثقة بمنهجية كاملة.";
+      let answerText = "تتيح لك منصة Diger جمع البيانات من المصادر المتاحة وتسليمها في ملفات منظمة.";
       if (promptLower.includes("شحن") || promptLower.includes("إنستاباي") || promptLower.includes("instapay")) {
         answerText = "يتم شحن الرصيد عبر إنستاباي (Instapay) من صفحة الرصيد. بعد التحويل ترفع إيصال المعاملة ويتم اعتماد النقاط فورياً لحسابك.";
       } else if (promptLower.includes("ملفات")) {

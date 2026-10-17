@@ -159,7 +159,7 @@ export function deriveArabicTaskName(rawEndpoint: any, platform: string): { name
   const idStr = String(rawEndpoint.id || "").toLowerCase();
 
   let nameAr = `استخراج بيانات من ${platformAr}`;
-  let summaryAr = `جمع واستخراج البيانات العامة من ${platformAr}`;
+  let summaryAr = `جمع واستخراج البيانات من المصادر المتاحة عبر ${platformAr}`;
 
   if (nameEn.includes("compan") || summaryEn.includes("compan") || idStr.includes("compan") || idStr.includes("lead")) {
     nameAr = "بحث واستخراج بيانات الشركات";

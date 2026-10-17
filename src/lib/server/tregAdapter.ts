@@ -116,7 +116,7 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return { englishKeywords: ["aerospace", "rocket"], arabicLabel: "صناعة الصواريخ والفضاء", exactTaxonomy: ["Aviation & Aerospace", "Defense & Space"] };
   }
   if (t.includes("طاقة شمسية") || t.includes("شمسية") || t.includes("solar") || t.includes("طاقة متجددة") || t.includes("renewable")) {
-    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة", exactTaxonomy: ["Renewables & Environment", "Oil & Energy"] };
+    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة", exactTaxonomy: ["Renewables & Environment"] };
   }
   if (t.includes("أغذية") || t.includes("اغذية") || t.includes("طعام") || t.includes("مطاعم") || t.includes("أطعمة") || t.includes("food") || t.includes("beverage")) {
     return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم", exactTaxonomy: ["Food & Beverages", "Restaurants"] };
@@ -150,7 +150,9 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     t.includes("construction") ||
     t.includes("contracting")
   ) {
-    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد", exactTaxonomy: ["Construction", "Building Materials"] };
+    // Building Materials is a separate supplier category and pulls unrelated
+    // manufacturers into a construction-company search.
+    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد", exactTaxonomy: ["Construction"] };
   }
   if (t.includes("أثاث") || t.includes("اثاث") || t.includes("موبيليا") || t.includes("furniture") || t.includes("woodworking")) {
     return { englishKeywords: ["furniture", "woodworking"], arabicLabel: "صناعة الأثاث", exactTaxonomy: ["Furniture"] };
@@ -745,7 +747,7 @@ export function createBuiltInMockAdapter(bodyOptions: {
         id: `rec_${globalIndex}`,
         uniqueId: `user_${globalIndex}`,
         nickname: `حساب بحثي ${globalIndex}`,
-        signature: `بيانات عامة مستخرجة رقم ${globalIndex}`,
+        signature: `سجل مصدر مرقّم ${globalIndex}`,
         verified: globalIndex % 2 === 0,
         followerCount: 1000 * globalIndex,
         followingCount: 150 + globalIndex,

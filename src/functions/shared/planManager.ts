@@ -554,6 +554,7 @@ export interface ManagedQuoteResult {
   outputFormats: string[];
   targetVolumeMax: number;
   unitPricePoints: number;
+  expectedPoints: number;
   quotedPoints: number;
   isAffordable: boolean;
   downscaledOffer?: {
@@ -884,6 +885,7 @@ export async function createAndSaveManagedQuote(
     outputFormats: plan.outputFormats || ["xlsx", "pdf", "csv"],
     targetVolumeMax: totalVolumeMax,
     unitPricePoints: quoteUnitPricePoints,
+    expectedPoints: Math.max(effectivePricing.minPoints, Math.ceil(totalRawPoints)),
     quotedPoints: totalQuotedPoints,
     isAffordable,
     downscaledOffer,

@@ -180,12 +180,8 @@ function customerFacingCountry(country: unknown): string {
 }
 
 /**
- * Generate a research-grade Excel (.xlsx) workbook with 5 sheets:
- * 1. لوحة المؤشرات العامة (Executive KPI Dashboard)
- * 2. البيانات (Full Clean Dataset with RTL & Frozen Header)
- * 3. تحليل التفاعل (Engagement & Distribution Analysis)
- * 4. جودة البيانات (Data Quality, Deduplication & Completeness Audit)
- * 5. دليل الحقول (Dynamic Data Codebook)
+ * Generate a data-only Excel workbook. Social results retain linked comment
+ * tables and a compact KPI sheet; methodology is delivered separately as PDF.
  */
 export async function generateExcelReport(
   payload: any,
@@ -193,8 +189,10 @@ export async function generateExcelReport(
 ): Promise<Buffer> {
   const norm: NormalizedDataset = normalizeDataset(payload);
   if (norm.metadata.entityType === "companies") {
-    return generateCompanyExcelReport(payload, options?.deduplicationAudit, (payload as any)?.uncertainRows);
+    return generateCompanyDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
+  return generateStructuredDataWorkbook(payload, norm);
+
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   const reportTitle = customerFacingTitle(norm.metadata.title);
@@ -499,6 +497,202 @@ export async function generateExcelReport(
 
   const buffer = await wb.xlsx.writeBuffer();
   return Buffer.from(buffer);
+}
+
+/** Build a data-only workbook with normalized parent/child tables when the
+ * source returns nested comments or replies. Methodology and quality prose is
+ * delivered in the separate PDF, not repeated as extra Excel tabs. */
+async function generateStructuredDataWorkbook(payload: any, norm: NormalizedDataset): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = customerFacingTitle(norm.metadata.title);
+  const rawRows: Record<string, any>[] = Array.isArray(payload?.rows) ? payload.rows : norm.rows;
+  const nestedKeys = new Set(["comments", "top_comments", "topComments", "commentList", "replies", "replyList", "reply_list"]);
+  const arrayValue = (value: unknown): any[] => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+      try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+    }
+    return [];
+  };
+  const mainRows: Record<string, any>[] = [];
+  const topComments: Record<string, any>[] = [];
+  const replies: Record<string, any>[] = [];
+  for (const source of rawRows) {
+    if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+    const main = Object.fromEntries(Object.entries(source).filter(([key]) => !nestedKeys.has(key)));
+    const looksLikeComment = Boolean(source.comment_id || source.commentId || source.comment_text || source.commentText || source.parent_id || source.parentId);
+    if (!looksLikeComment) mainRows.push(main);
+
+    const rootEntityId = String(source.video_id || source.videoId || source.post_id || source.postId || source.id || source.source_id || "");
+    const nestedComments = ["comments", "top_comments", "topComments", "commentList"].flatMap((key) => arrayValue(source[key]));
+    for (const comment of nestedComments) {
+      if (!comment || typeof comment !== "object") continue;
+      const { replies: nestedReplies, replyList, reply_list, ...commentFields } = comment;
+      const commentId = String(commentFields.comment_id || commentFields.commentId || commentFields.id || commentFields.cid || "");
+      topComments.push({ source_entity_id: rootEntityId, ...commentFields, comment_id: commentId || undefined });
+      for (const reply of [...arrayValue(nestedReplies), ...arrayValue(replyList), ...arrayValue(reply_list)]) {
+        if (!reply || typeof reply !== "object") continue;
+        replies.push({ parent_id: commentId, source_entity_id: rootEntityId, ...reply });
+      }
+    }
+    if (looksLikeComment) {
+      const item = { ...main };
+      const parentId = String(item.parent_id || item.parentId || item.parent_comment_id || "");
+      if (item.is_reply === true || parentId) replies.push({ ...item, parent_id: parentId });
+      else topComments.push({ ...item, comment_id: item.comment_id || item.commentId || item.id });
+    }
+  }
+  const mainDataset = normalizeDataset({ metadata: payload?.metadata || {}, rows: rawRows.length ? mainRows : norm.rows });
+  const commentsDataset = normalizeDataset({ metadata: payload?.metadata || {}, rows: topComments });
+  const repliesDataset = normalizeDataset({ metadata: payload?.metadata || {}, rows: replies });
+  const titleCell = (cell: ExcelJS.Cell) => {
+    cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  };
+  const addTable = (name: string, dataset: NormalizedDataset) => {
+    if (!dataset.rows.length) return;
+    const sheet = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
+    const labels = new Map(dataset.codebook.map((entry) => [entry.field, entry.titleAr]));
+    const headers = dataset.columns.map((key) => labels.get(key) || key);
+    const header = sheet.addRow(headers);
+    header.eachCell(titleCell);
+    header.height = 30;
+    dataset.rows.forEach((record, index) => {
+      const row = sheet.addRow(dataset.columns.map((key) => {
+        const value = record[key];
+        if (value === null || value === undefined) return "";
+        if (typeof value === "boolean") return value ? "نعم" : "لا";
+        if (typeof value === "string" && /^(?:https?:\/\/)/i.test(value.trim()) && /(?:^url$|_url$|link$|permalink$)/i.test(key)) return workbookHyperlink(value);
+        return escapeFormula(value);
+      }));
+      row.height = 22;
+      row.alignment = { vertical: "middle", wrapText: true };
+      row.eachCell((cell) => {
+        cell.border = borderThin;
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+        if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+      });
+    });
+    sheet.columns = dataset.columns.map((key) => ({ width: /text|comment|description|bio/i.test(key) ? 44 : /url|link/i.test(key) ? 32 : 20 }));
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, dataset.rows.length + 1), column: Math.max(1, headers.length) } };
+    sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+  };
+
+  const dashboard = wb.addWorksheet("لوحة النتائج", { views: [{ rightToLeft: true }] });
+  dashboard.addRow([customerFacingTitle(norm.metadata.title)]).font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_NAVY_HEADER } };
+  dashboard.addRow(["ملخص الأعداد والحقول المستلمة من المصدر؛ لا يتضمن هذا الملخص قياساً لتغطية المجتمع."]);
+  dashboard.addRow(["المؤشر", "القيمة"]);
+  [["المنصة", customerFacingPlatform(norm.metadata.platform)], ["الكيانات الأساسية", mainDataset.rows.length], ["التعليقات الرئيسية", topComments.length], ["الردود المرتبطة", replies.length], ["المشاهدات المسجلة", norm.kpis.totalViews], ["الإعجابات المسجلة", norm.kpis.totalLikes], ["التعليقات/الردود المسجلة بالمصدر", norm.kpis.totalComments]].forEach((values) => dashboard.addRow(values));
+  dashboard.getRow(3).eachCell(titleCell);
+  dashboard.columns = [{ width: 38 }, { width: 46 }];
+  dashboard.views = [{ rightToLeft: true }];
+  addTable(norm.metadata.entityType === "posts" ? "الكيانات الأساسية" : "البيانات", mainDataset);
+  addTable("التعليقات الرئيسية", commentsDataset);
+  addTable("الردود", repliesDataset);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/** Customer workbook for company research: only the delivered rows, with an
+ * optional separate review table for uncertain rows. Methodology belongs in
+ * its PDF, never as hidden audit/codebook tabs in the data workbook. */
+async function generateCompanyDataWorkbook(
+  norm: NormalizedDataset,
+  uncertainRows: any[] = [],
+): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = customerFacingTitle(norm.metadata.title);
+  const ws = wb.addWorksheet("بيانات الشركات", {
+    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+  });
+  const headers = [
+    "معرّف السجل", "اسم الشركة", "مجال النشاط", "الموقع الإلكتروني",
+    "صفحة لينكد إن", "المدينة", "العنوان", "الهاتف التجاري", "البريد المهني",
+  ];
+  const header = ws.addRow(headers);
+  header.font = { name: "Calibri", size: 11, bold: true, color: { argb: COLOR_WHITE } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  header.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  header.height = 30;
+  const companyName = (r: any, index: number) => String(r.company_name || r.name || r.title || `شركة ${index + 1}`).trim();
+  const cleanCellText = (v: unknown) => String(v ?? "").replace(/^'/, "").trim() || "غير متاح";
+  const sectorLabel = (value: unknown) => {
+    const s = cleanCellText(value);
+    const labels: Record<string, string> = {
+      "construction": "المقاولات والتشييد",
+      "information technology & services": "تقنية المعلومات والخدمات التقنية",
+      "computer software": "البرمجيات",
+      "restaurants": "المطاعم",
+      "food & beverages": "الأغذية والمشروبات",
+      "renewables & environment": "الطاقة المتجددة والبيئة",
+      "building materials": "مواد البناء",
+      "real estate": "العقارات",
+      "mechanical or industrial engineering": "الهندسة الميكانيكية والصناعية",
+      "electrical/electronic manufacturing": "تصنيع المعدات الكهربائية والإلكترونية",
+    };
+    return labels[s.toLowerCase()] || s;
+  };
+  const rows = norm.rows;
+  rows.forEach((r, index) => {
+    const rawAddress = cleanCellText(r.address || r.full_address || r.location);
+    const city = cleanCellText(r.city) !== "غير متاح"
+      ? cleanCellText(r.city)
+      : extractCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress);
+    const website = r.website || r.website_url || r.domain || r.company_website || "";
+    const linkedin = r.linkedin_url || r.linkedin || r.company_linkedin || "";
+    const values: ExcelJS.CellValue[] = [
+      cleanCellText(r.company_id || r.source_id || r.id || `rec_${index + 1}`),
+      companyName(r, index),
+      sectorLabel(r.industry || r.activity || r.sector || r.category),
+      /^https?:\/\//i.test(String(website)) ? workbookHyperlink(website) : "غير متاح",
+      /^https?:\/\//i.test(String(linkedin)) ? workbookHyperlink(linkedin) : "غير متاح",
+      city,
+      rawAddress,
+      cleanCellText(r.phone || r.phone_number || r.business_phone),
+      cleanCellText(r.work_email || r.workEmail || r.email),
+    ];
+    const row = ws.addRow(values);
+    row.height = 24;
+    row.alignment = { vertical: "middle", wrapText: true };
+    row.eachCell((cell, col) => {
+      cell.border = borderThin;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+      if (col === 8 || col === 9) cell.numFmt = "@";
+      if ((col === 4 || col === 5) && cell.hyperlink) {
+        cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+      }
+    });
+  });
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rows.length + 1), column: headers.length } };
+  ws.columns = [
+    { width: 22 }, { width: 36 }, { width: 32 }, { width: 38 },
+    { width: 38 }, { width: 22 }, { width: 44 }, { width: 24 }, { width: 36 },
+  ];
+  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+
+  const uncertain = Array.isArray(uncertainRows) ? uncertainRows : [];
+  if (uncertain.length) {
+    const review = wb.addWorksheet("سجلات تحتاج مراجعة", {
+      views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+    });
+    const reviewHeaders = ["معرّف السجل", "اسم الشركة", "مجال النشاط كما ورد", "الموقع كما ورد", "سبب المراجعة"];
+    const rh = review.addRow(reviewHeaders);
+    rh.font = header.font;
+    rh.fill = header.fill;
+    rh.alignment = header.alignment;
+    reviewHeaders.forEach((_, i) => { review.getColumn(i + 1).width = [22, 36, 32, 38, 56][i]; });
+    uncertain.forEach((r, i) => review.addRow([
+      cleanCellText(r.id || `review_${i + 1}`), companyName(r, i),
+      cleanCellText(r.industry || r.activity || r.sector),
+      cleanCellText(r.location || r.city || r.address),
+      cleanCellText(r._relevance_reason),
+    ]));
+    review.autoFilter = { from: { row: 1, column: 1 }, to: { row: uncertain.length + 1, column: reviewHeaders.length } };
+  }
+
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 /**

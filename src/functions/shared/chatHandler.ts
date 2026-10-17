@@ -457,7 +457,7 @@ export function buildAutoPlanProposal(
 
   const topicLabel =
     extractedCurrentTopic ||
-    (cleanTopics.length > 0 ? cleanTopics[cleanTopics.length - 1] : "البيانات العامة المطلوبة");
+    (cleanTopics.length > 0 ? cleanTopics[cleanTopics.length - 1] : "البيانات المطلوبة");
 
   const isCompanySearch =
     platformNorm === "companies" ||
@@ -553,7 +553,7 @@ export function buildAutoPlanProposal(
     outputFormats: brief.formats && brief.formats.length > 0 ? brief.formats : ["xlsx", "pdf", "csv"],
     methodologyNotes: isPeopleCapability
       ? "البحث عن صناع القرار والمهنيين بحسب المجال والدولة والمسمى الوظيفي؛ وجود أي حقل لا يعني التحقق المستقل من صحته."
-      : `جمع وتوثيق البيانات العامة لمنصة ${platformLabel} وفق المعايير البحثية المعتمدة.`,
+      : `جمع وتوثيق البيانات من المصادر المتاحة عبر ${platformLabel} وفق نطاق البحث المحدد.`,
   };
 }
 
@@ -584,6 +584,17 @@ export function routePeopleAlternative(
 ): any {
   if (!isPeopleSearchRequest(requestText)) return output;
 
+  const peopleCapability = capabilities.find((capability) =>
+    !UNAVAILABLE_CAPABILITY_SLUGS.has(capability.slug) && capability.enabled !== false && capability.status === "verified" &&
+    /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
+  );
+  if (!peopleCapability) {
+    return {
+      type: "refuse",
+      reasonAr: "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً.",
+    };
+  }
+
   // Preserve an explicit adaptive clarification from the model. The code
   // still enforces the required country below when a plan or alternative was
   // proposed without it.
@@ -603,17 +614,6 @@ export function routePeopleAlternative(
     "answer_question",
     "search_catalog",
   ].includes(output?.type)) return output;
-
-  const peopleCapability = capabilities.find((capability) =>
-    !UNAVAILABLE_CAPABILITY_SLUGS.has(capability.slug) && capability.enabled !== false && capability.status === "verified" &&
-    /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  );
-  if (!peopleCapability) {
-    return {
-      type: "refuse",
-      reasonAr: "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً.",
-    };
-  }
 
   if (!detectCountryFromText(requestText)) {
     const question = "ما الدولة التي تريد البحث فيها عن صناع القرار والمهنيين؟";
@@ -2245,6 +2245,7 @@ export class ChatHandler {
             items: managedQuote.items,
             targetVolumeMax: managedQuote.targetVolumeMax,
             unitPricePoints: managedQuote.unitPricePoints,
+            expectedPoints: managedQuote.expectedPoints,
             quotedPoints: managedQuote.quotedPoints,
             isAffordable: managedQuote.isAffordable,
             userBalance,
@@ -2255,7 +2256,7 @@ export class ChatHandler {
             methodologyNotes: planOutput.methodologyNotes,
           };
 
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n- التكلفة: ${managedQuote.quotedPoints} نقطة`;
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n- التكلفة المتوقعة: ${managedQuote.expectedPoints} نقطة`;
           if (brief.exclusionFile) {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
@@ -2345,6 +2346,7 @@ export class ChatHandler {
                 items: managedQuote.items,
                 targetVolumeMax: managedQuote.targetVolumeMax,
                 unitPricePoints: managedQuote.unitPricePoints,
+                expectedPoints: managedQuote.expectedPoints,
                 quotedPoints: managedQuote.quotedPoints,
                 isAffordable: managedQuote.isAffordable,
                 userBalance,
@@ -2354,7 +2356,7 @@ export class ChatHandler {
                 expiresAt: managedQuote.expiresAt,
               };
 
-              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المحدثة: ${managedQuote.quotedPoints} نقطة`;
+              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المتوقعة: ${managedQuote.expectedPoints} نقطة`;
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
               }

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
+import { computePublicCalculatorQuote } from "@/lib/calculatorPricing";
 import { FAQS, SHEETS, STATEMENTS } from "./data";
 import { Reveal } from "./Reveal";
 
@@ -50,11 +51,10 @@ export function Sheets() {
   );
 }
 
-/** Illustrative only: points = records × 0.085, the real price is always computed by the server per plan. */
+/** Uses the same catalog unit price and settlement calculation as the quote flow. */
 export function Calculator() {
   const [vol, setVol] = useState(1000);
-  const pts = Math.round(vol * 0.085);
-  const refund = pts - Math.round(pts * 0.92);
+  const pts = computePublicCalculatorQuote("icypeas-companies-search", vol, vol).chargedPoints;
   return (
     <section className={`${BORDER_TOP} px-5 py-[110px]`}>
       <div className="mx-auto max-w-[760px] text-center">
@@ -70,7 +70,7 @@ export function Calculator() {
           aria-label="عدد السجلات" style={{ direction: "rtl" }}
         />
         <p className="mx-auto mb-0 mt-6 max-w-[480px] text-sm font-light leading-[2] text-mut">
-          يُحجز هذا المبلغ مؤقتًا عند موافقتك، ويُخصم فقط على السجلات المسلَّمة. لو وصلك ٩٢٪ منها، يرجع <span className="font-medium text-goldT">{formatAr(refund)} نقطة</span> لرصيدك تلقائيًا.
+          هذه هي التكلفة المتوقعة للعدد المحدد. يُخصم فقط مقابل السجلات المطابقة التي يتم تسليمها.
         </p>
         <p className="mb-0 mt-2.5 text-[11px] text-fnt">مثال توضيحي — السعر النهائي يُحسب من الخادم لكل خطة.</p>
       </div>

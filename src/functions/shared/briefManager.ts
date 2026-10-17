@@ -377,7 +377,7 @@ export function extractBriefFromMessage(
   // 6. Infer 5 to 10 relevant Arabic keywords
   const primaryTopic = (brief.topics && brief.topics.length > 0)
     ? brief.topics[0]
-    : (!msgIsGreeting ? userMessage : "البيانات العامة المطلوبة");
+    : (!msgIsGreeting ? userMessage : "البيانات المطلوبة");
   const inferred = inferRelatedKeywords(primaryTopic, userMessage);
   if (!brief.keywords || brief.keywords.length === 0) {
     brief.keywords = inferred;

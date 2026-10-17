@@ -20,6 +20,7 @@ export interface PlanQuoteData {
   items?: PlanItem[];
   targetVolumeMax: number;
   unitPricePoints: number;
+  expectedPoints?: number;
   quotedPoints: number;
   isAffordable: boolean;
   userBalance: number;
@@ -168,6 +169,7 @@ export default function PlanQuoteCard({
   const balance = available ?? quote.userBalance;
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
   const shortPts = Math.max(0, quote.quotedPoints - balance);
+  const expectedPoints = quote.expectedPoints ?? Math.ceil(quote.unitPricePoints * quote.targetVolumeMax);
   const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
   const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] ?? f.toUpperCase());
 
@@ -227,11 +229,11 @@ export default function PlanQuoteCard({
         <div>
           <p className="m-0 text-xs text-mut mb-1 font-medium">التكلفة المتوقعة</p>
           <p className="m-0 text-[34px] font-normal leading-none text-ink">
-            {formatAr(quote.quotedPoints)}
+            {formatAr(expectedPoints)}
             <span className="text-base text-mut" style={{ marginInlineStart: 8 }}>نقطة</span>
           </p>
           <p className="mb-0 mt-2 text-[13px] font-light text-mut">
-            ≈ {formatAr(Number((quote.quotedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatAr(balance)} نقطة`}
+            ≈ {formatAr(Number((expectedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatAr(balance)} نقطة`}
           </p>
         </div>
         <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
@@ -316,10 +318,7 @@ export default function PlanQuoteCard({
 
       {/* Financial Guarantee & Accounting Clarity Box */}
       <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
-        <p className="m-0 font-medium text-ink">نظام احتساب النقاط والضمان المالي:</p>
-        <p className="m-0 mt-1">
-          عند الموافقة، يُحجز داخلياً <strong>{formatAr(quote.quotedPoints)} نقطة</strong>، ويشمل الحجز هامشاً يصل إلى ١٥٪. بعد التسليم، تُسوّى تكلفة السجلات المطابقة المسلَّمة فقط، ويُرفع الحجز عن أي فرق تلقائياً؛ هذا الفرق ليس استرداداً أو رصيداً جديداً.
-        </p>
+        <p className="m-0 font-medium text-ink">التكلفة المتوقعة تشمل السجلات المطلوبة. بعد التسليم، يُخصم فقط مقابل السجلات المطابقة التي وصلت إليك.</p>
         {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("صناع") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول") || quote.summaryAr?.includes("مدير")) && (
           <p className="m-0 mt-1.5 text-ink2 border-t border-ln pt-1.5">
             تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع توضيح ما إذا كان كل حقل موجودًا أو غير موجود في السجل. وجود البريد لا يعني التحقق من صحته. لا يُحاسب العميل على أي حقل غير متوفر.
@@ -481,7 +480,7 @@ export default function PlanQuoteCard({
               {isEditing ? "إلغاء التعديل" : EDIT_PLAN_BTN_LABEL}
             </button>
           </div>
-          <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">بالموافقة سيُحجز المبلغ تقديريًا — ولا يُخصم النهائي إلا بعد تسليم السجلات.</p>
+          <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">بعد الموافقة يبدأ البحث، ويُخصم فقط مقابل السجلات المطابقة التي تم تسليمها.</p>
         </>
       )}
     </div>

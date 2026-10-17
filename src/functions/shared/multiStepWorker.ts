@@ -933,7 +933,7 @@ export async function executeMultiStepJob(
   const dateStr = new Date().toISOString().slice(0, 10);
   const finalPayload: any = {
     metadata: {
-      platform: "Diger Data Platform",
+      platform: /compan|b2b/i.test(templateSlug) ? "companies" : templateSlug,
       company: "Diger",
       title: `نتائج استخراج ${templateSlug}`,
       template: templateSlug,

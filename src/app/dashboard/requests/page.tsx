@@ -37,6 +37,8 @@ interface RequestAttemptDoc {
 type Kind = "done" | "partial" | "running" | "refunded";
 const kindOfJob = (j: JobDoc): Kind => {
   const s = String(j.status || "").toLowerCase();
+  const delivered = j.rowsCollected ?? 0;
+  if ((s === "failed" || s === "cancelled" || s === "refused") && delivered > 0) return "partial";
   if (s === "failed" || s === "cancelled" || s === "refused") return "refunded";
   if (s === "done" || s === "completed") {
     const req = j.targetVolumeMax;
@@ -52,7 +54,7 @@ const STATUS: Record<Kind, { label: string; fg: string; tint: string }> = {
   done: { label: "مكتمل", fg: "var(--ok)", tint: "var(--ok)" },
   partial: { label: "مكتمل جزئياً", fg: "var(--gold)", tint: "var(--gold)" },
   running: { label: "قيد التنفيذ", fg: "var(--gold)", tint: "var(--gold)" },
-  refunded: { label: "مسترد", fg: "var(--mut)", tint: "var(--mut)" },
+  refunded: { label: "تعذر التنفيذ · رصيدك مسترد", fg: "var(--mut)", tint: "var(--mut)" },
 };
 const TABS: Array<["all" | "done" | "running" | "refunded", string]> = [
   ["all", "الكل"],
@@ -403,7 +405,8 @@ export default function RequestsPage() {
           const rows = j.rowsCollected ?? 0;
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
-            : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0) : "";
+            : k === "refunded" ? formatRefundedNote(j.errorAr, j.reservedCredits || 0)
+            : k === "partial" ? `توقف البحث بعد تسليم ${formatAr(rows)} من ${formatAr(requested || rows)} سجلاً؛ الخصم يقتصر على السجلات المسلّمة المطابقة.` : "";
           const availableFormats = (["xlsx", "pdf", "csv"] as const).filter(
             (ext) => Boolean(j.fileIds[ext]),
           );

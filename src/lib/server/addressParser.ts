@@ -103,12 +103,12 @@ const COUNTRIES_AND_REGIONS = new Set([
  */
 export function extractCityFromAddress(rawLocation?: string | null, targetCountry?: string | null): string {
   if (!rawLocation || typeof rawLocation !== "string") {
-    return targetCountry ? (targetCountry === "Saudi Arabia" ? "الرياض" : targetCountry === "Egypt" ? "القاهرة" : targetCountry) : "عام / غير مدرج";
+    return "غير متاح";
   }
 
   const trimmed = rawLocation.trim();
   if (!trimmed) {
-    return "عام / غير مدرج";
+    return "غير متاح";
   }
 
   // Check if address already contains an Arabic city
@@ -154,5 +154,5 @@ export function extractCityFromAddress(rawLocation?: string | null, targetCountr
     }
   }
 
-  return targetCountry ? (targetCountry === "Saudi Arabia" ? "الرياض" : targetCountry === "Egypt" ? "القاهرة" : targetCountry) : trimmed;
+  return "غير متاح";
 }

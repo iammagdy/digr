@@ -17,6 +17,7 @@ export interface PlanItem {
 export interface QuoteCalculationResult {
   unitPricePoints: number;
   rawPoints: number;
+  expectedPoints: number;
   quotedPoints: number;
   targetVolumeMax: number;
   safetyBufferPercent: number;
@@ -68,10 +69,10 @@ export function calculateCapabilityUnitPricePoints(
 }
 
 /**
- * Calculate capability quote using integer unitPricePoints and 15% safetyBuffer on the reserve only:
+ * Calculate the customer quote using the same per-unit charge used at settlement:
  * - unitPricePoints = calculateCapabilityUnitPricePoints(unitCostUsd, settings)
  * - rawPoints = targetVolumeMax * unitPricePoints
- * - quotedPoints = Math.max(settings.minPoints, Math.ceil(rawPoints * (1 + settings.safetyBuffer)))
+ * - quotedPoints = ceil(rawPoints * (1 + safetyBuffer)) (internal reserve)
  */
 export function calculateCapabilityQuote(
   targetVolumeMax: number,
@@ -81,19 +82,15 @@ export function calculateCapabilityQuote(
 ): QuoteCalculationResult {
   const unitPricePoints = calculateCapabilityUnitPricePoints(unitCostUsd, settings);
   const rawPoints = targetVolumeMax * unitPricePoints;
-  const withBuffer = rawPoints * (1 + settings.safetyBuffer);
-  const quotedPoints = Math.max(settings.minPoints, Math.ceil(withBuffer));
+  const expectedPoints = Math.ceil(rawPoints);
+  const quotedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
 
   const isAffordable = userBalance >= quotedPoints;
 
   let downscaledOffer: QuoteCalculationResult["downscaledOffer"] = undefined;
   if (!isAffordable && userBalance >= settings.minPoints && unitPricePoints > 0) {
-    const costPerUnitWithBuffer = unitPricePoints * (1 + settings.safetyBuffer);
-    const maxAffordableUnits = Math.max(1, Math.floor(userBalance / costPerUnitWithBuffer));
-    const affordableQuotedPoints = Math.max(
-      settings.minPoints,
-      Math.ceil(maxAffordableUnits * costPerUnitWithBuffer)
-    );
+    const maxAffordableUnits = Math.max(1, Math.floor(userBalance / (unitPricePoints * (1 + settings.safetyBuffer))));
+    const affordableQuotedPoints = Math.ceil(maxAffordableUnits * unitPricePoints * (1 + settings.safetyBuffer));
     if (maxAffordableUnits < targetVolumeMax) {
       downscaledOffer = {
         maxAffordableUnits,
@@ -105,9 +102,10 @@ export function calculateCapabilityQuote(
   return {
     unitPricePoints,
     rawPoints,
+    expectedPoints,
     quotedPoints,
     targetVolumeMax,
-    safetyBufferPercent: settings.safetyBuffer * 100,
+    safetyBufferPercent: Math.round(settings.safetyBuffer * 100),
     isAffordable,
     userBalance,
     downscaledOffer,
@@ -117,7 +115,7 @@ export function calculateCapabilityQuote(
 /**
  * Calculate Quote in Points:
  * - unitPricePoints excludes safety buffer
- * - quotedPoints = ceil(targetVolumeMax * unitPricePoints * (1 + safetyBuffer))
+ * - quotedPoints = ceil(rawPoints * (1 + safetyBuffer))
  * - downscales automatically if user balance is insufficient
  */
 export function calculateQuote(
@@ -128,19 +126,15 @@ export function calculateQuote(
 ): QuoteCalculationResult {
   const unitPricePoints = calculateUnitPricePoints(unitCostUsd, settings);
   const rawPoints = targetVolumeMax * unitPricePoints;
-  const withBuffer = rawPoints * (1 + settings.safetyBuffer);
-  const quotedPoints = Math.max(settings.minPoints, Math.ceil(withBuffer));
+  const expectedPoints = Math.ceil(rawPoints);
+  const quotedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
 
   const isAffordable = userBalance >= quotedPoints;
 
   let downscaledOffer: QuoteCalculationResult["downscaledOffer"] = undefined;
-  if (!isAffordable && userBalance >= settings.minPoints) {
-    const costPerUnitWithBuffer = unitPricePoints * (1 + settings.safetyBuffer);
-    const maxAffordableUnits = Math.max(1, Math.floor(userBalance / costPerUnitWithBuffer));
-    const affordableQuotedPoints = Math.max(
-      settings.minPoints,
-      Math.ceil(maxAffordableUnits * costPerUnitWithBuffer)
-    );
+  if (!isAffordable && userBalance >= settings.minPoints && unitPricePoints > 0) {
+    const maxAffordableUnits = Math.max(1, Math.floor(userBalance / (unitPricePoints * (1 + settings.safetyBuffer))));
+    const affordableQuotedPoints = Math.ceil(maxAffordableUnits * unitPricePoints * (1 + settings.safetyBuffer));
     if (maxAffordableUnits < targetVolumeMax) {
       downscaledOffer = {
         maxAffordableUnits,
@@ -152,9 +146,10 @@ export function calculateQuote(
   return {
     unitPricePoints,
     rawPoints,
+    expectedPoints,
     quotedPoints,
     targetVolumeMax,
-    safetyBufferPercent: settings.safetyBuffer * 100,
+    safetyBufferPercent: Math.round(settings.safetyBuffer * 100),
     isAffordable,
     userBalance,
     downscaledOffer,

@@ -77,9 +77,8 @@ export function getPublicCalculatorOptions(
 }
 
 /**
- * Computes the exact reservation, final charge, and refund using the SAME
- * pricing functions (calculateCapabilityUnitPricePoints + calculateFinalSettlement)
- * as the quote writer, strictly enforcing JOB_MAX_POINTS_CAP and daily spend cap.
+ * Computes the customer-visible estimated cost using the same unit rate and
+ * settlement formula as the quote writer, with the same job and spend caps.
  */
 export function computePublicCalculatorQuote(
   capabilitySlug: string,
@@ -100,18 +99,19 @@ export function computePublicCalculatorQuote(
 
   const unitPricePoints = calculateCapabilityUnitPricePoints(cap.unitCostUsd, settings);
   const rawPoints = safeTarget * unitPricePoints;
-  const withBuffer = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
-  const reservedPoints = Math.max(settings.minPoints, withBuffer);
+  const reservedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
 
   const dailyCapPoints = Math.floor((dailySpendCapUsd * settings.usdToEgp * settings.markup) / settings.creditValueEgp);
   const effectiveMaxCap = Math.min(jobPointsCap, dailyCapPoints);
 
   const isCapped = reservedPoints > effectiveMaxCap;
 
-  const costPerUnitWithBuffer = unitPricePoints * (1 + settings.safetyBuffer);
   const maxCappedVolume = isCapped
-    ? Math.max(1, Math.floor(effectiveMaxCap / costPerUnitWithBuffer))
+    ? Math.max(1, Math.floor(effectiveMaxCap / Math.max(1, unitPricePoints * (1 + settings.safetyBuffer))))
     : safeTarget;
+  const cappedReservedPoints = isCapped
+    ? effectiveMaxCap
+    : reservedPoints;
 
   const settlement = calculateFinalSettlement(
     safeDelivered,
@@ -124,7 +124,7 @@ export function computePublicCalculatorQuote(
   const cappedSettlement = calculateFinalSettlement(
     cappedDelivered,
     unitPricePoints,
-    effectiveMaxCap
+    cappedReservedPoints
   );
 
   const creditValueEgp = settings.creditValueEgp;
@@ -146,8 +146,8 @@ export function computePublicCalculatorQuote(
     isCapped,
     maxCapPoints: effectiveMaxCap,
     maxCappedVolume,
-    cappedReservedPoints: effectiveMaxCap,
-    cappedReservedEgp: Number((effectiveMaxCap * creditValueEgp).toFixed(2)),
+    cappedReservedPoints,
+    cappedReservedEgp: Number((cappedReservedPoints * creditValueEgp).toFixed(2)),
     cappedChargedPoints: cappedSettlement.chargePoints,
     cappedChargedEgp: Number((cappedSettlement.chargePoints * creditValueEgp).toFixed(2)),
     cappedRefundPoints: cappedSettlement.refundPoints,

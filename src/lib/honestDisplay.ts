@@ -243,13 +243,15 @@ export function methodologyMessageText(
   chargedPoints: unknown,
   remainingBalance: unknown,
   methodologyText: string,
+  downloadUrl?: string,
 ): string {
   const charged = trustworthyAmount(chargedPoints);
   const balance = trustworthyAmount(remainingBalance);
+  const download = downloadUrl ? `\n\n[تحميل ملف المنهجية PDF](${downloadUrl})` : "";
   if (charged === null || balance === null) {
-    return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}`;
+    return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}${download}`;
   }
-  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${formatNumber(charged)} نقاط (رصيدك الحالي: ${formatNumber(balance)} نقطة):\n\n${methodologyText}`;
+  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${formatNumber(charged)} نقاط (رصيدك الحالي: ${formatNumber(balance)} نقطة):\n\n${methodologyText}${download}`;
 }
 
 /* ------------------------------------------------------------------ */

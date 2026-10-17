@@ -56,10 +56,10 @@ export function evaluateDeterministicRelevance(
   const rowName = String(row.company_name || row.name || "").toLowerCase().trim();
   const rowText = `${rowInd} ${rowDesc} ${rowName}`;
 
-  if (!rowInd && !rowDesc) {
+  if (!rowInd) {
     return {
       decision: "uncertain",
-      reasonAr: "بيانات النشاط غير متوفرة في المصدر وتتطلب مراجعة يدوية",
+      reasonAr: "مجال النشاط غير وارد في المصدر؛ أُحيل السجل للمراجعة ولم يُحتسب ضمن السجلات المسلّمة",
     };
   }
 
@@ -223,10 +223,11 @@ export function evaluateDeterministicRelevance(
     };
   }
 
-  // Default fallback
+  // For custom sectors, do not turn a provider keyword hit into a match.
+  // The record remains reviewable until deterministic criteria are defined.
   return {
-    decision: "match",
-    reasonAr: "سجل مطابق للبحث",
+    decision: "uncertain",
+    reasonAr: "لا توجد قاعدة تحقق حاسمة لهذا المجال؛ أُحيل السجل للمراجعة",
   };
 }
 
@@ -314,9 +315,17 @@ ${JSON.stringify(rowsSummary, null, 2)}`;
     }
   }
 
-  // Final merge with deterministic safety guards
+  // Final merge with deterministic safety guards. Claude contributes an
+  // advisory explanation, while the server's deterministic decision alone
+  // controls whether a row is delivered or billed.
+  const advisoryByIndex = new Map(llmReviews.map((review) => [review.index, review]));
   return rows.map((row) => {
     const deterministic = evaluateDeterministicRelevance(row, targetCountry, targetIndustryAr);
+    const advisory = advisoryByIndex.get(row.index);
+    const advisoryReason = advisory?.reasonAr?.replace(/[<>\r\n]/g, " ").trim();
+    const reasonAr = advisoryReason
+      ? `${deterministic.reasonAr} · ملاحظة المراجعة: ${advisoryReason}`.slice(0, 400)
+      : deterministic.reasonAr;
 
     // Geographic boundary is an absolute invariant: if outside target country, ALWAYS no_match
     if (targetCountry && !isCompanyRowMatchingLocation(row, targetCountry)) {
@@ -324,35 +333,17 @@ ${JSON.stringify(rowsSummary, null, 2)}`;
         index: row.index,
         id: row.id,
         decision: "no_match",
-        reasonAr: deterministic.reasonAr,
+        reasonAr,
       };
     }
 
-    const llmReview = llmReviews.find((r) => r.index === row.index);
-    if (llmReview) {
-      // If LLM said match, but deterministic rules flagged it as excluded unrelated (e.g. real estate in contracting), override
-      if (llmReview.decision === "match" && deterministic.decision === "no_match") {
-        return {
-          index: row.index,
-          id: row.id,
-          decision: "no_match",
-          reasonAr: deterministic.reasonAr,
-        };
-      }
-
-      return {
-        index: row.index,
-        id: row.id,
-        decision: llmReview.decision,
-        reasonAr: llmReview.reasonAr || deterministic.reasonAr,
-      };
-    }
-
+    // Claude's review is advisory; only deterministic server rules decide
+    // what is delivered and billed.
     return {
       index: row.index,
       id: row.id,
       decision: deterministic.decision,
-      reasonAr: deterministic.reasonAr,
+      reasonAr,
     };
   });
 }

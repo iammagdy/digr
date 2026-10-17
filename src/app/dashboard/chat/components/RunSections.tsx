@@ -9,7 +9,6 @@ const FILES = [
   { ext: "csv" as const, name: "CSV", desc: "بيانات جدولية" },
 ];
 
-const pointsWord = (n: number) => (n >= 3 && n <= 10 ? "نقاط" : "نقطة");
 
 /** Design «الملفات»: delivery summary + Excel / PDF / CSV. Numbers come from the finished job, never from the quote. */
 export function FilesSection({
@@ -24,13 +23,11 @@ export function FilesSection({
   onOpenCanvas: () => void;
   canvasOpen: boolean;
 }) {
-  const refund = typeof reserved === "number" && typeof charged === "number" ? Math.max(0, reserved - charged) : 0;
   return (
     <div style={{ animation: "up .6s both" }}>
       <p className="mb-0 mt-3 text-sm font-light leading-[1.9] text-ink">
         سُلّم {formatAr(rows)} سجلًا{requested ? ` من ${formatAr(requested)}` : ""}
-        {typeof charged === "number" && <> — خُصم {formatAr(charged)} {pointsWord(charged)}</>}
-        {refund > 0 && <>، ورجعت <span className="font-medium text-goldT">{formatAr(refund)} {pointsWord(refund)}</span> لرصيدك</>}.
+        {typeof charged === "number" && <> — تم خصم {formatAr(charged)} نقطة.</>}
       </p>
       <div className="mt-4 grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,180px),1fr))" }}>
         {FILES.map((f) => (
@@ -69,7 +66,7 @@ export function FailureBox({
       <p className="m-0 text-[13px] font-semibold text-ink">تعذّر إكمال البحث</p>
       <p className="m-0 text-[13px] leading-[1.9] text-ink2">
         {providerMessage ? `${sanitizeActivityError(providerMessage)} ` : "تعذر إكمال البحث حالياً. "}
-        لم يُخصم شيء{typeof refunded === "number" && refunded > 0 && <>: رجعت <strong className="text-goldT">{formatAr(refunded)} {pointsWord(refunded)}</strong> كاملة لرصيدك</>}.
+        لم يُخصم أي رصيد.
       </p>
       <div className="flex flex-wrap gap-2">
         <button type="button" onClick={onRetry} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac">إعادة المحاولة</button>

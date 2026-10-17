@@ -8,7 +8,7 @@ import { useBalance } from "@/hooks/useBalance";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
-import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyAlertText, methodologyMessageText } from "@/lib/honestDisplay";
+import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
@@ -144,6 +144,8 @@ export default function ChatWorkspacePage() {
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
+  const [methodologyConfirmOpen, setMethodologyConfirmOpen] = useState(false);
+  const [methodologyPurchasing, setMethodologyPurchasing] = useState(false);
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
 
   // Active Job & Canvas Data
@@ -170,15 +172,8 @@ export default function ChatWorkspacePage() {
         sessionStorage.removeItem("diger_canvas_open");
       }
     } catch {}
+    window.dispatchEvent(new CustomEvent("diger:canvas-open", { detail: { open: canvasOpen } }));
   }, [canvasOpen]);
-
-  useEffect(() => {
-    try {
-      if (activeJob?.jobId) {
-        sessionStorage.setItem("diger_active_job_id", activeJob.jobId);
-      }
-    } catch {}
-  }, [activeJob?.jobId]);
 
   // 1. Check Profile & Onboarding status
   useEffect(() => {
@@ -779,40 +774,31 @@ export default function ChatWorkspacePage() {
       }
       setMessages(restoredMessages);
 
-      // Restore the run (progress / files) of the conversation's accepted quote or active job
-      let quoteJobId = targetJobId;
+      // Restore only jobs referenced by this conversation. A user can have
+      // several chats running at once, so a global "latest job" fallback can
+      // attach another conversation's results to this one.
+      const relatedJobs: Array<{ jobId: string; quote?: any }> = [];
       let quoteTargetMax: number | undefined;
       let quoteTemplateSlug: string | undefined;
-
-      // 1. Look for quote in loaded messages
-      if (!quoteJobId) {
-        for (const doc of documents) {
-          const qId = doc.quote?.quoteId || doc.quote?.id;
-          if (qId) {
-            quoteJobId = getJobIdForQuote(qId);
-            quoteTargetMax = doc.quote?.targetVolumeMax;
-            quoteTemplateSlug = doc.quote?.items?.[0]?.capabilitySlug;
-            break;
-          }
-          if (doc.payload?.jobId || doc.jobId) {
-            quoteJobId = doc.payload?.jobId || doc.jobId;
-            break;
-          }
+      for (const doc of documents) {
+        const quote = doc.quote;
+        const qId = quote?.quoteId || quote?.id;
+        if (typeof qId === "string" && qId.length > 0) {
+          relatedJobs.push({ jobId: getJobIdForQuote(qId), quote });
+        }
+        const payloadJobId = doc.payload?.jobId || doc.jobId;
+        if (typeof payloadJobId === "string" && payloadJobId.length > 0) {
+          relatedJobs.push({ jobId: payloadJobId, quote });
         }
       }
-
-      // 2. Fallback: check recent queued or running job for this user
-      if (!quoteJobId) {
-        const { data: recentJobs } = await supabase
-          .from("jobs")
-          .select("id, status")
-          .eq("user_id", user.id)
-          .in("status", ["queued", "running"])
-          .order("created_at", orderDesc)
-          .limit(1);
-        if (recentJobs && recentJobs[0]?.id) {
-          quoteJobId = recentJobs[0].id;
-        }
+      const uniqueRelatedJobs = Array.from(new Map(relatedJobs.map((item) => [item.jobId, item])).values());
+      const selectedJob = targetJobId
+        ? uniqueRelatedJobs.find((item) => item.jobId === targetJobId)
+        : uniqueRelatedJobs[uniqueRelatedJobs.length - 1];
+      const quoteJobId = selectedJob?.jobId;
+      if (selectedJob?.quote) {
+        quoteTargetMax = selectedJob.quote.targetVolumeMax;
+        quoteTemplateSlug = selectedJob.quote.items?.[0]?.capabilitySlug;
       }
 
       if (quoteJobId && sequence === conversationLoadSequence.current) {
@@ -871,7 +857,6 @@ export default function ChatWorkspacePage() {
     setHistoryOpen(false);
     syncConversationUrl(null);
     try {
-      sessionStorage.removeItem("diger_active_job_id");
       sessionStorage.removeItem("diger_canvas_open");
     } catch {}
   }
@@ -1192,8 +1177,14 @@ export default function ChatWorkspacePage() {
   }
 
   // Request Academic Methodology (10 points flow)
-  async function handleGenerateMethodology() {
+  function handleGenerateMethodology() {
     if (!activeJob?.jobId || !user) return;
+    setMethodologyConfirmOpen(true);
+  }
+
+  async function confirmGenerateMethodology() {
+    if (!activeJob?.jobId || !user || methodologyPurchasing) return;
+    setMethodologyPurchasing(true);
     try {
       const jwtToken = await getAccessToken();
 
@@ -1203,9 +1194,11 @@ export default function ChatWorkspacePage() {
       const res = await fetch(`/api/jobs/${activeJob.jobId}/methodology`, {
         method: "POST",
         headers,
+        body: JSON.stringify({ confirmed: true }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
+        setMethodologyConfirmOpen(false);
         setMessages((prev) => [
           ...prev,
           {
@@ -1221,12 +1214,12 @@ export default function ChatWorkspacePage() {
       const methodologyMsg: MessageItem = {
         id: `meth_${Date.now()}`,
         role: "assistant",
-        content: methodologyMessageText(data.chargedPoints, data.remainingBalance, data.methodologyText),
+        content: methodologyMessageText(data.chargedPoints, data.remainingBalance, data.methodologyText, data.downloadUrl),
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, methodologyMsg]);
       loadBalance();
-      const _alertMsg = methodologyAlertText(data.chargedPoints);
+      setMethodologyConfirmOpen(false);
     } catch (err: any) {
       setMessages((prev) => [
         ...prev,
@@ -1237,6 +1230,8 @@ export default function ChatWorkspacePage() {
           createdAt: new Date().toISOString(),
         },
       ]);
+    } finally {
+      setMethodologyPurchasing(false);
     }
   }
 
@@ -1336,12 +1331,7 @@ export default function ChatWorkspacePage() {
     const search = new URLSearchParams(window.location.search);
     const convId = search.get("c");
     const retry = search.get("retry") === "1";
-    let jobId = search.get("jobId");
-    if (!jobId && convId && typeof window !== "undefined") {
-      try {
-        jobId = sessionStorage.getItem("diger_active_job_id");
-      } catch {}
-    }
+    const jobId = search.get("jobId");
     const shouldOpenCanvas = (() => {
       try {
         return sessionStorage.getItem("diger_canvas_open") === "1";
@@ -1773,6 +1763,18 @@ export default function ChatWorkspacePage() {
             />
           </div>
         </>
+      )}
+      {methodologyConfirmOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !methodologyPurchasing) setMethodologyConfirmOpen(false); }}>
+          <section role="alertdialog" aria-modal="true" aria-labelledby="methodology-purchase-title" className="w-full max-w-md rounded-2xl border border-ln bg-sf p-5 shadow-2xl" dir="rtl">
+            <h2 id="methodology-purchase-title" className="m-0 text-lg font-semibold text-ink">صياغة المنهجية الرسمية</h2>
+            <p className="mb-0 mt-2 text-sm leading-7 text-ink2">تُضاف المنهجية إلى نتيجة هذا الطلب مقابل ١٠ نقاط. لن يتم الخصم إلا بعد تجهيزها.</p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button type="button" disabled={methodologyPurchasing} onClick={() => void confirmGenerateMethodology()} className="min-h-11 rounded-full border-0 bg-ac px-5 text-sm text-onac disabled:opacity-60">{methodologyPurchasing ? "جارٍ التجهيز…" : "تأكيد وطلب المنهجية"}</button>
+              <button type="button" disabled={methodologyPurchasing} onClick={() => setMethodologyConfirmOpen(false)} className="min-h-11 rounded-full border border-ln2 bg-transparent px-4 text-sm text-ink">إلغاء</button>
+            </div>
+          </section>
+        </div>
       )}
     </div>
   );

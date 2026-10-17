@@ -161,46 +161,21 @@ export default function PublicCalculatorPage() {
 
         {/* Numeric Results */}
         {(() => {
-          const displayReservedPoints = breakdown.isCapped
-            ? (breakdown.cappedReservedPoints ?? breakdown.reservedPoints)
-            : breakdown.reservedPoints;
-          const displayReservedEgp = breakdown.isCapped
-            ? (breakdown.cappedReservedEgp ?? breakdown.reservedEgp)
-            : breakdown.reservedEgp;
           const displayChargedPoints = breakdown.isCapped
             ? (breakdown.cappedChargedPoints ?? breakdown.chargedPoints)
             : breakdown.chargedPoints;
           const displayChargedEgp = breakdown.isCapped
             ? (breakdown.cappedChargedEgp ?? breakdown.chargedEgp)
             : breakdown.chargedEgp;
-          const displayRefundPoints = breakdown.isCapped
-            ? (breakdown.cappedRefundPoints ?? breakdown.refundPoints)
-            : breakdown.refundPoints;
-          const displayRefundEgp = breakdown.isCapped
-            ? (breakdown.cappedRefundEgp ?? breakdown.refundEgp)
-            : breakdown.refundEgp;
           const displayDeliveredVolume = breakdown.isCapped
             ? (breakdown.maxCappedVolume ?? breakdown.deliveredVolume)
             : breakdown.deliveredVolume;
 
           return (
-            <section className="grid grid-cols-1 gap-4 min-[720px]:grid-cols-3">
+            <section className="grid grid-cols-1 gap-4">
               <div className="rounded-[20px] border border-ln bg-sf p-5">
                 <p className="m-0 text-xs font-medium text-mut">
-                  الحجز المؤقت عند الموافقة (يشمل هامش أمان {formatAr(breakdown.safetyBufferPercent)}٪)
-                </p>
-                <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ink">
-                  {formatAr(displayReservedPoints)}{" "}
-                  <span className="text-base font-normal text-mut">نقطة</span>
-                </p>
-                <p className="mb-0 mt-2 text-sm text-mut">
-                  يعادل {formatAr(displayReservedEgp)} ج.م
-                </p>
-              </div>
-
-              <div className="rounded-[20px] border border-ln bg-sf p-5">
-                <p className="m-0 text-xs font-medium text-mut">
-                  الخصم النهائي على العمل المسلَّم ({formatAr(displayDeliveredVolume)} {currentOption?.unitLabelAr})
+                  التكلفة المتوقعة على {formatAr(displayDeliveredVolume)} {currentOption?.unitLabelAr}
                 </p>
                 <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ink">
                   {formatAr(displayChargedPoints)}{" "}
@@ -211,18 +186,6 @@ export default function PublicCalculatorPage() {
                 </p>
               </div>
 
-              <div className="rounded-[20px] border border-ln bg-sf p-5">
-                <p className="m-0 text-xs font-medium text-mut">
-                  المبلغ المسترد تلقائيًا إلى رصيدك بعد التسوية
-                </p>
-                <p className="mb-0 mt-3 font-display text-[36px] font-medium leading-none text-ok">
-                  {formatAr(displayRefundPoints)}{" "}
-                  <span className="text-base font-normal text-mut">نقطة</span>
-                </p>
-                <p className="mb-0 mt-2 text-sm text-mut">
-                  يعادل {formatAr(displayRefundEgp)} ج.م
-                </p>
-              </div>
             </section>
           );
         })()}
@@ -249,8 +212,7 @@ export default function PublicCalculatorPage() {
                   <th className="px-3 py-2.5">الخدمة</th>
                   <th className="px-3 py-2.5">الكمية</th>
                   <th className="px-3 py-2.5">سعر الوحدة</th>
-                  <th className="px-3 py-2.5">الحجز (مع هامش ١٥٪)</th>
-                  <th className="px-3 py-2.5">الخصم عند التسليم</th>
+                  <th className="px-3 py-2.5">التكلفة المتوقعة</th>
                   <th className="px-3 py-2.5">المعادل (ج.م)</th>
                   <th className="px-3 py-2.5">حالة المطابقة</th>
                 </tr>
@@ -270,7 +232,6 @@ export default function PublicCalculatorPage() {
                 ].map((sample, idx) => {
                   const b = computePublicCalculatorQuote(sample.slug, sample.target, sample.target);
                   const effectiveTarget = b.isCapped ? (b.maxCappedVolume || sample.target) : sample.target;
-                  const effectiveReserved = b.isCapped ? (b.cappedReservedPoints ?? b.reservedPoints) : b.reservedPoints;
                   const effectiveCharged = b.isCapped ? (b.cappedChargedPoints ?? b.chargedPoints) : b.chargedPoints;
                   const effectiveChargedEgp = b.isCapped ? (b.cappedChargedEgp ?? b.chargedEgp) : b.chargedEgp;
                   return (
@@ -281,7 +242,6 @@ export default function PublicCalculatorPage() {
                         {b.isCapped ? <span className="mr-1 text-[10px] text-mut">(سقف)</span> : null}
                       </td>
                       <td className="px-3 py-2 font-mono">{formatAr(b.unitPricePoints)} نقطة</td>
-                      <td className="px-3 py-2 font-mono">{formatAr(effectiveReserved)} نقطة</td>
                       <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(effectiveCharged)} نقطة</td>
                       <td className="px-3 py-2 font-mono">{formatAr(effectiveChargedEgp)} ج.م</td>
                       <td className="px-3 py-2">
@@ -307,13 +267,10 @@ export default function PublicCalculatorPage() {
               تكلفة الوحدة الواحدة لهذه الخدمة: {formatAr(breakdown.unitPricePoints)} نقطة ({formatAr(breakdown.unitPriceEgp)} ج.م لكل {currentOption?.unitLabelAr}).
             </li>
             <li>
-              لا يُخصم أي رصيد أثناء المحادثة أو إعداد الخطة؛ يبدأ الحجز المؤقت فقط بعد ضغطك على زر الموافقة.
+              لا يُخصم أي رصيد أثناء المحادثة أو إعداد الخطة. بعد موافقتك، يُخصم فقط مقابل السجلات المطابقة المسلَّمة.
             </li>
             <li>
-              يُحتسب الخصم النهائي على السجلات المسلَّمة فقط بدون هامش الأمان، ولا يتجاوز أبدًا المبلغ المحجوز.
-            </li>
-            <li>
-              إذا تعذّر تنفيذ الطلب أو توقّف لأي سبب تقني، يُحرَّر كامل الحجز المؤقت وتكون التكلفة النهائية {formatAr(0)} نقطة ({formatAr(0)} ج.م).
+              إذا تعذّر تنفيذ الطلب، لن يُخصم أي رصيد.
             </li>
           </ul>
         </section>

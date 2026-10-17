@@ -48,14 +48,17 @@ export default function ActivityTimeline({
   reservedPoints,
   requestedRows,
 }: ActivityTimelineProps) {
-  const hasEvents = events && events.length > 0;
+  // The failure panel renders the final, customer-safe reason. Hide its
+  // duplicate event from the timeline while preserving all progress events.
+  const visibleEvents = status === "failed" ? events.filter((event) => event.kind !== "error") : events;
+  const hasEvents = visibleEvents && visibleEvents.length > 0;
   const scopeNote =
     eventLimit !== undefined && hasEvents && events.length >= eventLimit
       ? `يعرض أحدث ${formatAr(eventLimit)} حدثًا مسجَّلًا.`
       : null;
 
   const liveSnapshot = deriveLiveActivitySnapshot({
-    events: events || [],
+    events: visibleEvents || [],
     rowsCollected,
     chargedCredits: spentPoints,
     reservedCredits: reservedPoints,
@@ -66,7 +69,7 @@ export default function ActivityTimeline({
   const reserved = liveSnapshot.reservedPoints ?? reservedPoints;
   const pct = requestedRows && requestedRows > 0 ? Math.min(100, (rowsCollected / requestedRows) * 100) : status === "done" ? 100 : 0;
   const remainingSeconds = status === "running" && requestedRows
-    ? estimateRemainingSecondsFromBatches(events || [], rowsCollected, requestedRows)
+    ? estimateRemainingSecondsFromBatches(visibleEvents || [], rowsCollected, requestedRows)
     : null;
   const remainingLabel = remainingSeconds === null
     ? null
@@ -98,7 +101,7 @@ export default function ActivityTimeline({
       {(
         <div className="mt-4 flex flex-col gap-3">
           {hasEvents ? (
-            events.map((evt, idx) => (
+            visibleEvents.map((evt, idx) => (
               <p
                 key={evt.$id || idx}
                 className="m-0 flex gap-3 text-sm font-light"

@@ -57,20 +57,20 @@ export async function GET(
       return NextResponse.json({ success: false, error: "غير مصرح لك بتحميل نتائج هذا الطلب." }, { status: 403 });
     }
 
-    // Respect the formats selected in the approved quote. Legacy jobs without a
-    // matching quote keep their historical on-demand download behavior.
-    let requestedFormats: string[] | null = null;
+    // File formats can be generated later from the saved dataset, even when
+    // the customer did not choose them before the search.
+    let quoteSummary: string | null = null;
     try {
       const { data: quoteRows } = await adminClient
         .from("plans_quotes")
-        .select("id, output_formats")
+        .select("id, summary_ar")
         .eq("user_id", job.user_id)
         .eq("status", "accepted");
       const quote = (quoteRows || []).find((row: any) => {
         const quoteId = String(row?.id || "");
         return quoteId && (`job_quote_${createHash("md5").update(quoteId).digest("hex")}` === jobId || quoteId === jobId);
       });
-      if (quote && Array.isArray(quote.output_formats)) requestedFormats = quote.output_formats;
+      if (quote && typeof quote.summary_ar === "string") quoteSummary = quote.summary_ar;
     } catch {
       // Existing artifact links remain available when quote history is unavailable.
     }
@@ -80,9 +80,6 @@ export async function GET(
     const allowedFormats = ["csv", "xlsx", "pdf", "json"];
     if (!allowedFormats.includes(format)) {
       return NextResponse.json({ success: false, error: "صيغة الملف غير مدعومة" }, { status: 400 });
-    }
-    if (requestedFormats && ["xlsx", "pdf", "csv"].includes(format) && !requestedFormats.includes(format)) {
-      return NextResponse.json({ success: false, error: "هذه الصيغة لم تكن ضمن الملفات المختارة في الخطة." }, { status: 409 });
     }
 
     let country = "الدولة غير محددة";
@@ -106,9 +103,10 @@ export async function GET(
       job.template_slug?.includes("compan") ||
       job.template_slug?.includes("b2b");
 
+    const titleSource = String(quoteSummary || job.title || job.brief || job.search_query || "نتائج البحث").trim();
     let downloadFileName = isCompanyJob
       ? `${industry} في ${country} - ${count} شركة - ${date}.${format}`
-      : `${job.template_slug || "بيانات"} - ${count} سجل - ${date}.${format}`;
+      : `${titleSource.slice(0, 64)} - ${count} سجل - ${date}.${format}`;
 
     downloadFileName = downloadFileName.replace(/[/\\?%*:|"<>]/g, "-").trim();
 

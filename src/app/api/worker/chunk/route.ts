@@ -46,6 +46,22 @@ export const maxDuration = 60; // Vercel Hobby maximum
 // Fallback in-memory partial step store used ONLY when unit-test mock storage omits .download()
 const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
+function companyIdentity(row: any): string | null {
+  const sourceId = String(row?.company_id || row?.source_id || row?.id || "").trim().toLowerCase();
+  if (sourceId) return `id:${sourceId}`;
+  const website = String(row?.website || row?.website_url || row?.domain || "").trim().toLowerCase();
+  if (website) {
+    try {
+      const host = new URL(/^https?:\/\//i.test(website) ? website : `https://${website}`).hostname.replace(/^www\./, "");
+      if (host) return `domain:${host}`;
+    } catch { /* fall through to the company name */ }
+  }
+  const name = String(row?.company_name || row?.name || row?.title || "")
+    .normalize("NFKC").toLocaleLowerCase()
+    .replace(/[\p{P}\p{S}\s]+/gu, "").trim();
+  return name.length >= 3 ? `name:${name}` : null;
+}
+
 function getWorkerBaseUrl(req?: NextRequest): string {
   return resolveInternalBaseUrl(req);
 }
@@ -435,7 +451,8 @@ export async function POST(req: NextRequest) {
     const requestedDateFrom = typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
     const requestedDateTo = typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
     const dateFiltered = filterRowsByDateRange(providerRows, requestedDateFrom, requestedDateTo);
-    const rawRows = dateFiltered.rows;
+    let rawRows = dateFiltered.rows;
+    const rawPageRowCount = rawRows.length;
     if (dateFiltered.excludedCount > 0) {
       try {
         await adminClient.from("job_events").insert({
@@ -450,8 +467,41 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    let filteredRows = rawRows;
+    const isCompanyCapability =
+      spec.capabilitySlug.includes("company") ||
+      spec.capabilitySlug.includes("companies") ||
+      spec.capabilitySlug === "web-company-search" ||
+      spec.endpointId.includes("icypeas");
     let duplicateExcludedCount = 0;
+    if (isCompanyCapability && rawRows.length) {
+      const seen = new Set<string>();
+      // A provider may repeat its first page or return overlapping cursor pages.
+      // De-duplicate against already accepted rows before validating or billing.
+      const partials = adminClient.storage.from("partials");
+      for (let step = 0; step < currentStep; step++) {
+        const key = `${jobId}/step_${step}.json`;
+        let prior: any = inMemoryPartialStepFallback.get(key);
+        if (typeof partials?.download === "function") {
+          const { data: blob, error } = await partials.download(key);
+          if (!error && blob) {
+            try { prior = JSON.parse(await blob.text()); } catch { /* retain in-memory fallback */ }
+          }
+        }
+        for (const row of Array.isArray(prior?.rows) ? prior.rows : []) {
+          const identity = companyIdentity(row);
+          if (identity) seen.add(identity);
+        }
+      }
+      rawRows = rawRows.filter((row: any) => {
+        const identity = companyIdentity(row);
+        if (!identity) return true;
+        if (seen.has(identity)) { duplicateExcludedCount += 1; return false; }
+        seen.add(identity);
+        return true;
+      });
+    }
+
+    let filteredRows = rawRows;
     if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
       const rules = spec.params.exclusionRules;
       const baselineRecords: EntityRecord[] = [
@@ -477,7 +527,7 @@ export async function POST(req: NextRequest) {
       const dedupResult = deduplicateAgainstBaseline(candidateRecords, baselineRecords);
       filteredRows = dedupResult.delivered;
       const excludedCount = dedupResult.confirmedDuplicates?.length || 0;
-      duplicateExcludedCount = excludedCount;
+      duplicateExcludedCount += excludedCount;
       if (excludedCount > 0) {
         try {
           await adminClient.from("job_events").insert({
@@ -492,12 +542,6 @@ export async function POST(req: NextRequest) {
         }
       }
     }
-
-    const isCompanyCapability =
-      spec.capabilitySlug.includes("company") ||
-      spec.capabilitySlug.includes("companies") ||
-      spec.capabilitySlug === "web-company-search" ||
-      spec.endpointId.includes("icypeas");
 
     let uncertainRows: any[] = [];
     let relevanceExcludedCount = 0;
@@ -644,7 +688,7 @@ export async function POST(req: NextRequest) {
       step: currentStep,
       cursor: adapterResult.nextCursor,
       batchUnits: acceptedRows.length,
-      rawRowsCount: rawRows.length,
+      rawRowsCount: rawPageRowCount,
       baselineExcludedCount: duplicateExcludedCount,
       relevanceExcludedCount,
       uncertainRowsCount: uncertainRows.length,
@@ -706,7 +750,7 @@ export async function POST(req: NextRequest) {
         const parts = [
           `المصدر: ${sourceLabel}`,
           `الصفحة ${toArabicDigits(currentStep + 1)}`,
-          `وصل ${toArabicDigits(rawRows.length)} سجل`,
+          `وصل ${toArabicDigits(rawPageRowCount)} سجل`,
           `جديد ومقبول ${toArabicDigits(acceptedRows.length)}`,
           duplicateExcludedCount ? `تكرار أو قائمة استبعاد ${toArabicDigits(duplicateExcludedCount)}` : null,
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
@@ -896,9 +940,18 @@ export async function POST(req: NextRequest) {
          spec.capabilitySlug === "web-company-search" ||
          finalRows.some((r) => r.company_name || r.cr_number || r.website_url || r.company_size || r.industry));
 
+      const requestScopeText = [
+        spec.params?.search,
+        spec.params?.query?.keyword?.include,
+        spec.params?.keyword,
+        spec.params?.industry,
+        spec.params?.country,
+        spec.params?.location,
+      ].flat(Infinity).filter((v) => typeof v === "string").join(" ");
       const detectedCountry = detectCountryFromText(
-        [spec.params?.country, spec.params?.location, spec.params?.search, spec.params?.query?.keyword?.include?.[0]].filter(Boolean).join(" ")
+        [spec.params?.country, spec.params?.location, requestScopeText].filter(Boolean).join(" ")
       )?.arabicLabel || "";
+      const detectedIndustry = detectIndustryFromText(requestScopeText);
 
       const methodologySummary = spec.params?.exclusionRules
         ? `يعرض التقرير ${toArabicDigits(finalRows.length)} سجلًا أعادها المصدر بتاريخ ${dateStr} بعد تطبيق قائمة الاستبعاد المرجعية (${spec.params.exclusionRules.fileName || "ملف الاستبعاد"}). وجود القيم في الحقول لا يثبت صحتها أو شمول النتائج.`
@@ -925,7 +978,9 @@ export async function POST(req: NextRequest) {
           searchTerms,
           dateFrom: typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined,
           dateTo: typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined,
-          industry: typeof spec.params?.industry === "string" ? spec.params.industry : undefined,
+          industry: detectedIndustry.arabicLabel !== "قواعد بيانات الشركات"
+            ? detectedIndustry.arabicLabel
+            : typeof spec.params?.industry === "string" ? spec.params.industry : undefined,
         },
         collection: {
           methodLabel: customerFacingCapabilityLabel(spec.capabilitySlug),
@@ -943,7 +998,7 @@ export async function POST(req: NextRequest) {
       };
 
       const cleanTitle = isCompanyResearch
-        ? `دليل الشركات التي أعادتها المصادر في ${detectedCountry}`
+        ? `شركات ${detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? detectedIndustry.arabicLabel : "وأعمال"} في ${detectedCountry || "النطاق المطلوب"}`
         : "تقرير بيانات من المصادر المتاحة";
 
       const finalPayload: any = {
