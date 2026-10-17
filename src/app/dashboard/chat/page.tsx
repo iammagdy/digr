@@ -523,11 +523,7 @@ export default function ChatWorkspacePage() {
 
       if (data.conversationId) {
         setConversationId(data.conversationId);
-        setConversationTitle((title) =>
-          !title || customerFacingConversationTitle(title) === "محادثة جديدة"
-            ? customerFacingConversationTitle(textToSend)
-            : title
-        );
+        if (data.conversationTitle) setConversationTitle(customerFacingConversationTitle(data.conversationTitle));
         if (user) loadConversations();
       }
 
@@ -640,7 +636,7 @@ export default function ChatWorkspacePage() {
       ]);
       if (data.conversationId) {
         setConversationId(data.conversationId);
-        setConversationTitle((title) => title || summary.slice(0, 50));
+        if (data.conversationTitle) setConversationTitle(customerFacingConversationTitle(data.conversationTitle));
       }
       loadConversations();
     } catch (err: any) {

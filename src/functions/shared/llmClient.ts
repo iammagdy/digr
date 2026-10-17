@@ -429,6 +429,7 @@ export const ACTION_RESULT_JSON_SCHEMA = {
       ],
     },
     intent: { type: "string", enum: ["chat", "research"] },
+    conversationTitle: { type: "string", maxLength: 50 },
     platforms: { type: "array", items: { type: "string" } },
     topics: { type: "array", items: { type: "string" } },
     keywords: { type: "array", items: { type: "string" } },

@@ -58,6 +58,7 @@ import {
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
+import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 
@@ -107,6 +108,7 @@ export interface ChatHandlerInput {
 
 export interface ChatHandlerResponse {
   conversationId: string;
+  conversationTitle?: string;
   messageId: string;
   role: "assistant";
   contentAr: string;
@@ -966,7 +968,8 @@ export class ChatHandler {
       let assistantMsgId = "";
 
       const isGreetingMsg = isGreetingOrGeneralQuestion(message).isGreeting;
-      const initialTitle = isGreetingMsg ? "محادثة استخراج" : (message.slice(0, 50) || "محادثة استخراج");
+      const initialTitle = "محادثة جديدة";
+      let currentConversationTitle = initialTitle;
 
       if (!conversationId) {
         conversationId = ID.unique();
@@ -1003,6 +1006,7 @@ export class ChatHandler {
             .select("id, user_id, status, brief, title")
             .eq("id", conversationId)
             .maybeSingle();
+          currentConversationTitle = conv?.title || initialTitle;
 
           if (conv && conv.user_id && conv.user_id !== userId) {
             const authErr: any = new Error("غير مصرح لك بالوصول إلى هذه المحادثة أو تعديل بياناتها.");
@@ -1025,9 +1029,6 @@ export class ChatHandler {
               updated_at: nowIso,
             });
             if (convCreateErr) throw convCreateErr;
-          } else if (!isGreetingMsg && (!conv.title || conv.title === "محادثة استخراج" || conv.title === "محادثة جديدة" || isGreetingOrGeneralQuestion(conv.title).isGreeting)) {
-            const updatedTitle = message.slice(0, 50);
-            await sb.from("conversations").update({ title: updatedTitle, updated_at: nowIso }).eq("id", conversationId);
           }
         } catch (convErr) {
           throw convErr;
@@ -1039,6 +1040,7 @@ export class ChatHandler {
             tableId: "conversations",
             rowId: conversationId,
           });
+          currentConversationTitle = conv?.title || initialTitle;
           if (conv && conv.userId && conv.userId !== userId) {
             const authErr: any = new Error("غير مصرح لك بالوصول إلى هذه المحادثة أو تعديل بياناتها.");
             authErr.statusCode = 403;
@@ -2578,12 +2580,22 @@ export class ChatHandler {
 
       // 11. Update Conversation Stats
       currentStep = "conversation_update";
+      const rawTitle = typeof (llmResult.output as any)?.conversationTitle === "string"
+        ? (llmResult.output as any).conversationTitle
+        : typeof (llmResult.output as any)?.summaryAr === "string"
+          ? (llmResult.output as any).summaryAr
+          : "";
+      const generatedTitle = customerFacingConversationTitle(rawTitle).replace(/[\n\r]+/g, " ").trim();
+      const conversationTitle = generatedTitle && generatedTitle !== "محادثة جديدة"
+        ? generatedTitle
+        : currentConversationTitle;
       const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;
       if (sb) {
         const { error: convUpdateErr } = await sb
           .from("conversations")
           .update({
             updated_at: new Date().toISOString(),
+            ...(conversationTitle !== "محادثة جديدة" ? { title: conversationTitle } : {}),
           })
           .eq("id", conversationId);
         if (convUpdateErr) throw convUpdateErr;
@@ -2596,6 +2608,7 @@ export class ChatHandler {
             totalTokens: newTotalTokens,
             costUsd: Number(llmResult.costUsd.toFixed(6)),
             updatedAt: new Date().toISOString(),
+            ...(conversationTitle !== "محادثة جديدة" ? { title: conversationTitle } : {}),
           },
         });
       }
@@ -2654,6 +2667,7 @@ export class ChatHandler {
 
       return {
         conversationId,
+        conversationTitle,
         messageId: assistantMsgId,
         role: "assistant",
         contentAr: finalContentAr,

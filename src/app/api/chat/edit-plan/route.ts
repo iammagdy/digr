@@ -9,7 +9,7 @@ import {
   PlanState,
 } from "@/functions/shared/planManager";
 import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
-import { sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
+import { getEndpointDetails, sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
@@ -119,7 +119,28 @@ export async function POST(req: NextRequest) {
       getCatalogCapabilities(adminClient),
     ]);
     const allCapabilities = [...capabilities, ...catalogCapabilities];
-    const valResult = validatePlanAgainstSchemas(updatedPlan.items, allCapabilities);
+    const additionalEndpoints = await Promise.all(updatedPlan.items.map(async (item) => {
+      const alreadyResolved = allCapabilities.some((capability) =>
+        capability.slug === item.capabilitySlug ||
+        capability.tregEndpointId === item.capabilitySlug ||
+        (item.endpointId && (
+          capability.tregEndpointId === item.endpointId ||
+          capability.slug === item.endpointId
+        ))
+      );
+      if (alreadyResolved) return null;
+
+      for (const endpointId of Array.from(new Set([item.endpointId, item.capabilitySlug].filter(Boolean) as string[]))) {
+        const endpoint = await getEndpointDetails(endpointId);
+        if (endpoint) return endpoint;
+      }
+      return null;
+    }));
+    const valResult = validatePlanAgainstSchemas(
+      updatedPlan.items,
+      allCapabilities,
+      additionalEndpoints.filter((endpoint): endpoint is NonNullable<typeof endpoint> => endpoint !== null),
+    );
     if (!valResult.valid) {
       const sanitizedError = sanitizeCustomerErrorMessage(valResult.errors.join("، "));
       return NextResponse.json(

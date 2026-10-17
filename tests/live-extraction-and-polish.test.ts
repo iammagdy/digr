@@ -186,6 +186,45 @@ describe("Catalog Capability Schema Validation for Plan Editing", () => {
     expect(result.errors).toHaveLength(0);
   });
 
+  it("validates live catalog endpoint details fetched during plan editing", () => {
+    const liveEndpoint = {
+      id: "live.tiktok.search",
+      slug: "live-tiktok-search",
+      nameAr: "بحث تيك توك",
+      nameEn: "TikTok Search",
+      summaryAr: "بحث مقاطع تيك توك",
+      summaryEn: "Search TikTok videos",
+      platform: "tiktok",
+      method: "GET" as const,
+      path: "/search",
+      paramsSchema: {
+        type: "object",
+        properties: { keyword: { type: "string" } },
+        required: ["keyword"],
+      },
+      billingUnit: "record" as const,
+      catalogPriceUsd: 0.001,
+      pointsPerUnit: 1,
+      pagination: { type: "cursor" as const, maxLimit: 100 },
+      observedSuccessRate: 0.9,
+      observedSamples: 10,
+      scope: "any_account",
+    };
+
+    const result = validatePlanAgainstSchemas([
+      {
+        capabilitySlug: "live-tiktok-search",
+        endpointId: "live.tiktok.search",
+        params: { keyword: "كرة القدم" },
+        targetVolumeMin: 1,
+        targetVolumeMax: 5,
+      },
+    ], [], [liveEndpoint]);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it("fails validation cleanly without leaking provider names when parameters are invalid", () => {
     const planItems: PlanItem[] = [
       {

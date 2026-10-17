@@ -6,6 +6,7 @@ import {
   validateCapabilityParams,
   getEnabledCapabilities,
   getRegistryPricingSettings,
+  computeRegistryPointsPerUnit,
   getCustomerPriceUsdPerCatalogItem,
   UNAVAILABLE_CAPABILITY_SLUGS,
 } from "./capabilityRegistry";
@@ -295,12 +296,53 @@ export function applyPlanOperations(
 /**
  * Validates plan items against server-only capability schemas.
  */
+function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capability {
+  const customerPriceUsdPerItem = getCustomerPriceUsdPerCatalogItem({
+    id: endpoint.id,
+    slug: endpoint.slug,
+    platform: endpoint.platform,
+    nameEn: endpoint.nameEn,
+    nameAr: endpoint.nameAr,
+  });
+  const unavailable =
+    UNAVAILABLE_CAPABILITY_SLUGS.has(endpoint.slug) || endpoint.id.startsWith("internal-");
+  return {
+    id: endpoint.slug,
+    slug: endpoint.slug,
+    nameAr: endpoint.nameAr,
+    nameEn: endpoint.nameEn || endpoint.slug,
+    descriptionAr: endpoint.summaryAr,
+    category: endpoint.platform,
+    platform: endpoint.platform,
+    unitCostUsd: endpoint.catalogPriceUsd,
+    pointsPerUnit: customerPriceUsdPerItem !== undefined
+      ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
+      : endpoint.pointsPerUnit,
+    maxRows: endpoint.pagination?.maxLimit ? endpoint.pagination.maxLimit * 50 : 5000,
+    enabled: !unavailable,
+    paramsSchema: JSON.stringify(endpoint.paramsSchema || {}),
+    tregEndpointId: endpoint.id,
+    tregMethod: endpoint.method,
+    pricingUnit: customerPriceUsdPerItem !== undefined
+      ? "item"
+      : endpoint.billingUnit === "call" || endpoint.billingUnit === "page"
+        ? endpoint.billingUnit
+        : "item",
+    paginationType: endpoint.pagination?.type === "page"
+      ? "offset"
+      : endpoint.pagination?.type === "cursor"
+        ? "cursor"
+        : "none",
+  };
+}
+
 export function validatePlanAgainstSchemas(
   planItems: PlanItem[],
-  capabilities: Capability[]
+  capabilities: Capability[],
+  additionalEndpoints: CatalogEndpointSummary[] = [],
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
-  const cachedEndpoints = getCachedCatalogEndpoints();
+  const cachedEndpoints = [...additionalEndpoints, ...getCachedCatalogEndpoints()];
 
   for (const it of planItems) {
     let matchedCap = capabilities.find(
@@ -318,24 +360,7 @@ export function validatePlanAgainstSchemas(
           (it.endpointId && (e.id === it.endpointId || e.slug === it.endpointId))
       );
       if (cached) {
-        matchedCap = {
-          id: cached.id,
-          slug: cached.slug,
-          nameAr: cached.nameAr,
-          nameEn: cached.nameEn || cached.slug,
-          descriptionAr: cached.summaryAr,
-          category: cached.platform,
-          platform: cached.platform,
-          unitCostUsd: cached.catalogPriceUsd,
-          pointsPerUnit: cached.pointsPerUnit,
-          maxRows: cached.pagination?.maxLimit ? cached.pagination.maxLimit * 50 : 5000,
-          enabled: true,
-          paramsSchema: typeof cached.paramsSchema === "string" ? cached.paramsSchema : JSON.stringify(cached.paramsSchema || {}),
-          pricingUnit: cached.billingUnit as any,
-          paginationType: cached.pagination?.type as any,
-          tregEndpointId: cached.id,
-          tregMethod: cached.method,
-        };
+        matchedCap = catalogEndpointAsCapability(cached);
       }
     }
 
