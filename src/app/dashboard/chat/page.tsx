@@ -129,7 +129,7 @@ interface ActiveJobState {
 }
 
 export default function ChatWorkspacePage() {
-  const { user } = useUser();
+  const { user, refresh } = useUser();
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -138,7 +138,7 @@ export default function ChatWorkspacePage() {
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationLoadError, setConversationLoadError] = useState(false);
-  const [userPersona, setUserPersona] = useState<PersonaType>("student");
+  const [userPersona, setUserPersona] = useState<PersonaType>("researcher");
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [conversationsList, setConversationsList] = useState<ConversationItem[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -179,6 +179,7 @@ export default function ChatWorkspacePage() {
   useEffect(() => {
     async function checkProfile() {
       if (!user) return;
+      if (user.user_metadata?.persona) setUserPersona(getPersonaConfig(user.user_metadata.persona).key);
       try {
         const supabase = createClient();
         const { data: prof } = await supabase
@@ -187,7 +188,7 @@ export default function ChatWorkspacePage() {
           .eq("id", user.id)
           .maybeSingle();
         if (prof) {
-          if (prof.persona) setUserPersona(getPersonaConfig(prof.persona).key);
+          if (!user.user_metadata?.persona && prof.persona) setUserPersona(getPersonaConfig(prof.persona).key);
           if (prof.onboarding_completed === false) {
             setShowOnboarding(true);
           }
@@ -1648,8 +1649,10 @@ export default function ChatWorkspacePage() {
       {/* 1. Onboarding (existing first-run persona step) */}
       <OnboardingModal
         isOpen={showOnboarding}
-        onComplete={(p) => {
+        initialProfile={user?.user_metadata}
+        onComplete={async (p) => {
           setUserPersona(p);
+          await refresh();
           setShowOnboarding(false);
         }}
         onSkip={() => setShowOnboarding(false)}

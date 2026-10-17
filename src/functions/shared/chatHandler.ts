@@ -34,6 +34,7 @@ import {
   PlanState,
 } from "./planManager";
 import { getBalance } from "./ledger";
+import { normalizePersonaProfileFields } from "./personaConfigs";
 import {
   discoveryQuestionPriority,
   normalizeClarificationQuestions,
@@ -105,6 +106,7 @@ export interface ChatHandlerInput {
   testScenario?: string;
   uploadedFiles?: any[];
   isGuest?: boolean;
+  personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown };
 }
 
 export interface ChatHandlerResponse {
@@ -1087,6 +1089,17 @@ export class ChatHandler {
         }
       } catch {
         // Profile not found or not created yet
+      }
+      if (input.personaProfile) {
+        const metadataPersona = input.personaProfile.persona;
+        userProfile = {
+          ...(userProfile || {}),
+          ...normalizePersonaProfileFields({
+            persona: typeof metadataPersona === "string" ? metadataPersona : undefined,
+            purposes: input.personaProfile.purposes,
+            topic: input.personaProfile.topic,
+          }, userProfile || {}),
+        };
       }
       supabaseMs += Date.now() - tSbProfStart;
 

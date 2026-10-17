@@ -14,6 +14,7 @@ import { HELP_CENTER_URL, SUPPORT_URL } from "@/lib/constants";
 import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
 import { startNewResearch } from "@/lib/newResearchNavigation";
+import { getPersonaConfig } from "@/functions/shared/personaConfigs";
 import { Icon, UI } from "./icons";
 
 /* ── shell context: pages set their header title, anyone can open the drawer / start a new question ── */
@@ -166,7 +167,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
-    { id: "notifs", label: "الإشعارات", icon: UI.bell, badge: notifs.unread, active: notifsOpen, onClick: () => { setNotifsOpen((v) => !v); setDrawer(false); setAcctOpen(false); } },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
     { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
@@ -301,7 +301,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <span className={`min-w-0 flex-1 ${compactSidebar && !mobile ? "sr-only" : ""}`}>
                   <span className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
                     <span className="truncate">{user.name || "حسابي"}</span>
-                    <span className="rounded-full bg-sf2 px-[7px] py-px text-[10px] font-medium text-mut">باحث</span>
+                    <span className="rounded-full bg-sf2 px-[7px] py-px text-[10px] font-medium text-mut">{{ student: "طالب", researcher: "باحث", statistician: "محلل", marketer: "مسوّق", other: "عام" }[getPersonaConfig(user.user_metadata?.persona).key]}</span>
                   </span>
                   <span dir="ltr" className="block truncate text-right text-[11px] text-fnt">{user.email}</span>
                 </span>

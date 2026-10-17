@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useTheme } from "@/lib/theme";
+import type { PersonaType } from "@/functions/shared/personaConfigs";
 
 const NOTIF_PREFS: Array<[id: "topup" | "done" | "refund" | "news", label: string, sub: string]> = [
   ["topup", "اعتماد أو رفض الشحن", "بريد إلكتروني + إشعار داخل التطبيق"],
@@ -15,6 +16,13 @@ const NOTIF_PREFS: Array<[id: "topup" | "done" | "refund" | "news", label: strin
 ];
 const DEFAULT_PREFS = { topup: true, done: true, refund: true, news: false };
 type Prefs = typeof DEFAULT_PREFS;
+const PERSONA_OPTIONS: Array<{ key: PersonaType; label: string }> = [
+  { key: "student", label: "طالب جامعي / دراسات عليا" },
+  { key: "researcher", label: "باحث أو أستاذ جامعي" },
+  { key: "statistician", label: "إحصائي / محلل بيانات" },
+  { key: "marketer", label: "مسوّق أو صانع محتوى" },
+  { key: "other", label: "أخرى / استخدام عام" },
+];
 
 const SECTION = "flex flex-col gap-3.5 rounded-3xl border border-ln bg-sf p-5";
 const INPUT = "min-h-14 w-full rounded-[18px] border border-ln bg-bg px-[18px] text-base font-light text-ink outline-none transition-colors focus:border-ln2";
@@ -35,6 +43,9 @@ export default function SettingsPage() {
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  const [persona, setPersona] = useState<PersonaType>("researcher");
+  const [personaMsg, setPersonaMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [personaBusy, setPersonaBusy] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
   const [delTxt, setDelTxt] = useState("");
   const [delBusy, setDelBusy] = useState(false);
@@ -43,6 +54,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!user) return;
     setName(user.name || "");
+    const currentPersona = user.user_metadata?.persona;
+    setPersona(PERSONA_OPTIONS.some((option) => option.key === currentPersona) ? currentPersona : "researcher");
     const saved = (user.prefs as { notif?: Partial<Prefs> } | undefined)?.notif;
     setPrefs({ ...DEFAULT_PREFS, ...(saved || {}) });
   }, [user]);
@@ -60,6 +73,31 @@ export default function SettingsPage() {
       setNameMsg({ ok: true, text: "تم حفظ الاسم." });
     } catch {
       setNameMsg({ ok: false, text: "تعذّر حفظ الاسم. حاول مرة أخرى." });
+    }
+  }
+
+  async function savePersona() {
+    if (!user || personaBusy) return;
+    setPersonaBusy(true);
+    setPersonaMsg(null);
+    try {
+      const res = await fetch("/api/onboarding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          persona,
+          purposes: Array.isArray(user.user_metadata?.purposes) ? user.user_metadata.purposes : ["أخرى"],
+          topic: typeof user.user_metadata?.topic === "string" ? user.user_metadata.topic : "",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) throw new Error(data.error || "تعذّر حفظ نوع الحساب.");
+      await refresh();
+      setPersonaMsg({ ok: true, text: "تم تحديث نوع الحساب وتخصيص المساعد." });
+    } catch {
+      setPersonaMsg({ ok: false, text: "تعذّر حفظ نوع الحساب. حاول مرة أخرى." });
+    } finally {
+      setPersonaBusy(false);
     }
   }
 
@@ -133,6 +171,16 @@ export default function SettingsPage() {
           </label>
           <button type="button" onClick={saveName} className="min-h-11 cursor-pointer self-start rounded-full border-0 bg-ac px-5 text-[13px] text-onac">حفظ</button>
           {nameMsg && <Status ok={nameMsg.ok}>{nameMsg.text}</Status>}
+        </section>
+
+        <section className={SECTION}>
+          <h3 className="m-0 text-[15px] font-semibold text-ink">نوع الحساب</h3>
+          <p className="m-0 text-[13px] font-light leading-[1.8] text-ink2">اختر الصفة الأقرب لاستخدامك ليخصص المساعد أسلوبه ومخرجاته.</p>
+          <select value={persona} onChange={(e) => { setPersona(e.target.value as PersonaType); setPersonaMsg(null); }} className={INPUT} aria-label="نوع الحساب">
+            {PERSONA_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
+          </select>
+          <button type="button" onClick={savePersona} disabled={personaBusy} className="min-h-11 cursor-pointer self-start rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:opacity-60">{personaBusy ? "جاري الحفظ..." : "حفظ نوع الحساب"}</button>
+          {personaMsg && <Status ok={personaMsg.ok}>{personaMsg.text}</Status>}
         </section>
 
         <section className={SECTION}>

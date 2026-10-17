@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PersonaType } from "@/functions/shared/personaConfigs";
 import { Alert, Button, Input, Modal } from "@/components/ui";
 
@@ -9,6 +9,7 @@ interface OnboardingModalProps {
   onComplete: (persona: PersonaType) => void;
   onSkip: () => void;
   jwtToken?: string;
+  initialProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown };
 }
 
 const PERSONA_OPTIONS: Array<{ key: PersonaType; title: string; desc: string }> = [
@@ -50,7 +51,7 @@ const PURPOSE_OPTIONS = [
 
 const STEP_TITLES = ["من أنت؟", "ما الغرض من البيانات؟", "مجال تخصصك"];
 
-export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }: OnboardingModalProps) {
+export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken, initialProfile }: OnboardingModalProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [selectedPersona, setSelectedPersona] = useState<PersonaType>("student");
   const [otherPersonaText, setOtherPersonaText] = useState("");
@@ -58,6 +59,19 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken }
   const [topic, setTopic] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const savedPersona = initialProfile?.persona;
+    setSelectedPersona(PERSONA_OPTIONS.some((option) => option.key === savedPersona) ? savedPersona as PersonaType : "researcher");
+    const savedPurposes = initialProfile?.purposes;
+    setSelectedPurposes(Array.isArray(savedPurposes) && savedPurposes.every((item) => typeof item === "string") && savedPurposes.length ? savedPurposes as string[] : ["رسالة أو بحث أكاديمي"]);
+    const savedTopic = typeof initialProfile?.topic === "string" ? initialProfile.topic : "";
+    setTopic(savedTopic);
+    setOtherPersonaText(savedTopic);
+    setStep(1);
+    setError(null);
+  }, [isOpen, initialProfile]);
 
   function togglePurpose(p: string) {
     if (selectedPurposes.includes(p)) {

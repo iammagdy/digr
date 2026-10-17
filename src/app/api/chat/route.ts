@@ -70,6 +70,7 @@ export async function POST(req: NextRequest) {
     let verifiedUserId: string | null = null;
     let emailVerified = false;
     let isGuest = false;
+    let personaProfile: { persona?: unknown; purposes?: unknown; topic?: unknown } | undefined;
 
     let guestSessionCookie = req.cookies.get("guest_session_id")?.value || null;
     let newGuestCookieToSet: string | null = null;
@@ -98,6 +99,7 @@ export async function POST(req: NextRequest) {
       if (user) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
+        personaProfile = user.user_metadata;
       }
     } catch {
       if (bearer) {
@@ -470,6 +472,7 @@ export async function POST(req: NextRequest) {
       answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,
       isGuest,
+      personaProfile: isGuest ? undefined : personaProfile,
     });
 
     const response = NextResponse.json({
