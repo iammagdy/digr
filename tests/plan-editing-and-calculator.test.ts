@@ -303,18 +303,17 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     expect(breakdown.maxCappedVolume).toBe(47);
 
     // Capped values strictly match the 600-point cap and 47 delivered records
-    expect(breakdown.cappedReservedPoints).toBe(600);
-    expect(breakdown.cappedReservedEgp).toBe(60.0);
+    expect(breakdown.cappedReservedPoints).toBe(595);
+    expect(breakdown.cappedReservedEgp).toBe(59.5);
     // 47 * 11 = 517 points
     expect(breakdown.cappedChargedPoints).toBe(517);
     expect(breakdown.cappedChargedEgp).toBe(51.7);
-    // 600 - 517 = 83 points
-    expect(breakdown.cappedRefundPoints).toBe(83);
-    expect(breakdown.cappedRefundEgp).toBe(8.3);
+    // 595 - 517 = 78 points
+    expect(breakdown.cappedRefundPoints).toBe(78);
+    expect(breakdown.cappedRefundEgp).toBe(7.8);
 
-    // Uncapped raw points preserved for comparison
-    expect(breakdown.reservedPoints).toBe(1265);
-    expect(breakdown.chargedPoints).toBe(1100);
+    expect(breakdown.reservedPoints).toBe(595);
+    expect(breakdown.chargedPoints).toBe(517);
   });
 
   it("caps managed YouTube comment quotes and their reserves at the settlement cap", async () => {

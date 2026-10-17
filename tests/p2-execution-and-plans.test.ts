@@ -666,7 +666,7 @@ describe("P2: Execution, Multi-Step Worker, and Editable Plans Test Suite", () =
       capabilities: [multiPageCapability],
     });
 
-    expect(quote2.targetVolumeMax).toBe(300);
+    expect(quote2.targetVolumeMax).toBe(173);
     expect(quote2.quoteId).not.toBe(quote1.quoteId);
 
     // Check that previous quote1 is now invalidated (expired/superseded)

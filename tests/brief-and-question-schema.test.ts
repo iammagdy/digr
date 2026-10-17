@@ -837,7 +837,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     });
 
     expect(res.outputType).toBe("propose_plan");
-    expect(res.planQuote?.targetVolumeMax).toBe(100);
+    expect(res.planQuote?.targetVolumeMax).toBe(86);
     expect(res.planQuote?.items?.[0]?.params?.query?.location?.include).toEqual(["Germany"]);
     expect(res.planQuote?.items?.[0]?.params?.query?.keyword?.include).toEqual(["fintech", "financial technology"]);
   });

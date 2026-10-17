@@ -111,7 +111,7 @@ export function computePublicCalculatorQuote(
     ? Math.max(1, Math.floor(effectiveMaxCap / Math.max(1, unitPricePoints * (1 + settings.safetyBuffer))))
     : safeTarget;
   const cappedReservedPoints = isCapped
-    ? effectiveMaxCap
+    ? Math.ceil(maxCappedVolume * unitPricePoints * (1 + settings.safetyBuffer))
     : reservedPoints;
 
   const settlement = calculateFinalSettlement(
@@ -133,16 +133,16 @@ export function computePublicCalculatorQuote(
   return {
     capabilitySlug: cap.slug,
     nameAr: cap.nameAr,
-    targetVolumeMax: safeTarget,
-    deliveredVolume: safeDelivered,
+    targetVolumeMax: isCapped ? maxCappedVolume : safeTarget,
+    deliveredVolume: cappedDelivered,
     unitPricePoints,
     unitPriceEgp: Number((unitPricePoints * creditValueEgp).toFixed(4)),
-    reservedPoints,
-    reservedEgp: Number((reservedPoints * creditValueEgp).toFixed(2)),
-    chargedPoints: settlement.chargePoints,
-    chargedEgp: Number((settlement.chargePoints * creditValueEgp).toFixed(2)),
-    refundPoints: settlement.refundPoints,
-    refundEgp: Number((settlement.refundPoints * creditValueEgp).toFixed(2)),
+    reservedPoints: cappedReservedPoints,
+    reservedEgp: Number((cappedReservedPoints * creditValueEgp).toFixed(2)),
+    chargedPoints: cappedSettlement.chargePoints,
+    chargedEgp: Number((cappedSettlement.chargePoints * creditValueEgp).toFixed(2)),
+    refundPoints: cappedSettlement.refundPoints,
+    refundEgp: Number((cappedSettlement.refundPoints * creditValueEgp).toFixed(2)),
     safetyBufferPercent: Math.round(settings.safetyBuffer * 100),
     isCapped,
     maxCapPoints: effectiveMaxCap,

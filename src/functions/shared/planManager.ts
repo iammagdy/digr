@@ -22,7 +22,7 @@ import {
 } from "./quotes";
 import type { CatalogEndpointSummary } from "./catalogClient";
 import { getCachedCatalogEndpoints } from "./catalogClient";
-import { checkPlanProviderCapacity, getConfiguredJobPointsCap } from "./providerSpend";
+import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "./providerSpend";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -600,7 +600,8 @@ export async function createAndSaveManagedQuote(
   let totalRawPoints = 0;
   let effectiveUnitPrice = 0;
   const requestedVolumeMax = plan.items.reduce((sum, item) => sum + Math.max(1, item.targetVolumeMax || 1), 0);
-  const pointsCap = getConfiguredJobPointsCap();
+  // The configured value may reduce the limit, but can never raise the settlement hard cap.
+  const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);
 
   for (const it of plan.items) {
     // Match capability strictly; NEVER substitute capabilities[0]

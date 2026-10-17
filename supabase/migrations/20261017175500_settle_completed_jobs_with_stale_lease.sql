@@ -8,7 +8,7 @@ CREATE OR REPLACE FUNCTION public.settle_job_atomic(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public
 AS $$
 DECLARE
   v_job RECORD;
@@ -153,7 +153,7 @@ CREATE OR REPLACE FUNCTION public.release_job_atomic(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public
 AS $$
 DECLARE
   v_job RECORD;
@@ -237,8 +237,8 @@ BEGIN
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION public.settle_job_atomic(TEXT, NUMERIC, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.settle_job_atomic(TEXT, NUMERIC, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.settle_job_atomic(TEXT, NUMERIC, TEXT) TO service_role;
 
-REVOKE EXECUTE ON FUNCTION public.release_job_atomic(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.release_job_atomic(TEXT, TEXT) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.release_job_atomic(TEXT, TEXT) TO service_role;

@@ -16,6 +16,7 @@ const db = vi.hoisted(() => ({
   events: [] as any[],
   // state of the job being worked
   step: 0,
+  cursor: null as string | null,
   deliveredUnits: 0,
   targetVolumeMax: 10,
   unitPrice: 2,
@@ -41,13 +42,16 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: vi.fn(async (name: string, args: any) => {
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") {
-        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: null, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "x-keyword-search", unit_price: db.unitPrice }, error: null };
+        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "x-keyword-search", unit_price: db.unitPrice }, error: null };
       }
       if (name === "reserve_provider_spend_atomic") return { data: { allowed: true, cost_id: 11 }, error: null };
       if (name === "commit_provider_spend") return { data: { success: true }, error: null };
       if (name === "complete_chunk") {
         db.step += 1;
         db.deliveredUnits = args.p_new_delivered_units;
+        db.cursor = args.p_new_cursor;
+        const job = db.jobs.find((row) => row.id === args.p_job_id);
+        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running" });
         return { data: { success: true, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "settle_job_atomic") {
@@ -101,13 +105,14 @@ const JOB = jobIdForQuote("quote_events");
 const tweet = (id: string, extra: Record<string, unknown> = {}) => ({ tweet_id: id, text: `نص ${id}`, ...extra });
 
 function resetDb(params: Record<string, unknown> = { query: "AI Trends" }, target = 20, createdSecondsAgo = 30) {
-  db.jobs = [{ id: JOB, user_id: "user_1", status: "running", step: 0, created_at: new Date(Date.now() - createdSecondsAgo * 1000).toISOString(), updated_at: new Date().toISOString() }];
+  db.jobs = [{ id: JOB, user_id: "user_1", status: "running", step: 0, current_cursor: null, delivered_units: 0, target_volume_max: target, created_at: new Date(Date.now() - createdSecondsAgo * 1000).toISOString(), updated_at: new Date().toISOString() }];
   db.quotes = [{ id: "quote_events", user_id: "user_1", items: [{ capabilitySlug: "x-keyword-search", endpointId: "treg.twitter.tweets", params, targetVolumeMax: target, paginationStrategy: "cursor" }], output_formats: ["csv"] }];
   db.partials.clear();
   db.results.clear();
   db.rpcCalls = [];
   db.events = [];
   db.step = 0;
+  db.cursor = null;
   db.deliveredUnits = 0;
   db.targetVolumeMax = target;
   db.unitPrice = 2;

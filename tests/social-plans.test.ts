@@ -139,7 +139,8 @@ describe("a researcher's social request becomes the right plan or the one missin
     expect(res.outputType).toBe("propose_plan");
     expect(item.capabilitySlug).toBe("social-youtube-comments");
     expect(item.params).toEqual({ query: "القهوة" });
-    expect(item.targetVolumeMax).toBe(100);
+    expect(item.targetVolumeMax).toBe(57);
+    expect(res.contentAr).toContain("٥٧");
     expect(res.contentAr).toContain("«القهوة»");
   });
 

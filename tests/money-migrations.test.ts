@@ -43,7 +43,7 @@ describe("review-only money migrations", () => {
     expect(sql).toContain("v_job.current_cursor = 'completed'");
     expect(sql).toContain("v_job.delivered_units, 0) >= v_job.target_volume_max");
     expect(sql).toContain("Cannot settle job % while active chunk lease is held until %");
-    expect(sql).toContain("REVOKE EXECUTE ON FUNCTION public.settle_job_atomic");
+    expect(sql).toContain("REVOKE ALL ON FUNCTION public.settle_job_atomic");
     expect(sql).toContain("GRANT EXECUTE ON FUNCTION public.settle_job_atomic");
   });
 });
