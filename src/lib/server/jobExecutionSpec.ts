@@ -1,6 +1,7 @@
 import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
+import { SOCIAL_ROWS_PER_CHUNK, estimateSocialChunkCostUsd, getSocialCapability } from "../socialSources";
 
 const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
@@ -102,6 +103,26 @@ export async function resolveJobExecutionSpec(
     }
   } catch {
     // Continue with capability catalog resolution
+  }
+
+  // Verified social services carry their own source chain: nothing else in the catalog applies to them,
+  // and one chunk may make several provider calls, so the spend estimate is the whole chunk's worst case.
+  const socialCapability = getSocialCapability(capabilitySlug);
+  if (socialCapability) {
+    const firstSource =
+      socialCapability.comments?.[0] || Object.values(socialCapability.discover).flat().filter(Boolean)[0];
+    return {
+      capabilitySlug: socialCapability.slug,
+      endpointId: firstSource?.endpointId || endpointId,
+      method: firstSource?.method || "POST",
+      params,
+      paginationStrategy: "cursor",
+      pricingUnit: "call",
+      unitCostUsd: estimateSocialChunkCostUsd(socialCapability),
+      pageSize: SOCIAL_ROWS_PER_CHUNK,
+      outputFormats,
+      ...(retryOfJobId ? { retryOfJobId } : {}),
+    };
   }
 
   // 2. Match capability in capability_registry table if available

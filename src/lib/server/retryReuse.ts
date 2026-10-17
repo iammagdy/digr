@@ -66,7 +66,7 @@ export function planParamsSignature(capabilitySlug: string, params: Record<strin
 
 /** Stable identity of a delivered row, or null when the row carries none. */
 export function rowIdentity(row: any): string | null {
-  const keys = ["company_id", "source_id", "id", "uniqueId", "unique_id", "tweet_id", "post_id", "video_id", "comment_id", "profile_id"];
+  const keys = ["company_id", "source_id", "id", "uniqueId", "unique_id", "tweet_id", "post_id", "video_id", "comment_id", "cid", "aweme_id", "profile_id"];
   for (const key of keys) {
     const value = String(row?.[key] ?? "").trim().toLowerCase();
     if (value) return `id:${value}`;

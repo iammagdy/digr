@@ -197,7 +197,53 @@ export async function generateExcelReport(
   if (norm.metadata.entityType === "companies") {
     return generateCompanyDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
+  if (norm.metadata.socialKind) {
+    return generateSocialDataWorkbook(norm);
+  }
   return generateStructuredDataWorkbook(payload, norm);
+}
+
+/** One data sheet of comments or videos with the fixed Arabic columns, readable dates and live links. */
+async function generateSocialDataWorkbook(norm: NormalizedDataset): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = customerFacingTitle(norm.metadata.title);
+  const sheet = wb.addWorksheet(norm.metadata.socialKind === "comments" ? "التعليقات" : "الفيديوهات والمنشورات", {
+    views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+  });
+  const labels = new Map(norm.codebook.map((entry) => [entry.field, entry.titleAr]));
+  const headers = norm.columns.map((key) => labels.get(key) || key);
+  const header = sheet.addRow(headers);
+  header.eachCell((cell) => {
+    cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  });
+  header.height = 30;
+  norm.rows.forEach((record, index) => {
+    const row = sheet.addRow(
+      norm.columns.map((key) => {
+        const value = record[key];
+        if (value === null || value === undefined) return "";
+        if (typeof value === "boolean") return value ? "نعم" : "لا";
+        if (typeof value === "string" && /^https?:\/\//i.test(value.trim()) && /(?:^url$|_url$)/i.test(key)) return workbookHyperlink(value);
+        return escapeFormula(value);
+      }),
+    );
+    row.height = 22;
+    row.alignment = { vertical: "middle", wrapText: true };
+    row.eachCell((cell) => {
+      cell.border = borderThin;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+      if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+    });
+  });
+  sheet.columns = norm.columns.map((key) => ({
+    width: /comment_text|video_caption|video_title/.test(key) ? 48 : /url/.test(key) ? 32 : /hashtags|author_name|channel_name/.test(key) ? 24 : 16,
+  }));
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, norm.rows.length + 1), column: Math.max(1, headers.length) } };
+  sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+  return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
 function contactVerificationSummary(rows: Array<Record<string, any>>): string {

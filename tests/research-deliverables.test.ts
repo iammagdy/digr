@@ -108,7 +108,7 @@ describe("Research Deliverables Generator Suite", () => {
       expect(headers).toContain("نص المحتوى");
       expect(headers).toContain("عدد الإعجابات");
       expect(headers).toContain("عدد المشاهدات");
-      expect(headers).toContain("اسم المستخدم (Handle)");
+      expect(headers).toContain("اسم المستخدم");
       // No raw source field names leak as headers.
       for (const raw of ["text", "likes_count", "views_count", "username"]) {
         expect(headers).not.toContain(raw);

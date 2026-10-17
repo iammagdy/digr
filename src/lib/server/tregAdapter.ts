@@ -6,7 +6,11 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
-import { findProviderResultList, findProviderNextCursor } from "./providerRows";
+import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
+import { isSocialCapabilitySlug } from "../socialSources";
+import { runSocialChunk, type SocialCall } from "./socialAdapter";
+
+export { hasRecognizedProviderResultShape };
 import { arabicVerificationStatus } from "../contactVerification";
 import {
   detectCountryFromText as detectInternationalCountryFromText,
@@ -360,19 +364,6 @@ function getTregPeopleArray(data: any): any[] {
   return [];
 }
 
-/** True only when the successful response has a recognized result envelope (a list, even an empty one). */
-export function hasRecognizedProviderResultShape(value: unknown): boolean {
-  if (findProviderResultList(value)) return true;
-  if (!value || typeof value !== "object") return false;
-  const record = value as Record<string, any>;
-  if (record.success === true && typeof record.total === "number") return true;
-  for (const key of ["data", "output", "raw", "response", "result", "payload"]) {
-    const inner = record[key];
-    if (inner && typeof inner === "object" && !Array.isArray(inner) && hasRecognizedProviderResultShape(inner)) return true;
-  }
-  return false;
-}
-
 function firstPeopleText(...values: any[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -580,6 +571,46 @@ export async function executeTregCallWithRetry(
   return lastResult!;
 }
 
+/** Plain Arabic reason a provider call failed, with no provider or technical wording. */
+export function providerFailureMessageAr(callResult: Pick<TregCallResult, "httpStatus" | "isRouteMaxCost" | "isPlatformBalanceLow">): string {
+  if (callResult.isRouteMaxCost) return "تجاوز الطلب سقف التكلفة المسموح به للمصدر.";
+  if (callResult.isPlatformBalanceLow) return "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
+  if (callResult.httpStatus === 404) return "الهدف المطلوب غير موجود أو غير متاح للعامة.";
+  if (callResult.httpStatus === 422) return "تعذر معالجة مدخلات الطلب لدى المصدر.";
+  if (callResult.httpStatus === 429) return "المصدر مشغول حالياً بعد استنفاد محاولات الإعادة.";
+  return "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
+}
+
+/** Call made for the social sources: one retry only, because a failed source falls through to the next one. */
+function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
+  return async (source, params, context) => {
+    const callResult = await executeTregCallWithRetry(
+      {
+        endpointId: source.endpointId,
+        method: source.method,
+        params,
+        userId: input.userId,
+        jobId: input.jobId,
+        stepId: `step_${input.step}`,
+        page: input.step + 1,
+        routeMaxCostUsd: "0.05",
+        idempotencyKey: context.idempotencyKey,
+        timeoutMs: context.timeoutMs,
+      },
+      1,
+    );
+    return {
+      ok: callResult.ok,
+      httpStatus: callResult.httpStatus,
+      data: callResult.data,
+      costMicro: Math.max(0, Number(callResult.costMicro) || 0),
+      tregCallId: callResult.tregCallId || "",
+      errorCode: callResult.ok ? undefined : callResult.error || `http_${callResult.httpStatus}`,
+      errorMessageAr: callResult.ok ? undefined : providerFailureMessageAr(callResult),
+    };
+  };
+}
+
 /**
  * Real TREG provider adapter calling https://treg.to/call/{endpoint-id}.
  * Strictly gated by TREG_LIVE === 'true' and TREG_TOKEN.
@@ -600,6 +631,11 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       errorCode: gate.reasonCode,
       errorMessageAr: gate.messageAr,
     };
+  }
+
+  // Verified social services run through their own source chain (fallbacks, comments of discovered videos).
+  if (isSocialCapabilitySlug(input.capabilitySlug)) {
+    return runSocialChunk(input, { call: socialCallThroughTreg(input) });
   }
 
   const page = input.step + 1;
@@ -721,18 +757,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   let costUsd = Number((costMicro / 1_000_000).toFixed(6));
 
   if (!callResult.ok) {
-    let errorMessageAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
-    if (callResult.isRouteMaxCost) {
-      errorMessageAr = "تجاوز الطلب سقف التكلفة المسموح به للمصدر.";
-    } else if (callResult.isPlatformBalanceLow) {
-      errorMessageAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
-    } else if (callResult.httpStatus === 404) {
-      errorMessageAr = "الهدف المطلوب غير موجود أو غير متاح للعامة.";
-    } else if (callResult.httpStatus === 422) {
-      errorMessageAr = "تعذر معالجة مدخلات الطلب لدى المصدر.";
-    } else if (callResult.httpStatus === 429) {
-      errorMessageAr = "المصدر مشغول حالياً بعد استنفاد محاولات الإعادة.";
-    }
+    const errorMessageAr = providerFailureMessageAr(callResult);
 
     return {
       ok: false,

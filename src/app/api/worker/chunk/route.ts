@@ -41,6 +41,7 @@ import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingReq
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
+import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -486,12 +487,16 @@ export async function POST(req: NextRequest) {
       spec.capabilitySlug.includes("companies") ||
       spec.capabilitySlug === "web-company-search" ||
       spec.endpointId.includes("icypeas");
+    // Social rows (comments, videos) are de-duplicated across pages the same way company rows are: a provider
+    // can repeat its first page, and a repeated comment must be neither delivered twice nor billed twice.
+    const socialCapability = getSocialCapability(spec.capabilitySlug);
+    const dedupeIdentity = isCompanyCapability ? companyIdentity : rowIdentity;
     let duplicateExcludedCount = 0;
-    if (isCompanyCapability && rawRows.length) {
+    if ((isCompanyCapability || socialCapability) && rawRows.length) {
       const seen = new Set<string>();
       // Rows reused from a failed earlier run are already accepted rows of this job.
       for (const row of retrySeed?.rows || []) {
-        const identity = companyIdentity(row);
+        const identity = dedupeIdentity(row);
         if (identity) seen.add(identity);
       }
       // A provider may repeat its first page or return overlapping cursor pages.
@@ -507,12 +512,12 @@ export async function POST(req: NextRequest) {
           }
         }
         for (const row of Array.isArray(prior?.rows) ? prior.rows : []) {
-          const identity = companyIdentity(row);
+          const identity = dedupeIdentity(row);
           if (identity) seen.add(identity);
         }
       }
       rawRows = rawRows.filter((row: any) => {
-        const identity = companyIdentity(row);
+        const identity = dedupeIdentity(row);
         if (!identity) return true;
         if (seen.has(identity)) { duplicateExcludedCount += 1; return false; }
         seen.add(identity);
@@ -1039,11 +1044,14 @@ export async function POST(req: NextRequest) {
 
       const cleanTitle = isCompanyResearch
         ? `شركات ${detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? detectedIndustry.arabicLabel : "وأعمال"} في ${detectedCountry || "النطاق المطلوب"}`
+        : socialCapability
+        ? socialResultTitleAr(socialCapability)
         : "تقرير بيانات من المصادر المتاحة";
 
       const finalPayload: any = {
         metadata: {
-          platform: "web",
+          platform: socialCapability ? socialCapability.platform : "web",
+          ...(socialCapability ? { socialKind: socialCapability.kind } : {}),
           country: detectedCountry,
           company: "Diger",
           title: cleanTitle,

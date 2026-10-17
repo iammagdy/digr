@@ -113,3 +113,16 @@ export function findProviderNextCursor(value: unknown, depth = 0): string | null
   }
   return null;
 }
+
+/** True when the successful answer carries a recognized result list (even an empty one), as opposed to an unrelated answer. */
+export function hasRecognizedProviderResultShape(value: unknown): boolean {
+  if (findProviderResultList(value)) return true;
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, any>;
+  if (record.success === true && typeof record.total === "number") return true;
+  for (const key of ["data", "output", "raw", "response", "result", "payload"]) {
+    const inner = record[key];
+    if (inner && typeof inner === "object" && !Array.isArray(inner) && hasRecognizedProviderResultShape(inner)) return true;
+  }
+  return false;
+}

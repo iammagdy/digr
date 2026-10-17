@@ -1,4 +1,5 @@
 import { TablesDB } from "./dbCompat";
+import { SOCIAL_CAPABILITIES, SocialCapabilityDef } from "../../lib/socialSources";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
 export type CapabilityUnit = "page" | "query" | "profile" | "1000 items";
@@ -125,7 +126,7 @@ export interface SanitizedCapabilityForLlm {
   enabled: boolean;
 }
 
-export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
+const BASE_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "tiktok-profile",
     slug: "tiktok-profile",
@@ -512,6 +513,48 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   },
 ];
 
+function socialCapabilitySeed(def: SocialCapabilityDef): Omit<Capability, "pointsPerUnit"> {
+  const firstSource = (def.comments || Object.values(def.discover).flat().filter(Boolean) as any[])[0];
+  return {
+    id: def.slug,
+    slug: def.slug,
+    platform: def.platform as any,
+    category: def.platform as any,
+    status: "verified",
+    unit: "1000 items",
+    estimatedCostUsdPerUnit: def.rowCostUsd,
+    maxItemsPerCall: 50,
+    estimatedSuccessRate: def.successRate,
+    verificationNote: VERIFICATION_NOTE,
+    nameAr: def.nameAr,
+    nameEn: def.nameEn,
+    descriptionAr: def.descriptionAr,
+    paramsSchema: JSON.stringify({
+      type: "object",
+      properties: {
+        url: { type: "string", description: "رابط الفيديو أو المنشور المطلوب سحب تعليقاته" },
+        query: { type: "string", description: "كلمة أو موضوع للبحث عن فيديوهات" },
+        channel: { type: "string", description: "اسم القناة أو الصفحة أو رابطها" },
+        trending: { type: "boolean", description: "اطلب الفيديوهات الرائجة" },
+        region: { type: "string", description: "رمز الدولة بحرفين مثل EG، للفيديوهات الرائجة" },
+      },
+    }),
+    tregEndpointId: firstSource?.endpointId || def.slug,
+    tregMethod: firstSource?.method || "POST",
+    pricingUnit: "item",
+    unitCostUsd: def.rowCostUsd,
+    ...(def.customerPriceUsdPerItem ? { customerPriceUsdPerItem: def.customerPriceUsdPerItem } : {}),
+    maxRows: def.maxRows,
+    paginationType: "cursor",
+    enabled: true,
+  };
+}
+
+export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
+  ...BASE_SEED_CAPABILITIES,
+  ...SOCIAL_CAPABILITIES.map(socialCapabilitySeed),
+];
+
 export function buildApprovedCatalog(
   settings: RegistryPricingSettings = getRegistryPricingSettings()
 ): Capability[] {
@@ -719,6 +762,8 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
 }
 
 const CORE_PEOPLE_SLUG = "professional-people-search";
+/** Reviewed services served from the code catalog until the registry has a row for them (a disabled row is a kill switch). */
+const CORE_SERVICE_SLUGS: string[] = [CORE_PEOPLE_SLUG, ...SOCIAL_CAPABILITIES.map((def) => def.slug)];
 
 const REGISTRY_ROW_STATE_TTL_MS = 60_000;
 const registryRowStateCache = new Map<string, { state: "absent" | "enabled" | "disabled"; at: number }>();
@@ -755,14 +800,52 @@ export function clearRegistryRowStateCacheForTesting(): void {
  */
 export async function getEnabledCapabilitiesWithCoreServices(tables?: TablesDB | any): Promise<Capability[]> {
   const enabled = await getEnabledCapabilities(tables);
-  if (enabled.some((capability) => capability.slug === CORE_PEOPLE_SLUG)) return enabled;
-  const seed = APPROVED_CAPABILITY_CATALOG.find(
-    (capability) => capability.slug === CORE_PEOPLE_SLUG && capability.status === "verified" && capability.enabled,
-  );
-  if (!seed) return enabled;
   // Without a readable registry the seed fallback inside getEnabledCapabilities already served the catalog.
   if (!tables || typeof tables.from !== "function") return enabled;
-  return (await registryRowState(tables, CORE_PEOPLE_SLUG)) === "absent" ? [...enabled, { ...seed }] : enabled;
+
+  const wanted = CORE_SERVICE_SLUGS.filter((slug) => !enabled.some((capability) => capability.slug === slug));
+  if (wanted.length === 0) return enabled;
+  const states = await registryRowStates(tables, wanted);
+  const added: Capability[] = [];
+  for (const slug of wanted) {
+    const seed = APPROVED_CAPABILITY_CATALOG.find(
+      (capability) => capability.slug === slug && capability.status === "verified" && capability.enabled,
+    );
+    if (seed && states.get(slug) === "absent") added.push({ ...seed });
+  }
+  return added.length ? [...enabled, ...added] : enabled;
+}
+
+/** Row state of several slugs with one query, falling back to one query each when the client cannot filter a list. */
+async function registryRowStates(tables: any, slugs: string[]): Promise<Map<string, "absent" | "enabled" | "disabled" | "unknown">> {
+  const out = new Map<string, "absent" | "enabled" | "disabled" | "unknown">();
+  const missing: string[] = [];
+  for (const slug of slugs) {
+    const cached = registryRowStateCache.get(slug);
+    if (cached && Date.now() - cached.at < REGISTRY_ROW_STATE_TTL_MS) out.set(slug, cached.state);
+    else missing.push(slug);
+  }
+  if (missing.length === 0) return out;
+
+  const select = tables.from("capability_registry").select("slug, enabled");
+  if (typeof select?.in === "function") {
+    try {
+      const { data, error } = await select.in("slug", missing);
+      if (!error && Array.isArray(data)) {
+        for (const slug of missing) {
+          const row = data.find((item: any) => item?.slug === slug);
+          const state = !row ? "absent" : row.enabled ? "enabled" : "disabled";
+          registryRowStateCache.set(slug, { state, at: Date.now() });
+          out.set(slug, state);
+        }
+        return out;
+      }
+    } catch {
+      /* fall through to per-slug reads */
+    }
+  }
+  for (const slug of missing) out.set(slug, await registryRowState(tables, slug));
+  return out;
 }
 
 /**

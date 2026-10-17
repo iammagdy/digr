@@ -71,7 +71,8 @@ import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
-import { getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
+import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
+import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -144,8 +145,12 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     if (!extractNumberFromText(normalized)) return { id: "company_count_required", text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true };
   }
   if (!isAccount && !isPeople && !isCompanies) {
+    const socialTaskIntent = detectSocialIntent(normalized);
     const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
     if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
+    // A request the verified social services understand is decided entirely by their own inputs (a link, a
+    // channel, a country); the generic topic question below does not apply to it.
+    if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) return null;
   }
   if (isSocialTopic) {
     const missingSocial = getMissingSocialInputs(normalized);
@@ -863,6 +868,38 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
     enabled: !unavailable,
+  };
+}
+
+/** A verified capability presented to the model in the same shape as a live catalog result. */
+function capabilityAsCatalogEndpoint(cap: Capability): CatalogEndpointSummary {
+  let schema: Record<string, any> = {};
+  try {
+    schema = typeof cap.paramsSchema === "string" ? JSON.parse(cap.paramsSchema) : (cap.paramsSchema as any) || {};
+  } catch {
+    schema = {};
+  }
+  return {
+    id: cap.slug,
+    slug: cap.slug,
+    nameAr: cap.nameAr,
+    nameEn: cap.nameEn,
+    summaryAr: cap.descriptionAr,
+    summaryEn: cap.nameEn,
+    platform: String(cap.platform || cap.category),
+    method: "POST",
+    path: "",
+    paramsSchema: schema,
+    billingUnit: "item",
+    catalogPriceUsd: cap.unitCostUsd,
+    pointsPerUnit:
+      typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0
+        ? computeRegistryPointsPerUnit(cap.customerPriceUsdPerItem)
+        : cap.pointsPerUnit ?? computeRegistryPointsPerUnit(cap.unitCostUsd),
+    pagination: { type: "cursor", maxLimit: cap.maxRows },
+    observedSuccessRate: cap.estimatedSuccessRate ?? 0.99,
+    observedSamples: 1000,
+    scope: "any_account",
   };
 }
 
@@ -1618,11 +1655,11 @@ export class ChatHandler {
       }
       tCatalogSearchMs = catalogMs || (Date.now() - tSearchStart);
 
-      const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
+      let dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
 
-      const allCapabilities = [...dynamicCapabilities, ...capabilities];
-      const allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
-      const sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
+      let allCapabilities = [...dynamicCapabilities, ...capabilities];
+      let allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
+      let sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
 
       // 6. Fetch previous messages for context
       currentStep = "message_history";
@@ -1713,6 +1750,20 @@ export class ChatHandler {
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
           turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
         };
+      }
+
+      // Verified social services: for a comments / videos / trending / channel request the model is shown only the
+      // verified capability for that platform and task, instead of choosing among the whole live catalog (where a
+      // post search at hundreds of points ranked above the comments the customer asked for).
+      const socialIntent = detectSocialIntent(conversationRequestText);
+      const verifiedSocialDef = socialIntent.task ? socialCapabilityForIntent(socialIntent) : undefined;
+      const verifiedSocialCap = verifiedSocialDef ? capabilities.find((c) => c.slug === verifiedSocialDef.slug) : undefined;
+      if (verifiedSocialCap) {
+        liveCatalogEndpoints = [capabilityAsCatalogEndpoint(verifiedSocialCap)];
+        dynamicCapabilities = [];
+        allCapabilities = [...capabilities];
+        allCatalogCapabilities = [...catalogCapabilities];
+        sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
       }
 
       // 7. Execute LLM Turn
@@ -2255,6 +2306,37 @@ export class ChatHandler {
           });
 
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
+          // A social request is served by its verified capability whatever the model proposed; the link, channel,
+          // keyword and country are rebuilt from the customer's own words.
+          if (verifiedSocialDef && verifiedSocialCap) {
+            // Only a period the customer wrote filters the results. The brief's own default window ("آخر شهر") would
+            // silently discard every comment on an older video and then report that nothing matched.
+            const dates = dateFiltersFromHint(extractDateHint(conversationRequestText) || "");
+            const perVideo = brief.commentsPerPost && brief.commentsPerPost > 0 ? brief.commentsPerPost : undefined;
+            const videoCount = brief.postCount && brief.postCount > 0 ? brief.postCount : undefined;
+            const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
+              dateFrom: dates.from,
+              dateTo: dates.to,
+              perVideo,
+              videoCount,
+            });
+            // The count the customer stated wins; a videos x comments-per-video request means exactly that many comments.
+            const statedVolume = explicitRequestedVolume && explicitRequestedVolume > 0
+              ? explicitRequestedVolume
+              : perVideo && videoCount && verifiedSocialDef.kind === "comments"
+              ? perVideo * videoCount
+              : item.targetVolumeMax || 1;
+            const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows));
+            return {
+              ...item,
+              capabilitySlug: verifiedSocialDef.slug,
+              endpointId: verifiedSocialCap.tregEndpointId || verifiedSocialDef.slug,
+              paginationStrategy: "cursor",
+              params,
+              targetVolumeMin: Math.min(item.targetVolumeMin || 1, volume),
+              targetVolumeMax: volume,
+            } as PlanItem;
+          }
           const capability = resolveCapabilityReference(item.capabilitySlug, validationCaps) ||
             (item.endpointId ? resolveCapabilityReference(item.endpointId, validationCaps) : undefined);
           let params = item.params;
@@ -2310,8 +2392,11 @@ export class ChatHandler {
         }
         const missingSocialFields: string[] = [];
         if (isAccountProfileRequest && !accountHandle) missingSocialFields.push("social_account_required");
-        if (isSocialTopicRequest) {
+        if (isSocialTopicRequest && !verifiedSocialDef) {
           missingSocialFields.push(...getMissingSocialInputs(requiredFieldsText).filter((id) => id !== "social_account_required"));
+        }
+        if (!isAccountProfileRequest && !companyPlan && !peoplePlan) {
+          missingSocialFields.push(...getMissingSocialTaskInputs(requiredFieldsText));
         }
         const missingCompanyCount = companyPlan && !isPeopleSearchRequest(requiredFieldsText) && !hasExplicitCount;
         const missingRequiredFields = [
@@ -2337,6 +2422,10 @@ export class ChatHandler {
             social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
             social_time_required: { id: firstMissing, text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true },
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
+            social_comment_target_required: socialTaskQuestion("social_comment_target_required"),
+            social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
+            social_trending_unsupported: socialTaskQuestion("social_trending_unsupported"),
+            social_channel_required: socialTaskQuestion("social_channel_required"),
           };
           clarificationItemsList = companyItem
             ? [companyItem]
@@ -2487,6 +2576,10 @@ export class ChatHandler {
         }
 
         if (platformCheck.valid && planValidation.valid && planOutput) {
+          if (verifiedSocialDef && planItems[0]) {
+            // The goal line is written by the server so it always matches what will run.
+            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits);
+          }
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
           const managedQuote = await createAndSaveManagedQuote(this.tables, {

@@ -12,6 +12,8 @@ export interface TregCallOptions {
   routeMaxCostUsd?: string | number;
   idempotencyKey?: string;
   testScenario?: string;
+  /** Give up on this one call after this long, so a slow source cannot outlast the worker's own time limit. */
+  timeoutMs?: number;
 }
 
 export interface TregCallResult {
@@ -227,6 +229,10 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
       method,
       headers,
       body: requestBody,
+      signal:
+        options.timeoutMs && options.timeoutMs > 0 && typeof AbortSignal !== "undefined" && AbortSignal.timeout
+          ? AbortSignal.timeout(options.timeoutMs)
+          : undefined,
     });
   } catch (netErr: any) {
     const errorMsg = sanitizeTregDetail(netErr.message || "Failed to reach data provider", token);

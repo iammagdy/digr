@@ -271,7 +271,7 @@ export function getMissingSocialTaskInputs(text: string): MissingSocialTaskInput
   if (intent.task === "comments") {
     if (intent.discover === "target") return [];
     if (intent.discover === "trending") {
-      if (!hasRegionHint(text)) missing.push("social_trending_region_required");
+      if (intent.platform === "tiktok" && !hasRegionHint(text)) missing.push("social_trending_region_required");
       return missing;
     }
     if (intent.discover === "channel") return [];
@@ -281,7 +281,8 @@ export function getMissingSocialTaskInputs(text: string): MissingSocialTaskInput
   }
 
   if (intent.task === "trending") {
-    if (!hasRegionHint(text)) missing.push("social_trending_region_required");
+    // The YouTube trending feed is one worldwide list; only TikTok's feed depends on the country.
+    if (intent.platform === "tiktok" && !hasRegionHint(text)) missing.push("social_trending_region_required");
     return missing;
   }
 
@@ -323,4 +324,11 @@ export function socialTaskQuestion(id: MissingSocialTaskInput): SocialTaskQuesti
     case "social_channel_required":
       return socialQuestion(id, "ما اسم القناة أو رابطها؟", "free");
   }
+}
+
+/** The subject words of a request (a keyword or name), for a search the customer did not spell out as a query. */
+export function socialSubjectText(text: string): string {
+  const hashtag = /(?:^|\s)#([\p{L}\p{N}_]{2,})/u.exec(text || "")?.[1];
+  if (hashtag) return hashtag.replace(/_/g, " ");
+  return topicTokens(text).slice(0, 6).join(" ");
 }

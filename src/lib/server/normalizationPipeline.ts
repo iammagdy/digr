@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { SOCIAL_COLUMN_ORDER, normalizeSocialRow, type SocialRowKind } from "./socialRows";
 
 export interface CodebookEntry {
   field: string;
@@ -30,6 +31,8 @@ export interface NormalizedDataset {
     entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" | "people";
     targetRequested?: number | string | null;
     reportContext?: Record<string, any>;
+    /** Set for comment and video results of the verified social services (fixed Arabic schema). */
+    socialKind?: "comments" | "videos";
   };
   profile: Record<string, any> | null;
   rows: Array<Record<string, any>>;
@@ -156,12 +159,12 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   is_reply: { titleAr: "هل هو رد فرعي؟", descAr: "تحديد ما إذا كان السجل رداً متداخلاً أم تعليقاً رئيسياً مستقلاً", type: "منطقي (Boolean)" },
   published_at: { titleAr: "تاريخ ووقت النشر", descAr: "تاريخ وتوقيت النشر الأصلي بالتوقيت العالمي الموحد (UTC)", type: "تاريخ ووقت (ISO 8601)" },
   created_at: { titleAr: "تاريخ الإنشاء", descAr: "تاريخ وتوقيت إنشاء السجل", type: "تاريخ ووقت (ISO 8601)" },
-  username: { titleAr: "اسم المستخدم (Handle)", descAr: "اسم الحساب أو المعرف الفريد للمستخدم مسبوقاً بعلامة @", type: "نص (String)" },
+  username: { titleAr: "اسم المستخدم", descAr: "اسم الحساب أو المعرف الفريد للمستخدم مسبوقاً بعلامة @", type: "نص (String)" },
   author_name: { titleAr: "الاسم المعروض", descAr: "الاسم الظاهر للمستخدم أو صاحب الحساب", type: "نص (String)" },
   display_name: { titleAr: "الاسم المعروض", descAr: "الاسم الظاهر للمستخدم أو القناة", type: "نص (String)" },
   text: { titleAr: "نص المحتوى", descAr: "النص الكامل للمنشور أو التغريدة كما نُشرت علناً", type: "نص طويل (Text)" },
   comment_text: { titleAr: "نص التعليق", descAr: "النص الكامل للتعليق الأصلي أو الرد", type: "نص طويل (Text)" },
-  bio: { titleAr: "النبذة التعريفية (Bio)", descAr: "النص التعريفي المسجل في الملف الشخصي للحساب", type: "نص طويل (Text)" },
+  bio: { titleAr: "النبذة التعريفية", descAr: "النص التعريفي المسجل في الملف الشخصي للحساب", type: "نص طويل (Text)" },
   verified: { titleAr: "حالة التوثيق", descAr: "حالة توثيق الحساب بالعلامة الرسمية (نعم / لا)", type: "منطقي (Boolean)" },
   followers: { titleAr: "عدد المتابعين", descAr: "إجمالي عدد المتابعين للحساب", type: "رقم صحيح (Integer)" },
   followers_count: { titleAr: "عدد المتابعين", descAr: "إجمالي عدد المتابعين للحساب وقت الجمع", type: "رقم صحيح (Integer)" },
@@ -169,7 +172,7 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   following_count: { titleAr: "الحسابات المتابَعة", descAr: "عدد الحسابات التي يتابعها صاحب الملف", type: "رقم صحيح (Integer)" },
   likes: { titleAr: "عدد الإعجابات", descAr: "إجمالي عدد الإعجابات التي حصدها المنشور", type: "رقم صحيح (Integer)" },
   likes_count: { titleAr: "عدد الإعجابات", descAr: "إجمالي عدد الإعجابات المسجلة", type: "رقم صحيح (Integer)" },
-  retweets_count: { titleAr: "إعادة النشر (Retweets)", descAr: "عدد مرات إعادة نشر التغريدة أو مشاركتها", type: "رقم صحيح (Integer)" },
+  retweets_count: { titleAr: "إعادة النشر", descAr: "عدد مرات إعادة نشر التغريدة أو مشاركتها", type: "رقم صحيح (Integer)" },
   shares_count: { titleAr: "عدد المشاركات", descAr: "إجمالي مرات مشاركة المنشور عبر المنصة", type: "رقم صحيح (Integer)" },
   replies_count: { titleAr: "عدد الردود", descAr: "عدد الردود والتعليقات المباشرة على المنشور", type: "رقم صحيح (Integer)" },
   quotes_count: { titleAr: "عدد الاقتباسات", descAr: "عدد التغريدات المقتبسة للمنشور", type: "رقم صحيح (Integer)" },
@@ -177,9 +180,19 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   views_count: { titleAr: "عدد المشاهدات", descAr: "إجمالي عدد المشاهدات المسجلة للمحتوى", type: "رقم صحيح (Integer)" },
   videos_count: { titleAr: "عدد مقاطع الفيديو", descAr: "إجمالي المقاطع المنشورة في الحساب", type: "رقم صحيح (Integer)" },
   language: { titleAr: "لغة المحتوى", descAr: "رمز اللغة المكتشف للمحتوى المنشور (مثل ar أو en)", type: "نص (Code)" },
-  url: { titleAr: "الرابط المباشر (URL)", descAr: "الرابط التشعبي المباشر للوصول للمنشور على الويب", type: "رابط (URI)" },
+  url: { titleAr: "الرابط المباشر", descAr: "الرابط التشعبي المباشر للوصول للمنشور على الويب", type: "رابط (URI)" },
   profile_url: { titleAr: "رابط الملف الشخصي", descAr: "الرابط المباشر لصفحة الحساب الشخصي", type: "رابط (URI)" },
   bio_link: { titleAr: "الرابط الخارجي بالملف", descAr: "الرابط الخارجي المضاف في ملف الحساب إن وجد", type: "رابط (URI)" },
+  video_url: { titleAr: "رابط الفيديو أو المنشور", descAr: "رابط الفيديو أو المنشور الذي كُتب عليه التعليق", type: "رابط (URI)" },
+  video_title: { titleAr: "عنوان الفيديو أو المنشور", descAr: "عنوان أو وصف الفيديو أو المنشور الذي كُتب عليه التعليق", type: "نص (String)" },
+  pinned: { titleAr: "تعليق مثبّت", descAr: "هل ثبّت صاحب المحتوى هذا التعليق", type: "منطقي (Boolean)" },
+  hearted_by_creator: { titleAr: "أعجب به صاحب المحتوى", descAr: "هل أعجب صاحب المحتوى بهذا التعليق", type: "منطقي (Boolean)" },
+  video_caption: { titleAr: "عنوان أو وصف الفيديو", descAr: "نص الوصف أو العنوان كما نُشر", type: "نص طويل (Text)" },
+  channel_name: { titleAr: "القناة أو الحساب", descAr: "اسم القناة أو الحساب الذي نشر المحتوى", type: "نص (String)" },
+  comments_count: { titleAr: "عدد التعليقات", descAr: "عدد التعليقات على الفيديو أو المنشور وقت الجمع", type: "رقم صحيح (Integer)" },
+  saves_count: { titleAr: "عدد مرات الحفظ", descAr: "عدد مرات حفظ الفيديو", type: "رقم صحيح (Integer)" },
+  video_duration: { titleAr: "مدة الفيديو", descAr: "مدة الفيديو كما أوردها المصدر", type: "نص (String)" },
+  hashtags: { titleAr: "الوسوم", descAr: "الوسوم المذكورة في الفيديو أو المنشور", type: "نص (String)" },
   collected_date: { titleAr: "تاريخ الاستخراج", descAr: "تاريخ وتوقيت إتمام عملية السحب آلياً", type: "تاريخ (Date)" },
 };
 
@@ -524,7 +537,16 @@ export function normalizeDataset(
     ? [cleanProfile]
     : [];
 
-  const mappedRows = rawRows.map((r, i) => normalizeRecord(r, i));
+  const socialKind: SocialRowKind | null = meta.socialKind === "comments" || meta.socialKind === "videos" ? meta.socialKind : null;
+  const mappedRows = socialKind
+    ? rawRows.map((r, i) => {
+        // Social rows get one fixed Arabic schema whatever source answered; text is formula-escaped here.
+        const social = normalizeSocialRow(socialKind, r && typeof r === "object" ? r : {});
+        const out: Record<string, any> = { id: `rec_${i + 1}` };
+        for (const [k, v] of Object.entries(social)) out[k] = typeof v === "string" ? escapeFormula(v) : v;
+        return out;
+      })
+    : rawRows.map((r, i) => normalizeRecord(r, i));
 
   // 3. Deduplicate and organize relational comment hierarchy
   const { uniqueRows: dedupedRows, duplicatesCount } = deduplicateRecords(mappedRows);
@@ -555,12 +577,12 @@ export function normalizeDataset(
     "profile_url",
   ];
 
-  for (const k of PREFERRED_ORDER) {
+  for (const k of socialKind ? SOCIAL_COLUMN_ORDER[socialKind] : PREFERRED_ORDER) {
     if (uniqueRows.some((r) => r[k] !== undefined)) {
       columnSet.add(k);
     }
   }
-  // Add any additional fields
+  // Add any additional fields (social rows already carry only their fixed schema)
   for (const r of uniqueRows) {
     for (const k of Object.keys(r)) {
       columnSet.add(k);
@@ -574,7 +596,9 @@ export function normalizeDataset(
 
   // 6. Determine Entity Type
   let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" | "people" = "tabular";
-  if (
+  if (socialKind) {
+    entityType = socialKind === "comments" ? "comments" : "posts";
+  } else if (
     rawPayload?.entityType === "people" ||
     rawPayload?.metadata?.entityType === "people" ||
     meta.template?.includes("people") ||
@@ -617,6 +641,7 @@ export function normalizeDataset(
       entityType,
       targetRequested: options?.targetRequested !== undefined ? options.targetRequested : (meta.targetRequested !== undefined ? meta.targetRequested : null),
       reportContext: meta.reportContext && typeof meta.reportContext === "object" ? meta.reportContext : undefined,
+      ...(socialKind ? { socialKind } : {}),
     },
     profile: cleanProfile,
     rows: uniqueRows,
