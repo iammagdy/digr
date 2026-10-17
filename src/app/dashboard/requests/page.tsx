@@ -10,6 +10,7 @@ import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
+import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 
 interface JobDoc {
   $id: string;
@@ -170,6 +171,27 @@ export default function RequestsPage() {
       ]);
       if (jobsRes.error) throw jobsRes.error;
       if (attemptsRes.error) throw attemptsRes.error;
+      const attemptConversationIds = Array.from(new Set((attemptsRes.data || []).map((row: any) => row.conversation_id).filter(Boolean)));
+      const firstUserMessageByConversation = new Map<string, string>();
+      if (attemptConversationIds.length) {
+        const { data: firstMessages } = await supabase
+          .from("messages")
+          .select("conversation_id, content_ar, created_at")
+          .eq("user_id", user.id)
+          .eq("role", "user")
+          .in("conversation_id", attemptConversationIds)
+          .order("created_at", { ascending: true });
+        for (const message of firstMessages || []) {
+          if (!firstUserMessageByConversation.has(message.conversation_id) && typeof message.content_ar === "string") {
+            const title = customerFacingConversationTitle(message.content_ar);
+            if (title !== "محادثة جديدة") firstUserMessageByConversation.set(message.conversation_id, title);
+          }
+        }
+      }
+      const conversationTitles = new Map<string, string>();
+      for (const conversation of convRes.data || []) {
+        conversationTitles.set(conversation.id, customerFacingConversationTitle(conversation.title || ""));
+      }
       const fileIdsByJob = new Map<string, JobDoc["fileIds"]>();
       for (const artifact of artifactsRes.data || []) {
         const fileIds = fileIdsByJob.get(artifact.job_id) || { xlsx: null, pdf: null, csv: null };
@@ -201,10 +223,18 @@ export default function RequestsPage() {
         const status = String(r.request_status || "");
         if (status === "accepted") return [];
         if (!["planning", "needs_input", "quoted", "refused", "failed"].includes(status)) return [];
+        const savedTitle = conversationTitles.get(r.conversation_id) || "محادثة جديدة";
+        const originalRequestTitle = customerFacingConversationTitle(firstUserMessageByConversation.get(r.conversation_id) || "");
+        const rawAttemptTitle = customerFacingConversationTitle(String(r.content_ar || ""));
+        const title = savedTitle !== "محادثة جديدة"
+          ? savedTitle
+          : originalRequestTitle !== "محادثة جديدة"
+            ? originalRequestTitle
+            : rawAttemptTitle !== "محادثة جديدة" ? rawAttemptTitle : "طلب بحث";
         return [{
           id: r.id,
           conversationId: r.conversation_id,
-          title: String(r.content_ar || "طلب بحث").slice(0, 160),
+          title: title.slice(0, 160),
           status: status as RequestAttemptDoc["status"],
           errorAr: r.request_error || undefined,
           createdAt: r.created_at || new Date().toISOString(),
