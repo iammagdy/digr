@@ -26,11 +26,11 @@ import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
 import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
+import { buildChatTimeline } from "@/lib/chatTimeline";
 import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
-import ResearchDocument, { type DocStage } from "./components/ResearchDocument";
 import EmptyChat from "./components/EmptyChat";
-import { FailureBox, FilesSection } from "./components/RunSections";
+import { FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
 import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 import { getJobIdForQuote } from "@/lib/md5";
@@ -114,6 +114,7 @@ interface MessageItem {
 
 interface ActiveJobState {
   jobId: string;
+  updatedAt?: string;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   templateSlug: string;
   rowsCollected: number;
@@ -413,6 +414,7 @@ export default function ChatWorkspacePage() {
           return {
             ...prev,
             status: toChatJobStatus(jobDoc.status),
+            updatedAt: jobDoc.updated_at ?? prev.updatedAt,
             rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
             chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
             reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
@@ -442,21 +444,7 @@ export default function ChatWorkspacePage() {
           now - lastNudge >= 10_000
         ) {
           lastNudgeAt.current.set(jId, now);
-          void fetch(`/api/jobs/${jId}/nudge`, { method: "POST" }).then(async (nudgeRes) => {
-            if (nudgeRes.ok) return;
-            const message = "تعذر الاتصال بمحرك التنفيذ. ستُعاد المحاولة تلقائياً مع بقاء النقاط محجوزة مؤقتاً.";
-            setActiveJob((prev) => {
-              if (!prev || prev.jobId !== jId || isTerminalJobStatus(prev.status)) return prev;
-              if (prev.events.some((event) => event.textAr === message)) return prev;
-              return {
-                ...prev,
-                events: dedupeAndSortChronological([
-                  ...prev.events,
-                  { $id: `nudge_retry_${Date.now()}`, textAr: message, kind: "info", createdAt: new Date().toISOString() },
-                ]),
-              };
-            });
-          }).catch(() => {});
+          void fetch(`/api/jobs/${jId}/nudge`, { method: "POST" }).catch(() => {});
         }
       } catch (err) {
         console.warn("Polling job status error:", err);
@@ -866,6 +854,7 @@ export default function ChatWorkspacePage() {
           const jId = jobDoc.id || jobDoc.$id;
           setActiveJob({
             jobId: jId,
+            updatedAt: jobDoc.updated_at ?? undefined,
             status: toChatJobStatus(jobDoc.status),
             templateSlug: quoteTemplateSlug || jobDoc.endpoint_id || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
             rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
@@ -1413,6 +1402,7 @@ export default function ChatWorkspacePage() {
             const jId = jobDoc.id || jobDoc.$id;
             setActiveJob({
               jobId: jId,
+              updatedAt: jobDoc.updated_at ?? undefined,
               status: toChatJobStatus(jobDoc.status),
               templateSlug: jobDoc.endpoint_id || jobDoc.template_slug || jobDoc.templateSlug || "tiktok-profile",
               rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
@@ -1449,34 +1439,14 @@ export default function ChatWorkspacePage() {
     m.outputType === "ask_clarification" ||
     (Array.isArray(m.clarificationItems) ? m.clarificationItems.length > 0 : !!m.clarificationItems) ||
     (Array.isArray(m.clarificationQuestions) ? m.clarificationQuestions.length > 0 : !!m.clarificationQuestions);
-  const isResearchActive = Boolean(
-    activeJob ||
-    messages.some((m) => m.planQuote || Boolean(m.jobId))
-  );
-  const firstUserIdx = messages.findIndex((m) => m.role === "user");
-  const question = customerFacingConversationTitle(conversationTitle || (firstUserIdx >= 0 ? messages[firstUserIdx].content : ""));
-  const startIdx = messages.findIndex((m) => !!m.jobId);
-  const lastPlanIdx = messages.reduce((acc, m, i) => (m.planQuote ? i : acc), -1);
-  const lastClarIdx = messages.reduce((acc, m, i) => (isClarification(m) ? i : acc), -1);
   const jobFinished = Boolean(activeJob && isTerminalJobStatus(activeJob.status) && activeJob.status !== "failed");
-  const answeringNow = loading && lastClarIdx >= 0 && !!messages[lastClarIdx].completedClarificationAnswers;
-
-  let stage: DocStage = 0;
-  if (activeJob) stage = jobFinished ? 4 : 3;
-  else if (lastPlanIdx >= 0 && lastPlanIdx > lastClarIdx) stage = 2;
-  else if (answeringNow) stage = 1;
-
-  const beforeJob = startIdx >= 0 ? messages.slice(0, startIdx) : messages;
-  const afterJob = startIdx >= 0 ? messages.slice(startIdx + 1) : [];
-  const dateLabel = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long", year: "numeric" })
-    .format(new Date(messages[0]?.createdAt || Date.now()));
   const balanceValue = userBalance.status === "ready" ? userBalance.value : null;
   // The real profile name only. The e-mail prefix that the account hook falls back to is not a name (owner decision D2).
   const firstName = String(user?.user_metadata?.name || user?.user_metadata?.full_name || "").trim().split(/\s+/)[0] || "";
   const chatEmpty = messages.length === 0 && !conversationLoading && !conversationLoadError;
 
   const renderNote = (m: MessageItem) => {
-    if (m.hidden || m.jobId) return null;
+    if (m.hidden) return null;
     if (m.role === "user") {
       return (
         <div key={m.id} className="mb-0 mt-3 flex w-fit max-w-full flex-col gap-1.5" style={{ animation: "up .3s both" }}>
@@ -1519,6 +1489,21 @@ export default function ChatWorkspacePage() {
             userBalance={balanceValue}
           />
         )}
+        {m.planQuote && (
+          <PlanQuoteCard
+            quote={m.planQuote}
+            conversationTitle={conversationTitle}
+            onStart={handleStartExecution}
+            onSaveEdit={handleSaveDirectEdit}
+            onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
+            isStarting={startingQuoteId === m.planQuote.quoteId}
+            available={balanceValue}
+            creditValue={creditValue}
+            onTopupShort={handleTopupShort}
+            onRefresh={handleRefreshQuote}
+            locked={!!activeJob}
+          />
+        )}
         {m.errorRetryPrompt && (
           <button
             type="button" onClick={() => handleSendMessage(m.errorRetryPrompt!)}
@@ -1540,66 +1525,8 @@ export default function ChatWorkspacePage() {
     );
   };
 
-  const detailsNode = (
-    <div>
-      {beforeJob.map((m, i) => {
-        if (i === firstUserIdx || m.planQuote) return null;
-        if (isClarification(m)) {
-          return (
-            <div key={m.id}>
-              <div className="mt-3.5">
-                <DetailsBlanks
-                  questions={m.clarificationItems || m.clarificationQuestions || []}
-                  intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}
-                  completedAnswers={m.completedClarificationAnswers}
-                  disabled={loading}
-                  onComplete={(answers) => handleSubmitClarification(m.id, answers)}
-                />
-              </div>
-            </div>
-          );
-        }
-        return renderNote(m);
-      })}
-      {loading && stage === 0 && (
-        <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>{loadingStatusText}</p>
-      )}
-    </div>
-  );
-
-  const planMsg = lastPlanIdx >= 0 ? messages[lastPlanIdx] : null;
-  const planNode = (
-    <>
-      {stage === 1 && <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>يحسب الخادم عرض السعر…</p>}
-      {planMsg?.planQuote && (stage >= 2 || lastPlanIdx > lastClarIdx) && (
-        <>
-          <PlanQuoteCard
-            quote={planMsg.planQuote}
-            conversationTitle={conversationTitle}
-            onStart={handleStartExecution}
-            onSaveEdit={handleSaveDirectEdit}
-            onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
-            isStarting={startingQuoteId === planMsg.planQuote.quoteId}
-            available={balanceValue}
-            creditValue={creditValue}
-            onTopupShort={handleTopupShort}
-            onRefresh={handleRefreshQuote}
-            locked={!!activeJob}
-          />
-        </>
-      )}
-    </>
-  );
-
   const runNode = activeJob ? (
-    activeJob.status === "failed" ? (
-      <FailureBox
-        providerMessage={activeJob.errorAr}
-        refunded={activeJob.reservedCredits}
-        onRetry={() => handleSendMessage(RETRY_SAME_PLAN_MESSAGE)}
-        onGoRequests={() => router.push("/dashboard/requests")}
-      />
-    ) : (
+    activeJob.status !== "failed" ? (
       <div className="space-y-3">
         <ActivityTimeline
           status={activeJob.status}
@@ -1623,7 +1550,7 @@ export default function ChatWorkspacePage() {
           </div>
         )}
       </div>
-    )
+    ) : null
   ) : null;
 
   const filesNode = (
@@ -1640,9 +1567,10 @@ export default function ChatWorkspacePage() {
           canvasOpen={canvasOpen}
         />
       )}
-      {afterJob.map(renderNote)}
     </>
   );
+
+  const chatTimeline = buildChatTimeline<MessageItem>(messages, activeJob);
 
   return (
     <div className="flex min-h-0 w-full flex-1 overflow-hidden bg-bg font-sans text-ink">
@@ -1688,7 +1616,7 @@ export default function ChatWorkspacePage() {
         onSkip={() => setShowOnboarding(false)}
       />
 
-      {/* 2. Research document + composer */}
+      {/* 2. Chronological conversation + composer */}
       <div data-screen-label="Chat" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style={{ containerType: "inline-size" }}>
         <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto px-[18px] pb-7 pt-5">
           {!user && (
@@ -1744,33 +1672,21 @@ export default function ChatWorkspacePage() {
           )}
 
           {!chatEmpty && !conversationLoading && messages.length > 0 && (
-            isResearchActive ? (
-              <ResearchDocument
-                dateLabel={dateLabel}
-                question={question}
-                stage={stage}
-                failed={activeJob?.status === "failed"}
-                banner={!llmEnabled ? (
-                  <div role="status" className="mb-[18px] flex items-start gap-2.5 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.8] text-ink2">
-                    <span className="mt-0.5 flex text-goldT"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 8v5M12 16.5v.5M10.3 4l-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0z" /></svg></span>
-                    <span>المساعد الذكي يعمل الآن بالوضع المبسّط: أسئلة ثابتة وخطة قياسية. السعر والموافقة والتنفيذ تعمل بشكل طبيعي.</span>
-                  </div>
-                ) : null}
-                details={detailsNode}
-                plan={planNode}
-                run={runNode}
-                files={filesNode}
-              />
-            ) : (
-              <div className="mx-auto w-full max-w-[680px] space-y-3 py-4">
-                {messages.map((m) => renderNote(m))}
-                {loading && (
-                  <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>
-                    {loadingStatusText}
-                  </p>
-                )}
+            <div className="mx-auto w-full max-w-[680px] space-y-3 py-4">
+              {!llmEnabled && (
+                <div role="status" className="mb-[18px] flex items-start gap-2.5 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.8] text-ink2">
+                  <span>المساعد الذكي يعمل الآن بالوضع المبسّط: أسئلة ثابتة وخطة قياسية. السعر والموافقة والتنفيذ تعمل بشكل طبيعي.</span>
+                </div>
+              )}
+              {chatTimeline.map((item) => renderNote(item as MessageItem))}
+              {loading && (
+                <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>
+                  {loadingStatusText}
+                </p>
+              )}
+              {runNode}
+              {filesNode}
               </div>
-            )
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -1796,7 +1712,7 @@ export default function ChatWorkspacePage() {
               requestedRows={activeJob?.requestedRows}
               reservedPoints={activeJob?.reservedCredits}
               chargedPoints={activeJob?.chargedCredits}
-              errorAr={activeJob?.errorAr}
+              errorAr={activeJob?.status === "failed" ? undefined : activeJob?.errorAr}
               onDownload={handleDownload}
               downloadingKey={downloadingKey}
               onExplainMethodology={handleExplainMethodology}

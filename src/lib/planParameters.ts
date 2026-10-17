@@ -732,11 +732,11 @@ export function getCompanyRequirementItems(
  * Decision-maker roles in a request: a specific title (CEO, مدير, مؤسس ...) or the generic phrase
  * itself (صناع القرار, decision makers, executives), which already names who is wanted.
  */
-export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع القرار|صانعي القرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
+export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
 
 export function isPeopleSearchRequest(text: string): boolean {
   const normalized = (text || "").toLowerCase();
-  const explicitPeopleIntent = /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
+  const explicitPeopleIntent = PEOPLE_ROLE_PATTERN.test(normalized) || /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
   if (explicitPeopleIntent) return true;
 
   // A work email can be a company field. Do not reinterpret an explicit
@@ -757,7 +757,8 @@ export function requiredProfessionalContactFields(text: string): string[] {
   if (/\b(?:phone|telephone|mobile)(?:\s+numbers?)?\b|رقم(?: الهاتف| التليفون| الموبايل)|الهاتف|التليفون|الموبايل|\b(?:rkm|rakm|raqm|rkmo|raqmo)\b/.test(normalized)) {
     fields.push("phone");
   }
-  return fields;
+  if (fields.length > 0) return fields;
+  return isPeopleSearchRequest(normalized) ? ["work_email", "phone"] : [];
 }
 
 /**

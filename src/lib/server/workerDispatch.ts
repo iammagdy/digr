@@ -18,10 +18,13 @@ export async function dispatchWorkerChunk(
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify({ jobId, expectedStep }),
     signal: AbortSignal.timeout(timeoutMs),
+    redirect: "manual",
   });
   const body = await response.json().catch(() => ({}));
   return {
-    started: response.ok && body?.claimed !== false,
+    // Treat SSO redirects, HTML protection pages, and malformed acknowledgments
+    // as a failed start; fetch otherwise follows a redirect and can see HTML 200.
+    started: response.ok && body?.success === true && body?.claimed !== false,
     status: response.status,
     body,
   };

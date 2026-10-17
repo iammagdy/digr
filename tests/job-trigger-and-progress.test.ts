@@ -169,6 +169,27 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
     );
   });
 
+  it("does not treat a deployment-protection redirect or HTML page as a worker start", async () => {
+    const fetcher = vi.fn(async () => new Response("<html>login</html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    }));
+    const result = await dispatchWorkerChunk(
+      "https://diger-preview.vercel.app",
+      "job_protected",
+      0,
+      { "x-worker-job-id": "job_protected" },
+      5_000,
+      fetcher,
+    );
+
+    expect(result.started).toBe(false);
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://diger-preview.vercel.app/api/worker/chunk",
+      expect.objectContaining({ redirect: "manual" }),
+    );
+  });
+
   describe("Event Deduplication & Progress State Mapping", () => {
     it("deduplicates identical events by ID or message+createdAt key", () => {
       // Logic matching mapJobEvents in chat/page.tsx

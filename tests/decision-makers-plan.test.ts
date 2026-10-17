@@ -9,7 +9,7 @@ vi.mock("../src/functions/shared/catalogClient", () => ({
 import { ChatHandler, getDeterministicDiscoveryQuestion } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../src/lib/contactExpectation";
-import { PEOPLE_ROLE_PATTERN } from "../src/lib/planParameters";
+import { isPeopleSearchRequest, PEOPLE_ROLE_PATTERN, requiredProfessionalContactFields } from "../src/lib/planParameters";
 
 function makeMockTables() {
   const store = new Map<string, Map<string, any>>();
@@ -85,6 +85,37 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     for (const text of ["5 شركات كهروميكانيكية في مصر مع صناع القرار وإيميلاتهم وأرقامهم", "٥ مدراء تنفيذيين لشركات برمجيات في السعودية", "five decision makers at solar companies in Germany"]) {
       expect(PEOPLE_ROLE_PATTERN.test(text), text).toBe(true);
       expect(getDeterministicDiscoveryQuestion(text, brief)?.id, text).not.toBe("people_roles_required");
+    }
+  });
+
+  it("routes the owner's exact Egyptian Arabic wording to people search with default email and phone fields", async () => {
+    const text = "أنا عايز تلاتة صناع قرار في شركات الكهرباء والميكانيكا في مصر.";
+    expect(isPeopleSearchRequest(text)).toBe(true);
+    expect(requiredProfessionalContactFields(text)).toEqual(["work_email", "phone"]);
+    expect(getDeterministicDiscoveryQuestion(text, brief)).toBeNull();
+
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_dm_exact_ar",
+      message: text,
+      userBalance: 5000,
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote.items[0].capabilitySlug).toBe("professional-people-search");
+    expect(res.planQuote.items[0].params.requiredContactFields).toEqual(["work_email", "phone"]);
+    expect(res.planQuote.targetVolumeMax).toBe(3);
+    expect(res.contentAr).toContain(CONTACT_EXPECTATION_AR);
+  });
+
+  it("recognizes role intent without contact words across dialect and English variants", () => {
+    for (const text of [
+      "أنا عايز تلاتة صناع قرار في شركات الكهرباء والميكانيكا في مصر.",
+      "عايز مديرين أو أعلى في شركات مقاولات في مصر",
+      "أريد صناع القرار في شركات البرمجيات في ألمانيا",
+      "Find decision makers at software companies in Germany",
+    ]) {
+      expect(isPeopleSearchRequest(text), text).toBe(true);
+      expect(requiredProfessionalContactFields(text), text).toEqual(["work_email", "phone"]);
     }
   });
 

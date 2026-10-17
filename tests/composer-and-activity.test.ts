@@ -39,9 +39,11 @@ describe("Composer & Activity Feed Integrity", () => {
   it("records progress and completion in public.job_events table", () => {
     const workerCode = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     const acceptCode = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
+    const startupFailureCode = readFileSync("src/lib/server/workerStartFailure.ts", "utf8");
 
-    // Accept quote records initial job_events row
-    expect(acceptCode).toContain('.from("job_events").insert');
+    // Failed worker starts record one terminal event through the shared helper.
+    expect(acceptCode).toContain("recordWorkerStartFailure");
+    expect(startupFailureCode).toContain('.from("job_events").insert');
     // Worker records chunk progress in job_events
     expect(workerCode).toContain('.from("job_events").insert');
     // Worker uploads data.json to partials bucket (results bucket strictly restricts MIME types to xlsx, csv, and pdf)
