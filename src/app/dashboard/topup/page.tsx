@@ -79,6 +79,7 @@ export default function WalletPage() {
       )
         .then(({ data }) => {
           if (!active) return;
+          setIpaLoadFailed(false);
           const d = (data?.value || {}) as { ipa?: string; maxPendingTopups?: number };
           if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
           if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
