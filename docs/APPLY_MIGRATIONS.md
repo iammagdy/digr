@@ -49,7 +49,7 @@ ON CONFLICT DO NOTHING;
 
 ### 3. `supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql`
 
-Replaces `settle_job_atomic` so a job with a persisted terminal cursor or completed target can settle after the worker's lease remains active. Incomplete collection still cannot settle. This migration also restates the existing release function and privilege boundary.
+Replaces only `settle_job_atomic` so a job with a persisted terminal cursor or completed target can settle after the worker's lease remains active. Incomplete collection still cannot settle. Both live `release_job_atomic` overloads are left untouched.
 
 Verify:
 
@@ -58,8 +58,7 @@ SELECT p.proname, p.prosecdef, p.proconfig,
        has_function_privilege('service_role', p.oid, 'EXECUTE') AS service_role_can_execute,
        has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authenticated_can_execute
 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-WHERE n.nspname = 'public' AND p.proname IN ('settle_job_atomic','release_job_atomic')
-ORDER BY p.proname;
+WHERE n.nspname = 'public' AND p.proname = 'settle_job_atomic';
 ```
 
 Rollback: reapply the prior approved definitions from `supabase/migrations/20261012135427_settle_job_atomic_functions.sql` only if that is still the live pre-migration definition. Check the live function definition first; do not overwrite a later owner change.

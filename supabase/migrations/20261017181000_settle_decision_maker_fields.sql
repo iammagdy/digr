@@ -10,7 +10,7 @@ CREATE OR REPLACE FUNCTION public.settle_people_job_atomic(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path TO 'public', 'pg_temp'
 AS $$
 DECLARE
   v_job public.jobs%ROWTYPE;
