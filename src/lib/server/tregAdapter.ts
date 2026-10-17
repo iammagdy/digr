@@ -504,11 +504,17 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   const page = input.step + 1;
   let effectiveEndpointId = input.endpointId;
+  let endpointDetails = null as Awaited<ReturnType<typeof getEndpointDetails>>;
+  try {
+    if (effectiveEndpointId) endpointDetails = await getEndpointDetails(effectiveEndpointId);
+  } catch {
+    // Keep the adapter's safe per-endpoint fallback below if live schema lookup fails.
+  }
   if (effectiveEndpointId && effectiveEndpointId.includes("-") && !effectiveEndpointId.includes(".")) {
     try {
-      const details = await getEndpointDetails(effectiveEndpointId);
-      if (details?.id && details.id.includes(".")) {
-        effectiveEndpointId = details.id;
+      endpointDetails = endpointDetails || await getEndpointDetails(effectiveEndpointId);
+      if (endpointDetails?.id && endpointDetails.id.includes(".")) {
+        effectiveEndpointId = endpointDetails.id;
       }
     } catch {
       // Continue
@@ -526,13 +532,30 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   const isIcypeas = isIcypeasCompanies || isIcypeasPeople;
 
+  let allowedParamKeys: string[] | undefined;
+  const schemaProperties = endpointDetails?.paramsSchema?.properties;
+  if (schemaProperties && typeof schemaProperties === "object") {
+    const keys = Object.keys(schemaProperties);
+    if (keys.length > 0) allowedParamKeys = keys;
+  }
+  // The catalog endpoint's allowlist is stable and its detail request can
+  // occasionally be unavailable in the worker region. Keep this live source
+  // usable while still blocking every undeclared request field.
+  if (effectiveEndpointId === "crawl4ai.tiktok.search.videos") {
+    allowedParamKeys = allowedParamKeys || ["query", "limit"];
+  }
+  // tregClient translates this local alias to uniqueId before sending it.
+  if (effectiveEndpointId === "tikhub.tiktok.user.profile" && allowedParamKeys) {
+    allowedParamKeys = [...new Set([...allowedParamKeys, "username", "uniqueId"])];
+  }
+
   let pageParams: Record<string, any>;
   if (isIcypeasCompanies) {
     pageParams = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, input.cursor);
   } else if (isIcypeasPeople) {
     pageParams = normalizeIcypeasPeopleParams(input.params || {}, input.pageSize, input.cursor);
   } else {
-    pageParams = serializeProviderParams(input.params || {});
+    pageParams = serializeProviderParams(input.params || {}, allowedParamKeys);
     if (input.paginationStrategy === "cursor") {
       if (input.cursor) {
         pageParams.cursor = input.cursor;
@@ -560,6 +583,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       endpointId: effectiveEndpointId,
       method: effectiveMethod,
       params: pageParams,
+      allowedParamKeys,
       userId: input.userId,
       jobId: input.jobId,
       stepId: `step_${input.step}`,
