@@ -97,7 +97,8 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     expect(res.outputType).not.toBe("refuse");
     expect(res.contentAr).toContain(CONTACT_EXPECTATION_AR);
     expect(res.contentAr).toContain(CONTACT_BILLING_NOTE_AR);
-    expect(res.contentAr).toContain("البريد المهني يُعرض إذا كان متاحاً ومؤكداً في المصادر المتاحة");
+    expect(res.contentAr).toContain("يُعرض البريد المهني إذا أعاده المصدر، وتظهر حالة التحقق بوضوح حتى عند ظهور «لم يتوفر تأكيد»");
+    expect(res.contentAr).not.toContain("مؤكداً في المصادر المتاحة");
     expect(res.contentAr).not.toMatch(/لا أستطيع|غير متاحة حالياً/);
     expect(res.planQuote.items[0].capabilitySlug).toBe("professional-people-search");
     expect(res.planQuote.items[0].targetVolumeMax).toBe(5);
