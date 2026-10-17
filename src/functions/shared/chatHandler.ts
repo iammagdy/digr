@@ -616,12 +616,12 @@ export function buildAutoPlanProposal(
   };
 
   const summaryAr = isPeopleCapability
-    ? `بحث ${volume} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
+    ? `بحث ${toArabicDigits(volume)} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
     : isAccountProfileRequest
       ? `بيانات الحساب العام ${topicLabel} على ${platformLabel}`
       : isCompanySearch
-      ? `استخراج بيانات ${volume} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
-      : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
+      ? `استخراج بيانات ${toArabicDigits(volume)} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
+      : `جمع واستخراج ${toArabicDigits(volume)} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
     type: "propose_plan",
