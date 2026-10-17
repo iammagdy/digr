@@ -7,10 +7,10 @@ import {
 } from "@/lib/honestDisplay";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 
-/** Design timeline clock: 24-hour «١٢:٤٠», no AM/PM. */
+/** Show seconds so separate execution events within one minute stay distinguishable. */
 const clock = (iso?: string) => {
   const d = iso ? new Date(iso) : null;
-  return d && !Number.isNaN(d.getTime()) ? toArabicDigits(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`) : "";
+  return d && !Number.isNaN(d.getTime()) ? toArabicDigits(`${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`) : "";
 };
 import {
   deriveLiveActivitySnapshot,

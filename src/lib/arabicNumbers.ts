@@ -204,7 +204,7 @@ export function extractNumberFromText(text: string): number | undefined {
     const val = parseInt(digitMatchWithEntity[1], 10);
     // If it's a plausible sample size (1..100000) and not a standalone year
     if (val > 0 && val <= 100000) {
-      const isYear = val >= 2024 && val <= 2027;
+      const isYear = val >= 1900 && val <= 2099;
       const hasCountContext = /(?:شركة|شركات|مؤسسة|فيديو|بوست|منشور|تعليق|سجل|عينة|companies|posts|comments|records|حجم|عدد|استخرج)/i.test(digitMatchWithEntity[0]);
       if (!isYear || hasCountContext) {
         return val;

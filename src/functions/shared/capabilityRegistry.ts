@@ -61,6 +61,9 @@ export const VERIFICATION_NOTE = "to verify against the real charge of the first
 export const UNVERIFIED_PLATFORM_MESSAGE_AR =
   "هتحقق من الطلب وأرجعلك";
 
+/** Services that have been disabled after live customer testing exposed an unreliable execution path. */
+export const UNAVAILABLE_CAPABILITY_SLUGS = new Set(["icypeas-people-search"]);
+
 export interface Capability {
   id?: string;
   slug: string;
@@ -441,7 +444,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
     slug: "icypeas-people-search",
     platform: "people",
     category: "people",
-    status: "verified",
+    status: "pending_verification",
     unit: "1000 items",
     estimatedCostUsdPerUnit: 0.00038,
     maxItemsPerCall: 100,
@@ -464,7 +467,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
     unitCostUsd: 0.00038,
     maxRows: 500,
     paginationType: "none",
-    enabled: true,
+    enabled: false,
   },
 ];
 
@@ -550,19 +553,20 @@ export async function getCatalogCapabilities(
       const isValidCost = Number.isFinite(costUsd) && costUsd > 0;
       const status: CapabilityStatus =
         row.status || (row.enabled && isValidCost ? "verified" : existing?.status || "pending_verification");
+      const forceUnavailable = UNAVAILABLE_CAPABILITY_SLUGS.has(row.slug);
       merged.set(row.slug, {
         ...(existing || {}),
         ...row,
         id: row.id || row.slug,
         platform: (row.platform || row.category || existing?.platform || "tiktok") as CapabilityPlatform,
-        status,
+        status: forceUnavailable ? "pending_verification" : status,
         unit: row.unit || existing?.unit || "profile",
         estimatedCostUsdPerUnit: isValidCost ? costUsd : 0,
         pointsPerUnit: isValidCost ? computeRegistryPointsPerUnit(costUsd, settings) : 0,
         maxItemsPerCall: row.maxItemsPerCall ?? existing?.maxItemsPerCall ?? row.maxRows ?? 1,
         estimatedSuccessRate: row.estimatedSuccessRate ?? existing?.estimatedSuccessRate ?? 0.9,
         verificationNote: row.verificationNote || existing?.verificationNote || VERIFICATION_NOTE,
-        enabled: isValidCost && (status === "verified" || Boolean(row.enabled)),
+        enabled: !forceUnavailable && isValidCost && (status === "verified" || Boolean(row.enabled)),
       });
     }
     const result = Array.from(merged.values());
@@ -589,6 +593,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
         const settings = getRegistryPricingSettings();
         const validCapabilities: Capability[] = [];
         for (const c of data) {
+          if (UNAVAILABLE_CAPABILITY_SLUGS.has(c.slug)) continue;
           const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
           const costUsd = Number(
             c.unit_cost_usd ??

@@ -17,6 +17,7 @@ import {
   buildCodeDiscoveryFallback,
   filterQuestionsAlreadyInBrief,
   deduplicateIntroText,
+  routeUnavailablePlatformRequest,
 } from "../src/functions/shared/chatHandler";
 import {
   normalizeDiscoveryQuestions,
@@ -232,7 +233,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     });
 
     expect(res.outputType).toBe("propose_plan");
-    expect(res.clarificationItems).toBeUndefined();
+    expect(res.planQuote).toBeDefined();
     expect(mockedSearchCatalog).toHaveBeenCalled();
   });
 
@@ -247,10 +248,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("propose_plan");
-    expect(res.planQuote?.items?.[0]?.capabilitySlug).toBe("icypeas-people-search");
-    expect(res.planQuote?.items?.[0]?.params?.query).toBeDefined();
-    expect(res.planQuote?.items?.[0]?.params?.query?.postUrl).toBeUndefined();
+    expect(res.outputType).toBe("refuse");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.contentAr).toContain("غير متاحة حالياً");
   });
 
   it("builds a people-search fallback from the people capability instead of the nearest unrelated service", () => {
@@ -272,7 +272,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(proposal.summaryAr).not.toContain("تيك توك");
   });
 
-  it("replaces an unrelated model alternative with a scoped people plan or asks for country", () => {
+  it("marks decision-maker search unavailable before asking for scope or quoting", () => {
     const suggestion = {
       type: "suggest_alternative",
       unsupportedService: "decision-makers",
@@ -284,12 +284,10 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     const request = "Find 20 solar decision-makers in Germany with job titles and work emails";
 
     const routed = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, request);
-    expect(routed.type).toBe("propose_plan");
-    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-people-search");
+    expect(routed.type).toBe("refuse");
 
     const clarification = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, "Find 20 decision-makers with work emails");
-    expect(clarification.type).toBe("ask_clarification");
-    expect(clarification.questionsAr.join(" ")).toContain("الدولة");
+    expect(clarification.type).toBe("refuse");
 
     const unavailable = routePeopleAlternative(suggestion, brief, [], request);
     expect(unavailable.type).toBe("refuse");
@@ -310,12 +308,8 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
     const routed = routePeopleAlternative(companyPlan, brief, RAW_SEED_CAPABILITIES as any, request);
 
-    expect(routed.type).toBe("propose_plan");
-    expect(routed.capabilities[0].capabilitySlug).toBe("icypeas-people-search");
-    expect(routed.capabilities[0].params.query.location.include).toEqual(["Germany"]);
-    expect(routed.capabilities[0].params.query.keyword.include).toContain("financial technology");
-    expect(routed.capabilities[0].params.query.jobTitle.include.length).toBeGreaterThan(0);
-    expect(routed.summaryAr).toContain("ألمانيا");
+    expect(routed.type).toBe("refuse");
+    expect(routed.reasonAr).toContain("غير متاحة حالياً");
   });
 
   it("routes explicit company requests away from the generic alternative and asks when scope is missing", () => {
@@ -359,16 +353,16 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(clarification.questionsAr.join(" ")).toContain("التواصل التجاري");
   });
 
-  it("asks for a country before quoting a people search instead of defaulting to Egypt", async () => {
+  it("refuses decision-maker search while the service is unavailable", async () => {
     const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
       userId: "user_people_country_required",
       message: "Find 20 decision-makers with names, job titles, and work emails",
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("ask_clarification");
+    expect(res.outputType).toBe("refuse");
     expect(res.planQuote).toBeUndefined();
-    expect(res.clarificationQuestions?.join(" ")).toContain("ما الدولة");
+    expect(res.refusalReason).toContain("غير متاحة");
   });
 
   it("asks one adaptive question at a time when company scope is unstated", async () => {
@@ -893,8 +887,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("propose_plan");
-    expect(res.planQuote?.targetVolumeMax).toBe(20);
+    expect(res.outputType).toBe("refuse");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.refusalReason).toContain("غير متاحة");
   });
 
   // (d) a submitted card answer is stored in the brief and the same question is not asked again

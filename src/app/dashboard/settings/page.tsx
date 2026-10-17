@@ -179,6 +179,12 @@ export default function SettingsPage() {
           <Link href="/legal/privacy" className="flex min-h-12 items-center justify-between text-sm text-ink"><span>سياسة الخصوصية</span><span className="text-fnt">‹</span></Link>
         </section>
 
+        <section className={SECTION}>
+          <h3 className="m-0 text-[15px] font-semibold text-ink">تخصيص تجربة المساعد</h3>
+          <p className="m-0 text-[13px] font-light leading-[1.8] text-ink2">يمكنك تحديث نوع الاستخدام والتخصص في أي وقت.</p>
+          <button type="button" onClick={() => router.push("/dashboard/chat?onboarding=1")} className="min-h-11 cursor-pointer self-start rounded-full border border-ln2 bg-transparent px-5 text-[13px] text-ink">إعادة فتح التخصيص</button>
+        </section>
+
         <section className={SECTION} style={{ borderColor: "color-mix(in oklab, var(--bad) 30%, var(--ln))" }}>
           <h3 className="m-0 text-[15px] font-semibold text-bad">حذف الحساب</h3>
           <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">سيتم حذف حسابك وملفات أبحاثك نهائيًا خلال ٣٠ يومًا. الرصيد المتبقي غير قابل للاسترداد بعد الحذف.</p>

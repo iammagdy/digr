@@ -7,6 +7,7 @@ import {
   getEnabledCapabilities,
   getRegistryPricingSettings,
   getCustomerPriceUsdPerCatalogItem,
+  UNAVAILABLE_CAPABILITY_SLUGS,
 } from "./capabilityRegistry";
 import {
   calculateQuote,
@@ -406,6 +407,12 @@ export function validatePlanAgainstLiveCatalog(
   };
 
   planItems.forEach((it, index) => {
+    if (UNAVAILABLE_CAPABILITY_SLUGS.has(it.capabilitySlug)) {
+      const nameAr = "بحث صناع القرار والمهنيين";
+      errors.push(`الخدمة "${nameAr}" غير متاحة حالياً`);
+      issues.push({ itemIndex: index, nameAr, kind: "unverified" });
+      return;
+    }
     let ep = liveResults.find(
       (r) => r.slug === it.capabilitySlug || r.id === it.capabilitySlug || (it.endpointId && (r.slug === it.endpointId || r.id === it.endpointId)),
     );
