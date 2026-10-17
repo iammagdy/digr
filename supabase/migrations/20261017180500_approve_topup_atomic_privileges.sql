@@ -1,4 +1,5 @@
--- Proposal only: same atomic top-up approval function, with the explicit privilege boundary required for new functions.`nCREATE OR REPLACE FUNCTION public.approve_topup_atomic(
+-- Proposal only: atomic top-up approval and rejection with service_role-only execution.
+CREATE OR REPLACE FUNCTION public.approve_topup_atomic(
   p_topup_id text,
   p_confirmed_amount_egp numeric DEFAULT NULL
 )
@@ -102,3 +103,30 @@ $$;
 
 REVOKE ALL ON FUNCTION public.approve_topup_atomic(text, numeric) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.approve_topup_atomic(text, numeric) TO service_role;
+
+CREATE OR REPLACE FUNCTION public.reject_topup_atomic(p_topup_id text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_topup public.topups%ROWTYPE;
+BEGIN
+  SELECT * INTO v_topup FROM public.topups WHERE id = p_topup_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'error', 'topup_not_found');
+  END IF;
+  IF v_topup.status = 'rejected' THEN
+    RETURN jsonb_build_object('success', true, 'already_rejected', true, 'topup_id', p_topup_id);
+  END IF;
+  IF v_topup.status <> 'pending' THEN
+    RETURN jsonb_build_object('success', false, 'error', 'invalid_status');
+  END IF;
+  UPDATE public.topups SET status = 'rejected' WHERE id = p_topup_id;
+  RETURN jsonb_build_object('success', true, 'already_rejected', false, 'topup_id', p_topup_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reject_topup_atomic(text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reject_topup_atomic(text) TO service_role;

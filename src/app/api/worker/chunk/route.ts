@@ -36,6 +36,7 @@ import {
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
 import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
+import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
@@ -1275,11 +1276,26 @@ export async function POST(req: NextRequest) {
 
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
       const primaryResultPath = savedCsvPath || savedXlsxPath || savedPdfPath || `${userId}/${jobId}/result.csv`;
-      const { data: settleData, error: settleErr } = await adminClient.rpc("settle_job_atomic", {
-        p_job_id: jobId,
-        p_points_cap: jobPointsCap,
-        p_result_file_id: primaryResultPath,
-      });
+      const isPeopleJob = spec.capabilitySlug === "professional-people-search";
+      const peopleUnits = isPeopleJob
+        ? decisionMakerDeliveredUnits(finalRows, Array.isArray(spec.params?.requiredContactFields)
+            ? spec.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
+            : ["work_email", "phone"])
+        : null;
+      const { data: settleData, error: settleErr } = isPeopleJob
+        ? await adminClient.rpc("settle_people_job_atomic", {
+            p_job_id: jobId,
+            p_base_units: peopleUnits!.baseUnits,
+            p_email_units: peopleUnits!.emailUnits,
+            p_phone_units: peopleUnits!.phoneUnits,
+            p_points_cap: jobPointsCap,
+            p_result_file_id: primaryResultPath,
+          })
+        : await adminClient.rpc("settle_job_atomic", {
+            p_job_id: jobId,
+            p_points_cap: jobPointsCap,
+            p_result_file_id: primaryResultPath,
+          });
 
       if (settleErr) {
         throw settleErr;

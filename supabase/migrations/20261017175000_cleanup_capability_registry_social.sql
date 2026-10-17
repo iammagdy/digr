@@ -3,6 +3,27 @@
 -- calculateCapabilityUnitPricePoints: ceil(unit USD x USD/EGP x markup / EGP per point).
 -- The code defaults are 55, 10, and 0.10; compare deployment environment overrides before applying.
 -- ON CONFLICT DO NOTHING preserves an existing disabled row as an intentional kill switch.
+-- Preserve exact pre-migration rows so rollback can restore disabled endpoints and any
+-- capability with a colliding slug without guessing live registry column values.
+CREATE TABLE IF NOT EXISTS public.capability_registry_backup_20261017175000 (
+  slug text PRIMARY KEY,
+  row_data jsonb NOT NULL
+);
+INSERT INTO public.capability_registry_backup_20261017175000(slug,row_data)
+SELECT r.slug,to_jsonb(r)
+FROM public.capability_registry r
+WHERE r.endpoint_id = ANY (ARRAY[
+  'facebook.page.posts','google.serp.organic','instagram.user.profile','instagram.user.posts',
+  'telegram.channel.messages','tikhub.tiktok.search.video','tikhub.tiktok.user.posts',
+  'twitter.search.tweets','twitter.user.tweets','youtube.channel.details','youtube.search.video',
+  'internal-facebook-post-comments','internal-youtube-comments'
+]) OR r.slug = ANY (ARRAY[
+  'social-tiktok-comments','social-youtube-comments','social-facebook-comments',
+  'social-tiktok-videos','social-youtube-videos','social-facebook-posts'
+])
+ON CONFLICT (slug) DO NOTHING;
+REVOKE ALL ON TABLE public.capability_registry_backup_20261017175000 FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON TABLE public.capability_registry_backup_20261017175000 TO service_role;
 WITH pricing AS (SELECT 55.0::numeric AS usd_to_egp, 10.0::numeric AS markup, 0.10::numeric AS point_value_egp),
 capabilities(slug,name_ar,description_ar,endpoint_id,unit_cost_usd,customer_usd,max_rows,category,name_en,params_schema) AS (
   VALUES

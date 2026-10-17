@@ -5,6 +5,7 @@ import { z } from "zod";
 vi.mock("../src/functions/shared/catalogClient", () => ({
   searchCatalog: vi.fn(),
   getCachedCatalogEndpoints: vi.fn(() => []),
+  getEndpointDetails: vi.fn(async (id: string) => ({ id, catalogPriceUsd: 0.005, pointsPerUnit: 28 })),
 }));
 
 import { searchCatalog } from "../src/functions/shared/catalogClient";

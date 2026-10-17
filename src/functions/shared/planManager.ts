@@ -22,7 +22,10 @@ import {
 } from "./quotes";
 import type { CatalogEndpointSummary } from "./catalogClient";
 import { getCachedCatalogEndpoints } from "./catalogClient";
+import { getEndpointDetails } from "./catalogClient";
 import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "./providerSpend";
+import { callAtomicOrFallback } from "./atomicRpc";
+import { decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -678,8 +681,39 @@ export async function createAndSaveManagedQuote(
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
 
+    let effectiveItemUnitPrice = unitPrice;
+    let itemProviderCostUsd = itemUnitCostUsd;
+    if (cap.slug === "professional-people-search") {
+      const requestedFields: ContactField[] = Array.isArray(it.params?.requiredContactFields)
+        ? it.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
+        : ["work_email", "phone"];
+      const [baseCatalog, emailCatalog, phoneCatalog] = await Promise.all([
+        getEndpointDetails(cap.tregEndpointId || it.endpointId || "treg.people.search"),
+        getEndpointDetails("treg.people.email.find"),
+        getEndpointDetails("treg.people.phone.find"),
+      ]);
+      const baseCatalogPriceUsd = baseCatalog?.catalogPriceUsd || itemUnitCostUsd;
+      if (!baseCatalogPriceUsd || !emailCatalog?.catalogPriceUsd || !phoneCatalog?.catalogPriceUsd) {
+        throw new Error("تعذر التحقق من أسعار السجل وحقول التواصل في كتالوج المصادر.");
+      }
+      const contactUnitPricesPoints: ContactUnitPricesPoints = {
+        basePerson: calculateCapabilityUnitPricePoints(baseCatalogPriceUsd, effectivePricing),
+        workEmail: calculateCapabilityUnitPricePoints(emailCatalog.catalogPriceUsd, effectivePricing),
+        phone: calculateCapabilityUnitPricePoints(phoneCatalog.catalogPriceUsd, effectivePricing),
+      };
+      effectiveItemUnitPrice = decisionMakerQuotePoints(
+        1, requestedFields, contactUnitPricesPoints, 0, Number.MAX_SAFE_INTEGER,
+      );
+      it.params.requiredContactFields = requestedFields;
+      (it as any).requiredContactFields = requestedFields;
+      (it as any).contactUnitPricesPoints = contactUnitPricesPoints;
+      (it as any).contactPricingDescriptionAr = "السعر الأساسي للسجل المهني، ويُضاف سعر البريد المهني والهاتف المكتبي عند إرجاع كل حقل مطلوب.";
+      itemProviderCostUsd = baseCatalogPriceUsd +
+        (requestedFields.includes("work_email") ? emailCatalog.catalogPriceUsd : 0) +
+        (requestedFields.includes("phone") ? phoneCatalog.catalogPriceUsd : 0);
+    }
     const itemVolume = Math.max(1, it.targetVolumeMax || 1);
-    const itemRawPoints = itemVolume * unitPrice;
+    const itemRawPoints = itemVolume * effectiveItemUnitPrice;
     const itemReservation = Math.max(1, Math.ceil(itemRawPoints * (1 + effectivePricing.safetyBuffer)));
 
     // Retain all required fields on the item
@@ -690,8 +724,8 @@ export async function createAndSaveManagedQuote(
         : cap.id && cap.id.includes(".")
         ? cap.id
         : it.endpointId || cap.tregEndpointId || cap.id || cap.slug;
-    it.unitCostUsd = itemUnitCostUsd;
-    it.unitPricePoints = unitPrice;
+    it.unitCostUsd = itemProviderCostUsd;
+    it.unitPricePoints = effectiveItemUnitPrice;
     it.targetVolumeMax = itemVolume;
     it.rawPoints = itemRawPoints;
     it.itemReservation = itemReservation;
@@ -703,7 +737,7 @@ export async function createAndSaveManagedQuote(
     totalRawPoints += itemRawPoints;
     totalQuotedPoints += itemReservation;
     totalVolumeMax += itemVolume;
-    effectiveUnitPrice = unitPrice;
+    effectiveUnitPrice = effectiveItemUnitPrice;
   }
 
   // 1b. Check provider capacity (10% safety margin) across all items
@@ -827,6 +861,7 @@ export async function createAndSaveManagedQuote(
   // 2. Invalidate previous proposed quotes that belong to this conversation.
   const anyTables = tables as any;
   if (anyTables && typeof anyTables.from === "function") {
+    let previousQuoteIds: string[] = [];
     try {
       const { data: quoteMessages, error: messageReadError } = await anyTables
         .from("messages")
@@ -839,22 +874,13 @@ export async function createAndSaveManagedQuote(
 
       if (messageReadError) throw messageReadError;
 
-      const previousQuoteIds = Array.from(new Set((quoteMessages || [])
+      previousQuoteIds = Array.from(new Set((quoteMessages || [])
         .map((row: any) => row?.quote?.quoteId || row?.quote?.id)
         .filter((id: unknown): id is string => typeof id === "string" && id.length > 0)));
-
-      if (previousQuoteIds.length > 0) {
-        await anyTables
-          .from("plans_quotes")
-          .update({ status: "expired" })
-          .eq("user_id", userId)
-          .in("id", previousQuoteIds)
-          .eq("status", "quoted");
-      }
     } catch (err: any) {
-      console.warn("Could not supersede prior quotes for this conversation:", err.message);
+      console.warn("[quote:prior_ids_unavailable] proceeding with no prior quote ids");
     }
-    await anyTables.from("plans_quotes").insert({
+    const quoteRow = {
       id: quoteId,
       user_id: userId,
       quote_hash: planHash,
@@ -864,6 +890,34 @@ export async function createAndSaveManagedQuote(
       output_formats: plan.outputFormats || ["xlsx", "pdf", "csv"],
       expires_at: expiresAt,
       created_at: nowIso,
+    };
+    const fallback = async () => {
+      if (previousQuoteIds.length > 0) {
+        const { error: expireError } = await anyTables.from("plans_quotes")
+          .update({ status: "expired" }).eq("user_id", userId)
+          .in("id", previousQuoteIds).eq("status", "quoted");
+        if (expireError) throw expireError;
+      }
+      const { error: insertError } = await anyTables.from("plans_quotes").insert(quoteRow);
+      if (insertError) throw insertError;
+      return true;
+    };
+    await callAtomicOrFallback({
+      rpc: () => typeof anyTables.rpc === "function"
+        ? anyTables.rpc("create_quote_atomic", {
+            p_user_id: userId,
+            p_quote_id: quoteId,
+            p_quote_hash: planHash,
+            p_items: plan.items,
+            p_total_points: totalQuotedPoints,
+            p_output_formats: plan.outputFormats || ["xlsx", "pdf", "csv"],
+            p_expires_at: expiresAt,
+            p_previous_quote_ids: previousQuoteIds,
+          })
+        : Promise.resolve({ error: { code: "PGRST202", message: "function not found" } }),
+      functionName: "create_quote_atomic",
+      fallback,
+      log: (line) => console.warn(line),
     });
   } else if (tables && typeof tables.createRow === "function") {
     try {

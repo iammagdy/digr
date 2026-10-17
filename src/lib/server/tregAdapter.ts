@@ -9,6 +9,7 @@ import { getLiveProviderGateStatus } from "./providerGate";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import { isSocialCapabilitySlug } from "../socialSources";
 import { runSocialChunk, type SocialCall } from "./socialAdapter";
+import { markContactRowsForReview } from "../../functions/shared/decisionMakerPricing";
 
 export { hasRecognizedProviderResultShape };
 import { arabicVerificationStatus } from "../contactVerification";
@@ -481,12 +482,12 @@ async function enrichTregPeopleRows(rows: Record<string, any>[], input: Provider
   const requiredFields = Array.isArray(input.params?.requiredContactFields)
     ? input.params.requiredContactFields.map((field: unknown) => String(field))
     : [];
-  const deliverableRows = requiredFields.length
-    ? enriched.filter((row) => requiredFields.every((field) =>
-      field === "work_email" ? Boolean(row.work_email) : field === "phone" ? Boolean(row.phone) : true,
-    ))
-    : enriched;
-  return { rows: deliverableRows, costMicro, callIds };
+  const reviewedRows = markContactRowsForReview(enriched, requiredFields.filter(
+    (field): field is "work_email" | "phone" => field === "work_email" || field === "phone",
+  ));
+  // Keep incomplete people visible. Enrichment calls have already incurred provider cost,
+  // and settlement decides the delivered contact units independently from these review rows.
+  return { rows: reviewedRows, costMicro, callIds };
 }
 
 export interface ProviderAdapterCallInput {
