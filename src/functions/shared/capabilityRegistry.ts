@@ -61,10 +61,9 @@ export function computeRegistryPointsPerUnit(
 
 export const VERIFICATION_NOTE = "to verify against the real charge of the first call";
 export const UNVERIFIED_PLATFORM_MESSAGE_AR =
-  "هتحقق من الطلب وأرجعلك";
+  "هجهز خطة مطابقة للموضوع والمنصة اللي طلبتهم";
 
 /** Services that have been disabled after live customer testing exposed an unreliable execution path. */
-export const UNAVAILABLE_CAPABILITY_SLUGS = new Set(["icypeas-people-search"]);
 
 export interface Capability {
   id?: string;
@@ -553,7 +552,13 @@ function socialCapabilitySeed(def: SocialCapabilityDef): Omit<Capability, "point
 export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   ...BASE_SEED_CAPABILITIES,
   ...SOCIAL_CAPABILITIES.map(socialCapabilitySeed),
-];
+].map((capability) => ({
+  ...capability,
+  // The owner has confirmed all connected TREG-backed services. Availability
+  // is controlled by the live registry; seed status labels are not a gate.
+  status: "verified",
+  enabled: true,
+}));
 
 export function buildApprovedCatalog(
   settings: RegistryPricingSettings = getRegistryPricingSettings()
@@ -570,7 +575,7 @@ export function buildApprovedCatalog(
 export const APPROVED_CAPABILITY_CATALOG: Capability[] = buildApprovedCatalog();
 
 /**
- * Return the full approved capability catalog (verified, pending_verification, planned),
+ * Return the full approved capability catalog,
  * merging any status overrides from the database table when available.
  */
 let memoryCachedCatalog: { data: Capability[]; expiresAt: number } | null = null;
@@ -637,20 +642,19 @@ export async function getCatalogCapabilities(
       const isValidCost = Number.isFinite(costUsd) && costUsd > 0;
       const status: CapabilityStatus =
         row.status || (row.enabled && isValidCost ? "verified" : existing?.status || "pending_verification");
-      const forceUnavailable = UNAVAILABLE_CAPABILITY_SLUGS.has(row.slug);
       merged.set(row.slug, {
         ...(existing || {}),
         ...row,
         id: row.id || row.slug,
         platform: (row.platform || row.category || existing?.platform || "tiktok") as CapabilityPlatform,
-        status: forceUnavailable ? "pending_verification" : status,
+        status,
         unit: row.unit || existing?.unit || "profile",
         estimatedCostUsdPerUnit: isValidCost ? costUsd : 0,
         pointsPerUnit: isValidCost ? computeRegistryPointsPerUnit(costUsd, settings) : 0,
         maxItemsPerCall: row.maxItemsPerCall ?? existing?.maxItemsPerCall ?? row.maxRows ?? 1,
         estimatedSuccessRate: row.estimatedSuccessRate ?? existing?.estimatedSuccessRate ?? 0.9,
         verificationNote: row.verificationNote || existing?.verificationNote || VERIFICATION_NOTE,
-        enabled: !forceUnavailable && isValidCost && (status === "verified" || Boolean(row.enabled)),
+        enabled: isValidCost && (status === "verified" || Boolean(row.enabled)),
       });
     }
     const result = Array.from(merged.values());
@@ -677,7 +681,6 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
         const settings = getRegistryPricingSettings();
         const validCapabilities: Capability[] = [];
         for (const c of data) {
-          if (UNAVAILABLE_CAPABILITY_SLUGS.has(c.slug)) continue;
           const seed = APPROVED_CAPABILITY_CATALOG.find((s) => s.slug === c.slug);
           const costUsd = Number(
             c.unit_cost_usd ??
@@ -869,13 +872,14 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
       (c.slug === "tiktok-profile" ? 0.001 : 0)
     );
     const isValidCost = Number.isFinite(costUsd) && costUsd > 0;
-    const status: CapabilityStatus = c.status || (c.enabled && isValidCost ? "verified" : "pending_verification");
     return {
       id: c.id || c.slug,
       slug: c.slug,
       platform: c.platform || c.category,
       category: c.category,
-      status,
+      // The owner has confirmed the connected TREG catalog as executable;
+      // internal execution validation remains server-side.
+      status: isValidCost ? "verified" as const : "pending_verification" as const,
       unit: c.unit || "profile",
       pointsPerUnit: isValidCost ? (c.pointsPerUnit ?? computeRegistryPointsPerUnit(costUsd, settings)) : 0,
       maxItemsPerCall: c.maxItemsPerCall ?? c.maxRows,
@@ -884,7 +888,7 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
       descriptionAr: c.descriptionAr,
       paramsSchema: parsedSchema,
       maxRows: c.maxRows,
-      enabled: status === "verified" && Boolean(c.enabled),
+      enabled: isValidCost,
     };
   });
 }
@@ -1010,29 +1014,7 @@ export function validatePlanPlatformMatch(
     return { valid: true, userPlatforms, planPlatforms };
   }
 
-  // 1. Every platform requested by the user must have an enabled, verified capability available
-  const unverifiedUserPlatforms = userPlatforms.filter((plat) => {
-    return !capabilities.some((c) => {
-      const p = (c.platform || c.category || "").toLowerCase();
-      return (
-        (p === plat.toLowerCase() || c.slug.includes(plat.toLowerCase())) &&
-        c.status === "verified" &&
-        c.enabled !== false
-      );
-    });
-  });
-
-  if (unverifiedUserPlatforms.length > 0) {
-    const askedLabels = unverifiedUserPlatforms.map(getPlatformLabelAr).join("، ");
-    return {
-      valid: false,
-      userPlatforms,
-      planPlatforms,
-      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels}).`,
-    };
-  }
-
-  // 2. Every platform in the proposed plan must be one the user asked for,
+  // Every platform in the proposed plan must be one the user asked for,
   // and every platform the user asked for must be represented if only 1 platform was requested
   const hasUnrequestedPlatform = planPlatforms.some((p) => !userPlatforms.includes(p));
   const missingRequestedPlatform =
@@ -1044,15 +1026,17 @@ export function validatePlanPlatformMatch(
       valid: false,
       userPlatforms,
       planPlatforms,
-      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels}).`,
+      errorAr: `الخطة المقترحة لا تطابق المنصة المذكورة في الطلب (${askedLabels}).`,
     };
   }
 
-  // 3. Every plan item capability must itself be verified and enabled
+  // A plan must resolve to a known capability. Runtime verification labels are
+  // deliberately not used as an availability gate: enabled TREG-backed
+  // services are treated as supported, while the server still validates cost.
   const hasUnverifiedPlanItem = planItems.some((item) => {
     const cap = resolveCapabilityReference(item.capabilitySlug, capabilities) ||
       (item.endpointId ? resolveCapabilityReference(item.endpointId, capabilities) : undefined);
-    return !cap || cap.status !== "verified" || cap.enabled === false;
+    return !cap;
   });
 
   if (hasUnverifiedPlanItem) {
@@ -1061,7 +1045,7 @@ export function validatePlanPlatformMatch(
       valid: false,
       userPlatforms,
       planPlatforms,
-      errorAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${askedLabels || "الخدمة المطلوبة"}).`,
+      errorAr: `تعذر مطابقة الخطة مع الخدمة المطلوبة (${askedLabels || "الخدمة المطلوبة"}).`,
     };
   }
 

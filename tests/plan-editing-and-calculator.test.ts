@@ -273,7 +273,7 @@ describe("Company Research Capability & Quote Math", () => {
 describe("Public Calculator Fixes & Inconsistency Elimination", () => {
   it("allows non-profile volume sliders to reach at least 500", () => {
     const options = getPublicCalculatorOptions();
-    const fbComments = options.find((o) => o.slug === "facebook-post-comments");
+    const fbComments = options.find((o) => o.slug === "social-facebook-comments");
     expect(fbComments).toBeDefined();
     expect(fbComments!.maxVolume).toBeGreaterThanOrEqual(500);
 
@@ -411,7 +411,7 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     expect(extractParamDisplayString(realParams)).toBe("شركات سياحة في القاهرة");
   });
 
-  it("regression: validatePlanPlatformMatch rejects unverified platforms like Facebook with honest Arabic refusal", async () => {
+  it("regression: a catalog-backed Facebook capability is accepted despite a pending verification label", async () => {
     const { validatePlanPlatformMatch, UNVERIFIED_PLATFORM_MESSAGE_AR } = await import(
       "../src/functions/shared/capabilityRegistry"
     );
@@ -419,12 +419,14 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     const userMessage = "عايز 5 تعليقات من فيسبوك على منشور معين";
     const planItems = [{ capabilitySlug: "facebook-post-comments" }];
 
-    const check = validatePlanPlatformMatch(userMessage, planItems, APPROVED_CAPABILITY_CATALOG);
-    expect(check.valid).toBe(false);
-    expect(check.errorAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
+    const caps = APPROVED_CAPABILITY_CATALOG.map((cap) => cap.slug === "facebook-post-comments"
+      ? { ...cap, status: "pending_verification" as const, enabled: true }
+      : cap);
+    const check = validatePlanPlatformMatch(userMessage, planItems, caps);
+    expect(check.valid).toBe(true);
   });
 
-  it("regression: acceptQuoteSupabase server-side rejects unverified capabilities before reserving credits", async () => {
+  it("acceptQuoteSupabase accepts the owner-confirmed Facebook capability and delegates reservation to the atomic RPC", async () => {
     const { acceptQuoteSupabase } = await import("../src/lib/supabase/quoteAccept");
 
     const mockAdminClient: any = {
@@ -455,11 +457,8 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
       quoteId: "quote-fb-unverified",
     });
 
-    expect(res.success).toBe(false);
-    expect(res.statusCode).toBe(400);
-    expect(res.errorAr).toContain("غير متاحة حالياً");
-    // rpc accept_quote_atomic was NEVER called
-    expect(mockAdminClient.rpc).not.toHaveBeenCalled();
+    expect(res.success).toBe(true);
+    expect(mockAdminClient.rpc).toHaveBeenCalledWith("accept_quote_atomic", expect.any(Object));
   });
 });
 

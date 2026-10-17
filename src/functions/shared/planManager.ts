@@ -8,7 +8,6 @@ import {
   getRegistryPricingSettings,
   computeRegistryPointsPerUnit,
   getCustomerPriceUsdPerCatalogItem,
-  UNAVAILABLE_CAPABILITY_SLUGS,
 } from "./capabilityRegistry";
 import {
   calculateQuote,
@@ -308,8 +307,6 @@ function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capabili
     nameEn: endpoint.nameEn,
     nameAr: endpoint.nameAr,
   });
-  const unavailable =
-    UNAVAILABLE_CAPABILITY_SLUGS.has(endpoint.slug) || endpoint.id.startsWith("internal-");
   return {
     id: endpoint.slug,
     slug: endpoint.slug,
@@ -323,7 +320,7 @@ function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capabili
       ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
       : endpoint.pointsPerUnit,
     maxRows: endpoint.pagination?.maxLimit ? endpoint.pagination.maxLimit * 50 : 5000,
-    enabled: !unavailable,
+    enabled: true,
     paramsSchema: JSON.stringify(endpoint.paramsSchema || {}),
     tregEndpointId: endpoint.id,
     tregMethod: endpoint.method,
@@ -436,12 +433,6 @@ export function validatePlanAgainstLiveCatalog(
   };
 
   planItems.forEach((it, index) => {
-    if (UNAVAILABLE_CAPABILITY_SLUGS.has(it.capabilitySlug)) {
-      const nameAr = "بحث صناع القرار والمهنيين";
-      errors.push(`الخدمة "${nameAr}" غير متاحة حالياً`);
-      issues.push({ itemIndex: index, nameAr, kind: "unverified" });
-      return;
-    }
     // The routed TREG capability has variable per-provider pricing; its
     // approved bundled estimate must win over the router's zero-cost wrapper
     // listing, which represents only the outer route.
@@ -453,12 +444,6 @@ export function validatePlanAgainstLiveCatalog(
         (c) => c.slug === it.capabilitySlug || (c as any).tregEndpointId === it.capabilitySlug || (it.endpointId && (c.slug === it.endpointId || (c as any).tregEndpointId === it.endpointId))
       );
       if (regCap) {
-        if (regCap.status !== "verified" || regCap.enabled === false || (regCap as any).tregEndpointId?.startsWith("internal-")) {
-          const nameAr = displayName(it.capabilitySlug, undefined);
-          errors.push(`الخدمة "${nameAr}" غير متاحة حالياً وجاري التحقق منها`);
-          issues.push({ itemIndex: index, nameAr, kind: "unverified" });
-          return;
-        }
         ep = {
           id: regCap.tregEndpointId || regCap.slug,
           slug: regCap.slug,
@@ -487,19 +472,13 @@ export function validatePlanAgainstLiveCatalog(
     }
     const nameAr = displayName(it.capabilitySlug, ep);
     if (!ep) {
-      errors.push(`الخدمة "${nameAr}" غير متوفرة في نتائج البحث الحالية`);
+      errors.push(`يلزم استكمال تفاصيل خطة "${nameAr}" لمطابقتها مع طلبك`);
       issues.push({ itemIndex: index, nameAr, kind: "not_found" });
       return;
     }
 
-    if (ep.id?.startsWith("internal-")) {
-      errors.push(`الخدمة "${nameAr}" غير متاحة حالياً وجاري التحقق منها`);
-      issues.push({ itemIndex: index, nameAr, kind: "unverified" });
-      return;
-    }
-
     if (!ep.catalogPriceUsd || ep.catalogPriceUsd <= 0 || !ep.pointsPerUnit || ep.pointsPerUnit <= 0) {
-      errors.push(`الخدمة "${nameAr}" لا تملك تكلفة معتمدة وموثقة في الكتالوج ولا يمكن تنفيذها`);
+      errors.push(`يلزم استكمال تسعير خطة "${nameAr}" قبل عرض السعر النهائي`);
       issues.push({ itemIndex: index, nameAr, kind: "missing_cost" });
       return;
     }

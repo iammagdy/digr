@@ -28,6 +28,7 @@ import {
   type PlatformEmailTemplateId,
   renderEmailTemplate,
 } from "./templates.ts";
+import { buildResendHeaders } from "./resendHeaders.ts";
 
 const FROM = "Diger <noreply@diger.tech>";
 const RESEND_URL = "https://api.resend.com/emails";
@@ -45,6 +46,7 @@ export type SendEmailRequest = {
   template: PlatformEmailTemplateId;
   to: string;
   vars?: Record<string, string | number | undefined | null>;
+  idempotencyKey?: string;
 };
 
 /** Build the Resend API payload for a template. Pure — no network, no secrets. */
@@ -97,6 +99,10 @@ async function handle(req: Request): Promise<Response> {
   if (input.vars !== undefined && (typeof input.vars !== "object" || input.vars === null)) {
     return json({ ok: false, error: "invalid_vars" }, 400);
   }
+  if (input.idempotencyKey !== undefined &&
+      (typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9._:-]{1,256}$/.test(input.idempotencyKey))) {
+    return json({ ok: false, error: "invalid_idempotency_key" }, 400);
+  }
 
   const resendKey = Deno.env.get("RESEND_API_KEY") ?? "";
   if (!resendKey) {
@@ -113,10 +119,7 @@ async function handle(req: Request): Promise<Response> {
   try {
     res = await fetch(RESEND_URL, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: buildResendHeaders(resendKey, input.idempotencyKey),
       body: JSON.stringify(payload),
     });
   } catch {

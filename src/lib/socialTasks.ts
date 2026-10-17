@@ -271,8 +271,7 @@ export function getMissingSocialTaskInputs(text: string): MissingSocialTaskInput
   const missing: MissingSocialTaskInput[] = [];
 
   if (!SOCIAL_TASK_PLATFORMS[intent.task].includes(intent.platform)) {
-    // Trending is the one customers expect everywhere; say plainly it is not served for this platform.
-    if (intent.task === "trending") return ["social_trending_platform_required"];
+    // Let the full platform guide and live catalog resolve newly connected routes.
     return [];
   }
 
@@ -323,12 +322,7 @@ export function socialTaskQuestion(id: MissingSocialTaskInput): SocialTaskQuesti
     case "social_trending_region_required":
       return socialQuestion(id, "في أي دولة تريد الفيديوهات الرائجة؟", "single", ["مصر", "السعودية", "الإمارات", "أخرى"]);
     case "social_trending_platform_required":
-      return socialQuestion(
-        id,
-        "الفيديوهات الرائجة غير متاحة على هذه المنصة حالياً. هل تريد الفيديوهات الرائجة على إحدى هاتين المنصتين؟",
-        "single",
-        ["تيك توك", "يوتيوب"],
-      );
+      return socialQuestion(id, "ما المنصة المطلوبة للفيديوهات الرائجة؟", "free");
     case "social_channel_required":
       return socialQuestion(id, "ما اسم القناة أو رابطها؟", "free");
   }

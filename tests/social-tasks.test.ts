@@ -93,11 +93,10 @@ describe("only the missing input is asked, one question at a time, with tappable
     expect(getMissingSocialTaskInputs("فيديوهات ترند في مصر على تيك توك")).toEqual([]);
   });
 
-  it("trending on a platform with no verified source says so and offers the two that have one", () => {
+  it("does not refuse or suggest a different platform for a trending request", () => {
     const q = getDeterministicDiscoveryQuestion("ترند فيسبوك", brief);
-    expect(q?.id).toBe("social_trending_platform_required");
-    expect(q?.options).toEqual(["تيك توك", "يوتيوب"]);
-    expect(q?.text).not.toMatch(/[A-Za-z]/);
+    expect(q?.id).toBe("social_topic_required");
+    expect(q?.text).toContain("ما الموضوع");
   });
 
   it("a channel request without a channel asks for it", () => {
@@ -137,9 +136,10 @@ describe("questions keep their own choices (a topic word in the text must not ch
     expect(region.defaultOption).toBeUndefined();
   });
 
-  it("the unsupported-trending question offers the two platforms that have a trending feed and preselects none", () => {
+  it("a platform clarification is one short free-text question", () => {
     const q = normalize(socialTaskQuestion("social_trending_platform_required"));
-    expect(q.options).toEqual(["تيك توك", "يوتيوب"]);
+    expect(q.type).toBe("free");
+    expect(q.options).toEqual([]);
     expect(q.defaultOption).toBeUndefined();
   });
 

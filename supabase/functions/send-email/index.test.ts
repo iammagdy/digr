@@ -6,6 +6,7 @@
 
 import { assertEquals, assert } from "jsr:@std/assert";
 import { buildResendPayload } from "./index.ts";
+import { buildResendHeaders } from "./resendHeaders.ts";
 import { renderEmailTemplate } from "./templates.ts";
 
 const TEMPLATES = [
@@ -51,4 +52,10 @@ Deno.test("buildResendPayload: shape + fixed sender", () => {
   assertEquals(payload.to, ["magdy.saber@outlook.com"]);
   assert(payload.subject.includes("Magdy"), "subject not substituted");
   assert(payload.html.includes("Magdy"), "html not substituted");
+});
+
+Deno.test("buildResendHeaders carries deterministic idempotency keys for transactional sends", () => {
+  assertEquals(buildResendHeaders("test-key", "job-done:job_123")["Idempotency-Key"], "job-done:job_123");
+  assertEquals(buildResendHeaders("test-key", "topup-approved:top_123")["Idempotency-Key"], "topup-approved:top_123");
+  assertEquals(buildResendHeaders("test-key")["Idempotency-Key"], undefined);
 });

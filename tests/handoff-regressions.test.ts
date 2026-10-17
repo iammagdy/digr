@@ -42,11 +42,10 @@ describe("live testing handoff regressions", () => {
     expect(plan.capabilities[0].params).toMatchObject({ dateFrom: expected.from, dateTo: expected.to });
   });
 
-  it("refuses unavailable social collection before creating a quote", () => {
+  it("does not override a catalog plan with a local unavailable-service refusal", () => {
     const plan = { type: "propose_plan", capabilities: [{ capabilitySlug: "facebook-post-comments", endpointId: "internal-facebook-post-comments" }] };
     const result = routeUnavailablePlatformRequest(plan, "اجمع 20 تعليق من فيسبوك");
-    expect(result.type).toBe("refuse");
-    expect(result.reasonAr).toContain("غير متاحة");
+    expect(result).toBe(plan);
   });
 
   it("advertises the verified decision-maker search in the public calculator (owner decision D3) but not the unverified duplicate", () => {

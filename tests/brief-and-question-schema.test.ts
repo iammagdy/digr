@@ -297,10 +297,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     const clarification = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, "Find 20 decision-makers with work emails");
     expect(clarification.type).toBe("ask_clarification");
 
-    const unavailable = routePeopleAlternative(suggestion, brief, [], request);
-    expect(unavailable.type).toBe("refuse");
-    expect(unavailable.reasonAr).toContain("خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً");
-    expect(unavailable.reasonAr).not.toContain("تيك توك");
+    const fallback = routePeopleAlternative(suggestion, brief, [], request);
+    expect(fallback.type).toBe("propose_plan");
+    expect(fallback.capabilities[0].capabilitySlug).toBe("professional-people-search");
   });
 
   it("replaces a generic company plan when the customer explicitly asked for decision-makers", () => {

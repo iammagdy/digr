@@ -1419,10 +1419,16 @@ export async function POST(req: NextRequest) {
       try {
         const rcpt = await getRecipient(adminClient, userId, "job-done");
         if (rcpt) {
+          const chargedPoints = Math.round(Number(settleData?.charged_credits) || 0);
           await sendPlatformEmail("job-done", rcpt.email, {
             Name: rcpt.name,
-            JobTitle: `نتائج استخراج ${spec.capabilitySlug}`,
-          });
+            JobTitle: `بحث ${customerFacingCapabilityLabel(spec.capabilitySlug)}`,
+            Delivered: toArabicDigits(finalRows.length),
+            Requested: toArabicDigits(targetMax),
+            Charged: toArabicDigits(chargedPoints),
+            Refunded: toArabicDigits(Math.round(Number(settleData?.refunded_credits) || 0)),
+            JobURL: `${(process.env.NEXT_PUBLIC_SITE_URL || "https://diger.tech").replace(/\/+$/, "")}/dashboard/requests?job=${encodeURIComponent(jobId)}`,
+          }, `job-done:${jobId}`);
         }
       } catch (emailErr) {
         console.error("[email:job-done_failed]", emailErr);

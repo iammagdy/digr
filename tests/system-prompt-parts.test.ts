@@ -74,7 +74,7 @@ describe("social research rules reach the model", () => {
     expect(staticText).toContain('"social-..."');
     expect(staticText).toContain("كومنتس");
     expect(staticText).toMatch(/exactly ONE thing to collect/);
-    expect(staticText).toMatch(/Facebook has no trending feed/);
+    expect(staticText).toMatch(/Trending requests use the country or region/);
     expect(staticText).toMatch(/Never invent a link/);
     // The part that changes every turn holds none of it, so the fixed block stays cacheable.
     expect(dynamicText).not.toContain("SOCIAL RESEARCH");

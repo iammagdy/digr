@@ -13,7 +13,6 @@ import {
   getCustomerPriceUsdPerCatalogItem,
   computeRegistryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
-  UNAVAILABLE_CAPABILITY_SLUGS,
   RAW_SEED_CAPABILITIES,
   APPROVED_CAPABILITY_CATALOG,
   Capability,
@@ -672,15 +671,15 @@ export function routePeopleAlternative(
   if (!isPeopleSearchRequest(requestText)) return output;
 
   const peopleCapability = capabilities.find((capability) =>
-    !UNAVAILABLE_CAPABILITY_SLUGS.has(capability.slug) && capability.enabled !== false && capability.status === "verified" &&
+    capability.enabled !== false && capability.status === "verified" &&
     /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  );
+  ) || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search");
   if (!peopleCapability) {
-    return {
-      type: "refuse",
-      reasonAr: "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً.",
-    };
+    return output;
   }
+  const peopleCapabilities = capabilities.some((capability) => capability.slug === peopleCapability.slug)
+    ? capabilities
+    : [...capabilities, peopleCapability];
 
   // Respect a model clarification only while a required field is still
   // missing. Once the deterministic inputs are complete, do not let the model
@@ -688,7 +687,7 @@ export function routePeopleAlternative(
   if (output?.type === "ask_clarification" || output?.type === "ask_questions") {
     return getDeterministicDiscoveryQuestion(requestText, brief)
       ? output
-      : buildAutoPlanProposal(brief, capabilities, requestText);
+      : buildAutoPlanProposal(brief, peopleCapabilities, requestText);
   }
 
   const proposedPeopleCapability = output?.type === "propose_plan" &&
@@ -718,7 +717,7 @@ export function routePeopleAlternative(
     };
   }
 
-  return buildAutoPlanProposal(brief, capabilities, requestText);
+  return buildAutoPlanProposal(brief, peopleCapabilities, requestText);
 }
 
 /** Route explicit company-search intent to the verified company capability when
@@ -736,13 +735,13 @@ export function routeCompanySearchRequest(
 
   const companyCapability = capabilities.find((capability) =>
     /companies|company/i.test(`${capability.platform || ""} ${capability.category || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  );
+  ) || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "icypeas-companies-search");
   if (!companyCapability) {
-    return {
-      type: "refuse",
-      reasonAr: "خدمة البحث عن الشركات غير متاحة حالياً.",
-    };
+    return output;
   }
+  const companyCapabilities = capabilities.some((capability) => capability.slug === companyCapability.slug)
+    ? capabilities
+    : [...capabilities, companyCapability];
 
   const missing = getMissingCompanyResearchRequirements(requestText);
   if (missing.length > 0) {
@@ -761,38 +760,14 @@ export function routeCompanySearchRequest(
   // Company requests need a single, priceable company-search capability. The
   // model may return a superficially relevant multi-step plan that later fails
   // validation or inflates the requested volume, so rebuild it deterministically.
-  return buildAutoPlanProposal(brief, capabilities, requestText);
+  return buildAutoPlanProposal(brief, companyCapabilities, requestText);
 }
 
 export function routeUnavailablePlatformRequest(output: any, requestText: string): any {
-  if (isPeopleSearchRequest(requestText)) return output;
-  if (output?.type !== "propose_plan") return output;
-  const platform = detectMentionedPlatforms(requestText).find((item) => item !== "companies");
-  if (!platform) return output;
-  const entity = extractEntityType(requestText).entityType;
-  const slug = entity === "comments"
-    ? (platform === "youtube" ? "youtube-comments" : `${platform}-post-comments`)
-    : entity === "posts"
-      ? `${platform}-post-search`
-      : entity === "videos" && platform === "youtube"
-        ? "youtube-search"
-        : entity === "profiles"
-          ? `${platform}-profile`
-          : null;
-  if (!slug) return output;
-  const capability = RAW_SEED_CAPABILITIES.find((item) => item.slug === slug);
-  if (!capability || capability.enabled) return output;
-  const proposedService = (output?.capabilities || output?.steps || []).find((step: any) =>
-    step?.capabilitySlug === slug || step?.endpointId === slug,
-  );
-  if (!proposedService) return output;
-  if (proposedService?.endpointId && !String(proposedService.endpointId).startsWith("internal-")) return output;
-  const serviceName = entity === "comments" ? "جمع التعليقات" : entity === "videos" ? "البحث عن الفيديوهات" : entity === "posts" ? "البحث عن المنشورات" : "البحث عن الحسابات";
-  const platformLabel = getPlatformLabelAr(platform);
-  return {
-    type: "refuse",
-    reasonAr: `خدمة ${serviceName} على ${platformLabel} غير متاحة حاليًا، لذلك لا أستطيع تقديم عرض سعر أو بدء التنفيذ لهذا الطلب.`,
-  };
+  // TREG-backed capabilities are owner-confirmed and are not blocked by a
+  // second local availability gate. Pricing and executable plans are still
+  // validated against the server catalog below.
+  return output;
 }
 
 /**
@@ -841,13 +816,12 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     nameAr: ep.nameAr,
   });
   const seeded = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === ep.slug);
-  const unavailable = UNAVAILABLE_CAPABILITY_SLUGS.has(ep.slug) || Boolean(ep.id?.startsWith("internal-"));
   return {
     id: ep.slug,
     slug: ep.slug,
     platform: ep.platform as any,
     category: ep.platform as any,
-    status: unavailable ? (seeded?.status || "pending_verification") : "verified",
+    status: "verified",
     unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
     pointsPerUnit:
@@ -867,7 +841,7 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     customerPriceUsdPerItem,
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
-    enabled: !unavailable,
+    enabled: true,
   };
 }
 
@@ -2491,9 +2465,8 @@ export class ChatHandler {
             questionsAr: clarificationQuestionsList,
           } as any;
         } else if (!platformCheck.valid) {
-          const closest = getClosestVerifiedCapability(capabilities);
           console.warn("[chat:platform_check_invalid]", { message, planItems });
-          finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+          finalContentAr = UNVERIFIED_PLATFORM_MESSAGE_AR;
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -2531,10 +2504,12 @@ export class ChatHandler {
                 planValidation = { valid: true, errors: [], issues: [] };
               } else {
                 console.warn("[chat:auto_plan_invalid_pricing]", { errors: autoCheck.errors });
-                finalContentAr = "نعتذر منك، لم نتمكن من إعداد خطة تسعير معتمدة لهذا الطلب لعدم توفر خدمة موثقة بالتسعير المطلوب حالياً. يمكنك تجربة إحدى المنصات المعتمدة (فيسبوك، لينكد إن، إكس، يوتيوب).";
+                finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
                 output = {
-                  type: "suggest_alternative",
-                  explanationAr: finalContentAr,
+                  type: "ask_clarification",
+                  intro: finalContentAr,
+                  reasonAr: finalContentAr,
+                  questions: [{ id: "topic_or_source", text: "ما الموضوع أو رابط المصدر المطلوب؟", type: "free" }],
                 } as any;
                 planOutput = null;
                 planValidation = { valid: false, errors: autoCheck.errors, issues: autoCheck.issues };
@@ -2764,12 +2739,11 @@ export class ChatHandler {
             output.unsupportedService = expectedLabel;
           }
         }
-        const closest = getClosestVerifiedCapability(capabilities);
         console.warn("[chat:suggest_alternative]", {
           unsupportedService: output.unsupportedService,
           explanationAr: output.explanationAr,
         });
-        finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+        finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
 
         // Log request in capability_requests table
         if (sb) {

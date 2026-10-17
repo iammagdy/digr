@@ -221,7 +221,7 @@ describe("Platform Email Preferences & Server-Side Enforcement", () => {
       const fetchCallArgs = fetchSpy.mock.calls[0];
       expect(fetchCallArgs[0]).toBe("https://example.supabase.co/functions/v1/send-email");
       expect((fetchCallArgs[1] as any)?.signal).toBeDefined();
-      expect(errorSpy).toHaveBeenCalledWith("[email:send_error]", expect.any(Error));
+      expect(errorSpy).toHaveBeenCalledWith("[email:send_error]");
     });
   });
 

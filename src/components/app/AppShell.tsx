@@ -29,6 +29,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard/topup": "الرصيد والشحن",
   "/dashboard/requests": "طلباتي",
   "/dashboard/settings": "الإعدادات",
+  "/services": "كتالوج الخدمات",
 };
 
 function initials(name: string) {
@@ -167,6 +168,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
     { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
@@ -175,6 +177,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       else router.push("/dashboard/chat?history=1");
     } },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
   ];
 
   const menu: Array<{ label: string; icon: string; meta?: string; danger?: boolean; href?: string; onClick?: () => void }> = [

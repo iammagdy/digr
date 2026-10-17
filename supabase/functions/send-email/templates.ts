@@ -239,6 +239,12 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
 </html>`,
 };
 
+// Transactional receipts are intentionally short and fully Arabic.
+Object.assign(PLATFORM_EMAIL_TEMPLATES, {
+  "topup-approved": `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><body style="margin:0;background:#F3F0E8;font:16px Arial,sans-serif;color:#16201F"><main style="max-width:560px;margin:24px auto;padding:24px;background:#FFFDF9;border:1px solid #E6E1D7;border-radius:18px"><h1 style="font-size:22px">تم شحن رصيدك يا {{ .Name }}</h1><p>المبلغ: {{ .ConfirmedAmountEgp }} ج.م</p><p>النقاط المضافة: {{ .Credits }} نقطة</p><p>الرصيد الجديد: {{ .Balance }} نقطة</p><p>المرجع: {{ .Reference }}</p><a href="{{ .SiteURL }}/dashboard/topup">متابعة رصيدك</a></main></body></html>`,
+  "job-done": `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><body style="margin:0;background:#F3F0E8;font:16px Arial,sans-serif;color:#16201F"><main style="max-width:560px;margin:24px auto;padding:24px;background:#FFFDF9;border:1px solid #E6E1D7;border-radius:18px"><h1 style="font-size:22px">اكتمل بحثك يا {{ .Name }}</h1><p>{{ .JobTitle }}</p><p>السجلات المسلّمة: {{ .Delivered }} من {{ .Requested }}</p><p>النقاط المخصومة: {{ .Charged }}</p><a href="{{ .JobURL }}">افتح نتائج البحث</a></main></body></html>`,
+});
+
 const TOKEN_RE = /\{\{\s*\.([A-Za-z]+)\s*\}\}/g;
 
 export function escapeHtml(s: string): string {

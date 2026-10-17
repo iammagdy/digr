@@ -118,11 +118,11 @@ export async function POST(req: NextRequest) {
           const balance = Number(approval.data.balance) || await getBalance(adminClient, topup.user_id);
           await sendPlatformEmail("topup-approved", rcpt.email, {
             Name: rcpt.name,
-            Credits: String(credits),
-            ConfirmedAmountEgp: String(confirmedAmount),
-            Reference: topup.reference,
-            Balance: String(balance),
-          });
+            Credits: toArabicDigits(credits),
+            ConfirmedAmountEgp: toArabicDigits(confirmedAmount),
+            Reference: toArabicDigits(topup.reference),
+            Balance: toArabicDigits(balance),
+          }, `topup-approved:${topupId}`);
         }
       } catch (emailErr) {
         console.error("[email:topup-approved_failed]", emailErr);

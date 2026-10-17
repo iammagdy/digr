@@ -6,7 +6,6 @@ import {
   APPROVED_CAPABILITY_CATALOG,
   getRegistryPricingSettings,
   computeRegistryPointsPerUnit,
-  UNVERIFIED_PLATFORM_MESSAGE_AR,
 } from "../src/functions/shared/capabilityRegistry";
 import { calculateQuote, calculateCapabilityQuote, DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
 
@@ -166,18 +165,17 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
   });
 
   describe("Scenario (d): Zero Catalog Results Handling", () => {
-    it("returns honest Arabic message and closest alternative when catalog has zero results", async () => {
+    it("asks one concise question when catalog results are empty without suggesting another platform", async () => {
       const res = await client.executeTurn({
         messages: [{ role: "user", content: "عايز استخراج من منصة_غير_معروفة_xyz" }],
         sanitizedCapabilities: [], // 0 results
         testScenario: "phase_b_scenario_d",
       });
 
-      expect(res.output.type).toBe("suggest_alternative");
-      if (res.output.type === "suggest_alternative") {
-        expect(res.output.explanationAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
-        expect(res.output.closestAlternative).toBeDefined();
-        expect(res.output.canRequestFeature).toBe(true);
+      expect(res.output.type).toBe("ask_clarification");
+      if (res.output.type === "ask_clarification") {
+        expect(res.output.questions).toHaveLength(1);
+        expect(JSON.stringify(res.output)).not.toContain("تيك توك");
       }
     });
   });
@@ -207,7 +205,7 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
 
   describe("System Prompt v5 Integrity & Guardrails", () => {
     it("enforces v6 version, zero emojis, zero provider leaks, and no legality claims", () => {
-      expect(PROMPT_VERSION).toBe("6.0.0");
+      expect(PROMPT_VERSION).toBe("7.0.0");
 
       const prompt = buildSystemPrompt({
         sanitizedCapabilities: APPROVED_CAPABILITY_CATALOG,
@@ -215,7 +213,7 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
         userBalancePoints: 300,
       });
 
-      expect(prompt).toContain("System Prompt v5");
+      expect(prompt).toContain("PRODUCT KNOWLEDGE & CATALOG ACCESS (v7)");
       expect(prompt).toContain("(v6)");
       expect(prompt).toContain("NO EMOJI");
       expect(prompt).toContain("NO PROVIDER OR TOOL NAMES");

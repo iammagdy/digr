@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { clearRegistryRowStateCacheForTesting, getEnabledCapabilitiesWithCoreServices, UNAVAILABLE_CAPABILITY_SLUGS } from "../src/functions/shared/capabilityRegistry";
+import { clearRegistryRowStateCacheForTesting, getEnabledCapabilitiesWithCoreServices } from "../src/functions/shared/capabilityRegistry";
 
 function registryWith(rows: any[]) {
   return {
@@ -46,12 +46,11 @@ describe("core decision-maker service (owner decision D3)", () => {
     expect(caps.map((c) => c.slug)).not.toContain("professional-people-search");
   });
 
-  it("keeps the unreliable legacy people endpoint blocked even if the registry enables it", async () => {
-    expect(UNAVAILABLE_CAPABILITY_SLUGS.has("icypeas-people-search")).toBe(true);
+  it("does not maintain a local unavailable list for a TREG-backed capability", async () => {
     const caps = await getEnabledCapabilitiesWithCoreServices(
       registryWith([TIKTOK, { slug: "icypeas-people-search", enabled: true, unit_cost_usd: 0.00038, unit_price_credits: 3, category: "people" }]) as any,
     );
-    expect(caps.map((c) => c.slug)).not.toContain("icypeas-people-search");
+    expect(caps.map((c) => c.slug)).toContain("icypeas-people-search");
     expect(caps.map((c) => c.slug)).toContain("professional-people-search");
   });
 });

@@ -461,7 +461,7 @@ describe("General-Purpose Catalog-Driven AI Assistant Integration Test Suite", (
 
       const val = validatePlanAgainstLiveCatalog(plan, [invalidCostEndpoint]);
       expect(val.valid).toBe(false);
-      expect(val.errors[0]).toContain("لا تملك تكلفة معتمدة وموثقة");
+      expect(val.errors[0]).toContain("يلزم استكمال تسعير");
       expect(val.issues[0].kind).toBe("missing_cost");
     });
   });

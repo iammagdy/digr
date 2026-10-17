@@ -158,11 +158,13 @@ describe("a researcher's social request becomes the right plan or the one missin
     expect(item.params.dateTo).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("trending on a platform with no verified trending feed is said plainly with the two that have one", async () => {
+  it("trending requests do not claim a platform is unavailable or suggest another platform", async () => {
     const { res, question } = await ask("ترند فيسبوك");
     expect(res.outputType).toBe("ask_clarification");
-    expect(question.id).toBe("social_trending_platform_required");
-    expect(question.options).toEqual(["تيك توك", "يوتيوب"]);
+    expect(question.id).toBe("social_topic_required");
+    expect(question.text).toContain("ما الموضوع");
+    expect(res.contentAr).not.toContain("غير متاحة");
+    expect(res.contentAr).not.toContain("تيك توك أو يوتيوب");
   });
 
   it("a count above what the sources can return is brought down to it, not refused", async () => {
