@@ -586,7 +586,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   const hasRequestedDateWindow =
     typeof input.params?.dateFrom === "string" || typeof input.params?.dateTo === "string";
   if (effectiveEndpointId === "crawl4ai.tiktok.search.videos" && hasRequestedDateWindow) {
-    pageParams.limit = Math.min(50, Math.max(input.pageSize, input.pageSize * 10));
+    pageParams.limit = Math.min(25, Math.max(input.pageSize, input.pageSize * 5));
   }
 
   const isSingleAttemptCap =
