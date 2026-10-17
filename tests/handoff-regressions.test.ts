@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractDateHint, buildAutoPlanProposal, routeUnavailablePlatformRequest } from "../src/functions/shared/chatHandler";
+import { extractDateHint, buildAutoPlanProposal, dateFiltersFromHint, routeUnavailablePlatformRequest } from "../src/functions/shared/chatHandler";
 import { extractTargetVolume } from "../src/functions/shared/briefManager";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
 import { getPublicCalculatorOptions } from "../src/lib/calculatorPricing";
@@ -25,6 +25,19 @@ describe("live testing handoff regressions", () => {
       "اجمع 10 منشورات",
     );
     expect(rangePlan.capabilities[0].params).toMatchObject({ dateFrom: "2025-02-01", dateTo: "2025-03-01" });
+  });
+
+  it("uses the user's relative date window when the extracted brief omitted it", () => {
+    const fixedNow = new Date("2026-10-17T12:00:00Z");
+    const expected = dateFiltersFromHint("آخر ٣٠ يومًا", fixedNow);
+    const plan = buildAutoPlanProposal(
+      { platforms: ["tiktok"], topics: ["كرة القدم"], targetVolume: 5 },
+      APPROVED_CAPABILITY_CATALOG,
+      "اجمع ٥ فيديوهات عن كرة القدم على تيك توك في مصر خلال آخر ٣٠ يومًا",
+    );
+
+    expect(expected).toEqual({ from: "2026-09-17", to: "2026-10-17" });
+    expect(plan.capabilities[0].params).toMatchObject({ dateFrom: expected.from, dateTo: expected.to });
   });
 
   it("refuses unavailable social collection before creating a quote", () => {

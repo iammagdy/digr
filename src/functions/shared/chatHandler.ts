@@ -523,8 +523,9 @@ export function buildAutoPlanProposal(
     stepParams.username = topicLabel.replace(/^@/, "").trim();
   }
 
-  if (brief.dateRange && !isCompanySearch) {
-    const dateFilters = dateFiltersFromHint(brief.dateRange);
+  const dateRangeHint = brief.dateRange || message;
+  if (dateRangeHint && !isCompanySearch) {
+    const dateFilters = dateFiltersFromHint(dateRangeHint);
     if (dateFilters.from) stepParams.dateFrom = dateFilters.from;
     if (dateFilters.to) stepParams.dateTo = dateFilters.to;
   }
@@ -556,7 +557,7 @@ export function buildAutoPlanProposal(
   };
 }
 
-function dateFiltersFromHint(hint: string, now = new Date()): { from?: string; to?: string } {
+export function dateFiltersFromHint(hint: string, now = new Date()): { from?: string; to?: string } {
   const dates = hint.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
   if (dates.length >= 2) return { from: dates[0], to: dates[1] };
   if (dates.length === 1) return { from: dates[0], to: dates[0] };
