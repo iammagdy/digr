@@ -7,7 +7,9 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS } from "@/functions/shared/decisionMa
 export default function ServicesCatalogPage() {
   const options = getPublicCalculatorOptions();
   const optionSlugs = new Set(options.map((option) => option.slug));
-  const services = buildPlatformGuideServices().filter((service) => optionSlugs.has(service.slug));
+  const services = buildPlatformGuideServices().filter((service) =>
+    optionSlugs.has(service.slug) || service.slug === "topic-news-academic-research"
+  );
   return (
     <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[1000px] flex-col gap-7">
@@ -21,7 +23,7 @@ export default function ServicesCatalogPage() {
         </header>
         <section className="grid gap-4 sm:grid-cols-2">
           {services.map((service) => {
-            const quote = computePublicCalculatorQuote(service.slug, 1, 1);
+            const quote = optionSlugs.has(service.slug) ? computePublicCalculatorQuote(service.slug, 1, 1) : null;
             const peoplePrice = service.slug === "professional-people-search" ? DECISION_MAKER_UNIT_PRICES_POINTS : null;
             return <article key={service.slug} className="rounded-[20px] border border-ln bg-sf p-5">
               <h2 className="m-0 text-lg font-semibold">{service.nameAr}</h2>
@@ -29,15 +31,12 @@ export default function ServicesCatalogPage() {
               <p className="mb-2 text-sm"><strong>مثال:</strong> {service.exampleAr}</p>
               <p className="m-0 text-sm"><strong>السعر:</strong> {peoplePrice
                 ? `${formatAr(peoplePrice.basePerson)} نقطة للشخص، و${formatAr(peoplePrice.workEmail)} نقطة للبريد المهني عند توفره، و${formatAr(peoplePrice.phone)} نقطة للهاتف المكتبي عند توفره.`
-                : `${formatAr(quote.unitPricePoints)} نقطة لكل ${options.find((option) => option.slug === service.slug)?.unitLabelAr || "سجل"}.`}</p>
+                : quote
+                  ? `${formatAr(quote.unitPricePoints)} نقطة لكل ${options.find((option) => option.slug === service.slug)?.unitLabelAr || "سجل"}.`
+                  : "يحسب الخادم السعر بالنقاط بعد تحديد الخدمة المطابقة لموضوعك."}</p>
               <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من الخادم بعد تحديد العدد والنطاق، وبحد أقصى {formatAr(PLATFORM_GUIDE.product.pointCap)} نقطة للمهمة.</p>
             </article>;
           })}
-          <article className="rounded-[20px] border border-ln bg-sf p-5 sm:col-span-2">
-            <h2 className="m-0 text-lg font-semibold">بحث موضوعي وأخبار ومواد أكاديمية</h2>
-            <p className="mb-2 mt-2 text-sm leading-7 text-mut">اجمع معلومات عن أي موضوع أو دولة أو لغة أو فترة زمنية، بما فيها الرياضة والأخبار والمواد الأكاديمية. مثال: «اجمع ١٠ أخبار عن الطاقة الشمسية في ألمانيا خلال آخر شهر».</p>
-            <p className="m-0 text-sm"><strong>السعر:</strong> يحسبه الخادم بالنقاط من الخدمة المطابقة في الكتالوج بعد تحديد نطاق البحث.</p>
-          </article>
           {PLATFORM_GUIDE.futureSources.map((future) => <article key={future.slug} className="rounded-[20px] border border-ln bg-sf2 p-5">
             <div className="flex items-center justify-between gap-3"><h2 className="m-0 text-lg font-semibold">{future.nameAr}</h2><span className="rounded-full bg-bg px-3 py-1 text-xs text-mut">{future.statusAr}</span></div>
           </article>)}
