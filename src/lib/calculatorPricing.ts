@@ -7,6 +7,7 @@ import {
 } from "../functions/shared/quotes";
 import {
   APPROVED_CAPABILITY_CATALOG,
+  UNAVAILABLE_CAPABILITY_SLUGS,
   type Capability,
 } from "../functions/shared/capabilityRegistry";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
@@ -61,7 +62,7 @@ function cleanArText(text: string): string {
 export function getPublicCalculatorOptions(
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG
 ): PublicCalculatorOption[] {
-  return capabilities.map((cap) => {
+  return capabilities.filter((cap) => !UNAVAILABLE_CAPABILITY_SLUGS.has(cap.slug)).map((cap) => {
     const isProfile = cap.slug.endsWith("-profile");
     return {
       slug: cap.slug,
