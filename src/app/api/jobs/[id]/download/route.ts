@@ -111,7 +111,7 @@ export async function GET(
     let country = "الدولة غير محددة";
     let industry = "النشاط غير محدد";
     const isUsefulIndustryLabel = (label?: string) => Boolean(
-      label && label !== country && label !== "قواعد بيانات الشركات" && label !== "يلزم تحديد النشاط" && !/دليل|المصادر|مصادر متاحة|أعادت|التي|results?|dataset|icypeas|endpoint|provider|search/i.test(label)
+      label && label !== country && label !== "قواعد بيانات الشركات" && !/يلزم تحديد النشاط|النشاط غير محدد|دليل|المصادر|مصادر متاحة|أعادت|التي|results?|dataset|icypeas|endpoint|provider|search/i.test(label)
     );
     const count = job.delivered_units || job.rows_collected || job.target_volume_max || 1;
     const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
