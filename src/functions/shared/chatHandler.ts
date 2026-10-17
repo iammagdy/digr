@@ -1990,6 +1990,11 @@ export class ChatHandler {
             const capabilityId = c.capabilitySlug || c.endpointId || "";
             const isRecordSearchCapability = /compan|b2b|people/i.test(capabilityId);
             const isSocialContentCapability = /video|videos|tiktok|youtube|reels|posts?|social|instagram|facebook|reddit|twitter/i.test(capabilityId);
+            if (isSocialContentCapability && (!itemParams.dateFrom || !itemParams.dateTo)) {
+              const dateFilters = dateFiltersFromHint(brief.dateRange || conversationRequestText);
+              if (dateFilters.from && !itemParams.dateFrom) itemParams.dateFrom = dateFilters.from;
+              if (dateFilters.to && !itemParams.dateTo) itemParams.dateTo = dateFilters.to;
+            }
             const requestedRecordVolume = isRecordSearchCapability && explicitRequestedVolume && explicitRequestedVolume > 0
               ? explicitRequestedVolume
               : undefined;
