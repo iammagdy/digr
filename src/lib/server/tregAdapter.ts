@@ -6,6 +6,7 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
+import { arabicVerificationStatus } from "../contactVerification";
 import { detectCountryFromText as detectInternationalCountryFromText, getMissingCompanyResearchRequirements } from "../planParameters";
 
 /**
@@ -458,18 +459,6 @@ function firstPeopleText(...values: any[]): string {
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
-}
-
-function arabicVerificationStatus(value: unknown, hasValue: boolean): string {
-  if (!hasValue) return "غير متاح";
-  if (["متحقق", "لم يتم التحقق", "يحتاج مراجعة", "غير صالح", "لم يتوفر تأكيد"].includes(String(value || ""))) return String(value);
-  if (value === true) return "متحقق";
-  if (value === false) return "لم يتم التحقق";
-  const status = String(value || "").trim().toLowerCase();
-  if (/^(?:verified|valid|deliverable|confirmed|true|pass)$/i.test(status)) return "متحقق";
-  if (/accept[_ -]?all|catch[_ -]?all/i.test(status)) return "يحتاج مراجعة";
-  if (/invalid|undeliverable|false|fail|disposable/i.test(status)) return "غير صالح";
-  return "لم يتوفر تأكيد";
 }
 
 function parseTregPeopleRows(data: any): Record<string, any>[] {

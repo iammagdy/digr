@@ -7,7 +7,6 @@ import {
   executeMultiStepPlanOffline,
 } from "../src/lib/server/multiStepOrchestrator";
 import {
-  generateCompanyExcelReport,
   generateMethodologyText,
   generateExcelReport,
 } from "../src/functions/shared/fileGenerators";
@@ -47,8 +46,8 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
     expect(summary.uniqueDeliveredCount).toBe(10);
   });
 
-  // Scenario B: MEP Contractors with Uploaded Exclusion File & 6-Sheet Excel Report
-  it("Scenario B: MEP contractors in Egypt with exclusion list & 6-sheet Excel report", async () => {
+  // Scenario B: MEP Contractors with Uploaded Exclusion File & data-only Excel Report
+  it("Scenario B: MEP contractors in Egypt with exclusion list & data-only Excel report", async () => {
     // 1. User uploaded exclusion CSV
     const csvContent = `اسم الشركة,الموقع الإلكتروني,السجل التجاري
 شركة أوراسكوم للإنشاءات,https://orascom.com,112233
@@ -100,7 +99,7 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
     expect(summary.duplicatesRemovedCount).toBe(2); // orascom and petrojet excluded
     expect(summary.uniqueDeliveredCount).toBe(3);
 
-    // 5. Generate 6-Sheet Corporate Excel Report
+    // 5. Generate the data-only Excel report (owner decision D4)
     const payload = {
       title: "دليل شركات المقاولات الكهروميكانيكية (MEP) في مصر",
       platform: "web",
@@ -109,7 +108,7 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
       rows: summary.finalDataset,
     };
 
-    const excelBuffer = await generateCompanyExcelReport(payload, summary.deduplicationAudit);
+    const excelBuffer = await generateExcelReport(payload);
     expect(excelBuffer).toBeDefined();
     expect(excelBuffer.length).toBeGreaterThan(1000);
 
@@ -118,10 +117,9 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
     await wb.xlsx.load(excelBuffer as any);
 
     const sheetNames = wb.worksheets.map((ws) => ws.name);
-    expect(sheetNames.some((n) => n.includes("الملخص التنفيذي"))).toBe(true);
-    expect(sheetNames.some((n) => n.includes("دليل الشركات"))).toBe(true);
-    expect(sheetNames.some((n) => n.includes("للتصفية"))).toBe(true);
-    // Explicitly confirm no audit/methodology/field-dictionary sheets inside Excel
+    expect(sheetNames).toEqual(["بيانات الشركات"]);
+    // Explicitly confirm no summary/audit/methodology/field-dictionary sheets inside Excel
+    expect(sheetNames.some((n) => n.includes("الملخص التنفيذي"))).toBe(false);
     expect(sheetNames.some((n) => n.includes("سجل تدقيق الاستبعاد"))).toBe(false);
     expect(sheetNames.some((n) => n.includes("جودة البيانات"))).toBe(false);
     expect(sheetNames.some((n) => n.includes("دليل الحقول"))).toBe(false);
@@ -133,10 +131,13 @@ describe("Offline Acceptance Scenarios (End-to-End Validation)", () => {
       duplicatesRemoved: summary.duplicatesRemovedCount,
       deduplicationCount: summary.duplicatesRemovedCount,
     });
-    expect(methodology).toContain("تغطية المجتمع المستهدف: لم تُقَس.");
-    expect(methodology).toContain("السجلات المستلمة من المصادر: ٥");
-    expect(methodology).toContain("السجلات المزالة بوصفها مكررة: ٢");
-    expect(methodology).toContain("عدد السجلات المعروضة: ٣");
+    expect(methodology).toContain("لم تُقَس نسبة تغطية المجتمع المستهدف");
+    expect(methodology).toContain("السجلات المستلمة من المصدر: ٥");
+    expect(methodology).toContain("تكرارات: ٢");
+    expect(methodology).toContain("السجلات المعروضة بعد التنظيف: ٣");
+    // Owner rule: Arabic-only customer text and "مصادر متاحة" wording.
+    expect(methodology).not.toContain("Diger");
+    expect(methodology).not.toContain("البيانات العامة");
   });
 
   // Scenario C: X/Twitter Public Sentiment Research

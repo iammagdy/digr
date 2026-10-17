@@ -2,7 +2,7 @@ import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import {
-  getEnabledCapabilities,
+  getEnabledCapabilitiesWithCoreServices,
   getCatalogCapabilities,
   sanitizeCapabilitiesForLlm,
   validateCapabilityParams,
@@ -65,6 +65,7 @@ import { customerFacingConversationTitle } from "../../lib/customerFacingConvers
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
+import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -115,11 +116,11 @@ function explicitCompanyClarificationNotes(notes?: string): string[] {
 
 function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
   const normalized = text || "";
-  const isAccount = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(normalized);
+  const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
   const isPeople = isPeopleSearchRequest(normalized);
   const isCompanies = !isPeople && (/(?:\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسة|مؤسسات|مصنع|مصانع)/iu.test(normalized));
-  const isSocialTopic = !isAccount && !isPeople && !isCompanies && /(?:فيديوهات?|مقاطع?|منشورات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/iu.test(normalized);
-  const accountHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(normalized)?.[1];
+  const isSocialTopic = !isAccount && !isPeople && !isCompanies && SOCIAL_CONTENT_WORDS_RE.test(normalized);
+  const accountHandle = ACCOUNT_HANDLE_RE.exec(normalized)?.[1];
 
   if (isAccount && !accountHandle) {
     return { id: "social_account_required", text: "ما اسم الحساب أو رابطه على المنصة؟", question: "ما اسم الحساب أو رابطه على المنصة؟", type: "free", options: [], allowOther: true };
@@ -137,9 +138,9 @@ function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): 
     if (!extractNumberFromText(normalized)) return { id: "company_count_required", text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true };
   }
   if (isSocialTopic) {
-    if (!/(?:عن|حول|بشأن|كلمة|وسم|هاشتاج|هاشتاغ|موضوع البحث المطلوب\s*:)\s+\S+/iu.test(normalized)) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
-    if (!/(?:على|منصة|في|منصة البحث المطلوبة\s*:)\s*(?:تيك\s*توك|tiktok|يوتيوب|youtube|إنستغرام|انستغرام|instagram|فيسبوك|facebook|تويتر|twitter|منصة\s*x)/iu.test(normalized)) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
-    if (!/(?:آخر|اخر|خلال|منذ)\s*(?:[0-9٠-٩]+|واحد|واحدة|اتنين|اثنين|ثلاثة|ثلاث|أربعة|اربعة|خمسة|خمس|عشرة|عشرين|شهر|أسبوع|سنة|يوم)|\b20\d{2}-\d{2}-\d{2}\b/iu.test(normalized)) return { id: "social_time_required", text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true };
+    const missingSocial = getMissingSocialInputs(normalized);
+    if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
+    if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
   }
   return null;
 }
@@ -191,6 +192,18 @@ export interface ChatHandlerResponse {
       tPlanLlmMs: number;
       tQuoteMs: number;
     };
+  };
+}
+
+/** Turn stats for replies that finish before any model call or catalog search (greeting, required-input question). */
+function zeroModelTurnStats(conversationId: string, messageId: string, turnStartTime: number): NonNullable<ChatHandlerResponse["turnStats"]> {
+  const latencyMs = Date.now() - turnStartTime;
+  console.log(`[chat:turn] conversationId=${conversationId} messageId=${messageId} modelCalls=0 catalogSearches=0 latencyMs=${latencyMs}`);
+  return {
+    modelCalls: 0,
+    catalogSearches: 0,
+    latencyMs,
+    stepTimings: { totalMs: latencyMs, tExtractMs: 0, tCatalogSearchMs: 0, tPlanLlmMs: 0, tQuoteMs: 0 },
   };
 }
 
@@ -455,7 +468,7 @@ export function buildAutoPlanProposal(
     .filter(Boolean)
     .join(" ");
   const peopleSearch = isPeopleSearchRequest(requestText);
-  const isAccountProfileRequest = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(requestText);
+  const isAccountProfileRequest = ACCOUNT_LOOKUP_RE.test(requestText);
   const explicitHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(requestText)?.[1];
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = peopleSearch
@@ -1332,6 +1345,7 @@ export class ChatHandler {
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
       };
     }
 
@@ -1474,13 +1488,10 @@ export class ChatHandler {
       currentStep = "capabilities_load";
       const tSbCapsStart = Date.now();
       const [loadedCapabilities, catalogCapabilities] = await Promise.all([
-        getEnabledCapabilities(this.tables),
+        getEnabledCapabilitiesWithCoreServices(this.tables),
         getCatalogCapabilities(this.tables),
       ]);
-      const peopleSearchSeed = APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search" && capability.enabled && capability.status === "verified");
-      const capabilities = peopleSearchSeed && !loadedCapabilities.some((capability) => capability.slug === peopleSearchSeed.slug)
-        ? [...loadedCapabilities, peopleSearchSeed]
-        : loadedCapabilities;
+      const capabilities = loadedCapabilities;
       supabaseMs += Date.now() - tSbCapsStart;
 
       let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
@@ -1682,6 +1693,7 @@ export class ChatHandler {
           clarificationQuestions: [normalizedQuestion.text || normalizedQuestion.question],
           clarificationItems: [normalizedQuestion],
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
         };
       }
 
@@ -1984,7 +1996,7 @@ export class ChatHandler {
       output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
       // Explicit company requests receive the same deterministic routing guard.
       output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
-      if (/(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(conversationRequestText)) {
+      if (ACCOUNT_LOOKUP_RE.test(conversationRequestText)) {
         // Profile requests have a distinct one-record plan with no country or
         // date filters; don't let a generic social-content plan replace it.
         output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
@@ -2261,9 +2273,9 @@ export class ChatHandler {
           /people/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
         );
         const requiredFieldsText = conversationRequestText;
-        const isAccountProfileRequest = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(requiredFieldsText);
-        const isSocialTopicRequest = !isAccountProfileRequest && /(?:فيديوهات?|مقاطع?|منشورات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/i.test(requiredFieldsText);
-        const accountHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(requiredFieldsText)?.[1];
+        const isAccountProfileRequest = ACCOUNT_LOOKUP_RE.test(requiredFieldsText);
+        const isSocialTopicRequest = !isAccountProfileRequest && SOCIAL_CONTENT_WORDS_RE.test(requiredFieldsText);
+        const accountHandle = ACCOUNT_HANDLE_RE.exec(requiredFieldsText)?.[1];
         const hasExplicitCount = Boolean(extractNumberFromText(requiredFieldsText));
         const missingCompanyFields = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
           ? getMissingCompanyResearchRequirements(requiredFieldsText)
@@ -2281,9 +2293,7 @@ export class ChatHandler {
         const missingSocialFields: string[] = [];
         if (isAccountProfileRequest && !accountHandle) missingSocialFields.push("social_account_required");
         if (isSocialTopicRequest) {
-          if (!/(?:على|منصة|في)\s*(?:تيك\s*توك|tiktok|يوتيوب|youtube|إنستغرام|انستغرام|instagram|فيسبوك|facebook|تويتر|twitter|منصة\s*x)/iu.test(requiredFieldsText)) missingSocialFields.push("social_platform_required");
-          if (!/(?:آخر|اخر|خلال|منذ)\s*(?:[0-9٠-٩]+|واحد|واحدة|اتنين|اثنين|ثلاثة|ثلاث|أربعة|اربعة|خمسة|خمس|عشرة|عشرين|شهر|أسبوع|سنة|يوم)|\b20\d{2}-\d{2}-\d{2}\b/iu.test(requiredFieldsText)) missingSocialFields.push("social_time_required");
-          if (!/(?:عن|حول|بشأن|كلمة|وسم|هاشتاج|هاشتاغ)\s+\S+/iu.test(requiredFieldsText)) missingSocialFields.push("social_topic_required");
+          missingSocialFields.push(...getMissingSocialInputs(requiredFieldsText).filter((id) => id !== "social_account_required"));
         }
         const missingCompanyCount = companyPlan && !isPeopleSearchRequest(requiredFieldsText) && !hasExplicitCount;
         const missingRequiredFields = [

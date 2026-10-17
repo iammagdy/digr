@@ -72,7 +72,8 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(detectPlatform("facebook.page.posts")).toContain("فيسبوك");
       expect(detectPlatform("instagram.user.profile")).toContain("إنستغرام");
       expect(detectPlatform("google.serp.organic")).toContain("جوجل");
-      expect(detectPlatform("custom_leads")).toContain("Diger");
+      // Owner decisions D4 / Arabic-only: the default source label is "مصادر متاحة".
+      expect(detectPlatform("custom_leads")).toBe("مصادر متاحة");
     });
   });
 
@@ -222,7 +223,8 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(norm.kpis.totalLikes).toBe(350);
       expect(norm.kpis.totalShares).toBe(55);
       expect(norm.codebook.length).toBeGreaterThanOrEqual(4);
-      expect(norm.metadata.methodology).toContain("Diger");
+      expect(norm.metadata.methodology).toContain("المصادر المتاحة");
+      expect(norm.metadata.methodology).not.toContain("Diger");
     });
   });
 

@@ -4,7 +4,7 @@ import { TablesDB, ID, Query } from "./dbCompat";
 import {
   Capability,
   validateCapabilityParams,
-  getEnabledCapabilities,
+  getEnabledCapabilitiesWithCoreServices,
   getRegistryPricingSettings,
   computeRegistryPointsPerUnit,
   getCustomerPriceUsdPerCatalogItem,

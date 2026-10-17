@@ -63,7 +63,7 @@ export const UNVERIFIED_PLATFORM_MESSAGE_AR =
   "هتحقق من الطلب وأرجعلك";
 
 /** Services that have been disabled after live customer testing exposed an unreliable execution path. */
-export const UNAVAILABLE_CAPABILITY_SLUGS = new Set<string>();
+export const UNAVAILABLE_CAPABILITY_SLUGS = new Set(["icypeas-people-search"]);
 
 export interface Capability {
   id?: string;
@@ -623,18 +623,8 @@ export async function getCatalogCapabilities(
  * falling back to verified entries in APPROVED_CAPABILITY_CATALOG if the table is empty.
  */
 export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<Capability[]> {
-  const requiredPeopleCapability = APPROVED_CAPABILITY_CATALOG.find((capability) =>
-    capability.slug === "professional-people-search" && capability.status === "verified" && capability.enabled,
-  );
-  const includeRequiredPeopleCapability = (items: Capability[]) => {
-    if (!requiredPeopleCapability || items.some((item) => item.slug === requiredPeopleCapability.slug)) return items;
-    // Decision-maker research is an owner-approved core capability (D3). Keep
-    // its reviewed server-side catalog entry available if an older registry
-    // snapshot simply predates the entry.
-    return [...items, { ...requiredPeopleCapability }];
-  };
   if (memoryCachedCatalog && Date.now() < memoryCachedCatalog.expiresAt) {
-    return includeRequiredPeopleCapability(memoryCachedCatalog.data.filter((c) => c.enabled));
+    return memoryCachedCatalog.data.filter((c) => c.enabled);
   }
 
   if (tables && typeof tables.from === "function") {
@@ -682,7 +672,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
             enabled: true,
           });
         }
-        return includeRequiredPeopleCapability(validCapabilities);
+        return validCapabilities;
       }
     } catch {
       // fallback
@@ -722,10 +712,46 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
           enabled: true,
         });
       }
-      return includeRequiredPeopleCapability(validCapabilities);
+      return validCapabilities;
     }
   }
-  return includeRequiredPeopleCapability(buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled));
+  return buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled);
+}
+
+const CORE_PEOPLE_SLUG = "professional-people-search";
+
+/** Registry row state for one slug, or "unknown" when it cannot be read (fail closed). */
+async function registryRowState(tables: any, slug: string): Promise<"absent" | "enabled" | "disabled" | "unknown"> {
+  if (!tables || typeof tables.from !== "function") return "unknown";
+  try {
+    const { data, error } = await tables.from("capability_registry").select("slug, enabled").eq("slug", slug);
+    if (error || !Array.isArray(data)) return "unknown";
+    const row = data.find((item: any) => item?.slug === slug);
+    if (!row) return "absent";
+    return row.enabled ? "enabled" : "disabled";
+  } catch {
+    return "unknown";
+  }
+}
+
+/**
+ * Enabled capabilities plus the owner-approved decision-maker service (D3).
+ *
+ * The reviewed code catalog entry is added only while the registry has no row
+ * at all for it, so existing deployments get the service before the registry
+ * row is inserted. A row that exists but is disabled is an admin kill switch
+ * and is always respected, and an unreadable registry never adds the service.
+ */
+export async function getEnabledCapabilitiesWithCoreServices(tables?: TablesDB | any): Promise<Capability[]> {
+  const enabled = await getEnabledCapabilities(tables);
+  if (enabled.some((capability) => capability.slug === CORE_PEOPLE_SLUG)) return enabled;
+  const seed = APPROVED_CAPABILITY_CATALOG.find(
+    (capability) => capability.slug === CORE_PEOPLE_SLUG && capability.status === "verified" && capability.enabled,
+  );
+  if (!seed) return enabled;
+  // Without a readable registry the seed fallback inside getEnabledCapabilities already served the catalog.
+  if (!tables || typeof tables.from !== "function") return enabled;
+  return (await registryRowState(tables, CORE_PEOPLE_SLUG)) === "absent" ? [...enabled, { ...seed }] : enabled;
 }
 
 /**

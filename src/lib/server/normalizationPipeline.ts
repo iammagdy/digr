@@ -116,7 +116,7 @@ export function detectPlatform(text?: string): string {
   if (str.includes("company") || str.includes("companies") || str.includes("b2b") || str.includes("icypeas")) {
     return "قواعد بيانات الشركات والأعمال (B2B Databases)";
   }
-  return "منصة Diger للبيانات العامة";
+  return "مصادر متاحة";
 }
 
 /**

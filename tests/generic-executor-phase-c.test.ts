@@ -265,6 +265,8 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       const capturedHeaders: Headers[] = [];
 
       global.fetch = vi.fn().mockImplementation(async (url: string, opts: any) => {
+        // The adapter reads the live endpoint schema first (a catalog GET, not a billed call); answer it with no schema.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         const headers = new Headers(opts.headers);
         capturedHeaders.push(headers);
         const body = JSON.parse(opts.body || "{}");
@@ -365,6 +367,8 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       const requestedOffsets: number[] = [];
 
       global.fetch = vi.fn().mockImplementation(async (url: string, opts: any) => {
+        // The adapter reads the live endpoint schema first (a catalog GET, not a billed call); answer it with no schema.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         const body = JSON.parse(opts.body || "{}");
         requestedOffsets.push(body.offset);
 
@@ -435,7 +439,9 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       });
 
       let callCount = 0;
-      global.fetch = vi.fn().mockImplementation(async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: any) => {
+        // Schema lookup (catalog GET) is not a billed provider call and must not count as a page or attempt.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         callCount++;
         return new Response(
           JSON.stringify({
@@ -498,7 +504,9 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       });
 
       let pageCalls = 0;
-      global.fetch = vi.fn().mockImplementation(async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: any) => {
+        // Schema lookup (catalog GET) is not a billed provider call and must not count as a page or attempt.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         pageCalls++;
         return new Response(
           JSON.stringify({
@@ -562,7 +570,9 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       setMemoryProviderDailySpendUsdForTesting(0.785);
 
       let pageCount = 0;
-      global.fetch = vi.fn().mockImplementation(async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: any) => {
+        // Schema lookup (catalog GET) is not a billed provider call and must not count as a page or attempt.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         pageCount++;
         // Page 1 costs $0.01 (10,000 microUSD), pushing daily spend to $0.805
         return new Response(
@@ -622,7 +632,9 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       });
 
       let attempts = 0;
-      global.fetch = vi.fn().mockImplementation(async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: any) => {
+        // Schema lookup (catalog GET) is not a billed provider call and must not count as a page or attempt.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         attempts++;
         if (attempts < 3) {
           return new Response(JSON.stringify({ error: "rate_limit", message: "Too Many Requests" }), {
@@ -682,7 +694,9 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
       });
 
       let attempts = 0;
-      global.fetch = vi.fn().mockImplementation(async () => {
+      global.fetch = vi.fn().mockImplementation(async (url: any) => {
+        // Schema lookup (catalog GET) is not a billed provider call and must not count as a page or attempt.
+        if (String(url).includes("/catalog/endpoints/")) return new Response("{}", { status: 200 });
         attempts++;
         return new Response(JSON.stringify({ error: "server_error" }), { status: 503 });
       });
