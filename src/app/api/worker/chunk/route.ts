@@ -1256,6 +1256,23 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Do not attempt settlement until the terminal cursor and collected count are persisted.
+      // settle_job_atomic also guards this state in SQL and can retire a stale lease only after
+      // this collection-complete marker has been committed.
+      const { data: persistedCompletion, error: persistedCompletionErr } = await adminClient
+        .from("jobs")
+        .select("status, current_cursor, delivered_units, target_volume_max")
+        .eq("id", jobId)
+        .maybeSingle();
+      if (
+        persistedCompletionErr ||
+        persistedCompletion?.status !== "running" ||
+        persistedCompletion?.current_cursor !== "completed" ||
+        Number(persistedCompletion?.delivered_units || 0) !== Number(recordedDeliveredUnits)
+      ) {
+        throw new Error("تعذر التحقق من اكتمال جمع البيانات قبل التسوية.");
+      }
+
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
       const primaryResultPath = savedCsvPath || savedXlsxPath || savedPdfPath || `${userId}/${jobId}/result.csv`;
       const { data: settleData, error: settleErr } = await adminClient.rpc("settle_job_atomic", {
