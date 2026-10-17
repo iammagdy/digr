@@ -37,7 +37,7 @@ import {
   type NormalizedClarificationQuestion,
   INTERNAL_DISCOVERY_KEYS,
 } from "./clarification";
-import { searchCatalog, getCachedCatalogEndpoints, CatalogEndpointSummary } from "./catalogClient";
+import { searchCatalog, getCachedCatalogEndpoints, sanitizeCustomerErrorMessage, CatalogEndpointSummary } from "./catalogClient";
 import {
   isGreetingOrGeneralQuestion,
   isPriceOrProceedIntent,
@@ -55,6 +55,7 @@ import { extractResearchIntent, extractEntityType } from "../../lib/server/resea
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest } from "../../lib/planParameters";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
+import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -882,6 +883,7 @@ export class ChatHandler {
         ? (this.tables as any)
         : null;
     let currentStep = "conversation_init";
+    let userMsgId = "";
 
     try {
       // 1. Get or Create Conversation
@@ -1013,7 +1015,7 @@ export class ChatHandler {
       supabaseMs += Date.now() - tSbProfStart;
 
       // 3. Save User Message & 4. Assistant Placeholder
-      const userMsgId = ID.unique();
+      userMsgId = ID.unique();
       assistantMsgId = ID.unique();
       const tSbMsgStart = Date.now();
 
@@ -1025,6 +1027,7 @@ export class ChatHandler {
             user_id: userId,
             role: "user",
             content_ar: message,
+            request_status: "planning",
             created_at: nowIso,
           }),
           sb.from("messages").insert({
@@ -1049,6 +1052,7 @@ export class ChatHandler {
             role: "user",
             content: message,
             status: "ready",
+            requestStatus: "planning",
             createdAt: nowIso,
           },
         });
@@ -1176,12 +1180,19 @@ export class ChatHandler {
       };
       if (sb) {
         await sb.from("messages").update({ content_ar: q.questionAr }).eq("id", assistantMsgId);
+        await sb.from("messages").update({ request_status: "needs_input" }).eq("id", userMsgId);
       } else {
         await this.tables.updateRow({
           databaseId: "digr",
           tableId: "messages",
           rowId: assistantMsgId,
           data: { content: q.questionAr, status: "ready" },
+        });
+        await this.tables.updateRow({
+          databaseId: "digr",
+          tableId: "messages",
+          rowId: userMsgId,
+          data: { requestStatus: "needs_input" },
         });
       }
       return assistantMsg;
@@ -2393,6 +2404,41 @@ export class ChatHandler {
       }
       supabaseMs += Date.now() - tSbMsgUpdateStart;
 
+      // Keep planning attempts in the request history even when no quote/job
+      // was created. This write is best-effort so history cannot block replies.
+      const requestStatus = resolveRequestAttemptStatus({
+        intent: isGreeting || isGeneralQuestion ? "chat" : "research",
+        outputType: output.type,
+        hasQuote: Boolean(planQuoteData?.quoteId),
+      });
+      try {
+        if (sb) {
+          const { error: requestStatusError } = await sb
+            .from("messages")
+            .update({
+              request_status: requestStatus,
+              request_error: output.type === "refuse" ? sanitizeCustomerErrorMessage(output.reasonAr) : null,
+              request_quote_id: planQuoteData?.quoteId || null,
+            })
+            .eq("id", userMsgId)
+            .eq("user_id", userId);
+          if (requestStatusError) throw requestStatusError;
+        } else {
+          await this.tables.updateRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: userMsgId,
+            data: {
+              requestStatus,
+              requestError: output.type === "refuse" ? sanitizeCustomerErrorMessage(output.reasonAr) : undefined,
+              requestQuoteId: planQuoteData?.quoteId || undefined,
+            },
+          });
+        }
+      } catch (requestStatusError: any) {
+        console.warn("[chat:request_history_update_failed]", requestStatusError?.message || "unknown_error");
+      }
+
       // 10. Record Token Usage & Stats in llm_usage (Server-only).
       // Logging must never block the reply: failures are swallowed.
       currentStep = "usage_log";
@@ -2550,6 +2596,27 @@ export class ChatHandler {
     } catch (err: any) {
       if (err && typeof err === "object" && !err.chatStep) {
         err.chatStep = currentStep;
+      }
+      if (userMsgId) {
+        const customerError = sanitizeCustomerErrorMessage(err?.message || "تعذر إعداد الطلب.");
+        try {
+          if (sb) {
+            await sb
+              .from("messages")
+              .update({ request_status: "failed", request_error: customerError })
+              .eq("id", userMsgId)
+              .eq("user_id", userId);
+          } else {
+            await this.tables.updateRow({
+              databaseId: "digr",
+              tableId: "messages",
+              rowId: userMsgId,
+              data: { requestStatus: "failed", requestError: customerError },
+            });
+          }
+        } catch (historyError: any) {
+          console.warn("[chat:request_history_failure_write_failed]", historyError?.message || "unknown_error");
+        }
       }
       throw err;
     }
