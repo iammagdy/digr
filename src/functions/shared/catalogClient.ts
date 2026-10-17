@@ -169,7 +169,7 @@ export function deriveArabicTaskName(rawEndpoint: any, platform: string): { name
     summaryAr = `جمع التعليقات العامة والمشاركات من ${platformAr}`;
   } else if (nameEn.includes("profile") || summaryEn.includes("profile") || idStr.includes("profile") || nameEn.includes("user")) {
     nameAr = `استخراج ملف حساب ${platformAr}`;
-    summaryAr = `استخراج البيانات والإحصائيات العامة لحساب ${platformAr}`;
+    summaryAr = `استخراج البيانات والإحصائيات المتاحة لحساب ${platformAr}`;
   } else if (nameEn.includes("search") || summaryEn.includes("search") || idStr.includes("search")) {
     nameAr = `بحث واستخراج بيانات ${platformAr}`;
     summaryAr = `البحث في البيانات والمحتوى العام على ${platformAr} بالكلمات المفتاحية`;
