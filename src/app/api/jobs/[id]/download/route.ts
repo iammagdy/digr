@@ -110,6 +110,9 @@ export async function GET(
 
     let country = "الدولة غير محددة";
     let industry = "النشاط غير محدد";
+    const isUsefulIndustryLabel = (label?: string) => Boolean(
+      label && label !== "قواعد بيانات الشركات" && !/دليل|المصادر|مصادر متاحة|أعادت|التي|results?|dataset/i.test(label)
+    );
     const count = job.delivered_units || job.rows_collected || job.target_volume_max || 1;
     const date = (job.finished_at || job.created_at || new Date().toISOString()).split("T")[0];
 
@@ -120,7 +123,7 @@ export async function GET(
       country = detectedC.arabicLabel;
     }
     const detectedInd = detectIndustryFromText(sourceText);
-    if (detectedInd?.arabicLabel) {
+    if (isUsefulIndustryLabel(detectedInd?.arabicLabel)) {
       industry = detectedInd.arabicLabel;
     }
 
@@ -226,10 +229,12 @@ export async function GET(
           const savedCountry = detectCountryFromText(metadataText);
           const savedIndustry = detectIndustryFromText(originalRequestText || metadataText);
           if (savedCountry?.arabicLabel) country = savedCountry.arabicLabel;
-          if (savedIndustry?.arabicLabel && savedIndustry.arabicLabel !== "قواعد بيانات الشركات") {
+          if (isUsefulIndustryLabel(savedIndustry?.arabicLabel)) {
             industry = savedIndustry.arabicLabel;
           }
-          downloadFileName = `${industry} في ${country} - ${count} شركة - ${date}.${format}`
+          const taskIndustry = isUsefulIndustryLabel(industry) ? industry : "الشركات";
+          const taskCountry = country === "الدولة غير محددة" ? "النطاق المطلوب" : country;
+          downloadFileName = `${taskIndustry} في ${taskCountry} - ${count} شركة - ${date}.${format}`
             .replace(/[/\\?%*:|"<>]/g, "-").trim();
         }
       } catch {
