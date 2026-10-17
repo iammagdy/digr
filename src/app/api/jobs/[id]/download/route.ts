@@ -98,8 +98,8 @@ export async function GET(
       industry = detectedInd.arabicLabel;
     }
 
-    const isCompanyJob = /company|compan|companies|\bB2B\b|شركة|شركات|مقاولات|مؤسسات/i.test(
-      [job.platform, job.template_slug, job.title, job.brief, job.search_query, paramsText, quoteSummary]
+    let isCompanyJob = /company|compan|companies|\bB2B\b|شركة|شركات|مقاولات|مؤسسات/i.test(
+      [job.platform, job.endpoint_id, job.capability_slug, job.template_slug, job.title, job.brief, job.search_query, paramsText, quoteSummary]
         .filter(Boolean).join(" ")
     );
 
@@ -174,6 +174,39 @@ export async function GET(
           jsonText = await blob.text();
           break;
         }
+      }
+    }
+
+    // Older job rows do not always carry a company platform slug. The stored
+    // result metadata is the most reliable source when building a task name.
+    if (jsonText) {
+      try {
+        const savedPayload = JSON.parse(jsonText);
+        const metadata = savedPayload?.metadata || {};
+        const firstRow = Array.isArray(savedPayload?.rows) ? savedPayload.rows[0] : null;
+        const metadataText = [
+          metadata.title,
+          metadata.description,
+          metadata.scope?.country,
+          metadata.scope?.industry,
+          metadata.country,
+          metadata.industry,
+        ].filter(Boolean).join(" ");
+        isCompanyJob = isCompanyJob || metadata.entityType === "companies" || Boolean(
+          firstRow && (firstRow.company_name || firstRow.company_website || firstRow.cr_number)
+        );
+        if (isCompanyJob) {
+          const savedCountry = detectCountryFromText(metadataText);
+          const savedIndustry = detectIndustryFromText(metadataText);
+          if (savedCountry?.arabicLabel) country = savedCountry.arabicLabel;
+          if (savedIndustry?.arabicLabel && savedIndustry.arabicLabel !== "قواعد بيانات الشركات") {
+            industry = savedIndustry.arabicLabel;
+          }
+          downloadFileName = `${industry} في ${country} - ${count} شركة - ${date}.${format}`
+            .replace(/[/\\?%*:|"<>]/g, "-").trim();
+        }
+      } catch {
+        // Keep the best task name derived from the approved request metadata.
       }
     }
 
