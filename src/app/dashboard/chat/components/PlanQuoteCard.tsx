@@ -23,6 +23,9 @@ export interface PlanQuoteData {
   expectedPoints?: number;
   quotedPoints: number;
   isAffordable: boolean;
+  pointsCapConstrained?: boolean;
+  requestedVolumeMax?: number;
+  pointsCap?: number;
   userBalance: number;
   downscaledOffer?: {
     maxAffordableUnits: number;
@@ -241,6 +244,12 @@ export default function PlanQuoteCard({
           {!locked && !expired && expiryShort(quote.expiresAt, now) && <>{expiryShort(quote.expiresAt, now)}</>}
         </p>
       </div>
+
+      {quote.pointsCapConstrained && (
+        <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
+          تم ضبط العدد من {formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى {formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف {formatAr(quote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.
+        </p>
+      )}
 
       {/* Interpreted Parameters: Country, Industry, Target Volume */}
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px]">

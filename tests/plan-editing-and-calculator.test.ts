@@ -317,6 +317,36 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     expect(breakdown.chargedPoints).toBe(1100);
   });
 
+  it("caps managed YouTube comment quotes and their reserves at the settlement cap", async () => {
+    const mockTables: any = {
+      from: () => {
+        const chain: any = {
+          select() { return this; }, eq() { return this; }, not() { return this; }, order() { return this; },
+          limit: async () => ({ data: [], error: null }),
+          insert: async () => ({ error: null }),
+          update() { return this; }, in() { return this; }, then(resolve: any) { resolve({ error: null }); },
+        };
+        return chain;
+      },
+    };
+    const cap: any = {
+      id: "social-youtube-comments", slug: "social-youtube-comments", nameAr: "تعليقات يوتيوب", nameEn: "YouTube comments",
+      unitCostUsd: 0.0009, customerPriceUsdPerItem: 0.0015, pricingUnit: "item", maxRows: 1000, enabled: true,
+      paramsSchema: "{}", tregEndpointId: "social-youtube-comments",
+    };
+    const quote = await createAndSaveManagedQuote(mockTables, {
+      conversationId: "cap-test", userId: "user-test", userBalance: 1000,
+      capabilities: [cap], pricingSettings: DEFAULT_PRICING_SETTINGS,
+      plan: { summaryAr: "تعليقات مقطع", items: [{ capabilitySlug: cap.slug, params: {}, targetVolumeMin: 1, targetVolumeMax: 100 }], outputFormats: ["xlsx"] },
+    });
+    expect(quote.pointsCapConstrained).toBe(true);
+    expect(quote.requestedVolumeMax).toBe(100);
+    expect(quote.targetVolumeMax).toBe(57);
+    expect(quote.expectedPoints).toBe(513);
+    expect(quote.quotedPoints).toBe(590);
+    expect(quote.quotedPoints).toBeLessThanOrEqual(600);
+  });
+
   it("produces identical quote results between managed quote and calculator across samples", async () => {
     const mockTables: any = {
       listRows: async () => ({ rows: [], total: 0 }),

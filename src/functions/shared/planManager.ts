@@ -561,6 +561,9 @@ export interface ManagedQuoteResult {
     rawCostPoints?: number;
   };
   capacityConstrained?: boolean;
+  pointsCapConstrained?: boolean;
+  requestedVolumeMax?: number;
+  pointsCap?: number;
   userBalance: number;
   expiresAt: string;
   createdAt: string;
@@ -596,6 +599,8 @@ export async function createAndSaveManagedQuote(
   let totalVolumeMax = 0;
   let totalRawPoints = 0;
   let effectiveUnitPrice = 0;
+  const requestedVolumeMax = plan.items.reduce((sum, item) => sum + Math.max(1, item.targetVolumeMax || 1), 0);
+  const pointsCap = getConfiguredJobPointsCap();
 
   for (const it of plan.items) {
     // Match capability strictly; NEVER substitute capabilities[0]
@@ -728,6 +733,37 @@ export async function createAndSaveManagedQuote(
       totalRawPoints += itemRawPoints;
       totalQuotedPoints += itemReservation;
       totalVolumeMax += it.targetVolumeMax;
+    }
+  }
+
+  // Settlement is capped, so keep both the visible charge and the 15% reserve within that same cap.
+  // Scale all items proportionally, then shave any rounding overflow from the highest-priced item.
+  let pointsCapConstrained = false;
+  const reservationTotal = () => plan.items.reduce((sum, item) => {
+    const raw = item.targetVolumeMax * (item.unitPricePoints || 1);
+    return sum + Math.max(1, Math.ceil(raw * (1 + effectivePricing.safetyBuffer)));
+  }, 0);
+  if (reservationTotal() > pointsCap) {
+    pointsCapConstrained = true;
+    const ratio = pointsCap / reservationTotal();
+    for (const item of plan.items) item.targetVolumeMax = Math.max(1, Math.floor(item.targetVolumeMax * ratio));
+    while (reservationTotal() > pointsCap) {
+      const reducible = plan.items
+        .filter((item) => item.targetVolumeMax > 1)
+        .sort((a, b) => (b.unitPricePoints || 1) - (a.unitPricePoints || 1))[0];
+      if (!reducible) throw new Error("الحد الأدنى للخطة يتجاوز سقف النقاط للمهمة؛ يرجى تقليل عدد السجلات.");
+      reducible.targetVolumeMax -= 1;
+    }
+    totalRawPoints = 0;
+    totalQuotedPoints = 0;
+    totalVolumeMax = 0;
+    for (const item of plan.items) {
+      item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
+      item.itemReservation = Math.max(1, Math.ceil(item.rawPoints * (1 + effectivePricing.safetyBuffer)));
+      item.reservedPoints = item.itemReservation;
+      totalRawPoints += item.rawPoints;
+      totalQuotedPoints += item.itemReservation;
+      totalVolumeMax += item.targetVolumeMax;
     }
   }
 
@@ -888,6 +924,9 @@ export async function createAndSaveManagedQuote(
     isAffordable,
     downscaledOffer,
     capacityConstrained,
+    pointsCapConstrained,
+    requestedVolumeMax,
+    pointsCap,
     userBalance,
     expiresAt,
     createdAt: nowIso,

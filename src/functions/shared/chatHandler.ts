@@ -2609,6 +2609,9 @@ export class ChatHandler {
             expectedPoints: managedQuote.expectedPoints,
             quotedPoints: managedQuote.quotedPoints,
             isAffordable: managedQuote.isAffordable,
+            pointsCapConstrained: managedQuote.pointsCapConstrained,
+            requestedVolumeMax: managedQuote.requestedVolumeMax,
+            pointsCap: managedQuote.pointsCap,
             userBalance,
             downscaledOffer: managedQuote.downscaledOffer,
             capacityConstrained: managedQuote.capacityConstrained,
@@ -2620,6 +2623,9 @@ export class ChatHandler {
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          if (managedQuote.pointsCapConstrained) {
+            planSummaryText += `\n- تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
+          }
           if (brief.exclusionFile) {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${toArabicDigits(brief.exclusionFile.baselineRowCount)} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
@@ -2718,6 +2724,9 @@ export class ChatHandler {
                 expectedPoints: managedQuote.expectedPoints,
                 quotedPoints: managedQuote.quotedPoints,
                 isAffordable: managedQuote.isAffordable,
+              pointsCapConstrained: managedQuote.pointsCapConstrained,
+              requestedVolumeMax: managedQuote.requestedVolumeMax,
+              pointsCap: managedQuote.pointsCap,
                 userBalance,
                 downscaledOffer: managedQuote.downscaledOffer,
                 capacityConstrained: managedQuote.capacityConstrained,
@@ -2726,6 +2735,9 @@ export class ChatHandler {
               };
 
               finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          if (managedQuote.pointsCapConstrained) {
+            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
+          }
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
               }
