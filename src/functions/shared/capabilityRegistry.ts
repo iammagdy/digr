@@ -720,18 +720,29 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
 
 const CORE_PEOPLE_SLUG = "professional-people-search";
 
-/** Registry row state for one slug, or "unknown" when it cannot be read (fail closed). */
+const REGISTRY_ROW_STATE_TTL_MS = 60_000;
+const registryRowStateCache = new Map<string, { state: "absent" | "enabled" | "disabled"; at: number }>();
+
+/** Registry row state for one slug, or "unknown" when it cannot be read (fail closed). Readable answers are cached for a minute. */
 async function registryRowState(tables: any, slug: string): Promise<"absent" | "enabled" | "disabled" | "unknown"> {
   if (!tables || typeof tables.from !== "function") return "unknown";
+  const cached = registryRowStateCache.get(slug);
+  if (cached && Date.now() - cached.at < REGISTRY_ROW_STATE_TTL_MS) return cached.state;
   try {
     const { data, error } = await tables.from("capability_registry").select("slug, enabled").eq("slug", slug);
     if (error || !Array.isArray(data)) return "unknown";
     const row = data.find((item: any) => item?.slug === slug);
-    if (!row) return "absent";
-    return row.enabled ? "enabled" : "disabled";
+    const state = !row ? "absent" : row.enabled ? "enabled" : "disabled";
+    registryRowStateCache.set(slug, { state, at: Date.now() });
+    return state;
   } catch {
     return "unknown";
   }
+}
+
+/** Test hook: forget cached registry row states. */
+export function clearRegistryRowStateCacheForTesting(): void {
+  registryRowStateCache.clear();
 }
 
 /**

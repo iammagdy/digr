@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
 import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
+import { normalizeEasternArabicDigits } from "@/lib/arabicNumbers";
 
 export interface TerminalEvent {
   $id: string;
@@ -81,15 +82,20 @@ export default function ActivityTerminal({
   const isAutoScrollActive = useRef(true);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
 
-  // Parse duplicates removed from events if not explicitly passed
+  // Parse duplicates removed from events if not explicitly passed. Events carry Arabic-Indic digits.
+  // Per-page lines already include every exclusion of that page, so they win over the separate audit line.
   let effectiveDuplicates = duplicatesRemoved;
   if (!effectiveDuplicates && events) {
+    let fromPages = 0;
+    let fromAudit = 0;
     for (const ev of events) {
-      const match = ev.textAr.match(/استبعاد\s+(\d+)\s+سجل\s+مكرر/);
-      if (match && match[1]) {
-        effectiveDuplicates += parseInt(match[1], 10);
-      }
+      const text = normalizeEasternArabicDigits(ev.textAr);
+      const page = text.match(/مكرر أو مستبعد\s+(\d+)/);
+      if (page && page[1]) fromPages += parseInt(page[1], 10);
+      const audit = text.match(/استبعاد\s+(\d+)\s+سجل\s+مكرر/);
+      if (audit && audit[1]) fromAudit += parseInt(audit[1], 10);
     }
+    effectiveDuplicates = fromPages > 0 ? fromPages : fromAudit;
   }
 
   // Handle user scroll detection

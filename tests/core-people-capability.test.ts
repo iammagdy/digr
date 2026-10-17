@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { getEnabledCapabilitiesWithCoreServices, UNAVAILABLE_CAPABILITY_SLUGS } from "../src/functions/shared/capabilityRegistry";
+import { describe, it, expect, beforeEach } from "vitest";
+import { clearRegistryRowStateCacheForTesting, getEnabledCapabilitiesWithCoreServices, UNAVAILABLE_CAPABILITY_SLUGS } from "../src/functions/shared/capabilityRegistry";
 
 function registryWith(rows: any[]) {
   return {
@@ -17,6 +17,8 @@ function registryWith(rows: any[]) {
 const TIKTOK = { slug: "tiktok-profile", enabled: true, unit_cost_usd: 0.001, unit_price_credits: 6, category: "tiktok" };
 
 describe("core decision-maker service (owner decision D3)", () => {
+  beforeEach(() => clearRegistryRowStateCacheForTesting());
+
   it("adds the reviewed people service while the registry has no row for it", async () => {
     const caps = await getEnabledCapabilitiesWithCoreServices(registryWith([TIKTOK]) as any);
     expect(caps.map((c) => c.slug)).toContain("professional-people-search");

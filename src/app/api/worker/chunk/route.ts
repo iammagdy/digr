@@ -39,7 +39,7 @@ import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLa
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
-import { estimateRemainingSecondsFromMeasuredPages } from "../../../../functions/shared/liveActivityFeed";
+import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 
 export const dynamic = "force-dynamic";
@@ -127,7 +127,7 @@ async function executeReleaseConfirmation(
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: jobRow.user_id,
-                message: `تعذر استكمال الاستخراج: ${reason} (تم استرداد ${Math.round(releasedCredits)} نقطة لرصيدك).`,
+                message: `تعذر استكمال الاستخراج: ${reason} (تم استرداد ${toArabicDigits(Math.round(releasedCredits))} نقطة لرصيدك).`,
                 units: 0,
                 event_type: "error",
               });
@@ -472,7 +472,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم استبعاد ${dateFiltered.excludedCount} سجل لوقوع تاريخه خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
+          message: `تم استبعاد ${toArabicDigits(dateFiltered.excludedCount)} سجل لوقوع تاريخه خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
           units: effectiveDelivered,
           event_type: "progress",
         });
@@ -565,7 +565,7 @@ export async function POST(req: NextRequest) {
           await adminClient.from("job_events").insert({
             job_id: jobId,
             user_id: userId,
-            message: `تم تدقيق السجلات واستبعاد ${excludedCount} سجل مكرر.`,
+            message: `تم تدقيق السجلات واستبعاد ${toArabicDigits(excludedCount)} سجل مكرر.`,
             units: effectiveDelivered,
             event_type: "progress",
           });
@@ -681,8 +681,12 @@ export async function POST(req: NextRequest) {
 
     // If done and zero rows were collected across the job, release full reserve with zero charge
     if (isDone && newDeliveredUnits === 0) {
-      const emptyErrorAr =
-        "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+      // A valid but empty answer and "records arrived but none matched the request" are different
+      // situations and are explained differently; both release the full reserve with zero charge.
+      const receivedFromSource = providerRows.length;
+      const emptyErrorAr = receivedFromSource > 0
+        ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+        : "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
       const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
       if (!rel.confirmed) {
         return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -775,11 +779,21 @@ export async function POST(req: NextRequest) {
             .eq("event_type", "progress")
             .order("created_at", { ascending: true })
             .limit(100);
-          const measuredPages = (previousPageEvents || [])
-            .filter((event: any) => typeof event.message === "string" && /^الصفحة\s/u.test(event.message))
-            .map((event: any) => ({ count: Number(event.units), createdAt: event.created_at, kind: "progress" as const }));
-          measuredPages.push({ count: recordedDeliveredUnits, createdAt: new Date().toISOString(), kind: "progress" });
-          const etaSeconds = estimateRemainingSecondsFromMeasuredPages(measuredPages, recordedDeliveredUnits, targetMax);
+          const { data: startedJob } = await adminClient.from("jobs").select("created_at").eq("id", jobId).maybeSingle();
+          // Measured batch durations: job start -> first page, then page -> page, ending now.
+          const marks = [
+            Date.parse(String(startedJob?.created_at || "")),
+            ...(previousPageEvents || [])
+              .filter((event: any) => typeof event.message === "string" && /^الصفحة\s/u.test(event.message))
+              .map((event: any) => Date.parse(String(event.created_at || ""))),
+            Date.now(),
+          ].filter((mark) => Number.isFinite(mark));
+          const measuredBatchSeconds = marks.slice(1).map((mark, index) => (mark - marks[index]) / 1000);
+          const etaSeconds = estimateRemainingSecondsFromBatchDurations({
+            remainingRows: targetMax - recordedDeliveredUnits,
+            pageSize: effectivePageSize,
+            measuredBatchSeconds,
+          });
           if (etaSeconds !== null) {
             const etaValue = etaSeconds < 60
               ? `نحو ${toArabicDigits(etaSeconds)} ثانية`
@@ -1056,7 +1070,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: "جاري تجهيز وتنسيق ملفات النتائج (Excel و PDF و CSV)...",
+          message: "جاري تجهيز ملفات النتائج وتنسيقها...",
           units: finalRows.length,
           event_type: "progress",
         });
@@ -1268,15 +1282,10 @@ export async function POST(req: NextRequest) {
 
       // Record completion event in job_events table
       try {
-        const filesSaved = [
-          savedXlsxPath ? "Excel" : null,
-          savedPdfPath ? "PDF" : null,
-          savedCsvPath ? "CSV" : null,
-        ].filter(Boolean).join(" و ");
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم إكمال استخراج ${finalRows.length} سجل بنجاح وحفظ ملفات النتائج (${filesSaved || "المتاحة"}).`,
+          message: `تم إكمال استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح وحفظ ملفات النتائج.`,
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,
@@ -1288,7 +1297,7 @@ export async function POST(req: NextRequest) {
           await adminClient.from("job_events").insert({
             job_id: jobId,
             user_id: userId,
-            message: `تم خصم ${chargedPts} نقطة وتحرير ${refundedPts} نقطة متبقية تلقائياً لرصيدك.`,
+            message: `تم خصم ${toArabicDigits(chargedPts)} نقطة وتحرير ${toArabicDigits(refundedPts)} نقطة متبقية تلقائياً لرصيدك.`,
             units: finalRows.length,
             event_type: "info",
             created_at: completedAtIso,

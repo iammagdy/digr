@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { buildSystemPrompt, PROMPT_VERSION } from "./systemPrompt";
+import { buildSystemPrompt, buildSystemPromptParts, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
@@ -2372,13 +2372,19 @@ export class LlmClient {
       return this.handleProviderError(new Error("ANTHROPIC_API_KEY is not configured"), "anthropic");
     }
 
-    const systemPrompt = buildSystemPrompt({
+    // The long fixed rules are marked cacheable; only the small per-turn context after them changes.
+    // Measured before this change: plan turns averaged 17.6k input tokens and 7.4 s (p50 6.3 s).
+    const promptParts = buildSystemPromptParts({
       userProfile: options.userProfile,
       sanitizedCapabilities: options.sanitizedCapabilities,
       todayDate: options.todayDate,
       userBalancePoints: options.userBalancePoints,
       conversationState: options.conversationState,
     });
+    const systemBlocks = [
+      { type: "text", text: promptParts.staticText, cache_control: { type: "ephemeral" } },
+      { type: "text", text: promptParts.dynamicText },
+    ];
 
     const formattedMessages = sanitizeMessagesForAnthropic(options.messages, {
       ensureUserEnd: true,
@@ -2400,7 +2406,7 @@ export class LlmClient {
         body: JSON.stringify({
           model,
           max_tokens: 1024,
-          system: systemPrompt,
+          system: systemBlocks,
           messages: formattedMessages,
           tools: [
             {
@@ -2641,7 +2647,12 @@ export class LlmClient {
         }
       }
 
-      const inTokens = data.usage?.input_tokens || 800;
+      // Cached prompt tokens are reported separately by the API: reads cost 0.1x and writes 1.25x of the
+      // input price. Counting only `input_tokens` would hide most of the real spend from the daily cap.
+      const uncachedInTokens = data.usage?.input_tokens || 800;
+      const cacheReadTokens = Number(data.usage?.cache_read_input_tokens) || 0;
+      const cacheWriteTokens = Number(data.usage?.cache_creation_input_tokens) || 0;
+      const inTokens = uncachedInTokens + cacheReadTokens + cacheWriteTokens;
       const outTokens = data.usage?.output_tokens || 150;
 
       const pricing = getLlmPricingSettings(
@@ -2649,7 +2660,8 @@ export class LlmClient {
         model,
         options.pricingSettings || this.customPricing
       );
-      const costUsd = (inTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
+      const weightedInputTokens = uncachedInTokens + cacheReadTokens * 0.1 + cacheWriteTokens * 1.25;
+      const costUsd = (weightedInputTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
 
       setLastLlmFallbackReason(null);
       setLastLlmFallbackDetail(null);

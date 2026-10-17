@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { detectIndustryFromText, isCompanyRowMatchingLocation } from "../planParameters";
+import { industryLabelForSentence } from "../industryLabels";
 
 export type RelevanceDecision = "match" | "no_match" | "uncertain";
 
@@ -79,7 +80,7 @@ export function evaluateDeterministicRelevance(
     if (isExcludedUnrelated) {
       return {
         decision: "no_match",
-        reasonAr: `النشاط الفعلي (${row.industry || "غير مطابق"}) ليس شركة مقاولات أو تشييد`,
+        reasonAr: `النشاط الفعلي (${industryLabelForSentence(row.industry)}) ليس شركة مقاولات أو تشييد`,
       };
     }
 
@@ -122,7 +123,7 @@ export function evaluateDeterministicRelevance(
     if (isAmbiguousEngineering) {
       return {
         decision: "uncertain",
-        reasonAr: `النشاط المسجل في المصدر (${row.industry || "غير محدد"}) قد يشمل مقاولات؛ أُحيل السجل للمراجعة ولم يُحتسب`,
+        reasonAr: `النشاط المسجل في المصدر (${industryLabelForSentence(row.industry)}) قد يشمل مقاولات؛ أُحيل السجل للمراجعة ولم يُحتسب`,
       };
     }
 
@@ -143,7 +144,7 @@ export function evaluateDeterministicRelevance(
     if (isExcluded) {
       return {
         decision: "no_match",
-        reasonAr: `النشاط (${row.industry || "غير مطابق"}) غير مرتبط بالتكنولوجيا المالية`,
+        reasonAr: `النشاط (${industryLabelForSentence(row.industry)}) غير مرتبط بالتكنولوجيا المالية`,
       };
     }
 
@@ -180,7 +181,7 @@ export function evaluateDeterministicRelevance(
     if (isExcluded) {
       return {
         decision: "no_match",
-        reasonAr: `النشاط (${row.industry || "غير مطابق"}) غير مرتبط بتقنية المعلومات`,
+        reasonAr: `النشاط (${industryLabelForSentence(row.industry)}) غير مرتبط بتقنية المعلومات`,
       };
     }
 
@@ -256,7 +257,7 @@ export function evaluateDeterministicRelevance(
   if (sectorLabels.some((label) => rowInd === label || rowInd.includes(label))) {
     return {
       decision: "match",
-      reasonAr: `النشاط المسجل في المصدر (${row.industry}) يطابق المجال المطلوب`,
+      reasonAr: `النشاط المسجل في المصدر (${industryLabelForSentence(row.industry)}) يطابق المجال المطلوب`,
     };
   }
 

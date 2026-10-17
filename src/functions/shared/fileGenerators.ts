@@ -8,6 +8,7 @@ import { localizeCityFromAddress, localizeCityName } from "../../lib/server/addr
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { arabicVerificationStatus } from "../../lib/contactVerification";
+import { industryLabelAr } from "../../lib/industryLabels";
 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
@@ -409,19 +410,7 @@ async function generateCompanyDataWorkbook(
   const cleanCellText = (v: unknown) => String(v ?? "").replace(/^'/, "").trim() || "غير متاح";
   const sectorLabel = (value: unknown) => {
     const s = cleanCellText(value);
-    const labels: Record<string, string> = {
-      "construction": "المقاولات والتشييد",
-      "information technology & services": "تقنية المعلومات والخدمات التقنية",
-      "computer software": "البرمجيات",
-      "restaurants": "المطاعم",
-      "food & beverages": "الأغذية والمشروبات",
-      "renewables & environment": "الطاقة المتجددة والبيئة",
-      "building materials": "مواد البناء",
-      "real estate": "العقارات",
-      "mechanical or industrial engineering": "الهندسة الميكانيكية والصناعية",
-      "electrical/electronic manufacturing": "تصنيع المعدات الكهربائية والإلكترونية",
-    };
-    return labels[s.toLowerCase()] || s;
+    return industryLabelAr(s) ?? s;
   };
   const rows = norm.rows;
   rows.forEach((r, index) => {
