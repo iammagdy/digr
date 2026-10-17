@@ -532,6 +532,13 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   const isIcypeas = isIcypeasCompanies || isIcypeasPeople;
 
+  // Pagination hints come from the generic source planner, but the live
+  // provider endpoint schema is authoritative. Some search endpoints expose
+  // only `query` and `limit`; sending an inferred offset/page/cursor then
+  // makes an otherwise valid first-page request fail with HTTP 400.
+  const supportsPaginationParam = (param: string) =>
+    !allowedParamKeys || allowedParamKeys.includes(param);
+
   let allowedParamKeys: string[] | undefined;
   const schemaProperties = endpointDetails?.paramsSchema?.properties;
   if (schemaProperties && typeof schemaProperties === "object") {
@@ -558,15 +565,17 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     pageParams = serializeProviderParams(input.params || {}, allowedParamKeys);
     if (input.paginationStrategy === "cursor") {
       if (input.cursor) {
-        pageParams.cursor = input.cursor;
-        pageParams.next_cursor = input.cursor;
+        if (supportsPaginationParam("cursor")) pageParams.cursor = input.cursor;
+        else if (supportsPaginationParam("next_cursor")) pageParams.next_cursor = input.cursor;
       }
     } else if (input.paginationStrategy === "offset") {
       const numericOffset = input.cursor ? Number(input.cursor) : input.step * input.pageSize;
-      pageParams.offset = Number.isFinite(numericOffset) ? numericOffset : input.step * input.pageSize;
+      if (supportsPaginationParam("offset")) {
+        pageParams.offset = Number.isFinite(numericOffset) ? numericOffset : input.step * input.pageSize;
+      }
       pageParams.limit = input.pageSize;
     } else if (input.paginationStrategy === "page") {
-      pageParams.page = page;
+      if (supportsPaginationParam("page")) pageParams.page = page;
       pageParams.limit = input.pageSize;
     }
   }
@@ -650,7 +659,8 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   if (rows.length > 0 && !isIcypeas) {
-    if (input.paginationStrategy === "cursor") {
+    if (input.paginationStrategy === "cursor" &&
+        (supportsPaginationParam("cursor") || supportsPaginationParam("next_cursor"))) {
       const candidateCursor =
         callResult.data?.next_cursor ??
         callResult.data?.cursor ??
@@ -667,12 +677,12 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       ) {
         nextCursor = String(candidateCursor);
       }
-    } else if (input.paginationStrategy === "offset") {
+    } else if (input.paginationStrategy === "offset" && supportsPaginationParam("offset")) {
       if (rows.length >= input.pageSize) {
         const baseOffset = input.cursor ? Number(input.cursor) : input.step * input.pageSize;
         nextCursor = String((Number.isFinite(baseOffset) ? baseOffset : 0) + rows.length);
       }
-    } else if (input.paginationStrategy === "page") {
+    } else if (input.paginationStrategy === "page" && supportsPaginationParam("page")) {
       if (rows.length >= input.pageSize) {
         nextCursor = String(page + 1);
       }
