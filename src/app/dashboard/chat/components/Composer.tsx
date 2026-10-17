@@ -24,13 +24,14 @@ export default function Composer({
 }: {
   value: string;
   onChange: (v: string) => void;
-  onSend: (text: string, attachedFile?: AttachedFile | null) => void;
+  onSend: (text: string, attachedFile?: AttachedFile | null) => void | boolean | Promise<void | boolean>;
   disabled?: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [attachedFile, setAttachedFile] = useState<AttachedFile | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setFileError(null);
@@ -82,15 +83,22 @@ export default function Composer({
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (disabled) return;
+    if (disabled || sending) return;
     const trimmed = value.trim();
     if (!trimmed && !attachedFile) return;
-    onSend(trimmed, attachedFile);
-    setAttachedFile(null);
-    setFileError(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    setSending(true);
+    try {
+      const sent = await onSend(trimmed, attachedFile);
+      if (sent === false) return;
+      onChange("");
+      setAttachedFile(null);
+      setFileError(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -205,7 +213,7 @@ export default function Composer({
           <button
             type="submit"
             aria-label="إرسال"
-            disabled={disabled || (!value.trim() && !attachedFile)}
+            disabled={disabled || sending || (!value.trim() && !attachedFile)}
             className="flex h-[46px] w-[46px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-ac text-onac disabled:cursor-not-allowed disabled:opacity-60 transition-opacity"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

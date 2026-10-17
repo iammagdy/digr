@@ -50,6 +50,7 @@ export default function WalletPage() {
   const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
   const [ipa, setIpa] = useState<string | null>(isIpaAvailable(ipaFromEnv) ? ipaFromEnv! : null);
   const [loadingIpa, setLoadingIpa] = useState(!isIpaAvailable(ipaFromEnv));
+  const [ipaLoadFailed, setIpaLoadFailed] = useState(false);
   const [maxPending, setMaxPending] = useState(3);
   const formRef = useRef<HTMLDivElement>(null);
   const returnTo = useRef("/dashboard/chat");
@@ -64,23 +65,34 @@ export default function WalletPage() {
 
   /* public settings: IPA + pending cap (fall back to env / 3) */
   useEffect(() => {
+    let active = true;
+    const timeout = setTimeout(() => {
+      if (active) {
+        setLoadingIpa(false);
+        setIpaLoadFailed(true);
+      }
+    }, 8000);
     try {
       const supabase = createClient();
       Promise.resolve(
         supabase.from(SETTINGS_PUBLIC_COLLECTION).select("value").eq("key", "pricing").maybeSingle()
       )
         .then(({ data }) => {
+          if (!active) return;
           const d = (data?.value || {}) as { ipa?: string; maxPendingTopups?: number };
           if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
           if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
         })
-        .catch(() => {})
+        .catch(() => { if (active) setIpaLoadFailed(true); })
         .finally(() => {
-          setLoadingIpa(false);
+          if (active) setLoadingIpa(false);
+          clearTimeout(timeout);
         });
     } catch {
       setLoadingIpa(false);
+      setIpaLoadFailed(true);
     }
+    return () => { active = false; clearTimeout(timeout); };
   }, []);
 
   const loadLedger = useCallback(async () => {
@@ -230,6 +242,20 @@ export default function WalletPage() {
   const available = balance.status === "ready" ? balance.value! : null;
   const total = (available ?? 0) + stats.held;
   const pendingCount = topups.filter((t) => t.status === "pending").length;
+  const creditsByTopup = new Map<string, number>();
+  for (const row of ledger) {
+    if (row.type === "topup" && row.topupId && row.delta > 0) {
+      creditsByTopup.set(row.topupId, (creditsByTopup.get(row.topupId) || 0) + row.delta);
+    }
+  }
+  const displayTopups = topups.map((topup) => ({
+    ...topup,
+    credits: topup.credits && topup.credits > 0 ? topup.credits : creditsByTopup.get(topup.$id) ?? topup.credits,
+  }));
+  const displaySubmitted = submitted ? {
+    ...submitted,
+    credits: submitted.credits && submitted.credits > 0 ? submitted.credits : creditsByTopup.get(submitted.$id) ?? submitted.credits,
+  } : null;
 
   const visibleLedger = ledger.filter((r) => r.type !== undefined && (ledFilter === "all" || kindOf(r.type) === ledFilter));
 
@@ -301,18 +327,19 @@ export default function WalletPage() {
             creditValue={creditValue}
             ipa={ipa}
             loadingIpa={loadingIpa}
+            ipaLoadFailed={ipaLoadFailed}
             pendingCount={pendingCount}
             maxPending={maxPending}
             onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
           />
         ) : (
-          <SubmittedCard topup={submitted} creditValue={creditValue} onBack={() => setSubmitted(null)} onContinue={() => router.push(returnTo.current)} />
+          <SubmittedCard topup={displaySubmitted || submitted} creditValue={creditValue} onBack={() => setSubmitted(null)} onContinue={() => router.push(returnTo.current)} />
         )}
 
         {topups.length > 0 && (
           <div className="mt-10">
             <h3 className="mb-1.5 mt-0 text-[15px] font-medium text-ink">طلبات الشحن</h3>
-            {topups.map((t) => {
+            {displayTopups.map((t) => {
               const b = statusBadge(t.status);
               const pts = t.status === "approved" ? (t.credits ?? 0) : Math.floor(t.amountEgp / creditValue);
               return (

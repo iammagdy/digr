@@ -98,7 +98,12 @@ export async function GET(
           methodology: normalized.metadata.methodology,
           entityType: normalized.metadata.entityType,
         },
-        profile: normalized.profile,
+        profile: {
+          ...(normalized.profile || {}),
+          sourcePlatform: normalized.metadata.platform,
+          collectedDate: jobDoc.finished_at || jobDoc.created_at || normalized.metadata.collectedAt,
+          methodology: normalized.metadata.methodology,
+        },
         rows: normalized.rows,
         columns: normalized.columns,
         codebook: normalized.codebook,

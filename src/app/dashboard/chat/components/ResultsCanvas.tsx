@@ -49,13 +49,15 @@ const COLUMN_LABELS: Record<string, string> = {
   bio: "النبذة", bioLink: "رابط النبذة", profileUrl: "رابط الملف", collectedDate: "تاريخ الجمع",
   count: "العدد", averageFollowers: "متوسط المتابعين",
   company_name: "اسم الشركة / المؤسسة", contact_name: "اسم المسؤول / جهة الاتصال",
+  contact_name_presence_status: "توفر اسم جهة الاتصال",
   job_title: "المسمى الوظيفي", work_email: "البريد الإلكتروني المهني",
   email_verification_status: "توفر البريد", title_verification_status: "توفر المسمى الوظيفي",
   verification_status: "الحالة المسجلة", website: "الموقع الإلكتروني",
   industry: "النشاط / التخصص", activity: "النشاط الرئيسي",
   location: "المدينة / المحافظة", city: "المدينة", phone: "الهاتف التجاري",
   headcount: "حجم العمالة", founded_year: "سنة التأسيس",
-  linkedin_url: "رابط لينكد إن", description: "الوصف التعريفي",
+  linkedin_url: "رابط لينكد إن", description: "الوصف التعريفي", text: "النص",
+  source_id: "معرّف المصدر", extractedAt: "تاريخ الجمع",
 };
 
 const SEVERITY_TONE: Record<string, StatusTone> = {
@@ -70,11 +72,22 @@ const SEVERITY_LABEL: Record<string, string> = {
   ok: "ضمن النطاق المرصود",
 };
 
+const SOURCE_LABELS: Record<string, string> = {
+  companies: "قواعد بيانات الشركات والأعمال",
+  people: "خدمة البحث عن المهنيين",
+  youtube: "يوتيوب",
+  facebook: "فيسبوك",
+  x: "منصة إكس",
+  tiktok: "تيك توك",
+  instagram: "إنستغرام",
+  linkedin: "لينكد إن",
+};
+
 function formatCell(value: unknown): string {
   if (typeof value === "number") return formatNumber(value);
   if (typeof value === "boolean") return value ? "نعم" : "لا";
   if (value == null || value === "") return "—";
-  return String(value);
+  return String(value).replace(/^'+(?=\+?\d)/, "");
 }
 
 export default function ResultsCanvas({
@@ -127,7 +140,11 @@ export default function ResultsCanvas({
   const filteredRecords = records.filter((record) =>
     Object.values(record).some((value) => String(value ?? "").toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()))
   );
-  const tableColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id"))));
+  const rawColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id" && !key.startsWith("_") && !key.endsWith("_relevance_status")))));
+  const tableColumns = rawColumns.filter((key, index) => {
+    const label = COLUMN_LABELS[key] || key;
+    return rawColumns.findIndex((candidate) => (COLUMN_LABELS[candidate] || candidate) === label) === index;
+  });
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
 
   const quickEdits: Array<{ label: string; op: ArtifactEditOperation; needsSearch?: boolean; needsNotes?: boolean }> = [
@@ -320,7 +337,7 @@ export default function ResultsCanvas({
                       {filteredRecords.map((r, idx) => (
                         <tr key={String(r.id ?? idx)} className="transition-colors hover:bg-sand-50/70">
                           {tableColumns.map((column) => {
-                            const value = r[column];
+                            const value = column === "headcount" && Number(r[column]) === 0 ? "غير متاح" : r[column];
                             return (
                               <td key={column} dir={column === "username" ? "ltr" : undefined} className={`max-w-55 truncate px-3 py-2.5 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
                                 {formatCell(value)}
@@ -394,7 +411,7 @@ export default function ResultsCanvas({
                   </div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => onDownload(f.ext)} disabled={downloadingKey === f.ext || !jobId}>
-                  {downloadingKey === f.ext ? "جاري التنزيل..." : "تحميل"}
+                  {downloadingKey === f.ext ? `جاري تنزيل ${f.label}...` : `تحميل ${f.label}`}
                 </Button>
               </div>
             ))}
@@ -402,7 +419,7 @@ export default function ResultsCanvas({
         )}
 
         {/* Methodology facts */}
-        {jobId && (
+        {jobId && tab === "pdf" && (
           <div className="mt-6 space-y-3 border-t border-sand-200 pt-4">
             <div className="rounded-[20px] border border-sand-200 bg-sand-50/70 p-4 text-xs">
               <p className="mb-2 font-bold text-ink-900">حقائق الاستخراج والمنهجية</p>
@@ -410,7 +427,7 @@ export default function ResultsCanvas({
                 <div className="flex justify-between gap-2">
                   <dt>المصدر</dt>
                   <dd className="font-semibold text-ink-800" dir="auto">
-                    {profile?.username ? `مصادر متاحة (@${profile.username})` : "مصادر الشركات والأعمال المتاحة"}
+                    {profile?.sourcePlatform ? (SOURCE_LABELS[String(profile.sourcePlatform).toLowerCase()] || String(profile.sourcePlatform)) : profile?.username ? `حساب @${profile.username}` : "غير متاح"}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-2"><dt>تاريخ الجمع</dt><dd className="font-semibold text-ink-800">{profile?.collectedDate || (records[0]?.extractedAt as string) || "غير متاح"}</dd></div>
