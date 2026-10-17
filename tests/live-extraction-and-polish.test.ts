@@ -245,8 +245,15 @@ describe("Catalog Capability Schema Validation for Plan Editing", () => {
       enabled: true,
     };
     const modelLabel = "منصة Diger-tiktok-search-videos";
+    const secondProvider: Capability = {
+      ...tiktokCapability,
+      id: "provider-two-tiktok-search-videos",
+      slug: "provider-two-tiktok-search-videos",
+      tregEndpointId: "provider-two.tiktok.search-videos",
+    };
 
     expect(resolveCapabilityReference(modelLabel, [tiktokCapability])).toBe(tiktokCapability);
+    expect(resolveCapabilityReference(modelLabel, [tiktokCapability, secondProvider])).toBe(tiktokCapability);
     expect(validatePlanPlatformMatch(
       "اجمع فيديوهات تريند على تيك توك",
       [{ capabilitySlug: modelLabel }],

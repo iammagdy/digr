@@ -776,16 +776,35 @@ export function resolveCapabilityReference(
   );
   if (exact) return exact;
 
-  const normalized = normalizeCapabilityReference(raw);
+  const normalized = normalizeCapabilityReference(raw).replace(/^(?:منصة-)?(?:diger|ديجر)-/i, "");
   const matches = capabilities.filter((capability) => {
     const identifiers = [capability.slug, capability.id, capability.tregEndpointId]
       .filter((value): value is string => typeof value === "string" && value.length > 0)
       .map(normalizeCapabilityReference);
-    return identifiers.some((identifier) =>
-      identifier.length >= 10 && (normalized.includes(identifier) || identifier.includes(normalized)),
-    );
+    return identifiers.some((identifier) => identifier.length >= 10 && (
+      normalized.includes(identifier) ||
+      identifier.includes(normalized) ||
+      identifier.endsWith(`-${normalized}`) ||
+      normalized.endsWith(`-${identifier}`)
+    ));
   });
-  return matches.length === 1 ? matches[0] : undefined;
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) {
+    const firstPlatform = (matches[0].platform || matches[0].category || "").toLowerCase();
+    const samePlatformAndTask = matches.every((capability) => {
+      const platform = (capability.platform || capability.category || "").toLowerCase();
+      const identifiers = [capability.slug, capability.id, capability.tregEndpointId]
+        .filter((value): value is string => typeof value === "string" && value.length > 0)
+        .map(normalizeCapabilityReference);
+      return platform === firstPlatform && identifiers.some((identifier) =>
+        identifier.endsWith(`-${normalized}`) || identifier === normalized,
+      );
+    });
+    // Search results are ordered by catalog quality and price. Use that ordering
+    // only when every candidate is the same platform and exact task suffix.
+    if (samePlatformAndTask) return matches[0];
+  }
+  return undefined;
 }
 
 /**
