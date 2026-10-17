@@ -24,6 +24,18 @@ describe("Composer & Activity Feed Integrity", () => {
     expect(chatPageCode).toContain("typeof e.units === \"number\" ? e.units");
   });
 
+  it("clears the chat input after a successful assistant response, while preserving it on failure", () => {
+    const chatPageCode = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    const sendHandler = chatPageCode.slice(
+      chatPageCode.indexOf("async function handleSendMessage("),
+      chatPageCode.indexOf("async function handleSubmitClarification(")
+    );
+
+    expect(sendHandler).toMatch(/setMessages\(\(prev\) => \[\.\.\.prev, assistantMsg\]\);\r?\n\s*setInputText\(""\);\r?\n\s*return true;/);
+    expect(sendHandler).toContain("return false;");
+    expect(sendHandler).toContain("errorRetryPrompt: textToSend");
+  });
+
   it("records progress and completion in public.job_events table", () => {
     const workerCode = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     const acceptCode = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");

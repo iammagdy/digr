@@ -589,6 +589,7 @@ export default function ChatWorkspacePage() {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      setInputText("");
       return true;
     } catch (err: any) {
       clearTimeout(timeoutId);
