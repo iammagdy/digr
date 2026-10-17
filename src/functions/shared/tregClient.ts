@@ -69,6 +69,7 @@ export const SENSITIVE_INTERNAL_CONTROL_KEYS: ReadonlySet<string> = new Set([
   "contextdata",
   "stepresults",
   "targetrequested",
+  "requiredcontactfields",
   "deliverableformats",
 ]);
 

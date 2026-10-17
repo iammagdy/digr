@@ -188,6 +188,9 @@ export async function generateExcelReport(
   options?: { deduplicationAudit?: any[] }
 ): Promise<Buffer> {
   const norm: NormalizedDataset = normalizeDataset(payload);
+  if (norm.metadata.entityType === "people") {
+    return generatePeopleDataWorkbook(norm);
+  }
   if (norm.metadata.entityType === "companies") {
     return generateCompanyDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
@@ -591,6 +594,76 @@ async function generateStructuredDataWorkbook(payload: any, norm: NormalizedData
   addTable(norm.metadata.entityType === "posts" ? "الكيانات الأساسية" : "البيانات", mainDataset);
   addTable("التعليقات الرئيسية", commentsDataset);
   addTable("الردود", repliesDataset);
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/** Contact-first workbook for professional people-search results. */
+async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buffer> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = customerFacingTitle(norm.metadata.title);
+  const ws = wb.addWorksheet("بيانات المهنيين", {
+    views: [{ state: "frozen", ySplit: 4, rightToLeft: true }],
+  });
+  ws.mergeCells("A1:J1");
+  ws.getCell("A1").value = customerFacingTitle(norm.metadata.title);
+  ws.getCell("A1").font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
+  ws.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+  ws.getCell("A1").alignment = { horizontal: "center", vertical: "middle" };
+  ws.getRow(1).height = 36;
+  ws.mergeCells("A2:J2");
+  ws.getCell("A2").value = "بيانات الاتصال المهنية كما أرجعتها المصادر؛ وجود القيمة لا يعني التحقق المستقل من صحتها.";
+  ws.getCell("A2").font = { name: "Calibri", size: 10, color: { argb: "FF475569" } };
+  ws.getCell("A2").alignment = { horizontal: "right", vertical: "middle", wrapText: true };
+  ws.getRow(2).height = 28;
+  ws.addRow(["عدد السجلات", norm.rows.length]);
+  const headers = ["م", "اسم جهة الاتصال", "المسمى الوظيفي", "الشركة", "مجال النشاط", "الدولة / الموقع", "لينكد إن", "البريد المهني", "رقم الهاتف", "حالة الحقول"];
+  const header = ws.addRow(headers);
+  header.height = 30;
+  header.eachCell((cell) => {
+    cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_MID } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = borderThin;
+  });
+  norm.rows.forEach((record, index) => {
+    const email = String(record.work_email || record.workEmail || record.email || "").trim();
+    const phone = String(record.phone || record.phone_number || record.business_phone || record.work_phone || "").replace(/^'/, "").trim();
+    const linkedin = String(record.linkedin_url || record.linkedin || record.profile_url || "").trim();
+    const values = [
+      index + 1,
+      record.contact_name || record.full_name || record.fullName || record.name || "غير متاح",
+      record.job_title || record.jobTitle || record.title || record.currentJobTitle || "غير متاح",
+      record.company_name || record.companyName || record.company || "غير متاح",
+      record.industry || record.keywords || "غير متاح",
+      record.location || record.city || record.country || "غير متاح",
+      linkedin,
+      email || "غير متاح",
+      phone || "غير متاح",
+      `البريد: ${email ? "موجود" : "غير موجود"} • الهاتف: ${phone ? "موجود" : "غير موجود"}`,
+    ];
+    const row = ws.addRow(values.map((value, column) =>
+      typeof value === "string" && column !== 8 ? escapeFormula(value) : value,
+    ));
+    row.height = 24;
+    row.alignment = { vertical: "middle", wrapText: true };
+    row.eachCell((cell) => {
+      cell.border = borderThin;
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    });
+    const profileCell = row.getCell(7);
+    if (/^https?:\/\//i.test(linkedin)) {
+      profileCell.value = workbookHyperlink(linkedin);
+      profileCell.font = { color: { argb: "FF0563C1" }, underline: true };
+    }
+    row.getCell(9).numFmt = "@";
+  });
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: norm.rows.length + 4, column: headers.length } };
+  ws.columns = [
+    { width: 8 }, { width: 28 }, { width: 27 }, { width: 28 }, { width: 24 },
+    { width: 24 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 32 },
+  ];
+  ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 

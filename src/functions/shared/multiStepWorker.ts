@@ -933,9 +933,9 @@ export async function executeMultiStepJob(
   const dateStr = new Date().toISOString().slice(0, 10);
   const finalPayload: any = {
     metadata: {
-      platform: /compan|b2b/i.test(templateSlug) ? "companies" : templateSlug,
+      platform: /people/i.test(templateSlug) ? "people" : (/compan|b2b/i.test(templateSlug) ? "companies" : templateSlug),
       company: "Diger",
-      title: `نتائج استخراج ${templateSlug}`,
+      title: /people/i.test(templateSlug) ? "بيانات صناع القرار والمهنيين" : `نتائج استخراج ${templateSlug}`,
       template: templateSlug,
       jobId,
       collectedAt: new Date().toISOString(),

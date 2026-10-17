@@ -400,6 +400,156 @@ export function normalizeIcypeasPeopleParams(
   };
 }
 
+export function normalizeTregPeopleParams(rawParams: Record<string, any>, pageSize: number): Record<string, any> {
+  const raw = rawParams || {};
+  const query = raw.query && typeof raw.query === "object" ? raw.query : {};
+  const first = (value: any) => Array.isArray(value) ? value[0] : value;
+  const q = raw.q || raw.search || (typeof raw.query === "string" ? raw.query : undefined);
+  const title = raw.title || first(query.title) || first(query.jobTitle?.include) || first(query.currentJobTitle?.include);
+  const location = raw.location || first(query.location?.include) || first(query.location);
+  const keywords = Array.isArray(raw.keywords) ? raw.keywords : query.keyword?.include;
+  return {
+    ...(q ? { q: String(q).slice(0, 500) } : {}),
+    ...(raw.company_domain || raw.domain ? { company_domain: String(raw.company_domain || raw.domain) } : {}),
+    ...(raw.full_name ? { full_name: String(raw.full_name) } : {}),
+    ...(title ? { title: String(title) } : {}),
+    ...(raw.country ? { country: String(raw.country) } : {}),
+    ...(location ? { location: String(location) } : {}),
+    ...(keywords?.length ? { keywords: (Array.isArray(keywords) ? keywords : [keywords]).map(String) } : {}),
+    limit: Math.max(1, Math.min(50, Math.floor(Number(raw.limit) || pageSize || 10))),
+  };
+}
+
+function getTregPeopleArray(data: any): any[] {
+  const candidates = [data?.output, data?.output?.people, data?.output?.results, data?.output?.items,
+    data?.output?.data, data?.people, data?.results, data?.items, data?.data,
+    data?.raw?.people, data?.raw?.results, data?.raw?.items, data?.raw?.data];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+    if (candidate && typeof candidate === "object") {
+      for (const key of ["people", "results", "items", "leads", "data"]) {
+        if (Array.isArray(candidate[key])) return candidate[key];
+      }
+    }
+  }
+  return [];
+}
+
+function firstPeopleText(...values: any[]): string {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
+function parseTregPeopleRows(data: any): Record<string, any>[] {
+  return getTregPeopleArray(data).map((person: any) => {
+    const company = person?.current_company || person?.currentCompany || person?.company || {};
+    const contact = person?.contact || {};
+    const name = firstPeopleText(person?.full_name, person?.fullName, person?.name,
+      [person?.first_name || person?.firstname, person?.last_name || person?.lastname].filter(Boolean).join(" "));
+    const title = firstPeopleText(person?.job_title, person?.jobTitle, person?.title, person?.current_title,
+      person?.currentJobTitle, person?.headline);
+    const email = firstPeopleText(person?.work_email, person?.workEmail, person?.business_email,
+      person?.businessEmail, person?.corporateEmail, person?.email, contact?.work_email, contact?.email);
+    const phone = firstPeopleText(person?.work_phone, person?.workPhone, person?.business_phone,
+      person?.businessPhone, person?.phone_number, person?.phone, person?.officePhone, contact?.phone);
+    return {
+      ...person,
+      contact_name: name,
+      job_title: title,
+      company_name: firstPeopleText(person?.company_name, person?.companyName, person?.current_company_name,
+        person?.currentCompanyName, company?.name, company?.company_name, person?.organization),
+      website: firstPeopleText(person?.company_website, person?.companyWebsite, person?.website, person?.domain, company?.website, company?.domain),
+      linkedin_url: firstPeopleText(person?.linkedin_url, person?.linkedinUrl, person?.profile_url, person?.profileUrl, person?.linkedin, contact?.linkedin_url),
+      location: firstPeopleText(person?.location, person?.city, person?.country, company?.location),
+      work_email: email,
+      phone,
+      contact_name_presence_status: name ? "موجود" : "غير موجود",
+      job_title_presence_status: title ? "موجود" : "غير موجود",
+      work_email_presence_status: email ? "موجود" : "غير موجود",
+      phone_presence_status: phone ? "موجود" : "غير موجود",
+    };
+  });
+}
+
+function findContactValue(data: any, keys: string[]): string {
+  const wanted = new Set(keys.map((key) => key.toLowerCase()));
+  const visit = (node: any, depth: number): string => {
+    if (!node || typeof node !== "object" || depth > 5) return "";
+    for (const [key, value] of Object.entries(node)) {
+      if (wanted.has(key.toLowerCase()) && typeof value === "string" && value.trim()) return value.trim();
+    }
+    for (const key of ["output", "data", "result", "person", "contact", "raw"]) {
+      const value = visit(node[key], depth + 1);
+      if (value) return value;
+    }
+    return "";
+  };
+  return visit(data, 0);
+}
+
+function getPeopleIdentity(row: Record<string, any>): Record<string, string> | null {
+  const linkedin = firstPeopleText(row.linkedin_url, row.linkedinUrl, row.profile_url);
+  if (linkedin) return { linkedin_url: linkedin };
+  const domainValue = firstPeopleText(row.domain, row.company_domain, row.website);
+  const domain = domainValue.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0];
+  const name = firstPeopleText(row.contact_name, row.full_name, row.fullName, row.name);
+  return domain && name ? { domain, full_name: name } : null;
+}
+
+async function enrichTregPeopleRows(rows: Record<string, any>[], input: ProviderAdapterCallInput) {
+  let costMicro = 0;
+  const callIds: string[] = [];
+  const enriched: Record<string, any>[] = [];
+  for (let index = 0; index < rows.length; index++) {
+    const row = { ...rows[index] };
+    const identity = getPeopleIdentity(row);
+    if (identity && !row.work_email) {
+      const result = await executeTregCallWithRetry({
+        endpointId: "treg.people.email.find", method: "POST", params: identity,
+        userId: input.userId, jobId: input.jobId, stepId: `people_email_${input.step}_${index}`,
+        page: input.step + 1, routeMaxCostUsd: "0.005",
+      }, 1);
+      costMicro += Math.max(0, Number(result.costMicro) || 0);
+      if (result.tregCallId) callIds.push(result.tregCallId);
+      if (result.ok) {
+        row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
+        if (result.data?._treg?.verification?.verdict) row.work_email_verification_status = String(result.data._treg.verification.verdict);
+      }
+    }
+    if (identity && !row.phone) {
+      const phoneIdentity = row.work_email ? { email: String(row.work_email) } : identity;
+      const result = await executeTregCallWithRetry({
+        endpointId: "treg.people.phone.find", method: "POST", params: phoneIdentity,
+        userId: input.userId, jobId: input.jobId, stepId: `people_phone_${input.step}_${index}`,
+        page: input.step + 1, routeMaxCostUsd: "0.005",
+      }, 1);
+      costMicro += Math.max(0, Number(result.costMicro) || 0);
+      if (result.tregCallId) callIds.push(result.tregCallId);
+      if (result.ok) {
+        row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
+        if (result.data?._treg?.verification?.verdict) row.phone_verification_status = String(result.data._treg.verification.verdict);
+      }
+    }
+    row.work_email = firstPeopleText(row.work_email);
+    row.phone = firstPeopleText(row.phone);
+    row.work_email_presence_status = row.work_email ? "موجود" : "غير موجود";
+    row.phone_presence_status = row.phone ? "موجود" : "غير موجود";
+    enriched.push(row);
+  }
+  const requiredFields = Array.isArray(input.params?.requiredContactFields)
+    ? input.params.requiredContactFields.map((field: unknown) => String(field))
+    : [];
+  const deliverableRows = requiredFields.length
+    ? enriched.filter((row) => requiredFields.every((field) =>
+      field === "work_email" ? Boolean(row.work_email) : field === "phone" ? Boolean(row.phone) : true,
+    ))
+    : enriched;
+  return { rows: deliverableRows, costMicro, callIds };
+}
+
 export interface ProviderAdapterCallInput {
   jobId: string;
   userId: string;
@@ -533,6 +683,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     input.capabilitySlug === "icypeas-people-search";
 
   const isIcypeas = isIcypeasCompanies || isIcypeasPeople;
+  const isTregPeople = effectiveEndpointId === "treg.people.search" || input.capabilitySlug === "professional-people-search";
 
   // Pagination hints come from the generic source planner, but the live
   // provider endpoint schema is authoritative. Some search endpoints expose
@@ -553,6 +704,9 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   if (effectiveEndpointId === "crawl4ai.tiktok.search.videos") {
     allowedParamKeys = allowedParamKeys || ["query", "limit"];
   }
+  if (effectiveEndpointId === "treg.people.search") {
+    allowedParamKeys = ["q", "company_domain", "full_name", "title", "country", "location", "keywords", "limit"];
+  }
   // tregClient translates this local alias to uniqueId before sending it.
   if (effectiveEndpointId === "tikhub.tiktok.user.profile" && allowedParamKeys) {
     allowedParamKeys = [...new Set([...allowedParamKeys, "username", "uniqueId"])];
@@ -563,6 +717,8 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     pageParams = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, input.cursor);
   } else if (isIcypeasPeople) {
     pageParams = normalizeIcypeasPeopleParams(input.params || {}, input.pageSize, input.cursor);
+  } else if (isTregPeople) {
+    pageParams = normalizeTregPeopleParams(input.params || {}, input.pageSize);
   } else {
     pageParams = serializeProviderParams(input.params || {}, allowedParamKeys);
     if (input.paginationStrategy === "cursor") {
@@ -608,13 +764,13 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       jobId: input.jobId,
       stepId: `step_${input.step}`,
       page,
-      routeMaxCostUsd: "0.05",
+      routeMaxCostUsd: isTregPeople ? "0.005" : "0.05",
     },
     retries
   );
 
-  const costMicro = Math.max(0, Number(callResult.costMicro) || 0);
-  const costUsd = Number((costMicro / 1_000_000).toFixed(6));
+  let costMicro = Math.max(0, Number(callResult.costMicro) || 0);
+  let costUsd = Number((costMicro / 1_000_000).toFixed(6));
 
   if (!callResult.ok) {
     let errorMessageAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
@@ -665,6 +821,15 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     const parsed = parseIcypeasCompaniesResponse(callResult.data);
     rows = parsed.rows;
     nextCursor = parsed.nextCursor;
+  } else if (isTregPeople) {
+    rows = parseTregPeopleRows(callResult.data);
+    if (rows.length === 0) rows = extractAndFlattenRows(callResult.data?.output ?? callResult.data?.raw ?? callResult.data);
+    const enriched = await enrichTregPeopleRows(rows, input);
+    rows = enriched.rows;
+    costMicro += enriched.costMicro;
+    costUsd = Number((costMicro / 1_000_000).toFixed(6));
+    const allCallIds = [callResult.tregCallId, ...enriched.callIds].filter(Boolean);
+    callResult.tregCallId = allCallIds.join(",");
   } else {
     rows = extractAndFlattenRows(callResult.data);
   }

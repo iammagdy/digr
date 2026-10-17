@@ -58,7 +58,7 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, socialSearchQueryFromTitle } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
 import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
@@ -491,19 +491,21 @@ export function buildAutoPlanProposal(
     ...(hasDetectedIndustry ? { keyword: { include: detectedIndustry.englishKeywords } } : {}),
     ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
   };
-  const peopleKeywords = hasDetectedIndustry
-    ? detectedIndustry.englishKeywords
-    : (topicLabel && topicLabel !== "البيانات العامة المطلوبة" &&
-       !isPeopleSearchRequest(topicLabel) && !detectCountryFromText(topicLabel)
-      ? [topicLabel]
-      : ["decision makers"]);
+  const titleMatch = requestText.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/i);
+  const countryCode = detectedCountry ? ({
+    Egypt: "EG", "Saudi Arabia": "SA", "United Arab Emirates": "AE", Kuwait: "KW",
+    Qatar: "QA", Bahrain: "BH", Oman: "OM", Jordan: "JO", Germany: "DE",
+    Austria: "AT", France: "FR", Italy: "IT", Spain: "ES", Switzerland: "CH",
+    Netherlands: "NL", Turkey: "TR", "United Kingdom": "GB", "United States": "US",
+  } as Record<string, string>)[detectedCountry.canonicalEnglish] : undefined;
   const stepParams: Record<string, any> = isPeopleCapability
     ? {
-        query: {
-          keyword: { include: peopleKeywords },
-          jobTitle: { include: ["CEO", "CTO", "CFO", "Head", "Director", "VP"] },
-          ...(detectedCountry ? { location: { include: [detectedCountry.canonicalEnglish] } } : {}),
-        },
+        q: requestText.slice(0, 300),
+        limit: Math.min(volume, 50),
+        ...(countryCode ? { country: countryCode } : {}),
+        ...(titleMatch ? { title: (titleMatch[1] || titleMatch[0]).replace(/s$/i, "") } : {}),
+        ...(hasDetectedIndustry ? { keywords: detectedIndustry.englishKeywords } : {}),
+        ...(requiredProfessionalContactFields(requestText).length ? { requiredContactFields: requiredProfessionalContactFields(requestText) } : {}),
       }
     : isCompanySearch
       ? {
@@ -1987,7 +1989,9 @@ export class ChatHandler {
         const mapPlanItems = (out: any) =>
           ((out as any).capabilities || (out as any).steps || []).map((c: any) => {
             const itemParams = { ...(c.params || {}) };
-            const capabilityId = c.capabilitySlug || c.endpointId || "";
+            const rawCapabilityId = c.capabilitySlug || c.endpointId || "";
+            const isPeopleCapability = /people/i.test(`${rawCapabilityId} ${c.endpointId || ""}`);
+            const capabilityId = isPeopleCapability ? "professional-people-search" : rawCapabilityId;
             const isRecordSearchCapability = /compan|b2b|people/i.test(capabilityId);
             const isSocialContentCapability = /video|videos|tiktok|youtube|reels|posts?|social|instagram|facebook|reddit|twitter/i.test(capabilityId);
             if (isSocialContentCapability && (!itemParams.dateFrom || !itemParams.dateTo)) {
@@ -2017,6 +2021,28 @@ export class ChatHandler {
                 itemParams.query.location = { include: [explicitCountry.canonicalEnglish] };
               }
             }
+            if (isPeopleCapability) {
+              itemParams.q = typeof itemParams.q === "string" && itemParams.q.trim()
+                ? itemParams.q.slice(0, 300)
+                : conversationRequestText.slice(0, 300);
+              itemParams.limit = Math.max(1, Math.min(50, Number(requestedRecordVolume || itemParams.limit || 10)));
+              if (explicitCountry) {
+                const countryCodes: Record<string, string> = {
+                  Egypt: "EG", "Saudi Arabia": "SA", "United Arab Emirates": "AE", Kuwait: "KW",
+                  Qatar: "QA", Bahrain: "BH", Oman: "OM", Jordan: "JO", Germany: "DE",
+                  Austria: "AT", France: "FR", Italy: "IT", Spain: "ES", Switzerland: "CH",
+                  Netherlands: "NL", Turkey: "TR", "United Kingdom": "GB", "United States": "US",
+                };
+                itemParams.country = countryCodes[explicitCountry.canonicalEnglish] || explicitCountry.canonicalEnglish;
+              }
+              const explicitTitle = conversationRequestText.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/i);
+              if (!itemParams.title && explicitTitle) itemParams.title = (explicitTitle[1] || explicitTitle[0]).replace(/s$/i, "");
+              if (!itemParams.keywords && detectedIndustry.englishKeywords.length) itemParams.keywords = detectedIndustry.englishKeywords;
+              const requiredContactFields = requiredProfessionalContactFields(conversationRequestText);
+              if (requiredContactFields.length) itemParams.requiredContactFields = requiredContactFields;
+              delete itemParams.query;
+              delete itemParams.pagination;
+            }
             if (requestedRecordVolume && itemParams.pagination && typeof itemParams.pagination === "object") {
               const currentPageSize = Number(itemParams.pagination.size);
               if (!Number.isFinite(currentPageSize) || currentPageSize > requestedRecordVolume) {
@@ -2026,7 +2052,7 @@ export class ChatHandler {
             return {
               stepId: c.stepId,
               capabilitySlug: capabilityId,
-              endpointId: c.endpointId || c.capabilitySlug,
+              endpointId: isPeopleCapability ? "treg.people.search" : (c.endpointId || c.capabilitySlug),
               paginationStrategy: c.paginationStrategy,
               params: {
                 ...itemParams,

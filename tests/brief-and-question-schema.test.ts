@@ -237,10 +237,10 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(mockedSearchCatalog).toHaveBeenCalled();
   });
 
-  it("routes decision-maker requests to the people catalog capability with query parameters", async () => {
+  it("routes decision-maker requests through TREG people search and contact enrichment", async () => {
     const message = "Find 20 solar industry decision-makers (CEOs) in Germany with names, job titles, work emails, and email verification status";
-    expect(RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-people-search")?.tregEndpointId)
-      .toBe("icypeas.people.search");
+    expect(RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "professional-people-search")?.tregEndpointId)
+      .toBe("treg.people.search");
 
     const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
       userId: "user_people_route",
@@ -248,9 +248,10 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("refuse");
-    expect(res.planQuote).toBeUndefined();
-    expect(res.contentAr).toContain("غير متاحة حالياً");
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.items?.[0]?.endpointId).toBe("treg.people.search");
+    expect(res.planQuote?.items?.[0]?.params).toMatchObject({ country: "DE", title: "CEO", limit: 20 });
+    expect(res.planQuote?.items?.[0]?.params?.requiredContactFields).toEqual(["work_email"]);
   });
 
   it("builds a people-search fallback from the people capability instead of the nearest unrelated service", () => {
@@ -264,15 +265,16 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     const proposal = buildAutoPlanProposal(brief, RAW_SEED_CAPABILITIES as any, request);
     const peopleStep = proposal.capabilities[0];
 
-    expect(peopleStep.capabilitySlug).toBe("icypeas-people-search");
+    expect(peopleStep.capabilitySlug).toBe("professional-people-search");
     expect(peopleStep.targetVolumeMax).toBe(20);
-    expect(peopleStep.params.query.location.include).toEqual(["Germany"]);
-    expect(peopleStep.params.query.jobTitle.include).toContain("CEO");
+    expect(peopleStep.params.country).toBe("DE");
+    expect(peopleStep.params.q).toContain("decision-makers");
+    expect(peopleStep.params.title).toBeUndefined();
     expect(proposal.summaryAr).toContain("ألمانيا");
     expect(proposal.summaryAr).not.toContain("تيك توك");
   });
 
-  it("marks decision-maker search unavailable before asking for scope or quoting", () => {
+  it("requires country before quoting people search and does not offer unrelated alternatives", () => {
     const suggestion = {
       type: "suggest_alternative",
       unsupportedService: "decision-makers",
@@ -284,10 +286,10 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     const request = "Find 20 solar decision-makers in Germany with job titles and work emails";
 
     const routed = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, request);
-    expect(routed.type).toBe("refuse");
+    expect(routed.type).toBe("propose_plan");
 
     const clarification = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, "Find 20 decision-makers with work emails");
-    expect(clarification.type).toBe("refuse");
+    expect(clarification.type).toBe("ask_clarification");
 
     const unavailable = routePeopleAlternative(suggestion, brief, [], request);
     expect(unavailable.type).toBe("refuse");
@@ -308,8 +310,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
 
     const routed = routePeopleAlternative(companyPlan, brief, RAW_SEED_CAPABILITIES as any, request);
 
-    expect(routed.type).toBe("refuse");
-    expect(routed.reasonAr).toContain("غير متاحة حالياً");
+    expect(routed.type).toBe("propose_plan");
+    expect(routed.capabilities[0].capabilitySlug).toBe("professional-people-search");
+    expect(routed.capabilities[0].endpointId).toBe("treg.people.search");
   });
 
   it("routes explicit company requests away from the generic alternative and asks when scope is missing", () => {
@@ -842,7 +845,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
   });
 
   it("keeps an explicit decision-maker count when the plan proposal returns a different volume", async () => {
-    const peopleCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "icypeas-people-search")!;
+    const peopleCap = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === "professional-people-search")!;
     mockedSearchCatalog.mockResolvedValue([{
       slug: peopleCap.slug,
       id: peopleCap.tregEndpointId,
@@ -865,8 +868,8 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
         type: "propose_plan",
         summaryAr: "استخراج بيانات صناع قرار",
         capabilities: [{
-          capabilitySlug: "icypeas-people-search",
-          endpointId: "icypeas.people.search",
+          capabilitySlug: "professional-people-search",
+          endpointId: "treg.people.search",
           params: { query: { keyword: { include: ["decision makers"] }, location: { include: ["Germany"] } } },
           targetVolumeMin: 1,
           targetVolumeMax: 374,
@@ -887,9 +890,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("refuse");
-    expect(res.planQuote).toBeUndefined();
-    expect(res.refusalReason).toContain("غير متاحة");
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote?.targetVolumeMax).toBe(20);
+    expect(res.planQuote?.items?.[0]?.endpointId).toBe("treg.people.search");
   });
 
   // (d) a submitted card answer is stored in the brief and the same question is not asked again

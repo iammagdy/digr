@@ -27,7 +27,7 @@ export interface NormalizedDataset {
     collectedAt: string;
     rowsCount: number;
     methodology: string;
-    entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies";
+    entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" | "people";
     targetRequested?: number | string | null;
     reportContext?: Record<string, any>;
   };
@@ -110,6 +110,9 @@ export function detectPlatform(text?: string): string {
   if (str.includes("telegram")) {
     return "تيليجرام (Telegram)";
   }
+  if (str.includes("people") || str.includes("decision-maker") || str.includes("decision maker")) {
+    return "بيانات صناع القرار والمهنيين (People Search)";
+  }
   if (str.includes("company") || str.includes("companies") || str.includes("b2b") || str.includes("icypeas")) {
     return "قواعد بيانات الشركات والأعمال (B2B Databases)";
   }
@@ -135,7 +138,10 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   location: { titleAr: "المقر والنطاق الجغرافي", descAr: "العنوان أو المدينة والدولة المسجلة للمقر", type: "نص (String)" },
   headcount: { titleAr: "حجم العمالة", descAr: "العدد التقديري للعاملين بالمنشأة", type: "رقم صحيح (Integer)" },
   description: { titleAr: "نبذة عن النشاط", descAr: "الوصف التعريفي المعتمد لطبيعة خدمات ومنتجات الشركة", type: "نص طويل (Text)" },
-  phone: { titleAr: "الهاتف التجاري", descAr: "رقم الهاتف المعتمد للتواصل مع المنشأة", type: "نص (String)" },
+  phone: { titleAr: "رقم الهاتف المهني", descAr: "رقم هاتف مهني كما ورد من المصدر، دون تحقق مستقل", type: "نص (String)" },
+  phone_presence_status: { titleAr: "توفر رقم الهاتف", descAr: "يوضح فقط ما إذا كان المصدر قد أعاد رقم هاتف؛ ولا يعني التحقق منه", type: "نص (String)" },
+  work_email_verification_status: { titleAr: "حالة التحقق من البريد", descAr: "حالة تحقق مستقلة إن أرجعها المصدر، وإلا فلا تُستنتج", type: "نص (String)" },
+  phone_verification_status: { titleAr: "حالة التحقق من الهاتف", descAr: "حالة تحقق مستقلة إن أرجعها المصدر، وإلا فلا تُستنتج", type: "نص (String)" },
   founded_year: { titleAr: "سنة التأسيس", descAr: "تاريخ وسنة إنشاء الشركة أو بدء النشاط", type: "رقم صحيح (Integer)" },
   tweet_id: { titleAr: "معرف التغريدة", descAr: "المعرف الرقمي الرسمي للتغريدة على منصة X", type: "نص (String)" },
   video_id: { titleAr: "معرف المقطع", descAr: "المعرف الفريد لمقطع الفيديو على المنصة", type: "نص (String)" },
@@ -561,8 +567,16 @@ export function normalizeDataset(
   const codebook = generateDynamicCodebook(columns, uniqueRows.slice(0, 20));
 
   // 6. Determine Entity Type
-  let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" = "tabular";
+  let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" | "people" = "tabular";
   if (
+    rawPayload?.entityType === "people" ||
+    rawPayload?.metadata?.entityType === "people" ||
+    meta.template?.includes("people") ||
+    columns.includes("contact_name") ||
+    columns.includes("job_title")
+  ) {
+    entityType = "people";
+  } else if (
     rawPayload?.entityType === "companies" ||
     rawPayload?.metadata?.entityType === "companies" ||
     meta.template?.includes("company") ||

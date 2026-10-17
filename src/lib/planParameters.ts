@@ -688,6 +688,19 @@ export function isPeopleSearchRequest(text: string): boolean {
   return /work emails?|professional emails?|بريد العمل|البريد المهني/.test(normalized);
 }
 
+/** Contact fields a people-search delivery must include when the request names them. */
+export function requiredProfessionalContactFields(text: string): string[] {
+  const normalized = (text || "").toLowerCase();
+  const fields: string[] = [];
+  if (/\b(?:work|professional|business)?\s*e-?mails?\b|\bemail\b|البريد(?: الإلكتروني| الالكتروني| المهني)?|إيميلات|ايميلات|إيميل|ايميل/.test(normalized)) {
+    fields.push("work_email");
+  }
+  if (/\b(?:phone|telephone|mobile)(?:\s+numbers?)?\b|رقم(?: الهاتف| التليفون| الموبايل)|الهاتف|التليفون|الموبايل|\b(?:rkm|rakm|raqm|rkmo|raqmo)\b/.test(normalized)) {
+    fields.push("phone");
+  }
+  return fields;
+}
+
 /**
  * Extracts a human-readable display string from capability/plan parameters.
  */

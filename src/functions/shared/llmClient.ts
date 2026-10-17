@@ -4,7 +4,7 @@ import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager
 import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest } from "../../lib/planParameters";
+import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest, requiredProfessionalContactFields } from "../../lib/planParameters";
 
 // ================= Schema Definitions =================
 
@@ -1239,8 +1239,8 @@ export class LlmClient {
       const matchedCap = (options.sanitizedCapabilities || []).find((c: any) =>
         (c.platform || c.slug || c.category || c.id || "").toLowerCase().includes(targetPlatform)
       ) || options.sanitizedCapabilities?.[0] || {
-        slug: isPeoplePrompt ? "icypeas-people-search" : (isCompanyPrompt ? "icypeas-companies-search" : "facebook-post-comments"),
-        id: isPeoplePrompt ? "icypeas.people.search" : (isCompanyPrompt ? "icypeas.companies.search" : "facebook-post-comments"),
+        slug: isPeoplePrompt ? "professional-people-search" : (isCompanyPrompt ? "icypeas-companies-search" : "facebook-post-comments"),
+        id: isPeoplePrompt ? "treg.people.search" : (isCompanyPrompt ? "icypeas.companies.search" : "facebook-post-comments"),
         nameAr: isPeoplePrompt ? "استخراج بيانات صناع القرار والمسؤولين" : (isCompanyPrompt ? "بحث واستخراج بيانات الشركات" : "استخراج تعليقات فيسبوك"),
       };
 
@@ -1269,6 +1269,7 @@ export class LlmClient {
 
       const fallbackCountry = detectCountryFromText(lastUserMsg);
       const fallbackIndustry = detectIndustryFromText(lastUserMsg);
+      const fallbackTitle = lastUserMsg.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/i);
       const missingCompanyRequirements = getMissingCompanyResearchRequirements(requestHistoryText);
       if (isCompanySearch && missingCompanyRequirements.length > 0) {
         const items = getCompanyRequirementItems(missingCompanyRequirements, requestHistoryText);
@@ -1295,7 +1296,21 @@ export class LlmClient {
         fallbackCountry?.arabicLabel,
       ].filter(Boolean).join(" في ");
       const params = isPeoplePrompt
-        ? { query: { keyword: { include: [lastUserMsg] } } }
+        ? {
+            q: lastUserMsg.slice(0, 300),
+            limit: volume,
+            ...(fallbackCountry ? {
+              country: ({
+                Egypt: "EG", "Saudi Arabia": "SA", "United Arab Emirates": "AE", Kuwait: "KW",
+                Qatar: "QA", Bahrain: "BH", Oman: "OM", Jordan: "JO", Germany: "DE",
+                Austria: "AT", France: "FR", Italy: "IT", Spain: "ES", Switzerland: "CH",
+                Netherlands: "NL", Turkey: "TR", "United Kingdom": "GB", "United States": "US",
+              } as Record<string, string>)[fallbackCountry.canonicalEnglish] || fallbackCountry.canonicalEnglish,
+            } : {}),
+            ...(fallbackTitle ? { title: (fallbackTitle[1] || fallbackTitle[0]).replace(/s$/i, "") } : {}),
+            ...(fallbackIndustry.englishKeywords.length ? { keywords: fallbackIndustry.englishKeywords } : {}),
+            ...(requiredProfessionalContactFields(lastUserMsg).length ? { requiredContactFields: requiredProfessionalContactFields(lastUserMsg) } : {}),
+          }
         : isCompanySearch
         ? {
             query: {
@@ -2059,14 +2074,24 @@ export class LlmClient {
     if (isPeopleSearchRequest(userHistoryText)) {
       const parsedVolume = extractTargetVolume(userHistoryText);
       const targetVolume = parsedVolume && parsedVolume > 0 ? parsedVolume : 10;
-      const peopleCap = (options.sanitizedCapabilities || []).find((c: any) =>
-        String(c.slug || c.platform || c.category || c.id || "").toLowerCase().includes("people")
-      ) || { slug: "icypeas-people-search", id: "icypeas.people.search", nameAr: "بحث صناع القرار والمهنيين" };
       const country = detectCountryFromText(userHistoryText);
-      // Keep the provider query scoped to the people capability. The full customer
-      // prompt is not a keyword/industry and must not leak into the quote card.
-      const query: Record<string, any> = { keyword: { include: ["decision makers"] } };
-      if (country) query.location = { include: [country.canonicalEnglish] };
+      const titleText = userHistoryText.toLowerCase();
+      const titleMatch = titleText.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/);
+      const detectedIndustry = detectIndustryFromText(userHistoryText);
+      const isoCountry = country ? ({
+        Egypt: "EG", "Saudi Arabia": "SA", "United Arab Emirates": "AE", Kuwait: "KW",
+        Qatar: "QA", Bahrain: "BH", Oman: "OM", Jordan: "JO", Germany: "DE",
+        Austria: "AT", France: "FR", Italy: "IT", Spain: "ES", Switzerland: "CH",
+        Netherlands: "NL", Turkey: "TR", "United Kingdom": "GB", "United States": "US",
+      } as Record<string, string>)[country.canonicalEnglish] : undefined;
+      const peopleParams: Record<string, any> = {
+        q: userHistoryText.slice(0, 300),
+        limit: targetVolume,
+        ...(isoCountry ? { country: isoCountry } : {}),
+        ...(titleMatch ? { title: (titleMatch[1] || titleMatch[0]).replace(/s$/i, "") } : {}),
+        ...(detectedIndustry.englishKeywords.length ? { keywords: detectedIndustry.englishKeywords } : {}),
+        ...(requiredProfessionalContactFields(userHistoryText).length ? { requiredContactFields: requiredProfessionalContactFields(userHistoryText) } : {}),
+      };
 
       return {
         output: {
@@ -2074,9 +2099,9 @@ export class LlmClient {
           summaryAr: `استخراج بيانات ${targetVolume} من صناع القرار والمهنيين وفق معايير الطلب`,
           capabilities: [{
             stepId: "people_search",
-            capabilitySlug: peopleCap.slug,
-            endpointId: peopleCap.id || "icypeas.people.search",
-            params: { query },
+            capabilitySlug: "professional-people-search",
+            endpointId: "treg.people.search",
+            params: peopleParams,
             targetVolumeMin: 1,
             targetVolumeMax: targetVolume,
             paginationStrategy: "none",
@@ -2553,8 +2578,8 @@ export class LlmClient {
         if (Array.isArray(scrubbedPayload.capabilities)) {
           for (const cap of scrubbedPayload.capabilities) {
             if (isPeoplePrompt || cap.capabilitySlug?.includes("people") || cap.endpointId?.includes("people")) {
-              cap.capabilitySlug = "icypeas-people-search";
-              cap.endpointId = "icypeas.people.search";
+              cap.capabilitySlug = "professional-people-search";
+              cap.endpointId = "treg.people.search";
             } else if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
               cap.capabilitySlug = "icypeas-companies-search";
               cap.endpointId = "icypeas.companies.search";
@@ -2775,8 +2800,8 @@ export class LlmClient {
         if (Array.isArray(parsedResult.capabilities)) {
           for (const cap of parsedResult.capabilities) {
             if (isPeoplePrompt || cap.capabilitySlug?.includes("people") || cap.endpointId?.includes("people")) {
-              cap.capabilitySlug = "icypeas-people-search";
-              cap.endpointId = "icypeas.people.search";
+              cap.capabilitySlug = "professional-people-search";
+              cap.endpointId = "treg.people.search";
             } else if (isCompanyPrompt || cap.capabilitySlug?.includes("compan") || cap.capabilitySlug?.includes("b2b")) {
               cap.capabilitySlug = "icypeas-companies-search";
               cap.endpointId = "icypeas.companies.search";

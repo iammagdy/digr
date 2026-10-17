@@ -438,7 +438,10 @@ export function validatePlanAgainstLiveCatalog(
       issues.push({ itemIndex: index, nameAr, kind: "unverified" });
       return;
     }
-    let ep = liveResults.find(
+    // The routed TREG capability has variable per-provider pricing; its
+    // approved bundled estimate must win over the router's zero-cost wrapper
+    // listing, which represents only the outer route.
+    let ep = it.capabilitySlug === "professional-people-search" ? undefined : liveResults.find(
       (r) => r.slug === it.capabilitySlug || r.id === it.capabilitySlug || (it.endpointId && (r.slug === it.endpointId || r.id === it.endpointId)),
     );
     if (!ep) {
