@@ -67,6 +67,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { toArabicDigits } from "../../lib/arabicDigits";
+import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 
@@ -157,6 +158,8 @@ export interface ChatHandlerInput {
   testScenario?: string;
   uploadedFiles?: any[];
   isGuest?: boolean;
+  /** Set by the route when this message only gave the customer's name (already stored); answered without a model turn. */
+  capturedName?: string;
   personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
 }
 
@@ -1311,8 +1314,9 @@ export class ChatHandler {
 
     // Greetings never enter research discovery or spend an LLM turn. Ask for a
     // missing name once per conversation, then use the persisted profile name.
-    if (isGreeting && !isTestSearchScenario) {
-      const displayName = [userProfile?.sender_name, userProfile?.name, userProfile?.full_name]
+    if ((isGreeting || input.capturedName) && !isTestSearchScenario) {
+      // The real profile name only: account name first, the top-up sender name last. Never a default.
+      const displayName = input.capturedName?.trim() || [userProfile?.name, userProfile?.full_name, userProfile?.sender_name]
         .find((value) => typeof value === "string" && value.trim())?.trim();
       let alreadyAskedName = false;
       if (!displayName && sb) {
@@ -1321,16 +1325,21 @@ export class ChatHandler {
             .select("id")
             .eq("conversation_id", conversationId)
             .eq("role", "assistant")
-            .ilike("content_ar", "%اسمك%")
+            .ilike("content_ar", `%${NAME_PROMPT_AR.slice(0, 12)}%`)
             .limit(2);
           alreadyAskedName = Boolean(priorNamePrompts?.length);
         } catch {}
       }
-      const greeting = displayName
-        ? `أهلًا ${displayName}، كيف أساعدك اليوم؟`
-        : alreadyAskedName
-          ? "أهلًا بك، كيف أساعدك اليوم؟"
-          : "أهلًا بك، ما الاسم الذي تفضّل أن أناديك به؟";
+      const balanceLine = typeof userBalance === "number" && Number.isFinite(userBalance)
+        ? `رصيدك المتاح ${toArabicDigits(Math.max(0, Math.floor(userBalance)))} نقطة. `
+        : "";
+      const greeting = input.capturedName
+        ? `تشرفنا يا ${displayName}. ${balanceLine}كيف أساعدك اليوم؟`
+        : displayName
+          ? `أهلًا ${displayName}، ${balanceLine}كيف أساعدك اليوم؟`
+          : alreadyAskedName
+            ? `أهلًا بك، ${balanceLine}كيف أساعدك اليوم؟`
+            : `أهلًا بك، ${NAME_PROMPT_AR}`;
       if (sb) {
         await Promise.all([
           sb.from("messages").update({ content_ar: greeting }).eq("id", assistantMsgId),
@@ -1774,9 +1783,9 @@ export class ChatHandler {
       const tLlmStart = Date.now();
       modelCallCount++;
       const resolvedDisplayName =
-        (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         (userProfile?.name && String(userProfile.name).trim()) ||
         (userProfile?.full_name && String(userProfile.full_name).trim()) ||
+        (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         "";
 
       let llmResult = await this.llm.executeTurn({

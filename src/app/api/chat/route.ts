@@ -1,3 +1,5 @@
+import { extractCustomerName } from "../../../lib/customerName";
+import { lastAssistantAskedForName } from "../../../lib/server/customerNameStore";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ChatHandler } from "../../../functions/shared/chatHandler";
@@ -78,6 +80,7 @@ export async function POST(req: NextRequest) {
     currentStep = "authenticate_user";
     let verifiedUserId: string | null = null;
     let emailVerified = false;
+    let capturedName: string | undefined;
     let isGuest = false;
     let personaProfile: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown } | undefined;
 
@@ -108,10 +111,16 @@ export async function POST(req: NextRequest) {
       if (user) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
-        const explicitName = /^(?:أنا\s+)?اسمي\s+([\p{L}][\p{L}\s.'’-]{1,58})[.!؟?\s]*$/iu.exec(message.trim())?.[1]?.trim();
-        if (explicitName && explicitName.length >= 2 && explicitName.length <= 60) {
-          const { data: updated, error: nameError } = await supabase.auth.updateUser({ data: { name: explicitName, full_name: explicitName } });
+        // The name is stored in the customer's own account profile through their own session (owner decision D2).
+        // "اسمي X" always counts; a bare short reply counts only right after Diger AI asked for the name.
+        const askedForName = typeof conversationId === "string" && conversationId
+          ? await lastAssistantAskedForName(createAdminClient(), user.id, conversationId)
+          : false;
+        capturedName = extractCustomerName(message, askedForName) || undefined;
+        if (capturedName) {
+          const { data: updated, error: nameError } = await supabase.auth.updateUser({ data: { name: capturedName, full_name: capturedName } });
           if (!nameError && updated.user) user = updated.user;
+          else capturedName = undefined;
         }
         personaProfile = user.user_metadata;
       }
@@ -486,6 +495,7 @@ export async function POST(req: NextRequest) {
       answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,
       isGuest,
+      capturedName,
       personaProfile: isGuest ? undefined : personaProfile,
     });
 
