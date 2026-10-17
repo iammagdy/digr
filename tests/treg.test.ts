@@ -49,7 +49,7 @@ describe("Fake TREG Server & TREG Client Integration", () => {
         baseUrl: fakeTreg.url,
         endpointId: "crawl4ai.tiktok.search.videos",
         method: "POST",
-        params: { query: "كرة القدم", limit: 5, country: "Egypt", location: "Egypt" },
+        params: { query: "كرة القدم", limit: 5, offset: 0, country: "Egypt", location: "Egypt" },
         allowedParamKeys: ["query", "limit"],
         userId: "user_test_456",
         jobId: "job_test_789",

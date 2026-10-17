@@ -99,16 +99,10 @@ export function serializeProviderParams(
       continue;
     }
 
-    // 2. If allowed param keys from schema are provided, ensure key is either in allowed schema or standard pagination keys
-    const STANDARD_PAGINATION_KEYS = new Set([
-      "cursor",
-      "next_cursor",
-      "offset",
-      "limit",
-      "page",
-      "per_page",
-    ]);
-    if (allowedSet && !allowedSet.has(lowerKey) && !STANDARD_PAGINATION_KEYS.has(lowerKey)) {
+    // 2. The live endpoint schema is authoritative, including for pagination.
+    // Generic plans sometimes include `offset` even when the provider does
+    // not support it; never exempt pagination keys from a known allowlist.
+    if (allowedSet && !allowedSet.has(lowerKey)) {
       continue;
     }
 
