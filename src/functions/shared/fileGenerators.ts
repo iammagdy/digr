@@ -1185,10 +1185,9 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
 
       reportFacts.forEach((fact, idx) => {
         const valueText = formatArabicRtl(fact.value);
+        doc.font("ArabicBold").fontSize(7.25);
         const valueHeight = doc.heightOfString(valueText, {
           width: 215,
-          font: "ArabicBold",
-          size: 7.25,
           lineGap: 1,
         });
         const rowHeight = Math.max(23, Math.min(38, valueHeight + 8));
