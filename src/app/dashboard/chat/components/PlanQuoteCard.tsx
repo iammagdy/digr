@@ -45,6 +45,10 @@ export interface PlanQuoteData {
     maxPoints: number;
   }>;
   outputFormats: string[];
+  /** Large or vague plans: a small priced sample first («استكشاف»). Computed by the server. */
+  explorationOffer?: { sampleUnits: number; samplePoints: number; sampleExpectedPoints: number; fullUnits: number; fullQuotedPoints: number };
+  /** This quote is the sample; the figures describe the full plan it explores. */
+  exploration?: { fullVolume: number; fullQuotedPoints: number };
   expiresAt: string;
   /** Loaded from plans_quotes when a saved conversation is restored. */
   status?: string;
@@ -75,6 +79,8 @@ interface PlanQuoteCardProps {
   onRefresh: (quote: PlanQuoteData) => Promise<void>;
   /** The plan was approved and a run exists: show the quote read-only. */
   locked?: boolean;
+  /** «استكشاف أولًا»: replace this quote by a small priced sample of the same plan. */
+  onExplore?: (quote: PlanQuoteData) => Promise<void> | void;
 }
 
 export function formatExpiry(expiresAt: string): string {
@@ -126,6 +132,7 @@ export default function PlanQuoteCard({
   onTopupShort,
   onRefresh,
   locked = false,
+  onExplore,
 }: PlanQuoteCardProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
@@ -496,7 +503,21 @@ export default function PlanQuoteCard({
             >
               {isEditing ? "إلغاء التعديل" : EDIT_PLAN_BTN_LABEL}
             </button>
+            {quote.explorationOffer && onExplore && !quote.exploration && (
+              <button
+                type="button"
+                data-testid="explore-first-btn"
+                onClick={() => void onExplore(quote)}
+                disabled={isStarting || quote.isDependent}
+                className={`${SECONDARY_BTN} min-h-11`}
+              >
+                استكشاف أولًا: {formatAr(quote.explorationOffer.sampleUnits)} سجل مقابل {formatAr(quote.explorationOffer.samplePoints)} نقطة
+              </button>
+            )}
           </div>
+          {quote.exploration && (
+            <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">هذه عينة استكشافية من خطتك الأكبر ({formatAr(quote.exploration.fullVolume)} سجل). بعد اكتمالها نقدّر لك الحجم الكامل من أرقامها.</p>
+          )}
           <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">بعد الموافقة يبدأ البحث، ويُخصم فقط مقابل السجلات المطابقة التي تم تسليمها.</p>
         </>
       )}

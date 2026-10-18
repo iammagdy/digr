@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { topupContinuationMessageAr } from "@/lib/lowBalance";
+import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploration";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
@@ -914,7 +915,8 @@ export default function ChatWorkspacePage() {
     newParam: string,
     newFormats: string[],
     newCountry?: string,
-    newIndustry?: string
+    newIndustry?: string,
+    exploration?: { fullVolume: number; fullQuotedPoints: number }
   ) {
     const primaryItem = currentQuote.items?.[0] || { capabilitySlug: "company-research", params: {} };
     const slug = primaryItem.capabilitySlug;
@@ -975,6 +977,7 @@ export default function ChatWorkspacePage() {
         quoteId: currentQuote.quoteId,
         operations,
         jwt: jwtToken,
+        ...(exploration ? { exploration } : {}),
       }),
     });
 
@@ -1000,6 +1003,20 @@ export default function ChatWorkspacePage() {
         return msg;
       })
     );
+  }
+
+  // «استكشاف أولًا»: swap the plan for a small priced sample of itself, so the full volume is decided with facts.
+  async function handleExplore(quote: PlanQuoteData) {
+    const offer = quote.explorationOffer;
+    if (!offer) return;
+    try {
+      await handleSaveDirectEdit(
+        quote, offer.sampleUnits, "", quote.outputFormats?.length ? quote.outputFormats : ["xlsx"],
+        undefined, undefined, { fullVolume: quote.targetVolumeMax, fullQuotedPoints: quote.quotedPoints },
+      );
+    } catch (err: any) {
+      setMessages((prev) => [...prev, { id: `err_explore_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الاستكشاف. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
+    }
   }
 
   // Start Job Execution
@@ -1030,6 +1047,7 @@ export default function ChatWorkspacePage() {
       }
 
       loadBalance();
+      if (quote.exploration) explorationByJob.current.set(data.jobId, quote);
 
       setActiveJob({
         jobId: data.jobId,
@@ -1456,6 +1474,23 @@ export default function ChatWorkspacePage() {
 
   // After an approved top-up the same plan becomes affordable: say so here, once per plan, and keep it approvable.
   const announcedTopupFor = useRef(new Set<string>());
+  // Sample («استكشاف») runs: when one finishes, explain what its numbers mean for the full plan, once.
+  const explorationByJob = useRef(new Map<string, PlanQuoteData>());
+  const explorationAnnounced = useRef(new Set<string>());
+  useEffect(() => {
+    if (!activeJob || !jobFinished || activeJob.review === undefined) return;
+    const sample = explorationByJob.current.get(activeJob.jobId);
+    if (!sample?.exploration || explorationAnnounced.current.has(activeJob.jobId)) return;
+    explorationAnnounced.current.add(activeJob.jobId);
+    const estimate = estimateFromSample({
+      delivered: activeJob.rowsCollected,
+      requested: activeJob.requestedRows || sample.targetVolumeMax,
+      rows: extractedRecords as unknown as Array<Record<string, any>>,
+      fullUnits: sample.exploration.fullVolume,
+      unitPricePoints: sample.unitPricePoints,
+    });
+    setMessages((prev) => [...prev, { id: `explore_done_${activeJob.jobId}`, role: "assistant", content: explorationResultMessageAr(estimate, sample.exploration!.fullVolume), createdAt: new Date().toISOString() }]);
+  }, [activeJob, jobFinished, extractedRecords]);
   useEffect(() => {
     if (balanceValue === null || activeJob) return;
     const lastPlan = [...messages].reverse().find((m) => m.planQuote)?.planQuote;
@@ -1524,6 +1559,7 @@ export default function ChatWorkspacePage() {
             available={balanceValue}
             creditValue={creditValue}
             onTopupShort={handleTopupShort}
+            onExplore={handleExplore}
             onRefresh={handleRefreshQuote}
             locked={!!activeJob}
           />

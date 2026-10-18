@@ -1,4 +1,6 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
+import { capStatementAr } from "../../lib/jobCaps";
+import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
@@ -2715,9 +2717,36 @@ export class ChatHandler {
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (managedQuote.pointsCapConstrained) {
-            planSummaryText += managedQuote.targetVolumeMax < (managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)
-              ? `\n- تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
+            const requestedUnits = managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax;
+            // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
+            const capStatement = managedQuote.items.length === 1
+              ? capStatementAr({
+                  requestedUnits,
+                  fittedUnits: managedQuote.targetVolumeMax,
+                  unitPricePoints: managedQuote.unitPricePoints,
+                  pointsCap: managedQuote.pointsCap || 600,
+                  safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
+                  quotedPoints: managedQuote.quotedPoints,
+                })
+              : null;
+            planSummaryText += capStatement
+              ? `\n- ${capStatement}`
+              : managedQuote.targetVolumeMax < requestedUnits
+              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
               : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${toArabicDigits(managedQuote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة.`;
+          }
+          // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
+          const explorationCandidate = isExplorationCandidate({
+            items: managedQuote.items,
+            targetVolumeMax: managedQuote.targetVolumeMax,
+            unitPricePoints: managedQuote.unitPricePoints,
+            quotedPoints: managedQuote.quotedPoints,
+            pointsCapConstrained: managedQuote.pointsCapConstrained,
+          });
+          if (explorationCandidate) {
+            const offer = explorationOffer(managedQuote);
+            planQuoteData.explorationOffer = offer;
+            planSummaryText += `\n- ${explorationOfferLineAr(offer)}`;
           }
           if (brief.exclusionFile) {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${toArabicDigits(brief.exclusionFile.baselineRowCount)} شركة مسجلة مسبقاً لمنع تكرارها.`;
