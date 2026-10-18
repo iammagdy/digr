@@ -246,6 +246,10 @@ const TOPIC_NOISE = new Set([
   "تيك", "توك", "تيكتوك", "يوتيوب", "يوتوب", "فيسبوك", "فيس", "انستغرام", "إنستغرام", "انستا", "تويتر", "إكس", "اكس", "ريديت", "لينكد", "منصة", "منصه",
   "قناة", "حساب", "صفحة", "رابط", "ريلز", "شورتس", "الفيس", "اليوم", "النهاردة", "حاليا", "حالياً", "دلوقتي", "الان", "الآن", "اخر", "آخر", "جديد",
   "عدد", "كام", "كم", "رقم", "حوالي", "تقريبا", "تقريباً", "لكل", "ولكل", "بتاع", "بتاعت", "بتاعه", "خاص", "خاصة", "الخاصة", "الخاص", "مع",
+  // Discovery answers are merged with the original request. Time-window labels must not leak into
+  // the provider topic (for example: "كرة السلة الفترة المطلوبة شهر").
+  "فترة", "الفترة", "زمنية", "الزمنية", "مطلوبة", "المطلوبة", "اسبوع", "أسبوع", "الشهر", "شهر", "اشهر", "أشهر", "سنة", "سنوات",
+  "week", "month", "months", "year", "years", "period", "timeframe",
   "tiktok", "youtube", "facebook", "instagram", "twitter", "videos", "video", "posts", "post", "comments", "comment", "trending", "trend", "viral", "get", "me", "the", "of", "on", "from", "about", "for", "with", "and", "a", "an", "i", "want", "need",
 ]);
 

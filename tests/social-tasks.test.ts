@@ -4,6 +4,7 @@ import {
   extractUrls,
   getMissingSocialTaskInputs,
   hasSocialSubject,
+  socialSubjectText,
   socialCatalogQuery,
   socialTaskQuestion,
 } from "../src/lib/socialTasks";
@@ -12,6 +13,12 @@ import { normalizeClarificationQuestions } from "../src/functions/shared/clarifi
 import { mapSearchQueryToEnglish } from "../src/functions/shared/catalogClient";
 
 const brief: any = { platforms: [], topics: [] };
+
+describe("social topic extraction", () => {
+  it("keeps a selected time window out of the provider topic", () => {
+    expect(socialSubjectText("هات ١٠ كومنتس على فيديوهات تيك توك عن كرة السلة في مصر الفترة المطلوبة شهر")).toBe("كرة السلة");
+  });
+});
 
 describe("what a researcher wants is understood in Egyptian and standard Arabic", () => {
   const cases: Array<[string, string | null, string | null, string | null]> = [

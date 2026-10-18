@@ -57,6 +57,12 @@ describe("other recognized sectors", () => {
   it("food sector rows with a matching label are delivered", () => {
     expect(evaluateDeterministicRelevance(row("Food & Beverages"), "Egypt", "الأغذية والمطاعم").decision).toBe("match");
   });
+
+  it("does not treat a broad Utilities label as an electricity match without corroborating evidence", () => {
+    expect(evaluateDeterministicRelevance(row("Utilities", { description: "Water treatment and chemical supplies" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("uncertain");
+    expect(evaluateDeterministicRelevance(row("Utilities", { company_name: "Lucky Patcher", description: "Hack Android games and apps" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("uncertain");
+    expect(evaluateDeterministicRelevance(row("Utilities", { description: "Electric power grid maintenance services" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("match");
+  });
 });
 
 describe("one industry detector for planning and the provider request", () => {

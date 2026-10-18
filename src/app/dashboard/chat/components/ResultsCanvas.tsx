@@ -6,6 +6,7 @@ import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
+import { customerResultColumnLabel } from "@/lib/customerResultColumns";
 
 export interface ExtractedRecord {
   id: string;
@@ -43,7 +44,7 @@ interface ResultsCanvasProps {
   onUndoVersion: (targetVersionId: string) => void;
 }
 
-const COLUMN_LABELS: Record<string, string> = {
+const LEGACY_COLUMN_LABELS: Record<string, string> = {
   username: "اسم المستخدم", displayName: "الاسم التعريفي", followers: "المتابعون",
   following: "المتابعَون", likes: "الإعجابات", videosCount: "المقاطع", verified: "موثّق",
   bio: "النبذة", bioLink: "رابط النبذة", profileUrl: "رابط الملف", collectedDate: "تاريخ الجمع",
@@ -142,8 +143,8 @@ export default function ResultsCanvas({
   );
   const rawColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id" && !key.startsWith("_") && !key.endsWith("_relevance_status")))));
   const tableColumns = rawColumns.filter((key, index) => {
-    const label = COLUMN_LABELS[key] || key;
-    return rawColumns.findIndex((candidate) => (COLUMN_LABELS[candidate] || candidate) === label) === index;
+    const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key);
+    return rawColumns.findIndex((candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate)) === label) === index;
   });
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
 
@@ -329,7 +330,7 @@ export default function ResultsCanvas({
                     <thead>
                       <tr className="border-b border-sand-200 bg-sand-100/80">
                         {tableColumns.map((column) => (
-                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{COLUMN_LABELS[column] || column}</th>
+                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{LEGACY_COLUMN_LABELS[column] || customerResultColumnLabel(column)}</th>
                         ))}
                       </tr>
                     </thead>
