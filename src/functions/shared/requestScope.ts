@@ -1,5 +1,6 @@
 import { detectMentionedPlatforms } from "./capabilityRegistry";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
+import { looksLikeFileShapingRequest } from "../../lib/fileSpec";
 
 /**
  * Which earlier messages may inform the CURRENT research request.
@@ -40,9 +41,18 @@ export function isStandaloneResearchRequest(text: string): boolean {
   return REQUEST_VERB.test(t) || LEADING_COUNT_OBJECT.test(t);
 }
 
+/**
+ * «قسّم الملف شيت لكل محافظة», «رتبها حسب التاريخ»: how the delivered file should look. A research request that merely names
+ * a layout ("منشورات من حسابات مشهورة، ملف لكل منصة") carries a research object and is not one.
+ */
+export function isFileShapingMessage(text: string): boolean {
+  return looksLikeFileShapingRequest(text) && !REQUEST_OBJECT.test(text || "");
+}
+
+/** A turn that carries no research request: a greeting, an identity question, or how the delivered file should look. */
 export function isGreetingOrIdentityTurn(text: string): boolean {
   const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion((text || "").trim());
-  return isGreeting || isGeneralQuestion;
+  return isGreeting || isGeneralQuestion || isFileShapingMessage(text);
 }
 
 /** At most this many earlier customer messages can complete a follow-up. */
@@ -54,6 +64,8 @@ export const MAX_FOLLOW_UP_CHAIN = 4;
  */
 export function scopeRequestText(priorUserMessages: string[], current: string, extraNotes: string[] = []): string {
   const own = (current || "").trim();
+  // How the delivered file should look is about the saved result: it never reads (or routes by) an earlier research request.
+  if (isFileShapingMessage(own)) return own;
   if (isStandaloneResearchRequest(own)) return [own, ...extraNotes].filter(Boolean).join(" ");
 
   const chain: string[] = [];

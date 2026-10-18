@@ -1,7 +1,7 @@
 import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
-import { isStandaloneResearchRequest } from "./requestScope";
+import { isFileShapingMessage, isStandaloneResearchRequest } from "./requestScope";
 
 export interface ResearchBrief {
   platforms: string[];
@@ -390,7 +390,7 @@ export function extractBriefFromMessage(
 
   // Greetings and identity questions ("إنت مين؟") never enter a research topic.
   const greetingOrGeneral = isGreetingOrGeneralQuestion(userMessage);
-  const msgIsGreeting = greetingOrGeneral.isGreeting || greetingOrGeneral.isGeneralQuestion;
+  const msgIsGreeting = greetingOrGeneral.isGreeting || greetingOrGeneral.isGeneralQuestion || isFileShapingMessage(userMessage);
 
   if (!msgIsGreeting) {
     const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);
@@ -414,15 +414,16 @@ export function extractBriefFromMessage(
   }
 
   // 6. Infer 5 to 10 relevant Arabic keywords
-  const primaryTopic = (brief.topics && brief.topics.length > 0)
-    ? brief.topics[0]
-    : (!msgIsGreeting ? userMessage : "البيانات المطلوبة");
-  const inferred = inferRelatedKeywords(primaryTopic, userMessage);
-  if (!brief.keywords || brief.keywords.length === 0) {
-    brief.keywords = inferred;
-  } else {
-    for (const kw of inferred) {
-      if (!brief.keywords.includes(kw)) brief.keywords.push(kw);
+  // A greeting, identity question or file-layout request carries no research words to infer from.
+  if (!msgIsGreeting) {
+    const primaryTopic = (brief.topics && brief.topics.length > 0) ? brief.topics[0] : userMessage;
+    const inferred = inferRelatedKeywords(primaryTopic, userMessage);
+    if (!brief.keywords || brief.keywords.length === 0) {
+      brief.keywords = inferred;
+    } else {
+      for (const kw of inferred) {
+        if (!brief.keywords.includes(kw)) brief.keywords.push(kw);
+      }
     }
   }
 

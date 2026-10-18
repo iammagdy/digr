@@ -1,11 +1,12 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
-import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, type DatasetColumn } from "../../lib/fileSpec";
+import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
+import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
 import { detectTopicGathering, hasTopicResearchService, topicSourceQuestion } from "./topicGathering";
 import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
@@ -81,7 +82,7 @@ import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, 
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
-import { INDEPENDENT_REQUEST_NOTE_AR, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
+import { INDEPENDENT_REQUEST_NOTE_AR, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -105,6 +106,10 @@ function customerAuthoredRequirementText(message: string): string {
     };
     return parsed.answers
       .flatMap((answer: any) => {
+        // The column chosen to split the delivered file: the shaping request it completes, not a research answer.
+        if (answer?.questionId === "shape_column_required" && typeof answer?.value === "string" && answer.value.trim()) {
+          return [`قسّم الملف شيت لكل ${sanitizeClarificationText(answer.value, 80)}`];
+        }
         const label = labels[answer?.questionId] || "الإجابة";
         if (typeof answer?.value === "string") return [`${label}: ${sanitizeClarificationText(answer.value, 200)}`];
         if (Array.isArray(answer?.value)) {
@@ -1348,7 +1353,19 @@ export class ChatHandler {
     const isGreeting = greetingOrGeneral.isGreeting;
     // A result is on screen (the page sent its columns) and the customer asks how the file should look: a chat turn
     // about an existing file, never a new research request, so it skips discovery and planning.
-    const isFileShapingTurn = sanitizeResultColumns(input.resultColumns).length > 0 && looksLikeFileShapingRequest(message);
+    // How the delivered file should look («قسّم الملف شيت لكل محافظة»): a turn about the saved result, never a new research
+    // request. The columns come from the page, or from the customer's latest delivered result when the page sent none.
+    const shapingText = formatClarificationMessageForAssistant(message);
+    const looksShaping = isFileShapingMessage(shapingText);
+    let shapingColumns = sanitizeResultColumns(input.resultColumns);
+    let deliveredResultJobId: string | null = null;
+    if (looksShaping && shapingColumns.length === 0 && sb) {
+      const saved = await loadLatestResultColumns(sb, { conversationId, userId });
+      shapingColumns = saved.columns;
+      deliveredResultJobId = saved.jobId;
+    }
+    // Only a message about the file, with a delivered result to shape; a research request that merely names a layout ("... ملف لكل منصة") is not one.
+    const isFileShapingTurn = looksShaping && !isStandaloneResearchRequest(shapingText) && (shapingColumns.length > 0 || Boolean(deliveredResultJobId));
     const isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
@@ -1466,6 +1483,32 @@ export class ChatHandler {
         messageId: assistantMsgId,
         role: "assistant",
         contentAr: answer,
+        outputType: "answer_question",
+        intent: "chat",
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+      };
+    }
+
+    // A delivered result whose columns cannot be read right now: answered by code, nothing is guessed or charged.
+    const shapingBlockedReplyAr = (!isTestSearchScenario && isFileShapingTurn && shapingColumns.length === 0)
+      ? "تعذّرت قراءة أعمدة ملفك الآن، ولم يُخصم أي رصيد. افتح نتائج طلبك ثم أعد كتابة الشكل المطلوب."
+      : null;
+    if (shapingBlockedReplyAr) {
+      if (sb) {
+        await Promise.all([
+          sb.from("messages").update({ content_ar: shapingBlockedReplyAr }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+        ]);
+      } else {
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: shapingBlockedReplyAr, status: "ready" } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: shapingBlockedReplyAr,
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
@@ -1988,7 +2031,7 @@ export class ChatHandler {
             },
         todayDate: new Date().toISOString().split("T")[0],
         userBalancePoints: userBalance,
-        resultColumns: sanitizeResultColumns(input.resultColumns),
+        resultColumns: shapingColumns,
         conversationId,
         userId,
         totalConversationTokens: effectiveConvTokens,
@@ -2248,12 +2291,41 @@ export class ChatHandler {
         }
       }
 
+      // 7f. File shaping: the spec is checked against the real columns of the delivered result. An unknown column is never
+      // guessed: the customer is told which columns exist and asked ONE question.
+      if (output.type === "shape_file" && shapingColumns.length > 0) {
+        const checked = validateFileSpec((output as any).spec, shapingColumns);
+        if (checked.ok) {
+          (output as any).spec = checked.spec;
+        } else if ((output as any).spec?.groupBy) {
+          const choices = columnChoicesAr(shapingColumns);
+          const question = {
+            id: "shape_column_required",
+            text: "بأي عمود تريد تقسيم الملف إلى شيتات؟",
+            question: "بأي عمود تريد تقسيم الملف إلى شيتات؟",
+            type: "single" as const,
+            options: choices,
+            allowOther: false,
+          };
+          clarificationItemsList = [question as any];
+          clarificationQuestionsList = [question.text];
+          finalContentAr = `${checked.errorAr.replace(/ اختر من الأعمدة الموجودة في الملف\.$/, "")} الأعمدة المتاحة في ملفك مذكورة أدناه، ولن يُخصم أي رصيد.`;
+          output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
+        } else {
+          finalContentAr = `${checked.errorAr} الأعمدة المتاحة: ${columnChoicesAr(shapingColumns, 10).map((c) => `«${c}»`).join("، ")}.`;
+          output = { type: "answer_question", answerAr: finalContentAr } as any;
+        }
+      }
+
       // The language model can incorrectly suggest an unrelated alternative for a
       // people-search request. Prefer the verified people capability when present.
-      output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
-      // Explicit company requests receive the same deterministic routing guard.
-      output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
-      if (ACCOUNT_LOOKUP_RE.test(conversationRequestText)) {
+      // A turn about the delivered file is never turned into a new search plan by these guards.
+      if (!isFileShapingTurn) {
+        output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
+        // Explicit company requests receive the same deterministic routing guard.
+        output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
+      }
+      if (!isFileShapingTurn && ACCOUNT_LOOKUP_RE.test(conversationRequestText)) {
         // Profile requests have a distinct one-record plan with no country or
         // date filters; don't let a generic social-content plan replace it.
         output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
@@ -2720,7 +2792,23 @@ export class ChatHandler {
                 planValidation = { valid: true, errors: [], issues: [] };
               } else {
                 console.warn("[chat:auto_plan_invalid_pricing]", { errors: autoCheck.errors });
-                finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+                // The generic sentence is only for a request with no topic at all. When the customer gave a topic (and maybe a
+        // country) the answer is ONE specific question that names them and offers the sources that exist.
+        const gathered = detectTopicGathering(conversationRequestText);
+        const topicHint = (gathered?.topic || researchIntent.topic.value || brief.topics[0] || "").toString().trim();
+        if (topicHint.length >= 2 && !input.isGuest && !hasTopicResearchService(capabilities)) {
+          const sourceQuestion = topicSourceQuestion({
+            noun: gathered?.noun || "البيانات",
+            topic: topicHint,
+            countryAr: detectCountryFromText(conversationRequestText)?.arabicLabel,
+          });
+          clarificationItemsList = [sourceQuestion as any];
+          clarificationQuestionsList = [sourceQuestion.text];
+          finalContentAr = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+          output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
+        } else {
+          finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+        }
                 output = {
                   type: "ask_clarification",
                   intro: finalContentAr,
@@ -2995,7 +3083,23 @@ export class ChatHandler {
           unsupportedService: output.unsupportedService,
           explanationAr: output.explanationAr,
         });
-        finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+        // The generic sentence is only for a request with no topic at all. When the customer gave a topic (and maybe a
+        // country) the answer is ONE specific question that names them and offers the sources that exist.
+        const gathered = detectTopicGathering(conversationRequestText);
+        const topicHint = (gathered?.topic || researchIntent.topic.value || brief.topics[0] || "").toString().trim();
+        if (topicHint.length >= 2 && !input.isGuest && !hasTopicResearchService(capabilities)) {
+          const sourceQuestion = topicSourceQuestion({
+            noun: gathered?.noun || "البيانات",
+            topic: topicHint,
+            countryAr: detectCountryFromText(conversationRequestText)?.arabicLabel,
+          });
+          clarificationItemsList = [sourceQuestion as any];
+          clarificationQuestionsList = [sourceQuestion.text];
+          finalContentAr = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+          output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
+        } else {
+          finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+        }
 
         // Log request in capability_requests table
         if (sb) {
@@ -3027,7 +3131,7 @@ export class ChatHandler {
         if (!parsedSpec.success) {
           finalContentAr = "لم أفهم الشكل المطلوب للملف تمامًا. وضّح لي مثلًا: شيت منفصل لكل محافظة، أو ترتيب حسب التاريخ، أو الأعمدة التي تريدها فقط.";
         } else {
-          const hintColumns = sanitizeResultColumns(input.resultColumns);
+          const hintColumns = shapingColumns;
           const descriptionAr = describeFileSpecAr(parsedSpec.data, hintColumns);
           fileShapeData = { spec: parsedSpec.data, descriptionAr };
           finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.`;
@@ -3297,7 +3401,7 @@ export class ChatHandler {
 
       const computedIntent: "chat" | "research" =
         (output as any).intent ||
-        (isGreeting || isGeneralQuestion
+        (isGreeting || (isGeneralQuestion && !(isFileShapingTurn && output.type === "ask_clarification"))
           ? "chat"
           : output.type === "propose_plan" ||
             output.type === "ask_clarification" ||

@@ -1729,13 +1729,13 @@ export class LlmClient {
     }
 
     // D2. File shaping of an existing result («شيت لكل محافظة», «رتب حسب …»): a spec, never a revision charge.
-    const shapeMatch = /(?:شيت|ورقة|ملف)\s+(?:منفصل\s+)?لكل\s+([^\s،.؟?]+)/.exec(lastUserMsg);
+    const shapeMatch = /(?:شيت|ورقة|ملف)\s+(?:منفصل\s+)?لكل\s+([^،.؟?\n]+)/.exec(lastUserMsg);
     if (shapeMatch) {
       return {
         output: {
           type: "shape_file",
           replyAr: "تمام، جهزت لك الملف مقسّمًا كما طلبت.",
-          spec: { groupBy: { column: shapeMatch[1], mode: "sheets" } },
+          spec: { groupBy: { column: shapeMatch[1].trim(), mode: "sheets" } },
         },
         inputTokens: 600,
         outputTokens: 70,

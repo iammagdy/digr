@@ -72,4 +72,29 @@ describe("3. a studies request with a topic and a country gets a specific questi
     expect(third.planQuote.items[0].params.query).toContain("الطاقة الشمسية");
     expect(third.planQuote.items[0].targetVolumeMax).toBe(10);
   });
+
+  it("when the model answers «suggest_alternative» for a request with a topic, the generic sentence is replaced by the one specific question", async () => {
+    const db = createChatDb();
+    const handler = new ChatHandler(db as any);
+    (handler as any).llm.executeTurn = vi.fn(async () => ({
+      output: { type: "suggest_alternative", unsupportedService: "الدراسات الأكاديمية", explanationAr: "غير متاح مباشرة", suggestedAlternativeAr: "منصات التواصل" },
+      inputTokens: 500, outputTokens: 40, costUsd: 0.0005, model: "claude-haiku-5-5", promptVersion: "t",
+    }));
+    // a wording the deterministic detector does not catch, so the model is reached
+    const res: any = await handler.handleUserMessage({ userId: "u_alt", message: "عايز مواد علمية عن الطاقة الشمسية في ألمانيا", userBalance: 5000 });
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.clarificationQuestions).toHaveLength(1);
+    expect(res.clarificationQuestions[0]).toContain("الطاقة الشمسية");
+    expect(res.contentAr).not.toMatch(GENERIC);
+    expect(res.contentAr).not.toContain("اكتب الموضوع أو أرسل رابط");
+  });
+
+  it("the short generic prompt remains only as the last resort for a request with no topic", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("src/functions/shared/chatHandler.ts", "utf8");
+    const at = source.indexOf("اكتب الموضوع أو أرسل رابط المصدر");
+    expect(at).toBeGreaterThan(0);
+    // it sits in the `else` branch of the topic check, never as the first answer
+    expect(source.slice(Math.max(0, at - 220), at)).toContain("} else {");
+  });
 });
