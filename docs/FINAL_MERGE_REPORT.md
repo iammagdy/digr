@@ -6,7 +6,7 @@ Date: 2026-10-18. Only raw evidence is reported. Anything not run is marked NOT 
 
 | Item | Value |
 |---|---|
-| main before | `de8e95575ee6b69e1f5ae67a7a7837f630e2a4`, unchanged for the whole run (checked before the dry run and again before every merge) |
+| main before | `de8e6e95575ee6b69e1f5ae67a7a7837f630e2a4`, unchanged for the whole run (checked before the dry run and again before every merge) |
 | #81 head before the fixes | `8d577921281d6679a6a7fcafe947832b0c20b3a7` |
 | Final-fixes PR | #82 (`claude/final-fixes`, base `codex/quote-cap-and-money-atomic`), head `9b986c9a6428eb848139dbb0ba9520e4439848f3` |
 | Merge commit of #82 into #81's branch | `26bd247e488d6dcce0555270fc42219af477d507` |
@@ -90,7 +90,7 @@ The single `icypeas` hit on each page is the internal capability id `icypeas-com
 
 ## 6. Older open PRs (listed only; one-line risk each, from title and base, diffs not reviewed here)
 
-- #3 to #9 (A to G): a chain of stacked PRs from 2026-10-10 (question cards, persona modules, result review, goodwill refunds, dependent plans, OpenAI readiness, polish). #4 to #9 target each other, not main; the goodwill-refund and artifact-edit parts touch money-adjacent code, and main already contains its own versions of several of these features, so expect large conflicts.
+- #3 to #9 (A to G): a chain of stacked PRs from 2026-10-10 (question cards, persona modules, result review, goodwill refunds, dependent plans, OpenAI readiness, polish). #4 to #9 target each other, not main; the goodwill-refund and artifact-edit parts touch money-adjacent code, and they are 8 days older than main, so expect conflicts (not tested).
 - #10: governance docs only; low risk, may conflict on docs.
 - #11: full redesign on top of the #3 to #9 chain; very large, targets `feat/visual-polish`, not main.
 - #40: design handoff audit (docs); low risk.
