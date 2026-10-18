@@ -1,4 +1,5 @@
 import { computeRegistryPointsPerUnit, getRegistryPricingSettings } from "./capabilityRegistry";
+import { SOCIAL_PLATFORM_LABEL_AR, SocialPlatformId, detectSocialIntent, socialCatalogQuery } from "../../lib/socialTasks";
 import { APPROVED_CAPABILITY_CATALOG, Capability } from "./capabilityRegistry";
 
 export interface CatalogEndpointSummary {
@@ -169,7 +170,7 @@ export function deriveArabicTaskName(rawEndpoint: any, platform: string): { name
     summaryAr = `جمع التعليقات العامة والمشاركات من ${platformAr}`;
   } else if (nameEn.includes("profile") || summaryEn.includes("profile") || idStr.includes("profile") || nameEn.includes("user")) {
     nameAr = `استخراج ملف حساب ${platformAr}`;
-    summaryAr = `استخراج البيانات والإحصائيات العامة لحساب ${platformAr}`;
+    summaryAr = `استخراج البيانات والإحصائيات المتاحة لحساب ${platformAr}`;
   } else if (nameEn.includes("search") || summaryEn.includes("search") || idStr.includes("search")) {
     nameAr = `بحث واستخراج بيانات ${platformAr}`;
     summaryAr = `البحث في البيانات والمحتوى العام على ${platformAr} بالكلمات المفتاحية`;
@@ -448,6 +449,14 @@ export function mapSearchQueryToEnglish(query: string, platformHint?: string): s
   if (!hasArabic && query.trim().length > 1) {
     return query.trim();
   }
+
+  // 0. A social task (comments, trending, channel videos...) is searched by what it does, not only by platform.
+  const socialIntent = detectSocialIntent(query);
+  if (!socialIntent.platform && normPlatform in SOCIAL_PLATFORM_LABEL_AR) {
+    socialIntent.platform = normPlatform as SocialPlatformId;
+  }
+  const socialQuery = socialCatalogQuery(socialIntent);
+  if (socialQuery) return socialQuery;
 
   // 1. Check for specific platform mentions
   let platformKeyword = normPlatform;

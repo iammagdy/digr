@@ -185,92 +185,112 @@ const THOUSANDS: Record<string, number> = {
   thousand: 1000,
 };
 
+type NumberKind = "one" | "teen" | "ten" | "hundred" | "thousand";
+
+/** Spelling-insensitive form: no diacritics, one alef, one yaa, no final taa marbuta. */
+function normalizeNumberWord(word: string): string {
+  return word
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة$/g, "ه")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const NUMBER_PHRASES: Array<{ words: string[]; value: number; kind: NumberKind }> = (() => {
+  const phrases = new Map<string, { value: number; kind: NumberKind }>();
+  const add = (table: Record<string, number>, kind: NumberKind) => {
+    for (const [phrase, value] of Object.entries(table)) phrases.set(normalizeNumberWord(phrase), { value, kind });
+  };
+  add(ONES, "one");
+  add(TEENS, "teen");
+  add(TENS, "ten");
+  add(HUNDREDS, "hundred");
+  add(THOUSANDS, "thousand");
+  // Longest phrases first so "خمسة عشر" is read as 15, not 5 followed by 10.
+  return [...phrases.entries()]
+    .map(([phrase, info]) => ({ words: phrase.split(" "), ...info }))
+    .sort((left, right) => right.words.length - left.words.length);
+})();
+
+/**
+ * Reads the first number written in words: simple (خمس، عشرة، مية، ألف), joined
+ * with "و" (خمسة وعشرين، مية وخمسين، ألف وخمسمية) or in English (five, ten).
+ * Returns undefined when the text contains no number word.
+ */
+function extractNumberFromWords(text: string): number | undefined {
+  // Split a leading conjunction off each word ("وخمسين" -> "و خمسين") without touching words that merely start with و.
+  const tokens = text
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean)
+    .flatMap((token) => {
+      const normalized = normalizeNumberWord(token);
+      const isNumberWordItself = NUMBER_PHRASES.some((phrase) => phrase.words[0] === normalized);
+      if (!isNumberWordItself && normalized.startsWith("و") && normalized.length > 2) {
+        const rest = normalized.slice(1);
+        if (NUMBER_PHRASES.some((phrase) => phrase.words[0] === rest)) return ["و", rest];
+      }
+      return [normalized];
+    });
+
+  const matchAt = (index: number) => {
+    for (const phrase of NUMBER_PHRASES) {
+      if (phrase.words.every((word, offset) => tokens[index + offset] === word)) return phrase;
+    }
+    return null;
+  };
+
+  for (let start = 0; start < tokens.length; start++) {
+    const first = matchAt(start);
+    if (!first) continue;
+    let total = 0;
+    let chunk = 0;
+    let index = start;
+    let phrase: ReturnType<typeof matchAt> = first;
+    while (phrase) {
+      if (phrase.kind === "thousand") total += phrase.value;
+      else chunk += phrase.value;
+      index += phrase.words.length;
+      if (tokens[index] === "و" && matchAt(index + 1)) index += 1;
+      phrase = matchAt(index);
+    }
+    return total + chunk;
+  }
+  return undefined;
+}
+
 /**
  * Extracts an explicit number from an Arabic or English request text.
- * Checks for numeric digits first, then compounds and word numbers.
+ * Digits are read first (with a year guard), then number words.
  */
 export function extractNumberFromText(text: string): number | undefined {
   if (!text || typeof text !== "string") return undefined;
 
   const normalized = normalizeEasternArabicDigits(text).toLowerCase().trim();
 
-  // 1. Look for explicit digits with context: e.g. "5 شركات", "30 شركة", "حجم 50", "عايز 10"
-  // Exclude current years (2024..2027) unless specifically asked with entity count
+  // 1. Explicit digits with context: "5 شركات", "30 شركة", "حجم 50", "عايز 10".
   const digitMatchWithEntity = normalized.match(
     /(?:عايز|عاوز|اريد|أريد|محتاج|استخرج|اجمع|هات|حجم|عدد|بحد أقصى|بحد اقصى|حتى|need|want)?\s*(\d+)\s*(?:شركة|شركات|مؤسسة|مؤسسات|فيديو|فيديوهات|مقطع|مقاطع|بوست|بوستات|منشور|منشورات|تعليق|تعليقات|سجل|سجلات|عينة|عينات|companies|company|posts|comments|records)?/i
   );
 
   if (digitMatchWithEntity && digitMatchWithEntity[1]) {
     const val = parseInt(digitMatchWithEntity[1], 10);
-    // If it's a plausible sample size (1..100000) and not a standalone year
     if (val > 0 && val <= 100000) {
       const isYear = val >= 1900 && val <= 2099;
       const hasCountContext = /(?:شركة|شركات|مؤسسة|فيديو|بوست|منشور|تعليق|سجل|عينة|companies|posts|comments|records|حجم|عدد|استخرج)/i.test(digitMatchWithEntity[0]);
-      if (!isYear || hasCountContext) {
+      // "في سنة 2024 تعليقات" names a year, not 2024 comments.
+      const before = normalized.slice(0, digitMatchWithEntity.index! + digitMatchWithEntity[0].indexOf(digitMatchWithEntity[1]));
+      const namesYear = isYear && /(?:سنة|سنه|عام|لعام|year|during|in)\s*$/i.test(before);
+      if (!namesYear && (!isYear || hasCountContext)) {
         return val;
       }
     }
   }
 
-  // 2. Check for teens phrases (e.g. "خمسة عشر", "أحد عشر")
-  for (const [phrase, val] of Object.entries(TEENS)) {
-    const regex = new RegExp(`(?:^|[^\\p{L}\\p{N}])${phrase}(?:$|[^\\p{L}\\p{N}])`, "iu");
-    if (regex.test(normalized)) {
-      return val;
-    }
-  }
-
-  // 3. Check for compound numbers: [hundreds] [و] [ones] [و] [tens]
-  // e.g. "خمسة وعشرين" -> 25, "مية وخمسين" -> 150, "ألف وخمسمية" -> 1500
-  const compoundMatch = normalized.match(
-    /(?:^|[^\p{L}\p{N}])(?:(ألفين|الفين|ألف|الف)\s*(?:و\s*)?)?(?:(مية|ميه|مائة|مئة|ميتين|خمسمية|خمسمائة|تلاتمية|أربعمية|ستمية|سبعمية|تمنمية|تسعمية)\s*(?:و\s*)?)?(?:([^\s]+)\s+و\s+([^\s]+)|([^\s]+))(?:\s+(?:شركة|شركات|مؤسسة|فيديو|بوست|منشور|تعليق|سجل|عينة))?(?:$|[^\p{L}\p{N}])/iu
-  );
-
-  // 4. Try matching specific Arabic phrases
-  // Check compound "X و عشرين/ثلاثين/أربعين/خمسين..."
-  const andTensMatch = normalized.match(/([^\s]+)\s+و\s*(عشرين|عشرون|تلاتين|ثلاثين|أربعين|اربعين|خمسين|ستين|سبعين|ثمانين|تمانين|تسعين)/iu);
-  if (andTensMatch) {
-    const oneWord = andTensMatch[1].trim();
-    const tenWord = andTensMatch[2].trim();
-    const oneVal = ONES[oneWord];
-    const tenVal = TENS[tenWord];
-    if (oneVal !== undefined && tenVal !== undefined) {
-      return oneVal + tenVal;
-    }
-  }
-
-  // Check thousands
-  for (const [word, val] of Object.entries(THOUSANDS)) {
-    const regex = new RegExp(`(?:^|[^\\p{L}\\p{N}])${word}(?:$|[^\\p{L}\\p{N}])`, "iu");
-    if (regex.test(normalized)) {
-      return val;
-    }
-  }
-
-  // Check hundreds
-  for (const [word, val] of Object.entries(HUNDREDS)) {
-    const regex = new RegExp(`(?:^|[^\\p{L}\\p{N}])${word}(?:$|[^\\p{L}\\p{N}])`, "iu");
-    if (regex.test(normalized)) {
-      return val;
-    }
-  }
-
-  // Check tens
-  for (const [word, val] of Object.entries(TENS)) {
-    const regex = new RegExp(`(?:^|[^\\p{L}\\p{N}])${word}(?:$|[^\\p{L}\\p{N}])`, "iu");
-    if (regex.test(normalized)) {
-      return val;
-    }
-  }
-
-  // Check ones (e.g. "خمس شركات", "عشر شركات", "6 companies")
-  for (const [word, val] of Object.entries(ONES)) {
-    // Only match if followed or preceded by context words like عايز/شركة/شركات/فيديو/منشور/تعليق or start/end
-    const regex = new RegExp(`(?:^|[^\\p{L}\\p{N}])${word}(?:\\s+(?:شركة|شركات|مؤسسة|مؤسسات|فيديو|فيديوهات|بوست|منشور|تعليق|سجل|عينة|companies|company|posts|comments|records)|$|[^\\p{L}\\p{N}])`, "iu");
-    if (regex.test(normalized)) {
-      return val;
-    }
-  }
-
-  return undefined;
+  // 2. Number words, including compounds ("مية وخمسين" is 150, "ألف وخمسمية" is 1500).
+  return extractNumberFromWords(normalized);
 }

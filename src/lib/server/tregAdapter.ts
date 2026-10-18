@@ -6,7 +6,17 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
-import { detectCountryFromText as detectInternationalCountryFromText, getMissingCompanyResearchRequirements } from "../planParameters";
+import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
+import { isSocialCapabilitySlug } from "../socialSources";
+import { runSocialChunk, type SocialCall } from "./socialAdapter";
+
+export { hasRecognizedProviderResultShape };
+import { arabicVerificationStatus } from "../contactVerification";
+import {
+  detectCountryFromText as detectInternationalCountryFromText,
+  detectIndustryFromText as detectInternationalIndustryFromText,
+  getMissingCompanyResearchRequirements,
+} from "../planParameters";
 
 /**
  * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
@@ -109,92 +119,8 @@ export function detectCountryFromText(text: string): CountryMapping | null {
   return detectInternationalCountryFromText(text);
 }
 
-export function detectIndustryFromText(text: string): IndustryMapping {
-  const t = (text || "").toLowerCase().trim();
-
-  if (t.includes("صواريخ") || t.includes("صاروخ") || t.includes("rocket") || t.includes("aerospace") || t.includes("فضاء")) {
-    return { englishKeywords: ["aerospace", "rocket"], arabicLabel: "صناعة الصواريخ والفضاء", exactTaxonomy: ["Aviation & Aerospace", "Defense & Space"] };
-  }
-  if (t.includes("طاقة شمسية") || t.includes("شمسية") || t.includes("solar") || t.includes("طاقة متجددة") || t.includes("renewable")) {
-    return { englishKeywords: ["solar", "solar energy", "renewable energy"], arabicLabel: "الطاقة الشمسية والمتجددة", exactTaxonomy: ["Renewables & Environment"] };
-  }
-  if (t.includes("أغذية") || t.includes("اغذية") || t.includes("طعام") || t.includes("مطاعم") || t.includes("أطعمة") || t.includes("food") || t.includes("beverage")) {
-    return { englishKeywords: ["food", "beverages", "restaurants"], arabicLabel: "الأغذية والمطاعم", exactTaxonomy: ["Food & Beverages", "Restaurants"] };
-  }
-  if (
-    t.includes("fintech") ||
-    t.includes("تكنولوجيا مالية") ||
-    t.includes("تقنية مالية") ||
-    t.includes("مدفوعات") ||
-    t.includes("فينتك") ||
-    t.includes("فنتك")
-  ) {
-    return { englishKeywords: ["fintech", "financial technology", "payments"], arabicLabel: "التكنولوجيا المالية (FinTech)", exactTaxonomy: ["Financial Services", "Banking"] };
-  }
-  if (
-    t.includes("تقنية") ||
-    t.includes("تكنولوجيا") ||
-    t.includes("معلومات") ||
-    t.includes("برمجيات") ||
-    t.includes("برمجة") ||
-    t.includes("software") ||
-    t.includes("tech") ||
-    t.includes("it")
-  ) {
-    return { englishKeywords: ["information technology", "software", "technology"], arabicLabel: "تقنية المعلومات والبرمجيات", exactTaxonomy: ["Information Technology & Services", "Computer Software"] };
-  }
-  if (
-    t.includes("مقاولات") ||
-    t.includes("تشييد") ||
-    t.includes("بناء") ||
-    t.includes("construction") ||
-    t.includes("contracting")
-  ) {
-    // Building Materials is a separate supplier category and pulls unrelated
-    // manufacturers into a construction-company search.
-    return { englishKeywords: ["construction", "contracting"], arabicLabel: "المقاولات والتشييد", exactTaxonomy: ["Construction"] };
-  }
-  if (t.includes("أثاث") || t.includes("اثاث") || t.includes("موبيليا") || t.includes("furniture") || t.includes("woodworking")) {
-    return { englishKeywords: ["furniture", "woodworking"], arabicLabel: "صناعة الأثاث", exactTaxonomy: ["Furniture"] };
-  }
-  if (t.includes("عقارات") || t.includes("تطوير عقاري") || t.includes("real estate")) {
-    return { englishKeywords: ["real estate"], arabicLabel: "التطوير العقاري", exactTaxonomy: ["Real Estate"] };
-  }
-  if (t.includes("أدوية") || t.includes("ادوية") || t.includes("صيدلة") || t.includes("pharma")) {
-    return { englishKeywords: ["pharmaceuticals", "healthcare"], arabicLabel: "الأدوية والرعاية الصحية", exactTaxonomy: ["Pharmaceuticals", "Hospital & Health Care"] };
-  }
-  if (t.includes("سيارات") || t.includes("automotive") || t.includes("vehicles")) {
-    return { englishKeywords: ["automotive", "vehicles"], arabicLabel: "السيارات والمركبات", exactTaxonomy: ["Automotive"] };
-  }
-  if (t.includes("تعليم") || t.includes("مدارس") || t.includes("education")) {
-    return { englishKeywords: ["education"], arabicLabel: "التعليم", exactTaxonomy: ["Education Management", "Primary/Secondary Education"] };
-  }
-  if (t.includes("سياحة") || t.includes("فنادق") || t.includes("tourism") || t.includes("hospitality")) {
-    return { englishKeywords: ["tourism", "hospitality"], arabicLabel: "السياحة والضيافة", exactTaxonomy: ["Hospitality", "Leisure, Travel & Tourism"] };
-  }
-  if (t.includes("شحن") || t.includes("لوجستيات") || t.includes("logistics") || t.includes("freight")) {
-    return { englishKeywords: ["logistics", "freight"], arabicLabel: "الشحن والخدمات اللوجستية", exactTaxonomy: ["Logistics & Supply Chain", "Transportation/Trucking/Railroad"] };
-  }
-  if (t.includes("صيد الحيتان") || t.includes("حيتان") || t.includes("whale hunting") || t.includes("whaling")) {
-    return { englishKeywords: ["whale hunting", "whaling"], arabicLabel: "صيد الحيتان", exactTaxonomy: ["Fishery"] };
-  }
-  if (t.includes("مصانع") || t.includes("تصنيع") || t.includes("صناعة") || t.includes("manufacturing") || t.includes("factory")) {
-    return { englishKeywords: ["manufacturing", "factory"], arabicLabel: "التصنيع والإنتاج الصناعي", exactTaxonomy: ["Mechanical or Industrial Engineering", "Electrical/Electronic Manufacturing"] };
-  }
-
-  // Fallback: clean words
-  const cleaned = t
-    .replace(/[^\w\s\u0600-\u06FF]/g, " ")
-    .replace(/\b(عايز|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  if (cleaned.length > 0) {
-    return { englishKeywords: [cleaned], arabicLabel: cleaned };
-  }
-
-  return { englishKeywords: ["contracting"], arabicLabel: "قواعد بيانات الشركات" };
-}
+// One industry detector for planning, provider requests and relevance review, so the three can never disagree.
+export const detectIndustryFromText = detectInternationalIndustryFromText;
 
 /**
  * Validates whether a company record returned from provider genuinely matches requested location.
@@ -438,38 +364,12 @@ function getTregPeopleArray(data: any): any[] {
   return [];
 }
 
-/** True only when the successful response has a recognized result envelope. */
-export function hasRecognizedProviderResultShape(value: unknown, depth = 0): boolean {
-  if (Array.isArray(value)) return true;
-  if (!value || typeof value !== "object" || depth > 4) return false;
-  const record = value as Record<string, any>;
-  const resultKeys = ["items", "results", "records", "leads", "companies", "posts", "tweets", "videos", "users", "people"];
-  for (const key of resultKeys) if (Array.isArray(record[key])) return true;
-  if (record.success === true && typeof record.total === "number") return true;
-  for (const key of ["data", "output", "raw", "response", "result", "payload"]) {
-    if (hasRecognizedProviderResultShape(record[key], depth + 1)) return true;
-  }
-  return false;
-}
-
 function firstPeopleText(...values: any[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
-}
-
-function arabicVerificationStatus(value: unknown, hasValue: boolean): string {
-  if (!hasValue) return "غير متاح";
-  if (["متحقق", "لم يتم التحقق", "يحتاج مراجعة", "غير صالح", "لم يتوفر تأكيد"].includes(String(value || ""))) return String(value);
-  if (value === true) return "متحقق";
-  if (value === false) return "لم يتم التحقق";
-  const status = String(value || "").trim().toLowerCase();
-  if (/^(?:verified|valid|deliverable|confirmed|true|pass)$/i.test(status)) return "متحقق";
-  if (/accept[_ -]?all|catch[_ -]?all/i.test(status)) return "يحتاج مراجعة";
-  if (/invalid|undeliverable|false|fail|disposable/i.test(status)) return "غير صالح";
-  return "لم يتوفر تأكيد";
 }
 
 function parseTregPeopleRows(data: any): Record<string, any>[] {
@@ -671,6 +571,46 @@ export async function executeTregCallWithRetry(
   return lastResult!;
 }
 
+/** Plain Arabic reason a provider call failed, with no provider or technical wording. */
+export function providerFailureMessageAr(callResult: Pick<TregCallResult, "httpStatus" | "isRouteMaxCost" | "isPlatformBalanceLow">): string {
+  if (callResult.isRouteMaxCost) return "تجاوز الطلب سقف التكلفة المسموح به للمصدر.";
+  if (callResult.isPlatformBalanceLow) return "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
+  if (callResult.httpStatus === 404) return "الهدف المطلوب غير موجود أو غير متاح للعامة.";
+  if (callResult.httpStatus === 422) return "تعذر معالجة مدخلات الطلب لدى المصدر.";
+  if (callResult.httpStatus === 429) return "المصدر مشغول حالياً بعد استنفاد محاولات الإعادة.";
+  return "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
+}
+
+/** Call made for the social sources: one retry only, because a failed source falls through to the next one. */
+function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
+  return async (source, params, context) => {
+    const callResult = await executeTregCallWithRetry(
+      {
+        endpointId: source.endpointId,
+        method: source.method,
+        params,
+        userId: input.userId,
+        jobId: input.jobId,
+        stepId: `step_${input.step}`,
+        page: input.step + 1,
+        routeMaxCostUsd: "0.05",
+        idempotencyKey: context.idempotencyKey,
+        timeoutMs: context.timeoutMs,
+      },
+      1,
+    );
+    return {
+      ok: callResult.ok,
+      httpStatus: callResult.httpStatus,
+      data: callResult.data,
+      costMicro: Math.max(0, Number(callResult.costMicro) || 0),
+      tregCallId: callResult.tregCallId || "",
+      errorCode: callResult.ok ? undefined : callResult.error || `http_${callResult.httpStatus}`,
+      errorMessageAr: callResult.ok ? undefined : providerFailureMessageAr(callResult),
+    };
+  };
+}
+
 /**
  * Real TREG provider adapter calling https://treg.to/call/{endpoint-id}.
  * Strictly gated by TREG_LIVE === 'true' and TREG_TOKEN.
@@ -691,6 +631,11 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       errorCode: gate.reasonCode,
       errorMessageAr: gate.messageAr,
     };
+  }
+
+  // Verified social services run through their own source chain (fallbacks, comments of discovered videos).
+  if (isSocialCapabilitySlug(input.capabilitySlug)) {
+    return runSocialChunk(input, { call: socialCallThroughTreg(input) });
   }
 
   const page = input.step + 1;
@@ -812,18 +757,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   let costUsd = Number((costMicro / 1_000_000).toFixed(6));
 
   if (!callResult.ok) {
-    let errorMessageAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
-    if (callResult.isRouteMaxCost) {
-      errorMessageAr = "تجاوز الطلب سقف التكلفة المسموح به للمصدر.";
-    } else if (callResult.isPlatformBalanceLow) {
-      errorMessageAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
-    } else if (callResult.httpStatus === 404) {
-      errorMessageAr = "الهدف المطلوب غير موجود أو غير متاح للعامة.";
-    } else if (callResult.httpStatus === 422) {
-      errorMessageAr = "تعذر معالجة مدخلات الطلب لدى المصدر.";
-    } else if (callResult.httpStatus === 429) {
-      errorMessageAr = "المصدر مشغول حالياً بعد استنفاد محاولات الإعادة.";
-    }
+    const errorMessageAr = providerFailureMessageAr(callResult);
 
     return {
       ok: false,
@@ -890,14 +824,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   if (rows.length > 0 && !isIcypeas) {
     if (input.paginationStrategy === "cursor" &&
         (supportsPaginationParam("cursor") || supportsPaginationParam("next_cursor"))) {
-      const candidateCursor =
-        callResult.data?.next_cursor ??
-        callResult.data?.cursor ??
-        callResult.data?.nextCursor ??
-        callResult.data?.pagination?.next_cursor ??
-        callResult.data?.meta?.next_cursor ??
-        callResult.data?.next_max_id ??
-        null;
+      const candidateCursor = findProviderNextCursor(callResult.data);
       if (
         candidateCursor !== null &&
         candidateCursor !== undefined &&

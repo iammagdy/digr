@@ -1,6 +1,13 @@
 import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
+import { SOCIAL_ROWS_PER_CHUNK, estimateSocialChunkCostUsd, getSocialCapability } from "../socialSources";
+
+const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
+
+export function isValidRetryJobId(value: unknown): value is string {
+  return typeof value === "string" && RETRY_JOB_ID_PATTERN.test(value);
+}
 
 export interface ResolvedJobExecutionSpec {
   capabilitySlug: string;
@@ -12,6 +19,8 @@ export interface ResolvedJobExecutionSpec {
   unitCostUsd: number;
   pageSize: number;
   outputFormats: Array<"xlsx" | "pdf" | "csv">;
+  /** Failed job whose collected rows this retry reuses (set only by the server when the retry quote was created). */
+  retryOfJobId?: string;
 }
 
 export async function resolveJobExecutionSpec(
@@ -30,6 +39,7 @@ export async function resolveJobExecutionSpec(
   let unitCostUsd: number | undefined;
   let itemTargetVolumeMax = 0;
   let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx", "pdf", "csv"];
+  let retryOfJobId: string | undefined;
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
   try {
@@ -61,7 +71,10 @@ export async function resolveJobExecutionSpec(
               method = firstItem.method;
             }
             if (firstItem.params && typeof firstItem.params === "object") {
-              params = { ...firstItem.params };
+              // The retry marker is an internal instruction; it must never reach the provider.
+              const { retryOfJobId: marker, ...providerParams } = firstItem.params as Record<string, any>;
+              params = { ...providerParams };
+              if (isValidRetryJobId(marker)) retryOfJobId = marker;
             }
             if (typeof firstItem.targetVolumeMax === "number" && firstItem.targetVolumeMax > 0) {
               itemTargetVolumeMax = firstItem.targetVolumeMax;
@@ -90,6 +103,26 @@ export async function resolveJobExecutionSpec(
     }
   } catch {
     // Continue with capability catalog resolution
+  }
+
+  // Verified social services carry their own source chain: nothing else in the catalog applies to them,
+  // and one chunk may make several provider calls, so the spend estimate is the whole chunk's worst case.
+  const socialCapability = getSocialCapability(capabilitySlug);
+  if (socialCapability) {
+    const firstSource =
+      socialCapability.comments?.[0] || Object.values(socialCapability.discover).flat().filter(Boolean)[0];
+    return {
+      capabilitySlug: socialCapability.slug,
+      endpointId: firstSource?.endpointId || endpointId,
+      method: firstSource?.method || "POST",
+      params,
+      paginationStrategy: "cursor",
+      pricingUnit: "call",
+      unitCostUsd: estimateSocialChunkCostUsd(socialCapability),
+      pageSize: SOCIAL_ROWS_PER_CHUNK,
+      outputFormats,
+      ...(retryOfJobId ? { retryOfJobId } : {}),
+    };
   }
 
   // 2. Match capability in capability_registry table if available
@@ -248,5 +281,6 @@ export async function resolveJobExecutionSpec(
     unitCostUsd: resolvedUnitCostUsd,
     pageSize,
     outputFormats,
+    ...(retryOfJobId ? { retryOfJobId } : {}),
   };
 }

@@ -117,7 +117,9 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
 
       expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
       expect(res.outputType).toBe("answer_question");
-      expect(res.contentAr).toContain("أهلاً بك");
+      expect(res.contentAr).toContain("أهلًا بك");
+      // Owner decision D2: the real name is required; with no profile name Diger AI asks once.
+      expect(res.contentAr).toContain("ما الاسم الذي تفضّل أن أناديك به");
       expect(res.planQuote).toBeUndefined();
       expect(res.clarificationQuestions).toBeUndefined();
     });
@@ -134,8 +136,28 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
 
       expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
       expect(res.outputType).toBe("answer_question");
-      expect(res.contentAr).toContain("أهلاً بك");
+      expect(res.contentAr).toContain("أهلًا بك");
+      // Owner decision D2: the real name is required; with no profile name Diger AI asks once.
+      expect(res.contentAr).toContain("ما الاسم الذي تفضّل أن أناديك به");
       expect(res.planQuote).toBeUndefined();
+    });
+
+    it("greeting uses the real profile name and never a hardcoded one (owner decision D2)", async () => {
+      const tables = makeMockTables();
+      const handler = new ChatHandler(tables as any);
+
+      const res = await handler.handleUserMessage({
+        userId: "user_named",
+        message: "هاي",
+        userBalance: 500,
+        personaProfile: { name: "سلمى" },
+      });
+
+      expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
+      expect(res.outputType).toBe("answer_question");
+      expect(res.contentAr).toContain("أهلًا سلمى");
+      expect(res.contentAr).not.toContain("مجدي");
+      expect(res.contentAr).not.toContain("ما الاسم");
     });
 
     it("(c) casual identity question 'انت بتعمل ايه؟' gets plain natural reply with 0 catalog searches", async () => {
@@ -211,7 +233,7 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
       expect(thinkingUpdate).toBeDefined();
     });
 
-    it("(f) user asks for price with partial brief ('هيكلفني كام') applies default volume (500) and triggers Phase 2", async () => {
+    it("(f) user asks for price with partial brief ('هيكلفني كام') applies the small safe default volume (10, shown and editable on the plan card) and triggers Phase 2", async () => {
       const tables = makeMockTables();
       const handler = new ChatHandler(tables as any);
 
@@ -227,7 +249,9 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
       expect(res.planQuote).toBeDefined();
 
       const brief = await getConversationBrief(tables as any, res.conversationId);
-      expect(brief.targetVolume).toBe(500);
+      // A silent 500-record default would put an unrequested multi-hundred point quote in front of
+      // the customer; the code default is a 10-record sample that the plan card lets them edit.
+      expect(brief.targetVolume).toBe(10);
     });
 
     it("(g) user asks for price with completely empty brief stays in Phase 1 with 0 catalog searches", async () => {

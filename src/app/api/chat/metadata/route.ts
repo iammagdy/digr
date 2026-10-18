@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
-import { getEnabledCapabilities } from "@/functions/shared/capabilityRegistry";
+import { getEnabledCapabilitiesWithCoreServices } from "@/functions/shared/capabilityRegistry";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     }
 
     const adminClient = createAdminClient();
-    const capabilities = await getEnabledCapabilities(adminClient);
+    const capabilities = await getEnabledCapabilitiesWithCoreServices(adminClient);
 
     return NextResponse.json({
       success: true,

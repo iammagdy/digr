@@ -31,9 +31,11 @@ describe("live testing handoff regressions", () => {
     const fixedNow = new Date("2026-10-17T12:00:00Z");
     const expected = dateFiltersFromHint("آخر ٣٠ يومًا", fixedNow);
     const plan = buildAutoPlanProposal(
-      { platforms: ["tiktok"], topics: ["كرة القدم"], targetVolume: 5 },
+      // The approved TikTok entry is a one-account profile lookup, which correctly carries no date
+      // filter, so the relative window is checked on a keyword-search capability (X).
+      { platforms: ["x"], topics: ["كرة القدم"], targetVolume: 5 },
       APPROVED_CAPABILITY_CATALOG,
-      "اجمع ٥ فيديوهات عن كرة القدم على تيك توك في مصر خلال آخر ٣٠ يومًا",
+      "اجمع ٥ منشورات عن كرة القدم على منصة x خلال آخر ٣٠ يومًا",
     );
 
     expect(expected).toEqual({ from: "2026-09-17", to: "2026-10-17" });
@@ -47,7 +49,10 @@ describe("live testing handoff regressions", () => {
     expect(result.reasonAr).toContain("غير متاحة");
   });
 
-  it("does not advertise decision-maker search in the public calculator", () => {
-    expect(getPublicCalculatorOptions().some((option) => option.slug === "icypeas-people-search")).toBe(false);
+  it("advertises the verified decision-maker search in the public calculator (owner decision D3) but not the unverified duplicate", () => {
+    const slugs = getPublicCalculatorOptions().map((option) => option.slug);
+    expect(slugs).toContain("professional-people-search");
+    // Same people service listed twice would confuse customers; the unverified entry stays hidden.
+    expect(slugs).not.toContain("icypeas-people-search");
   });
 });

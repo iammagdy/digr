@@ -9,6 +9,7 @@ import {
   generateMethodologyText as buildMethodologyDoc,
 } from "./fileGenerators";
 import { executeTregCall, TregCallOptions, TregCallResult } from "./tregClient";
+import { findProviderResultList } from "../../lib/server/providerRows";
 import { parseStoredPlan } from "./planManager";
 import { getEndpointDetails, searchCatalog } from "./catalogClient";
 import {
@@ -249,6 +250,10 @@ export function flattenRow(row: any): Record<string, any> {
  */
 export function extractAndFlattenRows(rawResponse: any): Array<Record<string, any>> {
   if (!rawResponse) return [];
+
+  // One reader for every envelope (routed output, aggregator data, recipe rows, top-level lists).
+  const found = findProviderResultList(rawResponse);
+  if (found) return found.list.filter((item) => item && typeof item === "object").map(flattenRow);
 
   let candidates: any[] = [];
 
@@ -1256,9 +1261,9 @@ export async function reportStuckJobsReadOnly(
     stuckCount: stuckJobs.length,
     stuckJobs,
     safeReleaseStepsAr: [
-      "1. افتح لوحة تحكم Supabase -> Table Editor -> jobs وحدد معرّف الطلب العالق (jobId).",
-      "2. في جدول credit_ledger تأكد من عدم وجود صف بمعرّف rel_<jobId>، ثم أنشئ صفًا بمعرّف مستند مخصص (Custom Document ID) يساوي rel_<jobId> بالقيم: type='release'، delta=+5 (موجب قيمة reservedCredits)، userId=<نفس userId للطلب>، jobId=<jobId>.",
-      "3. في جدول jobs حدّث حالة الطلب إلى status='failed' وerrorAr='تم إلغاء الطلب واسترجاع النقاط المحجوزة' (أو شغّل دالة job-worker بـ {\"mode\":\"watchdog\"} لتنفيذ الخطوتين تلقائيًا بأمان).",
+      "1. حدّد الطلبات العالقة (jobId) من هذا التقرير؛ الاطلاع على جدول jobs للقراءة فقط.",
+      "2. لا تنشئ ولا تعدّل أي صف في credit_ledger يدويًا؛ الدفتر للإضافة فقط ولا يُكتب إلا عبر الدوال المعتمدة.",
+      "3. شغّل مراقب الطلبات المتوقفة (المسار المجدول /api/cron/watchdog أو {\"mode\":\"watchdog\"})، فهو يسترد النقاط المحجوزة عبر الدالة المعتمدة release_job_atomic ويحدّث حالة الطلب تلقائيًا.",
     ],
   };
 }

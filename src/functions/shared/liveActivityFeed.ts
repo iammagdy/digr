@@ -73,6 +73,33 @@ export function estimateRemainingSecondsFromMeasuredPages(
   return Math.max(1, Math.ceil(((requestedRows - rowsCollected) * elapsedSeconds) / processedRows));
 }
 
+/**
+ * Server-side ETA: remaining batches times the MEASURED duration of this job's own batches.
+ *
+ * remainingBatches = ceil(remainingRows / pageSize)
+ * estimate         = remainingBatches x median(measured batch seconds)
+ *
+ * Assumption (stated, not measured): the remaining batches take as long as the median of the
+ * batches already completed. With no measured batch the function returns null; no number is
+ * ever invented. The median keeps one slow cold-start batch from inflating every later estimate.
+ */
+export function estimateRemainingSecondsFromBatchDurations(input: {
+  remainingRows: number;
+  pageSize: number;
+  measuredBatchSeconds: number[];
+}): number | null {
+  const remaining = Math.floor(Number(input.remainingRows));
+  const pageSize = Math.floor(Number(input.pageSize));
+  if (!Number.isFinite(remaining) || remaining <= 0 || !Number.isFinite(pageSize) || pageSize <= 0) return null;
+  const measured = (input.measuredBatchSeconds || [])
+    .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+    .sort((left, right) => left - right);
+  if (!measured.length) return null;
+  const middle = Math.floor(measured.length / 2);
+  const median = measured.length % 2 ? measured[middle] : (measured[middle - 1] + measured[middle]) / 2;
+  return Math.max(1, Math.ceil(Math.ceil(remaining / pageSize) * median));
+}
+
 const FORBIDDEN_PROVIDER_TERMS = /\b(?:diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows|icypeas|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd)\b/gi;
 const DOLLAR_AMOUNT_PATTERN = /\$\s*\d+(?:\.\d+)?|\b\d+(?:\.\d+)?\s*(?:usd|dollars?|دولار)\b/gi;
 const INTERNAL_JOB_ERROR_PATTERN = /\b(?:treg_live|diffbot|tikhub|scrapecreators|anyapi|brightdata|crawl4ai|justoneapi|treg|apify|socialdata|rapidapi|scrapingbee|zenrows|icypeas|serpapi|openai|anthropic|claude|gpt-[\w.-]*|microusd|usd|rate\s*limit|http\s*\d{3})\b|\$\s*\d|\b[a-z0-9_-]+\.(?:x|facebook|tiktok|instagram|youtube|linkedin|reddit|companies|people)\.[a-z0-9_.-]+\b|مزود البيانات|لدى المزود|\(\s*\d{3}\s*\)/i;

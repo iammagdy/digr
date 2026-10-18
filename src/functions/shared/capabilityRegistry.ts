@@ -1,4 +1,5 @@
 import { TablesDB } from "./dbCompat";
+import { SOCIAL_CAPABILITIES, SocialCapabilityDef } from "../../lib/socialSources";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
 export type CapabilityUnit = "page" | "query" | "profile" | "1000 items";
@@ -63,7 +64,7 @@ export const UNVERIFIED_PLATFORM_MESSAGE_AR =
   "هتحقق من الطلب وأرجعلك";
 
 /** Services that have been disabled after live customer testing exposed an unreliable execution path. */
-export const UNAVAILABLE_CAPABILITY_SLUGS = new Set<string>();
+export const UNAVAILABLE_CAPABILITY_SLUGS = new Set(["icypeas-people-search"]);
 
 export interface Capability {
   id?: string;
@@ -125,7 +126,7 @@ export interface SanitizedCapabilityForLlm {
   enabled: boolean;
 }
 
-export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
+const BASE_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "tiktok-profile",
     slug: "tiktok-profile",
@@ -512,6 +513,48 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   },
 ];
 
+function socialCapabilitySeed(def: SocialCapabilityDef): Omit<Capability, "pointsPerUnit"> {
+  const firstSource = (def.comments || Object.values(def.discover).flat().filter(Boolean) as any[])[0];
+  return {
+    id: def.slug,
+    slug: def.slug,
+    platform: def.platform as any,
+    category: def.platform as any,
+    status: "verified",
+    unit: "1000 items",
+    estimatedCostUsdPerUnit: def.rowCostUsd,
+    maxItemsPerCall: 50,
+    estimatedSuccessRate: def.successRate,
+    verificationNote: VERIFICATION_NOTE,
+    nameAr: def.nameAr,
+    nameEn: def.nameEn,
+    descriptionAr: def.descriptionAr,
+    paramsSchema: JSON.stringify({
+      type: "object",
+      properties: {
+        url: { type: "string", description: "رابط الفيديو أو المنشور المطلوب سحب تعليقاته" },
+        query: { type: "string", description: "كلمة أو موضوع للبحث عن فيديوهات" },
+        channel: { type: "string", description: "اسم القناة أو الصفحة أو رابطها" },
+        trending: { type: "boolean", description: "اطلب الفيديوهات الرائجة" },
+        region: { type: "string", description: "رمز الدولة بحرفين مثل EG، للفيديوهات الرائجة" },
+      },
+    }),
+    tregEndpointId: firstSource?.endpointId || def.slug,
+    tregMethod: firstSource?.method || "POST",
+    pricingUnit: "item",
+    unitCostUsd: def.rowCostUsd,
+    ...(def.customerPriceUsdPerItem ? { customerPriceUsdPerItem: def.customerPriceUsdPerItem } : {}),
+    maxRows: def.maxRows,
+    paginationType: "cursor",
+    enabled: true,
+  };
+}
+
+export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
+  ...BASE_SEED_CAPABILITIES,
+  ...SOCIAL_CAPABILITIES.map(socialCapabilitySeed),
+];
+
 export function buildApprovedCatalog(
   settings: RegistryPricingSettings = getRegistryPricingSettings()
 ): Capability[] {
@@ -623,18 +666,8 @@ export async function getCatalogCapabilities(
  * falling back to verified entries in APPROVED_CAPABILITY_CATALOG if the table is empty.
  */
 export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<Capability[]> {
-  const requiredPeopleCapability = APPROVED_CAPABILITY_CATALOG.find((capability) =>
-    capability.slug === "professional-people-search" && capability.status === "verified" && capability.enabled,
-  );
-  const includeRequiredPeopleCapability = (items: Capability[]) => {
-    if (!requiredPeopleCapability || items.some((item) => item.slug === requiredPeopleCapability.slug)) return items;
-    // Decision-maker research is an owner-approved core capability (D3). Keep
-    // its reviewed server-side catalog entry available if an older registry
-    // snapshot simply predates the entry.
-    return [...items, { ...requiredPeopleCapability }];
-  };
   if (memoryCachedCatalog && Date.now() < memoryCachedCatalog.expiresAt) {
-    return includeRequiredPeopleCapability(memoryCachedCatalog.data.filter((c) => c.enabled));
+    return memoryCachedCatalog.data.filter((c) => c.enabled);
   }
 
   if (tables && typeof tables.from === "function") {
@@ -682,7 +715,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
             enabled: true,
           });
         }
-        return includeRequiredPeopleCapability(validCapabilities);
+        return validCapabilities;
       }
     } catch {
       // fallback
@@ -722,10 +755,97 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
           enabled: true,
         });
       }
-      return includeRequiredPeopleCapability(validCapabilities);
+      return validCapabilities;
     }
   }
-  return includeRequiredPeopleCapability(buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled));
+  return buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled);
+}
+
+const CORE_PEOPLE_SLUG = "professional-people-search";
+/** Reviewed services served from the code catalog until the registry has a row for them (a disabled row is a kill switch). */
+const CORE_SERVICE_SLUGS: string[] = [CORE_PEOPLE_SLUG, ...SOCIAL_CAPABILITIES.map((def) => def.slug)];
+
+const REGISTRY_ROW_STATE_TTL_MS = 60_000;
+const registryRowStateCache = new Map<string, { state: "absent" | "enabled" | "disabled"; at: number }>();
+
+/** Registry row state for one slug, or "unknown" when it cannot be read (fail closed). Readable answers are cached for a minute. */
+async function registryRowState(tables: any, slug: string): Promise<"absent" | "enabled" | "disabled" | "unknown"> {
+  if (!tables || typeof tables.from !== "function") return "unknown";
+  const cached = registryRowStateCache.get(slug);
+  if (cached && Date.now() - cached.at < REGISTRY_ROW_STATE_TTL_MS) return cached.state;
+  try {
+    const { data, error } = await tables.from("capability_registry").select("slug, enabled").eq("slug", slug);
+    if (error || !Array.isArray(data)) return "unknown";
+    const row = data.find((item: any) => item?.slug === slug);
+    const state = !row ? "absent" : row.enabled ? "enabled" : "disabled";
+    registryRowStateCache.set(slug, { state, at: Date.now() });
+    return state;
+  } catch {
+    return "unknown";
+  }
+}
+
+/** Test hook: forget cached registry row states. */
+export function clearRegistryRowStateCacheForTesting(): void {
+  registryRowStateCache.clear();
+}
+
+/**
+ * Enabled capabilities plus the owner-approved decision-maker service (D3).
+ *
+ * The reviewed code catalog entry is added only while the registry has no row
+ * at all for it, so existing deployments get the service before the registry
+ * row is inserted. A row that exists but is disabled is an admin kill switch
+ * and is always respected, and an unreadable registry never adds the service.
+ */
+export async function getEnabledCapabilitiesWithCoreServices(tables?: TablesDB | any): Promise<Capability[]> {
+  const enabled = await getEnabledCapabilities(tables);
+  // Without a readable registry the seed fallback inside getEnabledCapabilities already served the catalog.
+  if (!tables || typeof tables.from !== "function") return enabled;
+
+  const wanted = CORE_SERVICE_SLUGS.filter((slug) => !enabled.some((capability) => capability.slug === slug));
+  if (wanted.length === 0) return enabled;
+  const states = await registryRowStates(tables, wanted);
+  const added: Capability[] = [];
+  for (const slug of wanted) {
+    const seed = APPROVED_CAPABILITY_CATALOG.find(
+      (capability) => capability.slug === slug && capability.status === "verified" && capability.enabled,
+    );
+    if (seed && states.get(slug) === "absent") added.push({ ...seed });
+  }
+  return added.length ? [...enabled, ...added] : enabled;
+}
+
+/** Row state of several slugs with one query, falling back to one query each when the client cannot filter a list. */
+async function registryRowStates(tables: any, slugs: string[]): Promise<Map<string, "absent" | "enabled" | "disabled" | "unknown">> {
+  const out = new Map<string, "absent" | "enabled" | "disabled" | "unknown">();
+  const missing: string[] = [];
+  for (const slug of slugs) {
+    const cached = registryRowStateCache.get(slug);
+    if (cached && Date.now() - cached.at < REGISTRY_ROW_STATE_TTL_MS) out.set(slug, cached.state);
+    else missing.push(slug);
+  }
+  if (missing.length === 0) return out;
+
+  const select = tables.from("capability_registry").select("slug, enabled");
+  if (typeof select?.in === "function") {
+    try {
+      const { data, error } = await select.in("slug", missing);
+      if (!error && Array.isArray(data)) {
+        for (const slug of missing) {
+          const row = data.find((item: any) => item?.slug === slug);
+          const state = !row ? "absent" : row.enabled ? "enabled" : "disabled";
+          registryRowStateCache.set(slug, { state, at: Date.now() });
+          out.set(slug, state);
+        }
+        return out;
+      }
+    } catch {
+      /* fall through to per-slug reads */
+    }
+  }
+  for (const slug of missing) out.set(slug, await registryRowState(tables, slug));
+  return out;
 }
 
 /**
@@ -770,16 +890,16 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
 }
 
 const PLATFORM_PATTERNS: Array<{ platform: string; labelAr: string; regex: RegExp }> = [
-  { platform: "companies", labelAr: "قواعد بيانات الشركات والأعمال (B2B Databases)", regex: /شركات|شركة|مؤسسات|مؤسسة|أعمال|business|companies|company|\bb2b\b/i },
-  { platform: "tiktok", labelAr: "تيك توك (TikTok)", regex: /تيك\s*توك|tiktok/i },
-  { platform: "facebook", labelAr: "فيسبوك (Facebook)", regex: /فيسبوك|فيس\s*بوك|facebook|\bfb\b/i },
-  { platform: "x", labelAr: "منصة X (تويتر)", regex: /تويتر|تغريد|twitter|منصة\s*x|\bx\.com\b/i },
-  { platform: "youtube", labelAr: "يوتيوب (YouTube)", regex: /يوتيوب|youtube/i },
-  { platform: "instagram", labelAr: "إنستغرام (Instagram)", regex: /انستغرام|إنستغرام|انستجرام|إنستجرام|instagram|\binsta\b/i },
-  { platform: "reddit", labelAr: "ريديت (Reddit)", regex: /ريديت|reddit/i },
-  { platform: "linkedin", labelAr: "لينكد إن (LinkedIn)", regex: /لينكد\s*إن|لينكدإن|linkedin/i },
-  { platform: "snapchat", labelAr: "سناب شات (Snapchat)", regex: /سناب\s*شات|سناب|snapchat/i },
-  { platform: "telegram", labelAr: "تيليجرام (Telegram)", regex: /تيليجرام|تلغرام|تليجرام|telegram/i },
+  { platform: "companies", labelAr: "قواعد بيانات الشركات والأعمال", regex: /شركات|شركة|مؤسسات|مؤسسة|أعمال|business|companies|company|\bb2b\b/i },
+  { platform: "tiktok", labelAr: "تيك توك", regex: /تيك\s*توك|tiktok/i },
+  { platform: "facebook", labelAr: "فيسبوك", regex: /فيسبوك|فيس\s*بوك|facebook|\bfb\b/i },
+  { platform: "x", labelAr: "منصة إكس (تويتر)", regex: /تويتر|تغريد|twitter|منصة\s*x|\bx\.com\b/i },
+  { platform: "youtube", labelAr: "يوتيوب", regex: /يوتيوب|youtube/i },
+  { platform: "instagram", labelAr: "إنستغرام", regex: /انستغرام|إنستغرام|انستجرام|إنستجرام|instagram|\binsta\b/i },
+  { platform: "reddit", labelAr: "ريديت", regex: /ريديت|reddit/i },
+  { platform: "linkedin", labelAr: "لينكد إن", regex: /لينكد\s*إن|لينكدإن|linkedin/i },
+  { platform: "snapchat", labelAr: "سناب شات", regex: /سناب\s*شات|سناب|snapchat/i },
+  { platform: "telegram", labelAr: "تيليجرام", regex: /تيليجرام|تلغرام|تليجرام|telegram/i },
 ];
 
 export function detectMentionedPlatforms(text: string): string[] {
@@ -872,7 +992,6 @@ export function validatePlanPlatformMatch(
   planPlatforms: string[];
   errorAr?: string;
 } {
-  const userPlatforms = detectMentionedPlatforms(userMessage);
   const planPlatforms = Array.from(
     new Set(
       planItems
@@ -880,6 +999,12 @@ export function validatePlanPlatformMatch(
         .filter(Boolean)
     )
   );
+  // "Decision makers of 5 electromechanical companies" mentions companies only to say whose people are
+  // wanted; the people-search plan satisfies it. It is not a request for the company database.
+  const mentionedPlatforms = detectMentionedPlatforms(userMessage);
+  const userPlatforms = planPlatforms.includes("people")
+    ? mentionedPlatforms.filter((platform) => platform !== "companies")
+    : mentionedPlatforms;
 
   if (userPlatforms.length === 0) {
     return { valid: true, userPlatforms, planPlatforms };

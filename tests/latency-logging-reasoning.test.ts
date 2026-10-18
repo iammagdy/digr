@@ -58,7 +58,7 @@ describe("Task 3: Latency & Call Logging + Reasoning Effort Status", () => {
   });
 
   describe("Server-Side Call & Latency Logging", () => {
-    it("(a) logs modelCalls, catalogSearches, and latencyMs on console per chat message", async () => {
+    it("(a) logs modelCalls, catalogSearches, and latencyMs on console per chat message (greeting: zero model calls)", async () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const tables = makeMockTables();
       const handler = new ChatHandler(tables as any);
@@ -70,7 +70,8 @@ describe("Task 3: Latency & Call Logging + Reasoning Effort Status", () => {
       });
 
       expect(res.turnStats).toBeDefined();
-      expect(res.turnStats?.modelCalls).toBe(1);
+      // Greetings are answered by server code with no model turn (owner decision D2 / speed).
+      expect(res.turnStats?.modelCalls).toBe(0);
       expect(res.turnStats?.catalogSearches).toBe(0);
       expect(res.turnStats?.latencyMs).toBeGreaterThanOrEqual(0);
 
@@ -78,7 +79,7 @@ describe("Task 3: Latency & Call Logging + Reasoning Effort Status", () => {
         (call) => typeof call[0] === "string" && call[0].includes("[chat:turn]"),
       );
       expect(matchingLog).toBeDefined();
-      expect(matchingLog![0]).toContain("modelCalls=1");
+      expect(matchingLog![0]).toContain("modelCalls=0");
       expect(matchingLog![0]).toContain("catalogSearches=0");
       expect(matchingLog![0]).toContain("latencyMs=");
     });

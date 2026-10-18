@@ -45,7 +45,9 @@ describe("P1: LLM Trust Boundary & Prompt Injection Suite", () => {
     });
 
     expect(res.output.type).toBe("refuse");
-    expect((res.output as any).reasonAr).toContain("البيانات العامة");
+    expect((res.output as any).reasonAr).toContain("المصادر المتاحة");
+    // Owner decision D4: sources are "مصادر متاحة", never "بيانات عامة".
+    expect((res.output as any).reasonAr).not.toContain("البيانات العامة");
   });
 
   it("should suggest alternatives and enable feature request for unsupported platforms (Instagram / LinkedIn)", async () => {

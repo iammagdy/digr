@@ -50,7 +50,7 @@ describe("Research Deliverables Generator Suite", () => {
   });
 
   describe("1. Excel Report (.xlsx) Generation", () => {
-    it("generates a multi-sheet research workbook with all 5 required sheets", async () => {
+    it("generates a data-only research workbook with no dashboard, quality or codebook sheets (owner decision D4)", async () => {
       const buffer = await generateExcelReport(sampleDataset);
       expect(buffer).toBeInstanceOf(Buffer);
       expect(buffer.length).toBeGreaterThan(1000);
@@ -59,15 +59,13 @@ describe("Research Deliverables Generator Suite", () => {
       await wb.xlsx.load(buffer as any);
 
       const sheetNames = wb.worksheets.map((ws) => ws.name);
-      expect(sheetNames).toContain("لوحة المؤشرات العامة");
-      expect(sheetNames).toContain("البيانات");
-      expect(sheetNames).toContain("تحليل التفاعل");
-      expect(sheetNames).toContain("جودة البيانات");
-      expect(sheetNames).toContain("دليل الحقول");
-      expect(sheetNames.length).toBe(5);
+      expect(sheetNames).toEqual(["الكيانات الأساسية"]);
+      for (const removed of ["لوحة المؤشرات العامة", "تحليل التفاعل", "جودة البيانات", "دليل الحقول"]) {
+        expect(sheetNames).not.toContain(removed);
+      }
     });
 
-    it("enforces Right-To-Left (RTL) views across all 5 sheets", async () => {
+    it("enforces Right-To-Left (RTL) views on every sheet", async () => {
       const buffer = await generateExcelReport(sampleDataset);
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buffer as any);
@@ -83,7 +81,7 @@ describe("Research Deliverables Generator Suite", () => {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buffer as any);
 
-      const wsData = wb.getWorksheet("البيانات");
+      const wsData = wb.getWorksheet("الكيانات الأساسية");
       expect(wsData).toBeDefined();
 
       let foundEscapedFormula = false;
@@ -97,26 +95,24 @@ describe("Research Deliverables Generator Suite", () => {
       expect(foundEscapedFormula).toBe(true);
     });
 
-    it("dynamically populates the Codebook with all active columns", async () => {
+    it("labels every active column in Arabic on the data sheet (the codebook sheet was removed)", async () => {
       const buffer = await generateExcelReport(sampleDataset);
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buffer as any);
 
-      const wsCode = wb.getWorksheet("دليل الحقول");
-      expect(wsCode).toBeDefined();
+      const wsData = wb.getWorksheet("الكيانات الأساسية");
+      expect(wsData).toBeDefined();
+      const headers = (wsData!.getRow(1).values as string[]).filter(Boolean);
 
-      const codebookFields: string[] = [];
-      wsCode?.eachRow((row, rowNumber) => {
-        if (rowNumber > 2) {
-          const field = row.getCell(1).value?.toString();
-          if (field) codebookFields.push(field);
-        }
-      });
-
-      expect(codebookFields).toContain("text");
-      expect(codebookFields).toContain("likes_count");
-      expect(codebookFields).toContain("views_count");
-      expect(codebookFields).toContain("username");
+      // text, likes_count, views_count and username are the source fields; the header names them in Arabic.
+      expect(headers).toContain("نص المحتوى");
+      expect(headers).toContain("عدد الإعجابات");
+      expect(headers).toContain("عدد المشاهدات");
+      expect(headers).toContain("اسم المستخدم");
+      // No raw source field names leak as headers.
+      for (const raw of ["text", "likes_count", "views_count", "username"]) {
+        expect(headers).not.toContain(raw);
+      }
     });
 
     it("contains zero upstream provider names or leaks (TREG, TikHub, Apify, etc.)", async () => {
@@ -130,54 +126,25 @@ describe("Research Deliverables Generator Suite", () => {
       expect(contentStr).not.toContain("apify");
     });
 
-    it("verifies quality sheet reports supported facts and accurate integrity phrasing", async () => {
-      const bufferWithoutTarget = await generateExcelReport(sampleDataset);
-      const wbWithout = new ExcelJS.Workbook();
-      await wbWithout.xlsx.load(bufferWithoutTarget as any);
-      const wsQualityWithout = wbWithout.getWorksheet("جودة البيانات");
-      expect(wsQualityWithout).toBeDefined();
+    it("reports supported facts and accurate integrity phrasing in the methodology (the quality sheet was removed)", () => {
+      const withoutTarget = generateMethodologyText(sampleDataset);
 
-      const qualityRowsWithout: Record<string, string> = {};
-      wsQualityWithout?.eachRow((row, rowNumber) => {
-        if (rowNumber > 3) {
-          const key = row.getCell(1).value?.toString() || "";
-          const val = row.getCell(2).value?.toString() || "";
-          qualityRowsWithout[key] = val;
-        }
-      });
-
-      // When targetRequested is missing, must not fall back to delivered rows; state unavailable
-      expect(qualityRowsWithout["السجلات المطلوبة (Target Requested)"]).toBe("عدد السجلات المطلوبة غير متاح");
-      // Integrity phrasing must not claim unverified exact identity
-      expect(qualityRowsWithout["النزاهة المنهجية (Integrity)"]).toBe("استخراج مباشر من الواجهات العامة المتاحة");
-      expect(qualityRowsWithout["النزاهة المنهجية (Integrity)"]).not.toContain("نقل مطابق للمصدر المعلن");
-      // Verifies distinct metrics
-      expect(qualityRowsWithout["إجمالي السجلات المستلمة (Raw Collected)"]).toBeDefined();
-      expect(qualityRowsWithout["السجلات الفريدة المسلمة (Unique Delivered)"]).toBe("2 سجل");
-      expect(qualityRowsWithout["السجلات المكررة المستبعدة (Duplicates Removed)"]).toBe("0 سجل");
-      expect(qualityRowsWithout["نسبة اكتمال الحقول (Completeness)"]).toBeDefined();
+      // When targetRequested is missing the delivered rows are never used as the requested count.
+      expect(withoutTarget).toContain("العدد المطلوب في الخطة: غير متاح");
+      // Integrity phrasing must not claim unverified exact identity.
+      expect(withoutTarget).not.toContain("نقل مطابق للمصدر المعلن");
+      // Distinct metrics: raw received, delivered after cleaning, removed duplicates.
+      expect(withoutTarget).toContain("السجلات المستلمة من المصدر: ٢");
+      expect(withoutTarget).toContain("السجلات المعروضة بعد التنظيف: ٢");
+      expect(withoutTarget).toContain("لا توجد استبعادات مسجلة");
+      expect(withoutTarget).toContain("اكتمال الحقول:");
 
       // With explicit targetRequested provided
-      const datasetWithTarget = {
+      const withTarget = generateMethodologyText({
         ...sampleDataset,
-        metadata: {
-          ...sampleDataset.metadata,
-          targetRequested: 100,
-        },
-      };
-      const bufferWithTarget = await generateExcelReport(datasetWithTarget);
-      const wbWith = new ExcelJS.Workbook();
-      await wbWith.xlsx.load(bufferWithTarget as any);
-      const wsQualityWith = wbWith.getWorksheet("جودة البيانات");
-      const qualityRowsWith: Record<string, string> = {};
-      wsQualityWith?.eachRow((row, rowNumber) => {
-        if (rowNumber > 3) {
-          const key = row.getCell(1).value?.toString() || "";
-          const val = row.getCell(2).value?.toString() || "";
-          qualityRowsWith[key] = val;
-        }
+        metadata: { ...sampleDataset.metadata, targetRequested: 100 },
       });
-      expect(qualityRowsWith["السجلات المطلوبة (Target Requested)"]).toBe("100 سجل");
+      expect(withTarget).toContain("العدد المطلوب في الخطة: ١٠٠");
     });
   });
 
@@ -240,9 +207,9 @@ describe("Research Deliverables Generator Suite", () => {
       const text = generateMethodologyText(sampleDataset);
 
       expect(text).toContain("المصدر: منصة إكس");
-      expect(text).toContain("عدد السجلات المعروضة: ٢");
-      expect(text).toContain("تغطية المجتمع المستهدف: لم تُقَس.");
-      expect(text).toContain("لم يُجرَ تحقق مستقل من بيانات الاتصال.");
+      expect(text).toContain("السجلات المعروضة بعد التنظيف: ٢");
+      expect(text).toContain("لم تُقَس نسبة تغطية المجتمع المستهدف");
+      expect(text).toContain("لم ترد حالات تحقق مستقلة للحقول");
       expect(text).not.toContain("job_wc_egypt_2026");
       expect(text).not.toMatch(/\b(?:public|general|coverage|integrity|verified|Job ID|Cross-sectional)\b/i);
       expect(text).not.toContain("البيانات العامة");

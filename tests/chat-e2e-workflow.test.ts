@@ -291,7 +291,7 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     expect(JSON.stringify(data.clarificationItems || [])).not.toContain("ارفع الملف");
   });
 
-  it("7. Deliverables generation profile: generates 6-sheet corporate Excel when entityType is companies", async () => {
+  it("7. Deliverables generation profile: generates a data-only company Excel when entityType is companies", async () => {
     const payload = {
       metadata: {
         title: "حصر شركات المقاولات الكهروميكانيكية في مصر",
@@ -325,14 +325,12 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(excelBuf as any);
 
-    // Excel is data-only and includes linked company/branch rows and data counters.
-    expect(wb.worksheets.length).toBe(5);
+    // Owner decision D4: Excel is data only. The summary/analysis sheets moved to the methodology PDF.
+    expect(wb.worksheets.length).toBe(1);
     const sheetNames = wb.worksheets.map((ws) => ws.name);
-    expect(sheetNames).toContain("الملخص التنفيذي ومؤشرات السوق");
-    expect(sheetNames).toContain("دليل الشركات المعتمد");
-    expect(sheetNames).toContain("بيانات الشركات للتصفية");
-    expect(sheetNames).toContain("فروع الشركات");
-    expect(sheetNames).toContain("تحليل وتوزيع الشركات");
+    expect(sheetNames).toEqual(["بيانات الشركات"]);
+    expect(sheetNames).not.toContain("الملخص التنفيذي ومؤشرات السوق");
+    expect(sheetNames).not.toContain("تحليل وتوزيع الشركات");
     expect(sheetNames).not.toContain("سجل تدقيق الاستبعاد والمطابقة");
     expect(sheetNames).not.toContain("جودة البيانات ومحددات الحصر");
     expect(sheetNames).not.toContain("دليل الحقول");
@@ -476,7 +474,8 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     const checkWb = new ExcelJS.Workbook();
     await checkWb.xlsx.load(finalExcel as any);
-    expect(checkWb.worksheets.length).toBe(5);
+    // Owner decision D4: the company workbook is the single data sheet.
+    expect(checkWb.worksheets.length).toBe(1);
     checkWb.worksheets.forEach((ws) => {
       // All sheets must have RTL view
       expect(ws.views?.[0]?.rightToLeft).toBe(true);

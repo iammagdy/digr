@@ -55,9 +55,11 @@ describe("release integration: PR #6 / PR #7 stay out", () => {
 
   it("redesign honesty fixes are present", () => {
     const chat = read("src/app/dashboard/chat/page.tsx");
-    expect(chat).toContain("methodologyAlertText(data.chargedPoints)");
+    // The in-page message replaced the browser alert; the charge comes only from the server value.
+    expect(chat).toContain("methodologyMessageText(data.chargedPoints");
+    expect(chat).not.toMatch(/(?:window\.)?alert\(/);
     expect(chat).not.toContain("اقتطاع 10 نقاط");
-    expect(read("src/lib/honestDisplay.ts")).toContain("methodologyAlertText");
+    expect(read("src/lib/honestDisplay.ts")).toContain("methodologyMessageText");
   });
 
   it("PR #3 trust boundary is preserved", () => {

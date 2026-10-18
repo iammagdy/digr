@@ -8,7 +8,7 @@ import {
   createAndSaveManagedQuote,
   PlanState,
 } from "@/functions/shared/planManager";
-import { getEnabledCapabilities, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
+import { getEnabledCapabilitiesWithCoreServices, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { getEndpointDetails, sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
 
     // 5. Validate updated plan against all capability schemas (static + catalog)
     const [capabilities, catalogCapabilities] = await Promise.all([
-      getEnabledCapabilities(adminClient),
+      getEnabledCapabilitiesWithCoreServices(adminClient),
       getCatalogCapabilities(adminClient),
     ]);
     const allCapabilities = [...capabilities, ...catalogCapabilities];

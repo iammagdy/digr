@@ -126,7 +126,7 @@ describe("Conversational Artifact Revisions", () => {
     expect(response.revisionQuote.operation.direction).toBe("desc");
   });
 
-  it("applies revision and regenerates Excel deliverable with 100% Arabic RTL on all sheets", async () => {
+  it("applies revision and regenerates a data-only Excel deliverable that is right-to-left on every sheet", async () => {
     const initialPayload = {
       metadata: { title: "نتائج البحث" },
       rows: [
@@ -151,7 +151,9 @@ describe("Conversational Artifact Revisions", () => {
     await workbook.xlsx.load(buffer as any);
 
     // Verify all worksheets are strictly Arabic RTL
-    expect(workbook.worksheets.length).toBeGreaterThanOrEqual(4);
+    // Owner decision D4: Excel carries data only (no dashboard, quality or codebook sheets).
+    expect(workbook.worksheets.length).toBe(1);
+    expect(workbook.worksheets[0].rowCount).toBe(3); // header + the 2 deduplicated rows
     for (const ws of workbook.worksheets) {
       expect(ws.views?.[0]?.rightToLeft).toBe(true);
     }

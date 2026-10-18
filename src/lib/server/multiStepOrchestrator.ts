@@ -548,7 +548,7 @@ export async function executeMultiStepPlanOffline(
             entityType: { value: plan.entityType, provenance: "INFERRED" },
             sampleSize: { value: plan.maxTargetVolume, provenance: "DEFAULT" },
             timeframe: { value: "آخر شهر", provenance: "DEFAULT" },
-            geographicScope: { value: "مصر", provenance: "DEFAULT" },
+            geographicScope: { value: "غير محدد", provenance: "DEFAULT" },
             outputTypes: { value: ["xlsx", "csv", "pdf"], provenance: "DEFAULT" },
             exclusionListReference: { detected: false, fileAttached: false, provenance: "DEFAULT" },
           } as any);

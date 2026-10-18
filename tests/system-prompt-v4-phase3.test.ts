@@ -65,7 +65,10 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
           }),
         };
       }
-      anthropicSystemPrompt = body.system || "";
+      // Anthropic receives the same text as two blocks (cacheable fixed rules, then per-turn context).
+      anthropicSystemPrompt = Array.isArray(body.system)
+        ? body.system.map((block: any) => block.text).join("\n\n")
+        : body.system || "";
       return {
         ok: true,
         json: async () => ({

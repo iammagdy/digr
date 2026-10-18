@@ -562,8 +562,17 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
       expect(capturedBody).toBeDefined();
       expect(capturedBody.model).toBe("claude-haiku-5-5");
       expect(capturedBody.max_tokens).toBe(1024);
-      expect(typeof capturedBody.system).toBe("string");
-      expect(capturedBody.system.length).toBeGreaterThan(0);
+      // The system prompt is sent as two blocks: the long fixed rules are cacheable, the per-turn context is not.
+      expect(Array.isArray(capturedBody.system)).toBe(true);
+      expect(capturedBody.system).toHaveLength(2);
+      expect(capturedBody.system[0].type).toBe("text");
+      expect(capturedBody.system[0].cache_control).toEqual({ type: "ephemeral" });
+      expect(capturedBody.system[0].text.length).toBeGreaterThan(1000);
+      expect(capturedBody.system[1].cache_control).toBeUndefined();
+      expect(capturedBody.system[1].text).toContain("AVAILABLE CATALOG CAPABILITIES");
+      // Nothing that changes per user or per turn may sit inside the cached block.
+      expect(capturedBody.system[0].text).not.toContain("User Name:");
+      expect(capturedBody.system[0].text).not.toContain("Available Balance:");
 
       // Verify messages strictly ends with a user turn
       expect(Array.isArray(capturedBody.messages)).toBe(true);

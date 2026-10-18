@@ -152,11 +152,19 @@ export function detectCountryFromText(text: string): CountryMapping | null {
 export function detectIndustryFromText(text: string): IndustryMapping {
   const t = (text || "").toLowerCase().trim();
 
-  if (t.includes("fintech") || t.includes("financial technology") || t.includes("التقنية المالية") || t.includes("التكنولوجيا المالية")) {
+  const hasLatinWord = (word: string) => new RegExp(`(?<![a-z0-9])${word}(?![a-z0-9])`).test(t);
+
+  if (
+    t.includes("fintech") || t.includes("financial technology") ||
+    t.includes("التقنية المالية") || t.includes("التكنولوجيا المالية") ||
+    t.includes("تقنية مالية") || t.includes("تكنولوجيا مالية") ||
+    t.includes("مدفوعات") || t.includes("فينتك") || t.includes("فنتك")
+  ) {
     return {
       englishKeywords: ["fintech", "financial technology"],
       arabicLabel: "FinTech",
-      exactTaxonomy: ["Financial Services", "Banking", "Information Technology & Services"],
+      // Financial services only: adding IT services here pulls every software house into a fintech search.
+      exactTaxonomy: ["Financial Services", "Banking"],
     };
   }
 
@@ -171,7 +179,14 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return {
       englishKeywords: ["solar", "solar energy", "renewable energy"],
       arabicLabel: "الطاقة الشمسية والمتجددة",
-      exactTaxonomy: ["Renewables & Environment", "Oil & Energy"],
+      exactTaxonomy: ["Renewables & Environment"],
+    };
+  }
+  if (t.includes("كهروميكانيك") || t.includes("electromechanical") || hasLatinWord("mep")) {
+    return {
+      englishKeywords: ["electromechanical", "MEP contracting", "electrical contracting"],
+      arabicLabel: "المقاولات الكهروميكانيكية",
+      exactTaxonomy: ["Construction", "Mechanical or Industrial Engineering", "Electrical/Electronic Manufacturing"],
     };
   }
   if (t.includes("كهرباء") || t.includes("كهربائية") || t.includes("electrical") || t.includes("electricity")) {
@@ -195,8 +210,9 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     t.includes("برمجيات") ||
     t.includes("برمجة") ||
     t.includes("software") ||
-    t.includes("tech") ||
-    t.includes("it")
+    // Whole Latin words only: a bare substring test matched "united", "italy", "technical" and "electricity".
+    hasLatinWord("tech") ||
+    hasLatinWord("it")
   ) {
     return {
       englishKeywords: ["information technology", "software", "technology"],
@@ -214,7 +230,8 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return {
       englishKeywords: ["construction", "contracting"],
       arabicLabel: "المقاولات والتشييد",
-      exactTaxonomy: ["Construction", "Civil Engineering", "Building Materials"],
+      // Building Materials is a supplier category and pulls unrelated manufacturers into a contractor search.
+      exactTaxonomy: ["Construction"],
     };
   }
   if (t.includes("أثاث") || t.includes("اثاث") || t.includes("موبيليا") || t.includes("furniture") || t.includes("woodworking")) {
@@ -249,7 +266,7 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     return {
       englishKeywords: ["education"],
       arabicLabel: "التعليم",
-      exactTaxonomy: ["Education Management"],
+      exactTaxonomy: ["Education Management", "Primary/Secondary Education"],
     };
   }
   if (t.includes("سياحة") || t.includes("فنادق") || t.includes("tourism") || t.includes("hospitality")) {
@@ -697,6 +714,12 @@ export function getCompanyRequirementItems(
   }
   return items;
 }
+
+/**
+ * Decision-maker roles in a request: a specific title (CEO, مدير, مؤسس ...) or the generic phrase
+ * itself (صناع القرار, decision makers, executives), which already names who is wanted.
+ */
+export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع القرار|صانعي القرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
 
 export function isPeopleSearchRequest(text: string): boolean {
   const normalized = (text || "").toLowerCase();

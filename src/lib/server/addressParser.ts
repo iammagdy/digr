@@ -144,6 +144,28 @@ const COUNTRIES_AND_REGIONS = new Set([
   "governorate", "province", "district", "state", "region",
 ]);
 
+/** Lowercase, underscores/hyphens/punctuation to single spaces; keeps accented Latin letters (münchen). */
+function normalizeCityKey(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/[^a-z0-9\u00c0-\u024f\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Longest names first so "New Cairo" wins over "Cairo" and "Kuwait City" over "Kuwait". */
+const CITY_ENTRIES = Object.entries(CITY_ARABIC_MAP)
+  .map(([key, arabic]) => {
+    const normalized = normalizeCityKey(key);
+    return { key: normalized, arabic, pattern: new RegExp(`(?<![a-z0-9\\u00c0-\\u024f])${escapeRegExp(normalized)}(?![a-z0-9\\u00c0-\\u024f])`) };
+  })
+  .sort((left, right) => right.key.length - left.key.length);
+
+const ARABIC_CITY_ENTRIES = [...new Set(Object.values(CITY_ARABIC_MAP))].sort((left, right) => right.length - left.length);
+
 /**
  * Extracts and localizes the city from a raw company location/address string.
  */
@@ -157,28 +179,24 @@ export function extractCityFromAddress(rawLocation?: string | null, targetCountr
     return "غير متاح";
   }
 
-  // Check if address already contains an Arabic city
-  for (const [enKey, arName] of Object.entries(CITY_ARABIC_MAP)) {
-    if (trimmed.includes(arName)) {
-      return arName;
+  // Check if the address already names an Arabic city. "سلطنة عمان" is the country Oman, not the city Amman.
+  const withoutOmanCountry = trimmed.replace(/سلطنة\s+عُ?مان/g, " ");
+  for (const arabicName of ARABIC_CITY_ENTRIES) {
+    if (withoutOmanCountry.includes(arabicName)) {
+      return arabicName;
     }
   }
 
   // Tokenize by comma
   const parts = trimmed.split(/[,،]+/).map((p) => p.trim()).filter(Boolean);
 
-  // Check individual parts for known cities
+  // Check individual parts for known cities (whole names only, longest first)
   for (const part of parts) {
-    const cleanPart = part.toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
-    if (CITY_ARABIC_MAP[cleanPart]) {
-      return CITY_ARABIC_MAP[cleanPart];
-    }
-    // Substring match
-    for (const [enKey, arName] of Object.entries(CITY_ARABIC_MAP)) {
-      if (cleanPart.includes(enKey)) {
-        return arName;
-      }
-    }
+    const cleanPart = normalizeCityKey(part);
+    const exact = CITY_ENTRIES.find((entry) => entry.key === cleanPart);
+    if (exact) return exact.arabic;
+    const contained = CITY_ENTRIES.find((entry) => entry.pattern.test(cleanPart));
+    if (contained) return contained.arabic;
   }
 
   // If no known city was matched, filter out countries and regions
@@ -209,8 +227,14 @@ export function localizeCityName(value?: string | null, targetCountry?: string |
   const trimmed = value.trim();
   if (!trimmed) return "غير متاح";
   if (/[\u0600-\u06FF]/u.test(trimmed)) return trimmed;
-  const normalized = trimmed.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
-  if (CITY_ARABIC_MAP[normalized]) return CITY_ARABIC_MAP[normalized];
+  const exact = CITY_ENTRIES.find((entry) => entry.key === normalizeCityKey(trimmed));
+  if (exact) return exact.arabic;
   const parsed = extractCityFromAddress(trimmed, targetCountry);
   return parsed && parsed !== "غير متاح" && /[\u0600-\u06FF]/u.test(parsed) ? parsed : "غير متاح";
+}
+
+/** City from a free-text address, as an Arabic name only ("غير متاح" when the city is not a known one). */
+export function localizeCityFromAddress(rawAddress?: string | null, targetCountry?: string | null): string {
+  const city = extractCityFromAddress(rawAddress, targetCountry);
+  return /[\u0600-\u06FF]/u.test(city) ? city : "غير متاح";
 }

@@ -155,7 +155,8 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
   it("methodology success never hardcodes a charge amount", () => {
     const chat = src("src/app/dashboard/chat/page.tsx");
     expect(chat).not.toContain("اقتطاع 10 نقاط");
-    expect(chat).toContain("methodologyAlertText(data.chargedPoints)");
+    // The browser alert was replaced by an in-page confirmation and message (owner rule: no browser alerts).
+    expect(chat).not.toMatch(/(?:window\.)?alert\(/);
     expect(chat).toContain("methodologyMessageText(data.chargedPoints");
   });
 

@@ -2,7 +2,7 @@ import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import {
-  getEnabledCapabilities,
+  getEnabledCapabilitiesWithCoreServices,
   getCatalogCapabilities,
   sanitizeCapabilitiesForLlm,
   validateCapabilityParams,
@@ -60,11 +60,19 @@ import {
 } from "./briefManager";
 import { extractResearchIntent, extractEntityType } from "../../lib/server/researchIntent";
 import { evaluateDiscoveryDecision } from "../../lib/server/questionDecisionFramework";
-import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, isoCountryCodeFromName, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
+import { PEOPLE_ROLE_PATTERN, detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, industryDisplayLabelAr, isPeopleSearchRequest, isoCountryCodeFromName, requiredProfessionalContactFields, socialSearchQueryFromTitle } from "../../lib/planParameters";
 import { customerFacingConversationTitle } from "../../lib/customerFacingConversationTitle";
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
+import { isRetrySamePlanMessage } from "../../lib/retryMessage";
+import { toArabicDigits } from "../../lib/arabicDigits";
+import { NAME_PROMPT_AR } from "../../lib/customerName";
+import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
+import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
+import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
+import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
+import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -113,13 +121,13 @@ function explicitCompanyClarificationNotes(notes?: string): string[] {
     .filter(Boolean);
 }
 
-function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
+export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
   const normalized = text || "";
-  const isAccount = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(normalized);
+  const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
   const isPeople = isPeopleSearchRequest(normalized);
   const isCompanies = !isPeople && (/(?:\bcompanies?\b|\bbusinesses\b|شركة|شركات|مؤسسة|مؤسسات|مصنع|مصانع)/iu.test(normalized));
-  const isSocialTopic = !isAccount && !isPeople && !isCompanies && /(?:فيديوهات?|مقاطع?|منشورات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/iu.test(normalized);
-  const accountHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(normalized)?.[1];
+  const isSocialTopic = !isAccount && !isPeople && !isCompanies && SOCIAL_CONTENT_WORDS_RE.test(normalized);
+  const accountHandle = ACCOUNT_HANDLE_RE.exec(normalized)?.[1];
 
   if (isAccount && !accountHandle) {
     return { id: "social_account_required", text: "ما اسم الحساب أو رابطه على المنصة؟", question: "ما اسم الحساب أو رابطه على المنصة؟", type: "free", options: [], allowOther: true };
@@ -128,7 +136,7 @@ function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): 
     if (!detectCountryFromText(normalized)) return { id: "people_country_required", text: "في أي دولة تريد البحث عن صناع القرار؟", question: "في أي دولة تريد البحث عن صناع القرار؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true };
     const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !/(?:نطاق صناع القرار\s*:|لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s*\p{L}/iu.test(normalized);
     if (scopeMissing) return { id: "people_scope_required", text: "ما المجال أو الشركة التي تريد صناع القرار منها؟", question: "ما المجال أو الشركة التي تريد صناع القرار منها؟", type: "free", options: [], allowOther: true };
-    if (!/\b(?:ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|presidents?|heads? of|vps?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة|مسؤول(?:ين)?/iu.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
+    if (!PEOPLE_ROLE_PATTERN.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
     if (!extractNumberFromText(normalized)) return { id: "people_count_required", text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true };
   }
   if (isCompanies) {
@@ -136,10 +144,18 @@ function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): 
     if (missing.length) return getCompanyRequirementItems(missing, normalized)[0] || null;
     if (!extractNumberFromText(normalized)) return { id: "company_count_required", text: "كم شركة تريد في النتائج؟", question: "كم شركة تريد في النتائج؟", type: "free", options: [], allowOther: true };
   }
+  if (!isAccount && !isPeople && !isCompanies) {
+    const socialTaskIntent = detectSocialIntent(normalized);
+    const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
+    if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
+    // A request the verified social services understand is decided entirely by their own inputs (a link, a
+    // channel, a country); the generic topic question below does not apply to it.
+    if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) return null;
+  }
   if (isSocialTopic) {
-    if (!/(?:عن|حول|بشأن|كلمة|وسم|هاشتاج|هاشتاغ|موضوع البحث المطلوب\s*:)\s+\S+/iu.test(normalized)) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
-    if (!/(?:على|منصة|في|منصة البحث المطلوبة\s*:)\s*(?:تيك\s*توك|tiktok|يوتيوب|youtube|إنستغرام|انستغرام|instagram|فيسبوك|facebook|تويتر|twitter|منصة\s*x)/iu.test(normalized)) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
-    if (!/(?:آخر|اخر|خلال|منذ)\s*(?:[0-9٠-٩]+|واحد|واحدة|اتنين|اثنين|ثلاثة|ثلاث|أربعة|اربعة|خمسة|خمس|عشرة|عشرين|شهر|أسبوع|سنة|يوم)|\b20\d{2}-\d{2}-\d{2}\b/iu.test(normalized)) return { id: "social_time_required", text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true };
+    const missingSocial = getMissingSocialInputs(normalized);
+    if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
+    if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
   }
   return null;
 }
@@ -153,6 +169,8 @@ export interface ChatHandlerInput {
   testScenario?: string;
   uploadedFiles?: any[];
   isGuest?: boolean;
+  /** Set by the route when this message only gave the customer's name (already stored); answered without a model turn. */
+  capturedName?: string;
   personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
 }
 
@@ -191,6 +209,18 @@ export interface ChatHandlerResponse {
       tPlanLlmMs: number;
       tQuoteMs: number;
     };
+  };
+}
+
+/** Turn stats for replies that finish before any model call or catalog search (greeting, required-input question). */
+function zeroModelTurnStats(conversationId: string, messageId: string, turnStartTime: number): NonNullable<ChatHandlerResponse["turnStats"]> {
+  const latencyMs = Date.now() - turnStartTime;
+  console.log(`[chat:turn] conversationId=${conversationId} messageId=${messageId} modelCalls=0 catalogSearches=0 latencyMs=${latencyMs}`);
+  return {
+    modelCalls: 0,
+    catalogSearches: 0,
+    latencyMs,
+    stepTimings: { totalMs: latencyMs, tExtractMs: 0, tCatalogSearchMs: 0, tPlanLlmMs: 0, tQuoteMs: 0 },
   };
 }
 
@@ -455,7 +485,7 @@ export function buildAutoPlanProposal(
     .filter(Boolean)
     .join(" ");
   const peopleSearch = isPeopleSearchRequest(requestText);
-  const isAccountProfileRequest = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(requestText);
+  const isAccountProfileRequest = ACCOUNT_LOOKUP_RE.test(requestText);
   const explicitHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(requestText)?.[1];
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = peopleSearch
@@ -596,12 +626,12 @@ export function buildAutoPlanProposal(
   };
 
   const summaryAr = isPeopleCapability
-    ? `بحث ${volume} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
+    ? `بحث ${toArabicDigits(volume)} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
     : isAccountProfileRequest
       ? `بيانات الحساب العام ${topicLabel} على ${platformLabel}`
       : isCompanySearch
-      ? `استخراج بيانات ${volume} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
-      : `جمع واستخراج ${volume} سجل حول ${topicLabel} من ${platformLabel}`;
+      ? `استخراج بيانات ${toArabicDigits(volume)} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
+      : `جمع واستخراج ${toArabicDigits(volume)} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
     type: "propose_plan",
@@ -838,6 +868,38 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
     enabled: !unavailable,
+  };
+}
+
+/** A verified capability presented to the model in the same shape as a live catalog result. */
+function capabilityAsCatalogEndpoint(cap: Capability): CatalogEndpointSummary {
+  let schema: Record<string, any> = {};
+  try {
+    schema = typeof cap.paramsSchema === "string" ? JSON.parse(cap.paramsSchema) : (cap.paramsSchema as any) || {};
+  } catch {
+    schema = {};
+  }
+  return {
+    id: cap.slug,
+    slug: cap.slug,
+    nameAr: cap.nameAr,
+    nameEn: cap.nameEn,
+    summaryAr: cap.descriptionAr,
+    summaryEn: cap.nameEn,
+    platform: String(cap.platform || cap.category),
+    method: "POST",
+    path: "",
+    paramsSchema: schema,
+    billingUnit: "item",
+    catalogPriceUsd: cap.unitCostUsd,
+    pointsPerUnit:
+      typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0
+        ? computeRegistryPointsPerUnit(cap.customerPriceUsdPerItem)
+        : cap.pointsPerUnit ?? computeRegistryPointsPerUnit(cap.unitCostUsd),
+    pagination: { type: "cursor", maxLimit: cap.maxRows },
+    observedSuccessRate: cap.estimatedSuccessRate ?? 0.99,
+    observedSamples: 1000,
+    scope: "any_account",
   };
 }
 
@@ -1295,8 +1357,9 @@ export class ChatHandler {
 
     // Greetings never enter research discovery or spend an LLM turn. Ask for a
     // missing name once per conversation, then use the persisted profile name.
-    if (isGreeting && !isTestSearchScenario) {
-      const displayName = [userProfile?.sender_name, userProfile?.name, userProfile?.full_name]
+    if ((isGreeting || input.capturedName) && !isTestSearchScenario) {
+      // The real profile name only: account name first, the top-up sender name last. Never a default.
+      const displayName = input.capturedName?.trim() || [userProfile?.name, userProfile?.full_name, userProfile?.sender_name]
         .find((value) => typeof value === "string" && value.trim())?.trim();
       let alreadyAskedName = false;
       if (!displayName && sb) {
@@ -1305,16 +1368,21 @@ export class ChatHandler {
             .select("id")
             .eq("conversation_id", conversationId)
             .eq("role", "assistant")
-            .ilike("content_ar", "%اسمك%")
+            .ilike("content_ar", `%${NAME_PROMPT_AR.slice(0, 12)}%`)
             .limit(2);
           alreadyAskedName = Boolean(priorNamePrompts?.length);
         } catch {}
       }
-      const greeting = displayName
-        ? `أهلًا ${displayName}، كيف أساعدك اليوم؟`
-        : alreadyAskedName
-          ? "أهلًا بك، كيف أساعدك اليوم؟"
-          : "أهلًا بك، ما الاسم الذي تفضّل أن أناديك به؟";
+      const balanceLine = typeof userBalance === "number" && Number.isFinite(userBalance)
+        ? `رصيدك المتاح ${toArabicDigits(Math.max(0, Math.floor(userBalance)))} نقطة. `
+        : "";
+      const greeting = input.capturedName
+        ? `تشرفنا يا ${displayName}. ${balanceLine}كيف أساعدك اليوم؟`
+        : displayName
+          ? `أهلًا ${displayName}، ${balanceLine}كيف أساعدك اليوم؟`
+          : alreadyAskedName
+            ? `أهلًا بك، ${balanceLine}كيف أساعدك اليوم؟`
+            : `أهلًا بك، ${NAME_PROMPT_AR}`;
       if (sb) {
         await Promise.all([
           sb.from("messages").update({ content_ar: greeting }).eq("id", assistantMsgId),
@@ -1332,6 +1400,7 @@ export class ChatHandler {
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
       };
     }
 
@@ -1474,13 +1543,10 @@ export class ChatHandler {
       currentStep = "capabilities_load";
       const tSbCapsStart = Date.now();
       const [loadedCapabilities, catalogCapabilities] = await Promise.all([
-        getEnabledCapabilities(this.tables),
+        getEnabledCapabilitiesWithCoreServices(this.tables),
         getCatalogCapabilities(this.tables),
       ]);
-      const peopleSearchSeed = APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search" && capability.enabled && capability.status === "verified");
-      const capabilities = peopleSearchSeed && !loadedCapabilities.some((capability) => capability.slug === peopleSearchSeed.slug)
-        ? [...loadedCapabilities, peopleSearchSeed]
-        : loadedCapabilities;
+      const capabilities = loadedCapabilities;
       supabaseMs += Date.now() - tSbCapsStart;
 
       let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
@@ -1589,11 +1655,11 @@ export class ChatHandler {
       }
       tCatalogSearchMs = catalogMs || (Date.now() - tSearchStart);
 
-      const dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
+      let dynamicCapabilities: Capability[] = liveCatalogEndpoints.map(catalogEndpointToCapability);
 
-      const allCapabilities = [...dynamicCapabilities, ...capabilities];
-      const allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
-      const sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
+      let allCapabilities = [...dynamicCapabilities, ...capabilities];
+      let allCatalogCapabilities = [...dynamicCapabilities, ...catalogCapabilities];
+      let sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
 
       // 6. Fetch previous messages for context
       currentStep = "message_history";
@@ -1682,7 +1748,22 @@ export class ChatHandler {
           clarificationQuestions: [normalizedQuestion.text || normalizedQuestion.question],
           clarificationItems: [normalizedQuestion],
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
         };
+      }
+
+      // Verified social services: for a comments / videos / trending / channel request the model is shown only the
+      // verified capability for that platform and task, instead of choosing among the whole live catalog (where a
+      // post search at hundreds of points ranked above the comments the customer asked for).
+      const socialIntent = detectSocialIntent(conversationRequestText);
+      const verifiedSocialDef = socialIntent.task ? socialCapabilityForIntent(socialIntent) : undefined;
+      const verifiedSocialCap = verifiedSocialDef ? capabilities.find((c) => c.slug === verifiedSocialDef.slug) : undefined;
+      if (verifiedSocialCap) {
+        liveCatalogEndpoints = [capabilityAsCatalogEndpoint(verifiedSocialCap)];
+        dynamicCapabilities = [];
+        allCapabilities = [...capabilities];
+        allCatalogCapabilities = [...catalogCapabilities];
+        sanitizedCaps = sanitizeCapabilitiesForLlm(allCatalogCapabilities);
       }
 
       // 7. Execute LLM Turn
@@ -1759,9 +1840,9 @@ export class ChatHandler {
       const tLlmStart = Date.now();
       modelCallCount++;
       const resolvedDisplayName =
-        (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         (userProfile?.name && String(userProfile.name).trim()) ||
         (userProfile?.full_name && String(userProfile.full_name).trim()) ||
+        (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         "";
 
       let llmResult = await this.llm.executeTurn({
@@ -1984,7 +2065,7 @@ export class ChatHandler {
       output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
       // Explicit company requests receive the same deterministic routing guard.
       output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
-      if (/(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(conversationRequestText)) {
+      if (ACCOUNT_LOOKUP_RE.test(conversationRequestText)) {
         // Profile requests have a distinct one-record plan with no country or
         // date filters; don't let a generic social-content plan replace it.
         output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
@@ -2225,6 +2306,37 @@ export class ChatHandler {
           });
 
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
+          // A social request is served by its verified capability whatever the model proposed; the link, channel,
+          // keyword and country are rebuilt from the customer's own words.
+          if (verifiedSocialDef && verifiedSocialCap) {
+            // Only a period the customer wrote filters the results. The brief's own default window ("آخر شهر") would
+            // silently discard every comment on an older video and then report that nothing matched.
+            const dates = dateFiltersFromHint(extractDateHint(conversationRequestText) || "");
+            const perVideo = brief.commentsPerPost && brief.commentsPerPost > 0 ? brief.commentsPerPost : undefined;
+            const videoCount = brief.postCount && brief.postCount > 0 ? brief.postCount : undefined;
+            const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
+              dateFrom: dates.from,
+              dateTo: dates.to,
+              perVideo,
+              videoCount,
+            });
+            // The count the customer stated wins; a videos x comments-per-video request means exactly that many comments.
+            const statedVolume = explicitRequestedVolume && explicitRequestedVolume > 0
+              ? explicitRequestedVolume
+              : perVideo && videoCount && verifiedSocialDef.kind === "comments"
+              ? perVideo * videoCount
+              : item.targetVolumeMax || 1;
+            const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows));
+            return {
+              ...item,
+              capabilitySlug: verifiedSocialDef.slug,
+              endpointId: verifiedSocialCap.tregEndpointId || verifiedSocialDef.slug,
+              paginationStrategy: "cursor",
+              params,
+              targetVolumeMin: Math.min(item.targetVolumeMin || 1, volume),
+              targetVolumeMax: volume,
+            } as PlanItem;
+          }
           const capability = resolveCapabilityReference(item.capabilitySlug, validationCaps) ||
             (item.endpointId ? resolveCapabilityReference(item.endpointId, validationCaps) : undefined);
           let params = item.params;
@@ -2261,9 +2373,9 @@ export class ChatHandler {
           /people/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`)
         );
         const requiredFieldsText = conversationRequestText;
-        const isAccountProfileRequest = /(?:بيانات|إحصائيات|احصائيات|ملف)\s+(?:حساب|ال?حساب)|حساب\s+(?:عام|على|تيك|إنستغرام|انستغرام)|(?:account|profile)\s+(?:data|stats|lookup)|user\s+profile/i.test(requiredFieldsText);
-        const isSocialTopicRequest = !isAccountProfileRequest && /(?:فيديوهات?|مقاطع?|منشورات?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية)/i.test(requiredFieldsText);
-        const accountHandle = /(?:@|tiktok\.com\/@|اسم الحساب المطلوب\s*:\s*@?)([a-zA-Z0-9_.]{2,30})/i.exec(requiredFieldsText)?.[1];
+        const isAccountProfileRequest = ACCOUNT_LOOKUP_RE.test(requiredFieldsText);
+        const isSocialTopicRequest = !isAccountProfileRequest && SOCIAL_CONTENT_WORDS_RE.test(requiredFieldsText);
+        const accountHandle = ACCOUNT_HANDLE_RE.exec(requiredFieldsText)?.[1];
         const hasExplicitCount = Boolean(extractNumberFromText(requiredFieldsText));
         const missingCompanyFields = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
           ? getMissingCompanyResearchRequirements(requiredFieldsText)
@@ -2273,17 +2385,18 @@ export class ChatHandler {
           if (!detectCountryFromText(requiredFieldsText)) missingPeopleFields.push("people_country_required");
           const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !/\b(?:company|at)\s*[:=]|(?:لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s+\p{L}/iu.test(requiredFieldsText);
           if (scopeMissing) missingPeopleFields.push("people_scope_required");
-          if (!/\b(?:ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|presidents?|heads? of|vps?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة|مسؤول(?:ين)?/iu.test(requiredFieldsText)) {
+          if (!PEOPLE_ROLE_PATTERN.test(requiredFieldsText)) {
             missingPeopleFields.push("people_roles_required");
           }
           if (!hasExplicitCount) missingPeopleFields.push("people_count_required");
         }
         const missingSocialFields: string[] = [];
         if (isAccountProfileRequest && !accountHandle) missingSocialFields.push("social_account_required");
-        if (isSocialTopicRequest) {
-          if (!/(?:على|منصة|في)\s*(?:تيك\s*توك|tiktok|يوتيوب|youtube|إنستغرام|انستغرام|instagram|فيسبوك|facebook|تويتر|twitter|منصة\s*x)/iu.test(requiredFieldsText)) missingSocialFields.push("social_platform_required");
-          if (!/(?:آخر|اخر|خلال|منذ)\s*(?:[0-9٠-٩]+|واحد|واحدة|اتنين|اثنين|ثلاثة|ثلاث|أربعة|اربعة|خمسة|خمس|عشرة|عشرين|شهر|أسبوع|سنة|يوم)|\b20\d{2}-\d{2}-\d{2}\b/iu.test(requiredFieldsText)) missingSocialFields.push("social_time_required");
-          if (!/(?:عن|حول|بشأن|كلمة|وسم|هاشتاج|هاشتاغ)\s+\S+/iu.test(requiredFieldsText)) missingSocialFields.push("social_topic_required");
+        if (isSocialTopicRequest && !verifiedSocialDef) {
+          missingSocialFields.push(...getMissingSocialInputs(requiredFieldsText).filter((id) => id !== "social_account_required"));
+        }
+        if (!isAccountProfileRequest && !companyPlan && !peoplePlan) {
+          missingSocialFields.push(...getMissingSocialTaskInputs(requiredFieldsText));
         }
         const missingCompanyCount = companyPlan && !isPeopleSearchRequest(requiredFieldsText) && !hasExplicitCount;
         const missingRequiredFields = [
@@ -2309,6 +2422,10 @@ export class ChatHandler {
             social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
             social_time_required: { id: firstMissing, text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true },
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
+            social_comment_target_required: socialTaskQuestion("social_comment_target_required"),
+            social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
+            social_trending_platform_required: socialTaskQuestion("social_trending_platform_required"),
+            social_channel_required: socialTaskQuestion("social_channel_required"),
           };
           clarificationItemsList = companyItem
             ? [companyItem]
@@ -2438,7 +2555,31 @@ export class ChatHandler {
           }
         }
 
+        // Retry button: reuse the rows a failed run already collected, but only when this plan
+        // searches for exactly the same thing. The marker is part of the plan hash, so the
+        // customer approves exactly what is reused.
+        let reusedRowsForRetry = 0;
+        if (platformCheck.valid && planValidation.valid && planOutput && isRetrySamePlanMessage(message) && sb && planItems.length === 1) {
+          const retryJob = await findRetryableJob(sb, userId, conversationId);
+          const previousItem = retryJob ? await loadQuoteFirstItem(sb, userId, retryJob.quoteId) : null;
+          const candidateItem = planItems[0];
+          if (
+            retryJob && previousItem &&
+            planParamsSignature(previousItem.capabilitySlug, previousItem.params) === planParamsSignature(candidateItem.capabilitySlug, candidateItem.params)
+          ) {
+            const reusable = await readReusableRows(sb, retryJob.jobId, retryJob.step, Math.max(1, Number(candidateItem.targetVolumeMax) || 1));
+            if (reusable.rows.length > 0) {
+              planItems = [{ ...candidateItem, params: { ...candidateItem.params, retryOfJobId: retryJob.jobId } }];
+              reusedRowsForRetry = reusable.rows.length;
+            }
+          }
+        }
+
         if (platformCheck.valid && planValidation.valid && planOutput) {
+          if (verifiedSocialDef && planItems[0]) {
+            // The goal line is written by the server so it always matches what will run.
+            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits);
+          }
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
@@ -2474,24 +2615,27 @@ export class ChatHandler {
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
             methodologyNotes: isPeopleSearchRequest(conversationRequestText)
-              ? `${planOutput.methodologyNotes || ""} البريد المهني ورقم الهاتف متوقعان عند توفرهما، وتظهر حالة التحقق لكل حقل. لا تُحتسب السجلات التي لا تتضمن بيانات التواصل المطلوبة.`.trim()
+              ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_BILLING_NOTE_AR}`.trim()
               : planOutput.methodologyNotes,
           };
 
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n- التكلفة المتوقعة: ${managedQuote.expectedPoints} نقطة`;
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (brief.exclusionFile) {
-            planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${brief.exclusionFile.baselineRowCount} شركة مسجلة مسبقاً لمنع تكرارها.`;
+            planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${toArabicDigits(brief.exclusionFile.baselineRowCount)} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
           if (isPeopleSearchRequest(conversationRequestText)) {
-            planSummaryText += "\n- بيانات التواصل المتوقعة: البريد المهني ورقم الهاتف عند توفرهما، مع حالة التحقق لكل حقل.";
+            planSummaryText += `\n- بيانات التواصل المتوقعة: ${CONTACT_EXPECTATION_AR}\n- ${CONTACT_BILLING_NOTE_AR}`;
+          }
+          if (reusedRowsForRetry > 0) {
+            planSummaryText += `\n- إعادة استخدام: ${toArabicDigits(reusedRowsForRetry)} سجل جُمعت في المحاولة السابقة تُضاف إلى النتيجة، ويُجلب المتبقي فقط. السعر المعروض يغطي كامل العدد المطلوب، ولا يُخصم إلا ثمن السجلات المسلّمة فعلاً.`;
           }
           if (managedQuote.capacityConstrained) {
-            planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+            planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
           }
           if (!managedQuote.isAffordable) {
-            planSummaryText += `\n- تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض.`;
+            planSummaryText += `\n- تنبيه: رصيدك الحالي (${toArabicDigits(userBalance)} نقطة) لا يكفي لتغطية كامل العرض.`;
             if (managedQuote.downscaledOffer) {
-              planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+              planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
             }
           }
           finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
@@ -2581,14 +2725,14 @@ export class ChatHandler {
                 expiresAt: managedQuote.expiresAt,
               };
 
-              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${managedQuote.targetVolumeMax} سجل\n• التكلفة المتوقعة: ${managedQuote.expectedPoints} نقطة`;
+              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
               if (managedQuote.capacityConstrained) {
-                finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${managedQuote.targetVolumeMax} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+                finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
               }
               if (!managedQuote.isAffordable) {
-                finalContentAr += `\n• تنبيه: رصيدك الحالي (${userBalance} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
+                finalContentAr += `\n• تنبيه: رصيدك الحالي (${toArabicDigits(userBalance)} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
                 if (managedQuote.downscaledOffer) {
-                  finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${managedQuote.downscaledOffer.maxAffordableUnits} سجل مقابل ${managedQuote.downscaledOffer.affordableQuotedPoints} نقطة تناسب رصيدك الحالي.`;
+                  finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
                 }
               }
             }

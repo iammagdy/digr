@@ -4,7 +4,7 @@ import { TablesDB, ID, Query } from "./dbCompat";
 import {
   Capability,
   validateCapabilityParams,
-  getEnabledCapabilities,
+  getEnabledCapabilitiesWithCoreServices,
   getRegistryPricingSettings,
   computeRegistryPointsPerUnit,
   getCustomerPriceUsdPerCatalogItem,
@@ -514,13 +514,8 @@ export function validatePlanAgainstLiveCatalog(
       it.params.postUrl = "https://www.facebook.com/post/1";
     }
 
-    if (
-      (it.capabilitySlug?.includes("icypeas") || it.endpointId?.includes("icypeas")) &&
-      required.includes("query") &&
-      (!it.params.query || (typeof it.params.query === "object" && Object.keys(it.params.query).length === 0))
-    ) {
-      it.params.query = { location: { include: ["Egypt"] } };
-    }
+    // An empty company query is never filled in with a country: the customer's country comes
+    // from the request (owner decision D1), so a missing query is reported as missing below.
 
     const missing = required
       .filter((p) => p !== "page" && p !== "size")

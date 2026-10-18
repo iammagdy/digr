@@ -8,7 +8,7 @@ import {
   computeRegistryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
 } from "../src/functions/shared/capabilityRegistry";
-import { calculateQuote, DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
+import { calculateQuote, calculateCapabilityQuote, DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
 
 describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
   let client: LlmClient;
@@ -245,7 +245,7 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
       expect(points2).toBe(27);
     });
 
-    it("applies 15% reserve buffer and enforces minimum order of 50 points", () => {
+    it("applies 15% reserve buffer and never inflates a tiny order to a minimum charge", () => {
       // 10 units at 0.001 USD with effective settings:
       // unit price in points = 0.001 * (53 * 10 / 0.10) = 5.3 points
       // rawPoints = 10 * 5.3 = 53 points
@@ -262,7 +262,9 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
       expect(quote.safetyBufferPercent).toBe(15);
       expect(quote.isAffordable).toBe(true);
 
-      // Minimum order: 1 unit at 0.0001 USD -> raw points = 0.53, with buffer = 0.61 -> capped at minPoints 50
+      // There is no minimum-order floor: a tiny order is priced from its units only (owner pricing rule),
+      // and minPoints only gates whether a smaller affordable offer can be made.
+      // Legacy unrounded formula: 0.53 x 1.15 = 0.61 -> 1 point.
       const smallQuote = calculateQuote(1, 0.0001, 100, {
         usdToEgp: 53,
         markup: 10,
@@ -271,7 +273,12 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
         minPoints: 50,
       });
 
-      expect(smallQuote.quotedPoints).toBe(50);
+      expect(smallQuote.quotedPoints).toBe(1);
+
+      // Production per-unit rounding: unit = ceil(0.53) = 1 point, reserve = ceil(1 x 1.15) = 2 points.
+      const roundedQuote = calculateCapabilityQuote(1, 0.0001, 100, { usdToEgp: 53, markup: 10, creditValueEgp: 0.10, safetyBuffer: 0.15, minPoints: 50 });
+      expect(roundedQuote.unitPricePoints).toBe(1);
+      expect(roundedQuote.quotedPoints).toBe(2);
     });
   });
 });
