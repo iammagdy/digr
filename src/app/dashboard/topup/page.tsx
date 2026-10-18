@@ -13,13 +13,16 @@ import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, 
 import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
+import PromoCodeBox from "./PromoCodeBox";
+import { CREDIT_KIND_LABEL_AR, classifyLedgerRow, type CreditKind } from "@/lib/creditKinds";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
-const LEDGER_LABEL: Record<LedgerRow["type"], string> = {
-  topup: "شحن رصيد", reserve: "حجز مؤقت", release: "استرداد حجز", charge: "خصم التسليم", promo: "رصيد ترحيبي", adjust: "تسوية إدارية",
-};
 type LedgerKind = "topup" | "charge" | "refund";
-const kindOf = (t: LedgerRow["type"]): LedgerKind => (t === "topup" || t === "promo" || t === "adjust" ? "topup" : t === "release" ? "refund" : "charge");
+const kindOf = (row: LedgerRow): LedgerKind => {
+  const kind: CreditKind = classifyLedgerRow({ type: row.type, kind: row.kind });
+  return kind === "release" ? "refund" : kind === "reserve" || kind === "charge" ? "charge" : "topup";
+};
+const ledgerLabel = (row: LedgerRow): string => row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })];
 const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "استرداد"]];
 
 const ipaFromEnv = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
@@ -98,6 +101,19 @@ export default function WalletPage() {
 
   const loadLedger = useCallback(async () => {
     if (!user) return;
+    try {
+      // Typed history from the server (real top-ups, promo credit, admin gifts); the direct read below is the fallback.
+      const res = await fetch("/api/wallet/history", { cache: "no-store" });
+      const typed = res.ok ? await res.json().catch(() => null) : null;
+      if (typed?.success && Array.isArray(typed.rows)) {
+        setLedger(typed.rows.map((r: any) => ({
+          $id: r.id, id: r.id, delta: Number(r.delta), type: r.type, kind: r.kind, labelAr: r.labelAr,
+          jobId: r.jobId, topupId: r.topupId, note: r.note || "", createdAt: r.createdAt,
+        })));
+        setLedgerFailed(false);
+        return;
+      }
+    } catch { /* fall through to the direct read */ }
     try {
       const supabase = createClient();
       const { data, error } = await supabase
@@ -258,7 +274,7 @@ export default function WalletPage() {
     credits: submitted.credits && submitted.credits > 0 ? submitted.credits : creditsByTopup.get(submitted.$id) ?? submitted.credits,
   } : null;
 
-  const visibleLedger = ledger.filter((r) => r.type !== undefined && (ledFilter === "all" || kindOf(r.type) === ledFilter));
+  const visibleLedger = ledger.filter((r) => r.type !== undefined && (ledFilter === "all" || kindOf(r) === ledFilter));
 
   const scrollToForm = () => {
     setSubmitted(null);
@@ -320,6 +336,8 @@ export default function WalletPage() {
           </div>
         </div>
 
+        <PromoCodeBox onRedeemed={() => { void refreshBalance(); void loadLedger(); }} />
+
         <div ref={formRef} data-topup-form="1" />
         {!submitted ? (
           <TopupForm
@@ -377,7 +395,7 @@ export default function WalletPage() {
           </div>
           {ledgerFailed && <p role="alert" className="text-[13px] text-bad">تعذّر تحميل سجل الحركات الآن.</p>}
           {visibleLedger.map((l) => {
-            const k = kindOf(l.type);
+            const k = kindOf(l);
             const ico = k === "topup" ? [UI.wallet, "var(--ok)"] : k === "refund" ? [UI.refund, "var(--goldT)"] : ["M5 12h14", "var(--ink2)"];
             const tint = k === "topup" ? "var(--ok)" : k === "refund" ? "var(--gold)" : "var(--mut)";
             const plus = l.delta > 0;
@@ -385,7 +403,7 @@ export default function WalletPage() {
               <div key={l.$id} className="flex items-center gap-3 border-b border-ln py-3">
                 <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
                 <div className="min-w-0 flex-1">
-                  <p className="m-0 text-sm text-ink">{LEDGER_LABEL[l.type] ?? l.type}</p>
+                  <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
                   <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{l.note ? `${l.note} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
                 </div>
                 <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--goldT)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>

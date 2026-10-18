@@ -19,7 +19,10 @@ export interface LedgerRow {
   $id: string;
   id?: string;
   userId?: string;
-  type: "topup" | "reserve" | "release" | "charge" | "promo" | "adjust";
+  type: "topup" | "reserve" | "release" | "charge" | "grant" | "goodwill" | "promo" | "adjust";
+  /** Set by the typed history: Instapay top-up, promotional credit or admin gift. */
+  kind?: string;
+  labelAr?: string;
   delta: number;
   jobId?: string | null;
   topupId?: string | null;
