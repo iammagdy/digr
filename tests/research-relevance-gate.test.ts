@@ -43,7 +43,7 @@ describe("deterministic relevance gate before settlement", () => {
     expect(evaluateResearchRowRelevance({ comment_text: "هدف رائع", video_title: "ملخص مباراة كرة القدم" }, context).decision).toBe("no_match");
   });
 
-  it("rejects trending rows with contradictory region metadata and accepts rows without per-row region when the source was region-scoped", () => {
+  it("rejects only explicit contradictory country metadata and trusts the region-scoped trending source when metadata is absent or city-only", () => {
     const context = {
       capabilitySlug: "social-tiktok-videos",
       endpointId: "scrapecreators.x.v1-tiktok-get-trending-feed",
@@ -51,14 +51,11 @@ describe("deterministic relevance gate before settlement", () => {
     };
     expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", region: "US" }, context).decision).toBe("no_match");
     expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة" }, context).decision).toBe("match");
-    expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", published_at: "2026-01-01" }, {
-      ...context,
-      now: new Date("2026-10-18T00:00:00Z"),
-    }).decision).toBe("no_match");
-    expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", published_at: "2026-10-17" }, {
-      ...context,
-      now: new Date("2026-10-18T00:00:00Z"),
-    }).decision).toBe("match");
+    expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", location: "Cairo" }, context).decision).toBe("match");
+    expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", location: "Cairo, Egypt" }, context).decision).toBe("match");
+    // Upload age is not a trend timestamp; a region-scoped trending feed may resurface older videos.
+    expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", published_at: "2026-01-01" }, context).decision).toBe("match");
+    expect(evaluateResearchRowRelevance({ title: "كعكة الشوكولاتة", country: "Saudi Arabia" }, context).decision).toBe("no_match");
   });
 
   it("applies requested date boundaries and excludes undated rows when a period was requested", () => {

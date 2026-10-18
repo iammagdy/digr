@@ -21,6 +21,7 @@ const db = vi.hoisted(() => ({
   targetVolumeMax: 10,
   unitPrice: 2,
   reserved: 30,
+  spendAllowed: true,
 }));
 
 function builder(rows: () => any[]) {
@@ -44,7 +45,7 @@ vi.mock("../src/lib/supabase/server", () => ({
       if (name === "claim_job_chunk") {
         return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "x-keyword-search", unit_price: db.unitPrice }, error: null };
       }
-      if (name === "reserve_provider_spend_atomic") return { data: { allowed: true, cost_id: 11 }, error: null };
+      if (name === "reserve_provider_spend_atomic") return { data: { allowed: db.spendAllowed, cost_id: db.spendAllowed ? 11 : null }, error: null };
       if (name === "commit_provider_spend") return { data: { success: true }, error: null };
       if (name === "complete_chunk") {
         db.step += 1;
@@ -117,6 +118,7 @@ function resetDb(params: Record<string, unknown> = { query: "AI Trends" }, targe
   db.targetVolumeMax = target;
   db.unitPrice = 2;
   db.reserved = Math.ceil(target * 2 * 1.15);
+  db.spendAllowed = true;
 }
 
 describe("estimateRemainingSecondsFromBatchDurations (remaining batches x measured duration)", () => {
@@ -252,5 +254,106 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     expect(json.error).toContain("تم استرداد كامل الرصيد المحجوز دون أي خصم");
     expect(json.error).not.toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.");
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+  });
+
+  it("continues to page two after four of five trending rows fail relevance, then settles the requested five matches", async () => {
+    resetDb({ trending: true, region: "EG" }, 5);
+    db.unitPrice = 6;
+    db.reserved = 35;
+    db.quotes[0].items[0] = {
+      capabilitySlug: "social-tiktok-videos",
+      endpointId: "scrapecreators.x.v1-tiktok-get-trending-feed",
+      params: { trending: true, region: "EG" },
+      targetVolumeMax: 5,
+      paginationStrategy: "cursor",
+    };
+
+    const firstPageRows = [
+      { video_id: "reject_1", title: "محتوى رائج", country_code: "SA" },
+      { video_id: "reject_2", title: "محتوى رائج", country: "United States" },
+      { video_id: "reject_3", title: "محتوى رائج", region: "AE" },
+      { video_id: "reject_4", title: "محتوى رائج", location: "Riyadh, Saudi Arabia" },
+      { video_id: "match_1", title: "محتوى رائج", country: "Egypt" },
+    ];
+    const secondPageRows = [
+      { video_id: "match_2", title: "محتوى رائج" },
+      { video_id: "match_3", title: "محتوى رائج", country_code: "EG" },
+      { video_id: "match_4", title: "محتوى رائج", location: "Cairo" },
+      { video_id: "match_5", title: "محتوى رائج", published_at: "2025-01-01" },
+    ];
+    const pageCursors: Array<string | null> = [];
+    setProviderAdapterForTesting(async (input) => {
+      pageCursors.push(input.cursor);
+      return input.cursor
+        ? { ok: true, httpStatus: 200, rows: secondPageRows, nextCursor: null, costUsd: 0.001, costMicro: 1000, tregCallId: "page_2" }
+        : { ok: true, httpStatus: 200, rows: firstPageRows, nextCursor: "page_2_cursor", costUsd: 0.001, costMicro: 1000, tregCallId: "page_1" };
+    });
+
+    const first = await callWorker(0);
+    expect(first.json).toMatchObject({ done: false, deliveredUnits: 1, targetMax: 5 });
+    expect(messages().some((line) => line.includes("استلمنا ٥ سجل") && line.includes("غير مطابق ٤"))).toBe(true);
+
+    const second = await callWorker(1);
+    expect(second.json).toMatchObject({ done: true, deliveredUnits: 5 });
+    expect(pageCursors).toEqual([null, "page_2_cursor"]);
+    expect(db.rpcCalls.filter((call) => call.name === "settle_job_atomic")).toHaveLength(1);
+    expect(db.rpcCalls.find((call) => call.name === "settle_job_atomic")?.args).toMatchObject({ p_points_cap: 600 });
+    const result = JSON.parse(db.partials.get(`user_1/${JOB}/data.json`)?.toString() || "{}");
+    expect(result.rows).toHaveLength(5);
+    expect(result.rows.map((row: any) => row.video_id)).not.toContain("reject_1");
+  });
+
+  it("stops before another provider call when the daily spend reservation is denied, settling rows already collected", async () => {
+    resetDb({ trending: true, region: "EG" }, 5);
+    db.unitPrice = 6;
+    db.reserved = 35;
+    db.quotes[0].items[0] = {
+      capabilitySlug: "social-tiktok-videos",
+      endpointId: "scrapecreators.x.v1-tiktok-get-trending-feed",
+      params: { trending: true, region: "EG" },
+      targetVolumeMax: 5,
+      paginationStrategy: "cursor",
+    };
+    let providerCalls = 0;
+    setProviderAdapterForTesting(async () => {
+      providerCalls += 1;
+      return { ok: true, httpStatus: 200, rows: [{ video_id: "match_1", title: "محتوى رائج" }], nextCursor: "page_2_cursor", costUsd: 0.001, costMicro: 1000, tregCallId: "page_1" };
+    });
+
+    const first = await callWorker(0);
+    expect(first.json.done).toBe(false);
+    db.spendAllowed = false;
+
+    const second = await callWorker(1);
+    expect(second.json).toMatchObject({ done: true, deliveredUnits: 1 });
+    expect(providerCalls).toBe(1);
+    expect(db.rpcCalls.filter((call) => call.name === "settle_job_atomic")).toHaveLength(1);
+    expect(messages().some((line) => line.includes("توقف الجمع عند الحد اليومي الآمن"))).toBe(true);
+    expect(db.rpcCalls.some((call) => call.name === "release_job_atomic")).toBe(false);
+  });
+
+  it("ends as partial when the provider repeats a previously seen cursor instead of looping", async () => {
+    resetDb({ trending: true, region: "EG" }, 5);
+    db.unitPrice = 6;
+    db.reserved = 35;
+    db.quotes[0].items[0] = {
+      capabilitySlug: "social-tiktok-videos",
+      endpointId: "scrapecreators.x.v1-tiktok-get-trending-feed",
+      params: { trending: true, region: "EG" },
+      targetVolumeMax: 5,
+      paginationStrategy: "cursor",
+    };
+    let providerCalls = 0;
+    setProviderAdapterForTesting(async () => {
+      providerCalls += 1;
+      return { ok: true, httpStatus: 200, rows: [{ video_id: "one", title: "رائج" }], nextCursor: "same_cursor", costUsd: 0.001, costMicro: 1000, tregCallId: `page_${providerCalls}` };
+    });
+
+    expect((await callWorker(0)).json.done).toBe(false);
+    const second = await callWorker(1);
+    expect(second.json).toMatchObject({ done: true, deliveredUnits: 1 });
+    expect(providerCalls).toBe(2);
+    expect(messages().some((line) => line.includes("توقف الجمع لأن المصدر كرر صفحة سبق استلامها"))).toBe(true);
+    expect(db.rpcCalls.filter((call) => call.name === "settle_job_atomic")).toHaveLength(1);
   });
 });

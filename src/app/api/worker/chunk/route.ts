@@ -426,6 +426,7 @@ export async function POST(req: NextRequest) {
 
     // 6. Reserve provider spend BEFORE calling provider
     let spendCostId: number | null = null;
+    let providerBudgetStopped = false;
     // A retried job whose reused rows already cover the target needs no provider call and reserves no provider spend.
     const needsProvider = (remainingUnits > 0 || !retrySeed) &&
       (!isPeopleJob || Number(decisionMakerSpendBudgetUsd) >= DECISION_MAKER_ROUTE_COST_CAP_USD);
@@ -441,29 +442,36 @@ export async function POST(req: NextRequest) {
     if (spendErr || !spendReserve?.allowed) {
       const capErrorMsg =
         "تم تجاوز الحد اليومي لاستهلاك مزود البيانات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-      await adminClient.rpc("record_chunk_failure", {
-        p_job_id: jobId,
-        p_error_message: capErrorMsg,
-      });
-      const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
-      if (!rel.confirmed) {
-        return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
-      }
+      if (effectiveDelivered > 0) {
+        // Do not make another billable call. Keep the matching rows already
+        // collected and let the existing atomic settlement charge only them.
+        providerBudgetStopped = true;
+        console.info(`[worker:provider_budget_stop] jobId=${jobId} delivered=${effectiveDelivered}`);
+      } else {
+        await adminClient.rpc("record_chunk_failure", {
+          p_job_id: jobId,
+          p_error_message: capErrorMsg,
+        });
+        const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
+        }
 
-      return NextResponse.json(
-        {
-          success: false,
-          released: true,
-          chargedCredits: 0,
-          capExceeded: true,
-          jobId,
-          error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
-          release: rel.data,
-        },
-        { status: 429 }
-      );
+        return NextResponse.json(
+          {
+            success: false,
+            released: true,
+            chargedCredits: 0,
+            capExceeded: true,
+            jobId,
+            error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
+            release: rel.data,
+          },
+          { status: 429 }
+        );
+      }
     }
-    spendCostId = spendReserve.cost_id ?? null;
+    if (!providerBudgetStopped) spendCostId = spendReserve.cost_id ?? null;
 
     // 7. Call provider through adapter
     const activeAdapter =
@@ -480,7 +488,7 @@ export async function POST(req: NextRequest) {
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
-    const adapterResult = !needsProvider ? noProviderCall : await activeAdapter({
+    const adapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
       userId,
       step: currentStep,
@@ -531,7 +539,9 @@ export async function POST(req: NextRequest) {
     const socialCapability = getSocialCapability(spec.capabilitySlug);
     const dedupeIdentity = isCompanyCapability ? companyIdentity : rowIdentity;
     let duplicateExcludedCount = 0;
-    if ((isCompanyCapability || socialCapability) && rawRows.length) {
+    const seenProviderCursors = new Set<string>();
+    if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(String(currentCursor));
+    if ((isCompanyCapability || socialCapability) && (rawRows.length > 0 || currentStep > 0)) {
       const seen = new Set<string>();
       // Rows reused from a failed earlier run are already accepted rows of this job.
       for (const row of retrySeed?.rows || []) {
@@ -550,6 +560,7 @@ export async function POST(req: NextRequest) {
             try { prior = JSON.parse(await blob.text()); } catch { /* retain in-memory fallback */ }
           }
         }
+        if (typeof prior?.cursor === "string" && prior.cursor) seenProviderCursors.add(prior.cursor);
         for (const row of Array.isArray(prior?.rows) ? prior.rows : []) {
           const identity = dedupeIdentity(row);
           if (identity) seen.add(identity);
@@ -719,9 +730,14 @@ export async function POST(req: NextRequest) {
       spec.paginationStrategy !== "none" &&
       acceptedRows.length < Math.min(effectivePageSize, remainingUnits) &&
       !adapterResult.nextCursor;
-    // Multi-page fetching continues until targetMax matching rows are reached or cursor exhausted
+    const cursorWouldRepeat = Boolean(
+      adapterResult.nextCursor && seenProviderCursors.has(String(adapterResult.nextCursor))
+    );
+    // Multi-page fetching continues until the requested matching count is reached,
+    // the source is exhausted, a cursor cycles, or the spend gate closes.
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
+      !cursorWouldRepeat &&
       newDeliveredUnits < targetMax &&
       !isShortLastPage;
     const isDone = !hasMorePages || newDeliveredUnits >= targetMax;
@@ -855,6 +871,8 @@ export async function POST(req: NextRequest) {
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
           uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
+          cursorWouldRepeat ? "توقف الجمع لأن المصدر كرر صفحة سبق استلامها" : null,
+          providerBudgetStopped ? "توقف الجمع عند الحد اليومي الآمن، مع تسليم السجلات المطابقة التي جُمعت" : null,
           skipReason,
           ...etaParts,
         ].filter(Boolean) as string[];

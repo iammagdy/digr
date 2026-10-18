@@ -55,25 +55,11 @@ function rowText(row: Record<string, any>): string {
   return normalizeText(candidates.map((key) => row[key]).filter((value) => typeof value === "string").join(" "));
 }
 
-function rowDate(row: Record<string, any>): number | null {
-  const value = [row.published_at, row.publishedAt, row.published_date, row.create_time, row.createTime, row.created_at, row.createdAt, row.createdUtc, row.created_utc, row.timestamp, row.date]
-    .find((candidate) => candidate !== undefined && candidate !== null && String(candidate).trim());
-  if (value === undefined) return null;
-  let time = typeof value === "number" ? value : Date.parse(String(value));
-  if (!Number.isFinite(time)) return null;
-  if (typeof value === "number" && Math.abs(time) < 1e12) time *= 1000;
-  return time;
-}
-
 function countMatches(value: string, pattern: RegExp): number {
   return [...value.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))].length;
 }
 
 function regionMatches(row: Record<string, any>, requestedRegion: string): boolean {
-  const rowRegion = [row.region, row.region_code, row.country, row.country_code, row.location, row.address]
-    .find((value) => typeof value === "string" && value.trim());
-  // A source request scoped to a region is sufficient when the provider does not expose row-level geography.
-  if (!rowRegion) return true;
   const countryCode = (value: string): string | undefined => {
     const trimmed = value.trim();
     if (/^[A-Za-z]{2}$/.test(trimmed)) return trimmed.toUpperCase();
@@ -81,11 +67,23 @@ function regionMatches(row: Record<string, any>, requestedRegion: string): boole
     return detected ? isoCountryCodeFromName(detected.canonicalEnglish) : undefined;
   };
   const expectedCode = countryCode(requestedRegion);
-  const actualCode = countryCode(String(rowRegion));
-  if (expectedCode && actualCode) return expectedCode === actualCode;
-  const expected = normalizeText(requestedRegion);
-  const actual = normalizeText(String(rowRegion));
-  return actual === expected || actual.includes(expected) || expected.includes(actual);
+  // Only contradict the source's requested region when a row has explicit,
+  // recognizable country metadata. City/state labels (for example "Cairo")
+  // and missing/opaque region fields are not evidence that a result is foreign.
+  const candidates = [
+    row.country_code,
+    row.country,
+    row.region_code,
+    row.region,
+    row.location,
+    row.address,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string" || !candidate.trim()) continue;
+    const actualCode = countryCode(candidate);
+    if (expectedCode && actualCode && actualCode !== expectedCode) return false;
+  }
+  return true;
 }
 
 /**
@@ -113,19 +111,9 @@ export function evaluateResearchRowRelevance(
   if (trending && params.region && !regionMatches(row, String(params.region))) {
     return { decision: "no_match", reasonAr: "النطاق الجغرافي في السجل لا يطابق الدولة المطلوبة" };
   }
-  if (trending) {
-    const published = rowDate(row);
-    // When the source supplies a publication date, reject a stale or future-dated
-    // result from a current trending feed. Missing dates are handled by an explicit
-    // customer date window above; no date is invented when the customer gave none.
-    if (published !== null) {
-      const now = (context.now || new Date()).getTime();
-      const maxAgeMs = 30 * 24 * 60 * 60 * 1000;
-      if (published > now || now - published > maxAgeMs) {
-        return { decision: "no_match", reasonAr: "تاريخ نشر السجل لا يناسب قائمة المحتوى الرائج الحالية" };
-      }
-    }
-  }
+  // A region-scoped trending feed is itself the evidence of current trend status.
+  // Upload age is not trend age: resurfacing videos can be old. Explicit customer
+  // date windows are enforced separately by filterRowsByDateRange.
 
   const tokens = topicTokens(topicFromParams(params));
   if (tokens.length === 0) return { decision: "match", reasonAr: "لا يتضمن الطلب موضوعاً نصياً يلزم مطابقته" };
