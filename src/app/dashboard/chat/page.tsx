@@ -511,6 +511,10 @@ export default function ChatWorkspacePage() {
     );
     setLoadingStatusText(isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : (hasPriorResearch ? "يفكّر في سؤالك ويجهّز الخطوة التالية..." : "يكتب الرد..."));
     setMessages((prev) => [...prev, userMsg]);
+    // Clear as soon as the message is accepted locally. The request may take
+    // several seconds; keep the text in the conversation bubble while the
+    // controlled composer becomes ready for the next message.
+    setInputText("");
     setLoading(true);
 
     const controller = new AbortController();
@@ -577,7 +581,6 @@ export default function ChatWorkspacePage() {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
-      setInputText("");
       return true;
     } catch (err: any) {
       clearTimeout(timeoutId);
