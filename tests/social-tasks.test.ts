@@ -93,6 +93,18 @@ describe("only the missing input is asked, one question at a time, with tappable
     expect(getMissingSocialTaskInputs("فيديوهات ترند في مصر على تيك توك")).toEqual([]);
   });
 
+  it("asks for a time window after a country is known for broad topic searches", () => {
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة", brief)).toBeNull();
+
+    const question = getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في مصر", brief);
+    expect(question?.id).toBe("social_time_required");
+    expect(question?.text).toBe("ما الفترة الزمنية التي تريد البحث فيها؟");
+    expect(question?.options).toEqual(["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"]);
+
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في مصر خلال آخر شهر", brief)).toBeNull();
+    expect(getDeterministicDiscoveryQuestion("فيديوهات ترند في مصر على تيك توك", brief)).toBeNull();
+  });
+
   it("does not refuse or suggest a different platform for a trending request", () => {
     const q = getDeterministicDiscoveryQuestion("ترند فيسبوك", brief);
     expect(q?.id).toBe("social_topic_required");

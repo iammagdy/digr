@@ -159,8 +159,29 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     const missingSocial = getMissingSocialInputs(normalized);
     if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
     if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
+    if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
   }
   return null;
+}
+
+function socialTimeWindowQuestion() {
+  return {
+    id: "social_time_required",
+    text: "ما الفترة الزمنية التي تريد البحث فيها؟",
+    question: "ما الفترة الزمنية التي تريد البحث فيها؟",
+    type: "single",
+    options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"],
+    allowOther: true,
+  };
+}
+
+/** A broad topic search is better scoped by time, once the user has supplied a country. */
+function shouldAskSocialTimeWindow(text: string): boolean {
+  const intent = detectSocialIntent(text);
+  if (!intent.platform || !detectCountryFromText(text) || extractDateHint(text)) return false;
+  // Feed, channel, and direct-link requests have their own scope and date behavior.
+  if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
+  return SOCIAL_CONTENT_WORDS_RE.test(text) && !ACCOUNT_LOOKUP_RE.test(text);
 }
 
 export interface ChatHandlerInput {
