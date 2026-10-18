@@ -1,0 +1,107 @@
+{
+ "capability": "social-youtube-comments",
+ "endpointId": "scrapecreators.youtube.comments",
+ "labelAr": "تعليقات يوتيوب (الطاقة الشمسية)",
+ "entity": "comments",
+ "params": {
+  "query": "الطاقة الشمسية"
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "topic phrase",
+   "row": {
+    "comment_id": "yc_1",
+    "text": "شرح ممتاز عن الطاقة الشمسية في البيوت",
+    "author": "قارئ 1",
+    "likes": 1,
+    "replies": 0,
+    "published_date": "2026-10-02"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "word order/morphology: طاقة شمسية vs الطاقة الشمسية",
+   "row": {
+    "comment_id": "yc_2",
+    "text": "طاقة شمسية للمنازل بتوفر كتير",
+    "author": "قارئ 2",
+    "likes": 2,
+    "replies": 0,
+    "published_date": "2026-10-03"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "related term but not the exact topic words",
+   "row": {
+    "comment_id": "yc_3",
+    "text": "الألواح الشمسية غالية",
+    "author": "قارئ 3",
+    "likes": 3,
+    "replies": 0,
+    "published_date": "2026-10-04"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "generic",
+   "row": {
+    "comment_id": "yc_4",
+    "text": "شكرا على المعلومات",
+    "author": "قارئ 4",
+    "likes": 4,
+    "replies": 0,
+    "published_date": "2026-10-05"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "spam",
+   "row": {
+    "comment_id": "yc_5",
+    "text": "اشترك في قناتي",
+    "author": "قارئ 5",
+    "likes": 5,
+    "replies": 0,
+    "published_date": "2026-10-06"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "english synonym of topic",
+   "row": {
+    "comment_id": "yc_6",
+    "text": "solar energy is the future",
+    "author": "قارئ 6",
+    "likes": 6,
+    "replies": 0,
+    "published_date": "2026-10-07"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "other energy: shares one word",
+   "row": {
+    "comment_id": "yc_7",
+    "text": "الطاقة الكهربائية غالية في مصر",
+    "author": "قارئ 7",
+    "likes": 7,
+    "replies": 0,
+    "published_date": "2026-10-08"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "generic",
+   "row": {
+    "comment_id": "yc_8",
+    "text": "ممتاز",
+    "author": "قارئ 8",
+    "likes": 8,
+    "replies": 0,
+    "published_date": "2026-10-09"
+   }
+  }
+ ]
+}

@@ -1,0 +1,253 @@
+{
+ "capability": "social-x-posts",
+ "endpointId": "scrapecreators.x.search",
+ "labelAr": "منشورات إكس (كرة السلة)",
+ "entity": "posts",
+ "params": {
+  "query": "كرة السلة",
+  "region": "EG",
+  "language": "ar"
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "arabic basketball text",
+   "row": {
+    "tweet_id": "tw_1",
+    "text": "مباراة كرة السلة امبارح كانت نار والأهلي كسب في آخر ثانية",
+    "author_username": "user1",
+    "author_name": "مستخدم 1",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 3,
+    "retweets": 1,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "basketball league (السلة)",
+   "row": {
+    "tweet_id": "tw_2",
+    "text": "دوري السلة المصري الموسم ده قوي جدا",
+    "author_username": "user2",
+    "author_name": "مستخدم 2",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 6,
+    "retweets": 2,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "english basketball (request names Arabic, row says English: review)",
+   "row": {
+    "tweet_id": "tw_3",
+    "text": "Great basketball game tonight, the NBA finals are on fire",
+    "author_username": "user3",
+    "author_name": "مستخدم 3",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 9,
+    "retweets": 3,
+    "replies": 1,
+    "lang": "en"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "football, not basketball",
+   "row": {
+    "tweet_id": "tw_4",
+    "text": "النهارده مباراة كرة القدم بين الزمالك والأهلي",
+    "author_username": "user4",
+    "author_name": "مستخدم 4",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 12,
+    "retweets": 4,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "both sports, football dominates",
+   "row": {
+    "tweet_id": "tw_5",
+    "text": "كرة القدم وكرة السلة الاتنين حلوين بس القدم أحسن",
+    "author_username": "user5",
+    "author_name": "مستخدم 5",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 15,
+    "retweets": 5,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "off topic",
+   "row": {
+    "tweet_id": "tw_6",
+    "text": "صباح الخير يا جماعة",
+    "author_username": "user6",
+    "author_name": "مستخدم 6",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 18,
+    "retweets": 6,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "off topic",
+   "row": {
+    "tweet_id": "tw_7",
+    "text": "اشتريت موبايل جديد النهارده",
+    "author_username": "user7",
+    "author_name": "مستخدم 7",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 21,
+    "retweets": 7,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "basketball player",
+   "row": {
+    "tweet_id": "tw_8",
+    "text": "لاعب كرة السلة المصري انضم لنادي جديد",
+    "author_username": "user8",
+    "author_name": "مستخدم 8",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 24,
+    "retweets": 8,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "NBA (request names Arabic, row says English: review)",
+   "row": {
+    "tweet_id": "tw_9",
+    "text": "NBA trade rumors: new star joining the league",
+    "author_username": "user9",
+    "author_name": "مستخدم 9",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 27,
+    "retweets": 9,
+    "replies": 1,
+    "lang": "en"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "football english",
+   "row": {
+    "tweet_id": "tw_10",
+    "text": "Egypt vs Nigeria football world cup qualifier",
+    "author_username": "user10",
+    "author_name": "مستخدم 10",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 30,
+    "retweets": 10,
+    "replies": 1,
+    "lang": "en"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "trash basket: the word سلة but not basketball",
+   "row": {
+    "tweet_id": "tw_11",
+    "text": "سلة المهملات اتملت",
+    "author_username": "user11",
+    "author_name": "مستخدم 11",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 33,
+    "retweets": 11,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "basketball casual",
+   "row": {
+    "tweet_id": "tw_12",
+    "text": "اتفرجت على كرة السلة مع صحابي",
+    "author_username": "user12",
+    "author_name": "مستخدم 12",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 36,
+    "retweets": 12,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "duplicate",
+   "note": "exact duplicate text",
+   "row": {
+    "tweet_id": "tw_1",
+    "text": "مباراة كرة السلة امبارح كانت نار والأهلي كسب في آخر ثانية",
+    "author_username": "user13",
+    "author_name": "مستخدم 13",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 39,
+    "retweets": 13,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "basketball in another country: topic only, no region on the row",
+   "row": {
+    "tweet_id": "tw_14",
+    "text": "كرة السلة في البرازيل بتتطور",
+    "author_username": "user14",
+    "author_name": "مستخدم 14",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 42,
+    "retweets": 14,
+    "replies": 1,
+    "lang": "ar"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "arabic basketball, language mismatch case (request names Arabic, row says English: review)",
+   "row": {
+    "tweet_id": "tw_15",
+    "text": "مباراة حلوة في كرة السلة",
+    "author_username": "user15",
+    "author_name": "مستخدم 15",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 45,
+    "retweets": 15,
+    "replies": 1,
+    "lang": "en"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "empty text",
+   "row": {
+    "tweet_id": "tw_16",
+    "text": "",
+    "author_username": "user16",
+    "author_name": "مستخدم 16",
+    "created_at": "2026-10-15T09:00:00Z",
+    "likes": 48,
+    "retweets": 16,
+    "replies": 1,
+    "lang": "ar"
+   }
+  }
+ ]
+}

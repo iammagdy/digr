@@ -13,6 +13,11 @@ export function ProviderAlertBanner() {
   const t = providers?.treg;
   if (!t) return null;
   const items: string[] = [];
+  const lim = providers?.limits;
+  if (lim?.level === "reached") items.push("وصل إنفاق مزود البيانات اليوم إلى الحد اليومي، فلن تبدأ طلبات جديدة تحتاجه حتى يُرفع الحد من تبويب «مزودو الخدمة» أو يبدأ يوم جديد.");
+  else if (lim?.level === "warn") items.push(`وصل إنفاق مزود البيانات اليوم إلى ${toArabicDigits(Math.round(lim.percent))}٪ من الحد اليومي. راجع الحدود من تبويب «مزودو الخدمة».`);
+  if (lim?.llmLevel === "reached") items.push("وصل إنفاق النموذج الذكي اليوم إلى حده اليومي، وسيتوقف المساعد حتى يُرفع الحد أو يبدأ يوم جديد.");
+  else if (lim?.llmLevel === "warn") items.push(`وصل إنفاق النموذج الذكي اليوم إلى ${toArabicDigits(Math.round(lim.llmPercent))}٪ من حده اليومي.`);
   if (t.health && !t.health.ok && t.tokenConfigured) {
     items.push(t.health.reason === "auth_rejected"
       ? "مزود البيانات رفض مفتاح الوصول، لذلك ستفشل المهام الجديدة. استبدل المفتاح من تبويب «مزودو الخدمة»."

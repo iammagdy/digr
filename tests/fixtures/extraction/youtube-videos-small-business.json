@@ -1,0 +1,83 @@
+{
+ "capability": "social-youtube-videos",
+ "endpointId": "scrapecreators.youtube.search",
+ "labelAr": "فيديوهات يوتيوب (مشاريع صغيرة)",
+ "entity": "videos",
+ "params": {
+  "query": "مشروع صغير"
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "topic: مشروع صغير",
+   "row": {
+    "video_id": "yv_00000000001",
+    "title": "كيف تبدأ مشروع صغير من الصفر",
+    "channel": "قناة 1",
+    "published": "2026-09-02",
+    "views": "3K views",
+    "url": "https://www.youtube.com/watch?v=yv_00000000001"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "plural/morphology",
+   "row": {
+    "video_id": "yv_00000000002",
+    "title": "أفضل مشاريع صغيرة 2026",
+    "channel": "قناة 2",
+    "published": "2026-09-03",
+    "views": "6K views",
+    "url": "https://www.youtube.com/watch?v=yv_00000000002"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "off topic",
+   "row": {
+    "video_id": "yv_00000000003",
+    "title": "طريقة عمل الكبسة",
+    "channel": "قناة 3",
+    "published": "2026-09-04",
+    "views": "9K views",
+    "url": "https://www.youtube.com/watch?v=yv_00000000003"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "shares one word",
+   "row": {
+    "video_id": "yv_00000000004",
+    "title": "مشروع تخرج هندسة",
+    "channel": "قناة 4",
+    "published": "2026-09-05",
+    "views": "12K views",
+    "url": "https://www.youtube.com/watch?v=yv_00000000004"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "plural",
+   "row": {
+    "video_id": "yv_00000000005",
+    "title": "تمويل المشروعات الصغيرة",
+    "channel": "قناة 5",
+    "published": "2026-09-06",
+    "views": "15K views",
+    "url": "https://www.youtube.com/watch?v=yv_00000000005"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "off topic",
+   "row": {
+    "video_id": "yv_00000000006",
+    "title": "رحلة إلى الأقصر",
+    "channel": "قناة 6",
+    "published": "2026-09-07",
+    "views": "18K views",
+    "url": "https://www.youtube.com/watch?v=yv_00000000006"
+   }
+  }
+ ]
+}

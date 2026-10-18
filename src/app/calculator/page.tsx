@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
 import {
   computePublicCalculatorQuote,
@@ -20,6 +20,14 @@ export default function PublicCalculatorPage() {
     () => options.find((o) => o.slug === selectedSlug) || options[0],
     [options, selectedSlug]
   );
+
+  // The live daily limit (as points) so the cap logic follows the admin setting; a failed read keeps the built-in default.
+  const [dailyCapPoints, setDailyCapPoints] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/calculator/cap").then((r) => r.json()).then((d) => { if (alive && typeof d?.dailyCapPoints === "number") setDailyCapPoints(d.dailyCapPoints); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
 
   const [targetVolume, setTargetVolume] = useState<number>(
     currentOption?.defaultVolume || 1
@@ -47,9 +55,14 @@ export default function PublicCalculatorPage() {
       computePublicCalculatorQuote(
         selectedSlug,
         targetVolume,
-        deliveredVolume
+        deliveredVolume,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        dailyCapPoints
       ),
-    [selectedSlug, targetVolume, deliveredVolume]
+    [selectedSlug, targetVolume, deliveredVolume, dailyCapPoints]
   );
 
   return (

@@ -77,6 +77,15 @@ export function evaluateDeterministicRelevance(
   // The source taxonomy's broad "Utilities" label also contains unrelated water, fencing, and
   // other service businesses. Require corroborating electrical/power evidence before delivering
   // such a row for an electricity request; otherwise keep it visible for review without charging.
+  // Energy-adjacent labels (oil & energy, renewables, engineering, electrical manufacturing...) with the company's OWN text
+  // describing electric power work are delivered; the label alone, or other text, is not enough.
+  const energyAdjacent = /^(?:utilities|oil & energy|oil and gas|renewables & environment|electrical\/electronic manufacturing|mechanical or industrial engineering|industrial automation|machinery|construction|civil engineering)$/.test(rowInd);
+  if (targetIndustryAr.toLowerCase().includes("الكهرباء") && energyAdjacent && rowInd !== "utilities") {
+    const strongElectrical = /\b(electric(?:al|ity)?|substations?|transformers?|switchgear|power (?:distribution|transmission|generation|plants?|grid)|high voltage|grid)\b|كهربا|محطات? (?:توليد|محولات)|محولات/u.test(`${rowDesc} ${rowName}`);
+    if (strongElectrical) {
+      return { decision: "match", reasonAr: "نص الشركة يصف نشاط الكهرباء، وتصنيف المصدر قريب من القطاع" };
+    }
+  }
   if (targetIndustryAr.toLowerCase().includes("الكهرباء") && rowInd === "utilities") {
     const clearlyUnrelated =
       /water treatment|chemical supplies|perimeter fencing|fencing|android game|game hacking|تهكير ألعاب|معالجة المياه|الأسوار|سياج/u.test(rowText);

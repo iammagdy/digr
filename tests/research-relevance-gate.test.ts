@@ -30,7 +30,8 @@ describe("deterministic relevance gate before settlement", () => {
     expect(evaluateResearchRowRelevance({ text: "Football highlights and goals from tonight" }, context).decision).toBe("no_match");
     expect(evaluateResearchRowRelevance({ text: "Basketball game recap and NBA scores" }, context).decision).toBe("match");
     expect(evaluateResearchRowRelevance({ text: "مباراتين كرة سلة في الدوري" }, context).decision).toBe("match");
-    expect(evaluateResearchRowRelevance({ text: "كرة سلة مقابل كرة قدم وكرة قدم" }, context).decision).toBe("no_match");
+    // Both sports named, football dominating: not delivered and not discarded either, it goes to the review sheet (never charged).
+    expect(evaluateResearchRowRelevance({ text: "كرة سلة مقابل كرة قدم وكرة قدم" }, context).decision).toBe("uncertain");
   });
 
   it("uses a comment's associated video title as topic context and rejects unrelated video comments", () => {

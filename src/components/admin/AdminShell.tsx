@@ -29,6 +29,8 @@ export interface ProviderStatus {
     balance?: { available: boolean; balanceUsd?: number; unavailableReason?: string; checkedAt: string };
     thresholdUsd?: number; lowBalance?: boolean; baseUrl: string; lastCall: string | null; callsToday: number;
   };
+  /** Today's recorded spend against the admin-set limits (drives the warning banner on the home page). */
+  limits?: { level: "ok" | "warn" | "reached"; percent: number; llmLevel: "ok" | "warn" | "reached"; llmPercent: number };
 }
 
 interface AdminCtx {
