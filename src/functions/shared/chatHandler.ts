@@ -1,3 +1,8 @@
+import { lowBalanceMessageAr } from "../../lib/lowBalance";
+import { capStatementAr } from "../../lib/jobCaps";
+import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, type DatasetColumn } from "../../lib/fileSpec";
+import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
+import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
@@ -201,6 +206,21 @@ export interface ChatHandlerInput {
   /** Set by the route when this message only gave the customer's name (already stored); answered without a model turn. */
   capturedName?: string;
   personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
+  /** Columns of the result on screen, sent by the page so the model can name real columns when the customer shapes a file. */
+  resultColumns?: Array<{ key?: unknown; titleAr?: unknown }>;
+}
+
+/** Column hints are untrusted: keep short plain names only. They are validated again against the real data at download. */
+export function sanitizeResultColumns(raw: unknown): DatasetColumn[] {
+  if (!Array.isArray(raw)) return [];
+  const clean = (value: unknown, max: number) => String(value ?? "").replace(/[\u0000-\u001f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
+  const out: DatasetColumn[] = [];
+  for (const item of raw.slice(0, 60)) {
+    const key = clean((item as any)?.key, 60);
+    const titleAr = clean((item as any)?.titleAr, 60);
+    if (/^[A-Za-z0-9_\u0600-\u06FF-]{1,60}$/.test(key) && titleAr) out.push({ key, titleAr });
+  }
+  return out;
 }
 
 export interface ChatHandlerResponse {
@@ -213,6 +233,8 @@ export interface ChatHandlerResponse {
   intent?: "chat" | "research";
   planQuote?: any;
   revisionQuote?: any;
+  /** A validated file spec for the result on screen; the page turns it into a download of the shaped file. */
+  fileShape?: { spec: any; descriptionAr: string };
   clarificationQuestions?: string[];
   clarificationItems?: NormalizedClarificationQuestion[];
   clarificationIntro?: string;
@@ -1315,7 +1337,12 @@ export class ChatHandler {
     tExtractMs = Date.now() - turnStartTime;
 
     const userComplained = isRepetitionComplaint(message);
-    const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(message);
+    const greetingOrGeneral = isGreetingOrGeneralQuestion(message);
+    const isGreeting = greetingOrGeneral.isGreeting;
+    // A result is on screen (the page sent its columns) and the customer asks how the file should look: a chat turn
+    // about an existing file, never a new research request, so it skips discovery and planning.
+    const isFileShapingTurn = sanitizeResultColumns(input.resultColumns).length > 0 && looksLikeFileShapingRequest(message);
+    const isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
     const hasPlatform = brief.platforms && brief.platforms.length > 0;
@@ -1406,6 +1433,32 @@ export class ChatHandler {
         messageId: assistantMsgId,
         role: "assistant",
         contentAr: greeting,
+        outputType: "answer_question",
+        intent: "chat",
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+      };
+    }
+
+    // «إنت مين؟» and questions about the technology behind the assistant are answered by code: fixed identity, no
+    // model turn, and the technology vendor is never named.
+    const identityKind = !isTestSearchScenario ? identityQuestionKind(message) : null;
+    if (identityKind) {
+      const answer = identityAnswerAr(identityKind);
+      if (sb) {
+        await Promise.all([
+          sb.from("messages").update({ content_ar: answer }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+        ]);
+      } else {
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: answer, status: "ready" } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: answer,
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
@@ -1920,6 +1973,7 @@ export class ChatHandler {
             },
         todayDate: new Date().toISOString().split("T")[0],
         userBalancePoints: userBalance,
+        resultColumns: sanitizeResultColumns(input.resultColumns),
         conversationId,
         userId,
         totalConversationTokens: effectiveConvTokens,
@@ -2020,6 +2074,7 @@ export class ChatHandler {
       let finalContentAr = "";
       let planQuoteData: any = undefined;
       let revisionQuoteData: any = undefined;
+      let fileShapeData: { spec: any; descriptionAr: string } | undefined = undefined;
       let clarificationQuestionsList: string[] | undefined = undefined;
       let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
@@ -2069,6 +2124,7 @@ export class ChatHandler {
           o.type === "propose_plan" ||
           o.type === "edit_plan" ||
           o.type === "edit_artifact" ||
+          o.type === "shape_file" ||
           o.type === "suggest_alternative" ||
           o.type === "refuse"
         );
@@ -2687,9 +2743,36 @@ export class ChatHandler {
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (managedQuote.pointsCapConstrained) {
-            planSummaryText += managedQuote.targetVolumeMax < (managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)
-              ? `\n- تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
+            const requestedUnits = managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax;
+            // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
+            const capStatement = managedQuote.items.length === 1
+              ? capStatementAr({
+                  requestedUnits,
+                  fittedUnits: managedQuote.targetVolumeMax,
+                  unitPricePoints: managedQuote.unitPricePoints,
+                  pointsCap: managedQuote.pointsCap || 600,
+                  safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
+                  quotedPoints: managedQuote.quotedPoints,
+                })
+              : null;
+            planSummaryText += capStatement
+              ? `\n- ${capStatement}`
+              : managedQuote.targetVolumeMax < requestedUnits
+              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
               : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${toArabicDigits(managedQuote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة.`;
+          }
+          // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
+          const explorationCandidate = isExplorationCandidate({
+            items: managedQuote.items,
+            targetVolumeMax: managedQuote.targetVolumeMax,
+            unitPricePoints: managedQuote.unitPricePoints,
+            quotedPoints: managedQuote.quotedPoints,
+            pointsCapConstrained: managedQuote.pointsCapConstrained,
+          });
+          if (explorationCandidate) {
+            const offer = explorationOffer(managedQuote);
+            planQuoteData.explorationOffer = offer;
+            planSummaryText += `\n- ${explorationOfferLineAr(offer)}`;
           }
           if (brief.exclusionFile) {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${toArabicDigits(brief.exclusionFile.baselineRowCount)} شركة مسجلة مسبقاً لمنع تكرارها.`;
@@ -2704,10 +2787,15 @@ export class ChatHandler {
             planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
           }
           if (!managedQuote.isAffordable) {
-            planSummaryText += `\n- تنبيه: رصيدك الحالي (${toArabicDigits(userBalance)} نقطة) لا يكفي لتغطية كامل العرض.`;
-            if (managedQuote.downscaledOffer) {
-              planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
-            }
+            // Low balance: the offer (reduce to what fits, or top up and continue here) is written by code from the quote.
+            const lowBalanceText = lowBalanceMessageAr({
+              balance: userBalance ?? 0,
+              quotedPoints: managedQuote.quotedPoints,
+              expectedPoints: managedQuote.expectedPoints,
+              targetVolumeMax: managedQuote.targetVolumeMax,
+              downscaledOffer: managedQuote.downscaledOffer,
+            });
+            if (lowBalanceText) planSummaryText += `\n- تنبيه الرصيد: ${lowBalanceText}`;
           }
           // The plan response is pre-approval. Keep it entirely server-authored so
           // free-form model text cannot claim that collection has already started.
@@ -2807,10 +2895,14 @@ export class ChatHandler {
                 finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
               }
               if (!managedQuote.isAffordable) {
-                finalContentAr += `\n• تنبيه: رصيدك الحالي (${toArabicDigits(userBalance)} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
-                if (managedQuote.downscaledOffer) {
-                  finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
-                }
+                const lowBalanceText = lowBalanceMessageAr({
+                  balance: userBalance ?? 0,
+                  quotedPoints: managedQuote.quotedPoints,
+                  expectedPoints: managedQuote.expectedPoints,
+                  targetVolumeMax: managedQuote.targetVolumeMax,
+                  downscaledOffer: managedQuote.downscaledOffer,
+                });
+                if (lowBalanceText) finalContentAr += `\n• تنبيه الرصيد: ${lowBalanceText}`;
               }
             }
           } catch (editErr: any) {
@@ -2856,6 +2948,18 @@ export class ChatHandler {
         }
       } else if (output.type === "refuse") {
         finalContentAr = output.reasonAr;
+      } else if (output.type === "shape_file") {
+        // How an existing result file should look. Free: built from the saved data, no collection, no charge. The
+        // model's spec is re-validated here (strict schema) and again against the real columns when it is downloaded.
+        const parsedSpec = FileSpecSchema.safeParse((output as any).spec);
+        if (!parsedSpec.success) {
+          finalContentAr = "لم أفهم الشكل المطلوب للملف تمامًا. وضّح لي مثلًا: شيت منفصل لكل محافظة، أو ترتيب حسب التاريخ، أو الأعمدة التي تريدها فقط.";
+        } else {
+          const hintColumns = sanitizeResultColumns(input.resultColumns);
+          const descriptionAr = describeFileSpecAr(parsedSpec.data, hintColumns);
+          fileShapeData = { spec: parsedSpec.data, descriptionAr };
+          finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.`;
+        }
       } else if (output.type === "edit_artifact") {
         let latestJobId: string | null = null;
         try {
@@ -2899,7 +3003,7 @@ export class ChatHandler {
       }
 
       // Post-job artifact revision detector: if user requests deliverable formatting fix on existing completed job
-      if (!revisionQuoteData && output.type !== "propose_plan" && output.type !== "edit_plan") {
+      if (!revisionQuoteData && !fileShapeData && output.type !== "shape_file" && output.type !== "propose_plan" && output.type !== "edit_plan") {
         const mLower = message.toLowerCase();
         const isRtlFix = mLower.includes("rtl") || mLower.includes("يمين") || mLower.includes("يسار") || mLower.includes("اتجاه الشيت");
         const isDedupe = mLower.includes("احذف التكرار") || mLower.includes("حذف التكرار") || mLower.includes("إزالة التكرار");
@@ -2955,7 +3059,7 @@ export class ChatHandler {
 
       // 9. Update Assistant Message to 'ready'
       currentStep = "assistant_message_save";
-      finalContentAr = deduplicateIntroText(finalContentAr);
+      finalContentAr = scrubAssistantIdentity(deduplicateIntroText(finalContentAr));
       const tSbMsgUpdateStart = Date.now();
       if (sb) {
         const { error: msgUpdateErr } = await sb
@@ -3128,7 +3232,7 @@ export class ChatHandler {
             output.type === "ask_questions" ||
             output.type === "edit_plan"
           ? "research"
-          : output.type === "answer_question"
+          : output.type === "answer_question" || output.type === "shape_file"
           ? "chat"
           : "research");
 
@@ -3157,6 +3261,7 @@ export class ChatHandler {
         intent: computedIntent,
         planQuote: planQuoteData,
         revisionQuote: revisionQuoteData,
+        fileShape: fileShapeData,
         clarificationQuestions: clarificationQuestionsList,
         clarificationItems: clarificationItemsList,
         clarificationIntro: clarificationItemsList?.length ? finalContentAr : undefined,

@@ -26,6 +26,6 @@ describe("transactional Resend mail adapter", () => {
 
     const failedSend = vi.fn().mockRejectedValue(new Error("network failure"));
     vi.stubGlobal("fetch", failedSend);
-    await expect(sendPlatformEmail("job-done", "customer@example.test", { JobTitle: "بحث الشركات" }, "job-done:job_456")).resolves.toBeUndefined();
+    await expect(sendPlatformEmail("job-done", "customer@example.test", { JobTitle: "بحث الشركات" }, "job-done:job_456")).resolves.toEqual({ ok: false, reason: "network_error" });
   });
 });

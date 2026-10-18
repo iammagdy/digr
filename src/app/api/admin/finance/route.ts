@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin, creditValueEgp, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, Query } from "../../../../lib/server/adminAuth";
 import { DAY_MS, lastMonths, margin, monthKey, monthLabelAr, refundPointsByJob } from "../../../../lib/server/adminStats";
+import { createAdminClient } from "../../../../lib/supabase/server";
+import { fetchTypedLedger } from "../../../../lib/server/typedLedger";
+import { summarizeCredit } from "../../../../lib/server/financeSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -51,8 +54,31 @@ export async function GET(req: NextRequest) {
   const treg = costs.filter((c) => c.provider === "treg" && inRange(c.at)).reduce((a, c) => a + (c.costEgp || 0), 0);
   const llm = costs.filter((c) => c.provider === "llm" && inRange(c.at)).reduce((a, c) => a + (c.costEgp || 0), 0);
 
+  // Real income (approved Instapay top-ups) is kept apart from promotional and admin-granted points.
+  const sp = req.nextUrl.searchParams;
+  const dateParam = (name: string) => {
+    const v = sp.get(name);
+    return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  };
+  const fromDay = dateParam("from");
+  const toDay = dateParam("to");
+  const periodFrom = fromDay ? new Date(`${fromDay}T00:00:00.000Z`).toISOString() : new Date(rangeStart).toISOString();
+  const periodTo = toDay ? new Date(new Date(`${toDay}T00:00:00.000Z`).getTime() + DAY_MS).toISOString() : null;
+  let credit: ReturnType<typeof summarizeCredit> | null = null;
+  try {
+    const typed = await fetchTypedLedger(createAdminClient(), {}, 50000);
+    credit = summarizeCredit(
+      typed,
+      approved.map((t: any) => ({ amountEgp: topupAmount(t), approvedAt: t.reviewedAt || null })),
+      { from: periodFrom, to: periodTo },
+    );
+  } catch {
+    credit = null;
+  }
+
   return NextResponse.json({
     range,
+    credit,
     cards: { rev, realized, refunds: refundEgp, treg, llm, profit: rev - (treg + llm), margin: margin(rev, treg + llm) },
     monthly,
     costSplit: { treg, llm },

@@ -121,8 +121,47 @@ export async function getRecipient(
   }
 }
 
+/** Why a send did not go out. Only these fixed codes are ever logged or returned: never a body, header or address. */
+export type EmailFailureReason =
+  | "invalid_recipient"
+  | "missing_config"
+  | "unauthorized"
+  | "invalid_request"
+  | "resend_not_configured"
+  | "resend_unreachable"
+  | "resend_rejected"
+  | "function_unavailable"
+  | "timeout"
+  | "network_error";
+
+export interface EmailSendResult {
+  ok: boolean;
+  reason?: EmailFailureReason;
+}
+
+const SAFE_FUNCTION_ERRORS: Record<string, EmailFailureReason> = {
+  unauthorized: "unauthorized",
+  invalid_json: "invalid_request",
+  invalid_template: "invalid_request",
+  invalid_to: "invalid_request",
+  invalid_vars: "invalid_request",
+  invalid_idempotency_key: "invalid_request",
+  resend_not_configured: "resend_not_configured",
+  resend_unreachable: "resend_unreachable",
+  resend_rejected: "resend_rejected",
+};
+
+/** Maps the Edge Function's answer to a fixed reason code; anything unknown becomes function_unavailable. */
+export function emailFailureReason(status: number, errorField: unknown): EmailFailureReason {
+  const known = typeof errorField === "string" ? SAFE_FUNCTION_ERRORS[errorField] : undefined;
+  if (known) return known;
+  return status === 401 ? "unauthorized" : "function_unavailable";
+}
+
 /**
- * Send one platform email. Fire-and-forget safe: never throws.
+ * Send one platform email. Fire-and-forget safe: never throws, so it can never block or fail settlement, a top-up
+ * approval or any other caller. The sender (Diger <noreply@diger.tech>, a verified domain) and the RESEND_API_KEY
+ * secret live in the Edge Function. `idempotencyKey` makes retries send at most one email.
  * `to` must be a real email address; `vars` are the template's {{ .Var }} values.
  */
 export async function sendPlatformEmail(
@@ -130,15 +169,16 @@ export async function sendPlatformEmail(
   to: string,
   vars: Record<string, string>,
   idempotencyKey?: string,
-): Promise<void> {
+): Promise<EmailSendResult> {
+  const fail = (reason: EmailFailureReason, extra = ""): EmailSendResult => {
+    console.error(`[email:send_failed] template=${template} reason=${reason}${extra}`);
+    return { ok: false, reason };
+  };
   try {
-    if (!to || !to.includes("@")) return;
+    if (!to || !to.includes("@")) return fail("invalid_recipient");
     const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-    if (!base || !key) {
-      console.error("[email:missing_config] NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
-      return;
-    }
+    if (!base || !key) return fail("missing_config");
     const res = await fetch(`${base}/functions/v1/send-email`, {
       method: "POST",
       headers: {
@@ -149,10 +189,13 @@ export async function sendPlatformEmail(
       signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) {
-      console.error(`[email:send_failed] template=${template} status=${res.status}`);
+      let errorField: unknown;
+      try { errorField = (await res.json())?.error; } catch { /* no body */ }
+      return fail(emailFailureReason(res.status, errorField), ` status=${res.status}`);
     }
-  } catch (err) {
+    return { ok: true };
+  } catch (err: any) {
     // Transport failures must not expose request headers, addresses, or response bodies.
-    console.error("[email:send_error]");
+    return fail(err?.name === "TimeoutError" || err?.name === "AbortError" ? "timeout" : "network_error");
   }
 }

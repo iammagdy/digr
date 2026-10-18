@@ -153,6 +153,13 @@ export const EditArtifactSchema = z.object({
   reasonAr: z.string().min(1),
 }).passthrough();
 
+/** The model's reading of how the customer wants an existing result file shaped. Validated again by code before use. */
+export const ShapeFileSchema = z.object({
+  type: z.literal("shape_file"),
+  replyAr: z.string().optional(),
+  spec: z.record(z.string(), z.any()),
+}).passthrough();
+
 export const WriteNoteSchema = z.object({
   type: z.literal("write_note"),
   titleAr: z.string().min(1),
@@ -250,6 +257,7 @@ export const LlmTurnOutputSchema = z.discriminatedUnion("type", [
   ProposePlanSchema,
   EditPlanToolSchema,
   EditArtifactSchema,
+  ShapeFileSchema,
   WriteNoteSchema,
   AnswerQuestionSchema,
   RefuseSchema,
@@ -325,6 +333,8 @@ export interface LlmCallOptions {
   todayDate?: string;
   userBalancePoints?: number;
   conversationState?: any;
+  /** Columns of the result on screen, for file shaping (untrusted hints). */
+  resultColumns?: Array<{ key: string; titleAr: string }>;
   conversationId?: string;
   userId?: string;
   totalConversationTokens?: number;
@@ -425,6 +435,7 @@ export const ACTION_RESULT_JSON_SCHEMA = {
         "propose_plan",
         "edit_plan",
         "edit_artifact",
+        "shape_file",
         "write_note",
         "suggest_alternative",
         "answer_question",
@@ -1718,6 +1729,23 @@ export class LlmClient {
       };
     }
 
+    // D2. File shaping of an existing result («شيت لكل محافظة», «رتب حسب …»): a spec, never a revision charge.
+    const shapeMatch = /(?:شيت|ورقة|ملف)\s+(?:منفصل\s+)?لكل\s+([^\s،.؟?]+)/.exec(lastUserMsg);
+    if (shapeMatch) {
+      return {
+        output: {
+          type: "shape_file",
+          replyAr: "تمام، جهزت لك الملف مقسّمًا كما طلبت.",
+          spec: { groupBy: { column: shapeMatch[1], mode: "sheets" } },
+        },
+        inputTokens: 600,
+        outputTokens: 70,
+        costUsd: (600 * 0.10 + 70 * 0.50) / 1_000_000,
+        model: fakeModel,
+        promptVersion: PROMPT_VERSION,
+      };
+    }
+
     // E. Edit Artifact requests
     if (promptLower.includes("احذف عمود") || promptLower.includes("رتب") || promptLower.includes("فلتر")) {
       return {
@@ -2318,6 +2346,7 @@ export class LlmClient {
       todayDate: options.todayDate,
       userBalancePoints: options.userBalancePoints,
       conversationState: options.conversationState,
+      resultColumns: options.resultColumns,
     });
     const systemBlocks = [
       { type: "text", text: promptParts.staticText, cache_control: { type: "ephemeral" } },
@@ -2650,6 +2679,7 @@ export class LlmClient {
       todayDate: options.todayDate,
       userBalancePoints: options.userBalancePoints,
       conversationState: options.conversationState,
+      resultColumns: options.resultColumns,
     });
 
     const controller = new AbortController();

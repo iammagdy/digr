@@ -115,6 +115,7 @@ export function FinalCta({ initialSignedIn }: { initialSignedIn?: boolean } = {}
         <Link href="/calculator" className="flex min-h-11 items-center text-xs text-mut">حاسبة التكلفة</Link>
         <Link href="/legal/terms" className="flex min-h-11 items-center text-xs text-mut">الشروط والأحكام</Link>
         <Link href="/legal/privacy" className="flex min-h-11 items-center text-xs text-mut">سياسة الخصوصية</Link>
+        <Link href="/contact" className="flex min-h-11 items-center text-xs text-mut">تواصل معنا</Link>
       </div>
     </section>
   );

@@ -169,7 +169,16 @@ export async function POST(req: NextRequest) {
     // Supabase stores live quotes as `quoted`, while the shared quote builder
     // returns the Appwrite-era `proposed` label. The editor immediately swaps
     // the current card with this response, so return the status the DB saved.
-    const currentQuote = markEditedQuoteCurrent(newQuote);
+    // A small priced sample of the same plan («استكشاف»): the flag and the full-plan figures only travel with the
+    // returned card and its saved message, so the chat can explain the sample's result later. They change no price.
+    const fullVolume = Number(body?.exploration?.fullVolume);
+    const fullQuotedPoints = Number(body?.exploration?.fullQuotedPoints);
+    const explorationFlag: Record<string, any> = body?.exploration && Number.isInteger(fullVolume) && fullVolume > 0 && fullVolume <= 1_000_000 &&
+      Number.isInteger(fullQuotedPoints) && fullQuotedPoints > 0 && fullQuotedPoints <= 10_000_000
+      ? { exploration: { fullVolume, fullQuotedPoints } }
+      : {};
+    const editedQuote: any = markEditedQuoteCurrent(newQuote);
+    const currentQuote = { ...editedQuote, ...explorationFlag };
 
     // The restored chat card is hydrated from messages.quote. Persist the
     // replacement there as well as in plans_quotes so reloads show this quote.
