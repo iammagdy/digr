@@ -64,7 +64,7 @@ export default function RegisterPage() {
         <Link href="/login" className="p-1 text-sm font-medium text-ink underline decoration-gold underline-offset-[5px]">سجّل الدخول</Link>
       </p>
       <p className="mb-0 mt-3.5 text-center text-xs font-light leading-[1.8] text-fnt">
-        بإنشائك الحساب أنت توافق على جمع البيانات العامة فقط وفق معايير البحث الأخلاقية.{" "}
+        بإنشائك الحساب أنت توافق على جمع البيانات من المصادر المتاحة وفق ضوابط الخصوصية والاستخدام المقبول.{" "}
         <Link href="/legal/terms" className="text-xs text-mut underline">الشروط</Link> · <Link href="/legal/privacy" className="text-xs text-mut underline">الخصوصية</Link>
       </p>
     </AuthLayout>

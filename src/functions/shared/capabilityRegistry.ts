@@ -2,6 +2,7 @@ import { TablesDB } from "./dbCompat";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
 export type CapabilityUnit = "page" | "query" | "profile" | "1000 items";
+export type ResearchInput = "country" | "industry" | "count" | "company_or_industry" | "roles" | "account_handle" | "topic" | "platform" | "time_range";
 export type CapabilityPlatform =
   | "tiktok"
   | "facebook"
@@ -62,7 +63,7 @@ export const UNVERIFIED_PLATFORM_MESSAGE_AR =
   "هتحقق من الطلب وأرجعلك";
 
 /** Services that have been disabled after live customer testing exposed an unreliable execution path. */
-export const UNAVAILABLE_CAPABILITY_SLUGS = new Set(["icypeas-people-search"]);
+export const UNAVAILABLE_CAPABILITY_SLUGS = new Set<string>();
 
 export interface Capability {
   id?: string;
@@ -89,6 +90,8 @@ export interface Capability {
   maxRows: number;
   paginationType: "cursor" | "offset" | "none";
   enabled: boolean;
+  /** User-supplied fields required before a quote can be created for this capability. */
+  requiredInputs?: ResearchInput[];
 }
 
 /**
@@ -126,6 +129,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "tiktok-profile",
     slug: "tiktok-profile",
+    requiredInputs: ["account_handle"],
     platform: "tiktok",
     category: "tiktok",
     status: "verified",
@@ -412,6 +416,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "icypeas-companies-search",
     slug: "icypeas-companies-search",
+    requiredInputs: ["country", "industry", "count"],
     platform: "companies",
     category: "companies",
     status: "verified",
@@ -442,6 +447,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "professional-people-search",
     slug: "professional-people-search",
+    requiredInputs: ["country", "company_or_industry", "roles", "count"],
     platform: "people",
     category: "people",
     status: "verified",
@@ -476,6 +482,7 @@ export const RAW_SEED_CAPABILITIES: Array<Omit<Capability, "pointsPerUnit">> = [
   {
     id: "icypeas-people-search",
     slug: "icypeas-people-search",
+    requiredInputs: ["country", "company_or_industry", "roles", "count"],
     platform: "people",
     category: "people",
     status: "pending_verification",
@@ -616,8 +623,18 @@ export async function getCatalogCapabilities(
  * falling back to verified entries in APPROVED_CAPABILITY_CATALOG if the table is empty.
  */
 export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<Capability[]> {
+  const requiredPeopleCapability = APPROVED_CAPABILITY_CATALOG.find((capability) =>
+    capability.slug === "professional-people-search" && capability.status === "verified" && capability.enabled,
+  );
+  const includeRequiredPeopleCapability = (items: Capability[]) => {
+    if (!requiredPeopleCapability || items.some((item) => item.slug === requiredPeopleCapability.slug)) return items;
+    // Decision-maker research is an owner-approved core capability (D3). Keep
+    // its reviewed server-side catalog entry available if an older registry
+    // snapshot simply predates the entry.
+    return [...items, { ...requiredPeopleCapability }];
+  };
   if (memoryCachedCatalog && Date.now() < memoryCachedCatalog.expiresAt) {
-    return memoryCachedCatalog.data.filter((c) => c.enabled);
+    return includeRequiredPeopleCapability(memoryCachedCatalog.data.filter((c) => c.enabled));
   }
 
   if (tables && typeof tables.from === "function") {
@@ -665,7 +682,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
             enabled: true,
           });
         }
-        return validCapabilities;
+        return includeRequiredPeopleCapability(validCapabilities);
       }
     } catch {
       // fallback
@@ -705,10 +722,10 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
           enabled: true,
         });
       }
-      return validCapabilities;
+      return includeRequiredPeopleCapability(validCapabilities);
     }
   }
-  return buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled);
+  return includeRequiredPeopleCapability(buildApprovedCatalog().filter((c) => c.status === "verified" && c.enabled));
 }
 
 /**

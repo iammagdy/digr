@@ -193,7 +193,7 @@ export function extractBriefFromCardAnswers(
     commentsPerPost: currentBrief.commentsPerPost,
     dateRange: currentBrief.dateRange,
     language: currentBrief.language,
-    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx", "csv", "pdf"],
+    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
     notes: currentBrief.notes,
   };
 
@@ -215,8 +215,28 @@ export function extractBriefFromCardAnswers(
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `المجال المطلوب: ${valToUse}`;
     } else if (qId === "company_outreach_required") {
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `إجابة هدف التواصل: ${valToUse}`;
+    } else if (qId === "company_count_required") {
+      const count = extractTargetVolume(valToUse);
+      if (count) brief.targetVolume = count;
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `عدد الشركات المطلوب: ${valToUse}`;
+    } else if (qId === "people_scope_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `نطاق صناع القرار: ${valToUse}`;
+    } else if (qId === "people_roles_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `المسميات المطلوبة: ${valToUse}`;
+    } else if (qId === "people_count_required") {
+      const count = extractTargetVolume(valToUse);
+      if (count) brief.targetVolume = count;
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `عدد صناع القرار المطلوب: ${valToUse}`;
+    } else if (qId === "social_account_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `اسم الحساب المطلوب: ${valToUse}`;
+    } else if (qId === "social_topic_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `موضوع البحث المطلوب: ${valToUse}`;
+    } else if (qId === "social_platform_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `منصة البحث المطلوبة: ${valToUse}`;
+    } else if (qId === "social_time_required") {
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `الفترة المطلوبة: ${valToUse}`;
     }
-    if (qId === "company_country_required" || qId === "company_industry_required" || qId === "company_outreach_required") continue;
+    if (["company_country_required", "company_industry_required", "company_outreach_required", "company_count_required", "people_scope_required", "people_roles_required", "people_count_required", "social_account_required", "social_topic_required", "social_platform_required", "social_time_required"].includes(qId)) continue;
 
     // 1. Platform
     if (qId.includes("platform") || qText.includes("منصة")) {
@@ -305,7 +325,7 @@ export function extractBriefFromMessage(
     commentsPerPost: currentBrief.commentsPerPost,
     dateRange: currentBrief.dateRange,
     language: currentBrief.language,
-    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx", "csv", "pdf"],
+    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
     notes: currentBrief.notes,
   };
 

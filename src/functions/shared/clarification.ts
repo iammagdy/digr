@@ -293,8 +293,7 @@ export function normalizeClarificationQuestions(
     const requestedDefault = sanitizeClarificationText(questionItem.defaultOption, 40);
     // Company scope fields are mandatory user decisions. Never preselect Egypt
     // or a sector on those questions, even if a generic option bank has a default.
-    const isRequiredScopeField = typeof questionItem.id === "string" &&
-      (questionItem.id.startsWith("company_") || questionItem.id === "people_country_required");
+    const isRequiredScopeField = typeof questionItem.id === "string" && questionItem.id.endsWith("_required");
     const defaultOption = isRequiredScopeField
       ? undefined
       : requestedDefault && options.includes(requestedDefault)
@@ -411,6 +410,14 @@ export function formatClarificationMessageForAssistant(message: string): string 
       company_industry_required: "المجال المطلوب",
       company_outreach_required: "هدف التواصل والبيانات المطلوبة",
       people_country_required: "دولة صناع القرار المطلوبة",
+      people_scope_required: "مجال أو شركة صناع القرار المطلوبة",
+      people_roles_required: "المسميات الوظيفية المطلوبة",
+      people_count_required: "عدد صناع القرار المطلوب",
+      company_count_required: "عدد الشركات المطلوب",
+      social_account_required: "اسم الحساب المطلوب",
+      social_topic_required: "موضوع البحث المطلوب",
+      social_platform_required: "منصة البحث المطلوبة",
+      social_time_required: "الفترة المطلوبة",
     };
     return parsed.answers.map((answer: any) => {
       const label = labels[answer?.questionId] || `إجابة عن ${sanitizeClarificationText(String(answer?.question || "السؤال"), 120)}`;

@@ -10,6 +10,7 @@ import {
   sanitizeActivityText,
   deriveLiveActivitySnapshot,
   estimateRemainingSecondsFromBatches,
+  estimateRemainingSecondsFromMeasuredPages,
   ThrottledActivityEmitter,
 } from "../src/functions/shared/liveActivityFeed";
 
@@ -22,6 +23,16 @@ describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, 
     expect(estimateRemainingSecondsFromBatches(events, 200, 400)).toBe(20);
     expect(estimateRemainingSecondsFromBatches(events.slice(0, 1), 100, 400)).toBeNull();
     expect(estimateRemainingSecondsFromBatches(events, 400, 400)).toBeNull();
+  });
+
+  it("waits for two measured page intervals before calculating ETA from the recorded pace", () => {
+    const events = [
+      { kind: "progress", count: 100, createdAt: "2026-10-16T10:00:00.000Z" },
+      { kind: "progress", count: 200, createdAt: "2026-10-16T10:00:10.000Z" },
+      { kind: "progress", count: 300, createdAt: "2026-10-16T10:00:20.000Z" },
+    ];
+    expect(estimateRemainingSecondsFromMeasuredPages(events, 300, 400)).toBe(10);
+    expect(estimateRemainingSecondsFromMeasuredPages(events.slice(0, 2), 200, 400)).toBeNull();
   });
 
   it("formats current step, current post, items collected, and points spent vs reserved in Arabic and points only", () => {

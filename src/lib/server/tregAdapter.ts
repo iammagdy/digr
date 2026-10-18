@@ -6,7 +6,7 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
-import { getMissingCompanyResearchRequirements } from "../planParameters";
+import { detectCountryFromText as detectInternationalCountryFromText, getMissingCompanyResearchRequirements } from "../planParameters";
 
 /**
  * Normalizes company search parameters (Arabic/English terms) into Icypeas API shape:
@@ -106,7 +106,7 @@ export function detectCountryFromText(text: string): CountryMapping | null {
     return { canonicalEnglish: "Turkey", arabicLabel: "تركيا" };
   }
 
-  return null;
+  return detectInternationalCountryFromText(text);
 }
 
 export function detectIndustryFromText(text: string): IndustryMapping {
@@ -323,7 +323,10 @@ export function normalizeIcypeasCompanyParams(
     finalQuery.industry = { include: detectedIndustry.exactTaxonomy };
   }
 
-  if (!missingRequirements.includes("industry")) {
+  // Icypeas combines the structured industry and free-keyword filters with AND.
+  // Keep taxonomy as the primary filter when it is known; keyword matching is
+  // only a fallback for custom sectors with no taxonomy mapping.
+  if (!missingRequirements.includes("industry") && !(detectedIndustry.exactTaxonomy && detectedIndustry.exactTaxonomy.length > 0)) {
     finalQuery.keyword = { include: detectedIndustry.englishKeywords };
   }
 
@@ -435,12 +438,38 @@ function getTregPeopleArray(data: any): any[] {
   return [];
 }
 
+/** True only when the successful response has a recognized result envelope. */
+export function hasRecognizedProviderResultShape(value: unknown, depth = 0): boolean {
+  if (Array.isArray(value)) return true;
+  if (!value || typeof value !== "object" || depth > 4) return false;
+  const record = value as Record<string, any>;
+  const resultKeys = ["items", "results", "records", "leads", "companies", "posts", "tweets", "videos", "users", "people"];
+  for (const key of resultKeys) if (Array.isArray(record[key])) return true;
+  if (record.success === true && typeof record.total === "number") return true;
+  for (const key of ["data", "output", "raw", "response", "result", "payload"]) {
+    if (hasRecognizedProviderResultShape(record[key], depth + 1)) return true;
+  }
+  return false;
+}
+
 function firstPeopleText(...values: any[]): string {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
     if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
   return "";
+}
+
+function arabicVerificationStatus(value: unknown, hasValue: boolean): string {
+  if (!hasValue) return "غير متاح";
+  if (["متحقق", "لم يتم التحقق", "يحتاج مراجعة", "غير صالح", "لم يتوفر تأكيد"].includes(String(value || ""))) return String(value);
+  if (value === true) return "متحقق";
+  if (value === false) return "لم يتم التحقق";
+  const status = String(value || "").trim().toLowerCase();
+  if (/^(?:verified|valid|deliverable|confirmed|true|pass)$/i.test(status)) return "متحقق";
+  if (/accept[_ -]?all|catch[_ -]?all/i.test(status)) return "يحتاج مراجعة";
+  if (/invalid|undeliverable|false|fail|disposable/i.test(status)) return "غير صالح";
+  return "لم يتوفر تأكيد";
 }
 
 function parseTregPeopleRows(data: any): Record<string, any>[] {
@@ -466,6 +495,14 @@ function parseTregPeopleRows(data: any): Record<string, any>[] {
       location: firstPeopleText(person?.location, person?.city, person?.country, company?.location),
       work_email: email,
       phone,
+      work_email_verification_status: arabicVerificationStatus(
+        person?.work_email_verification_status ?? person?.email_verification_status ?? person?.email_status ?? person?.email_verified,
+        Boolean(email),
+      ),
+      phone_verification_status: arabicVerificationStatus(
+        person?.phone_verification_status ?? person?.phone_status ?? person?.phone_verified,
+        Boolean(phone),
+      ),
       contact_name_presence_status: name ? "موجود" : "غير موجود",
       job_title_presence_status: title ? "موجود" : "غير موجود",
       work_email_presence_status: email ? "موجود" : "غير موجود",
@@ -516,7 +553,7 @@ async function enrichTregPeopleRows(rows: Record<string, any>[], input: Provider
       if (result.tregCallId) callIds.push(result.tregCallId);
       if (result.ok) {
         row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
-        if (result.data?._treg?.verification?.verdict) row.work_email_verification_status = String(result.data._treg.verification.verdict);
+        row.work_email_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.work_email));
       }
     }
     if (identity && !row.phone) {
@@ -530,11 +567,13 @@ async function enrichTregPeopleRows(rows: Record<string, any>[], input: Provider
       if (result.tregCallId) callIds.push(result.tregCallId);
       if (result.ok) {
         row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
-        if (result.data?._treg?.verification?.verdict) row.phone_verification_status = String(result.data._treg.verification.verdict);
+        row.phone_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.phone));
       }
     }
     row.work_email = firstPeopleText(row.work_email);
     row.phone = firstPeopleText(row.phone);
+    row.work_email_verification_status = arabicVerificationStatus(row.work_email_verification_status, Boolean(row.work_email));
+    row.phone_verification_status = arabicVerificationStatus(row.phone_verification_status, Boolean(row.phone));
     row.work_email_presence_status = row.work_email ? "موجود" : "غير موجود";
     row.phone_presence_status = row.phone ? "موجود" : "غير موجود";
     enriched.push(row);
@@ -832,6 +871,20 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     callResult.tregCallId = allCallIds.join(",");
   } else {
     rows = extractAndFlattenRows(callResult.data);
+  }
+
+  if (!rows.length && !hasRecognizedProviderResultShape(callResult.data)) {
+    return {
+      ok: false,
+      httpStatus: callResult.httpStatus,
+      rows: [],
+      nextCursor: null,
+      costUsd,
+      costMicro,
+      tregCallId: callResult.tregCallId || "",
+      errorCode: "invalid_provider_payload",
+      errorMessageAr: "استجاب المصدر ببيانات غير متوافقة مع نوع البحث؛ تم إيقاف الطلب وإرجاع الرصيد المحجوز.",
+    };
   }
 
   if (rows.length > 0 && !isIcypeas) {

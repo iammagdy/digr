@@ -279,6 +279,7 @@ export default function RequestsPage() {
     }
   }, [user]);
 
+  const jobStatusesKey = jobs.map((job) => `${job.$id}:${job.status}`).join("|");
   useEffect(() => {
     void load();
     const t = setInterval(() => {
@@ -293,7 +294,7 @@ export default function RequestsPage() {
     }, 4000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load, jobs.length]);
+  }, [load, jobStatusesKey]);
 
   const visibleAttempts = attempts;
   const attemptTab = (attempt: RequestAttemptDoc): "running" | "refunded" =>

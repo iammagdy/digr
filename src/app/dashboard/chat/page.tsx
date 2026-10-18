@@ -33,6 +33,7 @@ import Composer, { AttachedFile } from "./components/Composer";
 import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 import { getJobIdForQuote } from "@/lib/md5";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
+import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -455,6 +456,15 @@ export default function ChatWorkspacePage() {
   async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null): Promise<boolean> {
     const textToSend = messageContent.trim();
     if ((!textToSend && !attachedFile) || loading || conversationLoading || sendInFlight.current) return false;
+    if (findUnresolvedResearchPlaceholder(textToSend)) {
+      setMessages((prev) => [...prev, {
+        id: `placeholder_${Date.now()}`,
+        role: "assistant",
+        content: unresolvedResearchPlaceholderMessageAr(),
+        createdAt: new Date().toISOString(),
+      }]);
+      return false;
+    }
     sendInFlight.current = true;
 
     if (!user && attachedFile) {
@@ -880,6 +890,7 @@ export default function ChatWorkspacePage() {
     syncConversationUrl(null);
     try {
       sessionStorage.removeItem("diger_canvas_open");
+      sessionStorage.removeItem("diger_active_job_id");
     } catch {}
   }
 
@@ -1029,7 +1040,7 @@ export default function ChatWorkspacePage() {
         {
           id: `start_${Date.now()}`,
           role: "assistant",
-          content: `${data.messageAr || "تم قبول الطلب."} تم حجز ${data.reservedCredits} نقطة. يمكنك متابعة التنفيذ في سجل النشاط ولوحة النتائج.`,
+          content: "جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.",
           jobId: data.jobId,
           createdAt: new Date().toISOString(),
         },

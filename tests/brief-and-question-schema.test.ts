@@ -251,7 +251,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.outputType).toBe("propose_plan");
     expect(res.planQuote?.items?.[0]?.endpointId).toBe("treg.people.search");
     expect(res.planQuote?.items?.[0]?.params).toMatchObject({ country: "DE", title: "CEO", limit: 20 });
-    expect(res.planQuote?.items?.[0]?.params?.requiredContactFields).toEqual(["work_email"]);
+    expect(res.planQuote?.items?.[0]?.params?.requiredContactFields).toEqual(["work_email", "phone"]);
   });
 
   it("builds a people-search fallback from the people capability instead of the nearest unrelated service", () => {
@@ -356,16 +356,16 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(clarification.questionsAr.join(" ")).toContain("التواصل التجاري");
   });
 
-  it("refuses decision-maker search while the service is unavailable", async () => {
+  it("asks for missing decision-maker scope instead of refusing the enabled service", async () => {
     const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
       userId: "user_people_country_required",
       message: "Find 20 decision-makers with names, job titles, and work emails",
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("refuse");
+    expect(res.outputType).toBe("ask_clarification");
     expect(res.planQuote).toBeUndefined();
-    expect(res.refusalReason).toContain("غير متاحة");
+    expect(res.clarificationItems?.[0]?.id).toBe("people_country_required");
   });
 
   it("asks one adaptive question at a time when company scope is unstated", async () => {
@@ -656,9 +656,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     expect(res.clarificationItems).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: "company_industry_required", text: expect.stringContaining("تواصل التجاري") }),
     ]));
-    const modelMessages = (executeTurn as any).mock.calls[0]?.[0]?.messages || [];
-    expect(modelMessages.some((entry: any) => entry.content.includes("clarification_answers"))).toBe(false);
-    expect(modelMessages.some((entry: any) => entry.content.includes("هدف التواصل والبيانات المطلوبة: عملاء محتملون / مبيعات"))).toBe(true);
+    expect(executeTurn).not.toHaveBeenCalled();
   });
 
   it("replaces a sector-only clarification with country and sector when both are missing", async () => {
@@ -890,9 +888,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
       testScenario: "phase2_plan",
     });
 
-    expect(res.outputType).toBe("propose_plan");
-    expect(res.planQuote?.targetVolumeMax).toBe(20);
-    expect(res.planQuote?.items?.[0]?.endpointId).toBe("treg.people.search");
+    expect(res.outputType).toBe("ask_clarification");
+    expect(res.planQuote).toBeUndefined();
+    expect(res.clarificationItems?.[0]?.id).toBe("people_scope_required");
   });
 
   // (d) a submitted card answer is stored in the brief and the same question is not asked again

@@ -4,7 +4,7 @@ import * as path from "path";
 import * as fs from "fs";
 import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../lib/server/normalizationPipeline";
 import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
-import { extractCityFromAddress } from "../../lib/server/addressParser";
+import { extractCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 
@@ -164,6 +164,8 @@ function customerFacingCountry(country: unknown): string {
   const value = String(country || "").trim();
   if (!value) return "غير محدد";
   if (/[\u0600-\u06FF]/.test(value)) return value;
+  const detected = detectCountryFromText(value);
+  if (detected?.arabicLabel) return detected.arabicLabel;
   const labels: Record<string, string> = {
     egypt: "مصر",
     germany: "ألمانيا",
@@ -180,8 +182,7 @@ function customerFacingCountry(country: unknown): string {
 }
 
 /**
- * Generate a data-only Excel workbook. Social results retain linked comment
- * tables and a compact KPI sheet; methodology is delivered separately as PDF.
+ * Generate a data-only Excel workbook. Methodology is delivered separately as PDF.
  */
 export async function generateExcelReport(
   payload: any,
@@ -502,6 +503,26 @@ export async function generateExcelReport(
   return Buffer.from(buffer);
 }
 
+function contactVerificationSummary(rows: Array<Record<string, any>>): string {
+  const summarize = (field: "work_email" | "phone", statusField: string, label: string) => {
+    const fallbackField = field === "work_email" ? "email" : "phone_number";
+    const present = rows.filter((row) => String(row[field] || row[fallbackField] || "").trim());
+    if (!present.length) return `${label}: لا توجد قيم واردة`;
+    const statuses = present.map((row) => String(row[statusField] || "").trim());
+    const verified = statuses.filter((status) => status === "متحقق").length;
+    const checked = statuses.filter((status) => ["متحقق", "لم يتم التحقق", "يحتاج مراجعة", "غير صالح"].includes(status)).length;
+    if (!checked) return `${label}: لم ترد حالات تحقق (${toArabicDigits(present.length)} قيمة)`;
+    const rate = Math.round((verified / checked) * 100);
+    return `${label}: ${toArabicDigits(verified)} من ${toArabicDigits(checked)} حالة تحقق مسجلة (${toArabicDigits(rate)}٪)؛ إجمالي القيم ${toArabicDigits(present.length)}`;
+  };
+  const peopleRows = rows.filter((row) => row.contact_name || row.full_name || row.job_title || row.work_email || row.phone);
+  if (!peopleRows.length) return "";
+  return [
+    summarize("work_email", "work_email_verification_status", "البريد المهني"),
+    summarize("phone", "phone_verification_status", "الهاتف المهني"),
+  ].join("؛ ");
+}
+
 /** Build a data-only workbook with normalized parent/child tables when the
  * source returns nested comments or replies. Methodology and quality prose is
  * delivered in the separate PDF, not repeated as extra Excel tabs. */
@@ -583,14 +604,6 @@ async function generateStructuredDataWorkbook(payload: any, norm: NormalizedData
     sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
   };
 
-  const dashboard = wb.addWorksheet("لوحة النتائج", { views: [{ rightToLeft: true }] });
-  dashboard.addRow([customerFacingTitle(norm.metadata.title)]).font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_NAVY_HEADER } };
-  dashboard.addRow(["ملخص الأعداد والحقول المستلمة من المصدر؛ لا يتضمن هذا الملخص قياساً لتغطية المجتمع."]);
-  dashboard.addRow(["المؤشر", "القيمة"]);
-  [["المنصة", customerFacingPlatform(norm.metadata.platform)], ["الكيانات الأساسية", mainDataset.rows.length], ["التعليقات الرئيسية", topComments.length], ["الردود المرتبطة", replies.length], ["المشاهدات المسجلة", norm.kpis.totalViews], ["الإعجابات المسجلة", norm.kpis.totalLikes], ["التعليقات/الردود المسجلة بالمصدر", norm.kpis.totalComments]].forEach((values) => dashboard.addRow(values));
-  dashboard.getRow(3).eachCell(titleCell);
-  dashboard.columns = [{ width: 38 }, { width: 46 }];
-  dashboard.views = [{ rightToLeft: true }];
   addTable(norm.metadata.entityType === "posts" ? "الكيانات الأساسية" : "البيانات", mainDataset);
   addTable("التعليقات الرئيسية", commentsDataset);
   addTable("الردود", repliesDataset);
@@ -605,19 +618,19 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buff
   const ws = wb.addWorksheet("بيانات المهنيين", {
     views: [{ state: "frozen", ySplit: 4, rightToLeft: true }],
   });
-  ws.mergeCells("A1:J1");
+  ws.mergeCells("A1:L1");
   ws.getCell("A1").value = customerFacingTitle(norm.metadata.title);
   ws.getCell("A1").font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
   ws.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   ws.getCell("A1").alignment = { horizontal: "center", vertical: "middle" };
   ws.getRow(1).height = 36;
-  ws.mergeCells("A2:J2");
+  ws.mergeCells("A2:L2");
   ws.getCell("A2").value = "بيانات الاتصال المهنية كما أرجعتها المصادر؛ وجود القيمة لا يعني التحقق المستقل من صحتها.";
   ws.getCell("A2").font = { name: "Calibri", size: 10, color: { argb: "FF475569" } };
   ws.getCell("A2").alignment = { horizontal: "right", vertical: "middle", wrapText: true };
   ws.getRow(2).height = 28;
   ws.addRow(["عدد السجلات", norm.rows.length]);
-  const headers = ["م", "اسم جهة الاتصال", "المسمى الوظيفي", "الشركة", "مجال النشاط", "الدولة / الموقع", "لينكد إن", "البريد المهني", "رقم الهاتف", "حالة الحقول"];
+  const headers = ["م", "اسم جهة الاتصال", "المسمى الوظيفي", "الشركة", "مجال النشاط", "الدولة / الموقع", "لينكد إن", "البريد المهني", "رقم الهاتف", "حالة الحقول", "حالة تحقق البريد المهني", "حالة تحقق الهاتف"];
   const header = ws.addRow(headers);
   header.height = 30;
   header.eachCell((cell) => {
@@ -636,11 +649,16 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buff
       record.job_title || record.jobTitle || record.title || record.currentJobTitle || "غير متاح",
       record.company_name || record.companyName || record.company || "غير متاح",
       record.industry || record.keywords || "غير متاح",
-      record.location || record.city || record.country || "غير متاح",
+      (() => {
+        const localized = localizeCityName(record.city || record.location);
+        return localized !== "غير متاح" ? localized : detectCountryFromText(record.country || record.location || "")?.arabicLabel || "غير متاح";
+      })(),
       linkedin,
       email || "غير متاح",
       phone || "غير متاح",
       `البريد: ${email ? "موجود" : "غير موجود"} • الهاتف: ${phone ? "موجود" : "غير موجود"}`,
+      record.work_email_verification_status || (email ? "لم يتوفر تأكيد" : "غير متاح"),
+      record.phone_verification_status || (phone ? "لم يتوفر تأكيد" : "غير متاح"),
     ];
     const row = ws.addRow(values.map((value, column) =>
       typeof value === "string" && column !== 8 ? escapeFormula(value) : value,
@@ -661,7 +679,7 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buff
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: norm.rows.length + 4, column: headers.length } };
   ws.columns = [
     { width: 8 }, { width: 28 }, { width: 27 }, { width: 28 }, { width: 24 },
-    { width: 24 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 32 },
+    { width: 24 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 32 }, { width: 30 }, { width: 30 },
   ];
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
   return Buffer.from(await wb.xlsx.writeBuffer());
@@ -710,9 +728,10 @@ async function generateCompanyDataWorkbook(
   const rows = norm.rows;
   rows.forEach((r, index) => {
     const rawAddress = cleanCellText(r.address || r.full_address || r.location);
-    const city = cleanCellText(r.city) !== "غير متاح"
-      ? cleanCellText(r.city)
-      : extractCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress);
+    const rawCity = cleanCellText(r.city);
+    const city = rawCity !== "غير متاح"
+      ? localizeCityName(rawCity, String((norm.metadata as any).country || ""))
+      : extractCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || ""));
     const website = r.website || r.website_url || r.domain || r.company_website || "";
     const linkedin = r.linkedin_url || r.linkedin || r.company_linkedin || "";
     const values: ExcelJS.CellValue[] = [
@@ -846,7 +865,7 @@ export async function generateCompanyExcelReport(
   const byCity = new Map<string, { count: number; websites: number }>();
   norm.rows.forEach((company) => {
     const industry = String(company.activity || company.sector || company.industry || company.category || "غير متاح").trim() || "غير متاح";
-    const cityValue = company.city || extractCityFromAddress(company.location || company.address || company.city, targetCountry);
+    const cityValue = company.city ? localizeCityName(company.city, targetCountry) : extractCityFromAddress(company.location || company.address, targetCountry);
     const city = String(cityValue || "غير متاح").trim() || "غير متاح";
     const email = String(company.work_email || company.workEmail || company.email || "").trim();
     const website = String(company.website || company.website_url || company.domain || "").trim();
@@ -959,7 +978,7 @@ export async function generateCompanyExcelReport(
   dirHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
   norm.rows.forEach((r, idx) => {
-    const extractedCity = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const extractedCity = r.city ? localizeCityName(r.city, targetCountry) : extractCityFromAddress(r.location || r.address, targetCountry);
     const city = extractedCity && extractedCity !== "غير محدد" ? extractedCity : "غير متاح";
     const website = r.website || r.website_url || r.domain || "غير متاح";
     const linkedin = r.linkedin_url || r.linkedin || r.url || "غير متاح";
@@ -1023,7 +1042,7 @@ export async function generateCompanyExcelReport(
   flatHeaderRow.alignment = { horizontal: "center", vertical: "middle" };
 
   norm.rows.forEach((r, idx) => {
-    const extractedCity = r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry);
+    const extractedCity = r.city ? localizeCityName(r.city, targetCountry) : extractCityFromAddress(r.location || r.address, targetCountry);
     const city = extractedCity && extractedCity !== "غير محدد" ? extractedCity : "غير متاح";
     const rawFlatPhone = r.phone ?? r.phone_number ?? r.business_phone ?? "غير متاح";
     const flatPhoneVal = String(rawFlatPhone).replace(/^'/, "");
@@ -1110,7 +1129,7 @@ export async function generateCompanyExcelReport(
   const cityCounts = new Map<string, number>();
   norm.rows.forEach((r) => {
     const industry = String(r.activity || r.sector || r.industry || r.category || "غير متاح").trim() || "غير متاح";
-    const city = String(r.city || extractCityFromAddress(r.location || r.address || r.city, targetCountry) || "غير متاح").trim() || "غير متاح";
+    const city = String((r.city ? localizeCityName(r.city, targetCountry) : extractCityFromAddress(r.location || r.address, targetCountry)) || "غير متاح").trim() || "غير متاح";
     industryCounts.set(industry, (industryCounts.get(industry) || 0) + 1);
     cityCounts.set(city, (cityCounts.get(city) || 0) + 1);
   });
@@ -1436,7 +1455,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       { label: "٢. عبارات البحث", value: searchTerms.join("، ") || "لم تُسجل عبارات بحث منفصلة" },
       { label: "٣. الجمع والترقيم", value: `${collection.methodLabel || "مسار الجمع غير مسجل"} • ${paginationLabel} • ${Number(collection.pagesFetched) > 0 ? `${toArabicDigits(collection.pagesFetched)} دفعات` : "عدد الدفعات غير مسجل"} • ${stopReason}` },
       { label: "٤. التنظيف والأعداد", value: cleaningCounts },
-      { label: "٥. الخصوصية والتحقق", value: "لم يُجرَ تحقق مستقل من صحة الحقول أو بيانات الاتصال، ولم تُقَس تغطية المجتمع المستهدف." },
+      { label: "٥. الخصوصية والتحقق", value: [contactVerificationSummary(norm.rows), "لا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها."].filter(Boolean).join(" • ") || "لم ترد حالات تحقق مستقلة للحقول؛ ولا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها." },
       { label: "٦. ملفات التسليم", value: "Excel: البيانات ودليل الحقول • CSV: السجلات • PDF: الملخص والمنهجية" },
     ];
 
@@ -1628,7 +1647,7 @@ export function generateMethodologyText(
     `اكتمال الحقول: ${toArabicDigits(norm.kpis.dataCompletenessPct)}٪ (يقيس وجود القيم فقط).`,
     "",
     "٥. الخصوصية وحدود التحقق",
-    "لم يُجرَ تحقق مستقل من صحة البيانات أو بيانات الاتصال، ولم تُقَس تغطية مجتمع البحث. تُعرض السجلات وفق ما أعاده المصدر وقواعد الخطة المسجلة.",
+    `${contactVerificationSummary(norm.rows) || "لم ترد حالات تحقق مستقلة للحقول."} تُعرض السجلات وفق ما أعادته المصادر المتاحة وقواعد الخطة المسجلة؛ ولا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها.`,
     "",
     "٦. ملفات التسليم",
     `Excel: ${toArabicDigits(rowsCount)} سجل مع دليل الحقول والجودة • CSV: سجلات البيانات • PDF: ملخص البحث والمنهجية.`,
@@ -1639,7 +1658,6 @@ export function generateMethodologyText(
     "تعرض هذه الوثيقة الأعداد والحقول الموجودة في ملف التسليم. إزالة التكرار تعتمد على السجلات التي أمكن مطابقتها.",
     "اكتمال الحقول يقيس وجود قيمة في الحقل فقط، ولا يعني التحقق من صحتها.",
     "لم تُقَس نسبة تغطية المجتمع المستهدف، ولا يمكن استنتاج الشمول أو التمثيل الإحصائي من هذه الأعداد وحدها.",
-    "لم يُجرَ تحقق مستقل من بيانات الاتصال.",
     "",
     "تم الإنشاء آلياً عبر منصة Diger • جميع الحقوق محفوظة.",
     "============================================================",
