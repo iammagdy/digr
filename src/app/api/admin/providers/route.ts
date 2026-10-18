@@ -7,6 +7,7 @@ import { resolveProviderKey } from "@/lib/server/providerKeys";
 import { getProviderStatus, isLowBalance } from "@/lib/server/providerStatus";
 import { readProviderKeySettings } from "@/lib/server/providerKeyAdmin";
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
+import { loadProviderLimitsState } from "@/lib/server/providerLimitsAdmin";
 import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,7 @@ export async function GET(req: NextRequest) {
     getProviderStatus("anthropic", anthropicKey.key),
   ]);
 
+  const limitsState = await loadProviderLimitsState(createAdminClient(), { forceRefresh: false }).catch(() => null);
   const snap = getLlmStatusSnapshot(lastLlmUsage);
   const keyEnv = LLM_KEY_ENV[snap.provider] ?? "";
 
@@ -81,6 +83,7 @@ export async function GET(req: NextRequest) {
       lastCall: lastTregCall,
       callsToday: tregCallsToday,
     },
+    limits: limitsState ? { level: limitsState.spend.level, percent: limitsState.spend.percent, llmLevel: limitsState.spend.llmLevel, llmPercent: limitsState.spend.llmPercent } : undefined,
   });
 }
 

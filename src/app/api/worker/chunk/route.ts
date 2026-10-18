@@ -26,6 +26,7 @@ import {
   getConfiguredProviderSpendCapUsd,
   getConfiguredJobPointsCap,
 } from "../../../../functions/shared/providerSpend";
+import { CEILING_MESSAGE_AR, evaluateSpendCeilings, readSpendForCeilings, resolveProviderLimits, type CeilingReason, type ProviderLimits } from "../../../../lib/server/providerLimits";
 import {
   generateMethodologyText,
   generateCsvReport,
@@ -87,8 +88,11 @@ function scheduleNextChunkWithWaitUntil(task: () => Promise<void>): void {
 async function resolveLimitsFromSettings(adminClient: any): Promise<{
   dailyCapUsd: number;
   jobPointsCap: number;
+  limits: ProviderLimits;
 }> {
-  let dailyCapUsd = getConfiguredProviderSpendCapUsd();
+  // The daily limit and the per-job / per-user ceilings come from the ONE shared resolver (admin-editable, 30 s cache,
+  // falls back to the current constants). The points cap stays on its own existing source.
+  const { limits } = await resolveProviderLimits(adminClient);
   let jobPointsCap = getConfiguredJobPointsCap();
 
   try {
@@ -96,9 +100,6 @@ async function resolveLimitsFromSettings(adminClient: any): Promise<{
     if (query && typeof query.eq === "function") {
       const { data: row } = await query.eq("key", "pricing").maybeSingle();
       const val = row?.value && typeof row.value === "object" ? row.value : row;
-      if (typeof val?.providerDailySpendCapUsd === "number" && val.providerDailySpendCapUsd > 0) {
-        dailyCapUsd = val.providerDailySpendCapUsd;
-      }
       if (typeof val?.jobMaxPointsCap === "number" && val.jobMaxPointsCap > 0) {
         jobPointsCap = val.jobMaxPointsCap;
       }
@@ -107,7 +108,7 @@ async function resolveLimitsFromSettings(adminClient: any): Promise<{
     // Fallback to configured env/default caps
   }
 
-  return { dailyCapUsd, jobPointsCap };
+  return { dailyCapUsd: limits.dailyUsd, jobPointsCap, limits };
 }
 
 
@@ -346,7 +347,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 5. Resolve capability spec, real estimated unit cost, and daily spend cap from settings/env
-    const { dailyCapUsd, jobPointsCap } = await resolveLimitsFromSettings(adminClient);
+    const { dailyCapUsd, jobPointsCap, limits: providerLimits } = await resolveLimitsFromSettings(adminClient);
     const spec = await resolveJobExecutionSpec(
       adminClient,
       jobId,
@@ -444,7 +445,14 @@ export async function POST(req: NextRequest) {
     // A retried job whose reused rows already cover the target needs no provider call and reserves no provider spend.
     const needsProvider = (remainingUnits > 0 || !retrySeed) &&
       (!isPeopleJob || Number(decisionMakerSpendBudgetUsd) >= DECISION_MAKER_ROUTE_COST_CAP_USD);
-    const { data: spendReserve, error: spendErr } = needsProvider
+    // Per-job and per-user ceilings (admin-editable). Read only when one is set, so the default path costs nothing extra.
+    let ceilingHit: CeilingReason | null = null;
+    if (needsProvider && (providerLimits.perJobUsd !== null || providerLimits.perUserDailyUsd !== null)) {
+      ceilingHit = evaluateSpendCeilings(providerLimits, await readSpendForCeilings(adminClient, { jobId, userId }), estimatedCostUsd);
+    }
+    const { data: spendReserve, error: spendErr } = ceilingHit
+      ? { data: { allowed: false }, error: null }
+      : needsProvider
       ? await adminClient.rpc("reserve_provider_spend_atomic", {
           p_job_id: jobId,
           p_provider: "treg",
@@ -454,8 +462,9 @@ export async function POST(req: NextRequest) {
       : { data: { allowed: true, cost_id: null }, error: null };
 
     if (spendErr || !spendReserve?.allowed) {
-      const capErrorMsg =
-        "تم تجاوز الحد اليومي لاستهلاك مزود البيانات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+      const capErrorMsg = ceilingHit
+        ? CEILING_MESSAGE_AR[ceilingHit]
+        : "تم تجاوز الحد اليومي لاستهلاك مزود البيانات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
       if (effectiveDelivered > 0) {
         // Do not make another billable call. Keep the matching rows already
         // collected and let the existing atomic settlement charge only them.
@@ -478,7 +487,8 @@ export async function POST(req: NextRequest) {
             chargedCredits: 0,
             capExceeded: true,
             jobId,
-            error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
+            error: ceilingHit ? CEILING_MESSAGE_AR[ceilingHit] : "تم تجاوز الحد اليومي لاستهلاك المزود.",
+            ...(ceilingHit ? { ceiling: ceilingHit } : {}),
             release: rel.data,
           },
           { status: 429 }

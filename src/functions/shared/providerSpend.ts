@@ -1,4 +1,5 @@
 import { TablesDB, Query } from "./dbCompat";
+import { onProviderLimitsFlush, resolveProviderLimits } from "../../lib/server/providerLimits";
 
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 export const DEFAULT_JOB_POINTS_CAP = 600;
@@ -22,12 +23,23 @@ interface BalanceCacheEntry {
 
 let balanceCache: BalanceCacheEntry | null = null;
 let testBalanceOverrideUsd: number | null = null;
+// A saved limit must show in plan estimates at once, not after the 60 s balance cache.
+onProviderLimitsFlush(() => { balanceCache = null; });
 
 function checkAndResetDay(): void {
   const today = new Date().toISOString().slice(0, 10);
   if (memoryDailySpendDay !== today) {
     memoryDailySpendDay = today;
     memoryDailySpendMicro = 0;
+  }
+}
+
+/** The daily limit in force: the shared resolver (admin-editable, 30 s cache), else the environment or 0.80. */
+export async function getEffectiveProviderDailyCapUsd(tables?: any): Promise<number> {
+  try {
+    return (await resolveProviderLimits(tables)).limits.dailyUsd;
+  } catch {
+    return getConfiguredProviderSpendCapUsd();
   }
 }
 
@@ -151,7 +163,7 @@ export async function checkProviderDailySpendCap(
   estimatedCostUsd: number = 0.01,
   tables?: TablesDB | null
 ): Promise<{ allowed: boolean; currentSpendUsd: number; capUsd: number }> {
-  const capUsd = getConfiguredProviderSpendCapUsd();
+  const capUsd = await getEffectiveProviderDailyCapUsd(tables);
   const currentSpendUsd = await getDailyProviderSpendUsd(tables);
 
   const projectedSpend = currentSpendUsd + Math.max(0, estimatedCostUsd);
@@ -180,19 +192,21 @@ export async function getProviderBalanceStatus(
 ): Promise<ProviderBalanceStatus> {
   const now = Date.now();
   if (!forceRefresh && balanceCache && balanceCache.expiresAt > now && testBalanceOverrideUsd === null) {
+    // The limit is re-read from the shared resolver (30 s cache), never frozen in the 60 s balance cache.
+    const todayCapUsd = await getEffectiveProviderDailyCapUsd(tables);
     return {
       availableBalanceUsd: balanceCache.availableBalanceUsd,
       totalSpendUsd: balanceCache.totalSpendUsd,
       creditUsd: balanceCache.creditUsd,
       todaySpendUsd: balanceCache.todaySpendUsd,
-      todayCapUsd: balanceCache.todayCapUsd,
-      isHealthy: balanceCache.isHealthy,
+      todayCapUsd,
+      isHealthy: balanceCache.availableBalanceUsd > 0.02 && balanceCache.todaySpendUsd < todayCapUsd,
       cachedAt: balanceCache.cachedAt,
     };
   }
 
   const creditUsd = getConfiguredProviderCreditUsd();
-  const todayCapUsd = getConfiguredProviderSpendCapUsd();
+  const todayCapUsd = await getEffectiveProviderDailyCapUsd(tables);
   const totalSpendUsd = await getTotalProviderSpendUsd(tables);
   const todaySpendUsd = await getDailyProviderSpendUsd(tables);
 

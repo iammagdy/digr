@@ -5,6 +5,7 @@ import { adminFetch } from "@/lib/adminApi";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import type { ProviderTabState } from "@/lib/server/providerKeyAdmin";
 import { agoAr, dateTimeAr, tint } from "./format";
+import { ProviderLimitsPanel } from "./ProviderLimitsPanel";
 
 type Provider = "treg" | "anthropic";
 
@@ -156,6 +157,8 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
         </div>
         <p className="m-0 text-[11px] text-fnt">مسجّل من جدول التكاليف الداخلي للمنصة (قراءة فقط)، وليس رصيد المزود.</p>
       </section>
+
+      <ProviderLimitsPanel provider={provider} balanceUsd={provider === "treg" && b.available && typeof b.balanceUsd === "number" ? b.balanceUsd : null} onSaved={() => { void load(true); onChanged?.(); }} />
 
       {children}
 

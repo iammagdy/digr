@@ -1,4 +1,5 @@
 import { TablesDB, Query } from "./dbCompat";
+import { resolveProviderLimits } from "../../lib/server/providerLimits";
 
 export interface RateLimitConfig {
   /** Per-account burst protection: max USER messages per minute. No daily quota. */
@@ -149,20 +150,14 @@ export async function checkGlobalDailySpendCap(
 ): Promise<RateLimitCheckResult> {
   let configuredLimit = config.globalDailySpendCapUsd;
 
+  let cap: number;
   if (tables && typeof tables.from === "function") {
-    try {
-      const { data: row } = await tables
-        .from("settings_private")
-        .select("value")
-        .eq("key", "pricing")
-        .maybeSingle();
-      if (row?.value?.llmDailySpendCapUsd && Number.isFinite(Number(row.value.llmDailySpendCapUsd))) {
-        configuredLimit = Number(row.value.llmDailySpendCapUsd);
-      }
-    } catch {}
+    // One shared resolver (admin-editable, 30 s cache): settings, then legacy pricing row, then the environment or 50.
+    const resolved = await resolveProviderLimits(tables);
+    cap = resolved.source === "default" ? configuredCap("LLM_DAILY_SPEND_CAP_USD", configuredLimit) : resolved.limits.llmDailyUsd;
+  } else {
+    cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", configuredLimit);
   }
-
-  const cap = configuredCap("LLM_DAILY_SPEND_CAP_USD", configuredLimit);
   let totalCostUsd = 0;
 
   if (tables && typeof tables.from === "function") {

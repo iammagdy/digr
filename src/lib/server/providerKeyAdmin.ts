@@ -1,5 +1,5 @@
 import { isMissingAtomicRpc } from "../../functions/shared/atomicRpc";
-import { getConfiguredProviderSpendCapUsd } from "../../functions/shared/providerSpend";
+import { resolveProviderLimits } from "./providerLimits";
 import {
   ENCRYPTION_KEY_ENV, PROVIDER_IDS, ProviderKeyCryptoError, cleanKey, decryptProviderKey, encryptProviderKey,
   isEncryptionConfigured, last4Of, maskedKey, validateKeyShape, type ProviderId,
@@ -265,16 +265,8 @@ function utcStartOfDay(): string {
 }
 
 async function readCap(client: any, provider: ProviderId): Promise<number> {
-  let cap = provider === "treg"
-    ? getConfiguredProviderSpendCapUsd()
-    : (Number.isFinite(Number(process.env.LLM_DAILY_SPEND_CAP_USD)) && Number(process.env.LLM_DAILY_SPEND_CAP_USD) >= 0 && process.env.LLM_DAILY_SPEND_CAP_USD ? Number(process.env.LLM_DAILY_SPEND_CAP_USD) : 50);
-  try {
-    const { data } = await client.from("settings_private").select("value").eq("key", "pricing").maybeSingle();
-    const v = data?.value;
-    if (provider === "treg" && typeof v?.providerDailySpendCapUsd === "number" && v.providerDailySpendCapUsd > 0) cap = v.providerDailySpendCapUsd;
-    if (provider === "anthropic" && Number.isFinite(Number(v?.llmDailySpendCapUsd)) && Number(v.llmDailySpendCapUsd) > 0) cap = Number(v.llmDailySpendCapUsd);
-  } catch { /* defaults */ }
-  return cap;
+  const { limits } = await resolveProviderLimits(client);
+  return provider === "treg" ? limits.dailyUsd : limits.llmDailyUsd;
 }
 
 async function readSpendAndActivity(client: any, provider: ProviderId): Promise<{ todayUsd: number; activity: ActivityRow[] }> {

@@ -5,9 +5,9 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
-/** DIGR_TEST_PG="<socket dir or host>:<port>" points at a scratch Postgres (never Supabase). Unset = skip. */
+/** DIGR_TEST_PG (or DIGER_TEST_PG) = "<socket dir or host>:<port>" points at a scratch Postgres (never Supabase). Unset = skip. */
 export function scratchPgTarget(): { host: string; port: string } | null {
-  const raw = process.env.DIGR_TEST_PG;
+  const raw = process.env.DIGR_TEST_PG || process.env.DIGER_TEST_PG;
   if (!raw) return null;
   const idx = raw.lastIndexOf(":");
   return { host: raw.slice(0, idx), port: raw.slice(idx + 1) };

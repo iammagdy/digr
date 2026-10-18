@@ -80,6 +80,11 @@ export function getPublicCalculatorOptions(
   });
 }
 
+/** The daily provider limit expressed in customer points (same conversion the quote writer uses). */
+export function dailyCapPointsFor(dailySpendCapUsd: number, settings: PricingSettings = DEFAULT_PRICING_SETTINGS): number {
+  return Math.floor((dailySpendCapUsd * settings.usdToEgp * settings.markup) / settings.creditValueEgp);
+}
+
 /**
  * Computes the customer-visible estimated cost using the same unit rate and
  * settlement formula as the quote writer, with the same job and spend caps.
@@ -91,7 +96,9 @@ export function computePublicCalculatorQuote(
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG,
   settings: PricingSettings = DEFAULT_PRICING_SETTINGS,
   jobPointsCap: number = DEFAULT_JOB_POINTS_CAP,
-  dailySpendCapUsd: number = DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD
+  dailySpendCapUsd: number = DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD,
+  /** The live daily limit already converted to points (the server converts it; the page never sees the USD value). */
+  dailyCapPointsOverride?: number
 ): PublicCalculatorBreakdown {
   const safeTarget = Math.max(1, Math.floor(Number(targetVolumeMax) || 1));
   const safeDelivered = Math.max(0, Math.min(safeTarget, Math.floor(Number(deliveredVolume) ?? safeTarget)));
@@ -106,7 +113,9 @@ export function computePublicCalculatorQuote(
   const rawPoints = safeTarget * unitPricePoints;
   const reservedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
 
-  const dailyCapPoints = Math.floor((dailySpendCapUsd * settings.usdToEgp * settings.markup) / settings.creditValueEgp);
+  const dailyCapPoints = typeof dailyCapPointsOverride === "number" && Number.isFinite(dailyCapPointsOverride) && dailyCapPointsOverride >= 0
+    ? Math.floor(dailyCapPointsOverride)
+    : dailyCapPointsFor(dailySpendCapUsd, settings);
   const effectiveMaxCap = Math.min(jobPointsCap, dailyCapPoints);
 
   const isCapped = reservedPoints > effectiveMaxCap;
