@@ -48,9 +48,12 @@ export interface PublicCalculatorBreakdown {
   cappedRefundEgp?: number;
 }
 
-function cleanArText(text: string): string {
+/** Public pages are Arabic only: no Latin parenthetical, no «X» (the platform is written «إكس»), no sample handles. */
+export function cleanArText(text: string): string {
   return (text || "")
     .replace(/\s*\([A-Za-z0-9@_.\s/-]+\)/g, "")
+    .replace(/(^|[^A-Za-z0-9])X(?![A-Za-z0-9])/g, "$1إكس")
+    .replace(/\s*@example\b/gi, "")
     .replace(/[~≈]/g, "")
     .trim();
 }

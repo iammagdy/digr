@@ -6,8 +6,8 @@ import { Logo } from "@/components/Brand";
 import { SUPPORT_PLACEHOLDER_AR, validateSupportMessage, whatsappHref, type SupportSettings } from "@/lib/supportContact";
 
 /** «تواصل معنا»: a form that stores the message, the support email and WhatsApp number from the admin settings. */
-export default function ContactForm() {
-  const [settings, setSettings] = useState<SupportSettings>({ supportEmail: "", whatsappNumber: "" });
+export default function ContactForm({ initialSettings = { supportEmail: "", whatsappNumber: "" } }: { initialSettings?: SupportSettings }) {
+  const [settings, setSettings] = useState<SupportSettings>(initialSettings);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
@@ -16,7 +16,8 @@ export default function ContactForm() {
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    fetch("/api/support/settings").then((r) => r.json()).then((s) => setSettings({ supportEmail: s?.supportEmail || "", whatsappNumber: s?.whatsappNumber || "" })).catch(() => {});
+    // Refresh in case the owner changed the settings after the page was rendered; a failed refresh keeps what the server rendered.
+    fetch("/api/support/settings").then((r) => r.json()).then((s) => setSettings((prev) => ({ supportEmail: s?.supportEmail || prev.supportEmail, whatsappNumber: s?.whatsappNumber || prev.whatsappNumber }))).catch(() => {});
   }, []);
 
   async function submit(event: React.FormEvent) {
@@ -39,6 +40,9 @@ export default function ContactForm() {
   }
 
   const wa = whatsappHref(settings.whatsappNumber);
+  // The «coming soon» note appears only when NEITHER channel is set; with one set, the other card is simply not shown.
+  const hasEmail = Boolean(settings.supportEmail);
+  const hasAnyChannel = hasEmail || Boolean(wa);
   const field = "min-h-12 w-full rounded-xl border border-ln2 bg-bg px-3.5 text-base text-ink outline-none focus-visible:outline-2";
   return (
     <main data-screen-label="Contact" className="min-h-dvh bg-bg px-5 pb-[72px] pt-5 text-ink2">
@@ -53,18 +57,18 @@ export default function ContactForm() {
         </div>
 
         <div className="grid grid-cols-1 gap-2.5 min-[560px]:grid-cols-2">
-          <div className="rounded-[18px] border border-ln bg-sf p-4">
+          {(hasEmail || !hasAnyChannel) && <div className="rounded-[18px] border border-ln bg-sf p-4">
             <p className="m-0 text-xs text-mut">البريد الإلكتروني للدعم</p>
             <p className="mb-0 mt-1.5 text-[15px] text-ink" dir="ltr" style={{ textAlign: "right" }}>
               {settings.supportEmail ? <a href={`mailto:${settings.supportEmail}`} className="text-ink">{settings.supportEmail}</a> : <span dir="rtl">{SUPPORT_PLACEHOLDER_AR}</span>}
             </p>
-          </div>
-          <div className="rounded-[18px] border border-ln bg-sf p-4">
+          </div>}
+          {(wa || !hasAnyChannel) && <div className="rounded-[18px] border border-ln bg-sf p-4">
             <p className="m-0 text-xs text-mut">واتساب</p>
             <p className="mb-0 mt-1.5 text-[15px] text-ink" dir="ltr" style={{ textAlign: "right" }}>
               {wa ? <a href={wa} className="text-ink" rel="noopener noreferrer" target="_blank">{`+${settings.whatsappNumber}`}</a> : <span dir="rtl">{SUPPORT_PLACEHOLDER_AR}</span>}
             </p>
-          </div>
+          </div>}
         </div>
 
         <form onSubmit={submit} className="flex flex-col gap-3 rounded-[22px] border border-ln bg-sf p-[18px]" aria-label="نموذج التواصل" noValidate>

@@ -51,7 +51,7 @@ export const PLATFORM_GUIDE = {
       examplePlanAr: cap.slug.includes("comments") ? "خطوة واحدة: حتى ١٠ تعليقات من الرابط أو الموضوع المحدد." : cap.slug === "social-x-posts" ? "خطوة واحدة: حتى ٢٠ منشوراً عن كرة السلة خلال الأسبوع الماضي." : "خطوة واحدة: حتى ١٠ منشورات أو فيديوهات من القناة أو الموضوع المحدد.",
     })),
     { slug: "topic-news-academic-research", nameAr: "بحث موضوعي ومواد إخبارية وأكاديمية", descriptionAr: "جمع نتائج ومحتوى مرتبط بموضوع، دولة، لغة وفترة يحددها العميل.", requiredInputs: ["topic"], maxRecords: 500, exampleAr: "اجمع ١٠ أخبار عن الطاقة الشمسية في ألمانيا خلال آخر شهر", examplePlanAr: "خطوة واحدة: حتى ١٠ نتائج عن الطاقة الشمسية في ألمانيا خلال الشهر المحدد." },
-    { slug: "tiktok-profile", nameAr: "فيديوهات القنوات والملفات الاجتماعية", descriptionAr: "محتوى قناة أو حساب محدد حسب الخدمة المطلوبة.", requiredInputs: ["account_handle"], maxRecords: 200, exampleAr: "هات آخر ١٠ فيديوهات من قناة تيك توك @example", examplePlanAr: "خطوة واحدة: حتى ١٠ فيديوهات من القناة المحددة." },
+    { slug: "tiktok-profile", nameAr: "فيديوهات القنوات والملفات الاجتماعية", descriptionAr: "محتوى قناة أو حساب محدد حسب الخدمة المطلوبة.", requiredInputs: ["account_handle"], maxRecords: 200, exampleAr: "هات آخر ١٠ فيديوهات من حساب تيك توك أحدده لك", examplePlanAr: "خطوة واحدة: حتى ١٠ فيديوهات من القناة المحددة." },
   ] satisfies GuideService[],
   futureSources: [
     { slug: "future-web-collection", nameAr: "بحث وجمع صفحات الويب المتقدمة", statusAr: "قريباً" },
