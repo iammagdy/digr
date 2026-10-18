@@ -9,6 +9,7 @@ import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { arabicVerificationStatus } from "../../lib/contactVerification";
 import { industryLabelAr } from "../../lib/industryLabels";
+import { FILE_SPEC_LIMITS, applySpecToRows, groupRows, sheetNames, specColumns, type FileSpec } from "../../lib/fileSpec";
 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
@@ -575,6 +576,79 @@ async function generateCompanyDataWorkbook(
   }
 
   return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/** Why a shaped file cannot be built; the message is Arabic and safe to show the customer. */
+export class FileShapeError extends Error {
+  constructor(public readonly messageAr: string) {
+    super(messageAr);
+    this.name = "FileShapeError";
+  }
+}
+
+function shapedCell(key: string, value: unknown): ExcelJS.CellValue {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "boolean") return value ? "نعم" : "لا";
+  if (typeof value === "string" && /^https?:\/\//i.test(value.trim()) && /(?:^url$|_url$|link$|permalink$)/i.test(key)) return workbookHyperlink(value);
+  // Every cell goes through the same formula-injection guard as the standard files: nothing the spec or the data
+  // contains can become a formula.
+  return escapeFormula(value) as ExcelJS.CellValue;
+}
+
+/**
+ * Excel built from the saved data and a VALIDATED spec (see lib/fileSpec): chosen columns in order, filters, sorting,
+ * and one sheet per value of the grouping column. Data only, like every Diger workbook.
+ */
+export async function generateShapedExcelReport(payload: any, spec: FileSpec): Promise<Buffer> {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+  const labels = new Map(norm.codebook.map((entry) => [entry.field, entry.titleAr]));
+  const columns = specColumns(norm.columns, spec);
+  if (columns.length === 0) throw new FileShapeError("لا توجد أعمدة مطابقة لما طلبته.");
+  const rows = applySpecToRows(norm.rows, spec);
+  if (rows.length === 0) throw new FileShapeError("لا توجد سجلات تطابق شروط التصفية التي طلبتها.");
+
+  const groups = spec.groupBy ? groupRows(rows, spec.groupBy.column) : [{ value: customerFacingTitle(norm.metadata.title), rows }];
+  if (groups.length > FILE_SPEC_LIMITS.maxSheets) {
+    throw new FileShapeError(`التقسيم المطلوب ينتج ${toArabicDigits(groups.length)} شيتًا، والحد الأقصى ${toArabicDigits(FILE_SPEC_LIMITS.maxSheets)} شيتًا. اختر عمودًا قيمه أقل.`);
+  }
+  const names = sheetNames(groups.map((g) => g.value));
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Diger";
+  wb.title = customerFacingTitle(norm.metadata.title);
+  groups.forEach((group, groupIndex) => {
+    const sheet = wb.addWorksheet(names[groupIndex], { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
+    const header = sheet.addRow(columns.map((key) => labels.get(key) || key));
+    header.eachCell((cell) => {
+      cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    });
+    header.height = 30;
+    group.rows.forEach((record, index) => {
+      const row = sheet.addRow(columns.map((key) => shapedCell(key, record[key])));
+      row.height = 22;
+      row.alignment = { vertical: "middle", wrapText: true };
+      row.eachCell((cell) => {
+        cell.border = borderThin;
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+        if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+      });
+    });
+    sheet.columns = columns.map((key) => ({ width: /text|caption|title|description/.test(key) ? 48 : /url|link/.test(key) ? 32 : 18 }));
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, group.rows.length + 1), column: columns.length } };
+    sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+  });
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+/** The saved data after the spec's filters, sort and column choice, for the CSV and PDF builders. */
+export function shapedPayload(payload: any, spec: FileSpec): any {
+  const norm: NormalizedDataset = normalizeDataset(payload);
+  const columns = specColumns(norm.columns, spec);
+  const rows = applySpecToRows(norm.rows, spec).map((row) => Object.fromEntries(columns.map((key) => [key, row[key]])));
+  if (rows.length === 0) throw new FileShapeError("لا توجد سجلات تطابق شروط التصفية التي طلبتها.");
+  return { ...payload, rows, metadata: { ...(payload?.metadata || {}), rowsCount: rows.length } };
 }
 
 /**

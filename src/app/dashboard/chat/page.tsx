@@ -8,6 +8,7 @@ import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { topupContinuationMessageAr } from "@/lib/lowBalance";
 import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploration";
+import { encodeFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
@@ -101,6 +102,8 @@ interface MessageItem {
   intent?: "chat" | "research";
   planQuote?: PlanQuoteData;
   revisionQuote?: RevisionQuoteData;
+  /** A validated file spec for the result on screen («شيت لكل محافظة»): becomes a download of the shaped file. */
+  fileShape?: { spec: Record<string, unknown>; descriptionAr: string };
   clarificationQuestions?: string[];
   clarificationItems?: unknown;
   clarificationIntro?: string;
@@ -134,6 +137,8 @@ interface ActiveJobState {
   fileIds?: { xlsx?: string | null; pdf?: string | null; csv?: string | null } | null;
   versionHistory?: Array<{ id: string; versionNum: number; parentVersionId?: string | null; rowCount: number; isOriginal: boolean }>;
   artifactHistoryAvailable?: boolean;
+  /** Real columns of the saved result (for «شيت لكل …» file shaping). */
+  resultColumns?: Array<{ key: string; titleAr: string }>;
 }
 
 export default function ChatWorkspacePage() {
@@ -349,6 +354,9 @@ export default function ChatWorkspacePage() {
           reviewSeverity: dataJson.runFacts?.severity,
           artifactVersion: dataJson.artifactVersion || null,
           fileIds: dataJson.fileIds,
+          resultColumns: Array.isArray(dataJson.columns)
+            ? dataJson.columns.map((key: string) => ({ key, titleAr: dataJson.codebook?.find((c: any) => c.field === key)?.titleAr || key })).slice(0, 60)
+            : undefined,
           versionHistory: versionsJson.success ? versionsJson.versions : [],
           artifactHistoryAvailable: versionsJson.success && versionsJson.historyAvailable,
         } : previous);
@@ -538,6 +546,7 @@ export default function ChatWorkspacePage() {
           message: textToSend,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
+          ...(activeJob?.resultColumns?.length ? { resultColumns: activeJob.resultColumns } : {}),
           ...(attachedFile ? {
             uploadedFiles: [
               {
@@ -576,6 +585,7 @@ export default function ChatWorkspacePage() {
         intent: data.intent,
         planQuote: data.planQuote,
         revisionQuote: data.revisionQuote,
+        fileShape: data.fileShape,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
         clarificationIntro: data.clarificationIntro,
@@ -1093,15 +1103,15 @@ export default function ChatWorkspacePage() {
   }
 
   // Download File Handler
-  async function handleDownload(ext: "xlsx" | "pdf" | "csv") {
+  async function handleDownload(ext: "xlsx" | "pdf" | "csv", spec?: FileSpec) {
     if (!activeJob?.jobId || downloadingKey) return;
-    setDownloadingKey(ext);
+    setDownloadingKey(spec ? `${ext}:shaped` : ext);
 
     try {
       const jwtToken = await getAccessToken();
       const headers: Record<string, string> = {};
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
-      const res = await fetch(`/api/jobs/${activeJob.jobId}/download?format=${ext}`, { headers });
+      const res = await fetch(`/api/jobs/${activeJob.jobId}/download?format=${ext}${spec ? `&spec=${encodeFileSpec(spec)}` : ""}`, { headers });
       const payload = await res.json();
       if (!res.ok || !payload?.success || !payload?.signedUrl) {
         throw new Error(payload?.error || "الملف غير متاح للتحميل حالياً");
@@ -1117,9 +1127,12 @@ export default function ChatWorkspacePage() {
       }
 
       // The download route saves a format made on request; it is now one of this job's ready files.
-      setActiveJob((previous) => previous && previous.jobId === activeJob.jobId
-        ? { ...previous, fileIds: { ...(previous.fileIds || { xlsx: "ready" }), [ext]: "ready" } }
-        : previous);
+      // A shaped file is a separate download and never changes which files the job has.
+      if (!spec) {
+        setActiveJob((previous) => previous && previous.jobId === activeJob.jobId
+          ? { ...previous, fileIds: { ...(previous.fileIds || { xlsx: "ready" }), [ext]: "ready" } }
+          : previous);
+      }
 
       if (blobUrl) {
         const link = document.createElement("a");
@@ -1133,6 +1146,10 @@ export default function ChatWorkspacePage() {
       }
     } catch (err: any) {
       console.error("[chat:download_error]", err);
+      if (spec) {
+        // The reason (for example a split into too many sheets) is Arabic and written by the server: show it in the chat.
+        setMessages((prev) => [...prev, { id: `err_shape_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الملف بالتنسيق المطلوب.", createdAt: new Date().toISOString() }]);
+      }
     } finally {
       setDownloadingKey(null);
     }
@@ -1547,6 +1564,20 @@ export default function ChatWorkspacePage() {
             isApplying={artifactEditing}
             userBalance={balanceValue}
           />
+        )}
+        {m.fileShape && activeJob && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="download-shaped-file"
+              onClick={() => void handleDownload("xlsx", m.fileShape!.spec as FileSpec)}
+              disabled={downloadingKey !== null}
+              className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-wait disabled:opacity-60"
+            >
+              {downloadingKey === "xlsx:shaped" ? "جاري تجهيز الملف..." : "تحميل الملف المخصص"}
+            </button>
+            <span className="text-xs font-light text-fnt">{m.fileShape.descriptionAr}</span>
+          </div>
         )}
         {m.planQuote && (
           <PlanQuoteCard

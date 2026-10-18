@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { detectCountryFromText, detectIndustryFromText } from "@/lib/planParameters";
-import { generateExcelReport, generateCsvReport, generatePdfReport } from "@/functions/shared/fileGenerators";
+import {
+  generateExcelReport, generateCsvReport, generatePdfReport,
+  generateShapedExcelReport, shapedPayload, FileShapeError,
+} from "@/functions/shared/fileGenerators";
+import { decodeFileSpec, validateFileSpec, type FileSpec } from "@/lib/fileSpec";
+import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
@@ -244,6 +249,27 @@ export async function GET(
     let signedUrl: string | null = null;
     let resolvedStoragePath: string | null = null;
 
+    // A customer-shaped file («شيت لكل محافظة»): the spec comes from a link, so it is decoded and validated here
+    // against the real columns of this job's saved data before anything is built. It never touches the provider.
+    let shapedSpec: FileSpec | null = null;
+    const specParam = req.nextUrl.searchParams.get("spec");
+    if (specParam) {
+      if (!jsonText || format === "json") {
+        return NextResponse.json({ success: false, error: "بيانات هذا الطلب غير متاحة لتنسيق مخصص بعد." }, { status: 404 });
+      }
+      let normalized;
+      try {
+        normalized = normalizeDataset(JSON.parse(jsonText));
+      } catch {
+        return NextResponse.json({ success: false, error: "تعذر قراءة بيانات هذا الطلب." }, { status: 500 });
+      }
+      const columns = normalized.columns.map((key) => ({ key, titleAr: normalized.codebook.find((entry) => entry.field === key)?.titleAr || key }));
+      const check = validateFileSpec(decodeFileSpec(specParam), columns);
+      if (!check.ok) return NextResponse.json({ success: false, error: check.errorAr }, { status: 400 });
+      shapedSpec = check.spec;
+      downloadFileName = downloadFileName.replace(/(\.[a-z]+)$/i, " - مخصص$1");
+    }
+
     if (jsonText && format !== "json") {
       try {
         const parsed = JSON.parse(jsonText);
@@ -253,17 +279,19 @@ export async function GET(
         let fileBuf: Buffer | null = null;
         let mimeType = "application/octet-stream";
         if (format === "xlsx") {
-          fileBuf = await generateExcelReport(parsed);
+          fileBuf = shapedSpec ? await generateShapedExcelReport(parsed, shapedSpec) : await generateExcelReport(parsed);
           mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else if (format === "csv") {
-          fileBuf = generateCsvReport(parsed);
+          fileBuf = generateCsvReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
           mimeType = "text/csv";
         } else if (format === "pdf") {
-          fileBuf = await generatePdfReport(parsed);
+          fileBuf = await generatePdfReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
           mimeType = "application/pdf";
         }
         if (fileBuf) {
-          const uploadPath = `${job.user_id}/${jobId}/result.${format}`;
+          // A shaped file lives beside the standard result and never replaces it or becomes the job's linked artifact.
+          const shapedKey = shapedSpec ? createHash("sha1").update(JSON.stringify(shapedSpec)).digest("hex").slice(0, 10) : "";
+          const uploadPath = shapedSpec ? `${job.user_id}/${jobId}/shaped_${shapedKey}.${format}` : `${job.user_id}/${jobId}/result.${format}`;
           const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, fileBuf, {
             contentType: mimeType,
             upsert: true,
@@ -278,8 +306,16 @@ export async function GET(
           }
         }
       } catch (genErr) {
+        if (genErr instanceof FileShapeError) {
+          return NextResponse.json({ success: false, error: genErr.messageAr }, { status: 422 });
+        }
         console.error("Saved-data file regeneration error:", genErr);
       }
+    }
+
+    if (shapedSpec && !signedUrl) {
+      // Never fall back to the standard file when a custom shape was asked for.
+      return NextResponse.json({ success: false, error: "تعذر تجهيز الملف بالتنسيق المطلوب الآن. حاول مرة أخرى." }, { status: 500 });
     }
 
     if (!signedUrl) {
@@ -332,7 +368,7 @@ export async function GET(
       );
     }
 
-    if ((format === "pdf" || format === "xlsx" || format === "csv") && resolvedStoragePath) {
+    if (!shapedSpec && (format === "pdf" || format === "xlsx" || format === "csv") && resolvedStoragePath) {
       await linkArtifactVersion(adminClient, job.user_id, jobId, format, resolvedStoragePath);
     }
 

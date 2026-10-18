@@ -497,6 +497,7 @@ export async function POST(req: NextRequest) {
       isGuest,
       capturedName,
       personaProfile: isGuest ? undefined : personaProfile,
+      resultColumns: Array.isArray(body.resultColumns) ? body.resultColumns.slice(0, 60) : undefined,
     });
 
     const response = NextResponse.json({
