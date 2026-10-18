@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buildResultFollowupReply, type PriorConversationMessage } from "../src/functions/shared/resultFollowup";
+import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../src/functions/shared/chatErrors";
 import { resultFileManifest } from "../src/lib/server/resultFileManifest";
 
 const firstPlan = "أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: استخراج بيانات ٣ شركات كهرباء في مصر\n- الحد الأقصى: حتى ٣ سجل\n- التكلفة المتوقعة: ٩ نقطة";
@@ -55,11 +56,62 @@ describe("company result follow-up conversation", () => {
     expect(buildResultFollowupReply("الايميلات مش موجوده", [], { platforms: ["companies"] })).toBeNull();
   });
 
+  it.each([
+    ["pending plan", "quoted", []],
+    ["completed job", "accepted", [{ role: "assistant", content: "تم إكمال البحث وحفظ الملف." }]],
+    ["failed job", "quoted", [{ role: "assistant", content: "تعذر إكمال البحث، وأُعيدت النقاط المحجوزة." }]],
+  ] as const)("answers both email follow-ups after a %s without returning a plan card", (_state, requestStatus, extraMessages) => {
+    const transcript: PriorConversationMessage[] = [
+      {
+        role: "user",
+        content: "عايز ٣ شركات كهرباء في مصر",
+        requestStatus,
+        requestQuoteId: "quote_pending_company_3",
+      },
+      { role: "assistant", content: firstPlan, quote },
+      ...extraMessages,
+    ];
+
+    for (const followup of ["فين الايميلات", "الايميلات مش موجودة"]) {
+      const reply = buildResultFollowupReply(followup, transcript, {
+        platforms: ["companies"],
+        targetVolume: 3,
+      });
+      expect(reply).toContain("بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص");
+      expect(reply).toContain("السعر المتوقع ٥٧٩ نقطة");
+      expect(reply).toContain("هل تريد أن أجهز الخطة؟");
+      expect(reply).not.toContain(firstPlan);
+    }
+  });
+
+  it("uses the newest ten messages so a recent pending plan is not hidden by old greetings", () => {
+    const chatHandler = readFileSync("src/functions/shared/chatHandler.ts", "utf8");
+    const history = chatHandler.slice(
+      chatHandler.indexOf("const { data: rows, error: histErr }"),
+      chatHandler.indexOf("supabaseMs += Date.now() - tSbHistStart", chatHandler.indexOf("const { data: rows, error: histErr }")),
+    );
+
+    expect(history).toContain('.order("created_at", { ascending: false })');
+    expect(history).toContain("Query.orderDesc(\"createdAt\")");
+    expect(history).toContain("].reverse()");
+    expect(history).toContain("request_quote_id");
+  });
+
   it("answers other result feedback without re-entering plan generation", () => {
     const reply = buildResultFollowupReply("البيانات دي غلط، ليه؟", [
       { role: "assistant", content: firstPlan, quote },
     ], { platforms: ["companies"] });
     expect(reply).toBe("وصلت ملاحظتك على النتيجة. ما الحقل أو السجل الذي تريد مراجعته؟");
+  });
+
+  it("logs only a safe reason code and maps unknown failures to the generic Arabic message", () => {
+    const chatHandler = readFileSync("src/functions/shared/chatHandler.ts", "utf8");
+    const route = readFileSync("src/app/api/chat/route.ts", "utf8");
+    expect(chatHandler).toContain("[chat:handler_failed] step=${currentStep} reason=${safeReason}");
+    expect(route).toContain("[chat:request_failed] requestId=${requestId} step=${failingStep} reason=${reason}");
+    expect(route).toContain("reasonCodeToCustomerMessage(reason, err?.message)");
+    expect(toSafeReasonCode(new Error("unexpected internal exception"), "message_history")).toBe("internal_error");
+    expect(reasonCodeToCustomerMessage("internal_error")).toBe("حدث خطأ أثناء معالجة المحادثة. يرجى المحاولة مرة أخرى.");
   });
 });
 

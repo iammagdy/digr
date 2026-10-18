@@ -9,6 +9,7 @@ export interface PriorConversationMessage {
   quote?: any;
   plan?: any;
   requestStatus?: string;
+  requestQuoteId?: string | null;
 }
 
 function quoteItems(message: PriorConversationMessage): any[] {
@@ -25,7 +26,11 @@ function hasPriorPlanOrDelivery(messages: PriorConversationMessage[]): boolean {
         Boolean(message.quote?.quoteId || message.quote?.planHash) ||
         /أعددت لك خطة الاستخراج وعرض السعر|تم إكمال استخراج|تم حفظ ملفات النتائج/.test(message.content);
     }
-    return message.role === "user" && message.requestStatus === "accepted";
+    return message.role === "user" && (
+      message.requestStatus === "quoted" ||
+      message.requestStatus === "accepted" ||
+      Boolean(message.requestQuoteId)
+    );
   });
 }
 

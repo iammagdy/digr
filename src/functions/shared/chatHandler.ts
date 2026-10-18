@@ -73,6 +73,7 @@ import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissi
 import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
+import { toSafeReasonCode } from "./chatErrors";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -1084,6 +1085,9 @@ export class ChatHandler {
         : null;
     let currentStep = "conversation_init";
     let userMsgId = "";
+    let assistantMsgId = "";
+    let messagesContext: PriorConversationMessage[] = [];
+    let followupBrief: any = {};
 
     try {
       // 1. Get or Create Conversation
@@ -1093,7 +1097,6 @@ export class ChatHandler {
       let userBalance = input.userBalance;
       let userProfile: any = undefined;
       let convBriefFromDb: any = undefined;
-      let assistantMsgId = "";
 
       const isGreetingMsg = isGreetingOrGeneralQuestion(message).isGreeting;
       const initialTitle = "محادثة جديدة";
@@ -1290,11 +1293,13 @@ export class ChatHandler {
       const tSbBriefStart = Date.now();
       const currentBrief = convBriefFromDb || await getConversationBrief(this.tables, conversationId);
       let brief = extractBriefFromMessage(message, currentBrief);
+      followupBrief = brief;
 
     if ((input as any).answers) {
       const rawAns = (input as any).answers;
       if (Array.isArray(rawAns)) {
         brief = extractBriefFromCardAnswers(rawAns, brief);
+        followupBrief = brief;
       } else if (typeof rawAns === "object") {
         const normalizedCardItems = Object.entries(rawAns).map(([k, v]) => ({
           questionId: k,
@@ -1302,6 +1307,7 @@ export class ChatHandler {
           value: v as any,
         }));
         brief = extractBriefFromCardAnswers(normalizedCardItems, brief);
+        followupBrief = brief;
       }
     }
     await saveConversationBrief(this.tables, conversationId, userId, brief);
@@ -1667,16 +1673,15 @@ export class ChatHandler {
       // 6. Fetch previous messages for context
       currentStep = "message_history";
       const tSbHistStart = Date.now();
-      let messagesContext: PriorConversationMessage[] = [];
       if (sb) {
         const { data: rows, error: histErr } = await sb
           .from("messages")
-          .select("id, role, content_ar, created_at, quote, plan, request_status")
+          .select("id, role, content_ar, created_at, quote, plan, request_status, request_quote_id")
           .eq("conversation_id", conversationId)
-          .order("created_at", { ascending: true })
+          .order("created_at", { ascending: false })
           .limit(10);
         if (histErr) throw histErr;
-        messagesContext = (rows || [])
+        messagesContext = [...(rows || [])].reverse()
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
@@ -1686,6 +1691,7 @@ export class ChatHandler {
             quote: r.quote,
             plan: r.plan,
             requestStatus: r.request_status,
+            requestQuoteId: r.request_quote_id,
           }));
       } else {
         const historyRes = await this.tables.listRows({
@@ -1693,12 +1699,12 @@ export class ChatHandler {
           tableId: "messages",
           queries: [
             Query.equal("conversationId", conversationId),
-            Query.orderAsc("createdAt"),
+            Query.orderDesc("createdAt"),
             Query.limit(10),
           ],
         });
 
-        messagesContext = historyRes.rows
+        messagesContext = [...historyRes.rows].reverse()
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
@@ -1708,6 +1714,7 @@ export class ChatHandler {
             quote: r.quote,
             plan: r.plan,
             requestStatus: r.requestStatus,
+            requestQuoteId: r.requestQuoteId,
           }));
       }
       supabaseMs += Date.now() - tSbHistStart;
@@ -1730,31 +1737,35 @@ export class ChatHandler {
 
       const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
       if (resultFeedbackReply) {
-        if (sb) {
-          const [assistantUpdate, userUpdate] = await Promise.all([
-            sb.from("messages").update({
-              content_ar: resultFeedbackReply,
-              clarification_items: null,
-              plan: null,
-              quote: null,
-            }).eq("id", assistantMsgId),
-            sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
-          ]);
-          if (assistantUpdate?.error) throw assistantUpdate.error;
-          if (userUpdate?.error) throw userUpdate.error;
-        } else {
-          await this.tables.updateRow({
-            databaseId: "digr",
-            tableId: "messages",
-            rowId: assistantMsgId,
-            data: { content: resultFeedbackReply, status: "ready" },
-          });
-          await this.tables.updateRow({
-            databaseId: "digr",
-            tableId: "messages",
-            rowId: userMsgId,
-            data: { requestStatus: "completed" },
-          });
+        try {
+          if (sb) {
+            const [assistantUpdate, userUpdate] = await Promise.all([
+              sb.from("messages").update({
+                content_ar: resultFeedbackReply,
+                clarification_items: null,
+                plan: null,
+                quote: null,
+              }).eq("id", assistantMsgId),
+              sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+            ]);
+            if (assistantUpdate?.error) throw assistantUpdate.error;
+            if (userUpdate?.error) throw userUpdate.error;
+          } else {
+            await this.tables.updateRow({
+              databaseId: "digr",
+              tableId: "messages",
+              rowId: assistantMsgId,
+              data: { content: resultFeedbackReply, status: "ready" },
+            });
+            await this.tables.updateRow({
+              databaseId: "digr",
+              tableId: "messages",
+              rowId: userMsgId,
+              data: { requestStatus: "completed" },
+            });
+          }
+        } catch (persistError) {
+          console.warn(`[chat:result_followup_persist_failed] reason=${toSafeReasonCode(persistError, "result_followup_persist")}`);
         }
         return {
           conversationId,
@@ -3177,6 +3188,36 @@ export class ChatHandler {
       if (err && typeof err === "object" && !err.chatStep) {
         err.chatStep = currentStep;
       }
+      const safeReason = toSafeReasonCode(err, currentStep);
+      console.warn(`[chat:handler_failed] step=${currentStep} reason=${safeReason}`);
+      const fallbackReply = buildResultFollowupReply(message, messagesContext, followupBrief);
+      if (fallbackReply && assistantMsgId && input.conversationId) {
+        try {
+          if (sb) {
+            await Promise.all([
+              sb.from("messages").update({ content_ar: fallbackReply, clarification_items: null, plan: null, quote: null }).eq("id", assistantMsgId),
+              sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+            ]);
+          } else {
+            await Promise.all([
+              this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: fallbackReply, status: "ready" } }),
+              this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } }),
+            ]);
+          }
+        } catch {
+          console.warn(`[chat:result_followup_fallback_persist_failed] reason=${safeReason}`);
+        }
+        return {
+          conversationId: input.conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: fallbackReply,
+          outputType: "answer_question",
+          intent: "research",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(input.conversationId, assistantMsgId, turnStartTime),
+        };
+      }
       if (userMsgId) {
         const customerError = sanitizeCustomerErrorMessage(err?.message || "تعذر إعداد الطلب.");
         try {
@@ -3195,7 +3236,7 @@ export class ChatHandler {
             });
           }
         } catch (historyError: any) {
-          console.warn("[chat:request_history_failure_write_failed]", historyError?.message || "unknown_error");
+          console.warn(`[chat:request_history_failure_write_failed] reason=${toSafeReasonCode(historyError, "request_history_failure_write")}`);
         }
       }
       throw err;
