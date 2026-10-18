@@ -14,6 +14,8 @@ const REQUEST_VERB = /(?:^|\s)(?:جيب|جيبلي|تجيبلي|تجبلي|لا�
 const REQUEST_OBJECT = /(?:تعليق|تعليقات|كومنت|كومنتس|كومنتات|تغريد|تويت|بوست|منشور|فيديو|فيديوهات|شرك|مدير|مديري|دراس|بحث|أبحاث|ابحاث|مقال|حساب|متابع|ايميل|إيميل|رقم|صناع|مصنع|مستشف|مطعم|مكتب|مورد|عملاء|جامع|دكتور|أطباء|اطباء|محامي)/;
 const TOPIC_MARKER = /(?:^|\s)(?:عن|حول|بخصوص|في|من|لدى|داخل)\s/;
 const PLAN_REFERENCE = /(?:الخطة|الخطه|العرض|السعر|عرض السعر|النقاط|الرصيد|الملف|الشيت|الاكسل|الإكسل|اللي فات|السابق)/;
+/** An answer to one of our questions (the card answers are stored as labelled text) never starts a new request. */
+const ANSWER_PREFIX = /^\s*(?:إجابة عن|الإجابة\s*:|الدولة المطلوبة\s*:|المجال المطلوب\s*:|عدد الشركات المطلوب\s*:|دولة صناع القرار المطلوبة\s*:|نطاق صناع القرار\s*:|المسميات الوظيفية المطلوبة\s*:|عدد صناع القرار المطلوب\s*:|اسم الحساب المطلوب\s*:|موضوع البحث المطلوب\s*:|منصة البحث المطلوبة\s*:|الفترة المطلوبة\s*:|المصدر المطلوب\s*:|إجابة هدف التواصل\s*:)/;
 const LEADING_COUNT_OBJECT = new RegExp(`^[0-9٠-٩]+\\s+\\S*${REQUEST_OBJECT.source}`);
 
 export function isClarificationAnswerPayload(text: string): boolean {
@@ -24,7 +26,7 @@ export function isClarificationAnswerPayload(text: string): boolean {
 /** A message that states its own research task: its own platform, or a request verb/count with an object and a topic. */
 export function isStandaloneResearchRequest(text: string): boolean {
   const t = (text || "").trim();
-  if (!t || isClarificationAnswerPayload(t)) return false;
+  if (!t || isClarificationAnswerPayload(t) || ANSWER_PREFIX.test(t)) return false;
   const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(t);
   if (isGreeting || isGeneralQuestion) return false;
   // "شركة" alone names the company database, not a platform: it does not make a fragment an independent request.

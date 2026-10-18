@@ -142,7 +142,7 @@ export function detectSocialIntent(text: string): SocialIntent {
   const wantsComments = COMMENT_WORDS_RE.test(body);
   const wantsTrending = TREND_WORDS_RE.test(body);
   const wantsPosts = POST_WORDS_RE.test(body);
-  const wantsXTweets = platform === "x" && X_POST_WORDS_RE.test(body);
+  const wantsXTweets = platform === "x" && (X_POST_WORDS_RE.test(body) || POST_WORDS_RE.test(body));
   const wantsVideos = VIDEO_WORDS_RE.test(body);
   const wantsChannel = CHANNEL_WORDS_RE.test(body);
   const targetUrl = urls.find((u) => u.kind === "video" || u.kind === "post") ?? null;

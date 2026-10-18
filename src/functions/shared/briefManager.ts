@@ -236,8 +236,12 @@ export function extractBriefFromCardAnswers(
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `منصة البحث المطلوبة: ${valToUse}`;
     } else if (qId === "social_time_required") {
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `الفترة المطلوبة: ${valToUse}`;
+    } else if (qId === "topic_source_required") {
+      // The source chosen for a studies / articles request decides the service; the choice is not a topic.
+      for (const p of detectMentionedPlatforms(valToUse)) if (!brief.platforms.includes(p)) brief.platforms.push(p);
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `المصدر المطلوب: ${valToUse}`;
     }
-    if (["company_country_required", "company_industry_required", "company_outreach_required", "company_count_required", "people_scope_required", "people_roles_required", "people_count_required", "social_account_required", "social_topic_required", "social_platform_required", "social_time_required"].includes(qId)) continue;
+    if (["company_country_required", "company_industry_required", "company_outreach_required", "company_count_required", "people_scope_required", "people_roles_required", "people_count_required", "social_account_required", "social_topic_required", "social_platform_required", "social_time_required", "topic_source_required"].includes(qId)) continue;
 
     // 1. Platform
     if (qId.includes("platform") || qText.includes("منصة")) {

@@ -6,6 +6,8 @@ import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
+import { detectTopicGathering, hasTopicResearchService, topicSourceQuestion } from "./topicGathering";
+import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
   getEnabledCapabilitiesWithCoreServices,
   getCatalogCapabilities,
@@ -99,6 +101,7 @@ function customerAuthoredRequirementText(message: string): string {
       social_topic_required: "موضوع البحث المطلوب",
       social_platform_required: "منصة البحث المطلوبة",
       social_time_required: "الفترة المطلوبة",
+      topic_source_required: "المصدر المطلوب",
     };
     return parsed.answers
       .flatMap((answer: any) => {
@@ -132,7 +135,7 @@ function hasExplicitPeopleScope(text: string): boolean {
   return /(?:نطاق صناع القرار\s*:|لدى|في\s+(?:شركة|شركات)|شركة محددة|اسم الشركات?|\b(?:company|companies|at)\s*[:=]?\s*)\s*\p{L}/iu.test(text);
 }
 
-export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
+export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief, capabilities: Capability[] = []): any | null {
   const normalized = text || "";
   const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
   const isPeople = isPeopleSearchRequest(normalized);
@@ -158,6 +161,9 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
   if (!isAccount && !isPeople && !isCompanies) {
     const socialTaskIntent = detectSocialIntent(normalized);
     const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
+    // Studies / articles / news: no direct source exists, so ask ONE specific question that echoes the topic and country.
+    const topicGathering = !socialTaskIntent.task ? detectTopicGathering(normalized) : null;
+    if (topicGathering && !hasTopicResearchService(capabilities)) return topicSourceQuestion(topicGathering);
     if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
     // A request the verified social services understand is decided entirely by their own inputs (a link, a
     // channel, a country); the generic topic question below does not apply to it.
@@ -542,8 +548,8 @@ export function buildAutoPlanProposal(
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = peopleSearch
     ? "people"
-    : (brief.platforms && brief.platforms.length > 0)
-    ? brief.platforms[0]
+    : (brief.platforms && brief.platforms.some((p) => p !== "web"))
+    ? brief.platforms.find((p) => p !== "web")!
     : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "tiktok"));
   const platformNorm = platform.toLowerCase();
 
@@ -1834,7 +1840,7 @@ export class ChatHandler {
         };
       }
 
-      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief);
+      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
       if (requiredDiscoveryQuestion) {
         const intro = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
         const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
@@ -2027,7 +2033,8 @@ export class ChatHandler {
         llmMs += Date.now() - tLlmRepeatStart;
         output = llmResult.output;
       };
-      while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
+      const budgetLeft = () => turnBudgetLeftMs(turnStartTime);
+      while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         catalogIterations++;
         catalogSearchCount++;
         const tCatLoopStart = Date.now();
@@ -2069,7 +2076,7 @@ export class ChatHandler {
         if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim().length > 0;
         return o.type === "refuse" || o.type === "suggest_alternative" || o.type === "edit_plan" || o.type === "write_note";
       };
-      if (didSearch && !isProductiveTerminal(output)) {
+      if (didSearch && !isProductiveTerminal(output) && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         loopMessages.push(
           {
             role: "system",
@@ -2142,7 +2149,7 @@ export class ChatHandler {
       let answerCandidate = getEffectiveAnswerText(output);
       const isEndingColon = (t: string) => /[:：](\s*)$/.test(t);
 
-      if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
+      if (isEndingColon(answerCandidate) && !hasActiveTool(output) && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         // Retry once inside the turn
         loopMessages.push({
           role: "system",
@@ -2184,6 +2191,62 @@ export class ChatHandler {
         }
         return out;
       })();
+
+      // 7e. Stall guard. A reply that only announces a plan («هجهز لك خطة...») or a catalog loop cut short by the turn
+      // budget must never end the turn without a plan or ONE concrete question: retry once if time allows, then finish
+      // in code. (A provider outage keeps its honest «المساعد غير متاح» answer: real providers never fall back silently.)
+      {
+        const isStalled = () =>
+          output.type === "search_catalog" ||
+          (output.type === "answer_question" && isPlanAnnouncementOnly(((output as any).answerAr || "") as string));
+        const isResearchTurn = !isGreeting && !isGeneralQuestion && !isTestSearchScenario && !input.isGuest;
+        if (isResearchTurn && isStalled()) {
+          if (budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
+            loopMessages.push({
+              role: "system",
+              content:
+                "[تعليمات داخلية — أكمل الخطوة]: ردّك السابق أعلن عن خطة دون أن يستدعي أداة. استدعِ الآن propose_plan إن اكتملت المدخلات، أو ask_questions بسؤال واحد محدد. ممنوع الرد بنص فقط.",
+            } as const);
+            await repeatTurn();
+          }
+          if (isStalled()) {
+            const missingSocialInputs = socialIntent.task ? getMissingSocialTaskInputs(conversationRequestText) : [];
+            const verifiedSocialReady = Boolean(verifiedSocialCap) && Boolean(socialIntent.task) && missingSocialInputs.length === 0 &&
+              !shouldAskSocialTimeWindow(conversationRequestText);
+            const briefReady = brief.platforms.length > 0 && brief.topics.length > 0 &&
+              (Boolean(brief.targetVolume && brief.targetVolume > 0) || Boolean(brief.postCount && brief.commentsPerPost));
+            if (verifiedSocialReady || briefReady) {
+              clarificationItemsList = undefined;
+              clarificationQuestionsList = undefined;
+              output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
+              console.warn(`[chat:stall_guard] outcome=plan_from_code reason=no_tool_call`);
+            } else {
+              const one = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities) ||
+                buildCodeDiscoveryFallback(allCapabilities, conversationRequestText, false, brief).items[0] || null;
+              if (one) {
+                const normalizedOne = normalizeClarificationQuestions({ questions: [one] }, {
+                  capabilities: allCapabilities,
+                  userBalancePoints: userBalance,
+                  persona: userProfile?.persona,
+                })[0] || one;
+                clarificationItemsList = [normalizedOne];
+                clarificationQuestionsList = [normalizedOne.text || normalizedOne.question];
+                finalContentAr = deduplicateIntroText(
+                  budgetLeft() <= MIN_MODEL_CALL_BUDGET_MS ? SLOW_TURN_INTRO_AR : "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.",
+                );
+                output = {
+                  type: "ask_clarification",
+                  reasonAr: finalContentAr,
+                  intro: finalContentAr,
+                  questions: clarificationItemsList,
+                  questionsAr: clarificationQuestionsList,
+                } as any;
+                console.warn(`[chat:stall_guard] outcome=one_question reason=no_tool_call`);
+              }
+            }
+          }
+        }
+      }
 
       // The language model can incorrectly suggest an unrelated alternative for a
       // people-search request. Prefer the verified people capability when present.

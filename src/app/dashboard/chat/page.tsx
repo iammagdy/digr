@@ -600,7 +600,7 @@ export default function ChatWorkspacePage() {
       clearTimeout(timeoutId);
       const isTimeout = err.name === "AbortError";
       const errorContent = isTimeout
-        ? "استغرق المساعد وقتاً أطول من المتوقع (أكثر من 35 ثانية). يرجى الضغط على زر إعادة المحاولة."
+        ? "استغرق المساعد وقتًا أطول من المتوقع، ولم يُخصم أي رصيد. اضغط «إعادة المحاولة» أو أعد صياغة طلبك بتفاصيل أقل."
         : (err.message || "حدث خطأ غير متوقع في الاتصال. يرجى إعادة المحاولة.");
 
       setMessages((prev) => [
