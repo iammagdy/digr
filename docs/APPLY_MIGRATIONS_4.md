@@ -8,6 +8,8 @@ Proposal only. The author did NOT apply anything. Apply by hand, in this order, 
 |---|---|---|
 | 1 | `supabase/migrations/20261019100000_provider_limits.sql` | `provider_limits_audit` (append-only), the trigger that blocks UPDATE/DELETE on it, and `admin_set_provider_limits_atomic(uuid, jsonb)` (SECURITY DEFINER, service_role only, admin checked inside) |
 
+Items B (data extraction quality) and C (planning) of this change need no migration.
+
 It touches no money table (credit_ledger, jobs, topups, plans_quotes, provider_costs, profiles). It writes only the
 `provider_limits` row of the existing `settings_private` table.
 
