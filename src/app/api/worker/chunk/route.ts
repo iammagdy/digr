@@ -13,6 +13,12 @@ import {
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
 import { resultFileManifest } from "../../../../lib/server/resultFileManifest";
+import {
+  buildRejectedSample,
+  mergeRejectedSample,
+  REJECTED_SAMPLE_LIMIT,
+  type RejectedRowSampleEntry,
+} from "../../../../lib/server/rejectedRowSample";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
 import {
@@ -700,6 +706,34 @@ export async function POST(req: NextRequest) {
         console.log(
           `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry || "any"})`
         );
+      }
+
+      // Diagnosis only: keep a small masked sample of what the gate rejected, with reason codes. It is written
+      // before any release path so a job whose rows were all rejected still leaves evidence, and a failure
+      // here can never change the delivery, the charge or the chunk result.
+      if (excludedRows.length > 0) {
+        try {
+          const samplePath = `${jobId}/rejected_sample.json`;
+          const partialsStore = adminClient.storage.from("partials");
+          let stored: RejectedRowSampleEntry[] = [];
+          if (typeof partialsStore.download === "function") {
+            const { data: blob } = await partialsStore.download(samplePath);
+            if (blob) {
+              const parsed = JSON.parse(typeof blob.text === "function" ? await blob.text() : String(blob));
+              if (Array.isArray(parsed?.sample)) stored = parsed.sample;
+            }
+          }
+          if (stored.length < REJECTED_SAMPLE_LIMIT) {
+            const sample = mergeRejectedSample(stored, buildRejectedSample(excludedRows));
+            await partialsStore.upload(
+              samplePath,
+              Buffer.from(JSON.stringify({ jobId, limit: REJECTED_SAMPLE_LIMIT, sample }), "utf-8"),
+              { contentType: "application/json", upsert: true }
+            );
+          }
+        } catch {
+          // Best effort: the sample is for diagnosis and must not affect the job.
+        }
       }
 
     }

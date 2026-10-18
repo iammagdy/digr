@@ -5,6 +5,9 @@ import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
 import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
 import { normalizeEasternArabicDigits } from "@/lib/arabicNumbers";
+import { onRequestFormats, producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
+
+const FORMAT_LABEL_AR: Record<ResultFormat, string> = { xlsx: "إكسل", pdf: "بي دي إف", csv: "سي إس في" };
 
 export interface TerminalEvent {
   $id: string;
@@ -25,6 +28,8 @@ interface ActivityTerminalProps {
   errorAr?: string;
   onClose?: () => void;
   onDownload?: (ext: "xlsx" | "pdf" | "csv") => void;
+  /** Stored file ids of the finished job; a missing id means that format was not produced. */
+  fileIds?: ResultFileIds | null;
 }
 
 const clock = (iso?: string) => {
@@ -77,6 +82,7 @@ export default function ActivityTerminal({
   errorAr,
   onClose,
   onDownload,
+  fileIds,
 }: ActivityTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAutoScrollActive = useRef(true);
@@ -282,28 +288,32 @@ export default function ActivityTerminal({
         <div className="shrink-0 border-t border-ln bg-sf2 p-3.5">
           <div className="text-xs text-mut mb-2 font-medium">الملفات الجاهزة للتحميل:</div>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => onDownload("xlsx")}
-              className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
-            >
-              تحميل Excel
-            </button>
-            <button
-              type="button"
-              onClick={() => onDownload("pdf")}
-              className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
-            >
-              تحميل PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => onDownload("csv")}
-              className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
-            >
-              تحميل CSV
-            </button>
+            {producedFormats(fileIds).map((ext) => (
+              <button
+                key={ext}
+                type="button"
+                onClick={() => onDownload(ext)}
+                className="flex-1 min-h-11 cursor-pointer rounded-full border border-ln2 bg-sf px-3.5 text-xs font-medium text-ink hover:bg-sf2 transition-colors"
+              >
+                {`تحميل ${FORMAT_LABEL_AR[ext]}`}
+              </button>
+            ))}
           </div>
+          {onRequestFormats(fileIds).length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-[11px] text-mut">تُجهَّز عند الطلب:</span>
+              {onRequestFormats(fileIds).map((ext) => (
+                <button
+                  key={ext}
+                  type="button"
+                  onClick={() => onDownload(ext)}
+                  className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-3 text-[11px] text-ink hover:bg-sf transition-colors"
+                >
+                  {`جهّز ${FORMAT_LABEL_AR[ext]}`}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

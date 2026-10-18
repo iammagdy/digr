@@ -127,7 +127,8 @@ interface ActiveJobState {
   review?: ResultReview | null;
   reviewSeverity?: ReviewSeverity;
   artifactVersion?: { id: string; versionNum: number; rowCount: number } | null;
-  fileIds?: { xlsx: string; pdf: string; csv: string };
+  /** A missing id means that format was not produced for this job. */
+  fileIds?: { xlsx?: string | null; pdf?: string | null; csv?: string | null } | null;
   versionHistory?: Array<{ id: string; versionNum: number; parentVersionId?: string | null; rowCount: number; isOriginal: boolean }>;
   artifactHistoryAvailable?: boolean;
 }
@@ -1095,6 +1096,11 @@ export default function ChatWorkspacePage() {
         // Fall back to direct signed URL navigation
       }
 
+      // The download route saves a format made on request; it is now one of this job's ready files.
+      setActiveJob((previous) => previous && previous.jobId === activeJob.jobId
+        ? { ...previous, fileIds: { ...(previous.fileIds || { xlsx: "ready" }), [ext]: "ready" } }
+        : previous);
+
       if (blobUrl) {
         const link = document.createElement("a");
         link.href = blobUrl;
@@ -1565,6 +1571,7 @@ export default function ChatWorkspacePage() {
           requested={activeJob.requestedRows}
           charged={activeJob.chargedCredits}
           reserved={activeJob.reservedCredits}
+          fileIds={activeJob.fileIds}
           downloadingKey={downloadingKey}
           onDownload={handleDownload}
           onOpenCanvas={() => setCanvasOpen((v) => !v)}
@@ -1718,6 +1725,7 @@ export default function ChatWorkspacePage() {
               chargedPoints={activeJob?.chargedCredits}
               errorAr={activeJob?.status === "failed" ? undefined : activeJob?.errorAr}
               onDownload={handleDownload}
+              fileIds={activeJob?.fileIds}
               downloadingKey={downloadingKey}
               onExplainMethodology={handleExplainMethodology}
               onRequestDocxMethodology={handleGenerateMethodology}

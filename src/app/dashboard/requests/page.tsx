@@ -468,7 +468,7 @@ export default function RequestsPage() {
                     className="flex min-h-11 cursor-pointer items-center gap-1.5 rounded-full border border-ln2 bg-transparent px-3.5 text-xs text-ink disabled:opacity-60"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={DL_ICON} /></svg>
-                    {ext === "xlsx" ? "Excel" : ext.toUpperCase()}
+                    {ext === "xlsx" ? "إكسل" : ext === "pdf" ? "بي دي إف" : "سي إس في"}
                   </button>
                 ))}
                 <button

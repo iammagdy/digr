@@ -2,27 +2,32 @@
 
 import { formatAr } from "@/lib/arabicDigits";
 import { sanitizeActivityError } from "@/functions/shared/liveActivityFeed";
+import { onRequestFormats, producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
 
-const FILES = [
-  { ext: "xlsx" as const, name: "Excel", desc: "البيانات + الدليل المنهجي" },
-  { ext: "pdf" as const, name: "PDF", desc: "ملخص تنفيذي" },
-  { ext: "csv" as const, name: "CSV", desc: "بيانات جدولية" },
-];
+// Excel holds the data only; the methodology is its own Arabic PDF.
+const FILES: Record<ResultFormat, { name: string; desc: string; requestLabel: string }> = {
+  xlsx: { name: "إكسل", desc: "جدول البيانات فقط", requestLabel: "جهّز ملف إكسل" },
+  pdf: { name: "بي دي إف", desc: "الدليل المنهجي", requestLabel: "جهّز ملف بي دي إف" },
+  csv: { name: "سي إس في", desc: "بيانات جدولية", requestLabel: "جهّز ملف سي إس في" },
+};
 
-
-/** Design «الملفات»: delivery summary + Excel / PDF / CSV. Numbers come from the finished job, never from the quote. */
+/** Design «الملفات»: delivery summary + the files this request produced. Other formats are made on request from the saved data. Numbers come from the finished job, never from the quote. */
 export function FilesSection({
-  rows, requested, charged, reserved, downloadingKey, onDownload, onOpenCanvas, canvasOpen,
+  rows, requested, charged, reserved, fileIds, downloadingKey, onDownload, onOpenCanvas, canvasOpen,
 }: {
   rows: number;
   requested?: number;
   charged?: number;
   reserved?: number;
+  /** Stored file ids of the finished job; a missing id means that format was not produced. */
+  fileIds?: ResultFileIds | null;
   downloadingKey: string | null;
-  onDownload: (ext: "xlsx" | "pdf" | "csv") => void;
+  onDownload: (ext: ResultFormat) => void;
   onOpenCanvas: () => void;
   canvasOpen: boolean;
 }) {
+  const ready = producedFormats(fileIds);
+  const onRequest = onRequestFormats(fileIds);
   return (
     <div style={{ animation: "up .6s both" }}>
       <p className="mb-0 mt-3 text-sm font-light leading-[1.9] text-ink">
@@ -30,19 +35,36 @@ export function FilesSection({
         {typeof charged === "number" && <> — تم خصم {formatAr(charged)} نقطة.</>}
       </p>
       <div className="mt-4 grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,180px),1fr))" }}>
-        {FILES.map((f) => (
+        {ready.map((ext) => (
           <button
-            key={f.ext} type="button" onClick={() => onDownload(f.ext)} disabled={downloadingKey !== null}
+            key={ext} type="button" onClick={() => onDownload(ext)} disabled={downloadingKey !== null}
             className="flex min-h-14 cursor-pointer items-center justify-between gap-2.5 rounded-xl border border-ln bg-sf px-3.5 text-right disabled:cursor-wait disabled:opacity-60"
           >
             <span>
-              <span className="block text-[13px] font-semibold text-ink">{f.name}</span>
-              <span className="block text-[11px] font-light text-fnt">{f.desc}</span>
+              <span className="block text-[13px] font-semibold text-ink">{FILES[ext].name}</span>
+              <span className="block text-[11px] font-light text-fnt">{FILES[ext].desc}</span>
             </span>
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sf2 text-xs text-ink">↓</span>
           </button>
         ))}
       </div>
+      {onRequest.length > 0 && (
+        <div className="mt-3">
+          <p className="m-0 text-[11px] font-light leading-[1.9] text-fnt">
+            صيغ أخرى تُجهَّز عند الطلب من البيانات المحفوظة، دون أي تكلفة إضافية:
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {onRequest.map((ext) => (
+              <button
+                key={ext} type="button" onClick={() => onDownload(ext)} disabled={downloadingKey !== null}
+                className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[12px] text-ink disabled:cursor-wait disabled:opacity-60"
+              >
+                {FILES[ext].requestLabel}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <button
         type="button" onClick={onOpenCanvas} aria-expanded={canvasOpen} aria-controls="results-canvas"
         className="mt-3 min-h-11 min-w-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink"
