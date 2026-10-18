@@ -39,21 +39,21 @@ export async function POST(req: NextRequest) {
   if (body?.action === "replace") {
     const outcome = await replaceProviderKey({ client }, { adminId, provider, newKey: body?.key });
     if (outcome.ok) await auth.ctx.audit("key", `تغيير مفتاح ${PROVIDER_LABEL_AR[provider]}`, `${provider} · ينتهي بـ ${outcome.last4 ?? "—"}`, { targetType: "provider_key", targetId: provider });
-    return NextResponse.json({ success: outcome.ok, reason: outcome.reason, message: outcome.messageAr }, { status: outcome.status });
+    return NextResponse.json({ success: outcome.ok, reason: outcome.reason, message: outcome.messageAr, ...(outcome.ok ? {} : { error: outcome.messageAr }) }, { status: outcome.status });
   }
 
   if (body?.action === "rollback") {
     const outcome = await rollbackProviderKey({ client }, { adminId, provider });
     if (outcome.ok) await auth.ctx.audit("key", `رجوع إلى المفتاح السابق لـ ${PROVIDER_LABEL_AR[provider]}`, `${provider} · ينتهي بـ ${outcome.last4 ?? "—"}`, { targetType: "provider_key", targetId: provider });
-    return NextResponse.json({ success: outcome.ok, reason: outcome.reason, message: outcome.messageAr }, { status: outcome.status });
+    return NextResponse.json({ success: outcome.ok, reason: outcome.reason, message: outcome.messageAr, ...(outcome.ok ? {} : { error: outcome.messageAr }) }, { status: outcome.status });
   }
 
   if (body?.action === "settings") {
     if (provider !== "treg") return NextResponse.json({ error: "هذه الإعدادات لمزود البيانات فقط." }, { status: 400 });
     const parsed = validateSettingsInput({ lowBalanceThresholdUsd: body?.lowBalanceThresholdUsd, tregOrgId: body?.tregOrgId });
-    if (!parsed.ok) return NextResponse.json({ success: false, message: parsed.messageAr }, { status: 400 });
+    if (!parsed.ok) return NextResponse.json({ success: false, message: parsed.messageAr, error: parsed.messageAr }, { status: 400 });
     const saved = await saveProviderKeySettings(client, parsed.value);
-    if (!saved) return NextResponse.json({ success: false, message: MSG.failed }, { status: 500 });
+    if (!saved) return NextResponse.json({ success: false, message: MSG.failed, error: MSG.failed }, { status: 500 });
     await auth.ctx.audit("setting", "تعديل إعدادات مزود البيانات", `${Object.keys(parsed.value).join("، ")}`, { targetType: "provider_settings", targetId: provider });
     return NextResponse.json({ success: true, message: "تم حفظ الإعدادات." });
   }

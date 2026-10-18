@@ -20,9 +20,15 @@ export interface AdminAlerts {
   failedJobs: Array<{ id: string; reservedCredits: number; createdAt: string }>;
   failedTotal: number;
 }
+/** Result of a real authenticated provider call (never a flag). */
+export interface ProviderHealth { ok: boolean; reason: string; httpStatus: number | null; statusClass: string; latencyMs: number | null; checkedAt: string }
 export interface ProviderStatus {
-  llm: { enabled: boolean; provider: string; model: string; keyEnv: string; modelEnv: string; keyConfigured: boolean; keyLast4: string | null; lastUsage: string | null; fallbackReason: string | null; callsToday: number; costTodayEgp: number };
-  treg: { live: boolean; tokenConfigured: boolean; tokenLast4: string | null; baseUrl: string; lastCall: string | null; callsToday: number };
+  llm: { enabled: boolean; provider: string; model: string; keyEnv: string; modelEnv: string; keyConfigured: boolean; keyLast4: string | null; keySource?: string; health?: ProviderHealth; lastUsage: string | null; fallbackReason: string | null; callsToday: number; costTodayEgp: number };
+  treg: {
+    live: boolean; tokenConfigured: boolean; tokenLast4: string | null; keySource?: string; health?: ProviderHealth;
+    balance?: { available: boolean; balanceUsd?: number; unavailableReason?: string; checkedAt: string };
+    thresholdUsd?: number; lowBalance?: boolean; baseUrl: string; lastCall: string | null; callsToday: number;
+  };
 }
 
 interface AdminCtx {
@@ -164,11 +170,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
   );
   const ctx = useMemo<AdminCtx>(() => ({ range, setRange, alerts, providers, refresh, isMobile: mobile, pendingOpenTopup, setPendingOpenTopup, toast }), [range, setRange, alerts, providers, refresh, mobile, pendingOpenTopup, toast]);
 
-  const llmDot = providers ? (providers.llm.enabled && providers.llm.provider !== "fake" ? "var(--ok)" : providers.llm.enabled ? "var(--gold)" : "var(--bad)") : "var(--ln2)";
-  const tregDot = providers ? (providers.treg.live ? "var(--ok)" : "var(--bad)") : "var(--ln2)";
-  const PROVIDER_LABEL: Record<string, string> = { anthropic: "Anthropic", openai: "OpenAI", fake: "وضع تجريبي" };
-  const llmShort = providers ? (providers.llm.enabled ? PROVIDER_LABEL[providers.llm.provider] ?? providers.llm.provider : "متوقف") : "…";
-  const tregShort = providers ? (providers.treg.live ? "مباشر" : "متوقف") : "…";
+  // The dots come from a real authenticated call to each provider (cached 60 s on the server), not from a flag.
+  const llmDot = !providers ? "var(--ln2)" : !providers.llm.enabled ? "var(--bad)" : providers.llm.provider === "fake" ? "var(--gold)" : providers.llm.health ? (providers.llm.health.ok ? "var(--ok)" : "var(--bad)") : "var(--ln2)";
+  const tregDot = !providers ? "var(--ln2)" : providers.treg.health ? (providers.treg.health.ok ? (providers.treg.lowBalance ? "var(--gold)" : "var(--ok)") : "var(--bad)") : "var(--ln2)";
+  const llmShort = !providers ? "…" : !providers.llm.enabled ? "متوقف" : providers.llm.provider === "fake" ? "وضع تجريبي" : providers.llm.health ? (providers.llm.health.ok ? "متصل فعليًا" : "لا يستجيب") : "…";
+  const tregShort = !providers ? "…" : providers.treg.health ? (providers.treg.health.ok ? (providers.treg.lowBalance ? "رصيد منخفض" : "متصل فعليًا") : "لا يستجيب") : "…";
 
   const navItems = ADMIN_PAGES.map(([id, label]) => ({ id, label, icon: ADMIN_IC[id], on: page === id, badge: id === "topups" ? pendingCount : 0 }));
   const bottom: Array<{ id: string; label: string; icon: string; on: boolean; badge: number; go: () => void }> = [
