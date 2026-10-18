@@ -6,7 +6,7 @@
  * source answered, with a readable date, and no raw provider column names.
  */
 
-export type SocialRowKind = "comments" | "videos";
+export type SocialRowKind = "comments" | "videos" | "posts";
 
 /** Lower-cased key without separators, so `Digg_Count`, `diggCount` and `digg count` are the same key. */
 function squash(key: string): string {
@@ -129,12 +129,35 @@ export function normalizeSocialVideo(raw: Record<string, any>): Record<string, a
   });
 }
 
+/** Fixed public-post schema for X and other post-search sources; provider-native keys stay internal. */
+export function normalizeSocialPost(raw: Record<string, any>): Record<string, any> {
+  return clean({
+    source_id: text(pick(raw, ["tweet_id", "post_id", "postId", "id_str", "id", "source_id"])),
+    text: text(pick(raw, ["text", "full_text", "fullText", "content", "post_text", "tweet_text", "caption", "description"])),
+    author_name: text(pick(raw, ["author_name", "authorName", "author", "nickname", "display_name", "name"])),
+    username: handle(pick(raw, ["author_username", "authorUsername", "username", "screen_name", "handle"])),
+    published_at: toIsoDate(pick(raw, ["published_at", "publishedAt", "created_at", "createdAt", "createdUtc", "created_utc", "date", "timestamp"])),
+    likes_count: parseCount(pick(raw, ["likes", "like_count", "likeCount", "likesCount"])),
+    retweets_count: parseCount(pick(raw, ["retweets", "retweet_count", "retweetCount", "shares", "shares_count"])),
+    replies_count: parseCount(pick(raw, ["replies", "reply_count", "replyCount", "replies_count"])),
+    quotes_count: parseCount(pick(raw, ["quotes", "quote_count", "quoteCount", "quotes_count"])),
+    views_count: parseCount(pick(raw, ["views", "view_count", "viewCount", "views_count"])),
+    followers_count: parseCount(pick(raw, ["authorFollowers", "followers", "followers_count", "follower_count"])),
+    is_reply: bool(pick(raw, ["is_reply", "isReply"])),
+    language: text(pick(raw, ["lang", "language"])),
+    url: link(pick(raw, ["url", "permalink", "tweet_url", "post_url", "link"])),
+  });
+}
+
 export function normalizeSocialRow(kind: SocialRowKind, raw: Record<string, any>): Record<string, any> {
-  return kind === "comments" ? normalizeSocialComment(raw) : normalizeSocialVideo(raw);
+  if (kind === "comments") return normalizeSocialComment(raw);
+  if (kind === "posts") return normalizeSocialPost(raw);
+  return normalizeSocialVideo(raw);
 }
 
 /** Column order shown to the customer (only the columns that carry a value are kept). */
 export const SOCIAL_COLUMN_ORDER: Record<SocialRowKind, string[]> = {
   comments: ["id", "comment_text", "author_name", "username", "published_at", "likes_count", "replies_count", "url", "video_title", "video_url", "pinned", "hearted_by_creator", "source_id"],
   videos: ["id", "video_caption", "channel_name", "username", "published_at", "views_count", "likes_count", "comments_count", "shares_count", "saves_count", "video_duration", "hashtags", "url", "source_id"],
+  posts: ["id", "text", "author_name", "username", "published_at", "likes_count", "retweets_count", "replies_count", "quotes_count", "views_count", "followers_count", "language", "is_reply", "url", "source_id"],
 };

@@ -102,7 +102,7 @@ import { hasRecognizedProviderResultShape, setProviderAdapterForTesting } from "
 import { jobIdForQuote } from "../src/lib/server/retryReuse";
 
 const JOB = jobIdForQuote("quote_events");
-const tweet = (id: string, extra: Record<string, unknown> = {}) => ({ tweet_id: id, text: `نص ${id}`, ...extra });
+const tweet = (id: string, extra: Record<string, unknown> = {}) => ({ tweet_id: id, text: `نص ${id} عن AI Trends`, ...extra });
 
 function resetDb(params: Record<string, unknown> = { query: "AI Trends" }, target = 20, createdSecondsAgo = 30) {
   db.jobs = [{ id: JOB, user_id: "user_1", status: "running", step: 0, current_cursor: null, delivered_units: 0, target_volume_max: target, created_at: new Date(Date.now() - createdSecondsAgo * 1000).toISOString(), updated_at: new Date().toISOString() }];

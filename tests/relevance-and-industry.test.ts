@@ -59,8 +59,8 @@ describe("other recognized sectors", () => {
   });
 
   it("does not treat a broad Utilities label as an electricity match without corroborating evidence", () => {
-    expect(evaluateDeterministicRelevance(row("Utilities", { description: "Water treatment and chemical supplies" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("uncertain");
-    expect(evaluateDeterministicRelevance(row("Utilities", { company_name: "Lucky Patcher", description: "Hack Android games and apps" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("uncertain");
+    expect(evaluateDeterministicRelevance(row("Utilities", { description: "Water treatment and chemical supplies" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("no_match");
+    expect(evaluateDeterministicRelevance(row("Utilities", { company_name: "Lucky Patcher", description: "Hack Android games and apps" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("no_match");
     expect(evaluateDeterministicRelevance(row("Utilities", { description: "Electric power grid maintenance services" }), "Egypt", "الكهرباء والطاقة الكهربائية").decision).toBe("match");
   });
 });

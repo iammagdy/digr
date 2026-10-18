@@ -9,6 +9,8 @@ import {
   generateDynamicCodebook,
   normalizeDataset,
 } from "../src/lib/server/normalizationPipeline";
+import ExcelJS from "exceljs";
+import { generateExcelReport } from "../src/functions/shared/fileGenerators";
 
 describe("Data Normalization Pipeline Suite", () => {
   describe("1. Security: Formula Injection Sanitization", () => {
@@ -207,6 +209,48 @@ describe("Data Normalization Pipeline Suite", () => {
   });
 
   describe("7. End-to-End Dataset Normalization", () => {
+    it("normalizes X post source fields into Arabic columns and readable dates", () => {
+      const norm = normalizeDataset({
+        metadata: { socialKind: "posts", platform: "x", collectedAt: "2026-10-18T00:00:00Z" },
+        rows: [{
+          id: "post-1", text: "Basketball game", authorName: "Public account", authorUsername: "hoops",
+          authorFollowers: 24, authorId: "123", authorImage: "https://example.test/avatar.jpg", authorVerified: true,
+          bookmarkCount: 2, conversationId: "456", createdUtc: 1792308962, inReplyToId: "0", isReply: false,
+          lang: "en", likeCount: 5, media: "{}", quoteCount: 1, replyCount: 3, retweetCount: 4, viewCount: 99,
+        }],
+      });
+
+      expect(norm.metadata.entityType).toBe("posts");
+      expect(norm.rows[0].published_at).toBe("2026-10-18");
+      expect(norm.rows[0].likes_count).toBe(5);
+      expect(norm.rows[0].retweets_count).toBe(4);
+      expect(norm.columns).not.toContain("authorName");
+      expect(norm.columns).not.toContain("likeCount");
+      expect(norm.columns.every((column) => norm.codebook.find((item) => item.field === column)?.titleAr)).toBe(true);
+    });
+
+    it("generates one Arabic-only sheet for X posts without raw camelCase headers", async () => {
+      const buffer = await generateExcelReport({
+        metadata: { socialKind: "posts", platform: "x", title: "منشورات منصة إكس", collectedAt: "2026-10-18T00:00:00Z" },
+        rows: [{ text: "Basketball game", authorName: "Public account", createdUtc: 1792308962, likeCount: 5, retweetCount: 4 }],
+      });
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as any);
+      expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات"]);
+      const headers = ((workbook.worksheets[0].getRow(1).values as any[]).slice(1)).map(String);
+      expect(headers).toContain("نص المحتوى");
+      expect(headers).toContain("الاسم المعروض");
+      expect(headers.join(" ")).not.toMatch(/author_name|likeCount|retweetCount/i);
+    });
+
+    it("classifies company records as companies even if provider rows contain contact columns", () => {
+      const norm = normalizeDataset({
+        metadata: { entityType: "people", template: "icypeas.companies.search" },
+        rows: [{ company_name: "Power Co", contact_name: "", job_title: "", industry: "Utilities" }],
+      });
+      expect(norm.metadata.entityType).toBe("companies");
+    });
+
     it("successfully transforms raw multi-modal payload into research deliverable structure", () => {
       const rawPayload = {
         metadata: {

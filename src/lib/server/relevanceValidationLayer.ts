@@ -61,8 +61,16 @@ export function evaluateDeterministicRelevance(
   // other service businesses. Require corroborating electrical/power evidence before delivering
   // such a row for an electricity request; otherwise keep it visible for review without charging.
   if (targetIndustryAr.toLowerCase().includes("الكهرباء") && rowInd === "utilities") {
+    const clearlyUnrelated =
+      /water treatment|chemical supplies|perimeter fencing|fencing|android game|game hacking|تهكير ألعاب|معالجة المياه|الأسوار|سياج/u.test(rowText);
+    if (clearlyUnrelated) {
+      return {
+        decision: "no_match",
+        reasonAr: "وصف النشاط يوضح مجالاً مختلفاً عن الكهرباء؛ استُبعد السجل ولم يُحتسب",
+      };
+    }
     const hasElectricalEvidence =
-      /\b(electric(?:al|ity)?|power|grid|utility)\b/.test(rowText) ||
+      /\b(electric(?:al|ity)?|power|grid)\b/.test(rowText) ||
       /كهربا|طاقة كهربائية|شبكة الكهرباء/u.test(rowText);
     if (!hasElectricalEvidence) {
       return {

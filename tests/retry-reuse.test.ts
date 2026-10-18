@@ -104,7 +104,7 @@ import { setProviderAdapterForTesting } from "../src/lib/server/tregAdapter";
 const PREV_JOB = jobIdForQuote("quote_old");
 const NEW_JOB = jobIdForQuote("quote_new");
 
-const tweet = (id: string) => ({ tweet_id: id, text: `نص ${id}` });
+const tweet = (id: string) => ({ tweet_id: id, text: `نص ${id} عن AI Trends` });
 const putStep = (jobId: string, step: number, rows: any[], extra: Record<string, unknown> = {}) =>
   db.partials.set(`${jobId}/step_${step}.json`, Buffer.from(JSON.stringify({ jobId, step, rows, rawRowsCount: rows.length, ...extra })));
 
@@ -346,7 +346,7 @@ describe("worker: retried job fetches only the deficit", () => {
     let asked = -1;
     setProviderAdapterForTesting(async (input) => {
       asked = input.remainingNeeded;
-      return { ok: true, httpStatus: 200, rows: Array.from({ length: 10 }, (_, i) => tweet(`fresh_${i + 1}`)), nextCursor: null, costUsd: 0.01, costMicro: 10000, tregCallId: "call_3" };
+      return { ok: true, httpStatus: 200, rows: Array.from({ length: 10 }, (_, i) => ({ tweet_id: `fresh_${i + 1}`, text: `Another subject fresh_${i + 1}` })), nextCursor: null, costUsd: 0.01, costMicro: 10000, tregCallId: "call_3" };
     });
 
     const { json } = await callWorker();

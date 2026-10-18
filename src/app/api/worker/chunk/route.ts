@@ -35,7 +35,7 @@ import {
   detectIndustryFromText,
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
-import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
+import { evaluateResearchRowRelevance } from "../../../../lib/server/researchRelevanceGate";
 import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
@@ -623,7 +623,7 @@ export async function POST(req: NextRequest) {
     let relevanceExcludedCount = 0;
     let relevanceSkipReasons: string[] = [];
 
-    if (isCompanyCapability && Array.isArray(filteredRows) && filteredRows.length > 0) {
+    if (Array.isArray(filteredRows) && filteredRows.length > 0) {
       const fullText = [
         spec.params?.search,
         spec.params?.query,
@@ -644,26 +644,27 @@ export async function POST(req: NextRequest) {
         detectCountryFromText(fullText);
 
       const expectedCountry = targetCountryObj?.canonicalEnglish || null;
-      const expectedIndustry = detectIndustryFromText(fullText);
+      const expectedIndustry = isCompanyCapability
+        ? String(spec.params?.industry || detectIndustryFromText(fullText).arabicLabel)
+        : "";
 
-      const candidateRowsForReview = filteredRows.map((r: any, idx: number) => ({
+      // The row gate is deterministic and runs for every capability before acceptedRows
+      // is counted, saved, or charged. LLM classification is intentionally not on this
+      // billing path: it may advise separately but cannot increase delivered units.
+      const reviews = filteredRows.map((row: any, idx: number) => ({
         index: idx,
-        id: r.id || `comp_${idx + 1}`,
-        company_name: r.company_name || r.name,
-        industry: r.industry,
-        description: r.description,
-        location: r.location || r.city || r.country,
-        website: r.website || r.url,
+        ...evaluateResearchRowRelevance(row, {
+          capabilitySlug: spec.capabilitySlug,
+          endpointId: spec.endpointId,
+          params: {
+            ...(spec.params || {}),
+            ...(isCompanyCapability ? {
+              country: spec.params?.country || expectedCountry || "",
+              industry: expectedIndustry,
+            } : {}),
+          },
+        }),
       }));
-
-      const reviews = await reviewCompanyBatch({
-        customerRequest: fullText || spec.params?.search || "",
-        // An omitted country must stay omitted. Never silently classify the
-        // customer's request as Egypt when the brief has no geographic scope.
-        targetCountry: expectedCountry || "",
-        targetIndustryAr: expectedIndustry.arabicLabel,
-        rows: candidateRowsForReview,
-      });
 
       const matchedRows: any[] = [];
       const excludedRows: any[] = [];
@@ -685,7 +686,7 @@ export async function POST(req: NextRequest) {
 
       if (excludedRows.length > 0 || uncertainRows.length > 0) {
         console.log(
-          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry.arabicLabel})`
+          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry || "any"})`
         );
       }
 

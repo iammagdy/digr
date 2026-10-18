@@ -6,10 +6,13 @@ type DateRangeFilterResult<T> = {
 const DATE_FIELDS = [
   "published_at",
   "publishedAt",
+  "published_date",
   "create_time",
   "createTime",
   "created_at",
   "createdAt",
+  "createdUtc",
+  "created_utc",
   "timestamp",
   "date",
 ];
