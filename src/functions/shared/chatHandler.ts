@@ -1,4 +1,5 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
+import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
@@ -1407,6 +1408,32 @@ export class ChatHandler {
         messageId: assistantMsgId,
         role: "assistant",
         contentAr: greeting,
+        outputType: "answer_question",
+        intent: "chat",
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+      };
+    }
+
+    // «إنت مين؟» and questions about the technology behind the assistant are answered by code: fixed identity, no
+    // model turn, and the technology vendor is never named.
+    const identityKind = !isTestSearchScenario ? identityQuestionKind(message) : null;
+    if (identityKind) {
+      const answer = identityAnswerAr(identityKind);
+      if (sb) {
+        await Promise.all([
+          sb.from("messages").update({ content_ar: answer }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+        ]);
+      } else {
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: answer, status: "ready" } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: answer,
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
@@ -2965,7 +2992,7 @@ export class ChatHandler {
 
       // 9. Update Assistant Message to 'ready'
       currentStep = "assistant_message_save";
-      finalContentAr = deduplicateIntroText(finalContentAr);
+      finalContentAr = scrubAssistantIdentity(deduplicateIntroText(finalContentAr));
       const tSbMsgUpdateStart = Date.now();
       if (sb) {
         const { error: msgUpdateErr } = await sb
