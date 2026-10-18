@@ -4,6 +4,7 @@ import { createServerSideClient, createAdminClient } from "@/lib/supabase/server
 import { applyTopup, getBalance } from "@/lib/supabase/ledger";
 import { sendPlatformEmail, getRecipient } from "@/lib/server/sendPlatformEmail";
 import { normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
+import { callAtomicOrFallback } from "@/functions/shared/atomicRpc";
 
 export const dynamic = "force-dynamic";
 
@@ -72,38 +73,39 @@ export async function POST(req: NextRequest) {
     const egp = (n: number) => `${toArabicDigits(Math.round(n))} ج.م`;
 
     if (action === "approve") {
-      // 3. Read credit price from settings_public
-      const { data: settingsPub } = await adminClient
-        .from("settings_public")
-        .select("value")
-        .eq("key", "pricing")
-        .maybeSingle();
-
-      const creditValueEgp = Number(settingsPub?.value?.creditValueEgp) || 0.1;
       const effectiveAmount = confirmedAmountEgp || Number(topup.amount_egp);
-      const credits = Math.floor(effectiveAmount / creditValueEgp);
-
-      // 4. Create deterministic ledger entry: top_<topupId> via service_role
-      await applyTopup(
-        adminClient,
-        topup.user_id,
-        topupId,
-        credits,
-        `شحن عبر انستاباي (مرجع: ${topup.reference})`
-      );
-
-      // 5. Update topup status to approved
-      await adminClient
-        .from("topups")
-        .update({ status: "approved" })
-        .eq("id", topupId);
+      const approval = await callAtomicOrFallback<any>({
+        rpc: () => Promise.resolve(adminClient.rpc("approve_topup_atomic", {
+          p_topup_id: topupId,
+          p_confirmed_amount_egp: confirmedAmountEgp ?? null,
+        })),
+        functionName: "approve_topup_atomic",
+        fallback: async () => {
+          const { data: settingsPub } = await adminClient.from("settings_public")
+            .select("value").eq("key", "pricing").maybeSingle();
+          const creditValueEgp = Number(settingsPub?.value?.creditValueEgp) || 0.1;
+          const credits = Math.floor(effectiveAmount / creditValueEgp);
+          await applyTopup(adminClient, topup.user_id, topupId, credits,
+            `شحن عبر انستاباي (مرجع: ${topup.reference})`);
+          const { error: statusError } = await adminClient.from("topups")
+            .update({ status: "approved" }).eq("id", topupId);
+          if (statusError) throw statusError;
+          return { success: true, credits, effective_amount_egp: effectiveAmount };
+        },
+        log: (line) => console.warn(line),
+      });
+      if (!approval.data?.success) {
+        return NextResponse.json({ success: false, error: "تعذر اعتماد طلب الشحن" }, { status: 409 });
+      }
+      const credits = Number(approval.data.credits) || 0;
+      const confirmedAmount = Number(approval.data.effective_amount_egp ?? effectiveAmount);
 
       // 6. User notification
       await adminClient.from("notifications").insert({
         id: `notif_${topupId}`,
         user_id: topup.user_id,
         title: "تم اعتماد شحن رصيدك",
-        body: `أُضيف ${toArabicDigits(credits)} نقطة إلى محفظتك (${egp(effectiveAmount)}).`,
+          body: `أُضيف ${toArabicDigits(credits)} نقطة إلى محفظتك (${egp(confirmedAmount)}).`,
         link: "/dashboard/topup",
         read: false,
         created_at: now,
@@ -113,14 +115,14 @@ export async function POST(req: NextRequest) {
       try {
         const rcpt = await getRecipient(adminClient, topup.user_id, "topup-approved");
         if (rcpt) {
-          const balance = await getBalance(adminClient, topup.user_id);
+          const balance = Number(approval.data.balance) || await getBalance(adminClient, topup.user_id);
           await sendPlatformEmail("topup-approved", rcpt.email, {
             Name: rcpt.name,
-            Credits: String(credits),
-            ConfirmedAmountEgp: String(effectiveAmount),
-            Reference: topup.reference,
-            Balance: String(balance),
-          });
+            Credits: toArabicDigits(credits),
+            ConfirmedAmountEgp: toArabicDigits(confirmedAmount),
+            Reference: toArabicDigits(topup.reference),
+            Balance: toArabicDigits(balance),
+          }, `topup-approved:${topupId}`);
         }
       } catch (emailErr) {
         console.error("[email:topup-approved_failed]", emailErr);
@@ -133,7 +135,7 @@ export async function POST(req: NextRequest) {
         target_type: "topup",
         target_id: topupId,
         details: {
-          amountEgp: effectiveAmount,
+          amountEgp: confirmedAmount,
           credits,
           userId: topup.user_id,
         },
@@ -155,11 +157,20 @@ export async function POST(req: NextRequest) {
       }
       const confirmedRejectReason: string = rejectReason;
 
-      // Update topup status to rejected
-      await adminClient
-        .from("topups")
-        .update({ status: "rejected" })
-        .eq("id", topupId);
+      const rejection = await callAtomicOrFallback<any>({
+        rpc: () => Promise.resolve(adminClient.rpc("reject_topup_atomic", { p_topup_id: topupId })),
+        functionName: "reject_topup_atomic",
+        fallback: async () => {
+          const { error } = await adminClient.from("topups")
+            .update({ status: "rejected" }).eq("id", topupId);
+          if (error) throw error;
+          return { success: true };
+        },
+        log: (line) => console.warn(line),
+      });
+      if (!rejection.data?.success) {
+        return NextResponse.json({ success: false, error: "تعذر رفض طلب الشحن" }, { status: 409 });
+      }
 
       // User notification
       await adminClient.from("notifications").insert({

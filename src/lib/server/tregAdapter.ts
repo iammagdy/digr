@@ -9,6 +9,12 @@ import { getLiveProviderGateStatus } from "./providerGate";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import { isSocialCapabilitySlug } from "../socialSources";
 import { runSocialChunk, type SocialCall } from "./socialAdapter";
+import { markContactRowsForReview } from "../../functions/shared/decisionMakerPricing";
+import {
+  createDecisionMakerSpendBudget,
+  DECISION_MAKER_PROVIDER_SPEND_CAP_USD,
+  DECISION_MAKER_ROUTE_COST_CAP_USD,
+} from "./decisionMakerSpend";
 
 export { hasRecognizedProviderResultShape };
 import { arabicVerificationStatus } from "../contactVerification";
@@ -436,38 +442,68 @@ function getPeopleIdentity(row: Record<string, any>): Record<string, string> | n
   return domain && name ? { domain, full_name: name } : null;
 }
 
-async function enrichTregPeopleRows(rows: Record<string, any>[], input: ProviderAdapterCallInput) {
+async function enrichTregPeopleRows(
+  rows: Record<string, any>[],
+  input: ProviderAdapterCallInput,
+  spendBudget: ReturnType<typeof createDecisionMakerSpendBudget>,
+) {
   let costMicro = 0;
+  let providerCallCount = 0;
+  let spendBudgetExhausted = false;
   const callIds: string[] = [];
   const enriched: Record<string, any>[] = [];
   for (let index = 0; index < rows.length; index++) {
     const row = { ...rows[index] };
     const identity = getPeopleIdentity(row);
     if (identity && !row.work_email) {
-      const result = await executeTregCallWithRetry({
-        endpointId: "treg.people.email.find", method: "POST", params: identity,
-        userId: input.userId, jobId: input.jobId, stepId: `people_email_${input.step}_${index}`,
-        page: input.step + 1, routeMaxCostUsd: "0.005",
-      }, 1);
-      costMicro += Math.max(0, Number(result.costMicro) || 0);
-      if (result.tregCallId) callIds.push(result.tregCallId);
-      if (result.ok) {
-        row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
-        row.work_email_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.work_email));
+      if (spendBudget.reserveCall()) {
+        providerCallCount += 1;
+        const result = await executeTregCallWithRetry({
+          endpointId: "treg.people.email.find", method: "POST", params: identity,
+          userId: input.userId, jobId: input.jobId, stepId: `people_email_${input.step}_${index}`,
+          page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
+        }, 0);
+        costMicro += Math.max(0, Number(result.costMicro) || 0);
+        if (result.tregCallId) callIds.push(result.tregCallId);
+        if (!result.ok) {
+          console.warn("[decision_maker:contact_call_failed]", {
+            endpointId: "treg.people.email.find",
+            status: result.httpStatus,
+            callId: result.tregCallId || "none",
+          });
+        }
+        if (result.ok) {
+          row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
+          row.work_email_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.work_email));
+        }
+      } else {
+        spendBudgetExhausted = true;
       }
     }
     if (identity && !row.phone) {
-      const phoneIdentity = row.work_email ? { email: String(row.work_email) } : identity;
-      const result = await executeTregCallWithRetry({
-        endpointId: "treg.people.phone.find", method: "POST", params: phoneIdentity,
-        userId: input.userId, jobId: input.jobId, stepId: `people_phone_${input.step}_${index}`,
-        page: input.step + 1, routeMaxCostUsd: "0.005",
-      }, 1);
-      costMicro += Math.max(0, Number(result.costMicro) || 0);
-      if (result.tregCallId) callIds.push(result.tregCallId);
-      if (result.ok) {
-        row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
-        row.phone_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.phone));
+      if (spendBudget.reserveCall()) {
+        providerCallCount += 1;
+        const phoneIdentity = row.work_email ? { email: String(row.work_email) } : identity;
+        const result = await executeTregCallWithRetry({
+          endpointId: "treg.people.phone.find", method: "POST", params: phoneIdentity,
+          userId: input.userId, jobId: input.jobId, stepId: `people_phone_${input.step}_${index}`,
+          page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
+        }, 0);
+        costMicro += Math.max(0, Number(result.costMicro) || 0);
+        if (result.tregCallId) callIds.push(result.tregCallId);
+        if (!result.ok) {
+          console.warn("[decision_maker:contact_call_failed]", {
+            endpointId: "treg.people.phone.find",
+            status: result.httpStatus,
+            callId: result.tregCallId || "none",
+          });
+        }
+        if (result.ok) {
+          row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
+          row.phone_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.phone));
+        }
+      } else {
+        spendBudgetExhausted = true;
       }
     }
     row.work_email = firstPeopleText(row.work_email);
@@ -481,12 +517,12 @@ async function enrichTregPeopleRows(rows: Record<string, any>[], input: Provider
   const requiredFields = Array.isArray(input.params?.requiredContactFields)
     ? input.params.requiredContactFields.map((field: unknown) => String(field))
     : [];
-  const deliverableRows = requiredFields.length
-    ? enriched.filter((row) => requiredFields.every((field) =>
-      field === "work_email" ? Boolean(row.work_email) : field === "phone" ? Boolean(row.phone) : true,
-    ))
-    : enriched;
-  return { rows: deliverableRows, costMicro, callIds };
+  const reviewedRows = markContactRowsForReview(enriched, requiredFields.filter(
+    (field): field is "work_email" | "phone" => field === "work_email" || field === "phone",
+  ));
+  // Keep incomplete people visible. Enrichment calls have already incurred provider cost,
+  // and settlement decides the delivered contact units independently from these review rows.
+  return { rows: reviewedRows, costMicro, callIds, spendBudgetExhausted, providerCallCount };
 }
 
 export interface ProviderAdapterCallInput {
@@ -503,6 +539,8 @@ export interface ProviderAdapterCallInput {
   remainingNeeded: number;
   targetVolumeMax: number;
   deliveredSoFar: number;
+  /** Remaining per-job decision-maker spend ceiling, set by the worker. */
+  decisionMakerSpendBudgetUsd?: number;
 }
 
 export interface ProviderAdapterCallOutput {
@@ -513,6 +551,8 @@ export interface ProviderAdapterCallOutput {
   nextCursor: string | null;
   costUsd: number;
   costMicro: number;
+  /** Number of outbound TREG attempts, used for conservative DM cap accounting. */
+  providerCallCount?: number;
   tregCallId: string;
   errorCode?: string;
   errorMessageAr?: string;
@@ -668,6 +708,9 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   const isIcypeas = isIcypeasCompanies || isIcypeasPeople;
   const isTregPeople = effectiveEndpointId === "treg.people.search" || input.capabilitySlug === "professional-people-search";
+  const peopleSpendBudget = isTregPeople
+    ? createDecisionMakerSpendBudget(input.decisionMakerSpendBudgetUsd ?? DECISION_MAKER_PROVIDER_SPEND_CAP_USD)
+    : null;
 
   // Pagination hints come from the generic source planner, but the live
   // provider endpoint schema is authoritative. Some search endpoints expose
@@ -734,9 +777,22 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   const isSingleAttemptCap =
     effectiveEndpointId === "tikhub.tiktok.user.profile" ||
     input.capabilitySlug === "tiktok-profile";
-  const retries = isSingleAttemptCap ? 0 : 3;
+  const retries = isTregPeople || isSingleAttemptCap ? 0 : 3;
 
   const effectiveMethod = isIcypeas ? "POST" : input.method;
+
+  if (isTregPeople && !peopleSpendBudget!.reserveCall()) {
+    return {
+      ok: true,
+      httpStatus: 200,
+      rows: [],
+      nextCursor: null,
+      costUsd: 0,
+      costMicro: 0,
+      providerCallCount: 0,
+      tregCallId: "",
+    };
+  }
 
   const callResult = await executeTregCallWithRetry(
     {
@@ -748,13 +804,14 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       jobId: input.jobId,
       stepId: `step_${input.step}`,
       page,
-      routeMaxCostUsd: isTregPeople ? "0.005" : "0.05",
+      routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
     },
     retries
   );
 
   let costMicro = Math.max(0, Number(callResult.costMicro) || 0);
   let costUsd = Number((costMicro / 1_000_000).toFixed(6));
+  let providerCallCount = 1;
 
   if (!callResult.ok) {
     const errorMessageAr = providerFailureMessageAr(callResult);
@@ -766,6 +823,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       nextCursor: null,
       costUsd,
       costMicro,
+      providerCallCount,
       tregCallId: callResult.tregCallId || "",
       errorCode: callResult.error || `http_${callResult.httpStatus}`,
       errorMessageAr,
@@ -797,12 +855,14 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   } else if (isTregPeople) {
     rows = parseTregPeopleRows(callResult.data);
     if (rows.length === 0) rows = extractAndFlattenRows(callResult.data?.output ?? callResult.data?.raw ?? callResult.data);
-    const enriched = await enrichTregPeopleRows(rows, input);
+    const enriched = await enrichTregPeopleRows(rows, input, peopleSpendBudget!);
     rows = enriched.rows;
     costMicro += enriched.costMicro;
+    providerCallCount += enriched.providerCallCount;
     costUsd = Number((costMicro / 1_000_000).toFixed(6));
     const allCallIds = [callResult.tregCallId, ...enriched.callIds].filter(Boolean);
     callResult.tregCallId = allCallIds.join(",");
+    if (enriched.spendBudgetExhausted) nextCursor = null;
   } else {
     rows = extractAndFlattenRows(callResult.data);
   }
@@ -815,6 +875,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       nextCursor: null,
       costUsd,
       costMicro,
+      providerCallCount,
       tregCallId: callResult.tregCallId || "",
       errorCode: "invalid_provider_payload",
       errorMessageAr: "استجاب المصدر ببيانات غير متوافقة مع نوع البحث؛ تم إيقاف الطلب وإرجاع الرصيد المحجوز.",
@@ -853,6 +914,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     nextCursor,
     costUsd,
     costMicro,
+    providerCallCount,
     tregCallId: callResult.tregCallId || "",
   };
 };

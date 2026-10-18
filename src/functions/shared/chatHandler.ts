@@ -13,7 +13,6 @@ import {
   getCustomerPriceUsdPerCatalogItem,
   computeRegistryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
-  UNAVAILABLE_CAPABILITY_SLUGS,
   RAW_SEED_CAPABILITIES,
   APPROVED_CAPABILITY_CATALOG,
   Capability,
@@ -73,6 +72,8 @@ import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusable
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
+import { toSafeReasonCode } from "./chatErrors";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -121,6 +122,10 @@ function explicitCompanyClarificationNotes(notes?: string): string[] {
     .filter(Boolean);
 }
 
+function hasExplicitPeopleScope(text: string): boolean {
+  return /(?:نطاق صناع القرار\s*:|لدى|في\s+(?:شركة|شركات)|شركة محددة|اسم الشركات?|\b(?:company|companies|at)\s*[:=]?\s*)\s*\p{L}/iu.test(text);
+}
+
 export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
   const normalized = text || "";
   const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
@@ -134,7 +139,7 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
   }
   if (isPeople) {
     if (!detectCountryFromText(normalized)) return { id: "people_country_required", text: "في أي دولة تريد البحث عن صناع القرار؟", question: "في أي دولة تريد البحث عن صناع القرار؟", type: "single", options: ["مصر", "السعودية", "الإمارات", "أخرى"], allowOther: true };
-    const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !/(?:نطاق صناع القرار\s*:|لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s*\p{L}/iu.test(normalized);
+    const scopeMissing = getMissingCompanyResearchRequirements(normalized).includes("industry") && !hasExplicitPeopleScope(normalized);
     if (scopeMissing) return { id: "people_scope_required", text: "ما المجال أو الشركة التي تريد صناع القرار منها؟", question: "ما المجال أو الشركة التي تريد صناع القرار منها؟", type: "free", options: [], allowOther: true };
     if (!PEOPLE_ROLE_PATTERN.test(normalized)) return { id: "people_roles_required", text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true };
     if (!extractNumberFromText(normalized)) return { id: "people_count_required", text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true };
@@ -150,14 +155,38 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
     // A request the verified social services understand is decided entirely by their own inputs (a link, a
     // channel, a country); the generic topic question below does not apply to it.
-    if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) return null;
+    if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) {
+      if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
+      return null;
+    }
   }
   if (isSocialTopic) {
     const missingSocial = getMissingSocialInputs(normalized);
     if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
     if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
+    if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
   }
   return null;
+}
+
+function socialTimeWindowQuestion() {
+  return {
+    id: "social_time_required",
+    text: "ما الفترة الزمنية التي تريد البحث فيها؟",
+    question: "ما الفترة الزمنية التي تريد البحث فيها؟",
+    type: "single",
+    options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"],
+    allowOther: true,
+  };
+}
+
+/** A broad topic search is better scoped by time, once the user has supplied a country. */
+function shouldAskSocialTimeWindow(text: string): boolean {
+  const intent = detectSocialIntent(text);
+  if (!intent.platform || !detectCountryFromText(text) || extractDateHint(text)) return false;
+  // Feed, channel, and direct-link requests have their own scope and date behavior.
+  if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
+  return SOCIAL_CONTENT_WORDS_RE.test(text) && !ACCOUNT_LOOKUP_RE.test(text);
 }
 
 export interface ChatHandlerInput {
@@ -672,15 +701,15 @@ export function routePeopleAlternative(
   if (!isPeopleSearchRequest(requestText)) return output;
 
   const peopleCapability = capabilities.find((capability) =>
-    !UNAVAILABLE_CAPABILITY_SLUGS.has(capability.slug) && capability.enabled !== false && capability.status === "verified" &&
+    capability.enabled !== false && capability.status === "verified" &&
     /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  );
+  ) || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search");
   if (!peopleCapability) {
-    return {
-      type: "refuse",
-      reasonAr: "خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً.",
-    };
+    return output;
   }
+  const peopleCapabilities = capabilities.some((capability) => capability.slug === peopleCapability.slug)
+    ? capabilities
+    : [...capabilities, peopleCapability];
 
   // Respect a model clarification only while a required field is still
   // missing. Once the deterministic inputs are complete, do not let the model
@@ -688,7 +717,7 @@ export function routePeopleAlternative(
   if (output?.type === "ask_clarification" || output?.type === "ask_questions") {
     return getDeterministicDiscoveryQuestion(requestText, brief)
       ? output
-      : buildAutoPlanProposal(brief, capabilities, requestText);
+      : buildAutoPlanProposal(brief, peopleCapabilities, requestText);
   }
 
   const proposedPeopleCapability = output?.type === "propose_plan" &&
@@ -718,7 +747,7 @@ export function routePeopleAlternative(
     };
   }
 
-  return buildAutoPlanProposal(brief, capabilities, requestText);
+  return buildAutoPlanProposal(brief, peopleCapabilities, requestText);
 }
 
 /** Route explicit company-search intent to the verified company capability when
@@ -736,13 +765,13 @@ export function routeCompanySearchRequest(
 
   const companyCapability = capabilities.find((capability) =>
     /companies|company/i.test(`${capability.platform || ""} ${capability.category || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  );
+  ) || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "icypeas-companies-search");
   if (!companyCapability) {
-    return {
-      type: "refuse",
-      reasonAr: "خدمة البحث عن الشركات غير متاحة حالياً.",
-    };
+    return output;
   }
+  const companyCapabilities = capabilities.some((capability) => capability.slug === companyCapability.slug)
+    ? capabilities
+    : [...capabilities, companyCapability];
 
   const missing = getMissingCompanyResearchRequirements(requestText);
   if (missing.length > 0) {
@@ -761,38 +790,14 @@ export function routeCompanySearchRequest(
   // Company requests need a single, priceable company-search capability. The
   // model may return a superficially relevant multi-step plan that later fails
   // validation or inflates the requested volume, so rebuild it deterministically.
-  return buildAutoPlanProposal(brief, capabilities, requestText);
+  return buildAutoPlanProposal(brief, companyCapabilities, requestText);
 }
 
 export function routeUnavailablePlatformRequest(output: any, requestText: string): any {
-  if (isPeopleSearchRequest(requestText)) return output;
-  if (output?.type !== "propose_plan") return output;
-  const platform = detectMentionedPlatforms(requestText).find((item) => item !== "companies");
-  if (!platform) return output;
-  const entity = extractEntityType(requestText).entityType;
-  const slug = entity === "comments"
-    ? (platform === "youtube" ? "youtube-comments" : `${platform}-post-comments`)
-    : entity === "posts"
-      ? `${platform}-post-search`
-      : entity === "videos" && platform === "youtube"
-        ? "youtube-search"
-        : entity === "profiles"
-          ? `${platform}-profile`
-          : null;
-  if (!slug) return output;
-  const capability = RAW_SEED_CAPABILITIES.find((item) => item.slug === slug);
-  if (!capability || capability.enabled) return output;
-  const proposedService = (output?.capabilities || output?.steps || []).find((step: any) =>
-    step?.capabilitySlug === slug || step?.endpointId === slug,
-  );
-  if (!proposedService) return output;
-  if (proposedService?.endpointId && !String(proposedService.endpointId).startsWith("internal-")) return output;
-  const serviceName = entity === "comments" ? "جمع التعليقات" : entity === "videos" ? "البحث عن الفيديوهات" : entity === "posts" ? "البحث عن المنشورات" : "البحث عن الحسابات";
-  const platformLabel = getPlatformLabelAr(platform);
-  return {
-    type: "refuse",
-    reasonAr: `خدمة ${serviceName} على ${platformLabel} غير متاحة حاليًا، لذلك لا أستطيع تقديم عرض سعر أو بدء التنفيذ لهذا الطلب.`,
-  };
+  // TREG-backed capabilities are owner-confirmed and are not blocked by a
+  // second local availability gate. Pricing and executable plans are still
+  // validated against the server catalog below.
+  return output;
 }
 
 /**
@@ -804,7 +809,7 @@ export function summarizeConversationHistory(
   messages: Array<{ role: string; content: string }>,
   planSummary?: string,
 ): Array<{ role: "system" | "user" | "assistant"; content: string }> {
-  const KEEP_RECENT = 6;
+  const KEEP_RECENT = 4;
   const normalized = messages.map((m) => ({
     role: (m.role === "user" || m.role === "assistant" ? m.role : "system") as "system" | "user" | "assistant",
     content: String(m.content || ""),
@@ -815,7 +820,7 @@ export function summarizeConversationHistory(
   const middle = normalized.slice(1, -KEEP_RECENT);
   const lines = middle.map((m) => {
     const who = m.role === "user" ? "المستخدم" : "المساعد";
-    return `- ${who}: ${m.content.slice(0, 120)}`;
+    return `- ${who}: ${m.content.slice(0, 80)}`;
   });
   if (planSummary) lines.push(`- الخطة الحالية: ${planSummary}`);
   return [
@@ -841,13 +846,12 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     nameAr: ep.nameAr,
   });
   const seeded = RAW_SEED_CAPABILITIES.find((cap) => cap.slug === ep.slug);
-  const unavailable = UNAVAILABLE_CAPABILITY_SLUGS.has(ep.slug) || Boolean(ep.id?.startsWith("internal-"));
   return {
     id: ep.slug,
     slug: ep.slug,
     platform: ep.platform as any,
     category: ep.platform as any,
-    status: unavailable ? (seeded?.status || "pending_verification") : "verified",
+    status: "verified",
     unit: (ep.billingUnit === "record" || ep.billingUnit === "row" || ep.billingUnit === "item" ? "item" : "page") as any,
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
     pointsPerUnit:
@@ -867,7 +871,7 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     customerPriceUsdPerItem,
     maxRows: 5000,
     paginationType: ep.pagination.type === "page" ? "offset" : ep.pagination.type === "cursor" ? "cursor" : "none",
-    enabled: !unavailable,
+    enabled: true,
   };
 }
 
@@ -1081,6 +1085,9 @@ export class ChatHandler {
         : null;
     let currentStep = "conversation_init";
     let userMsgId = "";
+    let assistantMsgId = "";
+    let messagesContext: PriorConversationMessage[] = [];
+    let followupBrief: any = {};
 
     try {
       // 1. Get or Create Conversation
@@ -1090,7 +1097,6 @@ export class ChatHandler {
       let userBalance = input.userBalance;
       let userProfile: any = undefined;
       let convBriefFromDb: any = undefined;
-      let assistantMsgId = "";
 
       const isGreetingMsg = isGreetingOrGeneralQuestion(message).isGreeting;
       const initialTitle = "محادثة جديدة";
@@ -1287,11 +1293,13 @@ export class ChatHandler {
       const tSbBriefStart = Date.now();
       const currentBrief = convBriefFromDb || await getConversationBrief(this.tables, conversationId);
       let brief = extractBriefFromMessage(message, currentBrief);
+      followupBrief = brief;
 
     if ((input as any).answers) {
       const rawAns = (input as any).answers;
       if (Array.isArray(rawAns)) {
         brief = extractBriefFromCardAnswers(rawAns, brief);
+        followupBrief = brief;
       } else if (typeof rawAns === "object") {
         const normalizedCardItems = Object.entries(rawAns).map(([k, v]) => ({
           questionId: k,
@@ -1299,6 +1307,7 @@ export class ChatHandler {
           value: v as any,
         }));
         brief = extractBriefFromCardAnswers(normalizedCardItems, brief);
+        followupBrief = brief;
       }
     }
     await saveConversationBrief(this.tables, conversationId, userId, brief);
@@ -1664,22 +1673,25 @@ export class ChatHandler {
       // 6. Fetch previous messages for context
       currentStep = "message_history";
       const tSbHistStart = Date.now();
-      let messagesContext: Array<{ role: "user" | "assistant" | "system"; content: string }> = [];
       if (sb) {
         const { data: rows, error: histErr } = await sb
           .from("messages")
-          .select("id, role, content_ar, created_at")
+          .select("id, role, content_ar, created_at, quote, plan, request_status, request_quote_id")
           .eq("conversation_id", conversationId)
-          .order("created_at", { ascending: true })
+          .order("created_at", { ascending: false })
           .limit(10);
         if (histErr) throw histErr;
-        messagesContext = (rows || [])
+        messagesContext = [...(rows || [])].reverse()
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
             content: r.role === "user"
               ? formatClarificationMessageForAssistant(r.content_ar || "")
               : r.content_ar || "",
+            quote: r.quote,
+            plan: r.plan,
+            requestStatus: r.request_status,
+            requestQuoteId: r.request_quote_id,
           }));
       } else {
         const historyRes = await this.tables.listRows({
@@ -1687,18 +1699,22 @@ export class ChatHandler {
           tableId: "messages",
           queries: [
             Query.equal("conversationId", conversationId),
-            Query.orderAsc("createdAt"),
+            Query.orderDesc("createdAt"),
             Query.limit(10),
           ],
         });
 
-        messagesContext = historyRes.rows
+        messagesContext = [...historyRes.rows].reverse()
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
             content: r.role === "user"
               ? formatClarificationMessageForAssistant(r.content || "")
               : r.content,
+            quote: r.quote,
+            plan: r.plan,
+            requestStatus: r.requestStatus,
+            requestQuoteId: r.requestQuoteId,
           }));
       }
       supabaseMs += Date.now() - tSbHistStart;
@@ -1718,6 +1734,50 @@ export class ChatHandler {
         currentRequirement,
         ...explicitCompanyClarificationNotes(brief.notes),
       ].filter(Boolean).join(" ");
+
+      const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
+      if (resultFeedbackReply) {
+        try {
+          if (sb) {
+            const [assistantUpdate, userUpdate] = await Promise.all([
+              sb.from("messages").update({
+                content_ar: resultFeedbackReply,
+                clarification_items: null,
+                plan: null,
+                quote: null,
+              }).eq("id", assistantMsgId),
+              sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+            ]);
+            if (assistantUpdate?.error) throw assistantUpdate.error;
+            if (userUpdate?.error) throw userUpdate.error;
+          } else {
+            await this.tables.updateRow({
+              databaseId: "digr",
+              tableId: "messages",
+              rowId: assistantMsgId,
+              data: { content: resultFeedbackReply, status: "ready" },
+            });
+            await this.tables.updateRow({
+              databaseId: "digr",
+              tableId: "messages",
+              rowId: userMsgId,
+              data: { requestStatus: "completed" },
+            });
+          }
+        } catch (persistError) {
+          console.warn(`[chat:result_followup_persist_failed] reason=${toSafeReasonCode(persistError, "result_followup_persist")}`);
+        }
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: resultFeedbackReply,
+          outputType: "answer_question",
+          intent: "research",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+        };
+      }
 
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief);
       if (requiredDiscoveryQuestion) {
@@ -1781,7 +1841,7 @@ export class ChatHandler {
       // growing as a cumulative stat; the model only sees the compacted history.
       let effectiveConvTokens = totalConvTokens;
       let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
-      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT) {
+      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || messagesContext.length > 7) {
         let planSummary: string | undefined;
         try {
           if (sb) {
@@ -2383,7 +2443,7 @@ export class ChatHandler {
         const missingPeopleFields: string[] = [];
         if (peoplePlan) {
           if (!detectCountryFromText(requiredFieldsText)) missingPeopleFields.push("people_country_required");
-          const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !/\b(?:company|at)\s*[:=]|(?:لدى|في شركة|شركة محددة|اسم الشركة|اسم الشركات)\s+\p{L}/iu.test(requiredFieldsText);
+          const scopeMissing = getMissingCompanyResearchRequirements(requiredFieldsText).includes("industry") && !hasExplicitPeopleScope(requiredFieldsText);
           if (scopeMissing) missingPeopleFields.push("people_scope_required");
           if (!PEOPLE_ROLE_PATTERN.test(requiredFieldsText)) {
             missingPeopleFields.push("people_roles_required");
@@ -2426,6 +2486,8 @@ export class ChatHandler {
             social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
             social_trending_platform_required: socialTaskQuestion("social_trending_platform_required"),
             social_channel_required: socialTaskQuestion("social_channel_required"),
+            social_x_topic_required: socialTaskQuestion("social_x_topic_required"),
+            social_x_account_required: socialTaskQuestion("social_x_account_required"),
           };
           clarificationItemsList = companyItem
             ? [companyItem]
@@ -2491,9 +2553,8 @@ export class ChatHandler {
             questionsAr: clarificationQuestionsList,
           } as any;
         } else if (!platformCheck.valid) {
-          const closest = getClosestVerifiedCapability(capabilities);
           console.warn("[chat:platform_check_invalid]", { message, planItems });
-          finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+          finalContentAr = UNVERIFIED_PLATFORM_MESSAGE_AR;
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -2531,10 +2592,12 @@ export class ChatHandler {
                 planValidation = { valid: true, errors: [], issues: [] };
               } else {
                 console.warn("[chat:auto_plan_invalid_pricing]", { errors: autoCheck.errors });
-                finalContentAr = "نعتذر منك، لم نتمكن من إعداد خطة تسعير معتمدة لهذا الطلب لعدم توفر خدمة موثقة بالتسعير المطلوب حالياً. يمكنك تجربة إحدى المنصات المعتمدة (فيسبوك، لينكد إن، إكس، يوتيوب).";
+                finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
                 output = {
-                  type: "suggest_alternative",
-                  explanationAr: finalContentAr,
+                  type: "ask_clarification",
+                  intro: finalContentAr,
+                  reasonAr: finalContentAr,
+                  questions: [{ id: "topic_or_source", text: "ما الموضوع أو رابط المصدر المطلوب؟", type: "free" }],
                 } as any;
                 planOutput = null;
                 planValidation = { valid: false, errors: autoCheck.errors, issues: autoCheck.issues };
@@ -2578,7 +2641,7 @@ export class ChatHandler {
         if (platformCheck.valid && planValidation.valid && planOutput) {
           if (verifiedSocialDef && planItems[0]) {
             // The goal line is written by the server so it always matches what will run.
-            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits);
+            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits, socialIntent.discover === "keyword" ? conversationRequestText : undefined);
           }
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
@@ -2609,6 +2672,9 @@ export class ChatHandler {
             expectedPoints: managedQuote.expectedPoints,
             quotedPoints: managedQuote.quotedPoints,
             isAffordable: managedQuote.isAffordable,
+            pointsCapConstrained: managedQuote.pointsCapConstrained,
+            requestedVolumeMax: managedQuote.requestedVolumeMax,
+            pointsCap: managedQuote.pointsCap,
             userBalance,
             downscaledOffer: managedQuote.downscaledOffer,
             capacityConstrained: managedQuote.capacityConstrained,
@@ -2620,6 +2686,11 @@ export class ChatHandler {
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          if (managedQuote.pointsCapConstrained) {
+            planSummaryText += managedQuote.targetVolumeMax < (managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)
+              ? `\n- تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
+              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${toArabicDigits(managedQuote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة.`;
+          }
           if (brief.exclusionFile) {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${toArabicDigits(brief.exclusionFile.baselineRowCount)} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
@@ -2638,9 +2709,9 @@ export class ChatHandler {
               planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
             }
           }
-          finalContentAr = (llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
-            ? `${llmResult.textBlockAr}\n\n${planSummaryText}`
-            : planSummaryText;
+          // The plan response is pre-approval. Keep it entirely server-authored so
+          // free-form model text cannot claim that collection has already started.
+          finalContentAr = planSummaryText;
         }
       } else if (output.type === "edit_plan") {
         let activeQuote: any = null;
@@ -2718,6 +2789,9 @@ export class ChatHandler {
                 expectedPoints: managedQuote.expectedPoints,
                 quotedPoints: managedQuote.quotedPoints,
                 isAffordable: managedQuote.isAffordable,
+              pointsCapConstrained: managedQuote.pointsCapConstrained,
+              requestedVolumeMax: managedQuote.requestedVolumeMax,
+              pointsCap: managedQuote.pointsCap,
                 userBalance,
                 downscaledOffer: managedQuote.downscaledOffer,
                 capacityConstrained: managedQuote.capacityConstrained,
@@ -2726,6 +2800,9 @@ export class ChatHandler {
               };
 
               finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          if (managedQuote.pointsCapConstrained) {
+            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
+          }
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
               }
@@ -2750,12 +2827,11 @@ export class ChatHandler {
             output.unsupportedService = expectedLabel;
           }
         }
-        const closest = getClosestVerifiedCapability(capabilities);
         console.warn("[chat:suggest_alternative]", {
           unsupportedService: output.unsupportedService,
           explanationAr: output.explanationAr,
         });
-        finalContentAr = `${UNVERIFIED_PLATFORM_MESSAGE_AR}. أقرب خدمة متاحة: ${closest.nameAr}.`;
+        finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
 
         // Log request in capability_requests table
         if (sb) {
@@ -3112,6 +3188,36 @@ export class ChatHandler {
       if (err && typeof err === "object" && !err.chatStep) {
         err.chatStep = currentStep;
       }
+      const safeReason = toSafeReasonCode(err, currentStep);
+      console.warn(`[chat:handler_failed] step=${currentStep} reason=${safeReason}`);
+      const fallbackReply = buildResultFollowupReply(message, messagesContext, followupBrief);
+      if (fallbackReply && assistantMsgId && input.conversationId) {
+        try {
+          if (sb) {
+            await Promise.all([
+              sb.from("messages").update({ content_ar: fallbackReply, clarification_items: null, plan: null, quote: null }).eq("id", assistantMsgId),
+              sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+            ]);
+          } else {
+            await Promise.all([
+              this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: fallbackReply, status: "ready" } }),
+              this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } }),
+            ]);
+          }
+        } catch {
+          console.warn(`[chat:result_followup_fallback_persist_failed] reason=${safeReason}`);
+        }
+        return {
+          conversationId: input.conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: fallbackReply,
+          outputType: "answer_question",
+          intent: "research",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(input.conversationId, assistantMsgId, turnStartTime),
+        };
+      }
       if (userMsgId) {
         const customerError = sanitizeCustomerErrorMessage(err?.message || "تعذر إعداد الطلب.");
         try {
@@ -3130,7 +3236,7 @@ export class ChatHandler {
             });
           }
         } catch (historyError: any) {
-          console.warn("[chat:request_history_failure_write_failed]", historyError?.message || "unknown_error");
+          console.warn(`[chat:request_history_failure_write_failed] reason=${toSafeReasonCode(historyError, "request_history_failure_write")}`);
         }
       }
       throw err;

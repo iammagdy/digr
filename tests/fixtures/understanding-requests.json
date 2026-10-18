@@ -1,0 +1,52 @@
+[
+  { "id": "co-01", "category": "companies", "request": "عايز خمس شركات في مجال الكهرباء في مصر", "expectedCapability": "companies", "expectedMissingInputs": [] },
+  { "id": "co-02", "category": "companies", "request": "محتاج تلاتة شركات سوفت وير في ألمانيا", "expectedCapability": "companies", "expectedMissingInputs": [] },
+  { "id": "co-03", "category": "companies", "request": "هات شركات مقاولات في السعودية", "expectedCapability": "companies", "expectedMissingInputs": ["count"] },
+  { "id": "co-04", "category": "companies", "request": "عايز شركات", "expectedCapability": "companies", "expectedMissingInputs": ["country", "industry", "count"] },
+
+  { "id": "dm-01", "category": "decision_makers", "request": "أنا عايز تلاتة صناع قرار في شركات الكهرباء والميكانيكا في مصر.", "expectedCapability": "decision_makers", "expectedMissingInputs": [] },
+  { "id": "dm-02", "category": "decision_makers", "request": "محتاج ٥ CEOs في شركات البرمجيات بالسعودية", "expectedCapability": "decision_makers", "expectedMissingInputs": [] },
+  { "id": "dm-03", "category": "decision_makers", "request": "هات مدراء في شركات الكهرباء", "expectedCapability": "decision_makers", "expectedMissingInputs": ["country", "count"] },
+  { "id": "dm-04", "category": "decision_makers", "request": "صناع القرار في مصر", "expectedCapability": "decision_makers", "expectedMissingInputs": ["company_or_industry", "count"] },
+
+  { "id": "yc-01", "category": "youtube_comments", "request": "عايز ١٠ كومنتس على الفيديو ده https://youtu.be/dQw4w9WgXcQ على يوتيوب", "expectedCapability": "youtube_comments", "expectedMissingInputs": [] },
+  { "id": "yc-02", "category": "youtube_comments", "request": "هات تعليقات يوتيوب عن مباراة الأهلي والزمالك", "expectedCapability": "youtube_comments", "expectedMissingInputs": [] },
+  { "id": "yc-03", "category": "youtube_comments", "request": "عايز كومنتات يوتيوب", "expectedCapability": "youtube_comments", "expectedMissingInputs": ["topic_or_link"] },
+
+  { "id": "tc-01", "category": "tiktok_comments", "request": "هات ٢٠ كومنت على فيديو تيك توك https://www.tiktok.com/@x/video/1234567890", "expectedCapability": "tiktok_comments", "expectedMissingInputs": [] },
+  { "id": "tc-02", "category": "tiktok_comments", "request": "عايز كمنتس عن ترند الطبخ على تيك توك", "expectedCapability": "tiktok_comments", "expectedMissingInputs": [] },
+  { "id": "tc-03", "category": "tiktok_comments", "request": "ممكن كومنتس تيك توك؟", "expectedCapability": "tiktok_comments", "expectedMissingInputs": ["topic_or_link"] },
+
+  { "id": "fc-01", "category": "facebook_comments", "request": "هات كومنتات البوست ده على فيسبوك https://facebook.com/post/123", "expectedCapability": "facebook_comments", "expectedMissingInputs": [] },
+  { "id": "fc-02", "category": "facebook_comments", "request": "عايز تعليقات فيسبوك على موضوع أسعار العقارات", "expectedCapability": "facebook_comments", "expectedMissingInputs": [] },
+  { "id": "fc-03", "category": "facebook_comments", "request": "كومنتس فيسبوك", "expectedCapability": "facebook_comments", "expectedMissingInputs": ["topic_or_link"] },
+
+  { "id": "tr-01", "category": "tiktok_trending", "request": "هات ٥ فيديوهات ترند على تيك توك في مصر", "expectedCapability": "tiktok_trending", "expectedMissingInputs": [] },
+  { "id": "tr-02", "category": "tiktok_trending", "request": "عايز فيديوهات ترندينج على تيك توك", "expectedCapability": "tiktok_trending", "expectedMissingInputs": ["country"] },
+  { "id": "tr-03", "category": "tiktok_trending", "request": "وريني الرائج على تيك توك في الإمارات", "expectedCapability": "tiktok_trending", "expectedMissingInputs": [] },
+  { "id": "tr-04", "category": "tiktok_trending", "request": "عايز فيديوهات viral من TikTok في فرنسا", "expectedCapability": "tiktok_trending", "expectedMissingInputs": [] },
+
+  { "id": "ch-01", "category": "channel_videos", "request": "هات آخر ١٠ فيديوهات من قناة يوتيوب @ScienceArabic", "expectedCapability": "channel_videos", "expectedMissingInputs": [] },
+  { "id": "ch-02", "category": "channel_videos", "request": "عايز فيديوهات قناة تيك توك دي https://www.tiktok.com/@example", "expectedCapability": "channel_videos", "expectedMissingInputs": [] },
+  { "id": "ch-03", "category": "channel_videos", "request": "هات فيديوهات من قناة يوتيوب", "expectedCapability": "channel_videos", "expectedMissingInputs": ["channel"] },
+  { "id": "ch-04", "category": "channel_videos", "request": "محتاج ٣ مقاطع من قناة @mona.talks على تيك توك", "expectedCapability": "channel_videos", "expectedMissingInputs": [] },
+
+  { "id": "fp-01", "category": "facebook_posts", "request": "هات آخر ٢٠ بوست من صفحة فيسبوك دي https://facebook.com/brand", "expectedCapability": "facebook_posts", "expectedMissingInputs": [] },
+  { "id": "fp-02", "category": "facebook_posts", "request": "اجمع منشورات صفحة وزارة الصحة المصرية على فيسبوك", "expectedCapability": "facebook_posts", "expectedMissingInputs": [] },
+  { "id": "fp-03", "category": "facebook_posts", "request": "عايز بوستات عن حملة التبرع بالدم على فيسبوك", "expectedCapability": "facebook_posts", "expectedMissingInputs": [] },
+  { "id": "fp-04", "category": "facebook_posts", "request": "هات منشورات فيسبوك", "expectedCapability": "facebook_posts", "expectedMissingInputs": ["topic_or_page"] },
+
+  { "id": "x-01", "category": "x_tweets", "request": "هات ٥٠ تغريدة عن كأس العالم على منصة إكس", "expectedCapability": "x_tweets", "expectedMissingInputs": [] },
+  { "id": "x-02", "category": "x_tweets", "request": "عايز تويتات عن الذكاء الاصطناعي في تويتر", "expectedCapability": "x_tweets", "expectedMissingInputs": [] },
+  { "id": "x-03", "category": "x_tweets", "request": "اجمع tweets عن basketball من X", "expectedCapability": "x_tweets", "expectedMissingInputs": [] },
+  { "id": "x-04", "category": "x_tweets", "request": "هات تغريدات منصة إكس", "expectedCapability": "x_tweets", "expectedMissingInputs": ["topic"] },
+
+  { "id": "tp-01", "category": "topic_research", "request": "اجمع ١٠ أخبار عن الطاقة الشمسية في ألمانيا خلال آخر شهر", "expectedCapability": "topic_research", "expectedMissingInputs": [] },
+  { "id": "tp-02", "category": "topic_research", "request": "عايز مصادر أكاديمية عن كرة السلة في مصر باللغة العربية", "expectedCapability": "topic_research", "expectedMissingInputs": [] },
+  { "id": "tp-03", "category": "topic_research", "request": "هات دراسات عن تأثير الذكاء الاصطناعي على التعليم", "expectedCapability": "topic_research", "expectedMissingInputs": [] },
+  { "id": "tp-04", "category": "topic_research", "request": "عايز أخبار عالمية عن الدوري الإنجليزي", "expectedCapability": "topic_research", "expectedMissingInputs": [] },
+
+  { "id": "gv-01", "category": "greetings_vague", "request": "السلام عليكم", "expectedCapability": "greeting", "expectedMissingInputs": [] },
+  { "id": "gv-02", "category": "greetings_vague", "request": "ازيك يا ديجر", "expectedCapability": "vague", "expectedMissingInputs": ["topic"] },
+  { "id": "gv-03", "category": "greetings_vague", "request": "عايز بيانات", "expectedCapability": "vague", "expectedMissingInputs": ["topic"] }
+]

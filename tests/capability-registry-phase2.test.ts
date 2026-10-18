@@ -99,7 +99,7 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
     expect(mismatch.valid).toBe(false);
     expect(mismatch.userPlatforms).toContain("facebook");
     expect(mismatch.planPlatforms).toContain("tiktok");
-    expect(mismatch.errorAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
+    expect(mismatch.errorAr).toContain("لا تطابق المنصة المذكورة");
 
     const matching = validatePlanPlatformMatch(
       "أريد بيانات حساب تيك توك @tiktok",
@@ -108,7 +108,7 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
     expect(matching.valid).toBe(true);
   });
 
-  it("ChatHandler blocks mismatched platform plans and returns the unverified platform notice with closest verified capability", async () => {
+  it("ChatHandler blocks mismatched platform plans without proposing an unrelated platform", async () => {
     const mockTables: any = {
       createRow: vi.fn().mockResolvedValue({ $id: "row-1" }),
       getRow: vi.fn().mockResolvedValue({ totalTokens: 0 }),
@@ -155,7 +155,8 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
 
     expect(response.planQuote).toBeUndefined();
     expect(response.contentAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
-    expect(response.contentAr).toContain("تيك توك");
+    expect(response.contentAr).not.toContain("أقرب خدمة");
+    expect(response.contentAr).not.toContain("تيك توك");
     expect(response.contentAr).not.toContain("LinkedIn");
   });
 });

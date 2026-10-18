@@ -33,6 +33,15 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
   });
 
   describe("Internal Worker Auth & Canonical URL Resolution", () => {
+    it("adds an optional Vercel Preview protection bypass header without changing worker auth", () => {
+      vi.stubEnv("VERCEL_AUTOMATION_BYPASS_SECRET", "test-bypass-secret");
+      vi.stubEnv("CRON_SECRET", "test-cron-secret");
+      const headers = createInternalWorkerAuthHeaders("job_test");
+      expect(headers["x-vercel-protection-bypass"]).toBe("test-bypass-secret");
+      expect(headers.Authorization).toBe("Bearer test-cron-secret");
+      expect(headers["x-worker-job-id"]).toBe("job_test");
+    });
+
     it("resolves canonical base URL from APP_URL outside production requests", () => {
       process.env.APP_URL = "https://diger.tech";
       process.env.VERCEL_URL = "diger-git-test-iammagdy.vercel.app";
@@ -166,6 +175,28 @@ describe("Job Execution Triggering, Worker Auth & Progress Navigation", () => {
     expect(fetcher).toHaveBeenCalledWith(
       "https://diger.tech/api/worker/chunk",
       expect.objectContaining({ method: "POST", body: JSON.stringify({ jobId: "job_123", expectedStep: 0 }) })
+    );
+  });
+
+  it("does not treat a deployment-protection redirect or HTML page as a worker start", async () => {
+    const fetcher = vi.fn(async () => new Response("<html>login</html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    }));
+    const result = await dispatchWorkerChunk(
+      "https://diger-preview.vercel.app",
+      "job_protected",
+      0,
+      { "x-worker-job-id": "job_protected" },
+      5_000,
+      fetcher,
+    );
+
+    expect(result.started).toBe(false);
+    expect(result.failureCode).toBe("protection_redirect");
+    expect(fetcher).toHaveBeenCalledWith(
+      "https://diger-preview.vercel.app/api/worker/chunk",
+      expect.objectContaining({ redirect: "manual" }),
     );
   });
 

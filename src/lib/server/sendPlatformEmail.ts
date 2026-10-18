@@ -128,7 +128,8 @@ export async function getRecipient(
 export async function sendPlatformEmail(
   template: PlatformEmailTemplateId,
   to: string,
-  vars: Record<string, string>
+  vars: Record<string, string>,
+  idempotencyKey?: string,
 ): Promise<void> {
   try {
     if (!to || !to.includes("@")) return;
@@ -144,13 +145,14 @@ export async function sendPlatformEmail(
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ template, to, vars }),
+      body: JSON.stringify({ template, to, vars, ...(idempotencyKey ? { idempotencyKey } : {}) }),
       signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) {
       console.error(`[email:send_failed] template=${template} status=${res.status}`);
     }
   } catch (err) {
-    console.error("[email:send_error]", err);
+    // Transport failures must not expose request headers, addresses, or response bodies.
+    console.error("[email:send_error]");
   }
 }

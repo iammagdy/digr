@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { buildSystemPrompt, buildSystemPromptParts, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
-import { UNVERIFIED_PLATFORM_MESSAGE_AR } from "./capabilityRegistry";
 import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest, requiredProfessionalContactFields } from "../../lib/planParameters";
+import { customerConversationAnswer } from "../../lib/customerConversationCopy";
 
 // ================= Schema Definitions =================
 
@@ -341,6 +341,10 @@ export interface LlmCallResult {
   promptVersion?: string;
   rawText?: string;
   textBlockAr?: string;
+  /** Anthropic cache usage is kept distinct for operational cost evidence. */
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  uncachedInputTokens?: number;
 }
 
 // ================= White-Label Scrubber =================
@@ -1088,9 +1092,7 @@ export class LlmClient {
     // B2. Greetings & Casual Questions (Phase 1 fast path)
     const { isGreeting, isGeneralQuestion } = isGreetingOrGeneralQuestion(lastUserMsg);
     if (isGreeting || isGeneralQuestion) {
-      const answerText = isGreeting
-        ? "أهلاً بك! أنا مساعد Diger للبحث وجمع البيانات من المصادر المتاحة. كيف يمكنني مساعدتك اليوم؟"
-        : "أنا مساعد Diger، أساعدك في تصميم البحث وجمع البيانات من المصادر المتاحة وتسليمها في ملفات منظمة. كيف نبدأ؟";
+      const answerText = customerConversationAnswer(isGreeting);
       return {
         output: {
           type: "answer_question",
@@ -1554,11 +1556,13 @@ export class LlmClient {
 
     // D. Catalog-driven Platform Handling (Phase B)
     const hasCapForPlatform = (plat: string) => {
-      if (!options.sanitizedCapabilities || options.sanitizedCapabilities.length === 0) return false;
-      return options.sanitizedCapabilities.some((c: any) => {
+      const inCapabilities = (options.sanitizedCapabilities || []).some((c: any) => {
         const cPlat = (c.platform || c.category || c.slug || "").toLowerCase();
         return cPlat.includes(plat.toLowerCase()) && c.enabled !== false;
       });
+      // The full platform guide remains authoritative when this turn's catalog
+      // search is narrow or empty; it must not become an availability gate.
+      return inCapabilities || ["instagram", "reddit", "linkedin", "facebook", "youtube", "tiktok", "x", "twitter"].includes(plat.toLowerCase());
     };
 
     if (
@@ -1568,11 +1572,10 @@ export class LlmClient {
     ) {
       return {
         output: {
-          type: "suggest_alternative",
-          unsupportedService: "الخدمة المطلوبة",
-          explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (الخدمة المطلوبة). لم تسفر نتائج البحث عن أي أدوات صالحة لهذا الطلب.`,
-          closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
-          canRequestFeature: true,
+          type: "ask_clarification",
+          intro: "ما الموضوع أو البيانات التي تريد جمعها؟",
+          reasonAr: "تحديد موضوع البحث المطلوب",
+          questions: [{ id: "topic", text: "ما الموضوع أو البيانات المطلوبة؟", type: "free" }],
         },
         inputTokens: 500,
         outputTokens: 80,
@@ -1694,19 +1697,18 @@ export class LlmClient {
     ) {
       const platformName =
         promptLower.includes("instagram") || promptLower.includes("انستغرام") || promptLower.includes("إنستغرام")
-          ? "Instagram"
+          ? "إنستغرام"
           : promptLower.includes("فيسبوك") || promptLower.includes("facebook")
-          ? "Facebook"
+          ? "فيسبوك"
           : promptLower.includes("ريديت") || promptLower.includes("reddit")
-          ? "Reddit"
-          : "LinkedIn";
+          ? "ريديت"
+          : "لينكد إن";
       return {
         output: {
-          type: "suggest_alternative",
-          unsupportedService: platformName,
-          explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (${platformName}).`,
-          closestAlternative: "أقرب خدمة معتمدة متاحة حالياً: استخراج ملف حساب تيك توك العام (@username).",
-          canRequestFeature: true,
+          type: "ask_clarification",
+          intro: `ما البيانات التي تريد جمعها من ${platformName}؟`,
+          reasonAr: "تحديد نوع البيانات المطلوب",
+          questions: [{ id: "topic", text: "ما نوع البيانات المطلوبة؟", type: "free" }],
         },
         inputTokens: 500,
         outputTokens: 80,
@@ -1734,20 +1736,19 @@ export class LlmClient {
     }
 
     const isCapEnabled = (slug: string) => {
-      if (!options.sanitizedCapabilities || options.sanitizedCapabilities.length === 0) {
-        return true;
-      }
-      return options.sanitizedCapabilities.some(
+      const inCapabilities = (options.sanitizedCapabilities || []).some(
         (c: any) =>
           c.enabled !== false &&
-          c.status !== "pending_verification" &&
-          c.status !== "planned" &&
           (c.slug === slug ||
             c.id === slug ||
             c.slug?.includes(slug) ||
             c.id?.includes(slug) ||
             (c.platform && c.platform.toLowerCase() === slug.split("-")[0]?.toLowerCase()))
       );
+      return inCapabilities || [
+        "tiktok-user-videos", "tiktok-keyword-videos", "tiktok-profile", "youtube-search",
+        "youtube-channel-info", "youtube-comments", "x-keyword-search", "x-user-tweets",
+      ].includes(slug);
     };
 
     // F. TikTok requests handling
@@ -1759,24 +1760,7 @@ export class LlmClient {
         promptLower.includes("posts") ||
         promptLower.includes("videos");
 
-      if (isVideoRequest && !isCapEnabled("tiktok-user-videos") && !isCapEnabled("tiktok-keyword-videos")) {
-        return {
-          output: {
-            type: "suggest_alternative",
-            unsupportedService: "مقاطع فيديو تيك توك",
-            explanationAr: "خدمة استخراج مقاطع فيديو تيك توك قيد التحقق وستتاح قريباً في المنصة. الخدمة المعتمدة والمتاحة حالياً هي استخراج بيانات وإحصائيات ملف الحساب الشخصي (@username).",
-            closestAlternative: "يمكنك استخراج بيانات الملف الشخصي لأي حساب عام على تيك توك (@username).",
-            canRequestFeature: true,
-          },
-          inputTokens: 500,
-          outputTokens: 80,
-          costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: fakeModel,
-          promptVersion: PROMPT_VERSION,
-        };
-      }
-
-      if (isVideoRequest && isCapEnabled("tiktok-user-videos")) {
+      if (isVideoRequest) {
         const handleMatch = lastUserMsg.match(/@?([a-zA-Z0-9._]{2,30})/);
         const username = handleMatch && !["tiktok", "video", "videos"].includes(handleMatch[1].toLowerCase())
           ? handleMatch[1]
@@ -1921,31 +1905,8 @@ export class LlmClient {
       }
     }
 
-    // G. X/Twitter tweets plan proposal or coming soon alternative
+    // G. X/Twitter tweets plan proposal
     if (promptLower.includes("تغريدات") || promptLower.includes("تويتر") || promptLower.includes("منصة x")) {
-      if (
-        options.testScenario !== "phase_b_scenario_c_x" &&
-        !hasCapForPlatform("x") &&
-        !hasCapForPlatform("twitter") &&
-        !isCapEnabled("x-keyword-search") &&
-        !isCapEnabled("x-user-tweets")
-      ) {
-        return {
-          output: {
-            type: "suggest_alternative",
-            unsupportedService: "منصة X (تويتر)",
-            explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (منصة X). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.`,
-            closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
-            canRequestFeature: true,
-          },
-          inputTokens: 500,
-          outputTokens: 80,
-          costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: fakeModel,
-          promptVersion: PROMPT_VERSION,
-        };
-      }
-
       if (promptLower.includes("تتبع") || (!promptLower.includes("تغريدة") && !promptLower.includes("200") && !promptLower.includes("500"))) {
         return {
           output: {
@@ -2011,31 +1972,8 @@ export class LlmClient {
       };
     }
 
-    // H. YouTube coming soon alternative
+    // H. YouTube research plan
     if (promptLower.includes("يوتيوب") || promptLower.includes("youtube")) {
-      if (
-        options.testScenario !== "phase_b_scenario_c_youtube" &&
-        !hasCapForPlatform("youtube") &&
-        !isCapEnabled("youtube-search") &&
-        !isCapEnabled("youtube-channel-info") &&
-        !isCapEnabled("youtube-comments")
-      ) {
-        return {
-          output: {
-            type: "suggest_alternative",
-            unsupportedService: "يوتيوب (YouTube)",
-            explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (يوتيوب). الخدمة المعتمدة والمتاحة حالياً هي استخراج ملف تيك توك الشخصي.`,
-            closestAlternative: "يمكنك تجربة استخراج بيانات حساب تيك توك عام (@username).",
-            canRequestFeature: true,
-          },
-          inputTokens: 500,
-          outputTokens: 80,
-          costUsd: (500 * 0.10 + 80 * 0.50) / 1_000_000,
-          model: fakeModel,
-          promptVersion: PROMPT_VERSION,
-        };
-      }
-
       const cap = (options.sanitizedCapabilities || []).find(
         (c: any) => (c.platform || c.category || c.slug || "").toLowerCase().includes("youtube")
       ) || {
@@ -2663,6 +2601,17 @@ export class LlmClient {
       const weightedInputTokens = uncachedInTokens + cacheReadTokens * 0.1 + cacheWriteTokens * 1.25;
       const costUsd = (weightedInputTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
 
+      // Log only aggregate usage metadata; never include prompts, messages, or credentials.
+      console.info(JSON.stringify({
+        tag: "anthropic_prompt_usage",
+        uncachedInputTokens: uncachedInTokens,
+        cacheReadInputTokens: cacheReadTokens,
+        cacheCreationInputTokens: cacheWriteTokens,
+        outputTokens: outTokens,
+        costUsd,
+        latencyMs: llmLatencyMs,
+      }));
+
       setLastLlmFallbackReason(null);
       setLastLlmFallbackDetail(null);
 
@@ -2671,6 +2620,9 @@ export class LlmClient {
         inputTokens: inTokens,
         outputTokens: outTokens,
         costUsd,
+        uncachedInputTokens: uncachedInTokens,
+        cacheReadInputTokens: cacheReadTokens,
+        cacheCreationInputTokens: cacheWriteTokens,
         model,
         promptVersion: PROMPT_VERSION,
         rawText: JSON.stringify(scrubbedPayload),

@@ -153,12 +153,9 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
       sanitizedCapabilities: [],
     });
 
-    expect(res.output.type).toBe("suggest_alternative");
-    if (res.output.type === "suggest_alternative") {
-      expect(res.output.unsupportedService).toBe("Facebook");
-      expect(res.output.explanationAr).toContain("Facebook");
-      expect(res.output.explanationAr).not.toContain("LinkedIn");
-    }
+    expect(res.output.type).toBe("ask_clarification");
+    expect(JSON.stringify(res.output)).toContain("فيسبوك");
+    expect(JSON.stringify(res.output)).not.toContain("LinkedIn");
   });
 
   describe("/api/admin/llm-status endpoint", () => {

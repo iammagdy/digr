@@ -24,12 +24,33 @@ describe("Composer & Activity Feed Integrity", () => {
     expect(chatPageCode).toContain("typeof e.units === \"number\" ? e.units");
   });
 
+  it("clears the composer as soon as a valid message is queued, before waiting for the assistant", () => {
+    const chatPageCode = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    const sendHandler = chatPageCode.slice(
+      chatPageCode.indexOf("async function handleSendMessage("),
+      chatPageCode.indexOf("async function handleSubmitClarification(")
+    );
+
+    const queueMessageAt = sendHandler.indexOf('setMessages((prev) => [...prev, userMsg]);');
+    const clearInputAt = sendHandler.indexOf('setInputText("");', queueMessageAt);
+    const firstNetworkWaitAt = sendHandler.indexOf("await getAccessToken();", queueMessageAt);
+
+    expect(queueMessageAt).toBeGreaterThanOrEqual(0);
+    expect(clearInputAt).toBeGreaterThan(queueMessageAt);
+    expect(firstNetworkWaitAt).toBeGreaterThan(clearInputAt);
+    expect(sendHandler).not.toContain('setInputText("");\n      return true;');
+    expect(sendHandler).toContain("return false;");
+    expect(sendHandler).toContain("errorRetryPrompt: textToSend");
+  });
+
   it("records progress and completion in public.job_events table", () => {
     const workerCode = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     const acceptCode = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
+    const startupFailureCode = readFileSync("src/lib/server/workerStartFailure.ts", "utf8");
 
-    // Accept quote records initial job_events row
-    expect(acceptCode).toContain('.from("job_events").insert');
+    // Failed worker starts record one terminal event through the shared helper.
+    expect(acceptCode).toContain("recordWorkerStartFailure");
+    expect(startupFailureCode).toContain('.from("job_events").insert');
     // Worker records chunk progress in job_events
     expect(workerCode).toContain('.from("job_events").insert');
     // Worker uploads data.json to partials bucket (results bucket strictly restricts MIME types to xlsx, csv, and pdf)

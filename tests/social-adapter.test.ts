@@ -48,6 +48,26 @@ const comments = (n: number, prefix = "c", extra: Record<string, any> = {}) =>
 const YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
 
 describe("one source answers", () => {
+  it("searches X topics on a public keyword source and falls back without a login session", async () => {
+    const { call, calls } = fakeCall((id) => id === "anyapi.x.search.posts"
+      ? fail(503)
+      : ok({ rows: [{ id: "t1", text: "كرة السلة" }] }, 1000));
+    const out = await runSocialChunk(input("social-x-posts", { query: "كرة السلة" }, { remainingNeeded: 1, targetVolumeMax: 1, pageSize: 1 }), { call });
+    expect(out.ok).toBe(true);
+    expect(out.rows).toHaveLength(1);
+    expect(calls.map((call) => call.endpointId)).toEqual(["anyapi.x.search.posts", "tikhub.x.twitter-web-fetch-search-timeline"]);
+    expect(calls[0].params).toMatchObject({ query: "كرة السلة", limit: 1 });
+    expect(calls[1].params).toMatchObject({ keyword: "كرة السلة" });
+  });
+
+  it("reads X posts by account handle only when the customer supplies one", async () => {
+    const { call, calls } = fakeCall(() => ok({ rows: [{ id: "t1", text: "latest" }] }));
+    const out = await runSocialChunk(input("social-x-posts", { channel: "@nasa" }, { remainingNeeded: 1, targetVolumeMax: 1, pageSize: 1 }), { call });
+    expect(out.ok).toBe(true);
+    expect(calls[0].endpointId).toBe("anyapi.x.user.posts");
+    expect(calls[0].params).toEqual({ handle: "nasa", limit: 1 });
+  });
+
   it("collects the comments of a link from the first source, with one call and its real cost", async () => {
     const { call, calls } = fakeCall(() => ok({ ok: true, rows: comments(20) }, 900));
     const out = await runSocialChunk(input("social-youtube-comments", { url: YT }), { call });

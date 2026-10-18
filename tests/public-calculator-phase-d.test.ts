@@ -122,10 +122,11 @@ describe("Phase D: Public /calculator Page & Single Source of Truth Pricing", ()
         100_000,
         DEFAULT_PRICING_SETTINGS
       );
+      const cappedDelivered = Math.min(tc.delivered, calcResult.maxCappedVolume ?? tc.target);
       const directSettlement = calculateFinalSettlement(
-        tc.delivered,
+        cappedDelivered,
         directQuote.unitPricePoints,
-        directQuote.quotedPoints
+        calcResult.cappedReservedPoints ?? directQuote.quotedPoints
       );
 
       expect(calcResult.unitPricePoints).toBe(managedQuote.unitPricePoints);

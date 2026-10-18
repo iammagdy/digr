@@ -63,7 +63,7 @@ export const PERSONA_CONFIGS: Record<PersonaType, PersonaConfig> = {
     titleAr: "مسوّق أو صانع محتوى",
     tone: "practical engagement metrics, rankings and concise insights, no academic wording",
     styleGuidanceAr: "تركيز تسويقي مباشر على مؤشرات التفاعل والمقارنة والتصنيف، مع ملخص عملي موجز.",
-    promptModuleAr: "للمسوّق أو صانع المحتوى، ركّز على التفاعل والمقارنة والترتيب والأنماط القابلة للتنفيذ. قدّم استنتاجات قصيرة، وتجنّب اللغة الأكاديمية ما لم يطلبها المستخدم.",
+    promptModuleAr: "للمسوّق أو صانع المحتوى، ركّز على الشركات والخطافات التسويقية والتفاعل والمقارنة والترتيب والأنماط القابلة للتنفيذ. قدّم استنتاجات قصيرة، وتجنّب اللغة الأكاديمية ما لم يطلبها المستخدم.",
     defaultVolumeMax: 200,
     anonymizeDefault: false,
     defaultTimeWindow: "آخر شهر",
@@ -182,7 +182,7 @@ const PROMPTS_BY_PERSONA: Record<PersonaType, Record<string, string>> = {
 
 export function getPersonaWelcomeExamples(persona: string | undefined, enabledCapabilitySlugs: string[]): PersonaWelcomeExample[] {
   const config = getPersonaConfig(persona);
-  const enabled = new Set(enabledCapabilitySlugs.filter((slug) => typeof slug === "string"));
+  void enabledCapabilitySlugs; // TREG-backed services are owner-confirmed platform capabilities, not UI feature flags.
   const examples: PersonaWelcomeExample[] = [];
   const platforms: Array<{ key: string; prefix: string; label: string }> = [
     { key: "tiktok", prefix: "tiktok-", label: "تيك توك" },
@@ -191,7 +191,7 @@ export function getPersonaWelcomeExamples(persona: string | undefined, enabledCa
   ];
 
   for (const platform of platforms) {
-    const available = [...enabled].some((slug) => slug.startsWith(platform.prefix));
+    const available = true;
     examples.push({
       key: platform.key,
       title: available ? `${platform.label} · مثال مناسب لك` : `${platform.label} · قريباً`,

@@ -5,6 +5,7 @@ import { z } from "zod";
 vi.mock("../src/functions/shared/catalogClient", () => ({
   searchCatalog: vi.fn(),
   getCachedCatalogEndpoints: vi.fn(() => []),
+  getEndpointDetails: vi.fn(async (id: string) => ({ id, catalogPriceUsd: 0.005, pointsPerUnit: 28 })),
 }));
 
 import { searchCatalog } from "../src/functions/shared/catalogClient";
@@ -90,6 +91,11 @@ function makeMockTables() {
     return m ? parseInt(m[1], 10) : null;
   };
   return {
+    async rpc(name: string, args: any) {
+      return name === "settle_people_job_atomic"
+        ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
+        : { data: null, error: { code: "PGRST202", message: `function ${name} not found` } };
+    },
     async createRow({ tableId, rowId, data }: any) {
       const id = rowId || `row_${Math.random().toString(36).slice(2)}`;
       const doc = { $id: id, ...data };
@@ -291,10 +297,9 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     const clarification = routePeopleAlternative(suggestion, brief, RAW_SEED_CAPABILITIES as any, "Find 20 decision-makers with work emails");
     expect(clarification.type).toBe("ask_clarification");
 
-    const unavailable = routePeopleAlternative(suggestion, brief, [], request);
-    expect(unavailable.type).toBe("refuse");
-    expect(unavailable.reasonAr).toContain("خدمة البحث عن صناع القرار والمهنيين غير متاحة حالياً");
-    expect(unavailable.reasonAr).not.toContain("تيك توك");
+    const fallback = routePeopleAlternative(suggestion, brief, [], request);
+    expect(fallback.type).toBe("propose_plan");
+    expect(fallback.capabilities[0].capabilitySlug).toBe("professional-people-search");
   });
 
   it("replaces a generic company plan when the customer explicitly asked for decision-makers", () => {
@@ -837,7 +842,7 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     });
 
     expect(res.outputType).toBe("propose_plan");
-    expect(res.planQuote?.targetVolumeMax).toBe(100);
+    expect(res.planQuote?.targetVolumeMax).toBe(86);
     expect(res.planQuote?.items?.[0]?.params?.query?.location?.include).toEqual(["Germany"]);
     expect(res.planQuote?.items?.[0]?.params?.query?.keyword?.include).toEqual(["fintech", "financial technology"]);
   });

@@ -12,6 +12,13 @@ import {
 } from "../../../../lib/server/tregAdapter";
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
+import { resultFileManifest } from "../../../../lib/server/resultFileManifest";
+import {
+  buildRejectedSample,
+  mergeRejectedSample,
+  REJECTED_SAMPLE_LIMIT,
+  type RejectedRowSampleEntry,
+} from "../../../../lib/server/rejectedRowSample";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
 import {
@@ -35,13 +42,21 @@ import {
   detectIndustryFromText,
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
-import { reviewCompanyBatch } from "../../../../lib/server/relevanceValidationLayer";
+import { evaluateResearchRowRelevance } from "../../../../lib/server/researchRelevanceGate";
+import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
+import {
+  DECISION_MAKER_ROUTE_COST_CAP_USD,
+  estimateDecisionMakerChunkSpendUsd,
+  readDecisionMakerSpendToDate,
+  remainingDecisionMakerSpendUsd,
+} from "../../../../lib/server/decisionMakerSpend";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -339,6 +354,26 @@ export async function POST(req: NextRequest) {
       Number(unitPrice) || 1
     );
 
+    // The provider is called and billed after this point. Refuse a people job
+    // until field-level settlement exists, and release its reserve through the
+    // approved atomic release path without making any provider calls.
+    if (spec.capabilitySlug === "professional-people-search" && !(await requirePeopleSettlementRpc(adminClient))) {
+      const rel = await executeReleaseConfirmation(adminClient, jobId, PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
+      if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
+      return NextResponse.json(
+        {
+          success: false,
+          released: true,
+          chargedCredits: 0,
+          deliveredUnits: 0,
+          jobId,
+          error: PEOPLE_SETTLEMENT_UNAVAILABLE_AR,
+          release: rel.data,
+        },
+        { status: 503 }
+      );
+    }
+
     // Retry reuse: rows the failed run already collected count as delivered by this
     // job (they are in the delivered file and are charged like any delivered row),
     // and the provider is asked only for the deficit.
@@ -380,17 +415,28 @@ export async function POST(req: NextRequest) {
         ? Math.min(50, Math.floor(body.mockBatchSize))
         : spec.pageSize;
 
+    const isPeopleJob = spec.capabilitySlug === "professional-people-search";
+    const decisionMakerSpendBudgetUsd = isPeopleJob
+      ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId))
+      : undefined;
+
     const estUnitsThisCall =
       spec.pricingUnit === "item" ? Math.max(1, Math.min(effectivePageSize, remainingUnits)) : 1;
-    const estimatedCostUsd =
-      useMockProvider && typeof body?.mockEstimatedCostUsd === "number"
-        ? body.mockEstimatedCostUsd
-        : Math.max(0.0001, Number((spec.unitCostUsd * estUnitsThisCall).toFixed(6)));
+    const estimatedCostUsd = isPeopleJob
+      ? Math.max(0.0001, Math.min(
+          decisionMakerSpendBudgetUsd || 0,
+          estimateDecisionMakerChunkSpendUsd(Math.min(effectivePageSize, Math.max(1, remainingUnits))),
+        ))
+      : useMockProvider && typeof body?.mockEstimatedCostUsd === "number"
+      ? body.mockEstimatedCostUsd
+      : Math.max(0.0001, Number((spec.unitCostUsd * estUnitsThisCall).toFixed(6)));
 
     // 6. Reserve provider spend BEFORE calling provider
     let spendCostId: number | null = null;
+    let providerBudgetStopped = false;
     // A retried job whose reused rows already cover the target needs no provider call and reserves no provider spend.
-    const needsProvider = remainingUnits > 0 || !retrySeed;
+    const needsProvider = (remainingUnits > 0 || !retrySeed) &&
+      (!isPeopleJob || Number(decisionMakerSpendBudgetUsd) >= DECISION_MAKER_ROUTE_COST_CAP_USD);
     const { data: spendReserve, error: spendErr } = needsProvider
       ? await adminClient.rpc("reserve_provider_spend_atomic", {
           p_job_id: jobId,
@@ -403,29 +449,36 @@ export async function POST(req: NextRequest) {
     if (spendErr || !spendReserve?.allowed) {
       const capErrorMsg =
         "تم تجاوز الحد اليومي لاستهلاك مزود البيانات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
-      await adminClient.rpc("record_chunk_failure", {
-        p_job_id: jobId,
-        p_error_message: capErrorMsg,
-      });
-      const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
-      if (!rel.confirmed) {
-        return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
-      }
+      if (effectiveDelivered > 0) {
+        // Do not make another billable call. Keep the matching rows already
+        // collected and let the existing atomic settlement charge only them.
+        providerBudgetStopped = true;
+        console.info(`[worker:provider_budget_stop] jobId=${jobId} delivered=${effectiveDelivered}`);
+      } else {
+        await adminClient.rpc("record_chunk_failure", {
+          p_job_id: jobId,
+          p_error_message: capErrorMsg,
+        });
+        const rel = await executeReleaseConfirmation(adminClient, jobId, capErrorMsg);
+        if (!rel.confirmed) {
+          return buildReleaseFailedResponse(jobId, rel.diagnostic, { capExceeded: true });
+        }
 
-      return NextResponse.json(
-        {
-          success: false,
-          released: true,
-          chargedCredits: 0,
-          capExceeded: true,
-          jobId,
-          error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
-          release: rel.data,
-        },
-        { status: 429 }
-      );
+        return NextResponse.json(
+          {
+            success: false,
+            released: true,
+            chargedCredits: 0,
+            capExceeded: true,
+            jobId,
+            error: "تم تجاوز الحد اليومي لاستهلاك المزود.",
+            release: rel.data,
+          },
+          { status: 429 }
+        );
+      }
     }
-    spendCostId = spendReserve.cost_id ?? null;
+    if (!providerBudgetStopped) spendCostId = spendReserve.cost_id ?? null;
 
     // 7. Call provider through adapter
     const activeAdapter =
@@ -442,7 +495,7 @@ export async function POST(req: NextRequest) {
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
-    const adapterResult = !needsProvider ? noProviderCall : await activeAdapter({
+    const adapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
       userId,
       step: currentStep,
@@ -459,6 +512,7 @@ export async function POST(req: NextRequest) {
       remainingNeeded: remainingUnits,
       targetVolumeMax: targetMax,
       deliveredSoFar: effectiveDelivered,
+      ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
     });
 
     const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
@@ -492,7 +546,9 @@ export async function POST(req: NextRequest) {
     const socialCapability = getSocialCapability(spec.capabilitySlug);
     const dedupeIdentity = isCompanyCapability ? companyIdentity : rowIdentity;
     let duplicateExcludedCount = 0;
-    if ((isCompanyCapability || socialCapability) && rawRows.length) {
+    const seenProviderCursors = new Set<string>();
+    if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(String(currentCursor));
+    if ((isCompanyCapability || socialCapability) && (rawRows.length > 0 || currentStep > 0)) {
       const seen = new Set<string>();
       // Rows reused from a failed earlier run are already accepted rows of this job.
       for (const row of retrySeed?.rows || []) {
@@ -511,6 +567,7 @@ export async function POST(req: NextRequest) {
             try { prior = JSON.parse(await blob.text()); } catch { /* retain in-memory fallback */ }
           }
         }
+        if (typeof prior?.cursor === "string" && prior.cursor) seenProviderCursors.add(prior.cursor);
         for (const row of Array.isArray(prior?.rows) ? prior.rows : []) {
           const identity = dedupeIdentity(row);
           if (identity) seen.add(identity);
@@ -584,7 +641,7 @@ export async function POST(req: NextRequest) {
     let relevanceExcludedCount = 0;
     let relevanceSkipReasons: string[] = [];
 
-    if (isCompanyCapability && Array.isArray(filteredRows) && filteredRows.length > 0) {
+    if (Array.isArray(filteredRows) && filteredRows.length > 0) {
       const fullText = [
         spec.params?.search,
         spec.params?.query,
@@ -605,26 +662,27 @@ export async function POST(req: NextRequest) {
         detectCountryFromText(fullText);
 
       const expectedCountry = targetCountryObj?.canonicalEnglish || null;
-      const expectedIndustry = detectIndustryFromText(fullText);
+      const expectedIndustry = isCompanyCapability
+        ? String(spec.params?.industry || detectIndustryFromText(fullText).arabicLabel)
+        : "";
 
-      const candidateRowsForReview = filteredRows.map((r: any, idx: number) => ({
+      // The row gate is deterministic and runs for every capability before acceptedRows
+      // is counted, saved, or charged. LLM classification is intentionally not on this
+      // billing path: it may advise separately but cannot increase delivered units.
+      const reviews = filteredRows.map((row: any, idx: number) => ({
         index: idx,
-        id: r.id || `comp_${idx + 1}`,
-        company_name: r.company_name || r.name,
-        industry: r.industry,
-        description: r.description,
-        location: r.location || r.city || r.country,
-        website: r.website || r.url,
+        ...evaluateResearchRowRelevance(row, {
+          capabilitySlug: spec.capabilitySlug,
+          endpointId: spec.endpointId,
+          params: {
+            ...(spec.params || {}),
+            ...(isCompanyCapability ? {
+              country: spec.params?.country || expectedCountry || "",
+              industry: expectedIndustry,
+            } : {}),
+          },
+        }),
       }));
-
-      const reviews = await reviewCompanyBatch({
-        customerRequest: fullText || spec.params?.search || "",
-        // An omitted country must stay omitted. Never silently classify the
-        // customer's request as Egypt when the brief has no geographic scope.
-        targetCountry: expectedCountry || "",
-        targetIndustryAr: expectedIndustry.arabicLabel,
-        rows: candidateRowsForReview,
-      });
 
       const matchedRows: any[] = [];
       const excludedRows: any[] = [];
@@ -646,8 +704,36 @@ export async function POST(req: NextRequest) {
 
       if (excludedRows.length > 0 || uncertainRows.length > 0) {
         console.log(
-          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry.arabicLabel})`
+          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry || "any"})`
         );
+      }
+
+      // Diagnosis only: keep a small masked sample of what the gate rejected, with reason codes. It is written
+      // before any release path so a job whose rows were all rejected still leaves evidence, and a failure
+      // here can never change the delivery, the charge or the chunk result.
+      if (excludedRows.length > 0) {
+        try {
+          const samplePath = `${jobId}/rejected_sample.json`;
+          const partialsStore = adminClient.storage.from("partials");
+          let stored: RejectedRowSampleEntry[] = [];
+          if (typeof partialsStore.download === "function") {
+            const { data: blob } = await partialsStore.download(samplePath);
+            if (blob) {
+              const parsed = JSON.parse(typeof blob.text === "function" ? await blob.text() : String(blob));
+              if (Array.isArray(parsed?.sample)) stored = parsed.sample;
+            }
+          }
+          if (stored.length < REJECTED_SAMPLE_LIMIT) {
+            const sample = mergeRejectedSample(stored, buildRejectedSample(excludedRows));
+            await partialsStore.upload(
+              samplePath,
+              Buffer.from(JSON.stringify({ jobId, limit: REJECTED_SAMPLE_LIMIT, sample }), "utf-8"),
+              { contentType: "application/json", upsert: true }
+            );
+          }
+        } catch {
+          // Best effort: the sample is for diagnosis and must not affect the job.
+        }
       }
 
     }
@@ -661,7 +747,9 @@ export async function POST(req: NextRequest) {
       await adminClient.rpc("commit_provider_spend", {
         p_cost_id: spendCostId,
         p_actual_cost_usd: actualCostUsd,
-        p_units: acceptedRows.length,
+        // DM units are provider call attempts, preserving a conservative
+        // per-job estimate from route caps across worker chunks.
+        p_units: isPeopleJob ? Number(adapterResult.providerCallCount) || 0 : acceptedRows.length,
       });
     }
 
@@ -677,9 +765,14 @@ export async function POST(req: NextRequest) {
       spec.paginationStrategy !== "none" &&
       acceptedRows.length < Math.min(effectivePageSize, remainingUnits) &&
       !adapterResult.nextCursor;
-    // Multi-page fetching continues until targetMax matching rows are reached or cursor exhausted
+    const cursorWouldRepeat = Boolean(
+      adapterResult.nextCursor && seenProviderCursors.has(String(adapterResult.nextCursor))
+    );
+    // Multi-page fetching continues until the requested matching count is reached,
+    // the source is exhausted, a cursor cycles, or the spend gate closes.
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
+      !cursorWouldRepeat &&
       newDeliveredUnits < targetMax &&
       !isShortLastPage;
     const isDone = !hasMorePages || newDeliveredUnits >= targetMax;
@@ -807,12 +900,16 @@ export async function POST(req: NextRequest) {
           }
         }
         const parts = [
-          `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
+          providerBudgetStopped
+            ? "توقف جلب صفحات إضافية بعد بلوغ الحد اليومي الآمن"
+            : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
           `الجديد ${toArabicDigits(acceptedRows.length)}`,
           `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
           uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
+          cursorWouldRepeat ? "توقف الجمع لأن المصدر كرر صفحة سبق استلامها" : null,
+          providerBudgetStopped ? "توقف الجمع عند الحد اليومي الآمن، مع تسليم السجلات المطابقة التي جُمعت" : null,
           skipReason,
           ...etaParts,
         ].filter(Boolean) as string[];
@@ -1029,7 +1126,7 @@ export async function POST(req: NextRequest) {
         },
         collection: {
           methodLabel: customerFacingCapabilityLabel(spec.capabilitySlug),
-          pagesFetched: currentStep + 1,
+          pagesFetched: currentStep + (providerBudgetStopped ? 0 : 1),
           paginationStrategy: spec.paginationStrategy,
           stopReason: finalRows.length >= targetMax ? "target_reached" : "source_exhausted",
         },
@@ -1256,13 +1353,44 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // Do not attempt settlement until the terminal cursor and collected count are persisted.
+      // settle_job_atomic also guards this state in SQL and can retire a stale lease only after
+      // this collection-complete marker has been committed.
+      const { data: persistedCompletion, error: persistedCompletionErr } = await adminClient
+        .from("jobs")
+        .select("status, current_cursor, delivered_units, target_volume_max")
+        .eq("id", jobId)
+        .maybeSingle();
+      if (
+        persistedCompletionErr ||
+        persistedCompletion?.status !== "running" ||
+        persistedCompletion?.current_cursor !== "completed" ||
+        Number(persistedCompletion?.delivered_units || 0) !== Number(recordedDeliveredUnits)
+      ) {
+        throw new Error("تعذر التحقق من اكتمال جمع البيانات قبل التسوية.");
+      }
+
       // Settle job atomically (charges ceil(delivered * unit_price), capped at reserve & jobPointsCap)
       const primaryResultPath = savedCsvPath || savedXlsxPath || savedPdfPath || `${userId}/${jobId}/result.csv`;
-      const { data: settleData, error: settleErr } = await adminClient.rpc("settle_job_atomic", {
-        p_job_id: jobId,
-        p_points_cap: jobPointsCap,
-        p_result_file_id: primaryResultPath,
-      });
+      const peopleUnits = isPeopleJob
+        ? decisionMakerDeliveredUnits(finalRows, Array.isArray(spec.params?.requiredContactFields)
+            ? spec.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
+            : ["work_email", "phone"])
+        : null;
+      const { data: settleData, error: settleErr } = isPeopleJob
+        ? await adminClient.rpc("settle_people_job_atomic", {
+            p_job_id: jobId,
+            p_base_units: peopleUnits!.baseUnits,
+            p_email_units: peopleUnits!.emailUnits,
+            p_phone_units: peopleUnits!.phoneUnits,
+            p_points_cap: jobPointsCap,
+            p_result_file_id: primaryResultPath,
+          })
+        : await adminClient.rpc("settle_job_atomic", {
+            p_job_id: jobId,
+            p_points_cap: jobPointsCap,
+            p_result_file_id: primaryResultPath,
+          });
 
       if (settleErr) {
         throw settleErr;
@@ -1347,10 +1475,16 @@ export async function POST(req: NextRequest) {
       try {
         const rcpt = await getRecipient(adminClient, userId, "job-done");
         if (rcpt) {
+          const chargedPoints = Math.round(Number(settleData?.charged_credits) || 0);
           await sendPlatformEmail("job-done", rcpt.email, {
             Name: rcpt.name,
-            JobTitle: `نتائج استخراج ${spec.capabilitySlug}`,
-          });
+            JobTitle: `بحث ${customerFacingCapabilityLabel(spec.capabilitySlug)}`,
+            Delivered: toArabicDigits(finalRows.length),
+            Requested: toArabicDigits(targetMax),
+            Charged: toArabicDigits(chargedPoints),
+            Refunded: toArabicDigits(Math.round(Number(settleData?.refunded_credits) || 0)),
+            JobURL: `${(process.env.NEXT_PUBLIC_SITE_URL || "https://diger.tech").replace(/\/+$/, "")}/dashboard/requests?job=${encodeURIComponent(jobId)}`,
+          }, `job-done:${jobId}`);
         }
       } catch (emailErr) {
         console.error("[email:job-done_failed]", emailErr);
@@ -1362,11 +1496,11 @@ export async function POST(req: NextRequest) {
         jobId,
         deliveredUnits: finalRows.length,
         spendCostId,
-        resultFiles: {
-          csv: csvPath,
-          xlsx: xlsxPath,
-          pdf: pdfPath,
-        },
+        resultFiles: resultFileManifest({
+          csv: savedCsvPath,
+          xlsx: savedXlsxPath,
+          pdf: savedPdfPath,
+        }),
         settle: settleData,
       });
     }

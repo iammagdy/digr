@@ -11,8 +11,8 @@ import { createAdminClient } from "../src/lib/supabase/server";
 dotenv.config({ path: ".env.local" });
 
 const BASE_URL = "https://diger.tech";
-const TEST_EMAIL = "iam.magdy@outlook.com";
-const TEST_PASSWORD = process.env.TEST_USER_PASSWORD || "P@ssw0rd";
+const TEST_EMAIL = process.env.DIGER_TEST_EMAIL || (() => { throw new Error("DIGER_TEST_EMAIL is required"); })();
+const TEST_PASSWORD = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
 const ARTIFACT_DIR = path.resolve("C:/Users/lenovo/.gemini/antigravity/brain/19ea4c3a-a1f7-4847-b3e0-723c199db4cf");
 const DOWNLOAD_DIR = path.resolve(ARTIFACT_DIR, "downloads_round3");
 const BROWSER_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";

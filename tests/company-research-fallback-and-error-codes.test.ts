@@ -4,6 +4,7 @@ import {
   toSafeReasonCode,
   reasonCodeToCustomerMessage,
 } from "../src/functions/shared/chatErrors";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR } from "../src/functions/shared/peopleSettlementReadiness";
 import { sanitizeCustomerErrorMessage } from "../src/functions/shared/catalogClient";
 
 describe("Company Research Graceful Fallback & Error Code Mapping", () => {
@@ -160,12 +161,16 @@ describe("Company Research Graceful Fallback & Error Code Mapping", () => {
 
       const rateMsg = reasonCodeToCustomerMessage("rate_limit_exceeded");
       expect(rateMsg).toContain("تم تجاوز الحد الأقصى المؤقت");
+
+      expect(toSafeReasonCode(new Error(PEOPLE_SETTLEMENT_UNAVAILABLE_AR))).toBe("people_settlement_unavailable");
+      expect(reasonCodeToCustomerMessage("people_settlement_unavailable")).toBe(PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
     });
 
     it("never leaks provider names or technical tokens in error messages", () => {
       const reasons = [
         "capability_not_found",
         "plan_build_failed",
+        "people_settlement_unavailable",
         "catalog_unavailable",
         "llm_failed",
         "timeout",

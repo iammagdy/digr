@@ -39,6 +39,19 @@ const ISO_3166_ALPHA2_CODES = "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ B
 const countryNamesEn = new Intl.DisplayNames(["en"], { type: "region" });
 const countryNamesAr = new Intl.DisplayNames(["ar"], { type: "region" });
 
+function detectCountryValue(value: unknown): CountryMapping | null {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const named = detectCountryFromText(text);
+  if (named) return named;
+  if (!/^[A-Z]{2}$/i.test(text)) return null;
+  const code = text.toUpperCase();
+  const english = countryNamesEn.of(code);
+  const arabic = countryNamesAr.of(code);
+  if (!english || english.toUpperCase() === code || !arabic || arabic.toUpperCase() === code) return null;
+  return { canonicalEnglish: english, arabicLabel: arabic };
+}
+
 export function isoCountryCodeFromName(countryName: string): string | undefined {
   const normalized = String(countryName || "").trim().toLowerCase();
   return ISO_3166_ALPHA2_CODES.find((code) => countryNamesEn.of(code)?.toLowerCase() === normalized);
@@ -576,9 +589,10 @@ export function extractInterpretedParameters(
     .join(" ");
 
   const explicitCountry =
-    detectCountryFromText(queryCountry || "") ||
-    detectCountryFromText(params?.country || "") ||
-    detectCountryFromText(params?.location || "") ||
+    detectCountryValue(queryCountry) ||
+    detectCountryValue(params?.country) ||
+    detectCountryValue(params?.region) ||
+    detectCountryValue(params?.location) ||
     detectCountryFromText(fullText);
 
   const industry = isPeopleSearch
@@ -719,11 +733,11 @@ export function getCompanyRequirementItems(
  * Decision-maker roles in a request: a specific title (CEO, مدير, مؤسس ...) or the generic phrase
  * itself (صناع القرار, decision makers, executives), which already names who is wanted.
  */
-export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع القرار|صانعي القرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
+export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
 
 export function isPeopleSearchRequest(text: string): boolean {
   const normalized = (text || "").toLowerCase();
-  const explicitPeopleIntent = /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع القرار|صانعي القرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
+  const explicitPeopleIntent = PEOPLE_ROLE_PATTERN.test(normalized) || /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
   if (explicitPeopleIntent) return true;
 
   // A work email can be a company field. Do not reinterpret an explicit
@@ -744,7 +758,8 @@ export function requiredProfessionalContactFields(text: string): string[] {
   if (/\b(?:phone|telephone|mobile)(?:\s+numbers?)?\b|رقم(?: الهاتف| التليفون| الموبايل)|الهاتف|التليفون|الموبايل|\b(?:rkm|rakm|raqm|rkmo|raqmo)\b/.test(normalized)) {
     fields.push("phone");
   }
-  return fields;
+  if (fields.length > 0) return fields;
+  return isPeopleSearchRequest(normalized) ? ["work_email", "phone"] : [];
 }
 
 /**

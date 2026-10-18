@@ -57,6 +57,29 @@ export function evaluateDeterministicRelevance(
   const rowName = String(row.company_name || row.name || "").toLowerCase().trim();
   const rowText = `${rowInd} ${rowDesc} ${rowName}`;
 
+  // The source taxonomy's broad "Utilities" label also contains unrelated water, fencing, and
+  // other service businesses. Require corroborating electrical/power evidence before delivering
+  // such a row for an electricity request; otherwise keep it visible for review without charging.
+  if (targetIndustryAr.toLowerCase().includes("الكهرباء") && rowInd === "utilities") {
+    const clearlyUnrelated =
+      /water treatment|chemical supplies|perimeter fencing|fencing|android game|game hacking|تهكير ألعاب|معالجة المياه|الأسوار|سياج/u.test(rowText);
+    if (clearlyUnrelated) {
+      return {
+        decision: "no_match",
+        reasonAr: "وصف النشاط يوضح مجالاً مختلفاً عن الكهرباء؛ استُبعد السجل ولم يُحتسب",
+      };
+    }
+    const hasElectricalEvidence =
+      /\b(electric(?:al|ity)?|power|grid)\b/.test(rowText) ||
+      /كهربا|طاقة كهربائية|شبكة الكهرباء/u.test(rowText);
+    if (!hasElectricalEvidence) {
+      return {
+        decision: "uncertain",
+        reasonAr: "تصنيف المصدر واسع ولا يؤكد نشاط الكهرباء؛ أُحيل السجل للمراجعة ولم يُحتسب",
+      };
+    }
+  }
+
   if (!rowInd) {
     return {
       decision: "uncertain",

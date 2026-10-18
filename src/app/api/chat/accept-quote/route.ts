@@ -3,8 +3,11 @@ import { createServerSideClient, createAdminClient } from "../../../../lib/supab
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
-import { InvalidInternalOriginError, resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
-import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
+import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
+import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../../lib/server/workerDispatch";
+import { recordWorkerStartFailure, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
+import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -55,6 +58,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Acceptance and reservation are allowed only from the explicit plan-card
+    // approval action. Polling, retries, nudges, and chat refreshes must never
+    // infer consent from an accepted/active quote.
+    if (!hasExplicitQuoteApproval(body)) {
+      return NextResponse.json(
+        { success: false, error: "اضغط زر الموافقة على الخطة لبدء البحث." },
+        { status: 400 }
+      );
+    }
+
     // A1 Safety Guard: Do not silently accept a quote and start fake work when live provider is disabled
     const adminClient = createAdminClient();
     const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);
@@ -69,6 +82,28 @@ export async function POST(req: NextRequest) {
           error: gateStatus.messageAr,
           reasonCode: gateStatus.reasonCode,
         },
+        { status: 503 }
+      );
+    }
+
+    // Never reserve credits for a decision-maker quote unless its field-level
+    // settlement function is installed. The worker repeats this check before
+    // reserving provider spend as protection for already accepted jobs.
+    const { data: quoteForReadiness } = await adminClient
+      .from("plans_quotes")
+      .select("items")
+      .eq("id", quoteId)
+      .maybeSingle();
+    let readinessItems = quoteForReadiness?.items;
+    if (typeof readinessItems === "string") {
+      try { readinessItems = JSON.parse(readinessItems); } catch { readinessItems = []; }
+    }
+    const isPeopleQuote = Array.isArray(readinessItems) && readinessItems.some((item: any) =>
+      item?.capabilitySlug === "professional-people-search" || item?.endpointId === "treg.people.search"
+    );
+    if (isPeopleQuote && !(await requirePeopleSettlementRpc(adminClient))) {
+      return NextResponse.json(
+        { success: false, error: PEOPLE_SETTLEMENT_UNAVAILABLE_AR },
         { status: 503 }
       );
     }
@@ -102,7 +137,7 @@ export async function POST(req: NextRequest) {
     // Await the first bounded chunk so acceptance does not report a silent start
     // while the reserved job remains queued. Later chunks self-chain in worker.
     const acceptedJobId = acceptRes.jobId;
-    let workerDispatch: { started: boolean; status?: number } = { started: false };
+    let workerDispatch: WorkerChunkDispatchResult = { started: false, status: 0, body: {} };
     try {
       const baseUrl = resolveInternalBaseUrl(req);
       workerDispatch = await dispatchWorkerChunk(
@@ -112,45 +147,21 @@ export async function POST(req: NextRequest) {
         createInternalWorkerAuthHeaders(acceptedJobId)
       );
       if (!workerDispatch.started) {
-        console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} status=${workerDispatch.status}`);
+        console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} status=${workerDispatch.status} code=${workerDispatch.failureCode || "dispatch_failed"}`);
       } else {
         console.log(`[accept-quote:worker_triggered] jobId=${acceptedJobId} status=${workerDispatch.status}`);
       }
     } catch (chunkErr: any) {
-      console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} error=${chunkErr?.message || chunkErr}`);
-      if (chunkErr instanceof InvalidInternalOriginError) {
-        const { data: released, error: releaseError } = await adminClient.rpc("release_job_atomic", {
-          p_job_id: acceptedJobId,
-          p_error_message: "تعذر بدء التنفيذ بسبب إعداد غير صالح. تم إلغاء الطلب وإرجاع النقاط المحجوزة.",
-        });
-        if (releaseError || released?.success !== true) {
-          console.error(`[accept-quote:invalid_origin_release_failed] jobId=${acceptedJobId} code=${releaseError?.code || "rpc_failed"}`);
-          return NextResponse.json(
-            { success: false, jobId: acceptedJobId, error: "تعذر بدء البحث. لم نتمكن من تأكيد إرجاع النقاط، وسيُعاد التحقق تلقائياً." },
-            { status: 503 }
-          );
-        }
-        try {
-          await adminClient.from("job_events").insert({
-            job_id: acceptedJobId,
-            user_id: user.id,
-            message: "تعذر بدء التنفيذ بسبب إعداد غير صالح. تم إلغاء الطلب وإرجاع النقاط المحجوزة.",
-            units: 0,
-            event_type: "error",
-          });
-        } catch (eventError: any) {
-          console.warn(`[accept-quote:invalid_origin_event_failed] jobId=${acceptedJobId} code=${eventError?.code || "unknown"}`);
-        }
-        return NextResponse.json(
-          {
-            success: false,
-            jobId: acceptedJobId,
-            releasedCredits: released.released_credits,
-            error: "تعذر بدء البحث بسبب إعداد غير صالح. أُعيدت النقاط المحجوزة إلى رصيدك.",
-          },
-          { status: 503 }
-        );
-      }
+      console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} code=${chunkErr?.name || "dispatch_failed"}`);
+      workerDispatch = { started: false, status: 0, body: { dispatchFailed: true } };
+    }
+
+    if (!workerDispatch.started && workerDispatch.body?.claimed !== false) {
+      const outcome = await recordWorkerStartFailure(adminClient, acceptedJobId);
+      workerDispatch = {
+        ...workerDispatch,
+        body: { ...workerDispatch.body, retrying: !outcome.failed, failed: outcome.failed },
+      };
     }
 
     return NextResponse.json({
@@ -161,7 +172,7 @@ export async function POST(req: NextRequest) {
       workerDispatch,
       messageAr: workerDispatch.started
         ? "تم قبول الطلب وبدء التنفيذ."
-        : "تم قبول الطلب وحجز النقاط، وتعذر بدء التنفيذ الآن. سنعيد المحاولة تلقائياً، وسيُحرر الحجز إذا لم يبدأ خلال دقيقة.",
+        : WORKER_START_RETRY_REASON_AR,
     });
   } catch (err: any) {
     console.error("Accept quote error:", err);

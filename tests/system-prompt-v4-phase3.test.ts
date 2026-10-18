@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildSystemPrompt, PROMPT_VERSION } from "../src/functions/shared/systemPrompt";
-import { APPROVED_CAPABILITY_CATALOG, sanitizeCapabilitiesForLlm, UNVERIFIED_PLATFORM_MESSAGE_AR } from "../src/functions/shared/capabilityRegistry";
+import { APPROVED_CAPABILITY_CATALOG, sanitizeCapabilitiesForLlm } from "../src/functions/shared/capabilityRegistry";
 import { LlmClient } from "../src/functions/shared/llmClient";
 
 describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
@@ -18,7 +18,7 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
   });
 
   it("upgrades PROMPT_VERSION to 4.0.0, sends identical system prompt to OpenAI and Anthropic, and enforces v4 guardrails (no emoji, no provider names, no legality promises)", async () => {
-    expect(["4.0.0", "5.0.0", "6.0.0"]).toContain(PROMPT_VERSION);
+    expect(["4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.0.0"]).toContain(PROMPT_VERSION);
 
     const sanitized = sanitizeCapabilitiesForLlm(APPROVED_CAPABILITY_CATALOG);
     const prompt = buildSystemPrompt({
@@ -28,7 +28,7 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
       userBalancePoints: 250,
     });
 
-    expect(prompt).toMatch(/System Prompt v[45]/);
+    expect(prompt).toContain("PRODUCT KNOWLEDGE & CATALOG ACCESS (v7)");
     expect(prompt).toContain("NO EMOJI");
     expect(prompt).toContain("NO LEGALITY OR ACADEMIC-VALIDITY PROMISES");
     expect(prompt).toContain("allowOther");
@@ -274,7 +274,7 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
     }
   });
 
-  it("(c) unsupported platform request returns an honest unavailable message with closest verified option", async () => {
+  it("(c) a platform-specific request does not suggest an unrelated platform", async () => {
     process.env.LLM_PROVIDER = "anthropic";
     process.env.LLM_ENABLED = "true";
     process.env.ANTHROPIC_API_KEY = "sk-ant-mock";
@@ -291,11 +291,10 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
             id: "tool_unsup",
             name: "actionResult",
             input: {
-              type: "suggest_alternative",
-              unsupportedService: "Snapchat",
-              explanationAr: `${UNVERIFIED_PLATFORM_MESSAGE_AR} (Snapchat).`,
-              closestAlternative: "استخراج ملف حساب تيك توك العام (@username)",
-              canRequestFeature: true,
+              type: "ask_clarification",
+              intro: "ما نوع البيانات المطلوبة؟",
+              reasonAr: "تحديد نوع البيانات المطلوب",
+              questions: [{ id: "topic", text: "ما نوع البيانات المطلوبة؟", type: "free" }],
             },
           },
         ],
@@ -311,12 +310,8 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
       sanitizedCapabilities: sanitizeCapabilitiesForLlm(APPROVED_CAPABILITY_CATALOG),
     });
 
-    expect(res.output.type).toBe("suggest_alternative");
-    if (res.output.type === "suggest_alternative") {
-      expect(res.output.unsupportedService).toBe("Snapchat");
-      expect(res.output.explanationAr).toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
-      expect(res.output.canRequestFeature).toBe(true);
-    }
+    expect(res.output.type).toBe("ask_clarification");
+    expect(JSON.stringify(res.output)).not.toContain("تيك توك");
   });
 
   it("(d) prompt injection attempt returns a clean refusal", async () => {

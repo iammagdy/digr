@@ -81,13 +81,12 @@ export async function acceptQuoteSupabase(
         const isVerifiedExecutable = (slugOrId: string) => {
           if (!slugOrId || typeof slugOrId !== "string" || slugOrId.startsWith("internal-")) return false;
           const lower = slugOrId.toLowerCase();
-          if (lower.includes("facebook") || lower.startsWith("unverified-")) return false;
 
           const approved = APPROVED_CAPABILITY_CATALOG.find(
             (c: any) => c.slug === slugOrId || c.tregEndpointId === slugOrId || c.id === slugOrId
           );
           if (approved) {
-            return approved.status === "verified" && approved.enabled !== false;
+            return approved.enabled !== false && Number(approved.unitCostUsd || approved.estimatedCostUsdPerUnit) > 0;
           }
 
           // Dynamic live catalog endpoints (e.g. companies research from live TREG catalog)
@@ -110,7 +109,7 @@ export async function acceptQuoteSupabase(
           return {
             success: false,
             statusCode: 400,
-            errorAr: "الخدمة المطلوبة في هذا العرض غير متاحة حالياً وجاري التحقق منها؛ لم يتم خصم أي نقاط من رصيدك.",
+            errorAr: "تعذر مطابقة إحدى خطوات العرض مع تعريفها وسعرها؛ لم يتم خصم أي نقاط من رصيدك.",
           };
         }
       }

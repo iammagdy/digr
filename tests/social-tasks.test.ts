@@ -4,6 +4,7 @@ import {
   extractUrls,
   getMissingSocialTaskInputs,
   hasSocialSubject,
+  socialSubjectText,
   socialCatalogQuery,
   socialTaskQuestion,
 } from "../src/lib/socialTasks";
@@ -12,6 +13,12 @@ import { normalizeClarificationQuestions } from "../src/functions/shared/clarifi
 import { mapSearchQueryToEnglish } from "../src/functions/shared/catalogClient";
 
 const brief: any = { platforms: [], topics: [] };
+
+describe("social topic extraction", () => {
+  it("keeps a selected time window out of the provider topic", () => {
+    expect(socialSubjectText("هات ١٠ كومنتس على فيديوهات تيك توك عن كرة السلة في مصر الفترة المطلوبة شهر")).toBe("كرة السلة");
+  });
+});
 
 describe("what a researcher wants is understood in Egyptian and standard Arabic", () => {
   const cases: Array<[string, string | null, string | null, string | null]> = [
@@ -26,6 +33,10 @@ describe("what a researcher wants is understood in Egyptian and standard Arabic"
     ["فيديوهات قناة على تيك توك", "tiktok", "channel_videos", "channel"],
     ["فيديوهات قناة @zachking على تيك توك", "tiktok", "channel_videos", "channel"],
     ["بوستات صفحة نيك على الفيس", "facebook", "page_posts", "keyword"],
+    ["هات تغريدات عن كرة السلة", "x", "x_posts", "keyword"],
+    ["اجمع tweets عن الطاقة الشمسية على X", "x", "x_posts", "keyword"],
+    ["هات تغريدات من حساب @nasa", "x", "x_posts", "channel"],
+    ["هات تغريدات من حساب محدد على تويتر", "x", "x_posts", "channel"],
     ["فيديوهات عن القهوة على تيك توك", "tiktok", "video_search", "keyword"],
     ["عايز شركات مقاولات في مصر", null, null, null],
   ];
@@ -81,6 +92,18 @@ describe("only the missing input is asked, one question at a time, with tappable
     expect(getMissingSocialTaskInputs("عايز كومنتس بوست https://www.facebook.com/nasa/posts/123456 على فيسبوك")).toEqual([]);
   });
 
+  it("topic tweets use keyword search; account-only tweets ask for one handle question", () => {
+    expect(getMissingSocialTaskInputs("هات تغريدات عن كرة السلة")).toEqual([]);
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة", brief)).toBeNull();
+    expect(getMissingSocialTaskInputs("هات تغريدات من حساب محدد على تويتر")).toEqual(["social_x_account_required"]);
+    const question = getDeterministicDiscoveryQuestion("هات تغريدات من حساب محدد على تويتر", brief);
+    expect(question?.text).toBe("ما اسم حساب إكس أو رابطه؟");
+    expect(question?.questions).toBeUndefined();
+    expect(getMissingSocialTaskInputs("هات تغريدات من حساب @nasa")).toEqual([]);
+    expect(getMissingSocialTaskInputs("هات تغريدات منصة إكس")).toEqual(["social_x_topic_required"]);
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات منصة إكس", brief)?.text).toBe("ما الموضوع الذي تريد البحث عن منشوراته؟");
+  });
+
   it("comments with a subject (no link) are served by searching videos about it", () => {
     expect(getMissingSocialTaskInputs("هات كومنتات فيديوهات عن القهوة على تيك توك")).toEqual([]);
   });
@@ -93,11 +116,22 @@ describe("only the missing input is asked, one question at a time, with tappable
     expect(getMissingSocialTaskInputs("فيديوهات ترند في مصر على تيك توك")).toEqual([]);
   });
 
-  it("trending on a platform with no verified source says so and offers the two that have one", () => {
+  it("asks for a time window after a country is known for broad topic searches", () => {
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة", brief)).toBeNull();
+
+    const question = getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في مصر", brief);
+    expect(question?.id).toBe("social_time_required");
+    expect(question?.text).toBe("ما الفترة الزمنية التي تريد البحث فيها؟");
+    expect(question?.options).toEqual(["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"]);
+
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في مصر خلال آخر شهر", brief)).toBeNull();
+    expect(getDeterministicDiscoveryQuestion("فيديوهات ترند في مصر على تيك توك", brief)).toBeNull();
+  });
+
+  it("does not refuse or suggest a different platform for a trending request", () => {
     const q = getDeterministicDiscoveryQuestion("ترند فيسبوك", brief);
-    expect(q?.id).toBe("social_trending_platform_required");
-    expect(q?.options).toEqual(["تيك توك", "يوتيوب"]);
-    expect(q?.text).not.toMatch(/[A-Za-z]/);
+    expect(q?.id).toBe("social_topic_required");
+    expect(q?.text).toContain("ما الموضوع");
   });
 
   it("a channel request without a channel asks for it", () => {
@@ -137,9 +171,10 @@ describe("questions keep their own choices (a topic word in the text must not ch
     expect(region.defaultOption).toBeUndefined();
   });
 
-  it("the unsupported-trending question offers the two platforms that have a trending feed and preselects none", () => {
+  it("a platform clarification is one short free-text question", () => {
     const q = normalize(socialTaskQuestion("social_trending_platform_required"));
-    expect(q.options).toEqual(["تيك توك", "يوتيوب"]);
+    expect(q.type).toBe("free");
+    expect(q.options).toEqual([]);
     expect(q.defaultOption).toBeUndefined();
   });
 

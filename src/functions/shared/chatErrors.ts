@@ -1,4 +1,5 @@
 import { sanitizeCustomerErrorMessage } from "./catalogClient";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR } from "./peopleSettlementReadiness";
 
 export function toSafeReasonCode(err: unknown, failingStep?: string): string {
   if (!err || typeof err !== "object") return "internal_error";
@@ -12,6 +13,10 @@ export function toSafeReasonCode(err: unknown, failingStep?: string): string {
 
   const msg = typeof anyErr.message === "string" ? anyErr.message : "";
   const name = typeof anyErr.name === "string" ? anyErr.name : "";
+
+  if (msg === PEOPLE_SETTLEMENT_UNAVAILABLE_AR) {
+    return "people_settlement_unavailable";
+  }
 
   if (/timeout|AbortError|ETIMEDOUT|ESOCKETTIMEDOUT/i.test(msg) || /timeout|AbortError/i.test(name)) {
     return "timeout";
@@ -47,6 +52,8 @@ export function reasonCodeToCustomerMessage(reason: string, defaultMsg?: string)
       return "الخدمة أو المنصة المطلوبة غير متاحة حالياً ضمن الأدوات المعتمدة على المنصة.";
     case "plan_build_failed":
       return "تعذر إعداد خطة تسعير دقيقة للطلب بالبيانات المتاحة. يمكنك إعادة صياغة الطلب أو تحديد إحدى المنصات المعتمدة (فيسبوك، لينكد إن، إكس، يوتيوب).";
+    case "people_settlement_unavailable":
+      return PEOPLE_SETTLEMENT_UNAVAILABLE_AR;
     case "catalog_unavailable":
       return "تعذر الاتصال بفهرس الخدمات حالياً لتحديد التكلفة. يرجى المحاولة بعد لحظات.";
     case "llm_failed":

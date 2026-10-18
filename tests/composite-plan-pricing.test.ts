@@ -218,8 +218,9 @@ describe("Composite Multi-Capability Research Plan Pricing & Execution Safety", 
     expect(quote.items[0].unitPricePoints).toBe(9);
     expect(quote.items[0].unitCostUsd).toBe(0.0009);
     expect(quote.items[0].pricingUnit).toBe("item");
-    expect(quote.items[0].rawPoints).toBe(1251);
-    expect(quote.items[0].itemReservation).toBe(1439);
+    expect(quote.items[0].targetVolumeMax).toBe(57);
+    expect(quote.items[0].rawPoints).toBe(513);
+    expect(quote.items[0].itemReservation).toBe(590);
   });
 
   // 2. Two capabilities with different unit costs (IMPORTANT NUMERIC TEST)
@@ -478,7 +479,8 @@ describe("Composite Multi-Capability Research Plan Pricing & Execution Safety", 
     });
 
     expect(quote.isAffordable).toBe(false);
-    expect(quote.quotedPoints).toBe(1840);
+    expect(quote.quotedPoints).toBe(589);
+    expect(quote.pointsCapConstrained).toBe(true);
     expect(quote.downscaledOffer).toBeDefined();
     expect(quote.downscaledOffer!.affordableQuotedPoints).toBeLessThanOrEqual(500);
     expect(quote.downscaledOffer!.maxAffordableUnits).toBeLessThan(200);

@@ -61,7 +61,7 @@ async function record(
 
 async function getOrCreateTestUser(emailPrefix: string, labels: string[] = []) {
   const email = `${emailPrefix}_p1_${Date.now()}@diger.test`;
-  const password = "Password123!Secure";
+  const password = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
   const user = await serverUsers.create(ID.unique(), email, undefined, password, emailPrefix);
   if (labels.length > 0) {
     await serverUsers.updateLabels(user.$id, labels);

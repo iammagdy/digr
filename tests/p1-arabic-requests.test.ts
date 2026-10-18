@@ -37,14 +37,14 @@ describe("P1: 20 Realistic Arabic Requests Suite", () => {
     {
       id: 5,
       prompt: "أريد جمع منشورات حساب تجاري على انستغرام",
-      expectedType: "suggest_alternative",
-      expectedKeywordInResult: "Instagram",
+      expectedType: "propose_plan",
+      expectedKeywordInResult: "إنستغرام",
     },
     {
       id: 6,
       prompt: "اسحب لي بيانات بروفايلات مستخدمين على لينكد إن",
-      expectedType: "suggest_alternative",
-      expectedKeywordInResult: "LinkedIn",
+      expectedType: "propose_plan",
+      expectedKeywordInResult: "لينكد",
     },
     {
       id: 7,
@@ -113,7 +113,7 @@ describe("P1: 20 Realistic Arabic Requests Suite", () => {
     {
       id: 18,
       prompt: "هات لي كل المنشورات الشخصية في فيسبوك",
-      expectedType: "suggest_alternative",
+      expectedType: "ask_clarification",
     },
     {
       id: 19,

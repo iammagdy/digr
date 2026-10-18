@@ -6,6 +6,8 @@ import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
+import { customerResultColumnLabel } from "@/lib/customerResultColumns";
+import { onRequestFormats, producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 
 export interface ExtractedRecord {
   id: string;
@@ -25,6 +27,8 @@ interface ResultsCanvasProps {
   duplicatesRemoved?: number;
   errorAr?: string;
   onDownload: (ext: "xlsx" | "pdf" | "csv") => void;
+  /** Stored file ids of the finished job; a missing id means that format was not produced. */
+  fileIds?: ResultFileIds | null;
   downloadingKey: string | null;
   onExplainMethodology: () => void;
   onRequestDocxMethodology: () => void;
@@ -43,7 +47,7 @@ interface ResultsCanvasProps {
   onUndoVersion: (targetVersionId: string) => void;
 }
 
-const COLUMN_LABELS: Record<string, string> = {
+const LEGACY_COLUMN_LABELS: Record<string, string> = {
   username: "اسم المستخدم", displayName: "الاسم التعريفي", followers: "المتابعون",
   following: "المتابعَون", likes: "الإعجابات", videosCount: "المقاطع", verified: "موثّق",
   bio: "النبذة", bioLink: "رابط النبذة", profileUrl: "رابط الملف", collectedDate: "تاريخ الجمع",
@@ -103,6 +107,7 @@ export default function ResultsCanvas({
   duplicatesRemoved,
   errorAr,
   onDownload,
+  fileIds,
   downloadingKey,
   onExplainMethodology,
   onRequestDocxMethodology,
@@ -142,8 +147,8 @@ export default function ResultsCanvas({
   );
   const rawColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id" && !key.startsWith("_") && !key.endsWith("_relevance_status")))));
   const tableColumns = rawColumns.filter((key, index) => {
-    const label = COLUMN_LABELS[key] || key;
-    return rawColumns.findIndex((candidate) => (COLUMN_LABELS[candidate] || candidate) === label) === index;
+    const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key);
+    return rawColumns.findIndex((candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate)) === label) === index;
   });
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
 
@@ -244,6 +249,7 @@ export default function ResultsCanvas({
             duplicatesRemoved={duplicatesRemoved}
             errorAr={errorAr}
             onDownload={onDownload}
+            fileIds={fileIds}
           />
         </div>
       ) : (
@@ -329,7 +335,7 @@ export default function ResultsCanvas({
                     <thead>
                       <tr className="border-b border-sand-200 bg-sand-100/80">
                         {tableColumns.map((column) => (
-                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{COLUMN_LABELS[column] || column}</th>
+                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{LEGACY_COLUMN_LABELS[column] || customerResultColumnLabel(column)}</th>
                         ))}
                       </tr>
                     </thead>
@@ -398,10 +404,10 @@ export default function ResultsCanvas({
         {tab === "files" && (
           <div className="space-y-3">
             {[
-              { ext: "xlsx" as const, label: "إكسل", title: "ملف إكسل كامل", desc: "جدول البيانات ودليل الحقول." },
-              { ext: "pdf" as const, label: "بي دي إف", title: "تقرير المنهجية", desc: "منهجية الجمع وحدود البيانات." },
+              { ext: "xlsx" as const, label: "إكسل", title: "ملف إكسل", desc: "جدول البيانات فقط." },
+              { ext: "pdf" as const, label: "بي دي إف", title: "الدليل المنهجي", desc: "منهجية الجمع وحدود البيانات." },
               { ext: "csv" as const, label: "سي إس في", title: "بيانات جدولية", desc: "للاستخدام في التحليل." },
-            ].map((f) => (
+            ].filter((f) => producedFormats(fileIds).includes(f.ext)).map((f) => (
               <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ac text-xs font-semibold text-onac">{f.label}</span>
@@ -415,6 +421,21 @@ export default function ResultsCanvas({
                 </Button>
               </div>
             ))}
+            {onRequestFormats(fileIds).length > 0 && (
+              <div className="rounded-[20px] border border-dashed border-sand-300 p-4">
+                <p className="text-xs leading-relaxed text-sand-600">صيغ أخرى تُجهَّز عند الطلب من البيانات المحفوظة، دون أي تكلفة إضافية.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {onRequestFormats(fileIds).map((ext) => {
+                    const label = ext === "xlsx" ? "إكسل" : ext === "pdf" ? "بي دي إف" : "سي إس في";
+                    return (
+                      <Button key={ext} size="sm" variant="secondary" onClick={() => onDownload(ext)} disabled={downloadingKey === ext || !jobId}>
+                        {downloadingKey === ext ? `جاري تجهيز ${label}...` : `جهّز ملف ${label}`}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

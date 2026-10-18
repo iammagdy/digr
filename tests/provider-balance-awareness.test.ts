@@ -194,8 +194,8 @@ describe("Task 5: Provider Balance Awareness & Admin Endpoint", () => {
       });
 
       expect(quote.capacityConstrained).toBe(true);
-      expect(quote.targetVolumeMax).toBe(90);
-      expect(quote.items[0].targetVolumeMax).toBe(90);
+      expect(quote.targetVolumeMax).toBe(86);
+      expect(quote.items[0].targetVolumeMax).toBe(86);
     });
 
     it("does not downscale when requested volume is safely within budget", async () => {

@@ -29,6 +29,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard/topup": "الرصيد والشحن",
   "/dashboard/requests": "طلباتي",
   "/dashboard/settings": "الإعدادات",
+  "/services": "كتالوج الخدمات",
 };
 
 function initials(name: string) {
@@ -167,6 +168,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
     { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
     { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
@@ -175,6 +177,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       else router.push("/dashboard/chat?history=1");
     } },
     { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
   ];
 
   const menu: Array<{ label: string; icon: string; meta?: string; danger?: boolean; href?: string; onClick?: () => void }> = [
@@ -278,7 +281,19 @@ export function AppShell({ children }: { children: ReactNode }) {
             {/* account row: pinned to the bottom, never scrolls away */}
             <div ref={acctRef} className="relative flex flex-col gap-2.5 border-t border-ln p-3">
               {acctOpen && (
-                <div role="menu" className="absolute inset-x-3 bottom-[calc(100%-4px)] z-[5] flex flex-col rounded-[18px] border border-ln bg-sf p-1.5" style={{ boxShadow: "var(--shadow)", animation: "up .2s both" }}>
+                <div
+                  role="menu"
+                  className={`absolute bottom-[calc(100%-4px)] z-[5] flex flex-col rounded-[18px] border border-ln bg-sf p-1.5 ${compactSidebar && !mobile ? "" : "inset-x-3"}`}
+                  style={{
+                    boxShadow: "var(--shadow)",
+                    animation: "up .2s both",
+                    ...(compactSidebar && !mobile ? {
+                      width: "min(240px, calc(100vw - 88px))",
+                      insetInlineStart: 12,
+                      insetInlineEnd: "auto",
+                    } : {}),
+                  }}
+                >
                   {menu.map((m) => {
                     const cls = "flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-2.5 text-right text-[13px] transition-colors hover:bg-sf2";
                     const style = { color: m.danger ? "var(--bad)" : "var(--ink)" };

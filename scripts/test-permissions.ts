@@ -66,7 +66,7 @@ async function runTests() {
   const emailA = `test-user-a-${Date.now()}@diger.test`;
   const emailB = `test-user-b-${Date.now()}@diger.test`;
   const emailAdmin = `test-admin-${Date.now()}@diger.test`;
-  const password = "TestPassword123!";
+  const password = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
 
   console.log("1. Creating test actors (User A, User B, Admin)...");
   const userA = await serverUsers.create(ID.unique(), emailA, undefined, password, "User A");

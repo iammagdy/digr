@@ -68,4 +68,12 @@ describe("result review UI contracts (release branch)", () => {
     expect(quote).toContain("focus-visible:outline-2");
     expect(quote).toContain("motion-safe:animate-spin motion-reduce:animate-none");
   });
+
+  it("keeps the account menu readable when the desktop sidebar is collapsed", () => {
+    expect(sidebar).toContain('role="menu"');
+    expect(sidebar).toContain('width: "min(240px, calc(100vw - 88px))"');
+    expect(sidebar).toContain("insetInlineStart: 12");
+    expect(sidebar).toContain('insetInlineEnd: "auto"');
+    expect(sidebar).toContain("compactSidebar && !mobile");
+  });
 });

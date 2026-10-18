@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSystemPrompt, buildSystemPromptParts } from "../src/functions/shared/systemPrompt";
+import { buildSystemPrompt, buildSystemPromptParts, compactCapabilityInventory } from "../src/functions/shared/systemPrompt";
 import { LlmClient, getLlmPricingSettings } from "../src/functions/shared/llmClient";
 import { vi } from "vitest";
 
@@ -28,6 +28,28 @@ describe("system prompt: cacheable fixed rules, no hardcoded name", () => {
     }
   });
 
+  it("keeps the complete guide in the cacheable prefix and sends a compact full capability inventory", () => {
+    const caps = [
+      {
+        id: "social-x-posts", slug: "social-x-posts", platform: "x", nameAr: "منشورات إكس",
+        descriptionAr: "وصف طويل لا حاجة لتكراره لأن دليل المنصة يشرح الخدمة بالكامل",
+        paramsSchema: { required: ["query"], properties: { query: { type: "string" }, maxResults: { type: "integer" } } },
+        pointsPerUnit: 4, unitCostUsd: 0.002, enabled: true, maxRows: 200,
+      },
+      { id: "companies", slug: "companies", platform: "web", nameAr: "بحث الشركات", paramsSchema: {}, maxRows: 500 },
+    ];
+    const parts = buildSystemPromptParts({ ...base, sanitizedCapabilities: caps });
+    expect(parts.staticText).toContain("FULL DIGER PLATFORM GUIDE");
+    expect(parts.staticText).toContain('"slug":"social-x-posts"');
+    expect(parts.dynamicText).toContain('"s":"social-x-posts"');
+    expect(parts.dynamicText).toContain('"s":"companies"');
+    expect(parts.dynamicText).not.toContain("pointsPerUnit");
+    expect(parts.dynamicText).not.toContain("unitCostUsd");
+    expect(parts.dynamicText).not.toContain("paramsSchema");
+    expect(JSON.stringify(compactCapabilityInventory(caps)).length).toBeLessThan(JSON.stringify(caps).length);
+    expect(parts.dynamicText).toContain("User Persona:");
+  });
+
   it("never invents a name: an unknown name is empty and the model is told to ask once", () => {
     const parts = buildSystemPromptParts({ ...base });
     expect(parts.dynamicText).toMatch(/User Name:\s*\n/);
@@ -48,6 +70,7 @@ describe("system prompt: cacheable fixed rules, no hardcoded name", () => {
     process.env.LLM_PROVIDER = "anthropic";
     process.env.LLM_LIVE = "true";
     process.env.ANTHROPIC_API_KEY = "test-key-mock";
+    const usageLog = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -59,6 +82,12 @@ describe("system prompt: cacheable fixed rules, no hardcoded name", () => {
     const result = await client.executeTurn({ messages: [{ role: "user", content: "مرحبا" }], sanitizedCapabilities: [] });
     vi.unstubAllGlobals();
     expect(result.inputTokens).toBe(13000);
+    expect(result.uncachedInputTokens).toBe(1000);
+    expect(result.cacheReadInputTokens).toBe(10000);
+    expect(result.cacheCreationInputTokens).toBe(2000);
+    expect(usageLog).toHaveBeenCalledWith(expect.stringContaining('"cacheReadInputTokens":10000'));
+    expect(usageLog).toHaveBeenCalledWith(expect.stringContaining('"cacheCreationInputTokens":2000'));
+    expect(usageLog.mock.calls.join(" ")).not.toContain("مرحبا");
     // (1000 + 10000 x 0.1 + 2000 x 1.25) = 4500 weighted input tokens
     const pricing = getLlmPricingSettings("anthropic", result.model);
     expect(result.costUsd).toBeCloseTo((4500 * pricing.inputCostPerMillion + 100 * pricing.outputCostPerMillion) / 1_000_000, 10);
@@ -74,7 +103,7 @@ describe("social research rules reach the model", () => {
     expect(staticText).toContain('"social-..."');
     expect(staticText).toContain("كومنتس");
     expect(staticText).toMatch(/exactly ONE thing to collect/);
-    expect(staticText).toMatch(/Facebook has no trending feed/);
+    expect(staticText).toMatch(/Trending requests use the country or region/);
     expect(staticText).toMatch(/Never invent a link/);
     // The part that changes every turn holds none of it, so the fixed block stays cacheable.
     expect(dynamicText).not.toContain("SOCIAL RESEARCH");

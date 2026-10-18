@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
+import { inferSocialRowKind } from "@/lib/server/socialRows";
+import { producedFormats } from "@/lib/producedFormats";
 
 export const dynamic = "force-dynamic";
 
@@ -78,11 +80,36 @@ export async function GET(
         throw new Error("Result file not found");
       }
 
+      // Formats that exist for this job; a format outside the approved plan is generated only on request.
+      let fileIds: { xlsx: string | null; pdf: string | null; csv: string | null } | null = null;
+      try {
+        const { data: versionRows } = await adminClient
+          .from("artifact_versions")
+          .select("file_id_xlsx, file_id_pdf, file_id_csv")
+          .eq("job_id", jobId)
+          .eq("user_id", jobDoc.user_id)
+          .order("version_number", { ascending: false })
+          .limit(1);
+        const latest = versionRows?.[0];
+        if (latest) {
+          fileIds = {
+            xlsx: latest.file_id_xlsx || null,
+            pdf: latest.file_id_pdf || null,
+            csv: latest.file_id_csv || null,
+          };
+        }
+      } catch {
+        // Without the artifact record the page falls back to the default format only.
+      }
+
       const parsedData = JSON.parse(jsonText);
+      parsedData.metadata = parsedData.metadata && typeof parsedData.metadata === "object" ? parsedData.metadata : {};
+      parsedData.metadata.template ||= jobDoc.template_slug || jobDoc.endpoint_id;
       const normalized = normalizeDataset(parsedData, {
         platform: jobDoc.platform || undefined,
         title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,
         jobId,
+        socialKind: inferSocialRowKind(jobDoc.endpoint_id, jobDoc.template_slug, jobDoc.capability_slug, jobDoc.platform),
       });
 
       return NextResponse.json({
@@ -110,6 +137,8 @@ export async function GET(
         kpis: normalized.kpis,
         chargedCredits: jobDoc.charged_credits,
         finishedAt: jobDoc.finished_at,
+        fileIds,
+        producedFormats: producedFormats(fileIds),
       });
     } catch {
       // If JSON file doesn't exist yet (e.g. still running, failed, or older job)

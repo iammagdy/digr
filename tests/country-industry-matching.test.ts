@@ -27,6 +27,18 @@ describe("Country & Industry Detection and Matching", () => {
     expect(extractParamDisplayString(params, "بحث صناع القرار", true)).not.toContain("Germany");
   });
 
+  it("renders ISO country codes stored on a decision-maker quote as a country name", () => {
+    const interpreted = extractInterpretedParameters({ country: "EG" }, "بحث صناع القرار", true);
+    expect(interpreted.countryAr).toBe("مصر");
+    expect(interpreted.countryCanonical).toBe("Egypt");
+    expect(interpreted.isDefaultCountry).toBe(false);
+  });
+
+  it("renders an explicit social region code as the plan country", () => {
+    const interpreted = extractInterpretedParameters({ query: "كرة السلة", region: "EG" }, "تعليقات عن كرة السلة");
+    expect(interpreted).toMatchObject({ countryAr: "مصر", countryCanonical: "Egypt", isDefaultCountry: false });
+  });
+
   it("localizes the English FinTech taxonomy in customer-facing cards", () => {
     expect(industryDisplayLabelAr("FinTech")).toBe("التقنية المالية");
   });

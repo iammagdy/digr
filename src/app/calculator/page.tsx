@@ -103,7 +103,7 @@ export default function PublicCalculatorPage() {
             >
               {options.map((opt) => (
                 <option key={opt.slug} value={opt.slug}>
-                  {opt.nameAr} {opt.enabled ? "— متاح للتنفيذ الفوري" : "— قيد التفعيل"}
+                  {opt.nameAr}
                 </option>
               ))}
             </select>

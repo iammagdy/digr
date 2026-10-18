@@ -1,5 +1,6 @@
 import crypto from "crypto";
-import { SOCIAL_COLUMN_ORDER, normalizeSocialRow, type SocialRowKind } from "./socialRows";
+import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, type SocialRowKind } from "./socialRows";
+import { toArabicDigits } from "../arabicDigits";
 
 export interface CodebookEntry {
   field: string;
@@ -32,7 +33,7 @@ export interface NormalizedDataset {
     targetRequested?: number | string | null;
     reportContext?: Record<string, any>;
     /** Set for comment and video results of the verified social services (fixed Arabic schema). */
-    socialKind?: "comments" | "videos";
+    socialKind?: SocialRowKind;
   };
   profile: Record<string, any> | null;
   rows: Array<Record<string, any>>;
@@ -479,15 +480,10 @@ export function generateDynamicCodebook(columns: string[], sampleRows: Array<Rec
       }
     }
 
-    const titleAr = col
-      .replace(/_/g, " ")
-      .replace(/([A-Z])/g, " $1")
-      .trim();
-
     return {
       field: col,
-      titleAr: `حقل ${titleAr}`,
-      descriptionAr: `بيانات السجل المستخرجة لحقل ${col}`,
+      titleAr: `حقل إضافي ${toArabicDigits(columns.slice(0, columns.indexOf(col) + 1).filter((field) => !COLUMN_METADATA_MAP[field]).length)}`,
+      descriptionAr: "قيمة إضافية أعادها المصدر ولم يتوفر لها تصنيف تفصيلي.",
       dataType: inferredType,
     };
   });
@@ -504,6 +500,7 @@ export function normalizeDataset(
     title?: string;
     jobId?: string;
     targetRequested?: number | string | null;
+    socialKind?: SocialRowKind | null;
   }
 ): NormalizedDataset {
   const meta = rawPayload?.metadata || {};
@@ -537,7 +534,8 @@ export function normalizeDataset(
     ? [cleanProfile]
     : [];
 
-  const socialKind: SocialRowKind | null = meta.socialKind === "comments" || meta.socialKind === "videos" ? meta.socialKind : null;
+  const declaredSocialKind = options?.socialKind || meta.socialKind || inferSocialRowKind(meta.template, meta.platform, options?.title);
+  const socialKind: SocialRowKind | null = declaredSocialKind === "comments" || declaredSocialKind === "videos" || declaredSocialKind === "posts" ? declaredSocialKind : null;
   const mappedRows = socialKind
     ? rawRows.map((r, i) => {
         // Social rows get one fixed Arabic schema whatever source answered; text is formula-escaped here.
@@ -599,6 +597,17 @@ export function normalizeDataset(
   if (socialKind) {
     entityType = socialKind === "comments" ? "comments" : "posts";
   } else if (
+    rawPayload?.entityType === "companies" ||
+    rawPayload?.metadata?.entityType === "companies" ||
+    meta.template?.includes("company") ||
+    meta.template?.includes("companies") ||
+    columns.includes("cr_number") ||
+    columns.includes("domain") ||
+    columns.includes("website_url") ||
+    columns.includes("company_size")
+  ) {
+    entityType = "companies";
+  } else if (
     rawPayload?.entityType === "people" ||
     rawPayload?.metadata?.entityType === "people" ||
     meta.template?.includes("people") ||
@@ -611,11 +620,7 @@ export function normalizeDataset(
     rawPayload?.metadata?.entityType === "companies" ||
     meta.template?.includes("company") ||
     meta.template?.includes("companies") ||
-    columns.includes("company_name") ||
-    columns.includes("cr_number") ||
-    columns.includes("domain") ||
-    columns.includes("website_url") ||
-    columns.includes("company_size")
+    columns.includes("company_name")
   ) {
     entityType = "companies";
   } else if (columns.includes("comment_text") || columns.includes("parent_id")) {

@@ -569,7 +569,7 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
       expect(capturedBody.system[0].cache_control).toEqual({ type: "ephemeral" });
       expect(capturedBody.system[0].text.length).toBeGreaterThan(1000);
       expect(capturedBody.system[1].cache_control).toBeUndefined();
-      expect(capturedBody.system[1].text).toContain("AVAILABLE CATALOG CAPABILITIES");
+      expect(capturedBody.system[1].text).toContain("AVAILABLE CAPABILITY INVENTORY");
       // Nothing that changes per user or per turn may sit inside the cached block.
       expect(capturedBody.system[0].text).not.toContain("User Name:");
       expect(capturedBody.system[0].text).not.toContain("Available Balance:");

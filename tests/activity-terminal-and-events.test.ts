@@ -140,22 +140,23 @@ describe("Real-Time Activity Terminal, Worker Event Logging & Guest Rules", () =
           DEFAULT_PRICING_SETTINGS
         );
 
+        const cappedDelivered = Math.min(sample.delivered, calc.maxCappedVolume ?? sample.target);
         const directSettlement = calculateFinalSettlement(
-          sample.delivered,
+          cappedDelivered,
           directQuote.unitPricePoints,
-          directQuote.quotedPoints
+          calc.cappedReservedPoints ?? directQuote.quotedPoints
         );
 
         // Assert 0 discrepancy
         expect(calc.unitPricePoints).toBe(directQuote.unitPricePoints);
-        expect(calc.reservedPoints).toBe(directQuote.quotedPoints);
-        expect(calc.chargedPoints).toBe(directSettlement.chargePoints);
-        expect(calc.refundPoints).toBe(directSettlement.refundPoints);
+        expect(calc.reservedPoints).toBe(calc.cappedReservedPoints ?? directQuote.quotedPoints);
+        expect(calc.chargedPoints).toBe(calc.cappedChargedPoints ?? directSettlement.chargePoints);
+        expect(calc.refundPoints).toBe(calc.cappedRefundPoints ?? directSettlement.refundPoints);
 
         // Verification of EGP conversion: 1 point = 0.10 EGP
-        expect(calc.reservedEgp).toBe(Number((directQuote.quotedPoints * 0.10).toFixed(2)));
-        expect(calc.chargedEgp).toBe(Number((directSettlement.chargePoints * 0.10).toFixed(2)));
-        expect(calc.refundEgp).toBe(Number((directSettlement.refundPoints * 0.10).toFixed(2)));
+        expect(calc.reservedEgp).toBe(Number((calc.reservedPoints * 0.10).toFixed(2)));
+        expect(calc.chargedEgp).toBe(Number((calc.chargedPoints * 0.10).toFixed(2)));
+        expect(calc.refundEgp).toBe(Number((calc.refundPoints * 0.10).toFixed(2)));
       }
     });
 

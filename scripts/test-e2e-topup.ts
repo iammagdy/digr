@@ -42,7 +42,7 @@ async function runE2ETest() {
 
   const emailUser = `e2e-user-${Date.now()}@diger.test`;
   const emailAdmin = `e2e-admin-${Date.now()}@diger.test`;
-  const password = "E2EPassword123!";
+  const password = process.env.DIGER_TEST_PASSWORD || (() => { throw new Error("DIGER_TEST_PASSWORD is required"); })();
 
   console.log("Step 1: Registering User and Admin...");
   const user = await users.create(ID.unique(), emailUser, undefined, password, "E2E Customer");

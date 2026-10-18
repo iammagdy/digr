@@ -48,7 +48,7 @@ describe("chat discovery clarification UI", () => {
     });
 
     const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(chatPage.split("<DetailsBlanks")).toHaveLength(3);
+    expect(chatPage.split("<DetailsBlanks")).toHaveLength(2);
     expect(chatPage).toContain("questions={m.clarificationItems || m.clarificationQuestions || []}");
     expect(chatPage).toContain("onComplete={(answers) => handleSubmitClarification(m.id, answers)}");
     expect(chatPage).toContain('clarificationAnswers: { type: "clarification_answers", answers }');
@@ -133,7 +133,9 @@ describe("chat discovery clarification UI", () => {
     expect(cardSource).not.toContain("underline");
 
     const pageSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(pageSource).toContain("messages.some((m) => m.planQuote || Boolean(m.jobId))");
+    expect(pageSource).toContain("buildChatTimeline<MessageItem>(messages, activeJob)");
+    expect(pageSource).toContain("chatTimeline.map((item) => renderNote(item as MessageItem))");
+    expect(pageSource).not.toContain("<ResearchDocument");
     expect(pageSource).toContain("intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}");
   });
 

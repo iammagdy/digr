@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient, createServerSideClient } from "../../../../../lib/supabase/server";
 import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk } from "../../../../../lib/server/workerDispatch";
+import { recordWorkerStartFailure, WORKER_START_FINAL_REASON_AR, WORKER_START_RETRY_REASON_AR } from "../../../../../lib/server/workerStartFailure";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -169,20 +170,17 @@ export async function POST(
     // 4. Stalled or unassigned lease: Trigger worker chunk safely
     try {
       const baseUrl = resolveInternalBaseUrl(req);
-      const workerResult = await dispatchWorkerChunk(
-        baseUrl,
-        job.id,
-        job.step ?? 0,
-        createInternalWorkerAuthHeaders(job.id)
-      ).catch((fetchErr) => {
-        console.error("Worker trigger on nudge error:", fetchErr);
-        throw fetchErr;
-      });
-      if (workerResult.status < 200 || workerResult.status >= 300) {
-        return NextResponse.json(
-          { success: false, nudged: false, status: job.status, error: "تعذر بدء جزء التنفيذ. ستتم إعادة المحاولة تلقائياً.", workerStatus: workerResult.status },
-          { status: 502 }
-        );
+      const workerResult = await dispatchWorkerChunk(baseUrl, job.id, job.step ?? 0, createInternalWorkerAuthHeaders(job.id));
+      if (!workerResult.started && workerResult.body?.claimed !== false) {
+        console.warn(`[nudge:worker_trigger_failed] jobId=${job.id} status=${workerResult.status} code=${workerResult.failureCode || "dispatch_failed"}`);
+        const outcome = await recordWorkerStartFailure(createAdminClient(), job.id);
+        return NextResponse.json({
+          success: true,
+          nudged: false,
+          status: outcome.failed ? "failed" : "queued",
+          jobId: job.id,
+          messageAr: outcome.failed ? WORKER_START_FINAL_REASON_AR : WORKER_START_RETRY_REASON_AR,
+        });
       }
       return NextResponse.json({
         success: true,
@@ -194,13 +192,17 @@ export async function POST(
         message: "تم تنفيذ محاولة تنشيط المهمة.",
       });
     } catch (nudgeErr) {
-      console.warn("[nudge:trigger_warn]", nudgeErr);
+      console.warn(`[nudge:trigger_warn] jobId=${jobId} code=${(nudgeErr as any)?.name || "dispatch_failed"}`);
+      const outcome = await recordWorkerStartFailure(createAdminClient(), job?.id || jobId);
+      return NextResponse.json({
+        success: true,
+        nudged: false,
+        status: outcome.failed ? "failed" : "queued",
+        jobId,
+        messageAr: outcome.failed ? WORKER_START_FINAL_REASON_AR : WORKER_START_RETRY_REASON_AR,
+      });
     }
 
-    return NextResponse.json(
-      { success: false, nudged: false, status: job.status, error: "تعذر الاتصال بمحرك التنفيذ. ستتم إعادة المحاولة تلقائياً." },
-      { status: 502 }
-    );
   } catch (err: any) {
     console.error("Nudge job route error:", err);
     return NextResponse.json(

@@ -8,7 +8,6 @@ import {
   getRegistryPricingSettings,
   computeRegistryPointsPerUnit,
   getCustomerPriceUsdPerCatalogItem,
-  UNAVAILABLE_CAPABILITY_SLUGS,
 } from "./capabilityRegistry";
 import {
   calculateQuote,
@@ -22,7 +21,11 @@ import {
 } from "./quotes";
 import type { CatalogEndpointSummary } from "./catalogClient";
 import { getCachedCatalogEndpoints } from "./catalogClient";
-import { checkPlanProviderCapacity, getConfiguredJobPointsCap } from "./providerSpend";
+import { getEndpointDetails } from "./catalogClient";
+import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "./providerSpend";
+import { callAtomicOrFallback } from "./atomicRpc";
+import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
+import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -304,8 +307,6 @@ function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capabili
     nameEn: endpoint.nameEn,
     nameAr: endpoint.nameAr,
   });
-  const unavailable =
-    UNAVAILABLE_CAPABILITY_SLUGS.has(endpoint.slug) || endpoint.id.startsWith("internal-");
   return {
     id: endpoint.slug,
     slug: endpoint.slug,
@@ -319,7 +320,7 @@ function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capabili
       ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
       : endpoint.pointsPerUnit,
     maxRows: endpoint.pagination?.maxLimit ? endpoint.pagination.maxLimit * 50 : 5000,
-    enabled: !unavailable,
+    enabled: true,
     paramsSchema: JSON.stringify(endpoint.paramsSchema || {}),
     tregEndpointId: endpoint.id,
     tregMethod: endpoint.method,
@@ -432,12 +433,6 @@ export function validatePlanAgainstLiveCatalog(
   };
 
   planItems.forEach((it, index) => {
-    if (UNAVAILABLE_CAPABILITY_SLUGS.has(it.capabilitySlug)) {
-      const nameAr = "بحث صناع القرار والمهنيين";
-      errors.push(`الخدمة "${nameAr}" غير متاحة حالياً`);
-      issues.push({ itemIndex: index, nameAr, kind: "unverified" });
-      return;
-    }
     // The routed TREG capability has variable per-provider pricing; its
     // approved bundled estimate must win over the router's zero-cost wrapper
     // listing, which represents only the outer route.
@@ -449,12 +444,6 @@ export function validatePlanAgainstLiveCatalog(
         (c) => c.slug === it.capabilitySlug || (c as any).tregEndpointId === it.capabilitySlug || (it.endpointId && (c.slug === it.endpointId || (c as any).tregEndpointId === it.endpointId))
       );
       if (regCap) {
-        if (regCap.status !== "verified" || regCap.enabled === false || (regCap as any).tregEndpointId?.startsWith("internal-")) {
-          const nameAr = displayName(it.capabilitySlug, undefined);
-          errors.push(`الخدمة "${nameAr}" غير متاحة حالياً وجاري التحقق منها`);
-          issues.push({ itemIndex: index, nameAr, kind: "unverified" });
-          return;
-        }
         ep = {
           id: regCap.tregEndpointId || regCap.slug,
           slug: regCap.slug,
@@ -483,19 +472,13 @@ export function validatePlanAgainstLiveCatalog(
     }
     const nameAr = displayName(it.capabilitySlug, ep);
     if (!ep) {
-      errors.push(`الخدمة "${nameAr}" غير متوفرة في نتائج البحث الحالية`);
+      errors.push(`يلزم استكمال تفاصيل خطة "${nameAr}" لمطابقتها مع طلبك`);
       issues.push({ itemIndex: index, nameAr, kind: "not_found" });
       return;
     }
 
-    if (ep.id?.startsWith("internal-")) {
-      errors.push(`الخدمة "${nameAr}" غير متاحة حالياً وجاري التحقق منها`);
-      issues.push({ itemIndex: index, nameAr, kind: "unverified" });
-      return;
-    }
-
     if (!ep.catalogPriceUsd || ep.catalogPriceUsd <= 0 || !ep.pointsPerUnit || ep.pointsPerUnit <= 0) {
-      errors.push(`الخدمة "${nameAr}" لا تملك تكلفة معتمدة وموثقة في الكتالوج ولا يمكن تنفيذها`);
+      errors.push(`يلزم استكمال تسعير خطة "${nameAr}" قبل عرض السعر النهائي`);
       issues.push({ itemIndex: index, nameAr, kind: "missing_cost" });
       return;
     }
@@ -561,6 +544,9 @@ export interface ManagedQuoteResult {
     rawCostPoints?: number;
   };
   capacityConstrained?: boolean;
+  pointsCapConstrained?: boolean;
+  requestedVolumeMax?: number;
+  pointsCap?: number;
   userBalance: number;
   expiresAt: string;
   createdAt: string;
@@ -596,6 +582,9 @@ export async function createAndSaveManagedQuote(
   let totalVolumeMax = 0;
   let totalRawPoints = 0;
   let effectiveUnitPrice = 0;
+  const requestedVolumeMax = plan.items.reduce((sum, item) => sum + Math.max(1, item.targetVolumeMax || 1), 0);
+  // The configured value may reduce the limit, but can never raise the settlement hard cap.
+  const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);
 
   for (const it of plan.items) {
     // Match capability strictly; NEVER substitute capabilities[0]
@@ -672,8 +661,40 @@ export async function createAndSaveManagedQuote(
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
 
+    let effectiveItemUnitPrice = unitPrice;
+    let itemProviderCostUsd = itemUnitCostUsd;
+    if (cap.slug === "professional-people-search") {
+      if (!(await requirePeopleSettlementRpc(tables))) {
+        throw new Error(PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
+      }
+      const requestedFields: ContactField[] = Array.isArray(it.params?.requiredContactFields)
+        ? it.params.requiredContactFields.filter((field: unknown) => field === "work_email" || field === "phone")
+        : ["work_email", "phone"];
+      const [baseCatalog, emailCatalog, phoneCatalog] = await Promise.all([
+        getEndpointDetails(cap.tregEndpointId || it.endpointId || "treg.people.search"),
+        getEndpointDetails("treg.people.email.find"),
+        getEndpointDetails("treg.people.phone.find"),
+      ]);
+      const baseCatalogPriceUsd = baseCatalog?.catalogPriceUsd || itemUnitCostUsd;
+      if (!baseCatalogPriceUsd || !emailCatalog?.catalogPriceUsd || !phoneCatalog?.catalogPriceUsd) {
+        throw new Error("تعذر التحقق من أسعار السجل وحقول التواصل في كتالوج المصادر.");
+      }
+      const contactUnitPricesPoints: ContactUnitPricesPoints = {
+        ...DECISION_MAKER_UNIT_PRICES_POINTS,
+      };
+      effectiveItemUnitPrice = decisionMakerQuotePoints(
+        1, requestedFields, contactUnitPricesPoints, 0, Number.MAX_SAFE_INTEGER,
+      );
+      it.params.requiredContactFields = requestedFields;
+      (it as any).requiredContactFields = requestedFields;
+      (it as any).contactUnitPricesPoints = contactUnitPricesPoints;
+      (it as any).contactPricingDescriptionAr = "السعر الأساسي للسجل المهني، ويُضاف سعر البريد المهني والهاتف المكتبي عند إرجاع كل حقل مطلوب.";
+      itemProviderCostUsd = baseCatalogPriceUsd +
+        (requestedFields.includes("work_email") ? emailCatalog.catalogPriceUsd : 0) +
+        (requestedFields.includes("phone") ? phoneCatalog.catalogPriceUsd : 0);
+    }
     const itemVolume = Math.max(1, it.targetVolumeMax || 1);
-    const itemRawPoints = itemVolume * unitPrice;
+    const itemRawPoints = itemVolume * effectiveItemUnitPrice;
     const itemReservation = Math.max(1, Math.ceil(itemRawPoints * (1 + effectivePricing.safetyBuffer)));
 
     // Retain all required fields on the item
@@ -684,8 +705,8 @@ export async function createAndSaveManagedQuote(
         : cap.id && cap.id.includes(".")
         ? cap.id
         : it.endpointId || cap.tregEndpointId || cap.id || cap.slug;
-    it.unitCostUsd = itemUnitCostUsd;
-    it.unitPricePoints = unitPrice;
+    it.unitCostUsd = itemProviderCostUsd;
+    it.unitPricePoints = effectiveItemUnitPrice;
     it.targetVolumeMax = itemVolume;
     it.rawPoints = itemRawPoints;
     it.itemReservation = itemReservation;
@@ -697,7 +718,7 @@ export async function createAndSaveManagedQuote(
     totalRawPoints += itemRawPoints;
     totalQuotedPoints += itemReservation;
     totalVolumeMax += itemVolume;
-    effectiveUnitPrice = unitPrice;
+    effectiveUnitPrice = effectiveItemUnitPrice;
   }
 
   // 1b. Check provider capacity (10% safety margin) across all items
@@ -728,6 +749,74 @@ export async function createAndSaveManagedQuote(
       totalRawPoints += itemRawPoints;
       totalQuotedPoints += itemReservation;
       totalVolumeMax += it.targetVolumeMax;
+    }
+  }
+
+  // Decision-maker quotes cap the customer charge first, then cap the buffered
+  // reserve. Other capabilities retain the existing reserve-based volume cap.
+  let pointsCapConstrained = false;
+  const rawChargeTotal = () => plan.items.reduce((sum, item) => sum + item.targetVolumeMax * (item.unitPricePoints || 1), 0);
+  const peopleOnlyPlan = plan.items.length === 1 && plan.items[0].capabilitySlug === "professional-people-search";
+  const resizeVolumeToRawCap = () => {
+    const ratio = pointsCap / rawChargeTotal();
+    for (const item of plan.items) item.targetVolumeMax = Math.max(1, Math.floor(item.targetVolumeMax * ratio));
+    while (rawChargeTotal() > pointsCap) {
+      const reducible = plan.items.filter((item) => item.targetVolumeMax > 1)
+        .sort((a, b) => (b.unitPricePoints || 1) - (a.unitPricePoints || 1))[0];
+      if (!reducible) throw new Error("الحد الأدنى للخطة يتجاوز سقف النقاط للمهمة؛ يرجى تقليل عدد السجلات.");
+      reducible.targetVolumeMax -= 1;
+    }
+    totalRawPoints = 0;
+    totalQuotedPoints = 0;
+    totalVolumeMax = 0;
+    for (const item of plan.items) {
+      item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
+      item.itemReservation = Math.max(1, Math.ceil(item.rawPoints * (1 + effectivePricing.safetyBuffer)));
+      item.reservedPoints = item.itemReservation;
+      totalRawPoints += item.rawPoints;
+      totalQuotedPoints += item.itemReservation;
+      totalVolumeMax += item.targetVolumeMax;
+    }
+  };
+  if (peopleOnlyPlan) {
+    if (rawChargeTotal() > pointsCap) {
+      pointsCapConstrained = true;
+      resizeVolumeToRawCap();
+    }
+    if (totalQuotedPoints > pointsCap) {
+      pointsCapConstrained = true;
+      // One decision-maker item has one reserve field; cap that hold without
+      // reducing an otherwise affordable number of delivered people.
+      plan.items[0].itemReservation = pointsCap;
+      plan.items[0].reservedPoints = pointsCap;
+      totalQuotedPoints = pointsCap;
+    }
+  } else {
+    const reservationTotal = () => plan.items.reduce((sum, item) => {
+      const raw = item.targetVolumeMax * (item.unitPricePoints || 1);
+      return sum + Math.max(1, Math.ceil(raw * (1 + effectivePricing.safetyBuffer)));
+    }, 0);
+    if (reservationTotal() > pointsCap) {
+      pointsCapConstrained = true;
+      const ratio = pointsCap / reservationTotal();
+      for (const item of plan.items) item.targetVolumeMax = Math.max(1, Math.floor(item.targetVolumeMax * ratio));
+      while (reservationTotal() > pointsCap) {
+        const reducible = plan.items.filter((item) => item.targetVolumeMax > 1)
+          .sort((a, b) => (b.unitPricePoints || 1) - (a.unitPricePoints || 1))[0];
+        if (!reducible) throw new Error("الحد الأدنى للخطة يتجاوز سقف النقاط للمهمة؛ يرجى تقليل عدد السجلات.");
+        reducible.targetVolumeMax -= 1;
+      }
+      totalRawPoints = 0;
+      totalQuotedPoints = 0;
+      totalVolumeMax = 0;
+      for (const item of plan.items) {
+        item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
+        item.itemReservation = Math.max(1, Math.ceil(item.rawPoints * (1 + effectivePricing.safetyBuffer)));
+        item.reservedPoints = item.itemReservation;
+        totalRawPoints += item.rawPoints;
+        totalQuotedPoints += item.itemReservation;
+        totalVolumeMax += item.targetVolumeMax;
+      }
     }
   }
 
@@ -790,6 +879,7 @@ export async function createAndSaveManagedQuote(
   // 2. Invalidate previous proposed quotes that belong to this conversation.
   const anyTables = tables as any;
   if (anyTables && typeof anyTables.from === "function") {
+    let previousQuoteIds: string[] = [];
     try {
       const { data: quoteMessages, error: messageReadError } = await anyTables
         .from("messages")
@@ -802,22 +892,13 @@ export async function createAndSaveManagedQuote(
 
       if (messageReadError) throw messageReadError;
 
-      const previousQuoteIds = Array.from(new Set((quoteMessages || [])
+      previousQuoteIds = Array.from(new Set((quoteMessages || [])
         .map((row: any) => row?.quote?.quoteId || row?.quote?.id)
         .filter((id: unknown): id is string => typeof id === "string" && id.length > 0)));
-
-      if (previousQuoteIds.length > 0) {
-        await anyTables
-          .from("plans_quotes")
-          .update({ status: "expired" })
-          .eq("user_id", userId)
-          .in("id", previousQuoteIds)
-          .eq("status", "quoted");
-      }
     } catch (err: any) {
-      console.warn("Could not supersede prior quotes for this conversation:", err.message);
+      console.warn("[quote:prior_ids_unavailable] proceeding with no prior quote ids");
     }
-    await anyTables.from("plans_quotes").insert({
+    const quoteRow = {
       id: quoteId,
       user_id: userId,
       quote_hash: planHash,
@@ -827,6 +908,34 @@ export async function createAndSaveManagedQuote(
       output_formats: plan.outputFormats || ["xlsx", "pdf", "csv"],
       expires_at: expiresAt,
       created_at: nowIso,
+    };
+    const fallback = async () => {
+      if (previousQuoteIds.length > 0) {
+        const { error: expireError } = await anyTables.from("plans_quotes")
+          .update({ status: "expired" }).eq("user_id", userId)
+          .in("id", previousQuoteIds).eq("status", "quoted");
+        if (expireError) throw expireError;
+      }
+      const { error: insertError } = await anyTables.from("plans_quotes").insert(quoteRow);
+      if (insertError) throw insertError;
+      return true;
+    };
+    await callAtomicOrFallback({
+      rpc: () => typeof anyTables.rpc === "function"
+        ? anyTables.rpc("create_quote_atomic", {
+            p_user_id: userId,
+            p_quote_id: quoteId,
+            p_quote_hash: planHash,
+            p_items: plan.items,
+            p_total_points: totalQuotedPoints,
+            p_output_formats: plan.outputFormats || ["xlsx", "pdf", "csv"],
+            p_expires_at: expiresAt,
+            p_previous_quote_ids: previousQuoteIds,
+          })
+        : Promise.resolve({ error: { code: "PGRST202", message: "function not found" } }),
+      functionName: "create_quote_atomic",
+      fallback,
+      log: (line) => console.warn(line),
     });
   } else if (tables && typeof tables.createRow === "function") {
     try {
@@ -888,6 +997,9 @@ export async function createAndSaveManagedQuote(
     isAffordable,
     downscaledOffer,
     capacityConstrained,
+    pointsCapConstrained,
+    requestedVolumeMax,
+    pointsCap,
     userBalance,
     expiresAt,
     createdAt: nowIso,

@@ -7,9 +7,9 @@ import {
 } from "../functions/shared/quotes";
 import {
   APPROVED_CAPABILITY_CATALOG,
-  UNAVAILABLE_CAPABILITY_SLUGS,
   type Capability,
 } from "../functions/shared/capabilityRegistry";
+import { PLATFORM_GUIDE } from "../functions/shared/platformGuide";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 export const DEFAULT_JOB_POINTS_CAP = 600;
 
@@ -62,7 +62,8 @@ function cleanArText(text: string): string {
 export function getPublicCalculatorOptions(
   capabilities: Capability[] = APPROVED_CAPABILITY_CATALOG
 ): PublicCalculatorOption[] {
-  return capabilities.filter((cap) => !UNAVAILABLE_CAPABILITY_SLUGS.has(cap.slug)).map((cap) => {
+  const guideSlugs = new Set(PLATFORM_GUIDE.services.map((service) => service.slug));
+  return capabilities.filter((cap) => guideSlugs.has(cap.slug)).map((cap) => {
     const isProfile = cap.slug.endsWith("-profile");
     return {
       slug: cap.slug,
@@ -111,7 +112,7 @@ export function computePublicCalculatorQuote(
     ? Math.max(1, Math.floor(effectiveMaxCap / Math.max(1, unitPricePoints * (1 + settings.safetyBuffer))))
     : safeTarget;
   const cappedReservedPoints = isCapped
-    ? effectiveMaxCap
+    ? Math.ceil(maxCappedVolume * unitPricePoints * (1 + settings.safetyBuffer))
     : reservedPoints;
 
   const settlement = calculateFinalSettlement(
@@ -133,16 +134,16 @@ export function computePublicCalculatorQuote(
   return {
     capabilitySlug: cap.slug,
     nameAr: cap.nameAr,
-    targetVolumeMax: safeTarget,
-    deliveredVolume: safeDelivered,
+    targetVolumeMax: isCapped ? maxCappedVolume : safeTarget,
+    deliveredVolume: cappedDelivered,
     unitPricePoints,
     unitPriceEgp: Number((unitPricePoints * creditValueEgp).toFixed(4)),
-    reservedPoints,
-    reservedEgp: Number((reservedPoints * creditValueEgp).toFixed(2)),
-    chargedPoints: settlement.chargePoints,
-    chargedEgp: Number((settlement.chargePoints * creditValueEgp).toFixed(2)),
-    refundPoints: settlement.refundPoints,
-    refundEgp: Number((settlement.refundPoints * creditValueEgp).toFixed(2)),
+    reservedPoints: cappedReservedPoints,
+    reservedEgp: Number((cappedReservedPoints * creditValueEgp).toFixed(2)),
+    chargedPoints: cappedSettlement.chargePoints,
+    chargedEgp: Number((cappedSettlement.chargePoints * creditValueEgp).toFixed(2)),
+    refundPoints: cappedSettlement.refundPoints,
+    refundEgp: Number((cappedSettlement.refundPoints * creditValueEgp).toFixed(2)),
     safetyBufferPercent: Math.round(settings.safetyBuffer * 100),
     isCapped,
     maxCapPoints: effectiveMaxCap,

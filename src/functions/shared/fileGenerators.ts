@@ -208,7 +208,12 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset): Promise<Buff
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = customerFacingTitle(norm.metadata.title);
-  const sheet = wb.addWorksheet(norm.metadata.socialKind === "comments" ? "التعليقات" : "الفيديوهات والمنشورات", {
+  const sheetName = norm.metadata.socialKind === "comments"
+    ? "التعليقات"
+    : norm.metadata.socialKind === "videos"
+      ? "الفيديوهات والمنشورات"
+      : "المنشورات";
+  const sheet = wb.addWorksheet(sheetName, {
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
   });
   const labels = new Map(norm.codebook.map((entry) => [entry.field, entry.titleAr]));

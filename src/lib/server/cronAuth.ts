@@ -104,6 +104,12 @@ export function createInternalWorkerAuthHeaders(jobId?: string): Record<string, 
     }
   }
 
+  // Vercel Preview deployments protected by Deployment Protection need this
+  // server-only bypass header for same-deployment worker dispatch. The worker
+  // still validates its own HMAC/cron authorization after the edge bypass.
+  const protectionBypass = (process.env.VERCEL_AUTOMATION_BYPASS_SECRET || "").trim();
+  if (protectionBypass) headers["x-vercel-protection-bypass"] = protectionBypass;
+
   return headers;
 }
 

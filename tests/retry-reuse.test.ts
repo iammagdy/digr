@@ -16,6 +16,7 @@ const db = vi.hoisted(() => ({
   events: [] as any[],
   // state of the job being worked
   step: 0,
+  cursor: null as string | null,
   deliveredUnits: 0,
   targetVolumeMax: 10,
   unitPrice: 2,
@@ -41,13 +42,16 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: vi.fn(async (name: string, args: any) => {
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") {
-        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: null, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "x-keyword-search", unit_price: db.unitPrice }, error: null };
+        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "x-keyword-search", unit_price: db.unitPrice }, error: null };
       }
       if (name === "reserve_provider_spend_atomic") return { data: { allowed: true, cost_id: 11 }, error: null };
       if (name === "commit_provider_spend") return { data: { success: true }, error: null };
       if (name === "complete_chunk") {
         db.step += 1;
         db.deliveredUnits = args.p_new_delivered_units;
+        db.cursor = args.p_new_cursor;
+        const job = db.jobs.find((row) => row.id === args.p_job_id);
+        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running" });
         return { data: { success: true, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "settle_job_atomic") {
@@ -100,7 +104,7 @@ import { setProviderAdapterForTesting } from "../src/lib/server/tregAdapter";
 const PREV_JOB = jobIdForQuote("quote_old");
 const NEW_JOB = jobIdForQuote("quote_new");
 
-const tweet = (id: string) => ({ tweet_id: id, text: `نص ${id}` });
+const tweet = (id: string) => ({ tweet_id: id, text: `نص ${id} عن AI Trends` });
 const putStep = (jobId: string, step: number, rows: any[], extra: Record<string, unknown> = {}) =>
   db.partials.set(`${jobId}/step_${step}.json`, Buffer.from(JSON.stringify({ jobId, step, rows, rawRowsCount: rows.length, ...extra })));
 
@@ -114,13 +118,14 @@ function quote(id: string, params: Record<string, unknown>, target = 10) {
 }
 
 function resetDb(retryParams: Record<string, unknown> = { query: "AI Trends", retryOfJobId: PREV_JOB }, prevOverrides: Record<string, unknown> = {}) {
-  db.jobs = [{ id: PREV_JOB, user_id: "user_1", status: "failed", step: 1, delivered_units: 0, endpoint_id: "x-keyword-search", unit_price: 2, updated_at: new Date().toISOString(), created_at: new Date().toISOString(), ...prevOverrides }];
+  db.jobs = [{ id: PREV_JOB, user_id: "user_1", status: "failed", step: 1, delivered_units: 0, endpoint_id: "x-keyword-search", unit_price: 2, updated_at: new Date().toISOString(), created_at: new Date().toISOString(), ...prevOverrides }, { id: NEW_JOB, user_id: "user_1", status: "running", current_cursor: null, target_volume_max: 10, delivered_units: 0, created_at: new Date().toISOString() }];
   db.quotes = [quote("quote_old", { query: "AI Trends" }), quote("quote_new", retryParams)];
   db.partials.clear();
   db.results.clear();
   db.rpcCalls = [];
   db.events = [];
   db.step = 0;
+  db.cursor = null;
   db.deliveredUnits = 0;
   db.targetVolumeMax = 10;
   db.unitPrice = 2;
@@ -341,7 +346,7 @@ describe("worker: retried job fetches only the deficit", () => {
     let asked = -1;
     setProviderAdapterForTesting(async (input) => {
       asked = input.remainingNeeded;
-      return { ok: true, httpStatus: 200, rows: Array.from({ length: 10 }, (_, i) => tweet(`fresh_${i + 1}`)), nextCursor: null, costUsd: 0.01, costMicro: 10000, tregCallId: "call_3" };
+      return { ok: true, httpStatus: 200, rows: Array.from({ length: 10 }, (_, i) => ({ tweet_id: `fresh_${i + 1}`, text: `Another subject fresh_${i + 1}` })), nextCursor: null, costUsd: 0.01, costMicro: 10000, tregCallId: "call_3" };
     });
 
     const { json } = await callWorker();

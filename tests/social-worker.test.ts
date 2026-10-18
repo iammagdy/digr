@@ -49,6 +49,8 @@ vi.mock("../src/lib/supabase/server", () => ({
         db.step += 1;
         db.deliveredUnits = args.p_new_delivered_units;
         db.cursor = args.p_new_cursor;
+        const job = db.jobs.find((row) => row.id === args.p_job_id);
+        if (job) Object.assign(job, { current_cursor: db.cursor, delivered_units: db.deliveredUnits, status: "running" });
         return { data: { success: true, delivered_units: db.deliveredUnits }, error: null };
       }
       if (name === "settle_job_atomic") {
@@ -107,7 +109,7 @@ const comments = (n: number, prefix: string) => Array.from({ length: n }, (_, i)
 
 function resetDb(slug: string, params: Record<string, unknown>, target: number, unitPrice: number) {
   db.slug = slug;
-  db.jobs = [];
+  db.jobs = [{ id: JOB, status: "running", current_cursor: null, delivered_units: 0, target_volume_max: target, created_at: new Date().toISOString() }];
   db.quotes = [{ id: "quote_social", user_id: "user_1", items: [{ capabilitySlug: slug, endpointId: slug, params, targetVolumeMax: target, paginationStrategy: "cursor", unitCostUsd: 0.0009, pricingUnit: "item" }], output_formats: ["csv", "xlsx"] }];
   db.partials.clear();
   db.results.clear();

@@ -272,7 +272,7 @@ describe("context-bloat fix (fix/context-bloat)", () => {
       content: `message ${i}`,
     }));
     const out = summarizeConversationHistory(msgs, "خطة فيسبوك — 220 نقطة");
-    expect(out.length).toBeLessThan(msgs.length);
+    expect(out.length).toBe(6);
     expect(out[0].content).toBe("message 0");
     expect(out[1].role).toBe("system");
     expect(out[1].content).toContain("ملخص المحادثة");

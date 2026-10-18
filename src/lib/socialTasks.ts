@@ -8,7 +8,7 @@
  */
 
 export type SocialPlatformId = "facebook" | "youtube" | "tiktok" | "instagram" | "x" | "reddit" | "linkedin";
-export type SocialTask = "comments" | "trending" | "channel_videos" | "video_search" | "page_posts";
+export type SocialTask = "comments" | "trending" | "channel_videos" | "video_search" | "page_posts" | "x_posts";
 
 export const SOCIAL_PLATFORM_LABEL_AR: Record<SocialPlatformId, string> = {
   facebook: "فيسبوك",
@@ -25,7 +25,7 @@ const PLATFORM_RES: Array<[SocialPlatformId, RegExp]> = [
   ["youtube", /يوتيوب|يوتوب|اليوتيوب|youtube|youtu\.be|\bshorts?\b|شورتس/iu],
   ["facebook", /فيسبوك|فيس\s*بوك|الفيس(?![\p{L}])|فيس(?![\p{L}])|facebook|\bfb\b|fb\.watch/iu],
   ["instagram", /انستغرام|إنستغرام|انستجرام|إنستجرام|انستا(?![\p{L}])|instagram|\binsta\b/iu],
-  ["x", /تويتر|تغريد|منصة\s*(?:x|إكس|اكس)|twitter|\bx\.com\b/iu],
+  ["x", /تويتر|تغريد|منصة\s*(?:x|إكس|اكس)|twitter|\bx\b|\bx\.com\b/iu],
   ["reddit", /ريديت|reddit/iu],
   ["linkedin", /لينكد\s*إن|لينكدإن|لينكدان|linkedin/iu],
 ];
@@ -47,8 +47,9 @@ export const COMMENT_WORDS_RE = /كومنت|كومينت|كمنت|تعليق|ت�
 export const TREND_WORDS_RE = /ترند|تريند|تراند|ترندنج|تريندنج|تراندنج|ستراندنج|استراندنج|سترندنج|ستريندنج|رائج|الرائج|رايج|الأكثر\s*(?:مشاهدة|تفاعل|انتشار)|الاكثر\s*(?:مشاهدة|تفاعل|انتشار)|فيرال|viral|trending|trends?/iu;
 
 const POST_WORDS_RE = /بوست|بوستات|منشور|منشورات|posts?/iu;
+const X_POST_WORDS_RE = /تغريدة|تغريدات|تويتة|تويتات|تويت|tweets?/iu;
 const VIDEO_WORDS_RE = /فيديو|فيديوهات|مقطع|مقاطع|ريلز|ريل|شورتس|videos?|reels?|shorts?/iu;
-const CHANNEL_WORDS_RE = /قناة|قنوات|قناه|channel/iu;
+const CHANNEL_WORDS_RE = /قناة|قنوات|قناه|حساب|channel/iu;
 
 export interface SocialUrl {
   platform: SocialPlatformId | null;
@@ -141,6 +142,7 @@ export function detectSocialIntent(text: string): SocialIntent {
   const wantsComments = COMMENT_WORDS_RE.test(body);
   const wantsTrending = TREND_WORDS_RE.test(body);
   const wantsPosts = POST_WORDS_RE.test(body);
+  const wantsXTweets = platform === "x" && X_POST_WORDS_RE.test(body);
   const wantsVideos = VIDEO_WORDS_RE.test(body);
   const wantsChannel = CHANNEL_WORDS_RE.test(body);
   const targetUrl = urls.find((u) => u.kind === "video" || u.kind === "post") ?? null;
@@ -168,11 +170,14 @@ export function detectSocialIntent(text: string): SocialIntent {
   } else if (wantsTrending) {
     task = "trending";
     discover = "trending";
-  } else if ((channelRef || wantsChannel) && (wantsVideos || wantsPosts)) {
-    task = wantsPosts && platform === "facebook" ? "page_posts" : "channel_videos";
+  } else if ((channelRef || wantsChannel) && (wantsVideos || wantsPosts || wantsXTweets)) {
+    task = wantsPosts && platform === "facebook" ? "page_posts" : wantsXTweets ? "x_posts" : "channel_videos";
     discover = "channel";
   } else if (wantsVideos && platform) {
     task = "video_search";
+    discover = "keyword";
+  } else if (wantsXTweets) {
+    task = "x_posts";
     discover = "keyword";
   } else if (wantsPosts && platform === "facebook") {
     task = "page_posts";
@@ -193,6 +198,7 @@ export function socialCatalogQuery(intent: SocialIntent): string | null {
     channel_videos: p === "youtube" ? "youtube channel videos" : "tiktok user videos",
     video_search: p === "youtube" ? "youtube search videos" : "tiktok search videos",
     page_posts: intent.discover === "channel" ? `${p} user posts` : `${p} posts`,
+    x_posts: intent.discover === "channel" ? "X user posts by handle" : "X posts search by keyword",
   };
   return base[intent.task];
 }
@@ -201,7 +207,9 @@ export type MissingSocialTaskInput =
   | "social_comment_target_required"
   | "social_trending_region_required"
   | "social_trending_platform_required"
-  | "social_channel_required";
+  | "social_channel_required"
+  | "social_x_topic_required"
+  | "social_x_account_required";
 
 /** Ids of the questions built here: their own options are final and are never replaced by a generic option bank. */
 export const SOCIAL_TASK_QUESTION_IDS: ReadonlySet<string> = new Set<MissingSocialTaskInput>([
@@ -209,6 +217,8 @@ export const SOCIAL_TASK_QUESTION_IDS: ReadonlySet<string> = new Set<MissingSoci
   "social_trending_region_required",
   "social_trending_platform_required",
   "social_channel_required",
+  "social_x_topic_required",
+  "social_x_account_required",
 ]);
 
 /** Platforms the verified services can serve for each task. */
@@ -218,6 +228,7 @@ export const SOCIAL_TASK_PLATFORMS: Record<SocialTask, SocialPlatformId[]> = {
   channel_videos: ["youtube", "tiktok"],
   video_search: ["youtube", "tiktok"],
   page_posts: ["facebook"],
+  x_posts: ["x"],
 };
 
 const REGION_HINT_RE = /(?:مصر|المصر|السعود|الإمارات|الامارات|الكويت|قطر|البحرين|عمان|الأردن|الاردن|لبنان|العراق|المغرب|الجزائر|تونس|ليبيا|السودان|اليمن|سوريا|فلسطين|تركيا|ألمانيا|المانيا|فرنسا|بريطانيا|المملكة المتحدة|أمريكا|امريكا|الولايات المتحدة|إيطاليا|ايطاليا|إسبانيا|اسبانيا|الهند|باكستان|اندونيسيا|إندونيسيا|البرازيل|كندا|استراليا|أستراليا|اليابان|كوريا|الصين|روسيا|egypt|saudi|uae|emirates|kuwait|qatar|bahrain|oman|jordan|lebanon|iraq|morocco|algeria|tunisia|turkey|germany|france|\buk\b|britain|\busa?\b|america|india|brazil|canada|australia|japan|korea|china|russia|italy|spain|worldwide|global|عالمي|العالم)/iu;
@@ -230,11 +241,15 @@ export function hasRegionHint(text: string): boolean {
 const TOPIC_NOISE = new Set([
   "عايز", "عايزه", "عايزة", "عاوز", "عاوزه", "اريد", "أريد", "محتاج", "محتاجة", "ابغى", "أبغى", "هات", "هاتلي", "اسحب", "سحب", "استخرج", "جمع", "اجمع", "ابحث", "لي", "لى", "ليا", "لنا",
   "من", "على", "علي", "في", "فى", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
-  "فيديو", "فيديوهات", "مقطع", "مقاطع", "بوست", "بوستات", "منشور", "منشورات", "كومنت", "كومنتس", "كومنتات", "تعليق", "تعليقات", "ترند", "تريند", "تراند", "الترند", "التريند",
+  "فيديو", "فيديوهات", "مقطع", "مقاطع", "بوست", "بوستات", "منشور", "منشورات", "تغريدة", "تغريدات", "تويت", "تويتة", "تويتات", "tweets", "tweet", "كومنت", "كومنتس", "كومنتات", "تعليق", "تعليقات", "ترند", "تريند", "تراند", "الترند", "التريند",
   "ستراندنج", "الستراندنج", "استراندنج", "الاستراندنج", "ترندنج", "الترندنج", "رائج", "الرائج", "الاكثر", "الأكثر", "مشاهدة", "تفاعل", "انتشار", "فيرال",
-  "تيك", "توك", "تيكتوك", "يوتيوب", "يوتوب", "فيسبوك", "فيس", "انستغرام", "إنستغرام", "انستا", "تويتر", "ريديت", "لينكد", "منصة", "منصه",
+  "تيك", "توك", "تيكتوك", "يوتيوب", "يوتوب", "فيسبوك", "فيس", "انستغرام", "إنستغرام", "انستا", "تويتر", "إكس", "اكس", "ريديت", "لينكد", "منصة", "منصه",
   "قناة", "حساب", "صفحة", "رابط", "ريلز", "شورتس", "الفيس", "اليوم", "النهاردة", "حاليا", "حالياً", "دلوقتي", "الان", "الآن", "اخر", "آخر", "جديد",
   "عدد", "كام", "كم", "رقم", "حوالي", "تقريبا", "تقريباً", "لكل", "ولكل", "بتاع", "بتاعت", "بتاعه", "خاص", "خاصة", "الخاصة", "الخاص", "مع",
+  // Discovery answers are merged with the original request. Time-window labels must not leak into
+  // the provider topic (for example: "كرة السلة الفترة المطلوبة شهر").
+  "فترة", "الفترة", "زمنية", "الزمنية", "مطلوبة", "المطلوبة", "اسبوع", "أسبوع", "الشهر", "شهر", "اشهر", "أشهر", "سنة", "سنوات",
+  "week", "month", "months", "year", "years", "period", "timeframe",
   "tiktok", "youtube", "facebook", "instagram", "twitter", "videos", "video", "posts", "post", "comments", "comment", "trending", "trend", "viral", "get", "me", "the", "of", "on", "from", "about", "for", "with", "and", "a", "an", "i", "want", "need",
 ]);
 
@@ -271,8 +286,7 @@ export function getMissingSocialTaskInputs(text: string): MissingSocialTaskInput
   const missing: MissingSocialTaskInput[] = [];
 
   if (!SOCIAL_TASK_PLATFORMS[intent.task].includes(intent.platform)) {
-    // Trending is the one customers expect everywhere; say plainly it is not served for this platform.
-    if (intent.task === "trending") return ["social_trending_platform_required"];
+    // Let the full platform guide and live catalog resolve newly connected routes.
     return [];
   }
 
@@ -296,6 +310,12 @@ export function getMissingSocialTaskInputs(text: string): MissingSocialTaskInput
 
   if (intent.task === "channel_videos" || (intent.task === "page_posts" && intent.discover === "channel")) {
     if (!intent.channelRef) missing.push("social_channel_required");
+    return missing;
+  }
+
+  if (intent.task === "x_posts") {
+    if (intent.discover === "channel" && !intent.channelRef) missing.push("social_x_account_required");
+    else if (intent.discover === "keyword" && !hasSocialSubject(text)) missing.push("social_x_topic_required");
     return missing;
   }
 
@@ -323,14 +343,13 @@ export function socialTaskQuestion(id: MissingSocialTaskInput): SocialTaskQuesti
     case "social_trending_region_required":
       return socialQuestion(id, "في أي دولة تريد الفيديوهات الرائجة؟", "single", ["مصر", "السعودية", "الإمارات", "أخرى"]);
     case "social_trending_platform_required":
-      return socialQuestion(
-        id,
-        "الفيديوهات الرائجة غير متاحة على هذه المنصة حالياً. هل تريد الفيديوهات الرائجة على إحدى هاتين المنصتين؟",
-        "single",
-        ["تيك توك", "يوتيوب"],
-      );
+      return socialQuestion(id, "ما المنصة المطلوبة للفيديوهات الرائجة؟", "free");
     case "social_channel_required":
       return socialQuestion(id, "ما اسم القناة أو رابطها؟", "free");
+    case "social_x_topic_required":
+      return socialQuestion(id, "ما الموضوع الذي تريد البحث عن منشوراته؟", "free");
+    case "social_x_account_required":
+      return socialQuestion(id, "ما اسم حساب إكس أو رابطه؟", "free");
   }
 }
 
@@ -339,4 +358,9 @@ export function socialSubjectText(text: string): string {
   const hashtag = /(?:^|\s)#([\p{L}\p{N}_]{2,})/u.exec(text || "")?.[1];
   if (hashtag) return hashtag.replace(/_/g, " ");
   return topicTokens(text).slice(0, 6).join(" ");
+}
+
+/** Customer-facing social subject; trending feeds are a task type rather than a keyword topic. */
+export function socialSubjectForDisplay(text: string, trending = false): string {
+  return trending ? "الفيديوهات الرائجة" : socialSubjectText(text);
 }

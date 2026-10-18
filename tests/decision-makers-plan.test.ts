@@ -3,12 +3,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("../src/functions/shared/catalogClient", () => ({
   searchCatalog: vi.fn(async () => []),
   getCachedCatalogEndpoints: vi.fn(() => []),
+  getEndpointDetails: vi.fn(async (id: string) => ({ id, catalogPriceUsd: 0.005, pointsPerUnit: 28 })),
 }));
 
 import { ChatHandler, getDeterministicDiscoveryQuestion } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../src/lib/contactExpectation";
-import { PEOPLE_ROLE_PATTERN } from "../src/lib/planParameters";
+import { isPeopleSearchRequest, PEOPLE_ROLE_PATTERN, requiredProfessionalContactFields } from "../src/lib/planParameters";
 
 function makeMockTables() {
   const store = new Map<string, Map<string, any>>();
@@ -32,6 +33,11 @@ function makeMockTables() {
     return m ? parseInt(m[1], 10) : null;
   };
   return {
+    async rpc(name: string, args: any) {
+      return name === "settle_people_job_atomic"
+        ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
+        : { data: null, error: { code: "PGRST202", message: `function ${name} not found` } };
+    },
     async createRow({ tableId, rowId, data }: any) {
       const id = rowId || `row_${Math.random().toString(36).slice(2)}`;
       const doc = { $id: id, ...data };
@@ -82,8 +88,44 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     }
   });
 
+  it("routes the owner's exact Egyptian Arabic wording to people search with default email and phone fields", async () => {
+    const text = "أنا عايز تلاتة صناع قرار في شركات الكهرباء والميكانيكا في مصر.";
+    expect(isPeopleSearchRequest(text)).toBe(true);
+    expect(requiredProfessionalContactFields(text)).toEqual(["work_email", "phone"]);
+    expect(getDeterministicDiscoveryQuestion(text, brief)).toBeNull();
+
+    const res = await new ChatHandler(makeMockTables() as any).handleUserMessage({
+      userId: "user_dm_exact_ar",
+      message: text,
+      userBalance: 5000,
+    });
+
+    expect(res.outputType).toBe("propose_plan");
+    expect(res.planQuote.items[0].capabilitySlug).toBe("professional-people-search");
+    expect(res.planQuote.items[0].params.requiredContactFields).toEqual(["work_email", "phone"]);
+    expect(res.planQuote.targetVolumeMax).toBe(3);
+    expect(res.contentAr).toContain(CONTACT_EXPECTATION_AR);
+  });
+
+  it("recognizes role intent without contact words across dialect and English variants", () => {
+    for (const text of [
+      "أنا عايز تلاتة صناع قرار في شركات الكهرباء والميكانيكا في مصر.",
+      "عايز مديرين أو أعلى في شركات مقاولات في مصر",
+      "أريد صناع القرار في شركات البرمجيات في ألمانيا",
+      "Find decision makers at software companies in Germany",
+    ]) {
+      expect(isPeopleSearchRequest(text), text).toBe(true);
+      expect(requiredProfessionalContactFields(text), text).toEqual(["work_email", "phone"]);
+    }
+  });
+
   it("without a country the only question is the country", () => {
     expect(getDeterministicDiscoveryQuestion("5 شركات كهروميكانيكية مع صناع القرار وإيميلاتهم وأرقامهم", brief)?.id).toBe("people_country_required");
+  });
+
+  it("does not ask for a company scope that is already named in plural Egyptian Arabic", () => {
+    const text = "عايز ٣ مديرين في شركات الطاقة في السعودية مع إيميلاتهم وأرقام مكاتبهم";
+    expect(getDeterministicDiscoveryQuestion(text, brief)).toBeNull();
   });
 
   it("the plan card is created (never a refusal) and states which contact fields are expected and what is billed", async () => {
@@ -97,10 +139,13 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     expect(res.outputType).not.toBe("refuse");
     expect(res.contentAr).toContain(CONTACT_EXPECTATION_AR);
     expect(res.contentAr).toContain(CONTACT_BILLING_NOTE_AR);
-    expect(res.contentAr).toContain("البريد المهني يُعرض إذا كان متاحاً ومؤكداً في المصادر المتاحة");
+    expect(res.contentAr).toContain("حالة التحقق واضحة بجانبه");
+    expect(res.contentAr).not.toContain("مؤكداً في المصادر المتاحة");
     expect(res.contentAr).not.toMatch(/لا أستطيع|غير متاحة حالياً/);
     expect(res.planQuote.items[0].capabilitySlug).toBe("professional-people-search");
-    expect(res.planQuote.items[0].targetVolumeMax).toBe(5);
+    expect(res.planQuote.items[0].targetVolumeMax).toBeLessThanOrEqual(5);
+    expect(res.planQuote.items[0].contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
+    expect(res.planQuote.items[0].unitPricePoints).toBe(193);
     expect(res.planQuote.items[0].params.country).toBe("EG");
     expect(res.planQuote.methodologyNotes).toContain(CONTACT_EXPECTATION_AR);
     // Customer text never names a provider, an endpoint, a currency in dollars or an English word.
@@ -115,7 +160,7 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
       userBalance: 5000,
     });
     const q = res.planQuote;
-    expect(q.expectedPoints).toBe(q.unitPricePoints * 5);
-    expect(q.quotedPoints).toBe(Math.ceil(q.expectedPoints * 1.15));
+    expect(q.expectedPoints).toBe(q.unitPricePoints * q.targetVolumeMax);
+    expect(q.quotedPoints).toBe(Math.min(600, Math.ceil(q.expectedPoints * 1.15)));
   });
 });

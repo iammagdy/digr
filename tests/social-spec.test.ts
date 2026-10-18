@@ -23,6 +23,25 @@ function adminClientWith(quote: any) {
 }
 
 describe("a social job resolves from its quote alone", () => {
+  it("uses only the selected output formats and defaults legacy or missing formats to Excel", async () => {
+    const xlsxQuote = {
+      id: "xlsx_only_quote",
+      user_id: "u1",
+      output_formats: ["xlsx"],
+      items: [{ capabilitySlug: "social-tiktok-videos", endpointId: "tikhub.tiktok.search.videos", params: { query: "كرة السلة" }, targetVolumeMax: 3, paginationStrategy: "cursor", unitCostUsd: 0.001, pricingUnit: "item" }],
+    };
+    const selected = await resolveJobExecutionSpec(
+      adminClientWith(xlsxQuote), jobIdFor(xlsxQuote.id), "u1", "social-tiktok-videos", 6,
+    );
+    expect(selected.outputFormats).toEqual(["xlsx"]);
+
+    const legacyQuote = { ...xlsxQuote, id: "legacy_quote", output_formats: [] };
+    const legacy = await resolveJobExecutionSpec(
+      adminClientWith(legacyQuote), jobIdFor(legacyQuote.id), "u1", "social-tiktok-videos", 6,
+    );
+    expect(legacy.outputFormats).toEqual(["xlsx"]);
+  });
+
   for (const cap of SOCIAL_CAPABILITIES) {
     it(`${cap.slug}: one call per chunk estimated at the worst case, paged by the adapter's own cursor`, async () => {
       const quote = {
