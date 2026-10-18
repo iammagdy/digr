@@ -43,7 +43,7 @@ function topicFromParams(params: Record<string, any>): string {
 
 function topicTokens(topic: string): string[] {
   const normalized = normalizeText(topic);
-  if (/كره السله|كرة السلة|basketball|\bnba\b|hoops/i.test(topic)) return ["__basketball__"];
+  if (/كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\bnba\b|hoops/i.test(topic)) return ["__basketball__"];
   return [...new Set(normalized.split(/\s+/u).filter((token) => token.length > 1 && !TOPIC_STOP_WORDS.has(token)))];
 }
 
@@ -135,8 +135,8 @@ export function evaluateResearchRowRelevance(
 
   const matched = tokens.some((token) => {
     if (token === "__basketball__") {
-      const basketballTerms = countMatches(content, /كره السله|basketball|\bnba\b|hoops/);
-      const footballTerms = countMatches(content, /كره القدم|football|soccer/);
+      const basketballTerms = countMatches(content, /كره (?:ال)?سله|basketball|\bnba\b|hoops/);
+      const footballTerms = countMatches(content, /كره (?:ال)?قدم|football|soccer/);
       return basketballTerms > 0 && footballTerms <= basketballTerms;
     }
     return content.split(/\s+/u).includes(token);

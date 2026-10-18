@@ -80,6 +80,8 @@ export async function GET(
       }
 
       const parsedData = JSON.parse(jsonText);
+      parsedData.metadata = parsedData.metadata && typeof parsedData.metadata === "object" ? parsedData.metadata : {};
+      parsedData.metadata.template ||= jobDoc.template_slug || jobDoc.endpoint_id;
       const normalized = normalizeDataset(parsedData, {
         platform: jobDoc.platform || undefined,
         title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,

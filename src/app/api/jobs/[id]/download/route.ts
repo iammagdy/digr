@@ -248,6 +248,7 @@ export async function GET(
       try {
         const parsed = JSON.parse(jsonText);
         parsed.metadata = parsed.metadata && typeof parsed.metadata === "object" ? parsed.metadata : {};
+        parsed.metadata.template ||= job.template_slug || job.endpoint_id;
         parsed.metadata.socialKind ||= inferSocialRowKind(job.endpoint_id, job.template_slug, job.capability_slug, job.platform);
         let fileBuf: Buffer | null = null;
         let mimeType = "application/octet-stream";
