@@ -26,6 +26,10 @@ describe("what a researcher wants is understood in Egyptian and standard Arabic"
     ["فيديوهات قناة على تيك توك", "tiktok", "channel_videos", "channel"],
     ["فيديوهات قناة @zachking على تيك توك", "tiktok", "channel_videos", "channel"],
     ["بوستات صفحة نيك على الفيس", "facebook", "page_posts", "keyword"],
+    ["هات تغريدات عن كرة السلة", "x", "x_posts", "keyword"],
+    ["اجمع tweets عن الطاقة الشمسية على X", "x", "x_posts", "keyword"],
+    ["هات تغريدات من حساب @nasa", "x", "x_posts", "channel"],
+    ["هات تغريدات من حساب محدد على تويتر", "x", "x_posts", "channel"],
     ["فيديوهات عن القهوة على تيك توك", "tiktok", "video_search", "keyword"],
     ["عايز شركات مقاولات في مصر", null, null, null],
   ];
@@ -79,6 +83,18 @@ describe("only the missing input is asked, one question at a time, with tappable
   it("comments with a link ask nothing more", () => {
     expect(getMissingSocialTaskInputs("كومنتات https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toEqual([]);
     expect(getMissingSocialTaskInputs("عايز كومنتس بوست https://www.facebook.com/nasa/posts/123456 على فيسبوك")).toEqual([]);
+  });
+
+  it("topic tweets use keyword search; account-only tweets ask for one handle question", () => {
+    expect(getMissingSocialTaskInputs("هات تغريدات عن كرة السلة")).toEqual([]);
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة", brief)).toBeNull();
+    expect(getMissingSocialTaskInputs("هات تغريدات من حساب محدد على تويتر")).toEqual(["social_x_account_required"]);
+    const question = getDeterministicDiscoveryQuestion("هات تغريدات من حساب محدد على تويتر", brief);
+    expect(question?.text).toBe("ما اسم حساب إكس أو رابطه؟");
+    expect(question?.questions).toBeUndefined();
+    expect(getMissingSocialTaskInputs("هات تغريدات من حساب @nasa")).toEqual([]);
+    expect(getMissingSocialTaskInputs("هات تغريدات منصة إكس")).toEqual(["social_x_topic_required"]);
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات منصة إكس", brief)?.text).toBe("ما الموضوع الذي تريد البحث عن منشوراته؟");
   });
 
   it("comments with a subject (no link) are served by searching videos about it", () => {

@@ -48,6 +48,8 @@ describe("structured platform guide and offline request set", () => {
     expect(prompt).toContain("FULL DIGER PLATFORM GUIDE");
     expect(prompt).toContain("كومنتس على فيديو تيك توك");
     expect(prompt).toContain("بحث موضوعي ومواد إخبارية وأكاديمية");
+    expect(prompt).toContain("social-x-posts");
+    expect(prompt).toContain("topic_or_account_handle");
     expect(prompt).toContain("اعتبر كل خدمة مدرجة ضمن قدرات ديجر");
     expect(prompt).not.toMatch(/firecrawl|context\.dev|treg\.people\.search/i);
     expect(buildPlatformGuideServices().length).toBeGreaterThan(10);

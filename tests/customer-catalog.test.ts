@@ -21,6 +21,15 @@ describe("customer services catalog", () => {
       .toContain("بريد عمل وهاتف مكتبي");
   });
 
+  it("lists topic search and account-post collection for X with the shared pricing calculator", () => {
+    const service = buildPlatformGuideServices().find((item) => item.slug === "social-x-posts");
+    expect(service?.nameAr).toContain("إكس");
+    expect(service?.requiredInputs).toEqual(["topic_or_account_handle"]);
+    expect(service?.exampleAr).toContain("تغريدة");
+    expect(getPublicCalculatorOptions().some((option) => option.slug === "social-x-posts")).toBe(true);
+    expect(computePublicCalculatorQuote("social-x-posts", 1, 1).unitPricePoints).toBeGreaterThan(0);
+  });
+
   it("shows only the two future source categories as coming soon", () => {
     expect(PLATFORM_GUIDE.futureSources).toHaveLength(2);
     expect(PLATFORM_GUIDE.futureSources.map((source) => source.statusAr)).toEqual(["قريباً", "قريباً"]);

@@ -291,9 +291,9 @@ export async function runSocialChunk(
   };
 
   // Videos or posts as the deliverable: page through the discovery sources.
-  if (cap.kind === "videos") {
+  if (cap.kind === "videos" || cap.kind === "posts") {
     if (mode === "url") {
-      return failure(totals, "هذا النوع من الطلبات يحتاج كلمة بحث أو قناة أو الفيديوهات الرائجة.");
+      return failure(totals, "هذا النوع من الطلبات يحتاج كلمة بحث أو حساباً محدداً.");
     }
     const state = decodeState(input.cursor);
     const sources = cap.discover[mode] || [];

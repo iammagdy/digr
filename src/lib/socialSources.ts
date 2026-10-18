@@ -13,7 +13,7 @@
 import { extractUrls, socialSubjectText, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 
-export type SocialKind = "comments" | "videos";
+export type SocialKind = "comments" | "videos" | "posts";
 export type SocialMode = "url" | "query" | "channel" | "trending";
 export type SocialPaging = "none" | "cursor" | "offset";
 
@@ -39,6 +39,14 @@ export interface SocialSource {
   method: "GET" | "POST";
   /** Catalog price of one call, USD. */
   costUsd: number;
+  /** Public catalog input names. Kept beside the builder so contract tests catch drift. */
+  catalogParams: readonly string[];
+  /** Catalog-required inputs, distinct from optional pagination/filter fields. */
+  catalogRequiredParams: readonly string[];
+  /** True only if this source cannot run without a customer-provided session/login. */
+  requiresSession: boolean;
+  /** Catalog session note: "optional" means the public path works without customer cookies. */
+  sessionNote?: "none" | "optional";
   /** Most rows one call returns. */
   maxPerCall: number;
   paging: SocialPaging;
@@ -88,6 +96,14 @@ function handleOf(channel: string | undefined): string | undefined {
   return /^[\w.]{2,30}$/.test(handle) ? handle : undefined;
 }
 
+function xHandleOf(channel: string | undefined): string | undefined {
+  const raw = String(channel || "").trim();
+  if (!raw) return undefined;
+  const fromUrl = /(?:twitter|x)\.com\/([A-Za-z0-9_]{1,15})(?:[/?#]|$)/i.exec(raw)?.[1];
+  const handle = (fromUrl || raw.replace(/^@/, "")).trim();
+  return /^[A-Za-z0-9_]{1,15}$/.test(handle) ? handle : undefined;
+}
+
 function youtubeChannelRef(channel: string | undefined): string | undefined {
   const raw = String(channel || "").trim();
   return raw || undefined;
@@ -123,6 +139,9 @@ const TIKTOK_COMMENTS: SocialSource[] = [
     endpointId: "tikhub.tiktok.video.comments",
     method: "GET",
     costUsd: 0.001,
+    catalogParams: ["aweme_id", "cursor", "count", "current_region"],
+    catalogRequiredParams: ["aweme_id"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
     build: (r) => {
@@ -135,6 +154,9 @@ const TIKTOK_COMMENTS: SocialSource[] = [
     endpointId: "crawl4ai.tiktok.video.comments",
     method: "POST",
     costUsd: 0.0005,
+    catalogParams: ["post", "limit"],
+    catalogRequiredParams: ["post"],
+    requiresSession: false,
     maxPerCall: 100,
     paging: "none",
     build: (r) => {
@@ -149,6 +171,9 @@ const YOUTUBE_COMMENTS: SocialSource[] = [
     endpointId: "crawl4ai.youtube.video.comments",
     method: "POST",
     costUsd: 0.0009,
+    catalogParams: ["video", "limit"],
+    catalogRequiredParams: ["video"],
+    requiresSession: false,
     maxPerCall: 500,
     paging: "none",
     build: (r) => {
@@ -160,6 +185,9 @@ const YOUTUBE_COMMENTS: SocialSource[] = [
     endpointId: "tikhub.youtube.video.comments",
     method: "GET",
     costUsd: 0.001,
+    catalogParams: ["video_id", "language_code", "country_code", "sort_by", "continuation_token", "need_format"],
+    catalogRequiredParams: ["video_id"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
     build: (r) => {
@@ -174,6 +202,9 @@ const FACEBOOK_COMMENTS: SocialSource[] = [
     endpointId: "scrapecreators.x.v1-facebook-post-comments",
     method: "GET",
     costUsd: 0.00188,
+    catalogParams: ["url", "feedback_id", "cursor"],
+    catalogRequiredParams: [],
+    requiresSession: false,
     maxPerCall: 10,
     paging: "cursor",
     build: (r) => (r.ref?.url ? { url: r.ref.url, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
@@ -182,6 +213,9 @@ const FACEBOOK_COMMENTS: SocialSource[] = [
     endpointId: "treg.facebook.post.comments",
     method: "POST",
     costUsd: 0.00188,
+    catalogParams: ["post_id", "url"],
+    catalogRequiredParams: [],
+    requiresSession: false,
     maxPerCall: 10,
     paging: "none",
     build: (r) => (r.ref?.url ? { url: r.ref.url } : null),
@@ -193,6 +227,9 @@ const TIKTOK_SEARCH: SocialSource[] = [
     endpointId: "tikhub.tiktok.search.videos",
     method: "GET",
     costUsd: 0.001,
+    catalogParams: ["keyword", "count", "offset", "sort_type", "publish_time", "region"],
+    catalogRequiredParams: ["keyword"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "offset",
     build: (r) => (r.query ? { keyword: r.query, count: Math.min(20, Math.max(1, r.limit)), offset: Number(r.cursor || 0) } : null),
@@ -202,6 +239,9 @@ const TIKTOK_SEARCH: SocialSource[] = [
     endpointId: "anyapi.tiktok.search.videos",
     method: "POST",
     costUsd: 0.0012,
+    catalogParams: ["query", "cursor", "datePosted", "sortBy"],
+    catalogRequiredParams: ["query"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
     build: (r) => (r.query ? { query: r.query, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
@@ -213,6 +253,9 @@ const TIKTOK_CHANNEL: SocialSource[] = [
     endpointId: "anyapi.tiktok.user.videos",
     method: "POST",
     costUsd: 0.0012,
+    catalogParams: ["handle", "cursor"],
+    catalogRequiredParams: ["handle"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
     build: (r) => {
@@ -224,6 +267,9 @@ const TIKTOK_CHANNEL: SocialSource[] = [
     endpointId: "crawl4ai.tiktok.user.videos",
     method: "POST",
     costUsd: 0.0005,
+    catalogParams: ["account", "limit"],
+    catalogRequiredParams: ["account"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "none",
     build: (r) => {
@@ -240,6 +286,9 @@ const TIKTOK_TRENDING: SocialSource[] = [
     endpointId: "scrapecreators.x.v1-tiktok-get-trending-feed",
     method: "GET",
     costUsd: 0.00188,
+    catalogParams: ["region", "trim"],
+    catalogRequiredParams: ["region"],
+    requiresSession: false,
     maxPerCall: 30,
     paging: "none",
     build: (r) => {
@@ -254,6 +303,9 @@ const YOUTUBE_SEARCH: SocialSource[] = [
     endpointId: "crawl4ai.youtube.search.videos",
     method: "POST",
     costUsd: 0.0009,
+    catalogParams: ["query", "limit"],
+    catalogRequiredParams: ["query"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "none",
     build: (r) => (r.query ? { query: r.query, limit: Math.min(20, Math.max(1, r.limit)) } : null),
@@ -262,6 +314,9 @@ const YOUTUBE_SEARCH: SocialSource[] = [
     endpointId: "tikhub.youtube.search.videos",
     method: "GET",
     costUsd: 0.002,
+    catalogParams: ["keyword", "continuation_token", "type", "upload_date", "duration", "features", "sort_by"],
+    catalogRequiredParams: ["keyword"],
+    requiresSession: false,
     maxPerCall: 20,
     paging: "none",
     build: (r) => (r.query ? { keyword: r.query } : null),
@@ -273,6 +328,9 @@ const YOUTUBE_CHANNEL: SocialSource[] = [
     endpointId: "crawl4ai.youtube.channel.videos",
     method: "POST",
     costUsd: 0.0009,
+    catalogParams: ["channel", "limit"],
+    catalogRequiredParams: ["channel"],
+    requiresSession: false,
     maxPerCall: 30,
     paging: "none",
     build: (r) => {
@@ -284,6 +342,9 @@ const YOUTUBE_CHANNEL: SocialSource[] = [
     endpointId: "tikhub.youtube.channel.videos",
     method: "GET",
     costUsd: 0.001,
+    catalogParams: ["channel_id", "language_code", "country_code", "continuation_token", "need_format"],
+    catalogRequiredParams: ["channel_id"],
+    requiresSession: false,
     maxPerCall: 30,
     paging: "none",
     build: (r) => {
@@ -298,6 +359,9 @@ const YOUTUBE_TRENDING: SocialSource[] = [
     endpointId: "scrapecreators.x.v1-youtube-shorts-trending",
     method: "GET",
     costUsd: 0.00188,
+    catalogParams: [],
+    catalogRequiredParams: [],
+    requiresSession: false,
     maxPerCall: 48,
     paging: "none",
     build: () => ({}),
@@ -306,6 +370,9 @@ const YOUTUBE_TRENDING: SocialSource[] = [
     endpointId: "anyapi.youtube.trending_shorts",
     method: "POST",
     costUsd: 0.0012,
+    catalogParams: [],
+    catalogRequiredParams: [],
+    requiresSession: false,
     maxPerCall: 48,
     paging: "none",
     build: () => ({}),
@@ -317,6 +384,9 @@ const FACEBOOK_PAGE_POSTS: SocialSource[] = [
     endpointId: "anyapi.facebook.user.posts",
     method: "POST",
     costUsd: 0.002,
+    catalogParams: ["cursor", "pageId", "url"],
+    catalogRequiredParams: [],
+    requiresSession: false,
     maxPerCall: 10,
     paging: "cursor",
     build: (r) => (r.channel ? { url: /^https?:\/\//i.test(r.channel) ? r.channel : `https://www.facebook.com/${r.channel.replace(/^@/, "")}`, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
@@ -325,6 +395,9 @@ const FACEBOOK_PAGE_POSTS: SocialSource[] = [
     endpointId: "scrapecreators.x.v1-facebook-profile-posts",
     method: "GET",
     costUsd: 0.00188,
+    catalogParams: ["url", "pageId", "cursor"],
+    catalogRequiredParams: [],
+    requiresSession: false,
     maxPerCall: 3,
     paging: "cursor",
     build: (r) => (r.channel ? { url: /^https?:\/\//i.test(r.channel) ? r.channel : `https://www.facebook.com/${r.channel.replace(/^@/, "")}`, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
@@ -333,9 +406,74 @@ const FACEBOOK_PAGE_POSTS: SocialSource[] = [
     endpointId: "crawl4ai.facebook.user.posts",
     method: "POST",
     costUsd: 0.00135,
+    catalogParams: ["page", "limit"],
+    catalogRequiredParams: ["page"],
+    requiresSession: false,
+    sessionNote: "optional",
     maxPerCall: 20,
     paging: "none",
     build: (r) => (r.channel ? { page: r.channel.replace(/^@/, ""), limit: Math.min(20, Math.max(1, r.limit)) } : null),
+  },
+];
+
+// Public X search works without a customer session through the search endpoints below. Crawl4AI's
+// x.search.posts endpoint is intentionally excluded: its catalog only permits from:<account>
+// without a session, which made topic searches fail with HTTP 400.
+const X_TOPIC_POSTS: SocialSource[] = [
+  {
+    endpointId: "anyapi.x.search.posts",
+    method: "POST",
+    costUsd: 0.00075,
+    catalogParams: ["query", "limit", "cursor", "queryType"],
+    catalogRequiredParams: ["query"],
+    requiresSession: false,
+    maxPerCall: 50,
+    paging: "cursor",
+    build: (r) => r.query ? { query: r.query, limit: Math.min(50, Math.max(1, r.limit)), queryType: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
+  },
+  {
+    endpointId: "tikhub.x.twitter-web-fetch-search-timeline",
+    method: "GET",
+    costUsd: 0.001,
+    catalogParams: ["keyword", "search_type", "cursor"],
+    catalogRequiredParams: ["keyword"],
+    requiresSession: false,
+    maxPerCall: 20,
+    paging: "cursor",
+    build: (r) => r.query ? { keyword: r.query, search_type: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
+  },
+];
+
+const X_ACCOUNT_POSTS: SocialSource[] = [
+  {
+    endpointId: "anyapi.x.user.posts",
+    method: "POST",
+    costUsd: 0.0005,
+    catalogParams: ["handle", "limit", "cursor"],
+    catalogRequiredParams: ["handle"],
+    requiresSession: false,
+    maxPerCall: 100,
+    paging: "cursor",
+    build: (r) => {
+      const handle = xHandleOf(r.channel);
+      return handle ? { handle, limit: Math.min(100, Math.max(1, r.limit)), ...(r.cursor ? { cursor: r.cursor } : {}) } : null;
+    },
+  },
+  {
+    endpointId: "crawl4ai.x.user.posts",
+    method: "POST",
+    costUsd: 0.00045,
+    catalogParams: ["username", "limit"],
+    catalogRequiredParams: ["username"],
+    requiresSession: false,
+    sessionNote: "optional",
+    maxPerCall: 100,
+    paging: "none",
+    // Catalog says login cookies are optional; without them this reads as a visitor and may fall back.
+    build: (r) => {
+      const handle = xHandleOf(r.channel);
+      return handle ? { username: handle, limit: Math.min(100, Math.max(1, r.limit)) } : null;
+    },
   },
 ];
 
@@ -345,6 +483,19 @@ const RANKED = {
 };
 
 export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
+  {
+    slug: "social-x-posts",
+    platform: "x",
+    kind: "posts",
+    nameAr: "منشورات منصة إكس",
+    nameEn: "X Posts",
+    descriptionAr: "البحث عن منشورات إكس بموضوع أو كلمة، أو جمع أحدث منشورات حساب محدد.",
+    modes: ["query", "channel"],
+    rowCostUsd: 0.00075,
+    maxRows: 500,
+    successRate: 0.9999,
+    discover: { query: X_TOPIC_POSTS, channel: X_ACCOUNT_POSTS },
+  },
   {
     slug: "social-tiktok-comments",
     platform: "tiktok",
@@ -533,8 +684,8 @@ export function estimateSocialChunkCostUsd(cap: SocialCapabilityDef): number {
   return Number((worst * SOCIAL_MAX_CALLS_PER_CHUNK).toFixed(6));
 }
 
-const KIND_TITLE_AR: Record<string, string> = { comments: "تعليقات", videos: "فيديوهات" };
-const PLATFORM_TITLE_AR: Record<string, string> = { tiktok: "تيك توك", youtube: "يوتيوب", facebook: "فيسبوك" };
+const KIND_TITLE_AR: Record<string, string> = { comments: "تعليقات", videos: "فيديوهات", posts: "منشورات" };
+const PLATFORM_TITLE_AR: Record<string, string> = { tiktok: "تيك توك", youtube: "يوتيوب", facebook: "فيسبوك", x: "منصة إكس" };
 
 /** Arabic title of a finished social job, e.g. "تعليقات تيك توك" (never a service name). */
 export function socialResultTitleAr(cap: SocialCapabilityDef): string {
@@ -545,7 +696,7 @@ export function socialResultTitleAr(cap: SocialCapabilityDef): string {
 /** The verified capability that serves what the customer asked for, or undefined when none does. */
 export function socialCapabilityForIntent(intent: SocialIntent): SocialCapabilityDef | undefined {
   if (!intent.task || !intent.platform) return undefined;
-  const kind: SocialKind = intent.task === "comments" ? "comments" : "videos";
+  const kind: SocialKind = intent.task === "comments" ? "comments" : intent.task === "x_posts" ? "posts" : "videos";
   const cap = socialCapabilityFor(intent.platform, kind);
   if (!cap) return undefined;
   const mode: SocialMode | null =
@@ -613,7 +764,7 @@ export function socialPlanSummaryAr(
 ): string {
   const platform = PLATFORM_TITLE_AR[cap.platform] || "";
   const mode = resolveSocialMode(params);
-  const what = cap.kind === "comments" ? "التعليقات" : cap.platform === "facebook" ? "المنشورات" : "الفيديوهات";
+  const what = cap.kind === "comments" ? "التعليقات" : cap.kind === "posts" || cap.platform === "facebook" ? "المنشورات" : "الفيديوهات";
   const perVideo = Number(params.perVideo) > 0 ? Number(params.perVideo) : SOCIAL_COMMENTS_PER_VIDEO;
   const commentLimit = cap.kind === "comments" && mode !== "url"
     ? `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو، و${formatNumber(volume)} تعليقاً إجمالاً`
@@ -629,7 +780,9 @@ export function socialPlanSummaryAr(
     case "channel":
       return cap.kind === "comments"
         ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${commentLimit}`
-        : `سحب أحدث ${what} للقناة أو الصفحة المحددة على ${platform}`;
+        : cap.kind === "posts"
+          ? `سحب أحدث ${what} للحساب المحدد على ${platform}`
+          : `سحب أحدث ${what} للقناة أو الصفحة المحددة على ${platform}`;
     case "trending":
       return cap.kind === "comments"
         ? `سحب ${what} من الفيديوهات الرائجة على ${platform}${commentLimit}`

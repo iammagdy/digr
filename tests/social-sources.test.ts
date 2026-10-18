@@ -19,7 +19,7 @@ import {
 } from "../src/lib/socialSources";
 import { detectSocialIntent, socialSubjectForDisplay } from "../src/lib/socialTasks";
 
-type CatalogEntry = { method: string; params: string[]; required: string[]; costUsd: number | null; okRate: number | null; samples: number | null };
+type CatalogEntry = { method: string; params: string[]; required: string[]; costUsd: number | null; okRate: number | null; samples: number | null; requiresSession?: boolean; sessionNote?: "none" | "optional" };
 const live = catalog as Record<string, CatalogEntry>;
 
 const allSources = (): Array<{ slug: string; where: string; source: SocialSource }> =>
@@ -40,16 +40,26 @@ const YT_REQUEST = { ...FULL_REQUEST, ref: { id: "dQw4w9WgXcQ", url: "https://ww
 const FB_REQUEST = { ...FULL_REQUEST, ref: { url: "https://www.facebook.com/nasa/posts/123456" }, channel: "https://www.facebook.com/nasa" };
 
 function requestFor(platform: string) {
-  return platform === "youtube" ? YT_REQUEST : platform === "facebook" ? FB_REQUEST : FULL_REQUEST;
+  return platform === "youtube" ? YT_REQUEST : platform === "facebook" ? FB_REQUEST : platform === "x" ? { ...FULL_REQUEST, channel: "@nasa" } : FULL_REQUEST;
 }
 
-describe("every source matches the provider catalog it was read from (fixture captured 2026-10-17)", () => {
+describe("every source matches the public provider catalog snapshot (captured 2026-10-17 and 2026-10-18)", () => {
   it("each endpoint id exists in the catalog fixture", () => {
     for (const { source } of allSources()) expect(live[source.endpointId], source.endpointId).toBeDefined();
   });
 
   it("the HTTP method of each source is the one the catalog declares", () => {
     for (const { source } of allSources()) expect(source.method, source.endpointId).toBe(live[source.endpointId].method);
+  });
+
+  it("declares the exact catalog inputs and never relies on a customer login/session", () => {
+    for (const { source } of allSources()) {
+      expect([...source.catalogParams].sort(), source.endpointId).toEqual([...live[source.endpointId].params].sort());
+      expect([...source.catalogRequiredParams].sort(), source.endpointId).toEqual([...live[source.endpointId].required].sort());
+      expect(source.requiresSession, source.endpointId).toBe(false);
+      if (live[source.endpointId].requiresSession !== undefined) expect(live[source.endpointId].requiresSession, source.endpointId).toBe(false);
+      expect(source.sessionNote ?? "none", source.endpointId).toBe(live[source.endpointId].sessionNote ?? "none");
+    }
   });
 
   it("a source only ever sends parameters the catalog declares for that endpoint, including every required one", () => {
@@ -89,6 +99,21 @@ describe("every source matches the provider catalog it was read from (fixture ca
       if (entry.costUsd) expect(source.costUsd, source.endpointId).toBeCloseTo(entry.costUsd, 5);
     }
   });
+
+  it("X topic search uses a public keyword route and the account path asks for a handle", () => {
+    const cap = getSocialCapability("social-x-posts")!;
+    expect(cap.discover.query?.map((source) => source.endpointId)).toEqual([
+      "anyapi.x.search.posts",
+      "tikhub.x.twitter-web-fetch-search-timeline",
+    ]);
+    expect(cap.discover.query?.every((source) => !source.requiresSession)).toBe(true);
+    expect(cap.discover.channel?.map((source) => source.endpointId)).toEqual([
+      "anyapi.x.user.posts",
+      "crawl4ai.x.user.posts",
+    ]);
+    expect(cap.discover.channel?.every((source) => !source.requiresSession)).toBe(true);
+    expect(cap.discover.query?.some((source) => source.endpointId === "crawl4ai.x.search.posts")).toBe(false);
+  });
 });
 
 describe("source parameters for real requests", () => {
@@ -118,6 +143,18 @@ describe("source parameters for real requests", () => {
     const [primary] = facebookComments.comments!;
     expect(primary.build({ ref: { url: "https://www.facebook.com/nasa/posts/1" }, limit: 10, cursor: "c1" })).toEqual({ url: "https://www.facebook.com/nasa/posts/1", cursor: "c1" });
     expect(primary.build({ ref: {}, limit: 10 })).toBeNull();
+  });
+
+  it("X keyword posts use public query fields; account posts require only the handle", () => {
+    const cap = getSocialCapability("social-x-posts")!;
+    const topic = cap.discover.query!;
+    expect(topic[0].build({ query: "كرة السلة", limit: 1 })).toEqual({ query: "كرة السلة", limit: 1, queryType: "Latest" });
+    expect(topic[1].build({ query: "كرة السلة", limit: 1 })).toEqual({ keyword: "كرة السلة", search_type: "Latest" });
+    expect(topic[0].build({ query: "", limit: 1 })).toBeNull();
+    const account = cap.discover.channel!;
+    expect(account[0].build({ channel: "@nasa", limit: 1 })).toEqual({ handle: "nasa", limit: 1 });
+    expect(account[1].build({ channel: "https://x.com/nasa", limit: 1 })).toEqual({ username: "nasa", limit: 1 });
+    expect(account[0].build({ channel: "", limit: 1 })).toBeNull();
   });
 
   it("TikTok search pages by offset and moves the offset by the rows it returned", () => {

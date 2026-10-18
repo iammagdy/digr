@@ -37,6 +37,8 @@ export const PLATFORM_GUIDE = {
             ? ["topic_or_channel", "country_if_trending"]
             : cap.slug === "social-youtube-videos"
               ? ["topic_or_channel"]
+              : cap.slug === "social-x-posts"
+                ? ["topic_or_account_handle"]
               : ["facebook_page"],
       maxRecords: cap.maxRows,
       exampleAr: cap.slug === "social-youtube-comments" ? "هات ١٠ تعليقات على فيديو يوتيوب ده: [رابط]" :
@@ -44,11 +46,11 @@ export const PLATFORM_GUIDE = {
         cap.slug === "social-facebook-comments" ? "هات كومنتات بوست فيسبوك ده: [رابط]" :
         cap.slug === "social-tiktok-comments" ? "هات ١٠ كومنتس على فيديو تيك توك ده: [رابط]" :
         cap.slug === "social-youtube-videos" ? "هات ١٠ فيديوهات من قناة يوتيوب دي: [اسم القناة]" :
+        cap.slug === "social-x-posts" ? "هات ٢٠ تغريدة عن كرة السلة من الأسبوع الماضي" :
         "هات ١٠ بوستات من صفحة فيسبوك دي: [اسم الصفحة]",
-      examplePlanAr: cap.slug.includes("comments") ? "خطوة واحدة: حتى ١٠ تعليقات من الرابط أو الموضوع المحدد." : "خطوة واحدة: حتى ١٠ منشورات أو فيديوهات من القناة أو الموضوع المحدد.",
+      examplePlanAr: cap.slug.includes("comments") ? "خطوة واحدة: حتى ١٠ تعليقات من الرابط أو الموضوع المحدد." : cap.slug === "social-x-posts" ? "خطوة واحدة: حتى ٢٠ منشوراً عن كرة السلة خلال الأسبوع الماضي." : "خطوة واحدة: حتى ١٠ منشورات أو فيديوهات من القناة أو الموضوع المحدد.",
     })),
     { slug: "topic-news-academic-research", nameAr: "بحث موضوعي ومواد إخبارية وأكاديمية", descriptionAr: "جمع نتائج ومحتوى مرتبط بموضوع، دولة، لغة وفترة يحددها العميل.", requiredInputs: ["topic"], maxRecords: 500, exampleAr: "اجمع ١٠ أخبار عن الطاقة الشمسية في ألمانيا خلال آخر شهر", examplePlanAr: "خطوة واحدة: حتى ١٠ نتائج عن الطاقة الشمسية في ألمانيا خلال الشهر المحدد." },
-    { slug: "x-keyword-search", nameAr: "منشورات منصة إكس", descriptionAr: "منشورات مرتبطة بموضوع أو كلمات مفتاحية، مع فترة زمنية اختيارية.", requiredInputs: ["topic"], maxRecords: 500, exampleAr: "هات ٢٠ تغريدة عن كرة السلة في مصر الأسبوع اللي فات", examplePlanAr: "خطوة واحدة: حتى ٢٠ منشوراً عن كرة السلة في مصر خلال الأسبوع الماضي." },
     { slug: "tiktok-profile", nameAr: "فيديوهات القنوات والملفات الاجتماعية", descriptionAr: "محتوى قناة أو حساب محدد حسب الخدمة المطلوبة.", requiredInputs: ["account_handle"], maxRecords: 200, exampleAr: "هات آخر ١٠ فيديوهات من قناة تيك توك @example", examplePlanAr: "خطوة واحدة: حتى ١٠ فيديوهات من القناة المحددة." },
   ] satisfies GuideService[],
   futureSources: [

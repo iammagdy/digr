@@ -68,7 +68,8 @@
   "required": [
    "page"
   ],
-  "samples": 4862
+  "samples": 4862,
+  "sessionNote": "optional"
  },
  "crawl4ai.tiktok.user.videos": {
   "capturedAt": "2026-10-17",
@@ -290,6 +291,51 @@
    "video_id"
   ],
   "samples": 14783
+ },
+ "anyapi.x.search.posts": {
+  "capturedAt": "2026-10-18",
+  "costUsd": 0.00075,
+  "method": "POST",
+  "okRate": 0.9999,
+  "p50Ms": 1615,
+  "params": ["cursor", "limit", "query", "queryType"],
+  "required": ["query"],
+  "samples": 891820,
+  "requiresSession": false
+ },
+ "tikhub.x.twitter-web-fetch-search-timeline": {
+  "capturedAt": "2026-10-18",
+  "costUsd": 0.001,
+  "method": "GET",
+  "okRate": 0.9999,
+  "p50Ms": 2385,
+  "params": ["cursor", "keyword", "search_type"],
+  "required": ["keyword"],
+  "samples": 245587,
+  "requiresSession": false
+ },
+ "anyapi.x.user.posts": {
+  "capturedAt": "2026-10-18",
+  "costUsd": 0.0005,
+  "method": "POST",
+  "okRate": 0.9995,
+  "p50Ms": 1656,
+  "params": ["cursor", "handle", "limit"],
+  "required": ["handle"],
+  "samples": 149408,
+  "requiresSession": false
+ },
+ "crawl4ai.x.user.posts": {
+  "capturedAt": "2026-10-18",
+  "costUsd": 0.00045,
+  "method": "POST",
+  "okRate": 0.9969,
+  "p50Ms": 10717,
+  "params": ["limit", "username"],
+  "required": ["username"],
+  "samples": 766,
+  "sessionNote": "optional",
+  "requiresSession": false
  },
  "treg.facebook.post.comments": {
   "capturedAt": "2026-10-17",

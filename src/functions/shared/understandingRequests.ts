@@ -111,6 +111,6 @@ export function guideServiceByCapability(capability: UnderstandingCapability, se
     capability === "youtube_comments" ? "social-youtube-comments" : capability === "tiktok_comments" ? "social-tiktok-comments" :
     capability === "facebook_comments" ? "social-facebook-comments" : capability === "tiktok_trending" ? "social-tiktok-videos" :
     capability === "channel_videos" ? "social-youtube-videos" : capability === "facebook_posts" ? "social-facebook-posts" :
-    capability === "x_tweets" ? "x-keyword-search" : capability === "topic_research" ? "topic-news-academic-research" : "";
+    capability === "x_tweets" ? "social-x-posts" : capability === "topic_research" ? "topic-news-academic-research" : "";
   return services.find((service) => service.slug === slug);
 }

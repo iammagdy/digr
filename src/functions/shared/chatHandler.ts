@@ -153,7 +153,10 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
     // A request the verified social services understand is decided entirely by their own inputs (a link, a
     // channel, a country); the generic topic question below does not apply to it.
-    if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) return null;
+    if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) {
+      if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
+      return null;
+    }
   }
   if (isSocialTopic) {
     const missingSocial = getMissingSocialInputs(normalized);
@@ -2425,6 +2428,8 @@ export class ChatHandler {
             social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
             social_trending_platform_required: socialTaskQuestion("social_trending_platform_required"),
             social_channel_required: socialTaskQuestion("social_channel_required"),
+            social_x_topic_required: socialTaskQuestion("social_x_topic_required"),
+            social_x_account_required: socialTaskQuestion("social_x_account_required"),
           };
           clarificationItemsList = companyItem
             ? [companyItem]
