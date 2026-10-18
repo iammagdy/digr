@@ -1,3 +1,4 @@
+import { resolveProviderKey } from "../../lib/server/providerKeys";
 import { executeTregCall } from "./tregClient";
 
 export const HARD_TOTAL_COST_CAP_USD = 0.02; // $0.02 USD hard cap
@@ -24,10 +25,7 @@ export interface SmokeTestResult {
 }
 
 export async function runSmokeTests(userId: string): Promise<SmokeTestResult> {
-  const providerTokenPresent = Boolean(
-    (process.env.TREG_TOKEN && process.env.TREG_TOKEN.trim().length > 0) ||
-    (process.env.TREG_API_KEY && process.env.TREG_API_KEY.trim().length > 0)
-  );
+  const providerTokenPresent = Boolean((await resolveProviderKey("treg")).key);
 
   const liveRaw = (process.env.TREG_LIVE || "").trim().toLowerCase();
   const liveSwitch = liveRaw === "true" || liveRaw === "1" || liveRaw === "yes" || liveRaw === "on";

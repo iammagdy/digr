@@ -18,6 +18,7 @@ const FORBIDDEN_PATTERNS: Array<{ name: string; regex: RegExp }> = [
   { name: "Server Anthropic Key Leaked", regex: /process\.env\.ANTHROPIC_API_KEY/g },
   { name: "Server-only Variable Leaked", regex: /process\.env\.APPWRITE_API_KEY/g },
   { name: "Server TREG Token Leaked", regex: /process\.env\.TREG_TOKEN/g },
+  { name: "Provider Keys Encryption Key Leaked", regex: /process\.env\.PROVIDER_KEYS_ENCRYPTION_KEY/g },
   { name: "Supabase Service Role Key Leaked", regex: /process\.env\.SUPABASE_SERVICE_ROLE_KEY/g },
   { name: "Cron Secret Leaked", regex: /process\.env\.CRON_SECRET/g },
 ];

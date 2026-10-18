@@ -7,6 +7,7 @@ import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { useUser } from "@/hooks/useUser";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { UserSheet } from "@/components/admin/UserSheet";
+import { ProviderAlertBanner } from "@/components/admin/ProviderAlertBanner";
 import { ADMIN_IC, AIcon } from "@/components/admin/icons";
 import { EGP, initials, tint } from "@/components/admin/format";
 
@@ -98,6 +99,7 @@ export default function AdminOverview() {
 
   return (
     <div data-screen-label="Overview" className="flex flex-col gap-4">
+      <ProviderAlertBanner />
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <p className="m-0 font-display text-[32px] leading-[1.1] text-ink">{greeting}</p>

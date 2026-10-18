@@ -1,3 +1,4 @@
+import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
 import { z } from "zod";
 import { buildSystemPrompt, buildSystemPromptParts, PROMPT_VERSION } from "./systemPrompt";
 import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
@@ -633,11 +634,7 @@ export function resolveRuntimeProvider(override?: LlmProviderType): LlmProviderT
   if (raw === "anthropic" || raw === "openai" || raw === "fake") {
     return raw;
   }
-  if (
-    process.env.VITEST !== "true" &&
-    process.env.ANTHROPIC_API_KEY &&
-    process.env.ANTHROPIC_API_KEY.trim().length > 0
-  ) {
+  if (process.env.VITEST !== "true" && peekProviderKey("anthropic")) {
     return "anthropic";
   }
   return "fake";
@@ -661,7 +658,7 @@ export function isLlmEnabledRuntime(): boolean {
 
 export function isProviderKeyPresent(provider: LlmProviderType): boolean {
   if (provider === "anthropic") {
-    return Boolean(process.env.ANTHROPIC_API_KEY && process.env.ANTHROPIC_API_KEY.trim().length > 0);
+    return Boolean(peekProviderKey("anthropic"));
   }
   if (provider === "openai") {
     return Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim().length > 0);
@@ -739,6 +736,8 @@ export class LlmClient {
    * Main interaction point with budget enforcement & schema validation
    */
   async executeTurn(options: LlmCallOptions): Promise<LlmCallResult> {
+    // Prime the shared key resolver so the synchronous provider checks below see a key held only in the store.
+    await resolveProviderKey("anthropic");
     const provider = this.getProvider();
     const model = this.getModel();
 
@@ -2333,9 +2332,10 @@ export class LlmClient {
    */
   private async executeRealAnthropic(options: LlmCallOptions): Promise<LlmCallResult> {
     const model = this.getModel();
-    const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+    const resolvedKey = await resolveProviderKey("anthropic");
+    const apiKey = resolvedKey.key;
     if (!apiKey) {
-      return this.handleProviderError(new Error("ANTHROPIC_API_KEY is not configured"), "anthropic");
+      return this.handleProviderError(new Error("The model provider key is not configured"), "anthropic");
     }
 
     // The long fixed rules are marked cacheable; only the small per-turn context after them changes.
@@ -2391,6 +2391,7 @@ export class LlmClient {
       });
 
       clearTimeout(timeoutId);
+      reportProviderHttpStatus("anthropic", response.status, resolvedKey.source);
       const llmLatencyMs = Date.now() - llmStartTime;
       console.log(
         JSON.stringify({

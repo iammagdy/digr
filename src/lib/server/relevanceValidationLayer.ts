@@ -1,3 +1,4 @@
+import { resolveProviderKey } from "./providerKeys";
 import { z } from "zod";
 import { detectIndustryFromText, isCompanyRowMatchingLocation } from "../planParameters";
 import { industryLabelForSentence } from "../industryLabels";
@@ -302,7 +303,7 @@ export async function reviewCompanyBatch(
 
   if (!rows || rows.length === 0) return [];
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = await resolveProviderKey("anthropic").then((r) => r.key);
   const isLlmActive =
     Boolean(apiKey) &&
     process.env.LLM_PROVIDER !== "fake" &&

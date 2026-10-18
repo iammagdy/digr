@@ -1,3 +1,5 @@
+import { peekProviderKey, resolveProviderKey } from "./providerKeys";
+
 /**
  * Live Data Provider Gate & Diagnostics
  * Centralizes runtime environment flag checks (TREG_LIVE, TREG_TOKEN / TREG_API_KEY).
@@ -37,8 +39,8 @@ const REASON_MESSAGES_AR: Record<ProviderGateReasonCode, string> = {
  * Never logs or prints this value.
  */
 export function getSanitizedProviderToken(): string {
-  const raw = process.env.TREG_TOKEN || process.env.TREG_API_KEY || "";
-  return raw.trim().replace(/^["']|["']$/g, "").trim();
+  // Last resolved key (store or environment); callers that matter prime it with resolveProviderKey first.
+  return peekProviderKey("treg");
 }
 
 /**
@@ -81,7 +83,7 @@ export function getLiveProviderGateStatus(): ProviderGateStatus {
  * evaluating the gate. Vercel runs route handlers in separate functions, so a
  * process.env mutation made by the admin route is not shared with the accept
  * or worker routes. The switch is stored in settings_private; provider tokens
- * remain environment-only and are never read from that row.
+ * live in the encrypted key store (or the environment) and are never read from that row.
  */
 export async function getLiveProviderGateStatusFromSettings(source: any): Promise<ProviderGateStatus> {
   let savedLive: unknown;
@@ -112,6 +114,8 @@ export async function getLiveProviderGateStatusFromSettings(source: any): Promis
     process.env.TREG_LIVE = savedLive.trim().toLowerCase();
   }
 
+  // Prime the shared resolver so a key held only in the encrypted store counts as configured.
+  await resolveProviderKey("treg");
   return getLiveProviderGateStatus();
 }
 
