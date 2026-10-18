@@ -8,6 +8,8 @@ import {
   getPublicCalculatorOptions,
 } from "@/lib/calculatorPricing";
 
+import { capabilitySlugFromPublicId, publicCapabilityId } from "@/lib/publicCapabilityIds";
+
 export default function PublicCalculatorPage() {
   const options = useMemo(() => getPublicCalculatorOptions(), []);
   const [selectedSlug, setSelectedSlug] = useState<string>(
@@ -97,12 +99,12 @@ export default function PublicCalculatorPage() {
             </label>
             <select
               id="capability-select"
-              value={selectedSlug}
-              onChange={(e) => handleSelectCapability(e.target.value)}
+              value={publicCapabilityId(selectedSlug)}
+              onChange={(e) => handleSelectCapability(capabilitySlugFromPublicId(e.target.value))}
               className="min-h-12 rounded-[14px] border border-ln2 bg-bg px-3.5 text-sm text-ink outline-none"
             >
               {options.map((opt) => (
-                <option key={opt.slug} value={opt.slug}>
+                <option key={publicCapabilityId(opt.slug)} value={publicCapabilityId(opt.slug)}>
                   {opt.nameAr}
                 </option>
               ))}

@@ -1,5 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { CONTENT_SECURITY_POLICY_REPORT_ONLY } from "./src/lib/csp-policy.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +34,8 @@ const nextConfig = {
       { key: "X-Frame-Options", value: "SAMEORIGIN" },
       { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
       { key: "Strict-Transport-Security", value: "max-age=31536000" },
+      // Report-only for now: violations go to /api/csp-report, nothing is blocked.
+      { key: "Content-Security-Policy-Report-Only", value: CONTENT_SECURITY_POLICY_REPORT_ONLY },
     ];
     // Signed-in areas must never be indexed.
     const noindex = [{ key: "X-Robots-Tag", value: "noindex, nofollow" }];
