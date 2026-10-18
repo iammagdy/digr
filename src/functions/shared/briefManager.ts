@@ -1,6 +1,7 @@
 import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
+import { isStandaloneResearchRequest } from "./requestScope";
 
 export interface ResearchBrief {
   platforms: string[];
@@ -316,18 +317,30 @@ export function extractBriefFromMessage(
     } catch {}
   }
 
-  const brief: ResearchBrief = {
-    platforms: [...currentBrief.platforms],
-    topics: [...currentBrief.topics],
-    keywords: currentBrief.keywords ? [...currentBrief.keywords] : undefined,
-    targetVolume: currentBrief.targetVolume,
-    postCount: currentBrief.postCount,
-    commentsPerPost: currentBrief.commentsPerPost,
-    dateRange: currentBrief.dateRange,
-    language: currentBrief.language,
-    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
-    notes: currentBrief.notes,
-  };
+  // A self-contained research request starts a clean brief: it never inherits the platform, topic, country wording or
+  // notes of an older request. Only follow-ups (answers, "ابدأ", short fragments) merge into the brief.
+  const startsNewRequest = isStandaloneResearchRequest(userMessage);
+  const brief: ResearchBrief = startsNewRequest
+    ? {
+        platforms: [],
+        topics: [],
+        formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
+        language: currentBrief.language,
+        exclusionFile: currentBrief.exclusionFile,
+      }
+    : {
+        platforms: [...currentBrief.platforms],
+        topics: [...currentBrief.topics],
+        keywords: currentBrief.keywords ? [...currentBrief.keywords] : undefined,
+        targetVolume: currentBrief.targetVolume,
+        postCount: currentBrief.postCount,
+        commentsPerPost: currentBrief.commentsPerPost,
+        dateRange: currentBrief.dateRange,
+        language: currentBrief.language,
+        formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
+        notes: currentBrief.notes,
+        exclusionFile: currentBrief.exclusionFile,
+      };
 
   // 1. Platform
   const detectedPlatforms = detectMentionedPlatforms(userMessage);
@@ -371,7 +384,9 @@ export function extractBriefFromMessage(
   // Strip any old greetings that might have been stored in brief.topics
   brief.topics = (brief.topics || []).filter((t) => !isGreetingWord(t));
 
-  const { isGreeting: msgIsGreeting } = isGreetingOrGeneralQuestion(userMessage);
+  // Greetings and identity questions ("إنت مين؟") never enter a research topic.
+  const greetingOrGeneral = isGreetingOrGeneralQuestion(userMessage);
+  const msgIsGreeting = greetingOrGeneral.isGreeting || greetingOrGeneral.isGeneralQuestion;
 
   if (!msgIsGreeting) {
     const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);

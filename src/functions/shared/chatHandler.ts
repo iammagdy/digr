@@ -79,6 +79,7 @@ import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, 
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
+import { INDEPENDENT_REQUEST_NOTE_AR, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -958,7 +959,7 @@ export function buildPlanFixPrompt(
 }
 
 const TOPIC_STOPWORDS = new Set(
-  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome شكرا شكراً تمام ماشي فندم باشا يا حتى سجل سجلاً سجلات شركة شركات مؤسسة مؤسسات استخرج استخراج اريد أريد مجال تخصص نشاط فقط حجم عدد خمس خمسة ست ستة سبع سبعة ثمانية تمانية تسع تسعة عشر عشرة عشرين ثلاثين أربعين خمسين ستين سبعين ثمانين تسعين مية مائة ألف need want companies company records".split(
+  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome خلال منذ الماضي الماضية الماضيه السابق اسبوعين أسبوعين شهرين يومين كومنت كومنتس كومنتات تغريدات تغريدة تويت إنت انت مين شكرا شكراً تمام ماشي فندم باشا يا حتى سجل سجلاً سجلات شركة شركات مؤسسة مؤسسات استخرج استخراج اريد أريد مجال تخصص نشاط فقط حجم عدد خمس خمسة ست ستة سبع سبعة ثمانية تمانية تسع تسعة عشر عشرة عشرين ثلاثين أربعين خمسين ستين سبعين ثمانين تسعين مية مائة ألف need want companies company records".split(
     " ",
   ),
 );
@@ -1782,11 +1783,12 @@ export class ChatHandler {
       // The current message was persisted before history was fetched. Avoid
       // adding it twice to the deterministic routing text used for plans.
       if (priorUserRequirements.at(-1) === currentRequirement) priorUserRequirements.pop();
-      const conversationRequestText = [
-        ...priorUserRequirements,
+      // Scoped to THIS request: an independent request never reads older messages; only a follow-up does.
+      const conversationRequestText = scopeRequestText(
+        priorUserRequirements,
         currentRequirement,
-        ...explicitCompanyClarificationNotes(brief.notes),
-      ].filter(Boolean).join(" ");
+        explicitCompanyClarificationNotes(brief.notes),
+      );
 
       const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
       if (resultFeedbackReply) {
@@ -1893,8 +1895,10 @@ export class ChatHandler {
       // summarize older turns instead of blocking the user. The DB counter keeps
       // growing as a cumulative stat; the model only sees the compacted history.
       let effectiveConvTokens = totalConvTokens;
-      let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
-      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || messagesContext.length > 7) {
+      // Greetings and identity questions were answered by code; the model never re-reads them.
+      const modelHistory = dropGreetingAndIdentityTurns(messagesContext);
+      let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = modelHistory;
+      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || modelHistory.length > 7) {
         let planSummary: string | undefined;
         try {
           if (sb) {
@@ -1926,8 +1930,13 @@ export class ChatHandler {
         } catch {
           // plans_quotes unavailable: summarize without plan state
         }
-        turnMessages = summarizeConversationHistory(messagesContext, planSummary);
+        turnMessages = summarizeConversationHistory(modelHistory, planSummary);
         effectiveConvTokens = estimateTokens(turnMessages.map((m) => m.content).join("\n"));
+      }
+
+      // An independent request after earlier research turns is read on its own, never merged with them.
+      if (priorUserRequirements.some((entry) => entry && !isGreetingOrIdentityTurn(entry)) && isStandaloneResearchRequest(currentRequirement)) {
+        turnMessages = [...turnMessages, { role: "system", content: INDEPENDENT_REQUEST_NOTE_AR }];
       }
 
       if (isPhase2) {

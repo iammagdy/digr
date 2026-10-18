@@ -110,7 +110,10 @@ describe("shared provider key resolver", () => {
     const store = fakeKeyStore();
     store.seed("treg", fakeKey("stored"), undefined, { PROVIDER_KEYS_ENCRYPTION_KEY: enc } as unknown as NodeJS.ProcessEnv);
     const row = store.rows.get("treg");
-    row.active_ciphertext = row.active_ciphertext.replace(/.$/, (c: string) => (c === "A" ? "B" : "A"));
+    // Flip the first character of the ciphertext segment (the last tag character carries unused bits and can decode identically).
+    const parts = row.active_ciphertext.split(".");
+    parts[2] = (parts[2][0] === "A" ? "B" : "A") + parts[2].slice(1);
+    row.active_ciphertext = parts.join(".");
     const envKey = fakeKey("env");
     vi.stubEnv("TREG_TOKEN", envKey);
     __setProviderKeyStoreForTests(store.client, () => now);
