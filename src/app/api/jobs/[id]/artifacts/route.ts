@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { applyArtifactEdit, ArtifactEditOperationSchema, type ArtifactResultPayload } from "@/functions/shared/artifactEditing";
 import { artifactVersionRowId } from "@/functions/shared/artifactVersions";
+import { producedFormats } from "@/lib/producedFormats";
 import { generateCsvReport, generateExcelReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 
 export const dynamic = "force-dynamic";
@@ -267,25 +268,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     };
 
     const isFormatChange = operation?.action === "convert_formats";
-    const formats = isFormatChange && operation ? operation.formats : ["xlsx", "pdf", "csv"];
+    // A plain edit regenerates the formats this job already has, not all three.
+    const formats: string[] = isFormatChange && operation
+      ? operation.formats
+      : producedFormats(latest ? { xlsx: latest.fileIdXlsx, pdf: latest.fileIdPdf, csv: latest.fileIdCsv } : null);
 
-    const fileIds: Record<string, string> = {
-      xlsx: `${jobId}/v${versionNum}.xlsx`,
-      pdf: `${jobId}/v${versionNum}.pdf`,
-      csv: `${jobId}/v${versionNum}.csv`,
+    // Only a format generated for this version is recorded; the others stay empty and are made on request.
+    const fileIds: Record<string, string | null> = {
+      xlsx: formats.includes("xlsx") ? `${jobId}/v${versionNum}.xlsx` : null,
+      pdf: formats.includes("pdf") ? `${jobId}/v${versionNum}.pdf` : null,
+      csv: formats.includes("csv") ? `${jobId}/v${versionNum}.csv` : null,
     };
 
     if (formats.includes("xlsx")) {
       const buf = await generateExcelReport(edited);
-      await adminClient.storage.from("results").upload(fileIds.xlsx, buf, { upsert: true, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      await adminClient.storage.from("results").upload(fileIds.xlsx as string, buf, { upsert: true, contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     }
     if (formats.includes("pdf")) {
       const buf = await generatePdfReport(edited);
-      await adminClient.storage.from("results").upload(fileIds.pdf, buf, { upsert: true, contentType: "application/pdf" });
+      await adminClient.storage.from("results").upload(fileIds.pdf as string, buf, { upsert: true, contentType: "application/pdf" });
     }
     if (formats.includes("csv")) {
       const buf = Buffer.from(generateCsvReport(edited));
-      await adminClient.storage.from("results").upload(fileIds.csv, buf, { upsert: true, contentType: "text/csv; charset=utf-8" });
+      await adminClient.storage.from("results").upload(fileIds.csv as string, buf, { upsert: true, contentType: "text/csv; charset=utf-8" });
     }
 
     const nowIso = new Date().toISOString();
