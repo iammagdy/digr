@@ -1013,6 +1013,7 @@ export default function ChatWorkspacePage() {
         body: JSON.stringify({
           quoteId: quote.quoteId,
           expectedPlanHash: quote.planHash,
+          explicitApproval: true,
           jwt: jwtToken,
         }),
       });

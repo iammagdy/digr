@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { extractDateHint, buildAutoPlanProposal, dateFiltersFromHint, routeUnavailablePlatformRequest } from "../src/functions/shared/chatHandler";
 import { extractTargetVolume } from "../src/functions/shared/briefManager";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
@@ -29,6 +29,8 @@ describe("live testing handoff regressions", () => {
 
   it("uses the user's relative date window when the extracted brief omitted it", () => {
     const fixedNow = new Date("2026-10-17T12:00:00Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(fixedNow);
     const expected = dateFiltersFromHint("آخر ٣٠ يومًا", fixedNow);
     const plan = buildAutoPlanProposal(
       // The approved TikTok entry is a one-account profile lookup, which correctly carries no date
@@ -40,6 +42,7 @@ describe("live testing handoff regressions", () => {
 
     expect(expected).toEqual({ from: "2026-09-17", to: "2026-10-17" });
     expect(plan.capabilities[0].params).toMatchObject({ dateFrom: expected.from, dateTo: expected.to });
+    vi.useRealTimers();
   });
 
   it("does not override a catalog plan with a local unavailable-service refusal", () => {

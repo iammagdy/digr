@@ -172,6 +172,7 @@ export async function POST(
       const baseUrl = resolveInternalBaseUrl(req);
       const workerResult = await dispatchWorkerChunk(baseUrl, job.id, job.step ?? 0, createInternalWorkerAuthHeaders(job.id));
       if (!workerResult.started && workerResult.body?.claimed !== false) {
+        console.warn(`[nudge:worker_trigger_failed] jobId=${job.id} status=${workerResult.status} code=${workerResult.failureCode || "dispatch_failed"}`);
         const outcome = await recordWorkerStartFailure(createAdminClient(), job.id);
         return NextResponse.json({
           success: true,

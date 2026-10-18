@@ -7,6 +7,7 @@ import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../.
 import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../../lib/server/workerDispatch";
 import { recordWorkerStartFailure, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
+import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -54,6 +55,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: "فعّل بريدك الإلكتروني أولًا لبدء البحث." },
         { status: 403 }
+      );
+    }
+
+    // Acceptance and reservation are allowed only from the explicit plan-card
+    // approval action. Polling, retries, nudges, and chat refreshes must never
+    // infer consent from an accepted/active quote.
+    if (!hasExplicitQuoteApproval(body)) {
+      return NextResponse.json(
+        { success: false, error: "اضغط زر الموافقة على الخطة لبدء البحث." },
+        { status: 400 }
       );
     }
 
@@ -136,7 +147,7 @@ export async function POST(req: NextRequest) {
         createInternalWorkerAuthHeaders(acceptedJobId)
       );
       if (!workerDispatch.started) {
-        console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} status=${workerDispatch.status}`);
+        console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} status=${workerDispatch.status} code=${workerDispatch.failureCode || "dispatch_failed"}`);
       } else {
         console.log(`[accept-quote:worker_triggered] jobId=${acceptedJobId} status=${workerDispatch.status}`);
       }

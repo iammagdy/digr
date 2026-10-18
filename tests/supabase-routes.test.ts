@@ -426,6 +426,26 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
     expect(data.error).toBe("فعّل بريدك الإلكتروني أولًا لبدء البحث.");
   });
 
+  it("does not accept a quote unless the explicit plan approval action is present", async () => {
+    const { POST } = await import("../src/app/api/chat/accept-quote/route");
+    const { NextRequest } = await import("next/server");
+    authMockState.user = {
+      id: "user-verified-1",
+      email: "verified@example.com",
+      email_confirmed_at: "2026-10-12T00:00:00Z",
+      user_metadata: { email_verified: true },
+    };
+    authMockState.authError = null;
+
+    const req = new NextRequest("http://localhost:3000/api/chat/accept-quote", {
+      method: "POST",
+      body: JSON.stringify({ quoteId: "q-1" }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ success: false, error: "اضغط زر الموافقة على الخطة لبدء البحث." });
+  });
+
   it("A1 Safety Guard: refuses to silently reserve credits or start fake work when TREG_LIVE is disabled", async () => {
     const { POST } = await import("../src/app/api/chat/accept-quote/route");
     const { NextRequest } = await import("next/server");
@@ -446,7 +466,7 @@ describe("accept-quote Route Handler (POST /api/chat/accept-quote)", () => {
 
       const req = new NextRequest("http://localhost:3000/api/chat/accept-quote", {
         method: "POST",
-        body: JSON.stringify({ quoteId: "q-1" }),
+        body: JSON.stringify({ quoteId: "q-1", explicitApproval: true }),
       });
 
       const res = await POST(req);
