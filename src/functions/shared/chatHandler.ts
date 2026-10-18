@@ -72,6 +72,7 @@ import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusable
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -1666,11 +1667,11 @@ export class ChatHandler {
       // 6. Fetch previous messages for context
       currentStep = "message_history";
       const tSbHistStart = Date.now();
-      let messagesContext: Array<{ role: "user" | "assistant" | "system"; content: string }> = [];
+      let messagesContext: PriorConversationMessage[] = [];
       if (sb) {
         const { data: rows, error: histErr } = await sb
           .from("messages")
-          .select("id, role, content_ar, created_at")
+          .select("id, role, content_ar, created_at, quote, plan, request_status")
           .eq("conversation_id", conversationId)
           .order("created_at", { ascending: true })
           .limit(10);
@@ -1682,6 +1683,9 @@ export class ChatHandler {
             content: r.role === "user"
               ? formatClarificationMessageForAssistant(r.content_ar || "")
               : r.content_ar || "",
+            quote: r.quote,
+            plan: r.plan,
+            requestStatus: r.request_status,
           }));
       } else {
         const historyRes = await this.tables.listRows({
@@ -1701,6 +1705,9 @@ export class ChatHandler {
             content: r.role === "user"
               ? formatClarificationMessageForAssistant(r.content || "")
               : r.content,
+            quote: r.quote,
+            plan: r.plan,
+            requestStatus: r.requestStatus,
           }));
       }
       supabaseMs += Date.now() - tSbHistStart;
@@ -1720,6 +1727,46 @@ export class ChatHandler {
         currentRequirement,
         ...explicitCompanyClarificationNotes(brief.notes),
       ].filter(Boolean).join(" ");
+
+      const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
+      if (resultFeedbackReply) {
+        if (sb) {
+          const [assistantUpdate, userUpdate] = await Promise.all([
+            sb.from("messages").update({
+              content_ar: resultFeedbackReply,
+              clarification_items: null,
+              plan: null,
+              quote: null,
+            }).eq("id", assistantMsgId),
+            sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+          ]);
+          if (assistantUpdate?.error) throw assistantUpdate.error;
+          if (userUpdate?.error) throw userUpdate.error;
+        } else {
+          await this.tables.updateRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: assistantMsgId,
+            data: { content: resultFeedbackReply, status: "ready" },
+          });
+          await this.tables.updateRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: userMsgId,
+            data: { requestStatus: "completed" },
+          });
+        }
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: resultFeedbackReply,
+          outputType: "answer_question",
+          intent: "research",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+        };
+      }
 
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief);
       if (requiredDiscoveryQuestion) {
@@ -2651,9 +2698,9 @@ export class ChatHandler {
               planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
             }
           }
-          finalContentAr = (!verifiedSocialDef && llmResult.textBlockAr && llmResult.textBlockAr.trim().length > 0 && !planSummaryText.includes(llmResult.textBlockAr))
-            ? `${llmResult.textBlockAr}\n\n${planSummaryText}`
-            : planSummaryText;
+          // The plan response is pre-approval. Keep it entirely server-authored so
+          // free-form model text cannot claim that collection has already started.
+          finalContentAr = planSummaryText;
         }
       } else if (output.type === "edit_plan") {
         let activeQuote: any = null;

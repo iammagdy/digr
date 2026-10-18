@@ -654,7 +654,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       });
     });
 
-    it("A3: handles paged rows with short last page, verifies CSV row count == delivered_units, charge = ceil(delivered * unitPrice) capped at reserve, artifact_versions and notifications columns", async () => {
+    it("A3: handles a short last page and emits only the default Excel file in the result manifest", async () => {
       const originalNodeEnv = process.env.NODE_ENV;
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
@@ -761,14 +761,11 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(jsonStep1.settle?.charged_credits).toBe(20);
         expect(jsonStep1.settle?.released_credits).toBe(6);
 
-        // Verify CSV row count == delivered_units (1 header + 13 data lines)
-        const csvBuf = mockWorkerDb.uploadedBodies.get(
-          "results:user_worker_1/job_short_last_page/result.csv"
-        );
-        expect(csvBuf).toBeDefined();
-        const csvText = csvBuf!.toString("utf-8").replace(/^\uFEFF/, "").trimEnd();
-        const csvLines = csvText.split(/\r?\n/);
-        expect(csvLines.length).toBe(1 + 13); // 1 header + 13 data rows === delivered_units
+        const xlsxPath = "user_worker_1/job_short_last_page/result.xlsx";
+        expect(mockWorkerDb.uploadedBodies.get(`results:${xlsxPath}`)).toBeDefined();
+        expect(mockWorkerDb.uploadedBodies.has("results:user_worker_1/job_short_last_page/result.csv")).toBe(false);
+        expect(mockWorkerDb.uploadedBodies.has("results:user_worker_1/job_short_last_page/result.pdf")).toBe(false);
+        expect(jsonStep1.resultFiles).toEqual({ xlsx: xlsxPath, pdf: null, csv: null });
 
         // Verify artifact_versions row columns
         expect(mockWorkerDb.artifactVersions).toHaveLength(1);
@@ -784,9 +781,9 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
             "version_number",
           ].sort()
         );
-        expect(mockWorkerDb.artifactVersions[0].file_id_csv).toBe(
-          "user_worker_1/job_short_last_page/result.csv"
-        );
+        expect(mockWorkerDb.artifactVersions[0].file_id_xlsx).toBe(xlsxPath);
+        expect(mockWorkerDb.artifactVersions[0].file_id_csv).toBeNull();
+        expect(mockWorkerDb.artifactVersions[0].file_id_pdf).toBeNull();
 
         // Verify notifications row uses exact schema columns (id, user_id, title, body, read, link, created_at)
         expect(mockWorkerDb.notifications).toHaveLength(1);

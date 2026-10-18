@@ -38,7 +38,8 @@ export async function resolveJobExecutionSpec(
   let pricingUnit: "call" | "item" | "page" = "call";
   let unitCostUsd: number | undefined;
   let itemTargetVolumeMax = 0;
-  let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx", "pdf", "csv"];
+  // Excel is the default format when a quote is unavailable or predates format selection.
+  let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx"];
   let retryOfJobId: string | undefined;
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
@@ -57,7 +58,7 @@ export async function resolveJobExecutionSpec(
             ? matched.output_formats.filter((format: unknown): format is "xlsx" | "pdf" | "csv" =>
                 format === "xlsx" || format === "pdf" || format === "csv")
             : [];
-          if (selectedFormats.length > 0) outputFormats = Array.from(new Set(selectedFormats));
+          outputFormats = selectedFormats.length > 0 ? Array.from(new Set(selectedFormats)) : ["xlsx"];
           const items = Array.isArray(matched.items)
             ? matched.items
             : Array.isArray(matched.items?.items)

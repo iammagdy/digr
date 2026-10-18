@@ -12,6 +12,7 @@ import {
 } from "../../../../lib/server/tregAdapter";
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
+import { resultFileManifest } from "../../../../lib/server/resultFileManifest";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
 import {
@@ -1461,11 +1462,11 @@ export async function POST(req: NextRequest) {
         jobId,
         deliveredUnits: finalRows.length,
         spendCostId,
-        resultFiles: {
-          csv: csvPath,
-          xlsx: xlsxPath,
-          pdf: pdfPath,
-        },
+        resultFiles: resultFileManifest({
+          csv: savedCsvPath,
+          xlsx: savedXlsxPath,
+          pdf: savedPdfPath,
+        }),
         settle: settleData,
       });
     }
