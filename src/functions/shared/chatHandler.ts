@@ -807,7 +807,7 @@ export function summarizeConversationHistory(
   messages: Array<{ role: string; content: string }>,
   planSummary?: string,
 ): Array<{ role: "system" | "user" | "assistant"; content: string }> {
-  const KEEP_RECENT = 6;
+  const KEEP_RECENT = 4;
   const normalized = messages.map((m) => ({
     role: (m.role === "user" || m.role === "assistant" ? m.role : "system") as "system" | "user" | "assistant",
     content: String(m.content || ""),
@@ -818,7 +818,7 @@ export function summarizeConversationHistory(
   const middle = normalized.slice(1, -KEEP_RECENT);
   const lines = middle.map((m) => {
     const who = m.role === "user" ? "المستخدم" : "المساعد";
-    return `- ${who}: ${m.content.slice(0, 120)}`;
+    return `- ${who}: ${m.content.slice(0, 80)}`;
   });
   if (planSummary) lines.push(`- الخطة الحالية: ${planSummary}`);
   return [
@@ -1783,7 +1783,7 @@ export class ChatHandler {
       // growing as a cumulative stat; the model only sees the compacted history.
       let effectiveConvTokens = totalConvTokens;
       let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
-      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT) {
+      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || messagesContext.length > 7) {
         let planSummary: string | undefined;
         try {
           if (sb) {

@@ -85,5 +85,7 @@ export function buildPlatformGuideServices(capabilities: Capability[] = APPROVED
 }
 
 export function platformGuidePromptText(): string {
-  return JSON.stringify({ ...PLATFORM_GUIDE, services: buildPlatformGuideServices() }, null, 2);
+  // This is immutable product knowledge. Keep it compact and place it in the
+  // cacheable system prefix rather than repeating pretty-printed JSON per turn.
+  return JSON.stringify({ ...PLATFORM_GUIDE, services: buildPlatformGuideServices() });
 }

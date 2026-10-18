@@ -205,7 +205,7 @@ describe("Phase B: Claude as the Brain & Live Catalog Integration", () => {
 
   describe("System Prompt v5 Integrity & Guardrails", () => {
     it("enforces v6 version, zero emojis, zero provider leaks, and no legality claims", () => {
-      expect(PROMPT_VERSION).toBe("7.0.0");
+      expect(PROMPT_VERSION).toBe("8.0.0");
 
       const prompt = buildSystemPrompt({
         sanitizedCapabilities: APPROVED_CAPABILITY_CATALOG,

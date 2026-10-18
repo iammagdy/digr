@@ -2,7 +2,7 @@ import { getPersonaConfig, sanitizePersonaContextText } from "./personaConfigs";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { platformGuidePromptText } from "./platformGuide";
 
-export const PROMPT_VERSION = "7.0.0";
+export const PROMPT_VERSION = "8.0.0";
 
 export interface SystemPromptContext {
   userProfile?: {
@@ -27,6 +27,43 @@ export interface SystemPromptParts {
   staticText: string;
   /** Profile, balance, date, conversation state and the capability list. */
   dynamicText: string;
+}
+
+/**
+ * Keep every capability visible to the model while omitting duplicated schemas,
+ * status flags, prices, and provider metadata. The matching live catalog block
+ * in the conversation carries the exact route schema when a task needs it.
+ */
+export function compactCapabilityInventory(capabilities: any[] = []): Array<{
+  s: string;
+  p: string;
+  n: string;
+  r: string[];
+  m: number | null;
+}> {
+  const uniqueBySlug = new Map<string, any>();
+  for (const cap of capabilities) {
+    const slug = String(cap.slug || cap.id || "");
+    if (slug && !uniqueBySlug.has(slug)) uniqueBySlug.set(slug, cap);
+  }
+  return [...uniqueBySlug.values()].map((cap) => {
+    const schema = typeof cap.paramsSchema === "string"
+      ? (() => { try { return JSON.parse(cap.paramsSchema); } catch { return {}; } })()
+      : cap.paramsSchema || {};
+    const properties = schema && typeof schema.properties === "object" ? schema.properties : {};
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    const requiredKeys = [...new Set([...required, ...Object.keys(properties)])]
+      .filter((key): key is string => typeof key === "string")
+      .slice(0, 8);
+    const maxRows = Number(cap.maxRows ?? cap.maxItemsPerCall);
+    return {
+      s: String(cap.slug || cap.id || ""),
+      p: String(cap.platform || cap.category || ""),
+      n: String(cap.nameAr || cap.slug || cap.id || ""),
+      r: requiredKeys,
+      m: Number.isFinite(maxRows) && maxRows > 0 ? maxRows : null,
+    };
+  });
 }
 
 export function buildSystemPrompt(context: SystemPromptContext): string {
@@ -69,7 +106,7 @@ PRODUCT KNOWLEDGE & CATALOG ACCESS (v7)
 - Diger: users describe the information they need from connected internet sources; you understand, ask discovery questions only when essential, consult the catalogue, and propose an editable plan; the server computes the quote in points; after explicit user approval it collects the data and delivers Excel, CSV and PDF files in the results panel; you then help review and refine the output.
 - Flow: understand, short discovery questions (when essential), editable multi-step plan, server-computed quote in points, explicit approval, collection with a live activity timeline, files, post-collection review & refinement, optional methodology document.
 - Platform Guide: Diger is a general web-data research platform. Every topic, country, language and time window is allowed. Football, basketball, news, academic material, companies, professional decision makers, social comments, trending videos, channel videos, posts and tweets are all ordinary research topics. Never say "I only search X" or suggest an unrelated platform. Never mention a source vendor. Ask one short question only when an essential input is missing.
-- Full Capability List: Always use the complete structured Diger platform guide included in the user context, in addition to any catalog search results. Search results refine endpoint routing; they never replace the full capability list.
+- Full Capability List: Always use the complete structured Diger platform guide included in these fixed instructions, in addition to any catalog search results. Search results refine endpoint routing; they never replace the full capability list.
 - Whitelist Elimination: There is NO hardcoded whitelist of research topics. If exact routing details are not included in the current search result, ask one concise question or propose an editable plan using the matching catalog service.
 - Platform-Match Rule: The platform in the proposed plan must strictly match the platform the user requested. Never substitute a different platform without explicit user consent.
 - Points & Money Rule: Points are the platform currency (topped up via Instapay). You NEVER decide money, final charges, holds, or refunds; all point quotes and settlements come strictly from the server. You may reference the per-step catalog unit rate to explain plan structure, stating clearly that final quotes are calculated by the server.
@@ -101,7 +138,7 @@ WHAT YOU DO & MULTI-TOPIC PLAN BREAKDOWN (v6)
 - For decision-maker searches, default to the work email and office phone fields unless the user explicitly narrows them. State that the base person record and each returned contact field are priced separately, that missing values remain visible for review, and that the server charges only delivered units. Never calculate or state numeric prices; the server quote is authoritative.
 
 DISCOVERY QUESTIONS & DECISION RULES (v6)
-- If platform AND topic are known (from user text or brief) or if appropriate tools exist in the AVAILABLE CATALOG CAPABILITIES in the user context below: do not ask about known facts, but still clarify any essential company-search fields or vague commercial intent before proposing a plan.
+- If platform AND topic are known (from user text or brief) or if appropriate tools exist in the compact capability inventory and matching catalog context below: do not ask about known facts, but still clarify any essential company-search fields or vague commercial intent before proposing a plan.
 - If platform is missing: ask ONE question only: "ما المنصة المطلوبة؟" with platform options.
 - If topic is missing or vague (e.g. "عايز بيانات"): ask ONE question only: "ما الموضوع أو الكلمات المفتاحية؟".
 - For company requests, identify every essential missing detail from the actual request, such as country, industry, whether a phrase names a specific company or describes a company type, and the intended contact fields. Ask only for details that are genuinely unclear; do not assume country or industry.
@@ -180,6 +217,11 @@ Tool specifications:
 9. "write_note": { "type": "write_note", "titleAr": "عنوان الملاحظة", "contentAr": "محتوى الملاحظة" }
 10. "update_brief": { "type": "update_brief", "platforms": ["facebook"], "topics": ["الدهب"], "targetVolume": 1000, "replyAr": "نص الرد للمستخدم", "questions": [...] }`;
 
+  const staticTextWithGuide = `${staticText}
+
+FULL DIGER PLATFORM GUIDE (complete capability list; fixed/cacheable product knowledge):
+${platformGuidePromptText()}`;
+
   const dynamicText = `CURRENT USER PROFILE & PERSONA
 - User Name: ${displayName}
 - Available Balance: ${balance} points (${toArabicDigits(balance)} نقطة)
@@ -201,12 +243,9 @@ ENVIRONMENT & STATE
 - User Balance: ${balance} نقطة
 - Conversation State: ${JSON.stringify(context.conversationState || {})}
 
-FULL DIGER PLATFORM GUIDE (the complete capability list is always present; catalog search results only refine routing):
-${platformGuidePromptText()}
+AVAILABLE CAPABILITY INVENTORY (all capabilities; keys: s=slug, p=platform, n=Arabic name, r=parameter keys, m=record limit. Exact route details are supplied separately only for the matching task):
+${JSON.stringify(compactCapabilityInventory(catalogCapabilities))}`;
 
-AVAILABLE CATALOG CAPABILITIES (matching results; the full guide above remains present):
-${JSON.stringify(catalogCapabilities, null, 2)}`;
-
-  return { staticText, dynamicText };
+  return { staticText: staticTextWithGuide, dynamicText };
 }
 

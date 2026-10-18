@@ -341,6 +341,10 @@ export interface LlmCallResult {
   promptVersion?: string;
   rawText?: string;
   textBlockAr?: string;
+  /** Anthropic cache usage is kept distinct for operational cost evidence. */
+  cacheReadInputTokens?: number;
+  cacheCreationInputTokens?: number;
+  uncachedInputTokens?: number;
 }
 
 // ================= White-Label Scrubber =================
@@ -2597,6 +2601,17 @@ export class LlmClient {
       const weightedInputTokens = uncachedInTokens + cacheReadTokens * 0.1 + cacheWriteTokens * 1.25;
       const costUsd = (weightedInputTokens * pricing.inputCostPerMillion + outTokens * pricing.outputCostPerMillion) / 1_000_000;
 
+      // Log only aggregate usage metadata; never include prompts, messages, or credentials.
+      console.info(JSON.stringify({
+        tag: "anthropic_prompt_usage",
+        uncachedInputTokens: uncachedInTokens,
+        cacheReadInputTokens: cacheReadTokens,
+        cacheCreationInputTokens: cacheWriteTokens,
+        outputTokens: outTokens,
+        costUsd,
+        latencyMs: llmLatencyMs,
+      }));
+
       setLastLlmFallbackReason(null);
       setLastLlmFallbackDetail(null);
 
@@ -2605,6 +2620,9 @@ export class LlmClient {
         inputTokens: inTokens,
         outputTokens: outTokens,
         costUsd,
+        uncachedInputTokens: uncachedInTokens,
+        cacheReadInputTokens: cacheReadTokens,
+        cacheCreationInputTokens: cacheWriteTokens,
         model,
         promptVersion: PROMPT_VERSION,
         rawText: JSON.stringify(scrubbedPayload),

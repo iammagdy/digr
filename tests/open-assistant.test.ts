@@ -232,7 +232,7 @@ describe("open assistant (feat/open-assistant)", () => {
   });
 
   it("system prompt v7: no vendor/model names, smart discovery guidance", () => {
-    expect(PROMPT_VERSION).toBe("7.0.0");
+    expect(PROMPT_VERSION).toBe("8.0.0");
     const prompt = buildSystemPrompt({ sanitizedCapabilities: [] });
     for (const vendor of ["anthropic", "claude", "haiku", "openai", "gpt-"]) {
       expect(prompt.toLowerCase()).not.toContain(vendor);
