@@ -865,7 +865,9 @@ export async function POST(req: NextRequest) {
           }
         }
         const parts = [
-          `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
+          providerBudgetStopped
+            ? "توقف جلب صفحات إضافية بعد بلوغ الحد اليومي الآمن"
+            : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
           `الجديد ${toArabicDigits(acceptedRows.length)}`,
           `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
@@ -1089,7 +1091,7 @@ export async function POST(req: NextRequest) {
         },
         collection: {
           methodLabel: customerFacingCapabilityLabel(spec.capabilitySlug),
-          pagesFetched: currentStep + 1,
+          pagesFetched: currentStep + (providerBudgetStopped ? 0 : 1),
           paginationStrategy: spec.paginationStrategy,
           stopReason: finalRows.length >= targetMax ? "target_reached" : "source_exhausted",
         },
