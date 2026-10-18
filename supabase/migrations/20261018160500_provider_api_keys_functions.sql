@@ -30,7 +30,8 @@ BEGIN
   IF p_provider IS NULL OR p_provider NOT IN ('treg', 'anthropic') THEN
     RETURN jsonb_build_object('success', false, 'error', 'invalid_provider', 'error_ar', 'مزود غير معروف.');
   END IF;
-  IF p_ciphertext IS NULL OR p_ciphertext !~ '^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{8,1200}\.[A-Za-z0-9_-]{22}$' THEN
+  IF p_ciphertext IS NULL OR char_length(p_ciphertext) > 1300
+     OR p_ciphertext !~ '^v1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{22}$' THEN
     RETURN jsonb_build_object('success', false, 'error', 'invalid_ciphertext', 'error_ar', 'صيغة المفتاح المشفّر غير صالحة.');
   END IF;
   IF p_last4 IS NULL OR p_last4 !~ '^[^[:space:]]{1,4}$' THEN
