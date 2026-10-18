@@ -11,7 +11,9 @@
    "url"
   ],
   "required": [],
-  "samples": 11290
+  "samples": 11290,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "anyapi.tiktok.search.videos": {
   "capturedAt": "2026-10-17",
@@ -28,7 +30,9 @@
   "required": [
    "query"
   ],
-  "samples": 34904
+  "samples": 34904,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "anyapi.tiktok.user.videos": {
   "capturedAt": "2026-10-17",
@@ -43,7 +47,9 @@
   "required": [
    "handle"
   ],
-  "samples": 18790
+  "samples": 18790,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "anyapi.youtube.trending_shorts": {
   "capturedAt": "2026-10-17",
@@ -53,7 +59,9 @@
   "p50Ms": null,
   "params": [],
   "required": [],
-  "samples": null
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "crawl4ai.facebook.user.posts": {
   "capturedAt": "2026-10-17",
@@ -69,7 +77,8 @@
    "page"
   ],
   "samples": 4862,
-  "sessionNote": "optional"
+  "sessionNote": "optional",
+  "requiresSession": false
  },
  "crawl4ai.tiktok.user.videos": {
   "capturedAt": "2026-10-17",
@@ -84,7 +93,9 @@
   "required": [
    "account"
   ],
-  "samples": 14371
+  "samples": 14371,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "crawl4ai.tiktok.video.comments": {
   "capturedAt": "2026-10-17",
@@ -99,13 +110,15 @@
   "required": [
    "post"
   ],
-  "samples": 2791
+  "samples": 2791,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "crawl4ai.youtube.channel.videos": {
   "capturedAt": "2026-10-17",
   "costUsd": 0.0009,
   "method": "POST",
-  "okRate": 1.0,
+  "okRate": 1,
   "p50Ms": 541,
   "params": [
    "channel",
@@ -114,13 +127,15 @@
   "required": [
    "channel"
   ],
-  "samples": 5153
+  "samples": 5153,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "crawl4ai.youtube.search.videos": {
   "capturedAt": "2026-10-17",
   "costUsd": 0.0009,
   "method": "POST",
-  "okRate": 1.0,
+  "okRate": 1,
   "p50Ms": 1478,
   "params": [
    "limit",
@@ -129,13 +144,15 @@
   "required": [
    "query"
   ],
-  "samples": 3263
+  "samples": 3263,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "crawl4ai.youtube.video.comments": {
   "capturedAt": "2026-10-17",
   "costUsd": 0.0009,
   "method": "POST",
-  "okRate": 1.0,
+  "okRate": 1,
   "p50Ms": 1695,
   "params": [
    "limit",
@@ -144,7 +161,9 @@
   "required": [
    "video"
   ],
-  "samples": 2304
+  "samples": 2304,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "scrapecreators.x.v1-facebook-post-comments": {
   "capturedAt": "2026-10-17",
@@ -158,7 +177,9 @@
    "url"
   ],
   "required": [],
-  "samples": null
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "scrapecreators.x.v1-facebook-profile-posts": {
   "capturedAt": "2026-10-17",
@@ -172,7 +193,9 @@
    "url"
   ],
   "required": [],
-  "samples": 34453
+  "samples": 34453,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "scrapecreators.x.v1-tiktok-get-trending-feed": {
   "capturedAt": "2026-10-17",
@@ -187,7 +210,9 @@
   "required": [
    "region"
   ],
-  "samples": null
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "scrapecreators.x.v1-youtube-shorts-trending": {
   "capturedAt": "2026-10-17",
@@ -197,7 +222,9 @@
   "p50Ms": 9311,
   "params": [],
   "required": [],
-  "samples": 285
+  "samples": 285,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "tikhub.tiktok.search.videos": {
   "capturedAt": "2026-10-17",
@@ -216,7 +243,9 @@
   "required": [
    "keyword"
   ],
-  "samples": 170079
+  "samples": 170079,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "tikhub.tiktok.video.comments": {
   "capturedAt": "2026-10-17",
@@ -233,7 +262,9 @@
   "required": [
    "aweme_id"
   ],
-  "samples": 14376
+  "samples": 14376,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "tikhub.youtube.channel.videos": {
   "capturedAt": "2026-10-17",
@@ -251,7 +282,9 @@
   "required": [
    "channel_id"
   ],
-  "samples": null
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "tikhub.youtube.search.videos": {
   "capturedAt": "2026-10-17",
@@ -271,13 +304,15 @@
   "required": [
    "keyword"
   ],
-  "samples": null
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "tikhub.youtube.video.comments": {
   "capturedAt": "2026-10-17",
   "costUsd": 0.001,
   "method": "GET",
-  "okRate": 1.0,
+  "okRate": 1,
   "p50Ms": 1774,
   "params": [
    "continuation_token",
@@ -290,7 +325,9 @@
   "required": [
    "video_id"
   ],
-  "samples": 14783
+  "samples": 14783,
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "anyapi.x.search.posts": {
   "capturedAt": "2026-10-18",
@@ -298,10 +335,18 @@
   "method": "POST",
   "okRate": 0.9999,
   "p50Ms": 1615,
-  "params": ["cursor", "limit", "query", "queryType"],
-  "required": ["query"],
+  "params": [
+   "cursor",
+   "limit",
+   "query",
+   "queryType"
+  ],
+  "required": [
+   "query"
+  ],
   "samples": 891820,
-  "requiresSession": false
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "tikhub.x.twitter-web-fetch-search-timeline": {
   "capturedAt": "2026-10-18",
@@ -309,10 +354,17 @@
   "method": "GET",
   "okRate": 0.9999,
   "p50Ms": 2385,
-  "params": ["cursor", "keyword", "search_type"],
-  "required": ["keyword"],
+  "params": [
+   "cursor",
+   "keyword",
+   "search_type"
+  ],
+  "required": [
+   "keyword"
+  ],
   "samples": 245587,
-  "requiresSession": false
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "anyapi.x.user.posts": {
   "capturedAt": "2026-10-18",
@@ -320,10 +372,17 @@
   "method": "POST",
   "okRate": 0.9995,
   "p50Ms": 1656,
-  "params": ["cursor", "handle", "limit"],
-  "required": ["handle"],
+  "params": [
+   "cursor",
+   "handle",
+   "limit"
+  ],
+  "required": [
+   "handle"
+  ],
   "samples": 149408,
-  "requiresSession": false
+  "requiresSession": false,
+  "sessionNote": "none"
  },
  "crawl4ai.x.user.posts": {
   "capturedAt": "2026-10-18",
@@ -331,8 +390,13 @@
   "method": "POST",
   "okRate": 0.9969,
   "p50Ms": 10717,
-  "params": ["limit", "username"],
-  "required": ["username"],
+  "params": [
+   "limit",
+   "username"
+  ],
+  "required": [
+   "username"
+  ],
   "samples": 766,
   "sessionNote": "optional",
   "requiresSession": false
@@ -348,6 +412,8 @@
    "url"
   ],
   "required": [],
-  "samples": null
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
  }
 }

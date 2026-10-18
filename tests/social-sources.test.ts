@@ -19,7 +19,7 @@ import {
 } from "../src/lib/socialSources";
 import { detectSocialIntent, socialSubjectForDisplay } from "../src/lib/socialTasks";
 
-type CatalogEntry = { method: string; params: string[]; required: string[]; costUsd: number | null; okRate: number | null; samples: number | null; requiresSession?: boolean; sessionNote?: "none" | "optional" };
+type CatalogEntry = { method: string; params: string[]; required: string[]; costUsd: number | null; okRate: number | null; samples: number | null; requiresSession: boolean; sessionNote: "none" | "optional" };
 const live = catalog as Record<string, CatalogEntry>;
 
 const allSources = (): Array<{ slug: string; where: string; source: SocialSource }> =>
@@ -57,8 +57,8 @@ describe("every source matches the public provider catalog snapshot (captured 20
       expect([...source.catalogParams].sort(), source.endpointId).toEqual([...live[source.endpointId].params].sort());
       expect([...source.catalogRequiredParams].sort(), source.endpointId).toEqual([...live[source.endpointId].required].sort());
       expect(source.requiresSession, source.endpointId).toBe(false);
-      if (live[source.endpointId].requiresSession !== undefined) expect(live[source.endpointId].requiresSession, source.endpointId).toBe(false);
-      expect(source.sessionNote ?? "none", source.endpointId).toBe(live[source.endpointId].sessionNote ?? "none");
+      expect(live[source.endpointId].requiresSession, source.endpointId).toBe(false);
+      expect(source.sessionNote ?? "none", source.endpointId).toBe(live[source.endpointId].sessionNote);
     }
   });
 
