@@ -194,13 +194,14 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
 
       <section className={SECTION} aria-label="آخر النشاط">
         <h3 className="m-0 text-[15px] font-semibold text-ink">آخر النشاط (٢٠ سجلًا)</h3>
+        <p className="m-0 text-[11px] text-fnt">التكلفة بالدولار{provider === "anthropic" ? "، والتوكنات: دخل / خرج" : ""}.</p>
         {state.activity.length === 0 ? <p className="m-0 text-[13px] text-mut">لا يوجد نشاط مسجّل بعد.</p> : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[420px] border-collapse text-xs">
-              <thead><tr className="text-mut">{(provider === "treg" ? ["الوقت", "المهمة", "الوحدات", "التكلفة (دولار)"] : ["الوقت", "السبب", "توكنات (دخل / خرج)", "التكلفة (دولار)"]).map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+            <table className="w-full table-fixed border-collapse text-[11px]">
+              <thead><tr className="text-mut">{(provider === "treg" ? ["الوقت", "المهمة", "الوحدات", "التكلفة"] : ["الوقت", "السبب", "التوكنات", "التكلفة"]).map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
               <tbody>
                 {state.activity.map((r, i) => (
-                  <tr key={i} className="text-ink"><td className="border-b border-ln py-2">{agoAr(r.at)}</td><td className="border-b border-ln py-2">{r.label}</td><td className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
+                  <tr key={i} className="text-ink"><td className="border-b border-ln py-2">{agoAr(r.at)}</td><td className="break-words border-b border-ln py-2">{r.label}</td><td className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
                 ))}
               </tbody>
             </table>
