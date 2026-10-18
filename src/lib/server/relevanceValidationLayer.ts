@@ -58,6 +58,22 @@ export function evaluateDeterministicRelevance(
   const rowName = String(row.company_name || row.name || "").toLowerCase().trim();
   const rowText = `${rowInd} ${rowDesc} ${rowName}`;
 
+  // Electricity request: a company whose own text describes air conditioning, heating, refrigeration or plumbing is a
+  // different industry even when the source files it under an energy or engineering label. It is shown for review and is
+  // neither delivered nor charged; an explicit electrical activity in the same text keeps the normal path.
+  if (targetIndustryAr.toLowerCase().includes("الكهرباء")) {
+    const unrelatedTrade =
+      /\b(hvac|air[- ]?condition\w*|heating|ventilat\w*|refrigerat\w*|chiller\w*|plumbing)\b|تكييف|تبريد|تدفئة|تهوية|سباكة/u.test(rowText);
+    // The source label alone ("Electrical/Electronic Manufacturing") is not evidence; the company's own name or description is.
+    const explicitElectrical = /\belectric(?:al|ity)?\b|كهربا/u.test(`${rowDesc} ${rowName}`);
+    if (unrelatedTrade && !explicitElectrical) {
+      return {
+        decision: "uncertain",
+        reasonAr: "نشاط الشركة يبدو تكييفًا أو تبريدًا أو سباكة لا كهرباء؛ أُحيل السجل للمراجعة ولم يُحتسب",
+      };
+    }
+  }
+
   // The source taxonomy's broad "Utilities" label also contains unrelated water, fencing, and
   // other service businesses. Require corroborating electrical/power evidence before delivering
   // such a row for an electricity request; otherwise keep it visible for review without charging.

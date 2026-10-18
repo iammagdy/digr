@@ -4,11 +4,12 @@ import * as path from "path";
 import * as fs from "fs";
 import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../lib/server/normalizationPipeline";
 import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
-import { localizeCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
+import { localizeAddressAr, localizeCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { arabicVerificationStatus } from "../../lib/contactVerification";
-import { industryLabelAr } from "../../lib/industryLabels";
+import { industryLabelForCell } from "../../lib/industryLabels";
+import { resolveCompanyLinks } from "../../lib/companyUrls";
 import { FILE_SPEC_LIMITS, applySpecToRows, groupRows, sheetNames, specColumns, type FileSpec } from "../../lib/fileSpec";
 
 let cachedRegularBuffer: Buffer | null = null;
@@ -398,7 +399,7 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buff
       record.contact_name || record.full_name || record.fullName || record.name || "غير متاح",
       record.job_title || record.jobTitle || record.title || record.currentJobTitle || "غير متاح",
       record.company_name || record.companyName || record.company || "غير متاح",
-      record.industry || record.keywords || "غير متاح",
+      industryLabelForCell(record.industry || record.keywords || ""),
       (() => {
         const localized = localizeCityName(record.city || record.location);
         return localized !== "غير متاح" ? localized : detectCountryFromText(record.country || record.location || "")?.arabicLabel || "غير متاح";
@@ -435,6 +436,9 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buff
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+/** First line of the review sheet: said plainly, in Arabic, before any table. */
+export const REVIEW_SHEET_NOTICE_AR = "هذه السجلات لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم لأننا لم نتأكد من مطابقتها لطلبك. راجعها بنفسك إن أردت.";
+
 /** Customer workbook for company research: only the delivered rows, with an
  * optional separate review table for uncertain rows. Methodology belongs in
  * its PDF, never as hidden audit/codebook tabs in the data workbook. */
@@ -460,10 +464,7 @@ async function generateCompanyDataWorkbook(
   header.height = 30;
   const companyName = (r: any, index: number) => String(r.company_name || r.name || r.title || `شركة ${index + 1}`).trim();
   const cleanCellText = (v: unknown) => String(v ?? "").replace(/^'/, "").trim() || "غير متاح";
-  const sectorLabel = (value: unknown) => {
-    const s = cleanCellText(value);
-    return industryLabelAr(s) ?? s;
-  };
+  const sectorLabel = (value: unknown) => industryLabelForCell(cleanCellText(value));
   const rows = norm.rows;
   rows.forEach((r, index) => {
     const rawAddress = cleanCellText(r.address || r.full_address || r.location);
@@ -471,8 +472,7 @@ async function generateCompanyDataWorkbook(
     const city = rawCity !== "غير متاح"
       ? localizeCityName(rawCity, String((norm.metadata as any).country || ""))
       : localizeCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || ""));
-    const website = r.website || r.website_url || r.domain || r.company_website || "";
-    const linkedin = r.linkedin_url || r.linkedin || r.company_linkedin || "";
+    const { website, linkedin } = resolveCompanyLinks(r);
     const values: ExcelJS.CellValue[] = [
       cleanCellText(r.company_id || r.source_id || r.id || `rec_${index + 1}`),
       companyName(r, index),
@@ -480,7 +480,7 @@ async function generateCompanyDataWorkbook(
       /^https?:\/\//i.test(String(website)) ? workbookHyperlink(website) : "غير متاح",
       /^https?:\/\//i.test(String(linkedin)) ? workbookHyperlink(linkedin) : "غير متاح",
       city,
-      rawAddress,
+      localizeAddressAr(rawAddress),
       cleanCellText(r.phone || r.phone_number || r.business_phone),
       cleanCellText(r.work_email || r.workEmail || r.email),
       arabicVerificationStatus(
@@ -561,18 +561,27 @@ async function generateCompanyDataWorkbook(
       views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
     });
     const reviewHeaders = ["معرّف السجل", "اسم الشركة", "مجال النشاط كما ورد", "الموقع كما ورد", "سبب المراجعة"];
+    // Plain statement first: these rows are outside the delivered data and outside the bill.
+    review.mergeCells(1, 1, 1, reviewHeaders.length);
+    const notice = review.getCell(1, 1);
+    notice.value = REVIEW_SHEET_NOTICE_AR;
+    notice.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF7A2E0E" } };
+    notice.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4E5" } };
+    notice.alignment = { horizontal: "right", vertical: "middle", wrapText: true, readingOrder: "rtl" as any };
+    review.getRow(1).height = 48;
     const rh = review.addRow(reviewHeaders);
     rh.font = header.font;
     rh.fill = header.fill;
     rh.alignment = header.alignment;
+    review.views = [{ state: "frozen", ySplit: 2, rightToLeft: true }];
     reviewHeaders.forEach((_, i) => { review.getColumn(i + 1).width = [22, 36, 32, 38, 56][i]; });
     uncertain.forEach((r, i) => review.addRow([
       cleanCellText(r.id || `review_${i + 1}`), companyName(r, i),
-      cleanCellText(r.industry || r.activity || r.sector),
-      cleanCellText(r.location || r.city || r.address),
+      industryLabelForCell(cleanCellText(r.industry || r.activity || r.sector)),
+      localizeAddressAr(cleanCellText(r.location || r.city || r.address)),
       cleanCellText(r._relevance_reason),
     ]));
-    review.autoFilter = { from: { row: 1, column: 1 }, to: { row: uncertain.length + 1, column: reviewHeaders.length } };
+    review.autoFilter = { from: { row: 2, column: 1 }, to: { row: uncertain.length + 2, column: reviewHeaders.length } };
   }
 
   return Buffer.from(await wb.xlsx.writeBuffer());

@@ -85,7 +85,8 @@ describe("company workbook scope and field honesty", () => {
     expect(main.rowCount).toBe(2);
     expect(main.getRow(2).getCell(2).value).toBe("Accepted Co");
     const review = workbook.getWorksheet("سجلات تحتاج مراجعة")!;
-    expect(review.getRow(2).getCell(2).value).toBe("Maybe Co");
-    expect(review.getRow(2).getCell(5).value).toBe("النشاط غير واضح");
+    // Row 1 is the plain «not charged» notice, row 2 the headers, rows from 3 the records.
+    expect(review.getRow(3).getCell(2).value).toBe("Maybe Co");
+    expect(review.getRow(3).getCell(5).value).toBe("النشاط غير واضح");
   });
 });
