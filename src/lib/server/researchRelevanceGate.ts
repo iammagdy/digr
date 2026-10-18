@@ -1,5 +1,6 @@
 import { detectCountryFromText, isoCountryCodeFromName } from "../planParameters";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
+import { matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 
 export interface ResearchRelevanceContext {
   capabilitySlug: string;
@@ -13,38 +14,14 @@ export interface ResearchRelevanceResult {
   reasonAr: string;
 }
 
-const TOPIC_STOP_WORDS = new Set([
-  "عايز", "عايزة", "عاوز", "عاوزة", "هات", "اجمع", "جمع", "لي", "من", "في", "عن", "على", "مع", "خلال",
-  "آخر", "اخر", "الفترة", "فترة", "زمنية", "الزمنية", "المطلوبة", "مطلوبة", "شهر", "الشهر", "يوم", "أيام", "ايام",
-  "أسبوع", "اسبوع", "سنة", "سنه", "البلد", "الدولة", "مصر", "السعودية", "ألمانيا", "المانيا", "egypt", "saudi", "germany",
-  "تغريدة", "تغريدات", "تويت", "تويتات", "tweet", "tweets", "بوست", "بوستات", "منشور", "منشورات", "post", "posts",
-  "كومنت", "كومنتس", "تعليق", "تعليقات", "comment", "comments", "فيديو", "فيديوهات", "مقطع", "مقاطع", "video", "videos",
-  "تيك", "توك", "تيكتوك", "tiktok", "يوتيوب", "youtube", "فيسبوك", "facebook", "تويتر", "اكس", "إكس", "twitter", "x",
-  "ترند", "تريند", "ترندنج", "trending", "الرائجة", "رائجة", "القناة", "قناة", "حساب", "مصرى", "المصري", "المصرية",
-]);
-
 function normalizeText(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u064B-\u065F\u0670\u0640]/gu, "")
-    .replace(/[أإآٱ]/gu, "ا")
-    .replace(/ى/gu, "ي")
-    .replace(/ة/gu, "ه")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+  return topicNormalize(value);
 }
 
 function topicFromParams(params: Record<string, any>): string {
   const values = [params.topic, params.query, params.keyword, params.search, params.search_query]
     .filter((value) => typeof value === "string") as string[];
   return values.join(" ").trim();
-}
-
-function topicTokens(topic: string): string[] {
-  const normalized = normalizeText(topic);
-  if (/كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\bnba\b|hoops/i.test(topic)) return ["__basketball__"];
-  return [...new Set(normalized.split(/\s+/u).filter((token) => token.length > 1 && !TOPIC_STOP_WORDS.has(token)))];
 }
 
 function rowText(row: Record<string, any>): string {
@@ -104,33 +81,53 @@ export function evaluateResearchRowRelevance(
     return result;
   }
 
-  // The recency/region contract applies to trending-video rows, not comments
-  // collected from videos discovered by a trending workflow.
-  const trending = (params.trending === true || /trending/i.test(capabilitySlug)) &&
-    /video/i.test(`${capabilitySlug} ${endpointId}`) && !/comment/i.test(`${capabilitySlug} ${endpointId}`);
-  if (trending && params.region && !regionMatches(row, String(params.region))) {
-    return { decision: "no_match", reasonAr: "النطاق الجغرافي في السجل لا يطابق الدولة المطلوبة" };
-  }
-  // A region-scoped trending feed is itself the evidence of current trend status.
-  // Upload age is not trend age: resurfacing videos can be old. Explicit customer
-  // date windows are enforced separately by filterRowsByDateRange.
+  const kindText = `${capabilitySlug} ${endpointId}`;
+  const peopleCapability = /people|person|decision/i.test(kindText);
 
-  const tokens = topicTokens(topicFromParams(params));
-  if (tokens.length === 0) return { decision: "match", reasonAr: "لا يتضمن الطلب موضوعاً نصياً يلزم مطابقته" };
+  // Region: an explicit, recognisable country on the row that contradicts the requested country is never a match
+  // (people, trending videos, tweets, comments, posts). Missing or opaque metadata is not evidence of a foreign row.
+  const requestedRegion = String(params.region || (peopleCapability ? params.country || params.location : "") || "").trim();
+  if (requestedRegion && !regionMatches(row, requestedRegion)) {
+    return { decision: "no_match", reasonAr: peopleCapability ? "الشخص خارج النطاق الجغرافي المطلوب" : "النطاق الجغرافي في السجل لا يطابق الدولة المطلوبة" };
+  }
+  if (peopleCapability) return { decision: "match", reasonAr: "سجل مهني ضمن النطاق المطلوب" };
+
+  // Trending-video recency: a region-scoped trending feed is itself the evidence of current trend status. Upload age is not
+  // trend age (resurfacing videos can be old), so age never rejects a row here; an explicit customer date window is
+  // enforced separately by filterRowsByDateRange before this gate.
+  const topic = topicFromParams(params);
+  const basketball = /كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\bnba\b|hoops/i.test(topic);
+  const stems = basketball ? [] : topicStems(topic);
+  if (!basketball && stems.length === 0) return { decision: "match", reasonAr: "لا يتضمن الطلب موضوعاً نصياً يلزم مطابقته" };
 
   const content = rowText(row);
   if (!content) return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
 
-  const matched = tokens.some((token) => {
-    if (token === "__basketball__") {
-      const basketballTerms = countMatches(content, /كره (?:ال)?سله|basketball|\bnba\b|hoops/);
-      const footballTerms = countMatches(content, /كره (?:ال)?قدم|football|soccer/);
-      return basketballTerms > 0 && footballTerms <= basketballTerms;
-    }
-    return content.split(/\s+/u).includes(token);
-  });
-  return matched
-    ? { decision: "match", reasonAr: "يتضمن نص السجل كلمة من موضوع البحث" }
-    : { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
+  if (basketball) {
+    const basketballTerms = countMatches(content, /كره (?:ال)?سله|basketball|\bnba\b|hoops|(?:دوري|لاعب\w*|مباراه|منتخب|اتحاد|نادي)\s+(?:ال)?سله/);
+    const footballTerms = countMatches(content, /كره (?:ال)?قدم|football|soccer|(?<![\p{L}\p{N}])القدم(?![\p{L}\p{N}])/u);
+    if (basketballTerms === 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
+    if (footballTerms > 0 && footballTerms >= basketballTerms) return { decision: "uncertain", reasonAr: "يذكر السجل كرة السلة وكرة القدم معاً؛ أُحيل للمراجعة ولم يُحتسب" };
+  } else {
+    const { matched, total } = matchTopic(stems, content);
+    if (matched === 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
+    // A topic of several words that appears only in part («الطاقة الكهربائية» for «الطاقة الشمسية») is not a match.
+    if (matched < total) return { decision: "uncertain", reasonAr: "يتضمن النص جزءاً من موضوع البحث فقط؛ أُحيل للمراجعة ولم يُحتسب" };
+  }
+
+  // Language, only when the request names one and the row states its own.
+  const wanted = languageCode(params.language ?? params.lang);
+  const actual = languageCode(row.lang ?? row.language ?? row.language_code);
+  if (wanted && actual && wanted !== actual) {
+    return { decision: "uncertain", reasonAr: "لغة السجل تختلف عن اللغة المطلوبة؛ أُحيل للمراجعة ولم يُحتسب" };
+  }
+  return { decision: "match", reasonAr: "يتضمن نص السجل موضوع البحث" };
 }
 
+function languageCode(value: unknown): string | null {
+  const text = String(value ?? "").trim().toLowerCase();
+  if (!text) return null;
+  if (/^(ar|arabic|عربي|العربيه|العربية)/.test(text)) return "ar";
+  if (/^(en|english|انجليزي|الانجليزيه|الإنجليزية)/.test(text)) return "en";
+  return /^[a-z]{2}/.test(text) ? text.slice(0, 2) : null;
+}

@@ -24,6 +24,11 @@ export const ABSOLUTE_MAX_PAGES = 30;
 export const SMALL_JOB_MIN_PAGE_SIZE = 5;
 export const SMALL_JOB_MAX_PAGE_SIZE = 10;
 
+/** Feed-style sources (comments, posts, videos): a small job reads at most this many chunks of candidates. */
+export const FEED_SMALL_JOB_MAX_PAGES = 4;
+/** What a page is: a directory search bills every requested record; a feed (social) bills per call. */
+export type CapKind = "directory" | "feed";
+
 export const isSmallJob = (targetMax: number): boolean => targetMax > 0 && targetMax <= SMALL_JOB_RECORDS;
 
 /** Page size for a small directory job: enough candidates per page to find a few matches, never 2 rows per page. */
@@ -31,8 +36,8 @@ export function smallJobPageSize(targetMax: number): number {
   return Math.min(SMALL_JOB_MAX_PAGE_SIZE, Math.max(SMALL_JOB_MIN_PAGE_SIZE, Math.floor(targetMax) * 3));
 }
 
-export function maxPagesForJob(targetMax: number, pageSize: number): number {
-  if (isSmallJob(targetMax)) return SMALL_JOB_MAX_PAGES;
+export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKind = "directory"): number {
+  if (isSmallJob(targetMax)) return kind === "feed" ? FEED_SMALL_JOB_MAX_PAGES : SMALL_JOB_MAX_PAGES;
   const needed = Math.max(1, Math.ceil(targetMax / Math.max(1, pageSize)));
   return Math.min(ABSOLUTE_MAX_PAGES, needed * LARGE_JOB_PAGE_ALLOWANCE);
 }
@@ -50,6 +55,7 @@ export function evaluateProviderCallCap(input: {
   priorBatchUnits: Array<number | null>;
   targetMax: number;
   pageSize: number;
+  kind?: CapKind;
 }): CallCapReason | null {
   const limit = isSmallJob(input.targetMax) ? MAX_CONSECUTIVE_EMPTY_PAGES_SMALL : MAX_CONSECUTIVE_EMPTY_PAGES_LARGE;
   let streak = input.acceptedThisPage === 0 ? 1 : 0;
@@ -57,7 +63,7 @@ export function evaluateProviderCallCap(input: {
     for (let i = input.priorBatchUnits.length - 1; i >= 0 && input.priorBatchUnits[i] === 0; i--) streak++;
   }
   if (streak >= limit) return "empty_pages";
-  if (input.pagesDone >= maxPagesForJob(input.targetMax, input.pageSize)) return "page_cap";
+  if (input.pagesDone >= maxPagesForJob(input.targetMax, input.pageSize, input.kind)) return "page_cap";
   return null;
 }
 

@@ -9,6 +9,7 @@ import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { arabicVerificationStatus } from "../../lib/contactVerification";
 import { industryLabelForCell } from "../../lib/industryLabels";
+import { normalizeSocialRow } from "../../lib/server/socialRows";
 import { resolveCompanyLinks } from "../../lib/companyUrls";
 import { FILE_SPEC_LIMITS, applySpecToRows, groupRows, sheetNames, specColumns, type FileSpec } from "../../lib/fileSpec";
 
@@ -188,25 +189,61 @@ function customerFacingCountry(country: unknown): string {
 /**
  * Generate a data-only Excel workbook. Methodology is delivered separately as PDF.
  */
+/**
+ * A review sheet for rows the gate could not decide (social posts, comments, videos, people). Said plainly first: they
+ * were not charged and are not in the delivered data. Columns: identifier, what the row says, link, why it is here.
+ */
+function addGenericReviewSheet(wb: ExcelJS.Workbook, uncertain: any[], pick: { text: (row: any) => string; link: (row: any) => string; idLabel?: string }) {
+  if (!Array.isArray(uncertain) || uncertain.length === 0) return;
+  const review = wb.addWorksheet("سجلات تحتاج مراجعة", { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
+  const headers = ["معرّف السجل", "ما ورد في السجل", "الرابط", "سبب المراجعة"];
+  review.mergeCells(1, 1, 1, headers.length);
+  const notice = review.getCell(1, 1);
+  notice.value = REVIEW_SHEET_NOTICE_AR;
+  notice.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF7A2E0E" } };
+  notice.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4E5" } };
+  notice.alignment = { horizontal: "right", vertical: "middle", wrapText: true, readingOrder: "rtl" as any };
+  review.getRow(1).height = 48;
+  const head = review.addRow(headers);
+  head.eachCell((cell) => {
+    cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  });
+  [22, 60, 36, 56].forEach((width, i) => { review.getColumn(i + 1).width = width; });
+  uncertain.forEach((row, i) => {
+    const link = pick.link(row);
+    const out = review.addRow([
+      String(row?.source_id || row?.id || `review_${i + 1}`),
+      escapeFormula(String(pick.text(row) || "غير متاح")),
+      /^https?:\/\//i.test(link) ? workbookHyperlink(link) : "غير متاح",
+      escapeFormula(String(row?._relevance_reason || "غير متاح")),
+    ]);
+    out.alignment = { vertical: "middle", wrapText: true };
+    out.eachCell((cell) => { cell.border = borderThin; if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true }; });
+  });
+  review.autoFilter = { from: { row: 2, column: 1 }, to: { row: uncertain.length + 2, column: headers.length } };
+}
+
 export async function generateExcelReport(
   payload: any,
   options?: { deduplicationAudit?: any[] }
 ): Promise<Buffer> {
   const norm: NormalizedDataset = normalizeDataset(payload);
   if (norm.metadata.entityType === "people") {
-    return generatePeopleDataWorkbook(norm);
+    return generatePeopleDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
   if (norm.metadata.entityType === "companies") {
     return generateCompanyDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
   if (norm.metadata.socialKind) {
-    return generateSocialDataWorkbook(norm);
+    return generateSocialDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
   return generateStructuredDataWorkbook(payload, norm);
 }
 
 /** One data sheet of comments or videos with the fixed Arabic columns, readable dates and live links. */
-async function generateSocialDataWorkbook(norm: NormalizedDataset): Promise<Buffer> {
+async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = customerFacingTitle(norm.metadata.title);
@@ -250,6 +287,11 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset): Promise<Buff
   }));
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, norm.rows.length + 1), column: Math.max(1, headers.length) } };
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+  // Rows the gate could not decide are normalised like delivered rows and listed apart, never charged.
+  addGenericReviewSheet(wb, (Array.isArray(uncertainRows) ? uncertainRows : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason })), {
+    text: (row) => row.comment_text || row.text || row.video_caption || row.video_title || "",
+    link: (row) => row.url || row.video_url || "",
+  });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -362,7 +404,7 @@ async function generateStructuredDataWorkbook(payload: any, norm: NormalizedData
 }
 
 /** Contact-first workbook for professional people-search results. */
-async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buffer> {
+async function generatePeopleDataWorkbook(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = customerFacingTitle(norm.metadata.title);
@@ -433,6 +475,10 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset): Promise<Buff
     { width: 24 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 32 }, { width: 30 }, { width: 30 },
   ];
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+  addGenericReviewSheet(wb, Array.isArray(uncertainRows) ? uncertainRows : [], {
+    text: (row) => [row.contact_name || row.full_name || row.name, row.job_title, row.company_name].filter(Boolean).join(" — "),
+    link: (row) => row.linkedin_url || row.profile_url || "",
+  });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 

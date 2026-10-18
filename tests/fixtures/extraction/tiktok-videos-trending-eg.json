@@ -1,0 +1,148 @@
+{
+ "capability": "social-tiktok-videos",
+ "endpointId": "scrapecreators.tiktok.videos",
+ "labelAr": "فيديوهات تيك توك الرائجة (مصر)",
+ "entity": "videos",
+ "params": {
+  "trending": true,
+  "region": "EG"
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "egypt trending",
+   "row": {
+    "video_id": "v_1",
+    "desc": "تحدي الرقص الجديد #ترند",
+    "author_nickname": "قناة 1",
+    "author_unique_id": "chan1",
+    "create_time": 1790000001,
+    "play_count": 10000,
+    "digg_count": 500,
+    "comment_count": 10,
+    "share_count": 1,
+    "country": "EG",
+    "region": "EG"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "egypt trending",
+   "row": {
+    "video_id": "v_2",
+    "desc": "أغنية الموسم",
+    "author_nickname": "قناة 2",
+    "author_unique_id": "chan2",
+    "create_time": 1790000002,
+    "play_count": 20000,
+    "digg_count": 1000,
+    "comment_count": 20,
+    "share_count": 2,
+    "country": "EG",
+    "region": "EG"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "foreign region",
+   "row": {
+    "video_id": "v_3",
+    "desc": "Dance challenge from Brazil",
+    "author_nickname": "قناة 3",
+    "author_unique_id": "chan3",
+    "create_time": 1790000003,
+    "play_count": 30000,
+    "digg_count": 1500,
+    "comment_count": 30,
+    "share_count": 3,
+    "country": "BR",
+    "region": "BR"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "foreign region",
+   "row": {
+    "video_id": "v_4",
+    "desc": "Trending in the US",
+    "author_nickname": "قناة 4",
+    "author_unique_id": "chan4",
+    "create_time": 1790000004,
+    "play_count": 40000,
+    "digg_count": 2000,
+    "comment_count": 40,
+    "share_count": 4,
+    "country": "US",
+    "region": "US"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "no country metadata: not evidence of foreign",
+   "row": {
+    "video_id": "v_5",
+    "desc": "فيديو بدون بلد",
+    "author_nickname": "قناة 5",
+    "author_unique_id": "chan5",
+    "create_time": 1790000005,
+    "play_count": 50000,
+    "digg_count": 2500,
+    "comment_count": 50,
+    "share_count": 5,
+    "country": null,
+    "region": null
+   }
+  },
+  {
+   "expect": "match",
+   "note": "uploaded long ago but in the region's trending feed: upload age is not trend age (an explicit date window filters earlier)",
+   "row": {
+    "video_id": "v_6",
+    "desc": "فيديو قديم جدا ظهر تاني",
+    "author_nickname": "قناة 6",
+    "author_unique_id": "chan6",
+    "create_time": 1700000000,
+    "play_count": 60000,
+    "digg_count": 3000,
+    "comment_count": 60,
+    "share_count": 6,
+    "country": "EG",
+    "region": "EG"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "foreign region",
+   "row": {
+    "video_id": "v_7",
+    "desc": "فيديو من السعودية",
+    "author_nickname": "قناة 7",
+    "author_unique_id": "chan7",
+    "create_time": 1790000007,
+    "play_count": 70000,
+    "digg_count": 3500,
+    "comment_count": 70,
+    "share_count": 7,
+    "country": "SA",
+    "region": "SA"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "egypt trending",
+   "row": {
+    "video_id": "v_8",
+    "desc": "كوميدي مصري",
+    "author_nickname": "قناة 8",
+    "author_unique_id": "chan8",
+    "create_time": 1790000008,
+    "play_count": 80000,
+    "digg_count": 4000,
+    "comment_count": 80,
+    "share_count": 8,
+    "country": "EG",
+    "region": "EG"
+   }
+  }
+ ]
+}

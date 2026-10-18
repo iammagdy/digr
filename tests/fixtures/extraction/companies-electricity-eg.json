@@ -1,0 +1,204 @@
+{
+ "capability": "icypeas-companies-search",
+ "endpointId": "icypeas.companies.search",
+ "labelAr": "بحث الشركات (كهرباء، مصر)",
+ "entity": "companies",
+ "params": {
+  "country": "Egypt",
+  "industry": "الكهرباء والطاقة الكهربائية"
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "utilities + electrical evidence",
+   "row": {
+    "id": "co_1",
+    "company_name": "Delta Power Distribution",
+    "industry": "Utilities",
+    "description": "Electric power distribution and electrical grid maintenance across the Delta",
+    "location": "Mansoura, Egypt",
+    "website": "https://delta-power.example.eg"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "industry label names the sector",
+   "row": {
+    "id": "co_2",
+    "company_name": "Nile Electrical Contracting",
+    "industry": "Electrical/Electronic Manufacturing",
+    "description": "Electrical panels, switchgear and electrical contracting",
+    "location": "Cairo, Egypt",
+    "website": "https://nile-electrical.example.eg"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "power evidence in description",
+   "row": {
+    "id": "co_3",
+    "company_name": "Giza Substations Co",
+    "industry": "Oil & Energy",
+    "description": "High voltage substations, transformers and power transmission",
+    "location": "Giza, Egypt",
+    "website": "https://giza-substations.example.eg"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "HVAC under utilities label: review",
+   "row": {
+    "id": "co_4",
+    "company_name": "Sahara Cooling & HVAC",
+    "industry": "Utilities",
+    "description": "HVAC, air conditioning and chillers installation",
+    "location": "Cairo, Egypt",
+    "website": "https://sahara-hvac.example.eg"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "HVAC under engineering label",
+   "row": {
+    "id": "co_5",
+    "company_name": "Alex Chillers",
+    "industry": "Mechanical or Industrial Engineering",
+    "description": "Air conditioning, ventilation and refrigeration services",
+    "location": "Alexandria, Egypt",
+    "website": "https://alex-chillers.example.eg"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "HVAC under the electrical label: label alone is no evidence",
+   "row": {
+    "id": "co_6",
+    "company_name": "Pharaoh Cooling Systems",
+    "industry": "Electrical/Electronic Manufacturing",
+    "description": "Central air conditioning and heating systems",
+    "location": "Cairo, Egypt",
+    "website": "https://pharaoh-cooling.example.eg"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "water, not power",
+   "row": {
+    "id": "co_7",
+    "company_name": "Aswan Water Treatment",
+    "industry": "Utilities",
+    "description": "Water treatment and chemical supplies",
+    "location": "Aswan, Egypt",
+    "website": "https://aswan-water.example.eg"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "fencing",
+   "row": {
+    "id": "co_8",
+    "company_name": "Cairo Fencing Works",
+    "industry": "Utilities",
+    "description": "Perimeter fencing and gates",
+    "location": "Cairo, Egypt",
+    "website": "https://cairo-fencing.example.eg"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "foreign country",
+   "row": {
+    "id": "co_9",
+    "company_name": "Berlin Energie GmbH",
+    "industry": "Utilities",
+    "description": "Electric power and grid services",
+    "location": "Berlin, Germany",
+    "website": "https://berlin-energie.example.de"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "foreign country",
+   "row": {
+    "id": "co_10",
+    "company_name": "Dubai Power Trading",
+    "industry": "Utilities",
+    "description": "Electrical power equipment trading",
+    "location": "Dubai, United Arab Emirates",
+    "website": "https://dubai-power.example.ae"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "broad label, no evidence",
+   "row": {
+    "id": "co_11",
+    "company_name": "Luxor Utilities Group",
+    "industry": "Utilities",
+    "description": "General services",
+    "location": "Luxor, Egypt",
+    "website": "https://luxor-utilities.example.eg"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "other industry in Egypt: review",
+   "row": {
+    "id": "co_12",
+    "company_name": "Zagazig Stores",
+    "industry": "Retail",
+    "description": "Supermarket chain",
+    "location": "Zagazig, Egypt",
+    "website": "https://zagazig-stores.example.eg"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "other label, electrical text: review (label decides delivery)",
+   "row": {
+    "id": "co_13",
+    "company_name": "Smart Meters Egypt",
+    "industry": "Computer Hardware",
+    "description": "Smart electricity meters and electrical metering",
+    "location": "Cairo, Egypt",
+    "website": "https://smart-meters.example.eg"
+   }
+  },
+  {
+   "expect": "duplicate",
+   "note": "duplicate of co_1 (same site)",
+   "row": {
+    "id": "co_1_dup",
+    "company_name": "Delta Power Distribution",
+    "industry": "Utilities",
+    "description": "Electric power distribution and electrical grid maintenance across the Delta",
+    "location": "Mansoura, Egypt",
+    "website": "https://delta-power.example.eg"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "renewables label, but the text is power generation and electricity export",
+   "row": {
+    "id": "co_15",
+    "company_name": "Red Sea Wind Farm",
+    "industry": "Renewables & Environment",
+    "description": "Wind power generation and electricity export",
+    "location": "Hurghada, Egypt",
+    "website": "https://redsea-wind.example.eg"
+   }
+  },
+  {
+   "expect": "uncertain",
+   "note": "no industry in source",
+   "row": {
+    "id": "co_16",
+    "company_name": "No Industry Ltd",
+    "industry": "",
+    "description": "",
+    "location": "Cairo, Egypt",
+    "website": "https://noind.example.eg"
+   }
+  }
+ ]
+}

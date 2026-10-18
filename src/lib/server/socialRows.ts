@@ -102,12 +102,16 @@ function clean<T extends Record<string, any>>(row: T): T {
   return out as T;
 }
 
+/** Account verification flags as providers name them; the column appears only when the source returned one. */
+const VERIFIED_KEYS = ["author_verified", "is_verified", "verified", "is_blue_verified", "user_verified"];
+
 export function normalizeSocialComment(raw: Record<string, any>): Record<string, any> {
   return clean({
     source_id: text(pick(raw, ["comment_id", "cid", "commentId", "id"])),
     comment_text: text(pick(raw, ["text", "comment", "comment_text", "content", "message", "commentText"])),
     author_name: text(pick(raw, ["author", "author_name", "nickname", "user_nickname", "user_name", "display_name", "name"])),
     username: handle(pick(raw, ["user_unique_id", "unique_id", "author_handle", "author_username", "username", "handle", "screen_name"])),
+    author_verified: bool(pick(raw, VERIFIED_KEYS)),
     likes_count: parseCount(pick(raw, ["likes", "like_count", "digg_count", "likeCount", "reaction_count"])),
     replies_count: parseCount(pick(raw, ["replies", "reply_count", "reply_comment_total", "replyCount"])),
     published_at: toIsoDate(pick(raw, ["published_date", "published_at", "create_time", "createTime", "created_at", "date", "timestamp", "time"])),
@@ -126,6 +130,7 @@ export function normalizeSocialVideo(raw: Record<string, any>): Record<string, a
     video_caption: text(pick(raw, ["title", "desc", "description", "caption", "text", "video_desc", "message"])),
     channel_name: text(pick(raw, ["channel", "channel_title", "author_nickname", "author_name", "author", "uploader", "page_name", "nickname"])),
     username: handle(pick(raw, ["author_unique_id", "author_handle", "unique_id", "username", "handle"])),
+    author_verified: bool(pick(raw, VERIFIED_KEYS)),
     published_at: toIsoDate(pick(raw, ["published_date", "published_at", "create_time", "createTime", "publishedAt", "created_at", "date", "timestamp"])),
     views_count: parseCount(pick(raw, ["views", "view_count", "play_count", "playCount", "plays"])),
     likes_count: parseCount(pick(raw, ["likes", "like_count", "digg_count", "reactions", "reaction_count"])),
@@ -145,6 +150,7 @@ export function normalizeSocialPost(raw: Record<string, any>): Record<string, an
     text: text(pick(raw, ["text", "full_text", "fullText", "content", "post_text", "tweet_text", "caption", "description"])),
     author_name: text(pick(raw, ["author_name", "authorName", "author", "nickname", "display_name", "name"])),
     username: handle(pick(raw, ["author_username", "authorUsername", "username", "screen_name", "handle"])),
+    author_verified: bool(pick(raw, VERIFIED_KEYS)),
     published_at: toIsoDate(pick(raw, ["published_at", "publishedAt", "created_at", "createdAt", "createdUtc", "created_utc", "date", "timestamp"])),
     likes_count: parseCount(pick(raw, ["likes", "like_count", "likeCount", "likesCount"])),
     retweets_count: parseCount(pick(raw, ["retweets", "retweet_count", "retweetCount", "shares", "shares_count"])),
@@ -166,7 +172,7 @@ export function normalizeSocialRow(kind: SocialRowKind, raw: Record<string, any>
 
 /** Column order shown to the customer (only the columns that carry a value are kept). */
 export const SOCIAL_COLUMN_ORDER: Record<SocialRowKind, string[]> = {
-  comments: ["id", "comment_text", "author_name", "username", "published_at", "likes_count", "replies_count", "url", "video_title", "video_url", "pinned", "hearted_by_creator", "source_id"],
-  videos: ["id", "video_caption", "channel_name", "username", "published_at", "views_count", "likes_count", "comments_count", "shares_count", "saves_count", "video_duration", "hashtags", "url", "source_id"],
-  posts: ["id", "text", "author_name", "username", "published_at", "likes_count", "retweets_count", "replies_count", "quotes_count", "views_count", "followers_count", "language", "is_reply", "url", "source_id"],
+  comments: ["id", "comment_text", "author_name", "username", "author_verified", "published_at", "likes_count", "replies_count", "url", "video_title", "video_url", "pinned", "hearted_by_creator", "source_id"],
+  videos: ["id", "video_caption", "channel_name", "username", "author_verified", "published_at", "views_count", "likes_count", "comments_count", "shares_count", "saves_count", "video_duration", "hashtags", "url", "source_id"],
+  posts: ["id", "text", "author_name", "username", "author_verified", "published_at", "likes_count", "retweets_count", "replies_count", "quotes_count", "views_count", "followers_count", "language", "is_reply", "url", "source_id"],
 };

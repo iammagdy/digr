@@ -53,6 +53,7 @@ import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
+import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
 import {
   DECISION_MAKER_ROUTE_COST_CAP_USD,
   estimateDecisionMakerChunkSpendUsd,
@@ -66,9 +67,6 @@ export const maxDuration = 60; // Vercel Hobby maximum
 // Fallback in-memory partial step store used ONLY when unit-test mock storage omits .download()
 const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
-function companyIdentity(row: any): string | null {
-  return rowIdentity(row);
-}
 
 function getWorkerBaseUrl(req?: NextRequest): string {
   return resolveInternalBaseUrl(req);
@@ -561,13 +559,13 @@ export async function POST(req: NextRequest) {
     // Social rows (comments, videos) are de-duplicated across pages the same way company rows are: a provider
     // can repeat its first page, and a repeated comment must be neither delivered twice nor billed twice.
     const socialCapability = getSocialCapability(spec.capabilitySlug);
-    const dedupeIdentity = isCompanyCapability ? companyIdentity : rowIdentity;
+    const dedupeIdentity = dedupeIdentityFor(isCompanyCapability ? "company" : isPeopleJob ? "person" : "social");
     let duplicateExcludedCount = 0;
     // Accepted rows of each earlier page (null = unreadable): feeds the stop rule for pages that find nothing.
     const priorBatchUnits: Array<number | null> = Array.from({ length: currentStep }, () => null);
     const seenProviderCursors = new Set<string>();
     if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(String(currentCursor));
-    if ((isCompanyCapability || socialCapability) && (rawRows.length > 0 || currentStep > 0)) {
+    if ((isCompanyCapability || socialCapability || isPeopleJob) && (rawRows.length > 0 || currentStep > 0)) {
       const seen = new Set<string>();
       // Rows reused from a failed earlier run are already accepted rows of this job.
       for (const row of retrySeed?.rows || []) {
@@ -588,7 +586,8 @@ export async function POST(req: NextRequest) {
         }
         priorBatchUnits[step] = typeof prior?.batchUnits === "number" ? prior.batchUnits : Array.isArray(prior?.rows) ? prior.rows.length : null;
         if (typeof prior?.cursor === "string" && prior.cursor) seenProviderCursors.add(prior.cursor);
-        for (const row of Array.isArray(prior?.rows) ? prior.rows : []) {
+        // Rows an earlier page sent to review count too: the same row must not reach the review sheet twice.
+        for (const row of [...(Array.isArray(prior?.rows) ? prior.rows : []), ...(Array.isArray(prior?.uncertainRows) ? prior.uncertainRows : [])]) {
           const identity = dedupeIdentity(row);
           if (identity) seen.add(identity);
         }
@@ -792,13 +791,16 @@ export async function POST(req: NextRequest) {
     // the source is exhausted, a cursor cycles, or the spend gate closes.
     // Provider pages are capped per job (providerCallCaps): a search whose pages are mostly rejected stops, it does not
     // page until the source runs out. Rows already matched are kept and charged as usual.
-    const callCapReason = isCompanyCapability
+    // Directory searches (companies) and feeds (comments, posts, videos) both stop on the same rule: keep going within the
+    // documented caps until the MATCHING count is reached, then deliver honestly as partial and charge only matching rows.
+    const callCapReason = isCompanyCapability || socialCapability
       ? evaluateProviderCallCap({
           pagesDone: currentStep + 1,
           acceptedThisPage: acceptedRows.length,
           priorBatchUnits,
           targetMax,
           pageSize: effectivePageSize,
+          kind: isCompanyCapability ? "directory" : "feed",
         })
       : null;
     const hasMorePages =

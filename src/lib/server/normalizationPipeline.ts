@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, type SocialRowKind } from "./socialRows";
+import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, toIsoDate, type SocialRowKind } from "./socialRows";
 import { toArabicDigits } from "../arabicDigits";
 
 export interface CodebookEntry {
@@ -166,6 +166,7 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   text: { titleAr: "نص المحتوى", descAr: "النص الكامل للمنشور أو التغريدة كما نُشرت علناً", type: "نص طويل (Text)" },
   comment_text: { titleAr: "نص التعليق", descAr: "النص الكامل للتعليق الأصلي أو الرد", type: "نص طويل (Text)" },
   bio: { titleAr: "النبذة التعريفية", descAr: "النص التعريفي المسجل في الملف الشخصي للحساب", type: "نص طويل (Text)" },
+  author_verified: { titleAr: "حساب موثّق", descAr: "هل أرجع المصدر أن صاحب المحتوى حساب موثّق بالعلامة الرسمية؛ لا يُستنتج إن لم يرد", type: "منطقي (Boolean)" },
   verified: { titleAr: "حالة التوثيق", descAr: "حالة توثيق الحساب بالعلامة الرسمية (نعم / لا)", type: "منطقي (Boolean)" },
   followers: { titleAr: "عدد المتابعين", descAr: "إجمالي عدد المتابعين للحساب", type: "رقم صحيح (Integer)" },
   followers_count: { titleAr: "عدد المتابعين", descAr: "إجمالي عدد المتابعين للحساب وقت الجمع", type: "رقم صحيح (Integer)" },
@@ -230,7 +231,8 @@ export function normalizeRecord(raw: any, index: number): Record<string, any> {
     scrubbed.time ||
     scrubbed.collectedDate;
   if (dateVal) {
-    out.published_at = String(dateVal);
+    // A plain date when the source gives one in any common form; otherwise the value as it came (never a guess).
+    out.published_at = toIsoDate(dateVal) ?? String(dateVal);
   }
 
   // Identify author / username

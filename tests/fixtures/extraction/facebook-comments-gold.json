@@ -1,0 +1,99 @@
+{
+ "capability": "social-facebook-comments",
+ "endpointId": "scrapecreators.facebook.comments",
+ "labelAr": "تعليقات فيسبوك (الذهب)",
+ "entity": "comments",
+ "params": {
+  "query": "الذهب"
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "topic: الذهب",
+   "row": {
+    "comment_id": "fc_1",
+    "text": "سعر الذهب النهارده نزل شوية",
+    "author": "مستخدم 1",
+    "likes": 1,
+    "published_date": "2026-10-11"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "dialect spelling الدهب",
+   "row": {
+    "comment_id": "fc_2",
+    "text": "الدهب عيار 21 بكام؟",
+    "author": "مستخدم 2",
+    "likes": 2,
+    "published_date": "2026-10-12"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "dialect",
+   "row": {
+    "comment_id": "fc_3",
+    "text": "مين عايز يشتري دهب؟",
+    "author": "مستخدم 3",
+    "likes": 3,
+    "published_date": "2026-10-13"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "generic",
+   "row": {
+    "comment_id": "fc_4",
+    "text": "صباح الخير",
+    "author": "مستخدم 4",
+    "likes": 4,
+    "published_date": "2026-10-14"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "generic",
+   "row": {
+    "comment_id": "fc_5",
+    "text": "ربنا يوفقكم",
+    "author": "مستخدم 5",
+    "likes": 5,
+    "published_date": "2026-10-15"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "mentions gold",
+   "row": {
+    "comment_id": "fc_6",
+    "text": "الفضة أرخص من الذهب",
+    "author": "مستخدم 6",
+    "likes": 6,
+    "published_date": "2026-10-16"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "single word",
+   "row": {
+    "comment_id": "fc_7",
+    "text": "ذهب",
+    "author": "مستخدم 7",
+    "likes": 7,
+    "published_date": "2026-10-17"
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "generic",
+   "row": {
+    "comment_id": "fc_8",
+    "text": "اللهم صل على النبي",
+    "author": "مستخدم 8",
+    "likes": 8,
+    "published_date": "2026-10-18"
+   }
+  }
+ ]
+}

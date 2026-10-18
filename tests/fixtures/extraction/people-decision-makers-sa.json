@@ -1,0 +1,123 @@
+{
+ "capability": "professional-people-search",
+ "endpointId": "treg.people.search",
+ "labelAr": "صناع القرار (السعودية)",
+ "entity": "people",
+ "params": {
+  "country": "Saudi Arabia",
+  "title": "director",
+  "q": "energy",
+  "requestedFields": [
+   "work_email",
+   "phone"
+  ]
+ },
+ "rows": [
+  {
+   "expect": "match",
+   "note": "both fields",
+   "row": {
+    "id": "p_1",
+    "full_name": "Sami Example",
+    "job_title": "Chief Executive Officer",
+    "company_name": "Desert Energy Co",
+    "location": "Riyadh, Saudi Arabia",
+    "linkedin_url": "https://www.linkedin.com/in/person-1",
+    "work_email": "sami@desert-energy.example",
+    "phone": "+966500000001"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "email only",
+   "row": {
+    "id": "p_2",
+    "full_name": "Laila Example",
+    "job_title": "Operations Director",
+    "company_name": "Gulf Power Services",
+    "location": "Riyadh, Saudi Arabia",
+    "linkedin_url": "https://www.linkedin.com/in/person-2",
+    "work_email": "laila@gulf-power.example"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "phone only",
+   "row": {
+    "id": "p_3",
+    "full_name": "Omar Example",
+    "job_title": "Managing Director",
+    "company_name": "Red Sands Utilities",
+    "location": "Riyadh, Saudi Arabia",
+    "linkedin_url": "https://www.linkedin.com/in/person-3",
+    "phone": "+966500000003"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "no contact fields: nothing to charge",
+   "row": {
+    "id": "p_4",
+    "full_name": "Hana Example",
+    "job_title": "Plant Manager",
+    "company_name": "Eastern Grid Co",
+    "location": "Riyadh, Saudi Arabia",
+    "linkedin_url": "https://www.linkedin.com/in/person-4"
+   }
+  },
+  {
+   "expect": "duplicate",
+   "note": "duplicate person",
+   "row": {
+    "id": "p_5",
+    "full_name": "Sami Example",
+    "job_title": "Chief Executive Officer",
+    "company_name": "Desert Energy Co",
+    "location": "Riyadh, Saudi Arabia",
+    "linkedin_url": "https://www.linkedin.com/in/person-1",
+    "work_email": "sami@desert-energy.example",
+    "phone": "+966500000001"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "empty strings count as missing",
+   "row": {
+    "id": "p_6",
+    "full_name": "Yousef Example",
+    "job_title": "Head of Strategy",
+    "company_name": "Najd Renewables",
+    "location": "Riyadh, Saudi Arabia",
+    "linkedin_url": "https://www.linkedin.com/in/person-6",
+    "work_email": "",
+    "phone": ""
+   }
+  },
+  {
+   "expect": "no_match",
+   "note": "person located in another country",
+   "row": {
+    "id": "p_7",
+    "full_name": "Karim Example",
+    "job_title": "Managing Director",
+    "company_name": "Nile Energy",
+    "location": "Cairo, Egypt",
+    "linkedin_url": "https://www.linkedin.com/in/person-7",
+    "work_email": "karim@nile-energy.example",
+    "phone": "+201000000007"
+   }
+  },
+  {
+   "expect": "match",
+   "note": "no location in the row: not evidence of a foreign person",
+   "row": {
+    "id": "p_8",
+    "full_name": "Nora Example",
+    "job_title": "Director of Operations",
+    "company_name": "Al Noor Power",
+    "linkedin_url": "https://www.linkedin.com/in/person-8",
+    "work_email": "nora@alnoor-power.example"
+   }
+  }
+ ]
+}
