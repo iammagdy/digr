@@ -1729,13 +1729,13 @@ export class LlmClient {
     }
 
     // D2. File shaping of an existing result («شيت لكل محافظة», «رتب حسب …»): a spec, never a revision charge.
-    const shapeMatch = /(?:شيت|ورقة|ملف)\s+(?:منفصل\s+)?لكل\s+([^\s،.؟?]+)/.exec(lastUserMsg);
+    const shapeMatch = /(?:شيت|ورقة|ملف)\s+(?:منفصل\s+)?لكل\s+([^،.؟?\n]+)/.exec(lastUserMsg);
     if (shapeMatch) {
       return {
         output: {
           type: "shape_file",
           replyAr: "تمام، جهزت لك الملف مقسّمًا كما طلبت.",
-          spec: { groupBy: { column: shapeMatch[1], mode: "sheets" } },
+          spec: { groupBy: { column: shapeMatch[1].trim(), mode: "sheets" } },
         },
         inputTokens: 600,
         outputTokens: 70,
@@ -2348,9 +2348,14 @@ export class LlmClient {
       conversationState: options.conversationState,
       resultColumns: options.resultColumns,
     });
+    // Order matters for the prompt cache (prefix match): fixed rules, then the capability inventory (same for every
+    // user), then this user's profile (same for every turn), then only the small per-turn state, which is never cached.
+    // Together with the tool schema that is four cache breakpoints, the maximum.
     const systemBlocks = [
       { type: "text", text: promptParts.staticText, cache_control: { type: "ephemeral" } },
-      { type: "text", text: promptParts.dynamicText },
+      { type: "text", text: promptParts.capabilityText, cache_control: { type: "ephemeral" } },
+      { type: "text", text: promptParts.profileText, cache_control: { type: "ephemeral" } },
+      { type: "text", text: promptParts.turnText },
     ];
 
     const formattedMessages = sanitizeMessagesForAnthropic(options.messages, {

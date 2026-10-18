@@ -1,6 +1,7 @@
 import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
+import { isFileShapingMessage, isStandaloneResearchRequest } from "./requestScope";
 
 export interface ResearchBrief {
   platforms: string[];
@@ -235,8 +236,12 @@ export function extractBriefFromCardAnswers(
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `منصة البحث المطلوبة: ${valToUse}`;
     } else if (qId === "social_time_required") {
       if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `الفترة المطلوبة: ${valToUse}`;
+    } else if (qId === "topic_source_required") {
+      // The source chosen for a studies / articles request decides the service; the choice is not a topic.
+      for (const p of detectMentionedPlatforms(valToUse)) if (!brief.platforms.includes(p)) brief.platforms.push(p);
+      if (valToUse) brief.notes = (brief.notes ? brief.notes + " | " : "") + `المصدر المطلوب: ${valToUse}`;
     }
-    if (["company_country_required", "company_industry_required", "company_outreach_required", "company_count_required", "people_scope_required", "people_roles_required", "people_count_required", "social_account_required", "social_topic_required", "social_platform_required", "social_time_required"].includes(qId)) continue;
+    if (["company_country_required", "company_industry_required", "company_outreach_required", "company_count_required", "people_scope_required", "people_roles_required", "people_count_required", "social_account_required", "social_topic_required", "social_platform_required", "social_time_required", "topic_source_required"].includes(qId)) continue;
 
     // 1. Platform
     if (qId.includes("platform") || qText.includes("منصة")) {
@@ -316,18 +321,30 @@ export function extractBriefFromMessage(
     } catch {}
   }
 
-  const brief: ResearchBrief = {
-    platforms: [...currentBrief.platforms],
-    topics: [...currentBrief.topics],
-    keywords: currentBrief.keywords ? [...currentBrief.keywords] : undefined,
-    targetVolume: currentBrief.targetVolume,
-    postCount: currentBrief.postCount,
-    commentsPerPost: currentBrief.commentsPerPost,
-    dateRange: currentBrief.dateRange,
-    language: currentBrief.language,
-    formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
-    notes: currentBrief.notes,
-  };
+  // A self-contained research request starts a clean brief: it never inherits the platform, topic, country wording or
+  // notes of an older request. Only follow-ups (answers, "ابدأ", short fragments) merge into the brief.
+  const startsNewRequest = isStandaloneResearchRequest(userMessage);
+  const brief: ResearchBrief = startsNewRequest
+    ? {
+        platforms: [],
+        topics: [],
+        formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
+        language: currentBrief.language,
+        exclusionFile: currentBrief.exclusionFile,
+      }
+    : {
+        platforms: [...currentBrief.platforms],
+        topics: [...currentBrief.topics],
+        keywords: currentBrief.keywords ? [...currentBrief.keywords] : undefined,
+        targetVolume: currentBrief.targetVolume,
+        postCount: currentBrief.postCount,
+        commentsPerPost: currentBrief.commentsPerPost,
+        dateRange: currentBrief.dateRange,
+        language: currentBrief.language,
+        formats: currentBrief.formats ? [...currentBrief.formats] : ["xlsx"],
+        notes: currentBrief.notes,
+        exclusionFile: currentBrief.exclusionFile,
+      };
 
   // 1. Platform
   const detectedPlatforms = detectMentionedPlatforms(userMessage);
@@ -371,7 +388,9 @@ export function extractBriefFromMessage(
   // Strip any old greetings that might have been stored in brief.topics
   brief.topics = (brief.topics || []).filter((t) => !isGreetingWord(t));
 
-  const { isGreeting: msgIsGreeting } = isGreetingOrGeneralQuestion(userMessage);
+  // Greetings and identity questions ("إنت مين؟") never enter a research topic.
+  const greetingOrGeneral = isGreetingOrGeneralQuestion(userMessage);
+  const msgIsGreeting = greetingOrGeneral.isGreeting || greetingOrGeneral.isGeneralQuestion || isFileShapingMessage(userMessage);
 
   if (!msgIsGreeting) {
     const topicMatch = userMessage.match(/(?:عن|حول|بخصوص|في موضوع)\s+([^.،,؛\n!؟?]+)/i);
@@ -395,15 +414,16 @@ export function extractBriefFromMessage(
   }
 
   // 6. Infer 5 to 10 relevant Arabic keywords
-  const primaryTopic = (brief.topics && brief.topics.length > 0)
-    ? brief.topics[0]
-    : (!msgIsGreeting ? userMessage : "البيانات المطلوبة");
-  const inferred = inferRelatedKeywords(primaryTopic, userMessage);
-  if (!brief.keywords || brief.keywords.length === 0) {
-    brief.keywords = inferred;
-  } else {
-    for (const kw of inferred) {
-      if (!brief.keywords.includes(kw)) brief.keywords.push(kw);
+  // A greeting, identity question or file-layout request carries no research words to infer from.
+  if (!msgIsGreeting) {
+    const primaryTopic = (brief.topics && brief.topics.length > 0) ? brief.topics[0] : userMessage;
+    const inferred = inferRelatedKeywords(primaryTopic, userMessage);
+    if (!brief.keywords || brief.keywords.length === 0) {
+      brief.keywords = inferred;
+    } else {
+      for (const kw of inferred) {
+        if (!brief.keywords.includes(kw)) brief.keywords.push(kw);
+      }
     }
   }
 

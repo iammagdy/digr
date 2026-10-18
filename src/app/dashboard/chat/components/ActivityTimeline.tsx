@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  settleTimelineEvents,
   timelineWaitingText,
   type JobStatus,
   formatNumber,
@@ -49,7 +50,7 @@ export default function ActivityTimeline({
 }: ActivityTimelineProps) {
   // The failure panel renders the final, customer-safe reason. Hide its
   // duplicate event from the timeline while preserving all progress events.
-  const visibleEvents = status === "failed" ? events.filter((event) => event.kind !== "error") : events;
+  const visibleEvents = settleTimelineEvents(status === "failed" ? events.filter((event) => event.kind !== "error") : events, status);
   const hasEvents = visibleEvents && visibleEvents.length > 0;
   const scopeNote =
     eventLimit !== undefined && hasEvents && events.length >= eventLimit

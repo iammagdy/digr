@@ -109,3 +109,25 @@ describe("social research rules reach the model", () => {
     expect(dynamicText).not.toContain("SOCIAL RESEARCH");
   });
 });
+
+describe("item 9: prompt blocks are ordered for the prompt cache", () => {
+  const caps = [{ slug: "social-x-posts", platform: "x", nameAr: "منشورات إكس", paramsSchema: { required: ["query"] }, maxRows: 500 }];
+  const make = (balance: number, today: string, state: any) =>
+    buildSystemPromptParts({ sanitizedCapabilities: caps, todayDate: today, userBalancePoints: balance, conversationState: state, userProfile: { displayName: "سلمى", persona: "researcher" } });
+
+  it("the capability inventory is identical for every user and turn; the profile ignores balance, date and state", () => {
+    const a = make(10, "2026-10-17", { isFirstUserTurn: true });
+    const b = make(9999, "2026-10-18", { hasActivePlan: true });
+    expect(a.capabilityText).toBe(b.capabilityText);
+    expect(a.profileText).toBe(b.profileText);
+    expect(a.turnText).not.toBe(b.turnText);
+    expect(a.turnText).toContain("Available Balance: 10");
+    expect(a.profileText).not.toMatch(/Balance|Today's Date|Conversation State/);
+    expect(a.capabilityText).toContain('"s":"social-x-posts"');
+  });
+
+  it("the three dynamic parts still make up the whole dynamic text (no rule or capability lost)", () => {
+    const parts = make(250, "2026-10-17", {});
+    for (const piece of [parts.profileText, parts.turnText, parts.capabilityText]) expect(parts.dynamicText).toContain(piece);
+  });
+});

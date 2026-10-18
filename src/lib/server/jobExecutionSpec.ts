@@ -1,3 +1,4 @@
+import { isSmallJob, smallJobPageSize } from "./providerCallCaps";
 import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
@@ -270,7 +271,11 @@ export async function resolveJobExecutionSpec(
     : 10;
 
   const rawPageSize = Number(params?.limit || params?.count || params?.per_page || params?.size || defaultBatchSize);
-  const pageSize = Number.isFinite(rawPageSize) && rawPageSize > 0 ? Math.min(50, rawPageSize) : defaultBatchSize;
+  const requestedPageSize = Number.isFinite(rawPageSize) && rawPageSize > 0 ? Math.min(50, rawPageSize) : defaultBatchSize;
+  // A small company search asks for a page sized from the wanted count (not exactly the wanted count): two rows per
+  // page made one 2-record job fetch 19 pages. The page count is capped separately (providerCallCaps).
+  const isCompanySearchSpec = capabilitySlug.includes("compan") || endpointId.includes("compan") || endpointId.startsWith("icypeas.compan");
+  const pageSize = isCompanySearchSpec && isSmallJob(itemTargetVolumeMax || 0) ? smallJobPageSize(itemTargetVolumeMax || 0) : requestedPageSize;
 
   return {
     capabilitySlug,

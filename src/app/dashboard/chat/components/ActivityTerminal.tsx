@@ -5,7 +5,8 @@ import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
 import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
 import { normalizeEasternArabicDigits } from "@/lib/arabicNumbers";
-import { onRequestFormats, producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
+import { settleTimelineEvents } from "@/lib/honestDisplay";
+import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
 
 const FORMAT_LABEL_AR: Record<ResultFormat, string> = { xlsx: "إكسل", pdf: "بي دي إف", csv: "سي إس في" };
 
@@ -137,9 +138,10 @@ export default function ActivityTerminal({
     : basePhase;
 
   // Fallback initial event when events list is empty
+  const settledEvents = events ? settleTimelineEvents(events, status) : events;
   const displayEvents: TerminalEvent[] =
-    events && events.length > 0
-      ? events
+    settledEvents && settledEvents.length > 0
+      ? settledEvents
       : [
           {
             $id: "init_default",
@@ -299,21 +301,6 @@ export default function ActivityTerminal({
               </button>
             ))}
           </div>
-          {onRequestFormats(fileIds).length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <span className="text-[11px] text-mut">تُجهَّز عند الطلب:</span>
-              {onRequestFormats(fileIds).map((ext) => (
-                <button
-                  key={ext}
-                  type="button"
-                  onClick={() => onDownload(ext)}
-                  className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-3 text-[11px] text-ink hover:bg-sf transition-colors"
-                >
-                  {`جهّز ${FORMAT_LABEL_AR[ext]}`}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </div>

@@ -89,3 +89,12 @@ export function industryLabelAr(label: unknown): string | null {
 export function industryLabelForSentence(label: unknown): string {
   return industryLabelAr(label) ?? "نشاط آخر";
 }
+
+export const INDUSTRY_NOT_TRANSLATED_AR = "تصنيف غير مترجم — كما ورد في المصدر:";
+
+/** For a spreadsheet cell: the Arabic industry, or a plain Arabic marker keeping the source label when it has no known translation. */
+export function industryLabelForCell(label: unknown): string {
+  const value = String(label ?? "").trim();
+  if (!value || value === "غير متاح") return "غير متاح";
+  return industryLabelAr(value) ?? `${INDUSTRY_NOT_TRANSLATED_AR} ${value}`;
+}

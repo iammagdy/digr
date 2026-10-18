@@ -1,11 +1,14 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
-import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, type DatasetColumn } from "../../lib/fileSpec";
+import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
+import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
+import { detectTopicGathering, hasTopicResearchService, topicSourceQuestion } from "./topicGathering";
+import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
   getEnabledCapabilitiesWithCoreServices,
   getCatalogCapabilities,
@@ -79,6 +82,7 @@ import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, 
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
+import { INDEPENDENT_REQUEST_NOTE_AR, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -98,9 +102,14 @@ function customerAuthoredRequirementText(message: string): string {
       social_topic_required: "موضوع البحث المطلوب",
       social_platform_required: "منصة البحث المطلوبة",
       social_time_required: "الفترة المطلوبة",
+      topic_source_required: "المصدر المطلوب",
     };
     return parsed.answers
       .flatMap((answer: any) => {
+        // The column chosen to split the delivered file: the shaping request it completes, not a research answer.
+        if (answer?.questionId === "shape_column_required" && typeof answer?.value === "string" && answer.value.trim()) {
+          return [`قسّم الملف شيت لكل ${sanitizeClarificationText(answer.value, 80)}`];
+        }
         const label = labels[answer?.questionId] || "الإجابة";
         if (typeof answer?.value === "string") return [`${label}: ${sanitizeClarificationText(answer.value, 200)}`];
         if (Array.isArray(answer?.value)) {
@@ -131,7 +140,7 @@ function hasExplicitPeopleScope(text: string): boolean {
   return /(?:نطاق صناع القرار\s*:|لدى|في\s+(?:شركة|شركات)|شركة محددة|اسم الشركات?|\b(?:company|companies|at)\s*[:=]?\s*)\s*\p{L}/iu.test(text);
 }
 
-export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief): any | null {
+export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief, capabilities: Capability[] = []): any | null {
   const normalized = text || "";
   const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
   const isPeople = isPeopleSearchRequest(normalized);
@@ -157,6 +166,9 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
   if (!isAccount && !isPeople && !isCompanies) {
     const socialTaskIntent = detectSocialIntent(normalized);
     const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
+    // Studies / articles / news: no direct source exists, so ask ONE specific question that echoes the topic and country.
+    const topicGathering = !socialTaskIntent.task ? detectTopicGathering(normalized) : null;
+    if (topicGathering && !hasTopicResearchService(capabilities)) return topicSourceQuestion(topicGathering);
     if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
     // A request the verified social services understand is decided entirely by their own inputs (a link, a
     // channel, a country); the generic topic question below does not apply to it.
@@ -541,8 +553,8 @@ export function buildAutoPlanProposal(
   const mentionedPlats = detectMentionedPlatforms(message);
   const platform = peopleSearch
     ? "people"
-    : (brief.platforms && brief.platforms.length > 0)
-    ? brief.platforms[0]
+    : (brief.platforms && brief.platforms.some((p) => p !== "web"))
+    ? brief.platforms.find((p) => p !== "web")!
     : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "tiktok"));
   const platformNorm = platform.toLowerCase();
 
@@ -958,7 +970,7 @@ export function buildPlanFixPrompt(
 }
 
 const TOPIC_STOPWORDS = new Set(
-  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome شكرا شكراً تمام ماشي فندم باشا يا حتى سجل سجلاً سجلات شركة شركات مؤسسة مؤسسات استخرج استخراج اريد أريد مجال تخصص نشاط فقط حجم عدد خمس خمسة ست ستة سبع سبعة ثمانية تمانية تسع تسعة عشر عشرة عشرين ثلاثين أربعين خمسين ستين سبعين ثمانين تسعين مية مائة ألف need want companies company records".split(
+  "في عن من على إلى الي و هاتلي هات عايز عاوز محتاج أسحب سحب جمع بيانات داتا آخر اخر شهور شهر شهورا سنة سنوات عام أعوام أسبوع أسابيع يوم أيام مصر فيسبوك تيك توك انستغرام إنستغرام يوتيوب تويتر ريديت لينكد reddit tiktok instagram facebook youtube x comments comment posts post بوست بوستات منشور منشورات تعليق تعليقات الـ ده دي تلك هذا هذه التي الذي بيتكلموا تتكلم ازيك ازيكوا ازيكم مرحبا مرحباً اهلا أهلا أهلاً هاي سلام سلامو عليكم السلام صباح مساء الخير hello hi hey welcome خلال منذ الماضي الماضية الماضيه السابق اسبوعين أسبوعين شهرين يومين كومنت كومنتس كومنتات تغريدات تغريدة تويت إنت انت مين شكرا شكراً تمام ماشي فندم باشا يا حتى سجل سجلاً سجلات شركة شركات مؤسسة مؤسسات استخرج استخراج اريد أريد مجال تخصص نشاط فقط حجم عدد خمس خمسة ست ستة سبع سبعة ثمانية تمانية تسع تسعة عشر عشرة عشرين ثلاثين أربعين خمسين ستين سبعين ثمانين تسعين مية مائة ألف need want companies company records".split(
     " ",
   ),
 );
@@ -1341,7 +1353,19 @@ export class ChatHandler {
     const isGreeting = greetingOrGeneral.isGreeting;
     // A result is on screen (the page sent its columns) and the customer asks how the file should look: a chat turn
     // about an existing file, never a new research request, so it skips discovery and planning.
-    const isFileShapingTurn = sanitizeResultColumns(input.resultColumns).length > 0 && looksLikeFileShapingRequest(message);
+    // How the delivered file should look («قسّم الملف شيت لكل محافظة»): a turn about the saved result, never a new research
+    // request. The columns come from the page, or from the customer's latest delivered result when the page sent none.
+    const shapingText = formatClarificationMessageForAssistant(message);
+    const looksShaping = isFileShapingMessage(shapingText);
+    let shapingColumns = sanitizeResultColumns(input.resultColumns);
+    let deliveredResultJobId: string | null = null;
+    if (looksShaping && shapingColumns.length === 0 && sb) {
+      const saved = await loadLatestResultColumns(sb, { conversationId, userId });
+      shapingColumns = saved.columns;
+      deliveredResultJobId = saved.jobId;
+    }
+    // Only a message about the file, with a delivered result to shape; a research request that merely names a layout ("... ملف لكل منصة") is not one.
+    const isFileShapingTurn = looksShaping && !isStandaloneResearchRequest(shapingText) && (shapingColumns.length > 0 || Boolean(deliveredResultJobId));
     const isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
@@ -1459,6 +1483,32 @@ export class ChatHandler {
         messageId: assistantMsgId,
         role: "assistant",
         contentAr: answer,
+        outputType: "answer_question",
+        intent: "chat",
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+      };
+    }
+
+    // A delivered result whose columns cannot be read right now: answered by code, nothing is guessed or charged.
+    const shapingBlockedReplyAr = (!isTestSearchScenario && isFileShapingTurn && shapingColumns.length === 0)
+      ? "تعذّرت قراءة أعمدة ملفك الآن، ولم يُخصم أي رصيد. افتح نتائج طلبك ثم أعد كتابة الشكل المطلوب."
+      : null;
+    if (shapingBlockedReplyAr) {
+      if (sb) {
+        await Promise.all([
+          sb.from("messages").update({ content_ar: shapingBlockedReplyAr }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+        ]);
+      } else {
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: shapingBlockedReplyAr, status: "ready" } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+      }
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: shapingBlockedReplyAr,
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
@@ -1782,11 +1832,12 @@ export class ChatHandler {
       // The current message was persisted before history was fetched. Avoid
       // adding it twice to the deterministic routing text used for plans.
       if (priorUserRequirements.at(-1) === currentRequirement) priorUserRequirements.pop();
-      const conversationRequestText = [
-        ...priorUserRequirements,
+      // Scoped to THIS request: an independent request never reads older messages; only a follow-up does.
+      const conversationRequestText = scopeRequestText(
+        priorUserRequirements,
         currentRequirement,
-        ...explicitCompanyClarificationNotes(brief.notes),
-      ].filter(Boolean).join(" ");
+        explicitCompanyClarificationNotes(brief.notes),
+      );
 
       const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
       if (resultFeedbackReply) {
@@ -1832,7 +1883,7 @@ export class ChatHandler {
         };
       }
 
-      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief);
+      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
       if (requiredDiscoveryQuestion) {
         const intro = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
         const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
@@ -1893,8 +1944,10 @@ export class ChatHandler {
       // summarize older turns instead of blocking the user. The DB counter keeps
       // growing as a cumulative stat; the model only sees the compacted history.
       let effectiveConvTokens = totalConvTokens;
-      let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = messagesContext;
-      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || messagesContext.length > 7) {
+      // Greetings and identity questions were answered by code; the model never re-reads them.
+      const modelHistory = compactHistoryForModel(dropGreetingAndIdentityTurns(messagesContext));
+      let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = modelHistory;
+      if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || modelHistory.length > 7) {
         let planSummary: string | undefined;
         try {
           if (sb) {
@@ -1926,8 +1979,13 @@ export class ChatHandler {
         } catch {
           // plans_quotes unavailable: summarize without plan state
         }
-        turnMessages = summarizeConversationHistory(messagesContext, planSummary);
+        turnMessages = summarizeConversationHistory(modelHistory, planSummary);
         effectiveConvTokens = estimateTokens(turnMessages.map((m) => m.content).join("\n"));
+      }
+
+      // An independent request after earlier research turns is read on its own, never merged with them.
+      if (priorUserRequirements.some((entry) => entry && !isGreetingOrIdentityTurn(entry)) && isStandaloneResearchRequest(currentRequirement)) {
+        turnMessages = [...turnMessages, { role: "system", content: INDEPENDENT_REQUEST_NOTE_AR }];
       }
 
       if (isPhase2) {
@@ -1973,7 +2031,7 @@ export class ChatHandler {
             },
         todayDate: new Date().toISOString().split("T")[0],
         userBalancePoints: userBalance,
-        resultColumns: sanitizeResultColumns(input.resultColumns),
+        resultColumns: shapingColumns,
         conversationId,
         userId,
         totalConversationTokens: effectiveConvTokens,
@@ -2018,7 +2076,8 @@ export class ChatHandler {
         llmMs += Date.now() - tLlmRepeatStart;
         output = llmResult.output;
       };
-      while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS) {
+      const budgetLeft = () => turnBudgetLeftMs(turnStartTime);
+      while (output.type === "search_catalog" && catalogIterations < MAX_CATALOG_ITERATIONS && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         catalogIterations++;
         catalogSearchCount++;
         const tCatLoopStart = Date.now();
@@ -2060,7 +2119,7 @@ export class ChatHandler {
         if (o.type === "answer_question") return (((o as any).answerAr || "") as string).trim().length > 0;
         return o.type === "refuse" || o.type === "suggest_alternative" || o.type === "edit_plan" || o.type === "write_note";
       };
-      if (didSearch && !isProductiveTerminal(output)) {
+      if (didSearch && !isProductiveTerminal(output) && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         loopMessages.push(
           {
             role: "system",
@@ -2133,7 +2192,7 @@ export class ChatHandler {
       let answerCandidate = getEffectiveAnswerText(output);
       const isEndingColon = (t: string) => /[:：](\s*)$/.test(t);
 
-      if (isEndingColon(answerCandidate) && !hasActiveTool(output)) {
+      if (isEndingColon(answerCandidate) && !hasActiveTool(output) && budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
         // Retry once inside the turn
         loopMessages.push({
           role: "system",
@@ -2176,12 +2235,97 @@ export class ChatHandler {
         return out;
       })();
 
+      // 7e. Stall guard. A reply that only announces a plan («هجهز لك خطة...») or a catalog loop cut short by the turn
+      // budget must never end the turn without a plan or ONE concrete question: retry once if time allows, then finish
+      // in code. (A provider outage keeps its honest «المساعد غير متاح» answer: real providers never fall back silently.)
+      {
+        const isStalled = () =>
+          output.type === "search_catalog" ||
+          (output.type === "answer_question" && isPlanAnnouncementOnly(((output as any).answerAr || "") as string));
+        const isResearchTurn = !isGreeting && !isGeneralQuestion && !isTestSearchScenario && !input.isGuest;
+        if (isResearchTurn && isStalled()) {
+          if (budgetLeft() > MIN_MODEL_CALL_BUDGET_MS) {
+            loopMessages.push({
+              role: "system",
+              content:
+                "[تعليمات داخلية — أكمل الخطوة]: ردّك السابق أعلن عن خطة دون أن يستدعي أداة. استدعِ الآن propose_plan إن اكتملت المدخلات، أو ask_questions بسؤال واحد محدد. ممنوع الرد بنص فقط.",
+            } as const);
+            await repeatTurn();
+          }
+          if (isStalled()) {
+            const missingSocialInputs = socialIntent.task ? getMissingSocialTaskInputs(conversationRequestText) : [];
+            const verifiedSocialReady = Boolean(verifiedSocialCap) && Boolean(socialIntent.task) && missingSocialInputs.length === 0 &&
+              !shouldAskSocialTimeWindow(conversationRequestText);
+            const briefReady = brief.platforms.length > 0 && brief.topics.length > 0 &&
+              (Boolean(brief.targetVolume && brief.targetVolume > 0) || Boolean(brief.postCount && brief.commentsPerPost));
+            if (verifiedSocialReady || briefReady) {
+              clarificationItemsList = undefined;
+              clarificationQuestionsList = undefined;
+              output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
+              console.warn(`[chat:stall_guard] outcome=plan_from_code reason=no_tool_call`);
+            } else {
+              const one = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities) ||
+                buildCodeDiscoveryFallback(allCapabilities, conversationRequestText, false, brief).items[0] || null;
+              if (one) {
+                const normalizedOne = normalizeClarificationQuestions({ questions: [one] }, {
+                  capabilities: allCapabilities,
+                  userBalancePoints: userBalance,
+                  persona: userProfile?.persona,
+                })[0] || one;
+                clarificationItemsList = [normalizedOne];
+                clarificationQuestionsList = [normalizedOne.text || normalizedOne.question];
+                finalContentAr = deduplicateIntroText(
+                  budgetLeft() <= MIN_MODEL_CALL_BUDGET_MS ? SLOW_TURN_INTRO_AR : "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.",
+                );
+                output = {
+                  type: "ask_clarification",
+                  reasonAr: finalContentAr,
+                  intro: finalContentAr,
+                  questions: clarificationItemsList,
+                  questionsAr: clarificationQuestionsList,
+                } as any;
+                console.warn(`[chat:stall_guard] outcome=one_question reason=no_tool_call`);
+              }
+            }
+          }
+        }
+      }
+
+      // 7f. File shaping: the spec is checked against the real columns of the delivered result. An unknown column is never
+      // guessed: the customer is told which columns exist and asked ONE question.
+      if (output.type === "shape_file" && shapingColumns.length > 0) {
+        const checked = validateFileSpec((output as any).spec, shapingColumns);
+        if (checked.ok) {
+          (output as any).spec = checked.spec;
+        } else if ((output as any).spec?.groupBy) {
+          const choices = columnChoicesAr(shapingColumns);
+          const question = {
+            id: "shape_column_required",
+            text: "بأي عمود تريد تقسيم الملف إلى شيتات؟",
+            question: "بأي عمود تريد تقسيم الملف إلى شيتات؟",
+            type: "single" as const,
+            options: choices,
+            allowOther: false,
+          };
+          clarificationItemsList = [question as any];
+          clarificationQuestionsList = [question.text];
+          finalContentAr = `${checked.errorAr.replace(/ اختر من الأعمدة الموجودة في الملف\.$/, "")} الأعمدة المتاحة في ملفك مذكورة أدناه، ولن يُخصم أي رصيد.`;
+          output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
+        } else {
+          finalContentAr = `${checked.errorAr} الأعمدة المتاحة: ${columnChoicesAr(shapingColumns, 10).map((c) => `«${c}»`).join("، ")}.`;
+          output = { type: "answer_question", answerAr: finalContentAr } as any;
+        }
+      }
+
       // The language model can incorrectly suggest an unrelated alternative for a
       // people-search request. Prefer the verified people capability when present.
-      output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
-      // Explicit company requests receive the same deterministic routing guard.
-      output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
-      if (ACCOUNT_LOOKUP_RE.test(conversationRequestText)) {
+      // A turn about the delivered file is never turned into a new search plan by these guards.
+      if (!isFileShapingTurn) {
+        output = routePeopleAlternative(output, brief, validationCaps, conversationRequestText);
+        // Explicit company requests receive the same deterministic routing guard.
+        output = routeCompanySearchRequest(output, brief, validationCaps, conversationRequestText);
+      }
+      if (!isFileShapingTurn && ACCOUNT_LOOKUP_RE.test(conversationRequestText)) {
         // Profile requests have a distinct one-record plan with no country or
         // date filters; don't let a generic social-content plan replace it.
         output = buildAutoPlanProposal(brief, validationCaps, conversationRequestText) as any;
@@ -2648,7 +2792,23 @@ export class ChatHandler {
                 planValidation = { valid: true, errors: [], issues: [] };
               } else {
                 console.warn("[chat:auto_plan_invalid_pricing]", { errors: autoCheck.errors });
-                finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+                // The generic sentence is only for a request with no topic at all. When the customer gave a topic (and maybe a
+        // country) the answer is ONE specific question that names them and offers the sources that exist.
+        const gathered = detectTopicGathering(conversationRequestText);
+        const topicHint = (gathered?.topic || researchIntent.topic.value || brief.topics[0] || "").toString().trim();
+        if (topicHint.length >= 2 && !input.isGuest && !hasTopicResearchService(capabilities)) {
+          const sourceQuestion = topicSourceQuestion({
+            noun: gathered?.noun || "البيانات",
+            topic: topicHint,
+            countryAr: detectCountryFromText(conversationRequestText)?.arabicLabel,
+          });
+          clarificationItemsList = [sourceQuestion as any];
+          clarificationQuestionsList = [sourceQuestion.text];
+          finalContentAr = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+          output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
+        } else {
+          finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+        }
                 output = {
                   type: "ask_clarification",
                   intro: finalContentAr,
@@ -2923,7 +3083,23 @@ export class ChatHandler {
           unsupportedService: output.unsupportedService,
           explanationAr: output.explanationAr,
         });
-        finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+        // The generic sentence is only for a request with no topic at all. When the customer gave a topic (and maybe a
+        // country) the answer is ONE specific question that names them and offers the sources that exist.
+        const gathered = detectTopicGathering(conversationRequestText);
+        const topicHint = (gathered?.topic || researchIntent.topic.value || brief.topics[0] || "").toString().trim();
+        if (topicHint.length >= 2 && !input.isGuest && !hasTopicResearchService(capabilities)) {
+          const sourceQuestion = topicSourceQuestion({
+            noun: gathered?.noun || "البيانات",
+            topic: topicHint,
+            countryAr: detectCountryFromText(conversationRequestText)?.arabicLabel,
+          });
+          clarificationItemsList = [sourceQuestion as any];
+          clarificationQuestionsList = [sourceQuestion.text];
+          finalContentAr = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+          output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
+        } else {
+          finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
+        }
 
         // Log request in capability_requests table
         if (sb) {
@@ -2955,7 +3131,7 @@ export class ChatHandler {
         if (!parsedSpec.success) {
           finalContentAr = "لم أفهم الشكل المطلوب للملف تمامًا. وضّح لي مثلًا: شيت منفصل لكل محافظة، أو ترتيب حسب التاريخ، أو الأعمدة التي تريدها فقط.";
         } else {
-          const hintColumns = sanitizeResultColumns(input.resultColumns);
+          const hintColumns = shapingColumns;
           const descriptionAr = describeFileSpecAr(parsedSpec.data, hintColumns);
           fileShapeData = { spec: parsedSpec.data, descriptionAr };
           finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.`;
@@ -3225,7 +3401,7 @@ export class ChatHandler {
 
       const computedIntent: "chat" | "research" =
         (output as any).intent ||
-        (isGreeting || isGeneralQuestion
+        (isGreeting || (isGeneralQuestion && !(isFileShapingTurn && output.type === "ask_clarification"))
           ? "chat"
           : output.type === "propose_plan" ||
             output.type === "ask_clarification" ||

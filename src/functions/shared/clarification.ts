@@ -424,8 +424,13 @@ export function formatClarificationMessageForAssistant(message: string): string 
       social_topic_required: "موضوع البحث المطلوب",
       social_platform_required: "منصة البحث المطلوبة",
       social_time_required: "الفترة المطلوبة",
+      topic_source_required: "المصدر المطلوب",
     };
     return parsed.answers.map((answer: any) => {
+      // The column chosen to split the delivered file: read as the shaping request it completes.
+      if (answer?.questionId === "shape_column_required" && typeof answer?.value === "string" && answer.value.trim()) {
+        return `قسّم الملف شيت لكل ${sanitizeClarificationText(answer.value, 80)}`;
+      }
       const label = labels[answer?.questionId] || `إجابة عن ${sanitizeClarificationText(String(answer?.question || "السؤال"), 120)}`;
       const values = Array.isArray(answer?.value)
         ? answer.value.filter((value: unknown) => typeof value === "string").map((value: string) => sanitizeClarificationText(value, 40))

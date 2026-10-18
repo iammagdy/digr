@@ -142,7 +142,7 @@ export function detectSocialIntent(text: string): SocialIntent {
   const wantsComments = COMMENT_WORDS_RE.test(body);
   const wantsTrending = TREND_WORDS_RE.test(body);
   const wantsPosts = POST_WORDS_RE.test(body);
-  const wantsXTweets = platform === "x" && X_POST_WORDS_RE.test(body);
+  const wantsXTweets = platform === "x" && (X_POST_WORDS_RE.test(body) || POST_WORDS_RE.test(body));
   const wantsVideos = VIDEO_WORDS_RE.test(body);
   const wantsChannel = CHANNEL_WORDS_RE.test(body);
   const targetUrl = urls.find((u) => u.kind === "video" || u.kind === "post") ?? null;
@@ -249,6 +249,7 @@ const TOPIC_NOISE = new Set([
   // Discovery answers are merged with the original request. Time-window labels must not leak into
   // the provider topic (for example: "كرة السلة الفترة المطلوبة شهر").
   "فترة", "الفترة", "زمنية", "الزمنية", "مطلوبة", "المطلوبة", "اسبوع", "أسبوع", "الشهر", "شهر", "اشهر", "أشهر", "سنة", "سنوات",
+  "خلال", "منذ", "الماضي", "الماضية", "الماضيه", "السابق", "السابقة", "يوم", "ايام", "أيام", "يومين", "اسبوعين", "أسبوعين", "شهرين", "الاسبوع", "الأسبوع", "العام", "عام", "السنة", "الاخيرة", "الأخيرة", "الاخير", "الأخير",
   "week", "month", "months", "year", "years", "period", "timeframe",
   "tiktok", "youtube", "facebook", "instagram", "twitter", "videos", "video", "posts", "post", "comments", "comment", "trending", "trend", "viral", "get", "me", "the", "of", "on", "from", "about", "for", "with", "and", "a", "an", "i", "want", "need",
 ]);

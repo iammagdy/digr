@@ -1,3 +1,4 @@
+import { CALL_CAP_NOTE_AR, evaluateProviderCallCap } from "../../../../lib/server/providerCallCaps";
 import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
@@ -420,8 +421,14 @@ export async function POST(req: NextRequest) {
       ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId))
       : undefined;
 
+    // A directory search is billed for every record REQUESTED on the page, matched or not: the estimate (and the daily cap
+    // gate that reads it) is the full page, not only the records still wanted.
+    const isCompanySpecForCaps =
+      spec.capabilitySlug.includes("compan") || spec.endpointId.includes("compan") || spec.endpointId.includes("icypeas.compan");
     const estUnitsThisCall =
-      spec.pricingUnit === "item" ? Math.max(1, Math.min(effectivePageSize, remainingUnits)) : 1;
+      spec.pricingUnit === "item"
+        ? (isCompanySpecForCaps ? Math.max(1, effectivePageSize) : Math.max(1, Math.min(effectivePageSize, remainingUnits)))
+        : 1;
     const estimatedCostUsd = isPeopleJob
       ? Math.max(0.0001, Math.min(
           decisionMakerSpendBudgetUsd || 0,
@@ -546,6 +553,8 @@ export async function POST(req: NextRequest) {
     const socialCapability = getSocialCapability(spec.capabilitySlug);
     const dedupeIdentity = isCompanyCapability ? companyIdentity : rowIdentity;
     let duplicateExcludedCount = 0;
+    // Accepted rows of each earlier page (null = unreadable): feeds the stop rule for pages that find nothing.
+    const priorBatchUnits: Array<number | null> = Array.from({ length: currentStep }, () => null);
     const seenProviderCursors = new Set<string>();
     if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(String(currentCursor));
     if ((isCompanyCapability || socialCapability) && (rawRows.length > 0 || currentStep > 0)) {
@@ -567,6 +576,7 @@ export async function POST(req: NextRequest) {
             try { prior = JSON.parse(await blob.text()); } catch { /* retain in-memory fallback */ }
           }
         }
+        priorBatchUnits[step] = typeof prior?.batchUnits === "number" ? prior.batchUnits : Array.isArray(prior?.rows) ? prior.rows.length : null;
         if (typeof prior?.cursor === "string" && prior.cursor) seenProviderCursors.add(prior.cursor);
         for (const row of Array.isArray(prior?.rows) ? prior.rows : []) {
           const identity = dedupeIdentity(row);
@@ -770,11 +780,23 @@ export async function POST(req: NextRequest) {
     );
     // Multi-page fetching continues until the requested matching count is reached,
     // the source is exhausted, a cursor cycles, or the spend gate closes.
+    // Provider pages are capped per job (providerCallCaps): a search whose pages are mostly rejected stops, it does not
+    // page until the source runs out. Rows already matched are kept and charged as usual.
+    const callCapReason = isCompanyCapability
+      ? evaluateProviderCallCap({
+          pagesDone: currentStep + 1,
+          acceptedThisPage: acceptedRows.length,
+          priorBatchUnits,
+          targetMax,
+          pageSize: effectivePageSize,
+        })
+      : null;
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
       !cursorWouldRepeat &&
       newDeliveredUnits < targetMax &&
-      !isShortLastPage;
+      !isShortLastPage &&
+      !callCapReason;
     const isDone = !hasMorePages || newDeliveredUnits >= targetMax;
 
     // If done and zero rows were collected across the job, release full reserve with zero charge
@@ -909,6 +931,7 @@ export async function POST(req: NextRequest) {
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
           uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
           cursorWouldRepeat ? "توقف الجمع لأن المصدر كرر صفحة سبق استلامها" : null,
+          callCapReason && newDeliveredUnits < targetMax ? CALL_CAP_NOTE_AR[callCapReason] : null,
           providerBudgetStopped ? "توقف الجمع عند الحد اليومي الآمن، مع تسليم السجلات المطابقة التي جُمعت" : null,
           skipReason,
           ...etaParts,
@@ -1128,7 +1151,7 @@ export async function POST(req: NextRequest) {
           methodLabel: customerFacingCapabilityLabel(spec.capabilitySlug),
           pagesFetched: currentStep + (providerBudgetStopped ? 0 : 1),
           paginationStrategy: spec.paginationStrategy,
-          stopReason: finalRows.length >= targetMax ? "target_reached" : "source_exhausted",
+          stopReason: finalRows.length >= targetMax ? "target_reached" : callCapReason ? "call_cap" : "source_exhausted",
         },
         counts: {
           rawRows: rawRowsCollected,

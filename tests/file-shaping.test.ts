@@ -286,7 +286,7 @@ describe("10. the model's spec reaches the customer as a free download, through 
   it("«عايز شيت لكل محافظة» returns a validated spec, an Arabic description, no revision quote and no charge", async () => {
     const res = await ask("عايز شيت لكل محافظة", [{ key: "region", titleAr: "المحافظة" }]);
     expect(res.outputType).toBe("answer_question");
-    expect(res.fileShape.spec).toEqual({ groupBy: { column: "محافظة", mode: "sheets" } });
+    expect(res.fileShape.spec).toEqual({ version: 1, groupBy: { column: "region", mode: "sheets" } });
     expect(res.fileShape.descriptionAr).toContain("شيت منفصل لكل قيمة");
     expect(res.contentAr).toContain("تحميل الملف المخصص");
     expect(res.contentAr).toContain("لا يُخصم أي رصيد");

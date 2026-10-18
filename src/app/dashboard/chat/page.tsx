@@ -600,7 +600,7 @@ export default function ChatWorkspacePage() {
       clearTimeout(timeoutId);
       const isTimeout = err.name === "AbortError";
       const errorContent = isTimeout
-        ? "استغرق المساعد وقتاً أطول من المتوقع (أكثر من 35 ثانية). يرجى الضغط على زر إعادة المحاولة."
+        ? "استغرق المساعد وقتًا أطول من المتوقع، ولم يُخصم أي رصيد. اضغط «إعادة المحاولة» أو أعد صياغة طلبك بتفاصيل أقل."
         : (err.message || "حدث خطأ غير متوقع في الاتصال. يرجى إعادة المحاولة.");
 
       setMessages((prev) => [
@@ -1635,8 +1635,8 @@ export default function ChatWorkspacePage() {
               onClick={() => setCanvasOpen(true)}
               className="flex items-center gap-2 rounded-full border border-ln2 bg-sf px-4 py-2 text-xs font-semibold text-ink hover:bg-sf2 transition-colors cursor-pointer"
             >
-              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>عرض لوحة النشاط والتنفيذ</span>
+              <span className={`flex h-2 w-2 rounded-full ${activeJob.status === "running" || activeJob.status === "queued" ? "bg-emerald-500 animate-pulse" : "bg-ok"}`} />
+              <span>{activeJob.status === "running" || activeJob.status === "queued" ? "عرض لوحة النشاط والتنفيذ" : "عرض سجل التنفيذ"}</span>
             </button>
           </div>
         )}

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { buildPlatformGuideServices, PLATFORM_GUIDE } from "@/functions/shared/platformGuide";
-import { computePublicCalculatorQuote, getPublicCalculatorOptions } from "@/lib/calculatorPricing";
+import { cleanArText, computePublicCalculatorQuote, getPublicCalculatorOptions } from "@/lib/calculatorPricing";
 import { formatAr } from "@/lib/arabicDigits";
 import { publicCapabilityId } from "@/lib/publicCapabilityIds";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "@/functions/shared/decisionMakerPricing";
@@ -27,9 +27,9 @@ export default function ServicesCatalogPage() {
             const quote = optionSlugs.has(service.slug) ? computePublicCalculatorQuote(service.slug, 1, 1) : null;
             const peoplePrice = service.slug === "professional-people-search" ? DECISION_MAKER_UNIT_PRICES_POINTS : null;
             return <article key={publicCapabilityId(service.slug)} className="rounded-[20px] border border-ln bg-sf p-5">
-              <h2 className="m-0 text-lg font-semibold">{service.nameAr}</h2>
-              <p className="mb-4 mt-2 text-sm leading-7 text-mut">{service.descriptionAr}</p>
-              <p className="mb-2 text-sm"><strong>مثال:</strong> {service.exampleAr}</p>
+              <h2 className="m-0 text-lg font-semibold">{cleanArText(service.nameAr)}</h2>
+              <p className="mb-4 mt-2 text-sm leading-7 text-mut">{cleanArText(service.descriptionAr)}</p>
+              <p className="mb-2 text-sm"><strong>مثال:</strong> {cleanArText(service.exampleAr)}</p>
               <p className="m-0 text-sm"><strong>السعر:</strong> {peoplePrice
                 ? `${formatAr(peoplePrice.basePerson)} نقطة للشخص، و${formatAr(peoplePrice.workEmail)} نقطة للبريد المهني عند توفره، و${formatAr(peoplePrice.phone)} نقطة للهاتف المكتبي عند توفره.`
                 : quote

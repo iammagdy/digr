@@ -897,7 +897,7 @@ const PLATFORM_PATTERNS: Array<{ platform: string; labelAr: string; regex: RegEx
   { platform: "companies", labelAr: "قواعد بيانات الشركات والأعمال", regex: /شركات|شركة|مؤسسات|مؤسسة|أعمال|business|companies|company|\bb2b\b/i },
   { platform: "tiktok", labelAr: "تيك توك", regex: /تيك\s*توك|tiktok/i },
   { platform: "facebook", labelAr: "فيسبوك", regex: /فيسبوك|فيس\s*بوك|facebook|\bfb\b/i },
-  { platform: "x", labelAr: "منصة إكس (تويتر)", regex: /تويتر|تغريد|twitter|منصة\s*x|\bx\.com\b/i },
+  { platform: "x", labelAr: "منصة إكس (تويتر)", regex: /تويتر|تغريد|twitter|منصة\s*(?:x|إكس|اكس)|\bx\.com\b/i },
   { platform: "youtube", labelAr: "يوتيوب", regex: /يوتيوب|youtube/i },
   { platform: "instagram", labelAr: "إنستغرام", regex: /انستغرام|إنستغرام|انستجرام|إنستجرام|instagram|\binsta\b/i },
   { platform: "reddit", labelAr: "ريديت", regex: /ريديت|reddit/i },

@@ -562,17 +562,32 @@ describe("Anthropic Provider Integration & Trust Boundaries", () => {
       expect(capturedBody).toBeDefined();
       expect(capturedBody.model).toBe("claude-haiku-5-5");
       expect(capturedBody.max_tokens).toBe(1024);
-      // The system prompt is sent as two blocks: the long fixed rules are cacheable, the per-turn context is not.
+      // The system prompt is sent as four blocks: fixed rules, capability inventory and the user's profile are
+      // cacheable (prefix order), only the small per-turn state is not.
       expect(Array.isArray(capturedBody.system)).toBe(true);
-      expect(capturedBody.system).toHaveLength(2);
-      expect(capturedBody.system[0].type).toBe("text");
+      expect(capturedBody.system).toHaveLength(4);
+      for (const block of capturedBody.system) expect(block.type).toBe("text");
       expect(capturedBody.system[0].cache_control).toEqual({ type: "ephemeral" });
       expect(capturedBody.system[0].text.length).toBeGreaterThan(1000);
-      expect(capturedBody.system[1].cache_control).toBeUndefined();
+      expect(capturedBody.system[1].cache_control).toEqual({ type: "ephemeral" });
       expect(capturedBody.system[1].text).toContain("AVAILABLE CAPABILITY INVENTORY");
-      // Nothing that changes per user or per turn may sit inside the cached block.
-      expect(capturedBody.system[0].text).not.toContain("User Name:");
-      expect(capturedBody.system[0].text).not.toContain("Available Balance:");
+      expect(capturedBody.system[2].cache_control).toEqual({ type: "ephemeral" });
+      expect(capturedBody.system[2].text).toContain("User Name:");
+      expect(capturedBody.system[3].cache_control).toBeUndefined();
+      expect(capturedBody.system[3].text).toContain("Available Balance:");
+      // The Anthropic limit is four cache breakpoints including the tool block.
+      const breakpoints = capturedBody.system.filter((block: any) => block.cache_control).length + capturedBody.tools.filter((tool: any) => tool.cache_control).length;
+      expect(breakpoints).toBeLessThanOrEqual(4);
+      // Nothing that changes per user or per turn may sit inside a block cached across users or turns.
+      for (const cached of [capturedBody.system[0].text, capturedBody.system[1].text]) {
+        expect(cached).not.toContain("User Name:");
+        expect(cached).not.toContain("Available Balance:");
+      }
+      for (const cached of [capturedBody.system[0].text, capturedBody.system[1].text, capturedBody.system[2].text]) {
+        expect(cached).not.toContain("Today's Date");
+        expect(cached).not.toContain("Conversation State");
+        expect(cached).not.toContain("Available Balance:");
+      }
 
       // Verify messages strictly ends with a user turn
       expect(Array.isArray(capturedBody.messages)).toBe(true);
