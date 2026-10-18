@@ -1,20 +1,22 @@
 import type { Metadata, Viewport } from "next";
-import { Markazi_Text, Vazirmatn } from "next/font/google";
+import localFont from "next/font/local";
 import { AuthProvider } from "@/hooks/useUser";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/lib/theme";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
 
-const vazirmatn = Vazirmatn({
-  subsets: ["arabic", "latin"],
-  weight: ["200", "300", "400", "500", "600", "700"],
+// Fonts are committed in src/app/fonts so the build never fetches them from Google.
+const vazirmatn = localFont({
+  src: [{ path: "./fonts/Vazirmatn-Variable.woff2", weight: "200 700", style: "normal" }],
   variable: "--font-vazirmatn",
   display: "swap",
 });
 
-const markazi = Markazi_Text({
-  subsets: ["arabic", "latin"],
-  weight: ["500", "600"],
+const markazi = localFont({
+  src: [
+    { path: "./fonts/MarkaziText-500.woff2", weight: "500", style: "normal" },
+    { path: "./fonts/MarkaziText-600.woff2", weight: "600", style: "normal" },
+  ],
   variable: "--font-markazi",
   display: "swap",
 });
