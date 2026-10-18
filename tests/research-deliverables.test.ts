@@ -59,7 +59,7 @@ describe("Research Deliverables Generator Suite", () => {
       await wb.xlsx.load(buffer as any);
 
       const sheetNames = wb.worksheets.map((ws) => ws.name);
-      expect(sheetNames).toEqual(["الكيانات الأساسية"]);
+      expect(sheetNames).toEqual(["المنشورات"]);
       for (const removed of ["لوحة المؤشرات العامة", "تحليل التفاعل", "جودة البيانات", "دليل الحقول"]) {
         expect(sheetNames).not.toContain(removed);
       }
@@ -81,7 +81,7 @@ describe("Research Deliverables Generator Suite", () => {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buffer as any);
 
-      const wsData = wb.getWorksheet("الكيانات الأساسية");
+      const wsData = wb.getWorksheet("المنشورات");
       expect(wsData).toBeDefined();
 
       let foundEscapedFormula = false;
@@ -100,7 +100,7 @@ describe("Research Deliverables Generator Suite", () => {
       const wb = new ExcelJS.Workbook();
       await wb.xlsx.load(buffer as any);
 
-      const wsData = wb.getWorksheet("الكيانات الأساسية");
+      const wsData = wb.getWorksheet("المنشورات");
       expect(wsData).toBeDefined();
       const headers = (wsData!.getRow(1).values as string[]).filter(Boolean);
 

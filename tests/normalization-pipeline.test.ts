@@ -229,6 +229,17 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(norm.columns.every((column) => norm.codebook.find((item) => item.field === column)?.titleAr)).toBe(true);
     });
 
+    it("infers the legacy social schema from the stored task identifier when metadata omitted socialKind", () => {
+      const norm = normalizeDataset({
+        metadata: { platform: "x", template: "anyapi.x.search.posts", title: "منشورات منصة إكس" },
+        rows: [{ authorName: "Public account", text: "Basketball", createdUtc: 1792308962, likeCount: 5 }],
+      });
+      expect(norm.metadata.socialKind).toBe("posts");
+      expect(norm.columns).not.toContain("authorName");
+      expect(norm.columns).not.toContain("likeCount");
+      expect(norm.rows[0].published_at).toBe("2026-10-18");
+    });
+
     it("generates one Arabic-only sheet for X posts without raw camelCase headers", async () => {
       const buffer = await generateExcelReport({
         metadata: { socialKind: "posts", platform: "x", title: "منشورات منصة إكس", collectedAt: "2026-10-18T00:00:00Z" },

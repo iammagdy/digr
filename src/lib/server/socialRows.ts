@@ -8,6 +8,15 @@
 
 export type SocialRowKind = "comments" | "videos" | "posts";
 
+/** Resolve a stored task to its fixed social export schema when older JSON omitted socialKind. */
+export function inferSocialRowKind(...identifiers: Array<string | null | undefined>): SocialRowKind | null {
+  const value = identifiers.filter(Boolean).join(" ").toLowerCase();
+  if (/comment|comments|تعليق/u.test(value)) return "comments";
+  if (/tiktok|youtube|facebook|instagram/.test(value) && /video|channel|trending|trend/u.test(value)) return "videos";
+  if (/twitter|\bx\b|tweet|post/u.test(value)) return "posts";
+  return null;
+}
+
 /** Lower-cased key without separators, so `Digg_Count`, `diggCount` and `digg count` are the same key. */
 function squash(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9؀-ۿ]/g, "");
@@ -132,7 +141,7 @@ export function normalizeSocialVideo(raw: Record<string, any>): Record<string, a
 /** Fixed public-post schema for X and other post-search sources; provider-native keys stay internal. */
 export function normalizeSocialPost(raw: Record<string, any>): Record<string, any> {
   return clean({
-    source_id: text(pick(raw, ["tweet_id", "post_id", "postId", "id_str", "id", "source_id"])),
+    source_id: text(pick(raw, ["tweet_id", "post_id", "postId", "id_str", "source_id", "id"])),
     text: text(pick(raw, ["text", "full_text", "fullText", "content", "post_text", "tweet_text", "caption", "description"])),
     author_name: text(pick(raw, ["author_name", "authorName", "author", "nickname", "display_name", "name"])),
     username: handle(pick(raw, ["author_username", "authorUsername", "username", "screen_name", "handle"])),

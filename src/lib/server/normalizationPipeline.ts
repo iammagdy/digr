@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { SOCIAL_COLUMN_ORDER, normalizeSocialRow, type SocialRowKind } from "./socialRows";
+import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, type SocialRowKind } from "./socialRows";
 import { toArabicDigits } from "../arabicDigits";
 
 export interface CodebookEntry {
@@ -500,6 +500,7 @@ export function normalizeDataset(
     title?: string;
     jobId?: string;
     targetRequested?: number | string | null;
+    socialKind?: SocialRowKind | null;
   }
 ): NormalizedDataset {
   const meta = rawPayload?.metadata || {};
@@ -533,7 +534,8 @@ export function normalizeDataset(
     ? [cleanProfile]
     : [];
 
-  const socialKind: SocialRowKind | null = meta.socialKind === "comments" || meta.socialKind === "videos" || meta.socialKind === "posts" ? meta.socialKind : null;
+  const declaredSocialKind = options?.socialKind || meta.socialKind || inferSocialRowKind(meta.template, meta.platform, options?.title);
+  const socialKind: SocialRowKind | null = declaredSocialKind === "comments" || declaredSocialKind === "videos" || declaredSocialKind === "posts" ? declaredSocialKind : null;
   const mappedRows = socialKind
     ? rawRows.map((r, i) => {
         // Social rows get one fixed Arabic schema whatever source answered; text is formula-escaped here.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
+import { inferSocialRowKind } from "@/lib/server/socialRows";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,7 @@ export async function GET(
         platform: jobDoc.platform || undefined,
         title: parsedData.metadata?.title || `بيانات ${jobDoc.template_slug || jobDoc.endpoint_id}`,
         jobId,
+        socialKind: inferSocialRowKind(jobDoc.endpoint_id, jobDoc.template_slug, jobDoc.capability_slug, jobDoc.platform),
       });
 
       return NextResponse.json({
