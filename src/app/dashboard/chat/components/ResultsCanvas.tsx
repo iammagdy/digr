@@ -7,7 +7,7 @@ import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTon
 import { formatNumber } from "@/lib/honestDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import { customerResultColumnLabel } from "@/lib/customerResultColumns";
-import { onRequestFormats, producedFormats, type ResultFileIds } from "@/lib/producedFormats";
+import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 
 export interface ExtractedRecord {
   id: string;
@@ -197,7 +197,8 @@ export default function ResultsCanvas({
           tabs={[
             { id: "terminal" as const, label: "سجل النشاط" },
             { id: "table" as const, label: "البيانات" },
-            { id: "pdf" as const, label: "التقرير" },
+            // The report tab exists only when this request produced a PDF.
+            ...(producedFormats(fileIds).includes("pdf") ? [{ id: "pdf" as const, label: "التقرير" }] : []),
             { id: "notes" as const, label: "الملاحظات" },
             { id: "files" as const, label: "الملفات" },
           ]}
@@ -421,21 +422,6 @@ export default function ResultsCanvas({
                 </Button>
               </div>
             ))}
-            {onRequestFormats(fileIds).length > 0 && (
-              <div className="rounded-[20px] border border-dashed border-sand-300 p-4">
-                <p className="text-xs leading-relaxed text-sand-600">صيغ أخرى تُجهَّز عند الطلب من البيانات المحفوظة، دون أي تكلفة إضافية.</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {onRequestFormats(fileIds).map((ext) => {
-                    const label = ext === "xlsx" ? "إكسل" : ext === "pdf" ? "بي دي إف" : "سي إس في";
-                    return (
-                      <Button key={ext} size="sm" variant="secondary" onClick={() => onDownload(ext)} disabled={downloadingKey === ext || !jobId}>
-                        {downloadingKey === ext ? `جاري تجهيز ${label}...` : `جهّز ملف ${label}`}
-                      </Button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 

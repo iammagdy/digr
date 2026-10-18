@@ -412,3 +412,14 @@ export function groupLedgerEntries(entries: RawLedgerEntry[]): GroupedLedgerRow[
   result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return result;
 }
+
+/**
+ * A finished run must not keep saying it is still working. An event that ends with an ellipsis is an in-progress line
+ * («جاري تجهيز ملفات النتائج…», «…جاري بدء معالجة الطلب...»); once the job reached a final state it is superseded by the
+ * completion line, so it is dropped. Page summaries and every other recorded event stay.
+ */
+export function settleTimelineEvents<T extends { textAr: string }>(events: T[], status: string | undefined | null): T[] {
+  const terminal = status === "done" || status === "failed" || status === "cancelled" || status === "completed" || status === "partial";
+  if (!terminal) return events;
+  return events.filter((event) => !/(?:\.{3}|…)\s*$/u.test((event.textAr || "").trim()));
+}

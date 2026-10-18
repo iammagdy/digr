@@ -1635,8 +1635,8 @@ export default function ChatWorkspacePage() {
               onClick={() => setCanvasOpen(true)}
               className="flex items-center gap-2 rounded-full border border-ln2 bg-sf px-4 py-2 text-xs font-semibold text-ink hover:bg-sf2 transition-colors cursor-pointer"
             >
-              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>عرض لوحة النشاط والتنفيذ</span>
+              <span className={`flex h-2 w-2 rounded-full ${activeJob.status === "running" || activeJob.status === "queued" ? "bg-emerald-500 animate-pulse" : "bg-ok"}`} />
+              <span>{activeJob.status === "running" || activeJob.status === "queued" ? "عرض لوحة النشاط والتنفيذ" : "عرض سجل التنفيذ"}</span>
             </button>
           </div>
         )}
