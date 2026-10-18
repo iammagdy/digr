@@ -2348,9 +2348,14 @@ export class LlmClient {
       conversationState: options.conversationState,
       resultColumns: options.resultColumns,
     });
+    // Order matters for the prompt cache (prefix match): fixed rules, then the capability inventory (same for every
+    // user), then this user's profile (same for every turn), then only the small per-turn state, which is never cached.
+    // Together with the tool schema that is four cache breakpoints, the maximum.
     const systemBlocks = [
       { type: "text", text: promptParts.staticText, cache_control: { type: "ephemeral" } },
-      { type: "text", text: promptParts.dynamicText },
+      { type: "text", text: promptParts.capabilityText, cache_control: { type: "ephemeral" } },
+      { type: "text", text: promptParts.profileText, cache_control: { type: "ephemeral" } },
+      { type: "text", text: promptParts.turnText },
     ];
 
     const formattedMessages = sanitizeMessagesForAnthropic(options.messages, {

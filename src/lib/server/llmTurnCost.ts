@@ -50,8 +50,9 @@ export function measurePromptCost(): PromptMeasurement {
   const parts = buildSystemPromptParts({ sanitizedCapabilities: capabilities, userBalancePoints: 500 });
   const build = (charsPerToken: number) => {
     const tokens = (text: string) => Math.ceil(text.length / charsPerToken);
-    const staticTokens = tokens(parts.staticText);
-    const dynamicTokens = tokens(parts.dynamicText);
+    // Cached prefix: fixed rules, capability inventory and the user's profile; only the per-turn state is re-read in full.
+    const staticTokens = tokens(parts.staticText) + tokens(parts.capabilityText) + tokens(parts.profileText);
+    const dynamicTokens = tokens(parts.turnText);
     const scenario = (name: string, historyTokens: number, outputTokens: number, cacheHit: boolean) => ({
       scenario: name,
       usd: estimateTurnCostUsd({ staticTokens, dynamicTokens, historyTokens, outputTokens, cacheHit }),

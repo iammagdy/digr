@@ -21,3 +21,17 @@ export function isPlanAnnouncementOnly(text: string | undefined | null): boolean
 }
 
 export const SLOW_TURN_INTRO_AR = "استغرق الرد وقتًا أطول من المعتاد، فاخترت لك أبسط خطوة تالية.";
+
+/** Earlier turns only need their gist; the newest message is always sent whole. */
+export const HISTORY_ASSISTANT_MAX_CHARS = 500;
+export const HISTORY_USER_MAX_CHARS = 1200;
+
+export function compactHistoryForModel<T extends { role: string; content: string }>(messages: T[]): T[] {
+  const lastIndex = messages.length - 1;
+  return messages.map((message, index) => {
+    if (index === lastIndex) return message;
+    const limit = message.role === "assistant" ? HISTORY_ASSISTANT_MAX_CHARS : message.role === "user" ? HISTORY_USER_MAX_CHARS : Infinity;
+    const content = String(message.content ?? "");
+    return content.length > limit ? { ...message, content: `${content.slice(0, limit).trimEnd()}…` } : message;
+  });
+}

@@ -8,7 +8,7 @@ import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
 import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
 import { detectTopicGathering, hasTopicResearchService, topicSourceQuestion } from "./topicGathering";
-import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
+import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
   getEnabledCapabilitiesWithCoreServices,
   getCatalogCapabilities,
@@ -1945,7 +1945,7 @@ export class ChatHandler {
       // growing as a cumulative stat; the model only sees the compacted history.
       let effectiveConvTokens = totalConvTokens;
       // Greetings and identity questions were answered by code; the model never re-reads them.
-      const modelHistory = dropGreetingAndIdentityTurns(messagesContext);
+      const modelHistory = compactHistoryForModel(dropGreetingAndIdentityTurns(messagesContext));
       let turnMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = modelHistory;
       if (totalConvTokens >= CONTEXT_TOKEN_LIMIT || modelHistory.length > 7) {
         let planSummary: string | undefined;
