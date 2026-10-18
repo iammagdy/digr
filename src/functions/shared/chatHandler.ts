@@ -2,6 +2,7 @@ import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
 import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
+import { planExplanationLinesAr } from "../../lib/planExplanation";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
@@ -2902,6 +2903,18 @@ export class ChatHandler {
           };
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          if (managedQuote.items.length === 1) {
+            const explanation = planExplanationLinesAr({
+              capabilitySlug: managedQuote.items[0]?.capabilitySlug,
+              outputFormats: managedQuote.outputFormats,
+              targetVolumeMax: managedQuote.targetVolumeMax,
+              unitPricePoints: managedQuote.unitPricePoints,
+              expectedPoints: managedQuote.expectedPoints,
+              quotedPoints: managedQuote.quotedPoints,
+              countStated: Boolean(extractNumberFromText(conversationRequestText)),
+            });
+            planSummaryText += `\n- ${explanation.join("\n- ")}`;
+          }
           if (managedQuote.pointsCapConstrained) {
             const requestedUnits = managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
