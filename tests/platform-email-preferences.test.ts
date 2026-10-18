@@ -202,7 +202,7 @@ describe("Platform Email Preferences & Server-Side Enforcement", () => {
       ).resolves.not.toThrow();
 
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("[email:missing_config]")
+        expect.stringContaining("reason=missing_config")
       );
     });
 
@@ -221,7 +221,8 @@ describe("Platform Email Preferences & Server-Side Enforcement", () => {
       const fetchCallArgs = fetchSpy.mock.calls[0];
       expect(fetchCallArgs[0]).toBe("https://example.supabase.co/functions/v1/send-email");
       expect((fetchCallArgs[1] as any)?.signal).toBeDefined();
-      expect(errorSpy).toHaveBeenCalledWith("[email:send_error]");
+      expect(errorSpy).toHaveBeenCalledWith("[email:send_failed] template=welcome reason=network_error");
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain("user@example.com");
     });
   });
 

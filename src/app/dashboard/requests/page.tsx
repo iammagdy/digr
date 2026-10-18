@@ -1,5 +1,6 @@
 "use client";
 
+import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/hooks/useUser";
@@ -461,6 +462,7 @@ export default function RequestsPage() {
               </div>
               {k === "running" && <div className="h-1 overflow-hidden rounded bg-sf2"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>}
               {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{note}</p>}
+              {(k === "refunded" || k === "partial") && <ReportProblemButton jobId={j.$id} className="self-start" />}
               <div className="flex flex-wrap gap-2">
                 {availableFormats.map((ext) => (
                   <button

@@ -1,5 +1,6 @@
 "use client";
 
+import ReportProblemButton from "@/components/ReportProblemButton";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -1576,8 +1577,13 @@ export default function ChatWorkspacePage() {
     ) : null
   ) : null;
 
+  const jobNeedsReport = Boolean(
+    activeJob && isTerminalJobStatus(activeJob.status) &&
+    (activeJob.status === "failed" || (activeJob.requestedRows && activeJob.rowsCollected < activeJob.requestedRows)),
+  );
   const filesNode = (
     <>
+      {activeJob && jobNeedsReport && <ReportProblemButton jobId={activeJob.jobId} className="mt-3" />}
       {activeJob && jobFinished && (
         <FilesSection
           rows={activeJob.rowsCollected}
