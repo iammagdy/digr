@@ -104,4 +104,14 @@ describe.skipIf(!scratchPgTarget())("encrypted provider key store on a real Post
     expect(json(db, `public.admin_set_provider_key_atomic('${ADMIN}','anthropic','${longest}','kkkk')`).success).toBe(true);
     expect(json(db, `public.admin_set_provider_key_atomic('${ADMIN}','anthropic','${shortest}','kkkk')`).success).toBe(true);
   });
+
+  it("deleting an admin account is not blocked by the append-only audit table", () => {
+    const tmp = "00000000-0000-0000-0000-0000000000b2";
+    db.sql(`INSERT INTO auth.users (id,email,raw_app_meta_data) VALUES ('${tmp}','tmp-admin@t','{"role":"admin"}')`);
+    expect(json(db, `public.admin_set_provider_key_atomic('${tmp}','anthropic','${fakeCipher(40)}','tmpk')`).success).toBe(true);
+    db.sql("UPDATE provider_api_keys SET active_set_by = NULL WHERE active_set_by = '" + tmp + "'");
+    db.sql(`DELETE FROM public.profiles WHERE id = '${tmp}'`);
+    db.sql(`DELETE FROM auth.users WHERE id = '${tmp}'`);
+    expect(db.sql(`select count(*) from provider_key_audit where actor_id = '${tmp}'`)).toBe("1");
+  });
 });

@@ -81,7 +81,3 @@ export function validateKeyShape(raw: unknown): string | null {
 export function cleanKey(raw: string): string {
   return raw.trim().replace(/^["']|["']$/g, "").trim();
 }
-
-export function generateEncryptionKeyHint(): string {
-  return "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"";
-}

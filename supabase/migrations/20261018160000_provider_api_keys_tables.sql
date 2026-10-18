@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS public.provider_key_audit (
   provider text NOT NULL CHECK (provider IN ('treg', 'anthropic')),
   action text NOT NULL CHECK (action IN ('set', 'rollback')),
   last4 text CHECK (last4 IS NULL OR char_length(last4) BETWEEN 1 AND 4),
-  actor_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  -- Deliberately no foreign key: an ON DELETE action would try to UPDATE this append-only table and block deleting an
+  -- admin account. The actor id stays as written.
+  actor_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS provider_key_audit_created_idx ON public.provider_key_audit (created_at DESC);
