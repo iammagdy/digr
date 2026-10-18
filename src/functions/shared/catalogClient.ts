@@ -1,3 +1,4 @@
+import { resolveProviderKey } from "../../lib/server/providerKeys";
 import { computeRegistryPointsPerUnit, getRegistryPricingSettings } from "./capabilityRegistry";
 import { SOCIAL_PLATFORM_LABEL_AR, SocialPlatformId, detectSocialIntent, socialCatalogQuery } from "../../lib/socialTasks";
 import { APPROVED_CAPABILITY_CATALOG, Capability } from "./capabilityRegistry";
@@ -362,7 +363,7 @@ export async function getEndpointDetails(
 
   const effectiveFetch = options?.fetchFn || fetch;
   const baseUrl = (process.env.TREG_BASE_URL || "https://treg.to").replace(/\/$/, "");
-  const token = process.env.TREG_TOKEN || process.env.TREG_API_KEY;
+  const token = (await resolveProviderKey("treg")).key || undefined;
 
   if (token || options?.fetchFn || (process.env.NODE_ENV !== "test" && process.env.VITEST !== "true")) {
     try {
@@ -530,7 +531,7 @@ export async function searchCatalog(
 
   const effectiveFetch = options?.fetchFn || fetch;
   const baseUrl = (process.env.TREG_BASE_URL || "https://treg.to").replace(/\/$/, "");
-  const token = process.env.TREG_TOKEN || process.env.TREG_API_KEY;
+  const token = (await resolveProviderKey("treg")).key || undefined;
 
   let rawResults: any[] = [];
 

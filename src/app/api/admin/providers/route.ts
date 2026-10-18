@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin, Query } from "@/lib/server/adminAuth";
 import { getLlmStatusSnapshot } from "@/functions/shared/llmClient";
 import { LLM_KEY_ENV, LLM_MODEL_ENV, last4 } from "@/lib/server/providerEnv";
+import { createAdminClient } from "@/lib/supabase/server";
+import { resolveProviderKey } from "@/lib/server/providerKeys";
+import { getProviderStatus, isLowBalance } from "@/lib/server/providerStatus";
+import { readProviderKeySettings } from "@/lib/server/providerKeyAdmin";
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { SECRET_KEYS, applyEnvUpdates, validateEnvUpdate, type EnvKey } from "@/lib/server/envAdmin";
 
@@ -37,6 +41,14 @@ export async function GET(req: NextRequest) {
     llmCostToday = today.rows.reduce((a: number, r: any) => a + (r.costEgp || 0), 0);
   } catch { /* none */ }
 
+  // Real checks (an authenticated provider call, cached 60 s per server instance), never a flag.
+  const settings = await readProviderKeySettings(createAdminClient());
+  const [tregKey, anthropicKey] = await Promise.all([resolveProviderKey("treg"), resolveProviderKey("anthropic")]);
+  const [tregStatus, anthropicStatus] = await Promise.all([
+    getProviderStatus("treg", tregKey.key, { orgIdOverride: settings.tregOrgId }),
+    getProviderStatus("anthropic", anthropicKey.key),
+  ]);
+
   const snap = getLlmStatusSnapshot(lastLlmUsage);
   const keyEnv = LLM_KEY_ENV[snap.provider] ?? "";
 
@@ -48,7 +60,9 @@ export async function GET(req: NextRequest) {
       keyEnv,
       modelEnv: LLM_MODEL_ENV[snap.provider],
       keyConfigured: snap.provider === "fake" ? false : snap.key_present,
-      keyLast4: keyEnv ? last4(process.env[keyEnv]) : null,
+      keyLast4: snap.provider === "anthropic" ? anthropicKey.last4 : keyEnv ? last4(process.env[keyEnv]) : null,
+      keySource: anthropicKey.source,
+      health: anthropicStatus.health,
       lastUsage: snap.last_llm_usage_timestamp,
       fallbackReason: snap.last_fallback_reason,
       callsToday: llmCallsToday,
@@ -56,8 +70,13 @@ export async function GET(req: NextRequest) {
     },
     treg: {
       live: tregGate.isReady,
-      tokenConfigured: Boolean((process.env.TREG_TOKEN || process.env.TREG_API_KEY || "").trim()),
-      tokenLast4: last4(process.env.TREG_TOKEN || process.env.TREG_API_KEY),
+      tokenConfigured: Boolean(tregKey.key),
+      tokenLast4: tregKey.last4,
+      keySource: tregKey.source,
+      health: tregStatus.health,
+      balance: tregStatus.balance,
+      thresholdUsd: settings.lowBalanceThresholdUsd,
+      lowBalance: isLowBalance(tregStatus.balance, settings.lowBalanceThresholdUsd),
       baseUrl: (process.env.TREG_BASE_URL || "https://treg.to").replace(/\/$/, ""),
       lastCall: lastTregCall,
       callsToday: tregCallsToday,
@@ -79,6 +98,11 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const updates: Array<{ key: EnvKey; value: string }> = Array.isArray(body?.updates) ? body.updates : [];
   if (!updates.length || updates.length > 4) return NextResponse.json({ error: "طلب غير صالح" }, { status: 400 });
+
+  // Keys are never accepted here: they change only through the validated, encrypted key store (provider-keys route).
+  if (updates.some((u) => typeof u?.key === "string" && SECRET_KEYS.has(u.key))) {
+    return NextResponse.json({ error: "لا يمكن تغيير المفاتيح من هنا. استخدم زر «استبدال المفتاح» في تبويب المزود: يتحقق من المفتاح ويحفظه مشفّرًا ويُفعّله فورًا." }, { status: 400 });
+  }
 
   for (const u of updates) {
     const err = typeof u?.key === "string" && typeof u?.value === "string" ? validateEnvUpdate(u.key, u.value) : "طلب غير صالح";

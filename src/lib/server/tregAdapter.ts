@@ -6,6 +6,7 @@ import {
   parseIcypeasCompaniesResponse,
 } from "../../functions/shared/multiStepWorker";
 import { getLiveProviderGateStatus } from "./providerGate";
+import { resolveProviderKey } from "./providerKeys";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import { isSocialCapabilitySlug } from "../socialSources";
 import { runSocialChunk, type SocialCall } from "./socialAdapter";
@@ -658,6 +659,7 @@ function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
 export const defaultTregAdapter: ProviderAdapterFn = async (
   input: ProviderAdapterCallInput
 ): Promise<ProviderAdapterCallOutput> => {
+  await resolveProviderKey("treg");
   const gate = getLiveProviderGateStatus();
   if (!gate.isReady) {
     return {

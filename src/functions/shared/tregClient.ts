@@ -1,3 +1,4 @@
+import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
 export interface TregCallOptions {
   baseUrl?: string;
   token?: string;
@@ -46,9 +47,9 @@ export function sanitizeTregDetail(rawMsg: string, knownSecret?: string): string
     sanitized = sanitized.split(knownSecret.trim()).join("[REDACTED]");
   }
 
-  const envToken = process.env.TREG_TOKEN || process.env.TREG_API_KEY;
-  if (envToken && envToken.trim().length > 4) {
-    sanitized = sanitized.split(envToken.trim()).join("[REDACTED]");
+  const resolvedToken = peekProviderKey("treg");
+  if (resolvedToken && resolvedToken.trim().length > 4) {
+    sanitized = sanitized.split(resolvedToken.trim()).join("[REDACTED]");
   }
 
   return sanitized.trim().slice(0, 300);
@@ -136,11 +137,9 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     "https://treg.to"
   ).replace(/\/$/, "");
 
-  const token =
-    options.token ||
-    process.env.TREG_TOKEN ||
-    process.env.TREG_API_KEY ||
-    "";
+  // One shared resolver: encrypted store first (30 s cache), then the environment variable.
+  const resolvedKey = options.token ? null : await resolveProviderKey("treg");
+  const token = options.token || resolvedKey?.key || "";
 
   // Clean and map params (strictly strip internal control metadata)
   const cleanParams: Record<string, any> = serializeProviderParams(options.params || {}, options.allowedParamKeys);
@@ -252,6 +251,7 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   }
 
   const latencyMs = Date.now() - startTime;
+  if (resolvedKey) reportProviderHttpStatus("treg", response.status, resolvedKey.source);
   const costMicro = parseInt(response.headers.get("x-treg-cost-micro") || "0", 10);
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
