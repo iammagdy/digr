@@ -1,3 +1,4 @@
+import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput } from "./llmClient";
@@ -2704,10 +2705,15 @@ export class ChatHandler {
             planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
           }
           if (!managedQuote.isAffordable) {
-            planSummaryText += `\n- تنبيه: رصيدك الحالي (${toArabicDigits(userBalance)} نقطة) لا يكفي لتغطية كامل العرض.`;
-            if (managedQuote.downscaledOffer) {
-              planSummaryText += `\n- اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
-            }
+            // Low balance: the offer (reduce to what fits, or top up and continue here) is written by code from the quote.
+            const lowBalanceText = lowBalanceMessageAr({
+              balance: userBalance ?? 0,
+              quotedPoints: managedQuote.quotedPoints,
+              expectedPoints: managedQuote.expectedPoints,
+              targetVolumeMax: managedQuote.targetVolumeMax,
+              downscaledOffer: managedQuote.downscaledOffer,
+            });
+            if (lowBalanceText) planSummaryText += `\n- تنبيه الرصيد: ${lowBalanceText}`;
           }
           // The plan response is pre-approval. Keep it entirely server-authored so
           // free-form model text cannot claim that collection has already started.
@@ -2807,10 +2813,14 @@ export class ChatHandler {
                 finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
               }
               if (!managedQuote.isAffordable) {
-                finalContentAr += `\n• تنبيه: رصيدك الحالي (${toArabicDigits(userBalance)} نقطة) لا يكفي لتغطية كامل العرض المحدث.`;
-                if (managedQuote.downscaledOffer) {
-                  finalContentAr += `\n• اقتراح مخفض: يمكننا جمع حتى ${toArabicDigits(managedQuote.downscaledOffer.maxAffordableUnits)} سجل مقابل ${toArabicDigits(managedQuote.downscaledOffer.affordableQuotedPoints)} نقطة تناسب رصيدك الحالي.`;
-                }
+                const lowBalanceText = lowBalanceMessageAr({
+                  balance: userBalance ?? 0,
+                  quotedPoints: managedQuote.quotedPoints,
+                  expectedPoints: managedQuote.expectedPoints,
+                  targetVolumeMax: managedQuote.targetVolumeMax,
+                  downscaledOffer: managedQuote.downscaledOffer,
+                });
+                if (lowBalanceText) finalContentAr += `\n• تنبيه الرصيد: ${lowBalanceText}`;
               }
             }
           } catch (editErr: any) {

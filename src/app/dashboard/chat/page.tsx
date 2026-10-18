@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
+import { topupContinuationMessageAr } from "@/lib/lowBalance";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
@@ -1451,6 +1452,18 @@ export default function ChatWorkspacePage() {
     (Array.isArray(m.clarificationQuestions) ? m.clarificationQuestions.length > 0 : !!m.clarificationQuestions);
   const jobFinished = Boolean(activeJob && isTerminalJobStatus(activeJob.status) && activeJob.status !== "failed");
   const balanceValue = userBalance.status === "ready" ? userBalance.value : null;
+
+  // After an approved top-up the same plan becomes affordable: say so here, once per plan, and keep it approvable.
+  const announcedTopupFor = useRef(new Set<string>());
+  useEffect(() => {
+    if (balanceValue === null || activeJob) return;
+    const lastPlan = [...messages].reverse().find((m) => m.planQuote)?.planQuote;
+    if (!lastPlan || lastPlan.isAffordable || announcedTopupFor.current.has(lastPlan.quoteId)) return;
+    const text = topupContinuationMessageAr({ balance: balanceValue, quotedPoints: lastPlan.quotedPoints });
+    if (!text) return;
+    announcedTopupFor.current.add(lastPlan.quoteId);
+    setMessages((prev) => [...prev, { id: `topup_ok_${lastPlan.quoteId}`, role: "assistant", content: text, createdAt: new Date().toISOString() }]);
+  }, [balanceValue, messages, activeJob]);
   // The real profile name only. The e-mail prefix that the account hook falls back to is not a name (owner decision D2).
   const firstName = String(user?.user_metadata?.name || user?.user_metadata?.full_name || "").trim().split(/\s+/)[0] || "";
   const chatEmpty = messages.length === 0 && !conversationLoading && !conversationLoadError;
