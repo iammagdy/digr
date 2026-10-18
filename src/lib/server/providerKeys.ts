@@ -152,7 +152,9 @@ async function loadFresh(provider: ProviderId): Promise<ResolvedProviderKey> {
 export async function resolveProviderKey(provider: ProviderId, options?: { forceRefresh?: boolean }): Promise<ResolvedProviderKey> {
   const now = nowFn();
   const hit = cache.get(provider);
-  if (!options?.forceRefresh && hit && hit.expiresAt > now) return hit.value;
+  // Only a key that came from the store is held in memory. When the store gave nothing, the environment variable is
+  // read again each time (it is free), so a variable changed at runtime is never hidden behind the cache.
+  if (!options?.forceRefresh && hit && hit.expiresAt > now) return hit.value.source === "store" ? hit.value : fromEnv(provider, hit.value.storeState);
   const pending = inflight.get(provider);
   if (pending && !options?.forceRefresh) return pending;
   const p = loadFresh(provider)
@@ -173,7 +175,7 @@ export async function getProviderKey(provider: ProviderId): Promise<string> {
  */
 export function peekProviderKey(provider: ProviderId): string {
   const hit = cache.get(provider)?.value ?? lastGoodStore.get(provider);
-  if (hit && hit.key) return hit.key;
+  if (hit && hit.source === "store" && hit.key) return hit.key;
   return readEnvProviderKey(provider);
 }
 
