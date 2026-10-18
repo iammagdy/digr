@@ -67,8 +67,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="ar" dir="rtl" className={`${vazirmatn.variable} ${markazi.variable} h-full`} suppressHydrationWarning>
+    <html lang="ar" dir="rtl" translate="no" className={`${vazirmatn.variable} ${markazi.variable} h-full notranslate`} suppressHydrationWarning>
       <head>
+        <meta name="google" content="notranslate" />
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col bg-bg text-ink2 antialiased selection:bg-gold/30 selection:text-ink">
