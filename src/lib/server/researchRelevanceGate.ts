@@ -1,6 +1,7 @@
-import { detectCountryFromText, isoCountryCodeFromName } from "../planParameters";
+import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
+import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 
 export interface ResearchRelevanceContext {
   capabilitySlug: string;
@@ -12,6 +13,10 @@ export interface ResearchRelevanceContext {
 export interface ResearchRelevanceResult {
   decision: RelevanceDecision;
   reasonAr: string;
+  /** Short code for a demotion decided here (for logs and tests; never shown to the customer). */
+  reasonCode?: "no_evidence";
+  /** `own_text`: the match rests on the company's own text (not on the source label); see evaluateDeterministicRelevance. */
+  evidence?: "own_text";
 }
 
 function normalizeText(value: string): string {
@@ -78,7 +83,19 @@ export function evaluateResearchRowRelevance(
     const industry = String(params.industry || params.search || topicFromParams(params) || "").trim();
     const country = String(params.country || params.location || "").trim();
     const result = evaluateDeterministicRelevance(row, country, industry);
-    return result;
+    // A source label alone is never enough to deliver and charge a company: a match must rest on the company's own text,
+    // either the sector rule's own evidence or a keyword of the request found in its name, description or specialties.
+    // The keywords are the request's own (the planner's `query.keyword.include`) plus the English words of the sector the
+    // request names, so a request that carries only its sector label is judged against that sector's words.
+    const activityKeywords = [...companyActivityKeywords(params), ...(detectIndustryFromText(industry).englishKeywords || [])];
+    if (result.decision === "match" && result.evidence !== "own_text" && !hasActivityEvidence(row, activityKeywords)) {
+      return {
+        decision: "uncertain",
+        reasonAr: "تصنيف المصدر وحده لا يكفي ولا يوجد في وصف الشركة ما يؤكد نشاطها المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب",
+        reasonCode: "no_evidence",
+      };
+    }
+    return { decision: result.decision, reasonAr: result.reasonAr, ...(result.evidence ? { evidence: result.evidence } : {}) };
   }
 
   const kindText = `${capabilitySlug} ${endpointId}`;
