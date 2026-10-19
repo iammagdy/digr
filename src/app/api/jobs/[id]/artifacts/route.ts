@@ -245,7 +245,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         {
           success: false,
           blocked: true,
-          error: "خاصية تعديل وتخصيص المخرجات محددة بسعر ١٠ نقاط لكل نسخة، وهي معلقة حالياً بانتظار اعتماد آلية الخصم المالي الذرية (purchase_revision_atomic) من إدارة المنصة لحماية رصيد الحساب.",
+          error: "هذا التعديل غير متاح الآن. أما تغيير شكل الملف فمجاني: شيت لكل عمود، أو ترتيب، أو تصفية، أو اختيار الأعمدة من المحادثة.",
           reason: "revision_charging_pending_owner_approval",
         },
         { status: 409 }

@@ -36,7 +36,6 @@ import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import EmptyChat from "./components/EmptyChat";
 import { FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
-import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 import { getJobIdForQuote } from "@/lib/md5";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
@@ -102,7 +101,6 @@ interface MessageItem {
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   intent?: "chat" | "research";
   planQuote?: PlanQuoteData;
-  revisionQuote?: RevisionQuoteData;
   /** A validated file spec for the result on screen («شيت لكل محافظة»): becomes a download of the shaped file. */
   fileShape?: { spec: Record<string, unknown>; descriptionAr: string };
   clarificationQuestions?: string[];
@@ -604,7 +602,6 @@ export default function ChatWorkspacePage() {
         outputType: data.outputType,
         intent: data.intent,
         planQuote: data.planQuote,
-        revisionQuote: data.revisionQuote,
         fileShape: data.fileShape,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
@@ -696,7 +693,6 @@ export default function ChatWorkspacePage() {
           outputType: data.outputType,
           intent: data.intent,
           planQuote: data.planQuote,
-          revisionQuote: data.revisionQuote,
           clarificationQuestions: data.clarificationQuestions,
           clarificationItems: data.clarificationItems,
           clarificationIntro: data.clarificationIntro,
@@ -1261,32 +1257,6 @@ export default function ChatWorkspacePage() {
     }
   }
 
-  async function handleApplyRevisionQuote(revQuote: RevisionQuoteData) {
-    const targetJobId = revQuote.jobId && revQuote.jobId !== "current" ? revQuote.jobId : activeJob?.jobId;
-    if (!targetJobId) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err_rev_${Date.now()}`,
-          role: "assistant",
-          content: "لم يتم العثور على مهمة مكتملة لتعديلها.",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-      return;
-    }
-    if (!activeJob) {
-      setActiveJob({
-        jobId: targetJobId,
-        status: "done",
-        templateSlug: "research-deliverable",
-        rowsCollected: 0,
-        events: [],
-      });
-    }
-    await submitArtifactAction({ operation: revQuote.operation });
-  }
-
   // Request Academic Methodology (10 points flow)
   function handleGenerateMethodology() {
     if (!activeJob?.jobId || !user) return;
@@ -1584,14 +1554,6 @@ export default function ChatWorkspacePage() {
           <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>
             {customerFacingAssistantCopy(m.content)}
           </p>
-        )}
-        {m.revisionQuote && (
-          <RevisionQuoteCard
-            quote={m.revisionQuote}
-            onApply={handleApplyRevisionQuote}
-            isApplying={artifactEditing}
-            userBalance={balanceValue}
-          />
         )}
         {m.fileShape && activeJob && (
           <div className="mt-3 flex flex-wrap items-center gap-2">

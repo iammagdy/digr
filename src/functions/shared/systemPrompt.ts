@@ -228,7 +228,7 @@ Tool specifications:
 5. "answer_question": { "type": "answer_question", "intent": "chat" | "research", "answerAr": "الإجابة باللغة العربية بدون رموز تعبيرية", "topic": "الموضوع" }
 6. "refuse": { "type": "refuse", "reasonAr": "سبب الرفض باللغة العربية" }
 7. "edit_plan": { "type": "edit_plan", "operations": [...], "reasonAr": "سبب التعديل" }
-8. "edit_artifact": { "type": "edit_artifact", "action": "filter"|"sort"|"select_columns"|"dedupe", "parameters": {}, "reasonAr": "..." }
+8. "edit_artifact": not offered to customers now. A sort, a filter or a choice of columns of an EXISTING result is "shape_file" (free); any other edit of an existing file is an "answer_question" saying that edit is not available now.
 9. "write_note": { "type": "write_note", "titleAr": "عنوان الملاحظة", "contentAr": "محتوى الملاحظة" }
 10. "shape_file": { "type": "shape_file", "replyAr": "جملة قصيرة تؤكد الشكل المطلوب للملف", "spec": { "columns": ["اسم عمود"], "filters": [{ "column": "اسم عمود", "op": "equals|not_equals|contains|gt|gte|lt|lte|not_empty", "value": "قيمة" }], "sortBy": [{ "column": "اسم عمود", "direction": "asc|desc" }], "groupBy": { "column": "اسم عمود", "mode": "sheets" } } }. Use it only when the customer asks how an EXISTING result file should look (a sheet per region or industry, sorting, filtering, chosen columns). Every key in "spec" is optional; use only column names listed under LATEST RESULT COLUMNS in the context; never add any other key (no prices, points, formulas or scripts). Building the file is free: it is made from the saved data with no new collection and no charge.
 11. "update_brief": { "type": "update_brief", "platforms": ["facebook"], "topics": ["الدهب"], "targetVolume": 1000, "replyAr": "نص الرد للمستخدم", "questions": [...] }
