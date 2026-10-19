@@ -1,5 +1,6 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, getRowAdvisor } from "../../../../lib/server/rowReviewAdvisor";
+import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
@@ -514,7 +515,7 @@ export async function POST(req: NextRequest) {
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
-    const adapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
+    const rawAdapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
       userId,
       step: currentStep,
@@ -535,7 +536,17 @@ export async function POST(req: NextRequest) {
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
     });
 
-    const actualCostUsd = Math.max(0, Number(adapterResult.costUsd) || 0);
+    // A page that fails AFTER rows were already delivered ends the collection instead of the job: the rows collected so
+    // far are kept and the existing settlement charges only them (the same way a closed daily budget stops a job).
+    // Nothing was delivered yet -> unchanged: the error below releases the whole reserve with zero charge.
+    const providerFailedAfterDelivery = !rawAdapterResult.ok && effectiveDelivered > 0 && needsProvider && !providerBudgetStopped;
+    const adapterResult = providerFailedAfterDelivery ? noProviderCall : rawAdapterResult;
+    if (providerFailedAfterDelivery) {
+      console.warn(`[worker:provider_failed_after_delivery] jobId=${jobId} delivered=${effectiveDelivered}`);
+    }
+
+    // The provider's real cost is committed whatever the outcome of the page.
+    const actualCostUsd = Math.max(0, Number(rawAdapterResult.costUsd) || 0);
     const providerRows = adapterResult.ok ? (adapterResult.rows || []) : [];
     const requestedDateFrom = typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
     const requestedDateTo = typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
@@ -827,7 +838,7 @@ export async function POST(req: NextRequest) {
         p_actual_cost_usd: actualCostUsd,
         // DM units are provider call attempts, preserving a conservative
         // per-job estimate from route caps across worker chunks.
-        p_units: isPeopleJob ? Number(adapterResult.providerCallCount) || 0 : acceptedRows.length,
+        p_units: isPeopleJob ? Number(rawAdapterResult.providerCallCount) || 0 : acceptedRows.length,
       });
     }
 
@@ -995,7 +1006,9 @@ export async function POST(req: NextRequest) {
         const parts = [
           providerBudgetStopped
             ? "توقف جلب صفحات إضافية بعد بلوغ الحد اليومي الآمن"
-            : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
+            : providerFailedAfterDelivery
+              ? "توقف جلب صفحات إضافية لتعذر الوصول إلى المصدر"
+              : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
           `الجديد ${toArabicDigits(acceptedRows.length)}`,
           `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
@@ -1004,6 +1017,7 @@ export async function POST(req: NextRequest) {
           cursorWouldRepeat ? "توقف الجمع لأن المصدر كرر صفحة سبق استلامها" : null,
           callCapReason && newDeliveredUnits < targetMax ? CALL_CAP_NOTE_AR[callCapReason] : null,
           providerBudgetStopped ? "توقف الجمع عند الحد اليومي الآمن، مع تسليم السجلات المطابقة التي جُمعت" : null,
+          providerFailedAfterDelivery ? "توقف الجمع لأن المصدر لم يستجب، مع تسليم السجلات المطابقة التي جُمعت" : null,
           skipReason,
           ...etaParts,
         ].filter(Boolean) as string[];
@@ -1524,7 +1538,9 @@ export async function POST(req: NextRequest) {
         // Fewer rows than requested: say why in the customer's words, never leave the gap unexplained.
         if (finalRows.length < targetMax) {
           const excluded = relevanceExcludedCount + baselineExcludedCount;
-          const reason = excluded > 0
+          const reason = providerFailedAfterDelivery
+            ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
+            : excluded > 0
             ? `استُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.`
             : callCapReason
               ? CALL_CAP_NOTE_AR[callCapReason]
@@ -1540,7 +1556,7 @@ export async function POST(req: NextRequest) {
         }
 
         const chargedPts = Math.round(Number(settleData?.charged_credits) || 0);
-        const refundedPts = Math.round(Number(settleData?.refunded_credits) || 0);
+        const refundedPts = refundedPointsFromSettle(settleData);
         if (refundedPts > 0) {
           await adminClient.from("job_events").insert({
             job_id: jobId,
@@ -1594,7 +1610,7 @@ export async function POST(req: NextRequest) {
             Delivered: toArabicDigits(finalRows.length),
             Requested: toArabicDigits(targetMax),
             Charged: toArabicDigits(chargedPoints),
-            Refunded: toArabicDigits(Math.round(Number(settleData?.refunded_credits) || 0)),
+            Refunded: toArabicDigits(refundedPointsFromSettle(settleData)),
             JobURL: `${(process.env.NEXT_PUBLIC_SITE_URL || "https://diger.tech").replace(/\/+$/, "")}/dashboard/requests?job=${encodeURIComponent(jobId)}`,
           }, `job-done:${jobId}`);
         }
