@@ -165,6 +165,7 @@ export async function POST(req: NextRequest) {
       plan: updatedPlan,
       userBalance,
       capabilities: allCapabilities,
+      enforceScope: true,
     });
     // Supabase stores live quotes as `quoted`, while the shared quote builder
     // returns the Appwrite-era `proposed` label. The editor immediately swaps

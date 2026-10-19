@@ -2960,6 +2960,7 @@ export class ChatHandler {
             },
             userBalance: userBalance ?? 0,
             capabilities: validationCaps,
+            enforceScope: true,
           });
           tQuoteMs = Date.now() - tQuoteStart;
           quoteMs = tQuoteMs;
@@ -3125,6 +3126,7 @@ export class ChatHandler {
                 plan: updatedPlan,
                 userBalance: userBalance ?? 0,
                 capabilities: allCapabilities,
+                enforceScope: true,
               });
 
               planQuoteData = {

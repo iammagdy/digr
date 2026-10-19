@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
+import { quoteScopeGaps, planScopeRows } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { socialSubjectForDisplay } from "@/lib/socialTasks";
@@ -179,7 +180,7 @@ export default function PlanQuoteCard({
   }, []);
 
   const baseApprovalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
-  const planComplete = isQuotePlanComplete(quote.items);
+  const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
   const approvalState = { ...baseApprovalState, canApprove: baseApprovalState.canApprove && planComplete };
   const expired = !approvalState.canApprove;
   const balance = available ?? quote.userBalance;
@@ -266,26 +267,16 @@ export default function PlanQuoteCard({
         </p>
       )}
 
-      {/* Interpreted Parameters: Country, Industry, Target Volume */}
+      {/* Interpreted Parameters: Chips from planScopeRows */}
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px]">
-        <div className="flex items-center gap-1.5">
-          <span className="text-mut">الدولة / النطاق:</span>
-          <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
-            {interpreted.countryAr}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-mut">{scopeLabel}</span>
-          <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
-            {displayIndustry}
-          </span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-mut">العدد المطلوب:</span>
-          <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
-            حتى {formatAr(quote.targetVolumeMax)} سجل
-          </span>
-        </div>
+        {planScopeRows(quote.items, conversationTitle).map((chip, idx) => (
+          <div key={idx} className="flex items-center gap-1.5">
+            <span className="text-mut">{chip.label}</span>
+            <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">
+              {chip.value}
+            </span>
+          </div>
+        ))}
       </div>
 
       {/* Execution Steps */}
