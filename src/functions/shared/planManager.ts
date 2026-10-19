@@ -26,7 +26,7 @@ import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINT
 import { callAtomicOrFallback } from "./atomicRpc";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
-import { containsMissingToken, quoteScopeGaps } from "../../lib/quoteScopeGaps";
+import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -983,7 +983,7 @@ export async function createAndSaveManagedQuote(
         conversationId,
         userId,
         status: "proposed",
-        summaryAr: plan.summaryAr,
+        summaryAr: stripMissingValueWords(plan.summaryAr),
         itemsJson: JSON.stringify(serializeStoredPlan(plan)),
         targetVolumeMax: totalVolumeMax,
         unitPricePoints: quoteUnitPricePoints,
@@ -999,7 +999,7 @@ export async function createAndSaveManagedQuote(
     quoteId,
     status: "proposed",
     planHash,
-    summaryAr: plan.summaryAr,
+    summaryAr: stripMissingValueWords(plan.summaryAr),
     items: plan.items,
     outputFormats: plan.outputFormats || ["xlsx", "pdf", "csv"],
     targetVolumeMax: totalVolumeMax,
