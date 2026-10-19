@@ -507,7 +507,8 @@ async function enrichTregPeopleRows(
           endpointId: "treg.people.email.find", method: "POST", params: identity,
           userId: input.userId, jobId: input.jobId, stepId: `people_email_${input.step}_${index}`,
           page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
-        }, 0);
+          timeoutMs: 12000,
+        }, 0, input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined);
         costMicro += Math.max(0, Number(result.costMicro) || 0);
         if (result.tregCallId) callIds.push(result.tregCallId);
         if (!result.ok) {
@@ -533,7 +534,8 @@ async function enrichTregPeopleRows(
           endpointId: "treg.people.phone.find", method: "POST", params: phoneIdentity,
           userId: input.userId, jobId: input.jobId, stepId: `people_phone_${input.step}_${index}`,
           page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
-        }, 0);
+          timeoutMs: 12000,
+        }, 0, input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined);
         costMicro += Math.max(0, Number(result.costMicro) || 0);
         if (result.tregCallId) callIds.push(result.tregCallId);
         if (!result.ok) {
@@ -586,6 +588,8 @@ export interface ProviderAdapterCallInput {
   deliveredSoFar: number;
   /** Remaining per-job decision-maker spend ceiling, set by the worker. */
   decisionMakerSpendBudgetUsd?: number;
+  /** Deadline timestamp in milliseconds for chunk execution. */
+  deadlineMs?: number;
 }
 
 export interface ProviderAdapterCallOutput {
@@ -622,15 +626,21 @@ export function getInjectedProviderAdapter(): ProviderAdapterFn | null {
   return injectedTestAdapter;
 }
 
+export interface TregRetryControl {
+  deadlineMs?: number;
+}
+
 export async function executeTregCallWithRetry(
   options: TregCallOptions,
-  maxRetries: number = 3
+  maxRetries: number = 3,
+  control?: TregRetryControl
 ): Promise<TregCallResult> {
   // First real TikTok profile test requires exactly ONE outbound provider attempt maximum
   const isSingleAttemptEndpoint = options.endpointId === "tikhub.tiktok.user.profile";
   const effectiveMaxRetries = isSingleAttemptEndpoint ? 0 : maxRetries;
   let attempt = 0;
   let lastResult: TregCallResult | null = null;
+  const timeoutMs = options.timeoutMs ?? 0;
 
   while (attempt <= effectiveMaxRetries) {
     lastResult = await executeTregCall(options);
@@ -649,7 +659,17 @@ export async function executeTregCallWithRetry(
     }
 
     attempt++;
-    const backoffMs = Math.min(1000, 50 * Math.pow(2, attempt - 1));
+    const backoffTable = [2000, 4000, 8000];
+    let backoffMs = backoffTable[attempt - 1] ?? 8000;
+    const retryAfter = (lastResult as any)?.retryAfterMs;
+    if (typeof retryAfter === "number" && retryAfter > 0) {
+      backoffMs = Math.min(8000, retryAfter);
+    }
+
+    if (control?.deadlineMs && Date.now() + backoffMs + timeoutMs > control.deadlineMs) {
+      return lastResult;
+    }
+
     await new Promise((r) => setTimeout(r, backoffMs));
   }
 
@@ -683,6 +703,7 @@ function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
         timeoutMs: context.timeoutMs,
       },
       1,
+      input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
     );
     return {
       ok: callResult.ok,
@@ -851,8 +872,10 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       stepId: `step_${input.step}`,
       page,
       routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
+      timeoutMs: 12000,
     },
-    retries
+    retries,
+    input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
   );
 
   let costMicro = Math.max(0, Number(callResult.costMicro) || 0);

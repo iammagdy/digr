@@ -212,6 +212,9 @@ function buildReleaseFailedResponse(
 }
 
 export async function POST(req: NextRequest) {
+  const routeStart = Date.now();
+  const deadlineMs = routeStart + 45_000;
+
   // 1. Authenticate with CRON_SECRET (timing-safe)
   if (!verifyCronSecret(req)) {
     return NextResponse.json(
@@ -528,6 +531,7 @@ export async function POST(req: NextRequest) {
       remainingNeeded: remainingUnits,
       targetVolumeMax: targetMax,
       deliveredSoFar: effectiveDelivered,
+      deadlineMs,
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
     });
 
