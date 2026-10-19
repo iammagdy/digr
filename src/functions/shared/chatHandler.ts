@@ -1209,6 +1209,15 @@ export function buildClarificationPresentation(
   };
 }
 
+/** What one chat turn has spent and whether its llm_usage row is already written (see ChatHandler.handleUserMessage). */
+interface TurnUsageLog {
+  written: boolean;
+  usage: { inputTokens: number; outputTokens: number; costUsd: number; calls: number };
+  model: string;
+  conversationId?: string;
+  messageId?: string;
+}
+
 export class ChatHandler {
   private tables: TablesDB | any;
   private llm: LlmClient;
@@ -1220,7 +1229,78 @@ export class ChatHandler {
     this.llm = new LlmClient();
   }
 
+  /**
+   * One chat turn. Every turn that reaches the handler leaves exactly one llm_usage row: the normal path writes its own
+   * (with the turn's summed model usage); a turn answered by code (greeting, identity, studies refusal, deterministic
+   * question, file-shaping notice, result follow-up) or ended by an error gets one here, so rows reconcile with messages.
+   */
   async handleUserMessage(input: ChatHandlerInput): Promise<ChatHandlerResponse> {
+    const turn: TurnUsageLog = { written: false, usage: { inputTokens: 0, outputTokens: 0, costUsd: 0, calls: 0 }, model: "" };
+    const startedAt = Date.now();
+    let response: ChatHandlerResponse;
+    try {
+      response = await this.handleUserMessageInner(input, turn);
+    } catch (err) {
+      await this.logTurnUsageIfMissing(input, turn, "handler_error", startedAt);
+      throw err;
+    }
+    await this.logTurnUsageIfMissing(input, turn, response.outputType, startedAt);
+    return response;
+  }
+
+  private async logTurnUsageIfMissing(input: ChatHandlerInput, turn: TurnUsageLog, reason: string, startedAt: number): Promise<void> {
+    if (turn.written || input.isGuest || !input.userId) return;
+    const sb =
+      this.tables && typeof (this.tables as any).from === "function"
+        ? (this.tables as any)
+        : null;
+    const modelCalled = turn.usage.calls > 0;
+    const model = modelCalled ? (turn.model || "unknown") : "deterministic";
+    const costUsd = Number(turn.usage.costUsd.toFixed(6));
+    try {
+      if (sb) {
+        await sb.from("llm_usage").insert({
+          user_id: input.userId,
+          tokens_in: turn.usage.inputTokens,
+          tokens_out: turn.usage.outputTokens,
+          model,
+          latency_ms: Math.max(0, Date.now() - startedAt),
+          reason,
+          cost_usd: costUsd,
+          created_at: new Date().toISOString(),
+        });
+      } else {
+        await this.tables.createRow({
+          databaseId: "digr",
+          tableId: "llm_usage",
+          rowId: ID.unique(),
+          data: {
+            conversationId: turn.conversationId || input.conversationId || "",
+            userId: input.userId,
+            messageId: turn.messageId || "",
+            model,
+            inputTokens: turn.usage.inputTokens,
+            outputTokens: turn.usage.outputTokens,
+            costUsd,
+            createdAt: new Date().toISOString(),
+          },
+        });
+      }
+      turn.written = true;
+      // The normal path records the provider cost itself; only a turn that ended in an error after model calls needs it here.
+      if (modelCalled && reason === "handler_error") {
+        await logProviderCost(this.tables, {
+          provider: "llm",
+          units: turn.usage.inputTokens + turn.usage.outputTokens,
+          costUsd: turn.usage.costUsd,
+        });
+      }
+    } catch (usageErr) {
+      console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
+    }
+  }
+
+  private async handleUserMessageInner(input: ChatHandlerInput, turn: TurnUsageLog): Promise<ChatHandlerResponse> {
     const { userId, message, testScenario } = input;
     const nowIso = new Date().toISOString();
     const turnStartTime = Date.now();
@@ -1414,6 +1494,8 @@ export class ChatHandler {
       // 3. Save User Message & 4. Assistant Placeholder
       userMsgId = ID.unique();
       assistantMsgId = ID.unique();
+      turn.conversationId = conversationId;
+      turn.messageId = assistantMsgId;
       const tSbMsgStart = Date.now();
 
       if (sb) {
@@ -2310,7 +2392,7 @@ export class ChatHandler {
       const tLlmStart = Date.now();
       // Every model call of this turn is added here and the SUM is logged (a turn with a catalog search or a retry makes
       // several calls; only the last one used to be recorded).
-      const turnUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, calls: 0 };
+      const turnUsage = turn.usage;
       const fastIntent = extractRequestIntent(conversationRequestText);
       const fastPlanOutput = (this.deterministicPlanning && !input.isGuest && !isGreeting && !isGeneralQuestion && !isFileShapingTurn && !isTestSearchScenario && !testScenario)
         ? buildDeterministicPlanFromIntent(fastIntent, conversationRequestText, brief, allCatalogCapabilities as Capability[])
@@ -2347,6 +2429,7 @@ export class ChatHandler {
       });
       llmMs += Date.now() - tLlmStart;
       if (!fastPlanOutput) {
+        turn.model = llmResult.model;
         turnUsage.calls += 1;
         turnUsage.inputTokens += llmResult.inputTokens || 0;
         turnUsage.outputTokens += llmResult.outputTokens || 0;
@@ -2388,6 +2471,7 @@ export class ChatHandler {
           testScenario,
         });
         llmMs += Date.now() - tLlmRepeatStart;
+        turn.model = llmResult.model;
         turnUsage.calls += 1;
         turnUsage.inputTokens += llmResult.inputTokens || 0;
         turnUsage.outputTokens += llmResult.outputTokens || 0;
@@ -3667,7 +3751,8 @@ export class ChatHandler {
             tokens_out: turnUsage.outputTokens,
             model: llmResult.model,
             latency_ms: Math.max(0, Date.now() - tLlmStart),
-            reason: output.type,
+            // A provider-error refusal carries its short code (for example refuse:timeout); never shown to the customer.
+            reason: output.type === "refuse" && llmResult.fallbackCode ? `refuse:${llmResult.fallbackCode}` : output.type,
             cost_usd: Number(turnUsage.costUsd.toFixed(6)),
             created_at: new Date().toISOString(),
           });
@@ -3688,6 +3773,7 @@ export class ChatHandler {
             },
           });
         }
+        turn.written = true;
         writesMs += Date.now() - tUsageStart;
       } catch (usageErr) {
         console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
