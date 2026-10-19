@@ -229,6 +229,72 @@ export function looksLikeFileShapingRequest(text: string): boolean {
   return /(?:شيت|ورقة|ورقه|تبويب|ملف)\s+(?:منفصل\s+|مستقل\s+)?لكل\s+\p{L}+|(?:قسّم|قسم|قسمي|وزّع|وزع)\s+(?:لي\s+)?(?:ال)?(?:ملف|اكسل|إكسل|شيت|نتايج|نتائج)|رتّب(?:ها|ه|لي)?\s+(?:الملف\s+|الشيت\s+)?حسب|رتب(?:ها|ه|لي)?\s+(?:الملف\s+|الشيت\s+)?حسب|فلتر(?:ها|ه)?\s+(?:الملف\s+|الشيت\s+)?(?:على|حسب|ب)|(?:سيب|خلي|اعرض|اظهر|أظهر)\s+(?:لي\s+)?(?:بس\s+|فقط\s+)?(?:الأعمدة|الاعمدة|عمود)/u.test(t);
 }
 
+/** Arabic word without diacritics or the article, with the usual letter variants folded, for matching column words. */
+function arabicWordKey(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ة/g, "ه")
+    .replace(/ى/g, "ي")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^ال(?=\p{L})/u, "");
+}
+
+/** The words a customer uses for a column, mapped to the key that column has in a delivered file. */
+const GROUP_WORD_KEYS: Record<string, string> = {
+  "مدينه": "city", "مدن": "city",
+  "دوله": "country", "دول": "country", "بلد": "country", "بلدان": "country",
+  "نشاط": "industry", "انشطه": "industry", "مجال": "industry", "مجالات": "industry", "قطاع": "industry", "قطاعات": "industry", "صناعه": "industry",
+  "منصه": "platform", "منصات": "platform",
+  "لغه": "language", "لغات": "language",
+};
+
+const GROUP_PHRASES: RegExp[] = [
+  /(?:شيتات|شيت|أوراق|اوراق|ورقة|ورقه|تبويبات|تبويب)\s+(?:منفصل(?:ة|ه)?\s+|مستقل(?:ة|ه)?\s+)?(?:لكل|حسب|بحسب|على\s+حسب)\s+([^،,.!؟?\n]+)/u,
+  /(?:قسّم|قسم|قسمي|وزّع|وزع)(?:\s+لي)?\s+(?:(?:ال)?(?:ملف|اكسل|إكسل|شيت|نتايج|نتائج)\s+)?(?:(?:على\s+)?(?:شيتات|أوراق|اوراق|تبويبات)\s+)?(?:حسب|بحسب|على\s+حسب|لكل)\s+([^،,.!؟?\n]+)/u,
+];
+
+/**
+ * The column a customer names in a «sheet per X» request («قسّم الملف شيت لكل مدينة» gives «مدينة»), or null when the
+ * request is anything else (a sort, a filter, a column choice, or a split mixed with another shaping step).
+ */
+export function shapingGroupName(text: string): string | null {
+  const t = String(text || "").trim();
+  if (!t || t.length > 300) return null;
+  if (/رتّ?ب|فلتر|الأعمدة|الاعمدة|عمود|(?:^|\s)(?:و|ثم)\s*(?:اعرض|سيب|خلي)/u.test(t)) return null;
+  for (const pattern of GROUP_PHRASES) {
+    const hit = pattern.exec(t);
+    if (!hit) continue;
+    const name = hit[1].replace(/\s*(?:لو\s+سمحت|من\s+فضلك|please)\s*$/iu, "").trim();
+    if (!name || name.length > FILE_SPEC_LIMITS.maxColumnNameLength || name.split(/\s+/).length > 4) return null;
+    return name;
+  }
+  return null;
+}
+
+/** The real column a named word points to: its key or Arabic title, else the usual word for a known column that exists. */
+export function resolveGroupColumn(name: string, columns: DatasetColumn[]): DatasetColumn | null {
+  const direct = resolveColumn(name, columns);
+  if (direct) return direct;
+  const key = GROUP_WORD_KEYS[arabicWordKey(name)];
+  return (key && columns.find((c) => c.key === key)) || null;
+}
+
+/**
+ * «Sheet per X» read by code against the REAL columns of the delivered file: no model call, no guessing. A column that
+ * exists gives a spec with its real key; one that does not gives a spec naming the word as written, which the usual
+ * validation turns into ONE question listing the columns the file has. Null when the text is not a split request.
+ */
+export function deterministicShapeSpec(text: string, columns: DatasetColumn[]): FileSpec | null {
+  const name = shapingGroupName(text);
+  if (!name) return null;
+  const column = resolveGroupColumn(name, columns);
+  return { version: 1, groupBy: { column: column ? column.key : name, mode: "sheets" } };
+}
+
 /** Plain-Arabic description of what the spec will do, shown to the customer before they download. */
 export function describeFileSpecAr(spec: FileSpec, columns: DatasetColumn[]): string {
   const title = (key: string) => columns.find((c) => c.key === key)?.titleAr || key;

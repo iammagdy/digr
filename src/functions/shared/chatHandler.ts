@@ -1,6 +1,6 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
-import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
+import { FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { planExplanationLinesAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
@@ -2397,15 +2397,21 @@ export class ChatHandler {
       const fastPlanOutput = (this.deterministicPlanning && !input.isGuest && !isGreeting && !isGeneralQuestion && !isFileShapingTurn && !isTestSearchScenario && !testScenario)
         ? buildDeterministicPlanFromIntent(fastIntent, conversationRequestText, brief, allCatalogCapabilities as Capability[])
         : null;
-      if (!fastPlanOutput) modelCallCount++;
+      // «Sheet per X» about a delivered file is read by code against the file's REAL columns: no model call and no guessing.
+      // (A card answer to the column question still goes to the model, as before.) Anything else about the file is the model's.
+      const shapeSpec = isFileShapingTurn && !isCardAnswer && !isTestSearchScenario && !testScenario && shapingColumns.length > 0
+        ? deterministicShapeSpec(shapingText, shapingColumns)
+        : null;
+      const codeBuiltOutput: any = fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
+      if (!codeBuiltOutput) modelCallCount++;
       const resolvedDisplayName =
         (userProfile?.name && String(userProfile.name).trim()) ||
         (userProfile?.full_name && String(userProfile.full_name).trim()) ||
         (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         "";
 
-      let llmResult = fastPlanOutput
-        ? ({ output: fastPlanOutput, inputTokens: 0, outputTokens: 0, costUsd: 0, model: "deterministic", promptVersion: "intent-1", textBlockAr: "" } as LlmCallResult)
+      let llmResult = codeBuiltOutput
+        ? ({ output: codeBuiltOutput, inputTokens: 0, outputTokens: 0, costUsd: 0, model: "deterministic", promptVersion: fastPlanOutput ? "intent-1" : "shape-1", textBlockAr: "" } as LlmCallResult)
         : await this.llm.executeTurn({
         messages: turnMessages,
         sanitizedCapabilities: sanitizedCaps,
@@ -2428,7 +2434,7 @@ export class ChatHandler {
         testScenario,
       });
       llmMs += Date.now() - tLlmStart;
-      if (!fastPlanOutput) {
+      if (!codeBuiltOutput) {
         turn.model = llmResult.model;
         turnUsage.calls += 1;
         turnUsage.inputTokens += llmResult.inputTokens || 0;
@@ -2700,7 +2706,7 @@ export class ChatHandler {
         if (checked.ok) {
           (output as any).spec = checked.spec;
         } else if ((output as any).spec?.groupBy) {
-          const choices = columnChoicesAr(shapingColumns);
+          const choices = columnChoicesAr(shapingColumns, 8, true);
           const question = {
             id: "shape_column_required",
             text: "بأي عمود تريد تقسيم الملف إلى شيتات؟",

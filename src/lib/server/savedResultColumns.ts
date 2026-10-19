@@ -64,9 +64,13 @@ export async function loadLatestResultColumns(
   }
 }
 
-/** One question's worth of choices: the columns a customer can actually split or sort by, longest text fields last. */
-export function columnChoicesAr(columns: DatasetColumn[], limit = 8): string[] {
+/** Contact details, links, record ids and status flags: a sheet per one of these is never what a customer means. */
+const NOT_A_GROUPING_COLUMN = /(?:^|_)(?:phone|email|url|website|linkedin|id)(?:_|$)|_status$/;
+
+/** One question's worth of choices: the columns a customer can actually split or sort by, longest text fields last. With `forGrouping` the contact, link, id and status columns are left out. */
+export function columnChoicesAr(columns: DatasetColumn[], limit = 8, forGrouping = false): string[] {
   const long = /^(?:text|comment_text|description|bio|methodology)$/;
-  const ordered = [...columns.filter((c) => !long.test(c.key)), ...columns.filter((c) => long.test(c.key))];
+  const usable = forGrouping ? columns.filter((c) => !NOT_A_GROUPING_COLUMN.test(c.key)) : columns;
+  const ordered = [...usable.filter((c) => !long.test(c.key)), ...usable.filter((c) => long.test(c.key))];
   return [...new Set(ordered.map((c) => c.titleAr))].slice(0, limit);
 }
