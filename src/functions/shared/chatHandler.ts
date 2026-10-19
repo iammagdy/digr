@@ -1,6 +1,7 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
-import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
+import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
+import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { planExplanationLinesAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
@@ -788,7 +789,7 @@ export function buildAutoPlanProposal(
     : isAccountProfileRequest
       ? `بيانات الحساب العام ${topicLabel} على ${platformLabel}`
       : isCompanySearch
-      ? `استخراج بيانات ${toArabicDigits(volume)} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)} في ${countryNameAr}`
+      ? `استخراج بيانات ${toArabicDigits(volume)} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)}${countryNameAr ? ` في ${countryNameAr}` : ""}`
       : `جمع واستخراج ${toArabicDigits(volume)} سجل حول ${topicLabel} من ${platformLabel}`;
 
   return {
@@ -1230,6 +1231,8 @@ interface TurnUsageLog {
   messageId?: string;
 }
 
+const SHAPING_NEVER_A_PLAN_AR = "هذا الطلب عن شكل ملفك الحالي ولا يحتاج خطة جديدة، ولن يُخصم عليه أي رصيد. اكتب مثلًا: رتب الملف حسب المدينة، أو شيت لكل مدينة.";
+
 const REVISION_UNAVAILABLE_AR = "هذا التعديل غير متاح الآن. أما تغيير شكل الملف فمجاني: شيت لكل عمود، أو ترتيب، أو تصفية، أو اختيار الأعمدة التي تريدها.";
 
 /** The file spec a model-written sort, filter or column choice stands for, or null for any other edit. */
@@ -1360,6 +1363,8 @@ export class ChatHandler {
     let userMsgId = "";
     let assistantMsgId = "";
     let messagesContext: PriorConversationMessage[] = [];
+    /** What the customer actually typed in earlier turns (card answers stay as their stored payload). */
+    let rawUserHistoryTexts: string[] = [];
     let followupBrief: any = {};
 
     try {
@@ -1642,7 +1647,9 @@ export class ChatHandler {
     // How the delivered file should look («قسّم الملف شيت لكل محافظة»): a turn about the saved result, never a new research
     // request. The columns come from the page, or from the customer's latest delivered result when the page sent none.
     const shapingText = formatClarificationMessageForAssistant(message);
-    const looksShaping = isFileShapingMessage(shapingText);
+    // The customer's answer to one of our shaping questions («أي عمود؟»): resolved in code, never by the model and never as research.
+    const shapeAnswer = shapeAnswerFromMessage(message);
+    const looksShaping = isFileShapingMessage(shapingText) || Boolean(shapeAnswer);
     let shapingColumns = sanitizeResultColumns(input.resultColumns);
     let deliveredResultJobId: string | null = null;
     if (looksShaping && shapingColumns.length === 0 && sb) {
@@ -1652,7 +1659,7 @@ export class ChatHandler {
       deliveredResultJobId = saved.jobId;
     }
     // Only a message about the file, with a delivered result to shape; a research request that merely names a layout ("... ملف لكل منصة") is not one.
-    const isFileShapingTurn = looksShaping && !isStandaloneResearchRequest(shapingText) && (shapingColumns.length > 0 || Boolean(deliveredResultJobId));
+    const isFileShapingTurn = looksShaping && (Boolean(shapeAnswer) || !isStandaloneResearchRequest(shapingText)) && (shapingColumns.length > 0 || Boolean(deliveredResultJobId));
     const isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
@@ -2148,6 +2155,9 @@ export class ChatHandler {
           .order("created_at", { ascending: false })
           .limit(10);
         if (histErr) throw histErr;
+        rawUserHistoryTexts = [...(rows || [])].reverse()
+          .filter((r: any) => r.role === "user" && r.id !== assistantMsgId)
+          .map((r: any) => String(r.content_ar || ""));
         messagesContext = [...(rows || [])].reverse()
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
@@ -2172,6 +2182,9 @@ export class ChatHandler {
           ],
         });
 
+        rawUserHistoryTexts = [...historyRes.rows].reverse()
+          .filter((r: any) => r.role === "user" && r.$id !== assistantMsgId)
+          .map((r: any) => String(r.content || ""));
         messagesContext = [...historyRes.rows].reverse()
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
@@ -2433,7 +2446,24 @@ export class ChatHandler {
       const shapeSpec = isFileShapingTurn && !isCardAnswer && !isTestSearchScenario && !testScenario && shapingColumns.length > 0
         ? deterministicShapeSpec(shapingText, shapingColumns)
         : null;
-      const codeBuiltOutput: any = fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
+      // The answer to a shaping question is code too: the chosen column plus the step the question belongs to (the sort
+      // direction and the split are in the question id; a filter and a column choice come from the customer's own request).
+      // It never reaches the model and never becomes a plan, whatever the history holds.
+      let shapeAnswerOutput: any = null;
+      let shapeIgnoredNames: string[] = [];
+      if (shapeAnswer && !isTestSearchScenario && !testScenario) {
+        const originalText = [...rawUserHistoryTexts].reverse().find((text) => text && text !== message && !shapeAnswerFromMessage(text) && isFileShapingMessage(formatClarificationMessageForAssistant(text)));
+        const resolution = shapingColumns.length > 0
+          ? resolveShapeAnswer({ questionId: shapeAnswer.questionId, value: shapeAnswer.value, originalText, columns: shapingColumns })
+          : { ok: false as const, errorAr: "لا أستطيع قراءة أعمدة ملفك الآن. حاول مرة أخرى بعد قليل. لن يُخصم أي رصيد." };
+        if (resolution.ok) {
+          shapeAnswerOutput = { type: "shape_file", replyAr: "تمام", spec: resolution.spec };
+          shapeIgnoredNames = resolution.ignored;
+        } else {
+          shapeAnswerOutput = { type: "answer_question", answerAr: resolution.errorAr };
+        }
+      }
+      const codeBuiltOutput: any = shapeAnswerOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
       if (!codeBuiltOutput) modelCallCount++;
       const resolvedDisplayName =
         (userProfile?.name && String(userProfile.name).trim()) ||
@@ -2742,15 +2772,13 @@ export class ChatHandler {
         const checked = validateFileSpec((output as any).spec, shapingColumns);
         if (checked.ok) {
           (output as any).spec = checked.spec;
-        } else if ((output as any).spec?.groupBy || (output as any).spec?.sortBy?.length) {
-          const isSort = !(output as any).spec?.groupBy;
-          const sortDesc = isSort && (output as any).spec.sortBy[0]?.direction === "desc";
-          const choices = columnChoicesAr(shapingColumns, 8, !isSort);
-          const questionText = isSort ? "بأي عمود تريد ترتيب الملف؟" : "بأي عمود تريد تقسيم الملف إلى شيتات؟";
+        } else if (shapeQuestionForSpec((output as any).spec, shapingColumns)) {
+          const shapeQuestion = shapeQuestionForSpec((output as any).spec, shapingColumns)!;
+          const choices = columnChoicesAr(shapingColumns, 8, shapeQuestion.id === "shape_column_required");
           const question = {
-            id: isSort ? (sortDesc ? "shape_sort_desc_required" : "shape_sort_asc_required") : "shape_column_required",
-            text: questionText,
-            question: questionText,
+            id: shapeQuestion.id,
+            text: shapeQuestion.textAr,
+            question: shapeQuestion.textAr,
             type: "single" as const,
             options: choices,
             allowOther: false,
@@ -2763,6 +2791,13 @@ export class ChatHandler {
           finalContentAr = `${checked.errorAr} الأعمدة المتاحة: ${columnChoicesAr(shapingColumns, 10).map((c) => `«${c}»`).join("، ")}.`;
           output = { type: "answer_question", answerAr: finalContentAr } as any;
         }
+      }
+
+      // A turn about the delivered file, and every answer to a shaping question, can never become a priced plan: the
+      // shape of a file is free, and a plan would reserve points the customer never asked to spend.
+      if (isFileShapingTurn && (output.type === "propose_plan" || output.type === "edit_plan")) {
+        finalContentAr = SHAPING_NEVER_A_PLAN_AR;
+        output = { type: "answer_question", answerAr: SHAPING_NEVER_A_PLAN_AR } as any;
       }
 
       // The language model can incorrectly suggest an unrelated alternative for a
@@ -3611,7 +3646,7 @@ export class ChatHandler {
           const hintColumns = shapingColumns;
           const descriptionAr = describeFileSpecAr(parsedSpec.data, hintColumns);
           fileShapeData = { spec: parsedSpec.data, descriptionAr };
-          finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.`;
+          finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.${shapeIgnoredNames.length ? ` لم أجد في ملفك: ${shapeIgnoredNames.map((name) => `«${name}»`).join("، ")} فتجاهلتها.` : ""}`;
         }
       } else if (output.type === "edit_artifact") {
         // The paid revision service is not offered: no price, no card. Shaping the file is free and is answered above.
@@ -3654,7 +3689,7 @@ export class ChatHandler {
 
       // 9. Update Assistant Message to 'ready'
       currentStep = "assistant_message_save";
-      finalContentAr = scrubAssistantIdentity(deduplicateIntroText(finalContentAr));
+      finalContentAr = stripMissingValueWords(scrubAssistantIdentity(deduplicateIntroText(finalContentAr)));
       const tSbMsgUpdateStart = Date.now();
       awaitsCount++;
       if (sb) {
@@ -3663,7 +3698,8 @@ export class ChatHandler {
           .update({
             content_ar: finalContentAr,
             clarification_items: clarificationItemsList ?? null,
-            plan: planQuoteData ? { items: planQuoteData.items, summaryAr: planQuoteData.summaryAr } : null,
+            // A custom file is kept with its message (no new column): the download action survives a reload.
+            plan: planQuoteData ? { items: planQuoteData.items, summaryAr: planQuoteData.summaryAr } : fileShapeData ? { fileShape: fileShapeData } : null,
             quote: planQuoteData ?? null,
           })
           .eq("id", assistantMsgId);
@@ -3678,6 +3714,7 @@ export class ChatHandler {
             status: "ready",
             promptVersion: llmResult.promptVersion || "2.0.0",
             ...(planQuoteData ? { planQuoteId: planQuoteData.quoteId } : {}),
+            ...(fileShapeData ? { plan: { fileShape: fileShapeData } } : {}),
           },
         });
       }

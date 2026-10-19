@@ -34,7 +34,7 @@ const countryNamesAr = new Intl.DisplayNames(["ar"], { type: "region" });
 
 function resolveCountryAr(val: unknown): string {
   const text = String(val ?? "").trim();
-  if (!text) return "يلزم تحديد الدولة";
+  if (isMissingText(text)) return "يلزم تحديد الدولة";
   const detected = detectCountryFromText(text);
   if (detected?.arabicLabel) return detected.arabicLabel;
   if (/^[A-Z]{2}$/i.test(text)) {
@@ -56,9 +56,40 @@ export function toArabicDigits(val: number | string): string {
   return String(val).replace(/[0-9]/g, (d) => digits[Number(d)]);
 }
 
+/** The strings a failed lookup leaves behind: they are missing values, never content. */
+const MISSING_TOKEN = /^\s*(?:undefined|null|nan)?\s*$/i;
+const MISSING_TOKEN_IN_TEXT = /(?:^|[\s،,:؛(«"'])(?:undefined|null|NaN)(?=$|[\s،,.:؛)»"'!؟?])/;
+
+/** True for an empty or whitespace string and for the words «undefined», «null», «NaN»: a value that was never found. */
+export function isMissingText(val: unknown): boolean {
+  return typeof val !== "string" || MISSING_TOKEN.test(val);
+}
+
+/** True when a customer-facing sentence carries one of those words as a value («… في undefined»). */
+export function containsMissingToken(text: unknown): boolean {
+  return typeof text === "string" && MISSING_TOKEN_IN_TEXT.test(text);
+}
+
+/**
+ * A customer-facing sentence without a value that was never found: «… في undefined» loses the dangling phrase. A builder should
+ * leave the phrase out itself; this is the last line of defence before a message is saved or a card is drawn.
+ */
+export function stripMissingValueWords(text: string): string {
+  return String(text ?? "")
+    .replace(/\s+(?:في|من|على|إلى|حول|بـ?)\s+(?:undefined|null|NaN)(?=$|[\s،,.:؛)»"'!؟?])/g, "")
+    .replace(/(?:^|(?<=[\s،,:؛(«"']))(?:undefined|null|NaN)(?=$|[\s،,.:؛)»"'!؟?])/g, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/** A string that says something: not empty, not a missing-value word, not a «يلزم تحديد» placeholder. */
+function usableText(val: unknown): boolean {
+  return typeof val === "string" && !isMissingText(val) && !/يلزم تحديد/.test(val);
+}
+
 function hasPlaceholderText(val: unknown): boolean {
   if (typeof val === "string") {
-    return /يلزم تحديد/.test(val);
+    return /يلزم تحديد/.test(val) || (MISSING_TOKEN.test(val) && val.trim().length > 0);
   }
   if (Array.isArray(val)) {
     return val.some(hasPlaceholderText);
@@ -109,9 +140,9 @@ export function quoteScopeGaps(
       const locInclude = query.location?.include;
       const hasLocation =
         Array.isArray(locInclude)
-          ? locInclude.length > 0 && typeof locInclude[0] === "string" && locInclude[0].trim().length > 0 && !/يلزم تحديد/.test(locInclude[0])
-          : (typeof params.location === "string" && params.location.trim().length > 0 && !/يلزم تحديد/.test(params.location)) ||
-            (typeof params.country === "string" && params.country.trim().length > 0 && !/يلزم تحديد/.test(params.country));
+          ? locInclude.length > 0 && usableText(locInclude[0])
+          : (usableText(params.location)) ||
+            (usableText(params.country));
 
       if (!hasLocation) {
         gaps.push("country");
@@ -120,12 +151,12 @@ export function quoteScopeGaps(
       const indInclude = query.industry?.include;
       const kwInclude = query.keyword?.include || query.keywords?.include;
       const hasIndustry =
-        (Array.isArray(indInclude) && indInclude.some((x: any) => typeof x === "string" && x.trim().length > 0 && !/يلزم تحديد/.test(x))) ||
-        (typeof params.industry === "string" && params.industry.trim().length > 0 && !/يلزم تحديد/.test(params.industry));
+        (Array.isArray(indInclude) && indInclude.some((x: any) => usableText(x))) ||
+        (usableText(params.industry));
       const hasKeyword =
-        (Array.isArray(kwInclude) && kwInclude.some((x: any) => typeof x === "string" && x.trim().length > 0 && !/يلزم تحديد/.test(x))) ||
-        (typeof params.keyword === "string" && params.keyword.trim().length > 0 && !/يلزم تحديد/.test(params.keyword)) ||
-        (typeof params.keywords === "string" && params.keywords.trim().length > 0 && !/يلزم تحديد/.test(params.keywords));
+        (Array.isArray(kwInclude) && kwInclude.some((x: any) => usableText(x))) ||
+        (usableText(params.keyword)) ||
+        (usableText(params.keywords));
 
       if (!hasIndustry && !hasKeyword) {
         gaps.push("industry");
@@ -133,7 +164,7 @@ export function quoteScopeGaps(
     } else if (isPeople) {
       // people -> country and (title or keywords)
       const countryVal = params.country || params.location || query.location?.include?.[0];
-      const hasCountry = typeof countryVal === "string" && countryVal.trim().length > 0 && !/يلزم تحديد/.test(countryVal);
+      const hasCountry = usableText(countryVal);
       if (!hasCountry) {
         gaps.push("country");
       }
@@ -141,11 +172,11 @@ export function quoteScopeGaps(
       const titleVal = params.title || params.jobTitle || query.title || query.jobTitle?.include?.[0];
       const kwVal = params.keywords || params.keyword || query.keywords || query.keyword?.include?.[0];
       const hasTitle =
-        (typeof titleVal === "string" && titleVal.trim().length > 0 && !/يلزم تحديد/.test(titleVal)) ||
-        (Array.isArray(titleVal) && titleVal.length > 0 && titleVal.some((t: any) => typeof t === "string" && t.trim().length > 0 && !/يلزم تحديد/.test(t)));
+        (usableText(titleVal)) ||
+        (Array.isArray(titleVal) && titleVal.length > 0 && titleVal.some((t: any) => usableText(t)));
       const hasKeywords =
-        (typeof kwVal === "string" && kwVal.trim().length > 0 && !/يلزم تحديد/.test(kwVal)) ||
-        (Array.isArray(kwVal) && kwVal.length > 0 && kwVal.some((k: any) => typeof k === "string" && k.trim().length > 0 && !/يلزم تحديد/.test(k)));
+        (usableText(kwVal)) ||
+        (Array.isArray(kwVal) && kwVal.length > 0 && kwVal.some((k: any) => usableText(k)));
       const isDecisionMakers = Array.isArray(params.requiredContactFields) && params.requiredContactFields.length > 0;
 
       if (!hasTitle && !hasKeywords && !isDecisionMakers) {
@@ -261,5 +292,6 @@ export function planScopeRows(
     value: `حتى ${toArabicDigits(vol)} سجل`,
   });
 
-  return chips;
+  // A chip never shows a value that was not found («undefined», «null», «NaN», blank): it asks for it instead.
+  return chips.map((chip) => (isMissingText(chip.value) || containsMissingToken(chip.value) ? { ...chip, value: "يلزم تحديد القيمة" } : chip));
 }

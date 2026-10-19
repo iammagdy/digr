@@ -55,14 +55,14 @@ describe("4. «قسّم الملف شيت لكل محافظة» after a delivere
     await send(COMPANY_REQUEST);
     await send(SHAPE, COMPANY_COLUMNS);
     const seen: any[] = [];
-    // The model sees the answer as the shaping request it completes and writes the spec from the real column title.
+    // The answer is resolved by code from the chosen option; the model is never asked (and could not make a plan of it).
     (handler as any).llm.executeTurn = async (opts: any) => {
       seen.push(opts.messages.at(-1));
       return { output: { type: "shape_file", replyAr: "تمام", spec: { groupBy: { column: "المقر والنطاق الجغرافي", mode: "sheets" } } }, inputTokens: 700, outputTokens: 40, costUsd: 0.0007, model: "claude-haiku-5-5", promptVersion: "t" };
     };
     const answer = JSON.stringify({ type: "clarification_answers", answers: [{ questionId: "shape_column_required", question: "بأي عمود تريد تقسيم الملف إلى شيتات؟", value: "المقر والنطاق الجغرافي" }] });
     const res: any = await send(answer, COMPANY_COLUMNS);
-    expect(seen[0].content).toBe("قسّم الملف شيت لكل المقر والنطاق الجغرافي");
+    expect(seen).toHaveLength(0);
     expect(res.outputType).toBe("answer_question");
     expect(res.planQuote).toBeUndefined();
     expect(res.revisionQuote).toBeUndefined();
