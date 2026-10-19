@@ -3,12 +3,13 @@ import { capStatementAr } from "../../lib/jobCaps";
 import { FileSpecSchema, describeFileSpecAr, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { planExplanationLinesAr } from "../../lib/planExplanation";
+import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
-import { LlmClient, LlmTurnOutput } from "./llmClient";
+import { LlmClient, LlmTurnOutput, type LlmCallResult } from "./llmClient";
 import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
-import { detectTopicGathering, hasTopicResearchService, topicSourceQuestion } from "./topicGathering";
+import { detectTopicGathering, hasTopicResearchService, studiesUnavailableReplyAr, topicSourceQuestion } from "./topicGathering";
 import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
   getEnabledCapabilitiesWithCoreServices,
@@ -204,6 +205,8 @@ function shouldAskSocialTimeWindow(text: string): boolean {
   if (!intent.platform || !detectCountryFromText(text) || extractDateHint(text)) return false;
   // Feed, channel, and direct-link requests have their own scope and date behavior.
   if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
+  // Comments are never held up for a period: only a period the customer wrote filters them, otherwise all are eligible.
+  if (intent.wantsComments) return false;
   return SOCIAL_CONTENT_WORDS_RE.test(text) && !ACCOUNT_LOOKUP_RE.test(text);
 }
 
@@ -725,6 +728,35 @@ export function dateFiltersFromHint(hint: string, now = new Date()): { from?: st
   return { from: from.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
 }
 
+/**
+ * A standalone company, decision-maker or social request whose every required input is stated is read by code into a
+ * structured intent and planned WITHOUT a model call: the plan comes out in a fraction of the time, costs no model spend and
+ * carries exactly the provider parameters the capability accepts. Anything unclear, any unanswered discovery question and
+ * any other kind of request still goes to the model.
+ */
+export function buildDeterministicPlanFromIntent(
+  intent: RequestIntent,
+  requestText: string,
+  brief: ResearchBrief,
+  capabilities: Capability[],
+): any | null {
+  if (!["companies", "people", "posts", "comments", "videos"].includes(intent.dataType)) return null;
+  if (missingInputsForIntent(intent, requestText).length > 0) return null;
+  if (getDeterministicDiscoveryQuestion(requestText, brief, capabilities)) return null;
+  const enabled = (capability: Capability) => capability.enabled !== false && (capability.status === "verified" || capability.status === undefined);
+  if (intent.dataType === "companies") {
+    if (!capabilities.some((c) => enabled(c) && /compan/i.test(`${c.slug} ${c.platform || ""}`))) return null;
+  } else if (intent.dataType === "people") {
+    if (!capabilities.some((c) => enabled(c) && /people/i.test(`${c.slug} ${c.platform || ""}`))) return null;
+  } else {
+    const social = detectSocialIntent(requestText);
+    if (!social.task || !social.platform || getMissingSocialTaskInputs(requestText).length > 0) return null;
+    const cap = socialCapabilityForIntent(social);
+    if (!cap || !capabilities.some((c) => c.slug === cap.slug && enabled(c))) return null;
+  }
+  return buildAutoPlanProposal(brief, capabilities, requestText);
+}
+
 /** Keep people-search requests on the people capability, even if the model
  * proposes a generic company plan or refuses while that capability is enabled. */
 export function routePeopleAlternative(
@@ -1094,6 +1126,8 @@ export function buildClarificationPresentation(
 export class ChatHandler {
   private tables: TablesDB | any;
   private llm: LlmClient;
+  /** Plan fully stated company, decision-maker and social requests in code (no model call). Tests of the model path switch it off. */
+  public deterministicPlanning = true;
 
   constructor(tables: TablesDB | any) {
     this.tables = tables;
@@ -1884,6 +1918,32 @@ export class ChatHandler {
         };
       }
 
+      // Studies, papers, articles and news from websites: not a service yet. Said plainly by code, with what is available;
+      // no social platform is offered as a source, no plan is priced, nothing is charged.
+      const studiesRequest = !isTestSearchScenario && !input.isGuest && !isFileShapingTurn ? detectTopicGathering(conversationRequestText) : null;
+      if (studiesRequest && !hasTopicResearchService(APPROVED_CAPABILITY_CATALOG)) {
+        const studiesReplyAr = studiesUnavailableReplyAr(studiesRequest);
+        if (sb) {
+          await Promise.all([
+            sb.from("messages").update({ content_ar: studiesReplyAr }).eq("id", assistantMsgId),
+            sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+          ]);
+        } else {
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: studiesReplyAr, status: "ready" } });
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+        }
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: studiesReplyAr,
+          outputType: "answer_question",
+          intent: "chat",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+        };
+      }
+
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
       if (requiredDiscoveryQuestion) {
         const intro = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
@@ -2010,14 +2070,23 @@ export class ChatHandler {
 
       currentStep = "llm_turn";
       const tLlmStart = Date.now();
-      modelCallCount++;
+      // Every model call of this turn is added here and the SUM is logged (a turn with a catalog search or a retry makes
+      // several calls; only the last one used to be recorded).
+      const turnUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, calls: 0 };
+      const fastIntent = extractRequestIntent(conversationRequestText);
+      const fastPlanOutput = (this.deterministicPlanning && !input.isGuest && !isGreeting && !isGeneralQuestion && !isFileShapingTurn && !isTestSearchScenario && !testScenario)
+        ? buildDeterministicPlanFromIntent(fastIntent, conversationRequestText, brief, allCatalogCapabilities as Capability[])
+        : null;
+      if (!fastPlanOutput) modelCallCount++;
       const resolvedDisplayName =
         (userProfile?.name && String(userProfile.name).trim()) ||
         (userProfile?.full_name && String(userProfile.full_name).trim()) ||
         (userProfile?.sender_name && String(userProfile.sender_name).trim()) ||
         "";
 
-      let llmResult = await this.llm.executeTurn({
+      let llmResult = fastPlanOutput
+        ? ({ output: fastPlanOutput, inputTokens: 0, outputTokens: 0, costUsd: 0, model: "deterministic", promptVersion: "intent-1", textBlockAr: "" } as LlmCallResult)
+        : await this.llm.executeTurn({
         messages: turnMessages,
         sanitizedCapabilities: sanitizedCaps,
         userProfile: userProfile
@@ -2039,6 +2108,12 @@ export class ChatHandler {
         testScenario,
       });
       llmMs += Date.now() - tLlmStart;
+      if (!fastPlanOutput) {
+        turnUsage.calls += 1;
+        turnUsage.inputTokens += llmResult.inputTokens || 0;
+        turnUsage.outputTokens += llmResult.outputTokens || 0;
+        turnUsage.costUsd += llmResult.costUsd || 0;
+      }
 
       let output: typeof llmResult.output = llmResult.output;
 
@@ -2075,6 +2150,10 @@ export class ChatHandler {
           testScenario,
         });
         llmMs += Date.now() - tLlmRepeatStart;
+        turnUsage.calls += 1;
+        turnUsage.inputTokens += llmResult.inputTokens || 0;
+        turnUsage.outputTokens += llmResult.outputTokens || 0;
+        turnUsage.costUsd += llmResult.costUsd || 0;
         output = llmResult.output;
       };
       const budgetLeft = () => turnBudgetLeftMs(turnStartTime);
@@ -2517,16 +2596,15 @@ export class ChatHandler {
               }
             }
             if (isPeopleCapability) {
-              itemParams.q = typeof itemParams.q === "string" && itemParams.q.trim()
-                ? itemParams.q.slice(0, 300)
-                : conversationRequestText.slice(0, 300);
-              itemParams.limit = Math.max(1, Math.min(50, Number(requestedRecordVolume || itemParams.limit || 10)));
-              if (explicitCountry) {
-                itemParams.country = isoCountryCodeFromName(explicitCountry.canonicalEnglish) || explicitCountry.canonicalEnglish;
-              }
-              const explicitTitle = conversationRequestText.match(/\b(ceos?|ctos?|cfos?|coos?|founders?|owners?|directors?|managers?|heads?|vps?|presidents?)\b|الرئيس التنفيذي|مدير(?:ين)?|مؤسس(?:ين)?|رئيس مجلس الإدارة/i);
-              if (!itemParams.title && explicitTitle) itemParams.title = (explicitTitle[1] || explicitTitle[0]).replace(/s$/i, "");
-              if (!itemParams.keywords && detectedIndustry.englishKeywords.length) itemParams.keywords = detectedIndustry.englishKeywords;
+              // Parameters are built from the customer's own words in the form the source matches: an English job title,
+              // English activity keywords, an ISO country code, and NO copy of the sentence (it carries contact wording).
+              const builtPeopleParams = peopleParamsFromIntent(
+                extractRequestIntent(conversationRequestText),
+                itemParams,
+                Math.max(1, Math.min(50, Number(requestedRecordVolume || itemParams.limit || 10))),
+              );
+              for (const key of ["q", "company_domain", "title", "keywords", "country"]) delete itemParams[key];
+              Object.assign(itemParams, builtPeopleParams);
               // Contact data is a required part of this B2B capability. The
               // per-person rate covers these bounded enrichment attempts;
               // incomplete rows are excluded before customer billing.
@@ -2534,6 +2612,9 @@ export class ChatHandler {
               itemParams.requiredContactFields = ["work_email", "phone"];
               delete itemParams.query;
               delete itemParams.pagination;
+            }
+            if (/compan|b2b/i.test(capabilityId) && !isPeopleCapability) {
+              Object.assign(itemParams, companyParamsFromIntent(extractRequestIntent(conversationRequestText), itemParams));
             }
             if (requestedRecordVolume && itemParams.pagination && typeof itemParams.pagination === "object") {
               const currentPageSize = Number(itemParams.pagination.size);
@@ -2915,6 +2996,8 @@ export class ChatHandler {
             });
             planSummaryText += `\n- ${explanation.join("\n- ")}`;
           }
+          const unsupportedNote = unsupportedConstraintsNoteAr(extractRequestIntent(conversationRequestText));
+          if (unsupportedNote) planSummaryText += `\n- ${unsupportedNote}`;
           if (managedQuote.pointsCapConstrained) {
             const requestedUnits = managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
@@ -3319,12 +3402,12 @@ export class ChatHandler {
         if (sb) {
           await sb.from("llm_usage").insert({
             user_id: userId,
-            tokens_in: llmResult.inputTokens || 0,
-            tokens_out: llmResult.outputTokens || 0,
+            tokens_in: turnUsage.inputTokens,
+            tokens_out: turnUsage.outputTokens,
             model: llmResult.model,
             latency_ms: Math.max(0, Date.now() - tLlmStart),
             reason: output.type,
-            cost_usd: Number((llmResult.costUsd || 0).toFixed(6)),
+            cost_usd: Number(turnUsage.costUsd.toFixed(6)),
             created_at: new Date().toISOString(),
           });
         } else {
@@ -3337,9 +3420,9 @@ export class ChatHandler {
               userId,
               messageId: assistantMsgId,
               model: llmResult.model,
-              inputTokens: llmResult.inputTokens,
-              outputTokens: llmResult.outputTokens,
-              costUsd: Number(llmResult.costUsd.toFixed(6)),
+              inputTokens: turnUsage.inputTokens,
+              outputTokens: turnUsage.outputTokens,
+              costUsd: Number(turnUsage.costUsd.toFixed(6)),
               createdAt: new Date().toISOString(),
             },
           });
@@ -3349,8 +3432,8 @@ export class ChatHandler {
       }
       await logProviderCost(this.tables, {
         provider: "llm",
-        units: (llmResult.inputTokens || 0) + (llmResult.outputTokens || 0),
-        costUsd: llmResult.costUsd || 0,
+        units: turnUsage.inputTokens + turnUsage.outputTokens,
+        costUsd: turnUsage.costUsd,
       });
 
       // 11. Update Conversation Stats

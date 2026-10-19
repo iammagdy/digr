@@ -2,6 +2,7 @@ import { formatAr } from "../../lib/arabicDigits";
 import { getConfiguredJobPointsCap } from "./providerSpend";
 import { decisionMakerQuotePoints, DECISION_MAKER_UNIT_PRICES_POINTS } from "./decisionMakerPricing";
 import { DEFAULT_PRICING_SETTINGS } from "./quotes";
+import { isStandaloneResearchRequest } from "./requestScope";
 
 export interface PriorConversationMessage {
   role: "user" | "assistant" | "system";
@@ -62,6 +63,9 @@ export function buildResultFollowupReply(
   currentBrief: { platforms?: string[]; targetVolume?: number } = {},
 ): string | null {
   if (!text.trim() || !hasPriorPlanOrDelivery(messages) || !isResultFeedback(text)) return null;
+  // A new, complete research request is never feedback on an earlier result, even when it names e-mails or phones
+  // («٣ مديرين … مع إيميلاتهم وأرقامهم» after an unrelated plan).
+  if (isStandaloneResearchRequest(text)) return null;
 
   if (isEmailFeedback(text) && isCompanyPlan(messages, currentBrief)) {
     const companyQuote = [...messages].reverse().find((message) =>

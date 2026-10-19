@@ -46,13 +46,17 @@ describe("structured platform guide and offline request set", () => {
   it("puts the full structured capability guide in each model prompt independently of catalog search results", () => {
     const prompt = buildSystemPrompt({ sanitizedCapabilities: [] });
     expect(prompt).toContain("FULL DIGER PLATFORM GUIDE");
-    expect(prompt).toContain("كومنتس على فيديو تيك توك");
-    expect(prompt).toContain("بحث موضوعي ومواد إخبارية وأكاديمية");
+    // The services are structured capability cards now: each names its inputs and carries request-to-parameter examples.
+    expect(prompt).toContain("كومنتس تيك توك");
     expect(prompt).toContain("social-x-posts");
-    expect(prompt).toContain("topic_or_account_handle");
+    expect(prompt).toContain("query=الموضوع");
+    // Studies, papers and news from websites are NOT a service; the prompt says so instead of advertising one.
+    expect(prompt).not.toContain("بحث موضوعي ومواد إخبارية وأكاديمية");
+    expect(prompt).toContain("غير متاح بعد");
     expect(prompt).toContain("اعتبر كل خدمة مدرجة ضمن قدرات ديجر");
     expect(prompt).not.toMatch(/firecrawl|context\.dev|treg\.people\.search/i);
-    expect(buildPlatformGuideServices().length).toBeGreaterThan(10);
+    // 10 services: the one that never had an executable capability (studies, papers, news) was removed on purpose.
+    expect(buildPlatformGuideServices().length).toBeGreaterThanOrEqual(10);
     expect(PLATFORM_GUIDE.futureSources.every((source) => source.statusAr === "قريباً")).toBe(true);
   });
 });

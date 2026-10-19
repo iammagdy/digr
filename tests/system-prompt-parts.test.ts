@@ -41,8 +41,9 @@ describe("system prompt: cacheable fixed rules, no hardcoded name", () => {
     const parts = buildSystemPromptParts({ ...base, sanitizedCapabilities: caps });
     expect(parts.staticText).toContain("FULL DIGER PLATFORM GUIDE");
     expect(parts.staticText).toContain('"slug":"social-x-posts"');
-    expect(parts.dynamicText).toContain('"s":"social-x-posts"');
-    expect(parts.dynamicText).toContain('"s":"companies"');
+    // Capabilities appear as structured cards (a capability without a card is still listed by slug).
+    expect(parts.dynamicText).toContain("[social-x-posts]");
+    expect(parts.dynamicText).toContain("[companies]");
     expect(parts.dynamicText).not.toContain("pointsPerUnit");
     expect(parts.dynamicText).not.toContain("unitCostUsd");
     expect(parts.dynamicText).not.toContain("paramsSchema");
@@ -123,7 +124,7 @@ describe("item 9: prompt blocks are ordered for the prompt cache", () => {
     expect(a.turnText).not.toBe(b.turnText);
     expect(a.turnText).toContain("Available Balance: 10");
     expect(a.profileText).not.toMatch(/Balance|Today's Date|Conversation State/);
-    expect(a.capabilityText).toContain('"s":"social-x-posts"');
+    expect(a.capabilityText).toContain("[social-x-posts]");
   });
 
   it("the three dynamic parts still make up the whole dynamic text (no rule or capability lost)", () => {

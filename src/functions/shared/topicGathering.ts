@@ -6,7 +6,7 @@ import { detectMentionedPlatforms, type Capability } from "./capabilityRegistry"
  * No executable service collects academic material directly, so the customer gets ONE specific question that names
  * their topic and country and offers the sources that do exist, instead of the generic "write the topic" sentence.
  */
-const GATHER_NOUN = /(دراسات|دراسة|أبحاث|ابحاث|بحوث|ورقة بحثية|أوراق بحثية|أوراق علمية|مقالات علمية|مقالات أكاديمية|مقالات|أخبار|اخبار|تقارير|مراجع|مصادر)/;
+const GATHER_NOUN = /(دراسات|دراسة|أبحاث|ابحاث|بحوث|ورقة بحثية|أوراق بحثية|أوراق علمية|ورقة علمية|مواد علمية|مواد أكاديمية|مواد بحثية|مقالات علمية|مقالات أكاديمية|مقالات|أخبار|اخبار|تقارير|مراجع|مصادر)/;
 const TOPIC_AFTER = /(?:عن|حول|بخصوص|في موضوع|تخص|تتناول)\s+(.+)$/;
 const TIME_TAIL = /\s+(?:خلال|منذ|في آخر|في اخر|آخر|اخر|مع|بحد|لا تزيد)\s.*$/;
 
@@ -49,4 +49,17 @@ export function topicSourceQuestion(request: TopicGatheringRequest) {
   const where = request.countryAr ? ` في ${request.countryAr}` : "";
   const text = `عن «${request.topic}»${where}: من أي مصدر تريد أن أجمع ${request.noun}؟`;
   return { id: "topic_source_required", text, question: text, type: "single" as const, options: TOPIC_SOURCE_OPTIONS_AR, allowOther: true };
+}
+
+/**
+ * Studies, papers, articles and news from websites are not a service yet. The customer is told so plainly, with what IS
+ * available and an example on the same topic. No social platform is ever offered as a source of studies.
+ */
+export function studiesUnavailableReplyAr(request: TopicGatheringRequest): string {
+  const where = request.countryAr ? ` في ${request.countryAr}` : "";
+  return [
+    `جمع ${request.noun} عن «${request.topic}»${where} غير متاح بعد في ديجر، ولن أخمّن مصدرًا بديلًا لأن منصات التواصل ليست مصدرًا للدراسات.`,
+    "المتاح الآن: قوائم الشركات حسب النشاط والدولة، وصناع القرار مع بيانات التواصل، ومنشورات وتعليقات وفيديوهات إكس وتيك توك ويوتيوب وفيسبوك.",
+    `إن أردت، اكتب مثلًا: «١٠ تغريدات عن ${request.topic}» أو «٥ شركات في هذا المجال${request.countryAr ? ` في ${request.countryAr}` : ""}» وأجهز لك الخطة والسعر.`,
+  ].join("\n");
 }

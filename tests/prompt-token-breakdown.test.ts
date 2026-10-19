@@ -17,6 +17,8 @@ describe("item 9: section-by-section token estimate of a real model request", ()
   async function captureRealPlanTurn() {
     const db = createChatDb();
     const handler = new ChatHandler(db as any);
+    // A fully stated request is planned in code (no model call); this measurement needs the model path.
+    handler.deterministicPlanning = false;
     const llm = (handler as any).llm;
     const calls: any[] = [];
     const original = llm.executeTurn.bind(llm);
@@ -46,7 +48,7 @@ describe("item 9: section-by-section token estimate of a real model request", ()
     // Nothing lost: every capability stays in the prompt, and so does the fixed identity.
     const capabilities = sanitizeCapabilitiesForLlm(APPROVED_CAPABILITY_CATALOG);
     const inventory = buildSystemPromptParts({ sanitizedCapabilities: capabilities }).capabilityText;
-    for (const capability of capabilities) expect(inventory).toContain(`"s":"${capability.slug}"`);
+    for (const capability of capabilities) expect(inventory).toContain(`[${capability.slug}]`);
     expect(parts.staticText).toContain('"ديجر الذكي"');
     expect(parts.staticText).toContain("IDENTITY & VOICE");
 
