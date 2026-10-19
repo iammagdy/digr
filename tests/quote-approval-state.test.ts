@@ -33,3 +33,16 @@ describe("quote approval state", () => {
     expect(chatPage).toContain('status: quoteStatusById.get(quoteId) || "unknown"');
   });
 });
+
+describe("an incomplete plan can never be approved", () => {
+  it("needs a service, parameters and a volume in every step", async () => {
+    const { isQuotePlanComplete } = await import("../src/lib/quoteApprovalState");
+    const ok = { capabilitySlug: "social-x-posts", params: { query: "كرة السلة" }, targetVolumeMax: 10 };
+    expect(isQuotePlanComplete([ok])).toBe(true);
+    expect(isQuotePlanComplete(undefined)).toBe(true);
+    expect(isQuotePlanComplete([])).toBe(false);
+    expect(isQuotePlanComplete([ok, { ...ok, params: {} }])).toBe(false);
+    expect(isQuotePlanComplete([{ ...ok, capabilitySlug: "" }])).toBe(false);
+    expect(isQuotePlanComplete([{ ...ok, targetVolumeMax: 0 }])).toBe(false);
+  });
+});

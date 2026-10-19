@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
-import { getQuoteApprovalState } from "@/lib/quoteApprovalState";
+import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { socialSubjectForDisplay } from "@/lib/socialTasks";
@@ -178,7 +178,9 @@ export default function PlanQuoteCard({
     return () => clearInterval(t);
   }, []);
 
-  const approvalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
+  const baseApprovalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
+  const planComplete = isQuotePlanComplete(quote.items);
+  const approvalState = { ...baseApprovalState, canApprove: baseApprovalState.canApprove && planComplete };
   const expired = !approvalState.canApprove;
   const balance = available ?? quote.userBalance;
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
