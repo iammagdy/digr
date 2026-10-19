@@ -30,9 +30,18 @@ export interface AdvisoryUsage {
   latencyMs: number;
 }
 
+export type AdvisoryFailureCode =
+  | "timeout"
+  | "network"
+  | "no_key"
+  | "disabled"
+  | "bad_reply"
+  | `http_${number}`;
+
 export interface AdvisoryResult {
   verdicts: Map<number, AdvisoryVerdict>;
   usage: AdvisoryUsage | null;
+  failure?: AdvisoryFailureCode | null;
 }
 
 export interface RowAdvisoryInput {
@@ -108,32 +117,39 @@ function buildPrompt(input: RowAdvisoryInput): string {
 
 /** The production advisor: one small call, short timeout, never throws. */
 export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
-  const empty: AdvisoryResult = { verdicts: new Map(), usage: null };
-  if (input.rows.length === 0) return empty;
-  if ((process.env.LLM_PROVIDER || "").trim().toLowerCase() === "fake" || (process.env.LLM_ENABLED || "").trim().toLowerCase() === "false" || (process.env.LLM_LIVE || "").trim().toLowerCase() === "false") return empty;
+  const empty = (failure: AdvisoryFailureCode | null = null): AdvisoryResult => ({
+    verdicts: new Map(),
+    usage: null,
+    failure,
+  });
+  if (input.rows.length === 0) return empty(null);
+  if ((process.env.LLM_PROVIDER || "").trim().toLowerCase() === "fake" || (process.env.LLM_ENABLED || "").trim().toLowerCase() === "false" || (process.env.LLM_LIVE || "").trim().toLowerCase() === "false") return empty("disabled");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ADVISORY_TIMEOUT_MS);
   const started = Date.now();
   try {
     const key = (await resolveProviderKey("anthropic")).key;
-    if (!key) return empty;
+    if (!key) return empty("no_key");
     const model = (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       signal: controller.signal,
-      body: JSON.stringify({ model, max_tokens: 1200, temperature: 0, messages: [{ role: "user", content: buildPrompt(input) }] }),
+      body: JSON.stringify({ model, max_tokens: 1200, messages: [{ role: "user", content: buildPrompt(input) }] }),
     });
-    if (!response.ok) return empty;
+    if (!response.ok) return empty(`http_${response.status}`);
     const data: any = await response.json();
     const text = Array.isArray(data?.content) ? data.content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("") : "";
     const inputTokens = Number(data?.usage?.input_tokens) || 0;
     const outputTokens = Number(data?.usage?.output_tokens) || 0;
     const pricing = getLlmPricingSettings("anthropic", model);
     const costUsd = (inputTokens * pricing.inputCostPerMillion + outputTokens * pricing.outputCostPerMillion) / 1_000_000;
-    return { verdicts: parseAdvisoryReply(text), usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started } };
-  } catch {
-    return empty;
+    const verdicts = parseAdvisoryReply(text);
+    const failure: AdvisoryFailureCode | null = verdicts.size === 0 && input.rows.length > 0 ? "bad_reply" : null;
+    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure };
+  } catch (err: any) {
+    const isTimeout = err?.name === "AbortError" || controller.signal.aborted;
+    return empty(isTimeout ? "timeout" : "network");
   } finally {
     clearTimeout(timer);
   }
