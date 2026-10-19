@@ -1462,6 +1462,24 @@ export async function POST(req: NextRequest) {
           created_at: completedAtIso,
         });
 
+        // Fewer rows than requested: say why in the customer's words, never leave the gap unexplained.
+        if (finalRows.length < targetMax) {
+          const excluded = relevanceExcludedCount + baselineExcludedCount;
+          const reason = excluded > 0
+            ? `استُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.`
+            : callCapReason
+              ? CALL_CAP_NOTE_AR[callCapReason]
+              : "لم يتوفر في المصدر عدد أكبر يطابق طلبك.";
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: `المسلَّم ${toArabicDigits(finalRows.length)} من ${toArabicDigits(targetMax)} مطلوب. ${reason}`,
+            units: finalRows.length,
+            event_type: "info",
+            created_at: completedAtIso,
+          });
+        }
+
         const chargedPts = Math.round(Number(settleData?.charged_credits) || 0);
         const refundedPts = Math.round(Number(settleData?.refunded_credits) || 0);
         if (refundedPts > 0) {
