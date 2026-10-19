@@ -1,4 +1,5 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap } from "../../../../lib/server/providerCallCaps";
+import { applyAdvisoryToReviews, getRowAdvisor } from "../../../../lib/server/rowReviewAdvisor";
 import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
@@ -681,14 +682,19 @@ export async function POST(req: NextRequest) {
         detectCountryFromText(fullText);
 
       const expectedCountry = targetCountryObj?.canonicalEnglish || null;
+      // The sector rules of the gate (for example the electricity checks) are keyed by the sector's full Arabic label.
+      // A plan that carries the customer's short word («كهرباء») is read to that label first, so the rules still apply.
+      const recognizedSector = isCompanyCapability
+        ? detectIndustryFromText(`${typeof spec.params?.industry === "string" ? spec.params.industry : ""} ${fullText}`)
+        : null;
       const expectedIndustry = isCompanyCapability
-        ? String(spec.params?.industry || detectIndustryFromText(fullText).arabicLabel)
+        ? String(recognizedSector?.exactTaxonomy?.length ? recognizedSector.arabicLabel : (spec.params?.industry || recognizedSector?.arabicLabel))
         : "";
 
       // The row gate is deterministic and runs for every capability before acceptedRows
       // is counted, saved, or charged. LLM classification is intentionally not on this
       // billing path: it may advise separately but cannot increase delivered units.
-      const reviews = filteredRows.map((row: any, idx: number) => ({
+      let reviews = filteredRows.map((row: any, idx: number) => ({
         index: idx,
         ...evaluateResearchRowRelevance(row, {
           capabilitySlug: spec.capabilitySlug,
@@ -696,12 +702,48 @@ export async function POST(req: NextRequest) {
           params: {
             ...(spec.params || {}),
             ...(isCompanyCapability ? {
-              country: spec.params?.country || expectedCountry || "",
+              // The location matcher is keyed by the canonical English country; the plan's Arabic «مصر» would
+              // reject every English «Cairo, Egypt» row.
+              country: expectedCountry || spec.params?.country || "",
               industry: expectedIndustry,
             } : {}),
           },
         }),
       }));
+
+      // Claude reads the rows the deterministic gate matched against the customer's request. Its verdict is advisory
+      // and can only make delivery stricter: a doubted row moves to the review sheet (not delivered, not charged).
+      // A failed, slow or malformed review changes nothing.
+      const matchedForAdvice = reviews
+        .filter((rev) => rev.decision === "match")
+        .map((rev) => ({ index: rev.index, row: filteredRows[rev.index] as Record<string, any> }));
+      if (matchedForAdvice.length > 0) {
+        try {
+          const advisory = await getRowAdvisor()({
+            customerRequest: [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
+              .filter((part) => typeof part === "string" && part.trim()).join(" ").slice(0, 400),
+            kind: isCompanyCapability ? "companies" : isPeopleJob ? "people" : String(spec.capabilitySlug || ""),
+            rows: matchedForAdvice,
+          });
+          const applied = applyAdvisoryToReviews(reviews, advisory.verdicts);
+          reviews = applied.reviews;
+          if (applied.demoted > 0) console.log(`[worker:relevance_advisory] moved ${applied.demoted} matched row(s) to review`);
+          if (advisory.usage && userId) {
+            await adminClient.from("llm_usage").insert({
+              user_id: userId,
+              tokens_in: advisory.usage.inputTokens,
+              tokens_out: advisory.usage.outputTokens,
+              model: advisory.usage.model,
+              latency_ms: advisory.usage.latencyMs,
+              reason: "relevance_review",
+              cost_usd: Number(advisory.usage.costUsd.toFixed(6)),
+              created_at: new Date().toISOString(),
+            });
+          }
+        } catch (advisoryErr: any) {
+          console.warn("[worker:relevance_advisory_skipped]", advisoryErr?.message || "");
+        }
+      }
 
       const matchedRows: any[] = [];
       const excludedRows: any[] = [];
