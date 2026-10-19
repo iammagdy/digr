@@ -140,6 +140,57 @@ async function sumDailyUsageCost(tables: TablesDB, userId?: string): Promise<num
   return totalCostUsd;
 }
 
+/** The API returns at most this many rows per request by default; a read that returns this many may be cut short. */
+export const SPEND_READ_PAGE_SIZE = 1000;
+/** Ceiling on the pages read for the daily sum (50 000 rows). Past it the check fails closed instead of guessing. */
+export const SPEND_READ_MAX_PAGES = 50;
+
+function sumCostRows(rows: any[] | null | undefined): number {
+  let total = 0;
+  for (const row of rows || []) {
+    const cost = Number(row?.cost_usd);
+    if (Number.isFinite(cost) && cost > 0) total += cost;
+  }
+  return total;
+}
+
+/**
+ * Today's LLM spend from llm_usage. The first read is the plain one; only when it comes back as many rows as the API
+ * returns per request (so it may be incomplete) the day is re-read page by page in a stable order (by id), counting only
+ * rows that cost something. Any error, and a day too large for the page ceiling, throws: the chat route turns that into
+ * its existing 503 "protection" answer, so the cap never silently under-counts.
+ */
+export async function sumTodayLlmCostSupabase(tables: any, sinceIso: string): Promise<number> {
+  const { data, error } = await tables
+    .from("llm_usage")
+    .select("cost_usd")
+    .gte("created_at", sinceIso);
+  if (error) {
+    throw error;
+  }
+  if ((data || []).length < SPEND_READ_PAGE_SIZE) return sumCostRows(data);
+
+  let total = 0;
+  let offset = 0;
+  for (let page = 0; page < SPEND_READ_MAX_PAGES; page++) {
+    const { data: rows, error: pageError } = await tables
+      .from("llm_usage")
+      .select("cost_usd")
+      .gt("cost_usd", 0)
+      .gte("created_at", sinceIso)
+      .order("id", { ascending: true })
+      .range(offset, offset + SPEND_READ_PAGE_SIZE - 1);
+    if (pageError) {
+      throw pageError;
+    }
+    if (!rows || rows.length === 0) return total;
+    total += sumCostRows(rows);
+    // Advance by what the server actually returned, so a lower server-side row limit cannot skip rows.
+    offset += rows.length;
+  }
+  throw new Error("llm_usage_daily_sum_exceeds_page_ceiling");
+}
+
 /**
  * Check platform-wide global daily LLM spend cap.
  * Supports both Supabase client and Appwrite TablesDB.
@@ -162,18 +213,7 @@ export async function checkGlobalDailySpendCap(
 
   if (tables && typeof tables.from === "function") {
     // Supabase client: uses idx_llm_usage_created_at index
-    const { data, error } = await tables
-      .from("llm_usage")
-      .select("cost_usd")
-      .gte("created_at", utcStartOfDay());
-
-    if (error) {
-      throw error;
-    }
-    for (const r of data || []) {
-      const cost = Number(r.cost_usd);
-      if (Number.isFinite(cost) && cost > 0) totalCostUsd += cost;
-    }
+    totalCostUsd = await sumTodayLlmCostSupabase(tables, utcStartOfDay());
   } else if (tables && typeof tables.listRows === "function") {
     // Appwrite TablesDB
     totalCostUsd = await sumDailyUsageCost(tables);
