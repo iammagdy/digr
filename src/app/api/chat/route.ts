@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
 
     const authHeader = req.headers.get("authorization");
     const bearer = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : null;
+    const tAuthStart = Date.now();
 
     try {
       const supabase = await createServerSideClient();
@@ -229,6 +230,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    const authMs = Date.now() - tAuthStart;
+
     // Research is blocked until the email is verified (for logged in accounts)
     if (!isGuest && !emailVerified) {
       return NextResponse.json(
@@ -326,7 +329,9 @@ export async function POST(req: NextRequest) {
 
     // 3. Per-User Rate Limits Guard (messages per minute)
     currentStep = "user_rate_limit";
+    const tRateStart = Date.now();
     const rateCheck = await checkUserRateLimits(tables, verifiedUserId);
+    const rateLimitMs = Date.now() - tRateStart;
     if (!rateCheck.allowed) {
       return NextResponse.json(
         { success: false, requestId, error: rateCheck.reasonAr },
@@ -498,6 +503,8 @@ export async function POST(req: NextRequest) {
       capturedName,
       personaProfile: isGuest ? undefined : personaProfile,
       resultColumns: Array.isArray(body.resultColumns) ? body.resultColumns.slice(0, 60) : undefined,
+      authMs,
+      rateLimitMs,
     });
 
     const response = NextResponse.json({
