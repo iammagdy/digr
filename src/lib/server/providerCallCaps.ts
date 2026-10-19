@@ -42,7 +42,8 @@ export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKin
   return Math.min(ABSOLUTE_MAX_PAGES, needed * LARGE_JOB_PAGE_ALLOWANCE);
 }
 
-export type CallCapReason = "page_cap" | "empty_pages";
+/** `review_unavailable` is set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run. */
+export type CallCapReason = "page_cap" | "empty_pages" | "review_unavailable";
 
 /**
  * Decides whether to stop fetching after the page that was just processed.
@@ -80,4 +81,5 @@ export function worstCaseJobProviderUsd(unitCostUsd: number, targetMax: number, 
 export const CALL_CAP_NOTE_AR: Record<CallCapReason, string> = {
   page_cap: "توقف الجمع عند الحد الأقصى لعدد الصفحات المسموح لهذا الطلب، مع تسليم السجلات المطابقة التي جُمعت فقط",
   empty_pages: "توقف الجمع لأن الصفحات الأخيرة لم تُنتج سجلات مطابقة جديدة، مع تسليم السجلات المطابقة التي جُمعت فقط",
+  review_unavailable: "توقف الجمع لأن التحقق الآلي من ملاءمة السجلات تعذّر الآن، ولم يُحتسب عليك إلا ما سُلّم",
 };

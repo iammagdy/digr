@@ -1,6 +1,9 @@
-import { CALL_CAP_NOTE_AR, evaluateProviderCallCap } from "../../../../lib/server/providerCallCaps";
+import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, getRowAdvisor } from "../../../../lib/server/rowReviewAdvisor";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
+import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
+import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
+import { companyActivityKeywords } from "../../../../lib/server/relevanceEvidence";
 import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
@@ -675,6 +678,9 @@ export async function POST(req: NextRequest) {
     let uncertainRows: any[] = [];
     let relevanceExcludedCount = 0;
     let relevanceSkipReasons: string[] = [];
+    // Set when the automatic relevance review could not review some candidate rows: they go to the review sheet, paging
+    // stops (no more provider rows are bought for rows nobody can check), and an all-unreviewed job releases the reserve.
+    let reviewUnavailable = false;
 
     if (Array.isArray(filteredRows) && filteredRows.length > 0) {
       const fullText = [
@@ -726,13 +732,88 @@ export async function POST(req: NextRequest) {
         }),
       }));
 
-      // Claude reads the rows the deterministic gate matched against the customer's request. Its verdict is advisory
-      // and can only make delivery stricter: a doubted row moves to the review sheet (not delivered, not charged).
-      // A failed, slow or malformed review changes nothing.
+      const reviewCustomerRequest = [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
+        .filter((part) => typeof part === "string" && part.trim()).join(" ").slice(0, 400);
       const matchedForAdvice = reviews
         .filter((rev) => rev.decision === "match")
         .map((rev) => ({ index: rev.index, row: filteredRows[rev.index] as Record<string, any> }));
-      if (matchedForAdvice.length > 0) {
+      // Company rows: the strict review (production always; in tests only when a test injected a reviewer). A label alone
+      // never delivers a row; a deterministic match is delivered only when Claude's structured review says the company
+      // itself does the requested activity AND quotes its own text. Anything else (a doubt, a failure, a timeout, a
+      // disabled reviewer) puts the row in the labelled review sheet: not delivered, not charged. Claude never promotes.
+      const strictCompanyReview = isCompanyCapability && (!useMockProvider || hasInjectedCompanyReviewer());
+
+      if (strictCompanyReview) {
+        const reviewKeywords = [...companyActivityKeywords(spec.params), ...(recognizedSector?.englishKeywords || [])];
+        const reviewModel = (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
+        let outcome: CompanyReviewOutcome = { verdicts: new Map(), failure: null, attempts: 0 };
+        if (matchedForAdvice.length > 0) {
+          outcome = await runCompanyReview({
+            reviewer: getCompanyReviewer(),
+            request: { customerRequest: reviewCustomerRequest, activityKeywords: reviewKeywords, country: expectedCountry || "", rows: matchedForAdvice },
+            // leave time after the review for saving the page, building the files and settling
+            deadlineMs: deadlineMs - 8_000,
+            onAttempt: async (attempt) => {
+              if (!userId) return;
+              try {
+                await adminClient.from("llm_usage").insert({
+                  user_id: userId,
+                  tokens_in: attempt.usage?.inputTokens ?? 0,
+                  tokens_out: attempt.usage?.outputTokens ?? 0,
+                  model: attempt.usage?.model ?? reviewModel,
+                  latency_ms: attempt.usage?.latencyMs ?? 0,
+                  reason: attempt.failure ? "relevance_review_failed" : "relevance_review",
+                  cost_usd: Number((attempt.usage?.costUsd ?? 0).toFixed(6)),
+                  created_at: new Date().toISOString(),
+                });
+              } catch (usageErr: any) {
+                console.warn("[worker:relevance_review_usage_log_failed]", usageErr?.message || "");
+              }
+              if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure}`);
+            },
+            onRetry: async () => {
+              try {
+                await adminClient.from("job_events").insert({
+                  job_id: jobId,
+                  user_id: userId,
+                  message: "جاري إعادة التحقق من ملاءمة السجلات",
+                  units: effectiveDelivered,
+                  event_type: "progress",
+                });
+              } catch (evtErr: any) {
+                console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+              }
+            },
+          });
+        }
+        let unreviewed = 0;
+        reviews = reviews.map((rev) => {
+          if (rev.decision !== "match") return rev;
+          const decided = decideCompanyRow({
+            deterministic: rev,
+            verdict: outcome.verdicts.get(rev.index),
+            row: filteredRows[rev.index] as Record<string, any>,
+            keywords: reviewKeywords,
+          });
+          if (decided.reasonCode === "review_unavailable") unreviewed += 1;
+          return { index: rev.index, decision: decided.decision, reasonAr: decided.reasonAr };
+        });
+        if (unreviewed > 0) {
+          reviewUnavailable = true;
+          console.warn(`[worker:relevance_review_unavailable] unreviewed=${unreviewed} failure=${outcome.failure || "incomplete"}`);
+          try {
+            await adminClient.from("job_events").insert({
+              job_id: jobId,
+              user_id: userId,
+              message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(unreviewed)} سجل الآن؛ وُضعت في شيت المراجعة ولم تُحتسب.`,
+              units: effectiveDelivered,
+              event_type: "info",
+            });
+          } catch (evtErr: any) {
+            console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+          }
+        }
+      } else if (matchedForAdvice.length > 0) {
         try {
           const advisory = await getRowAdvisor()({
             customerRequest: [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
@@ -863,7 +944,7 @@ export async function POST(req: NextRequest) {
     // page until the source runs out. Rows already matched are kept and charged as usual.
     // Directory searches (companies) and feeds (comments, posts, videos) both stop on the same rule: keep going within the
     // documented caps until the MATCHING count is reached, then deliver honestly as partial and charge only matching rows.
-    const callCapReason = isCompanyCapability || socialCapability
+    const pageCapReason = isCompanyCapability || socialCapability
       ? evaluateProviderCallCap({
           pagesDone: currentStep + 1,
           acceptedThisPage: acceptedRows.length,
@@ -873,6 +954,8 @@ export async function POST(req: NextRequest) {
           kind: isCompanyCapability ? "directory" : "feed",
         })
       : null;
+    // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
+    const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : pageCapReason;
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
       !cursorWouldRepeat &&
@@ -886,7 +969,9 @@ export async function POST(req: NextRequest) {
       // A valid but empty answer and "records arrived but none matched the request" are different
       // situations and are explained differently; both release the full reserve with zero charge.
       const receivedFromSource = providerRows.length;
-      const emptyErrorAr = receivedFromSource > 0
+      const emptyErrorAr = reviewUnavailable
+        ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
+        : receivedFromSource > 0
         ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
       const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);

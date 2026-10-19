@@ -11,7 +11,7 @@ export function evaluateDeterministicRelevance(
   row: Record<string, any>,
   targetCountry: string,
   targetIndustryAr: string
-): { decision: RelevanceDecision; reasonAr: string } {
+): { decision: RelevanceDecision; reasonAr: string; evidence?: "own_text" } {
   // 1. Strict Geographic Check: Never deliver rows from another country than requested
   if (targetCountry && !isCompanyRowMatchingLocation(row, targetCountry)) {
     return {
@@ -50,7 +50,8 @@ export function evaluateDeterministicRelevance(
   if (targetIndustryAr.toLowerCase().includes("الكهرباء") && energyAdjacent && rowInd !== "utilities") {
     const strongElectrical = /\b(electric(?:al|ity)?|substations?|transformers?|switchgear|power (?:distribution|transmission|generation|plants?|grid)|high voltage|grid)\b|كهربا|محطات? (?:توليد|محولات)|محولات/u.test(`${rowDesc} ${rowName}`);
     if (strongElectrical) {
-      return { decision: "match", reasonAr: "نص الشركة يصف نشاط الكهرباء، وتصنيف المصدر قريب من القطاع" };
+      // `evidence: "own_text"`: this match rests on the company's own name or description, not on the source label.
+      return { decision: "match", reasonAr: "نص الشركة يصف نشاط الكهرباء، وتصنيف المصدر قريب من القطاع", evidence: "own_text" };
     }
   }
   if (targetIndustryAr.toLowerCase().includes("الكهرباء") && rowInd === "utilities") {
