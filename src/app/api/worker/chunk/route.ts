@@ -728,7 +728,7 @@ export async function POST(req: NextRequest) {
           const applied = applyAdvisoryToReviews(reviews, advisory.verdicts);
           reviews = applied.reviews;
           if (applied.demoted > 0) console.log(`[worker:relevance_advisory] moved ${applied.demoted} matched row(s) to review`);
-          if (advisory.usage && userId) {
+          if (advisory.usage && userId && !advisory.failure) {
             await adminClient.from("llm_usage").insert({
               user_id: userId,
               tokens_in: advisory.usage.inputTokens,
@@ -739,6 +739,19 @@ export async function POST(req: NextRequest) {
               cost_usd: Number(advisory.usage.costUsd.toFixed(6)),
               created_at: new Date().toISOString(),
             });
+          } else if (advisory.failure && userId) {
+            const fallbackModel = (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
+            await adminClient.from("llm_usage").insert({
+              user_id: userId,
+              tokens_in: 0,
+              tokens_out: 0,
+              model: fallbackModel,
+              latency_ms: advisory.usage?.latencyMs ?? 0,
+              reason: "relevance_review_failed",
+              cost_usd: 0,
+              created_at: new Date().toISOString(),
+            });
+            console.warn(`[worker:relevance_advisory_failed] code=${advisory.failure}`);
           }
         } catch (advisoryErr: any) {
           console.warn("[worker:relevance_advisory_skipped]", advisoryErr?.message || "");
