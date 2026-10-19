@@ -226,7 +226,7 @@ export function decodeFileSpec(encoded: string): unknown | null {
 export function looksLikeFileShapingRequest(text: string): boolean {
   const t = String(text || "");
   if (t.length > 300) return false;
-  return /(?:شيت|ورقة|ورقه|تبويب|ملف)\s+(?:منفصل\s+|مستقل\s+)?لكل\s+\p{L}+|(?:قسّم|قسم|قسمي|وزّع|وزع)\s+(?:لي\s+)?(?:ال)?(?:ملف|اكسل|إكسل|شيت|نتايج|نتائج)|رتّب(?:ها|ه|لي)?\s+(?:الملف\s+|الشيت\s+)?حسب|رتب(?:ها|ه|لي)?\s+(?:الملف\s+|الشيت\s+)?حسب|فلتر(?:ها|ه)?\s+(?:الملف\s+|الشيت\s+)?(?:على|حسب|ب)|(?:سيب|خلي|اعرض|اظهر|أظهر)\s+(?:لي\s+)?(?:بس\s+|فقط\s+)?(?:الأعمدة|الاعمدة|عمود)/u.test(t);
+  return /(?:شيت|ورقة|ورقه|تبويب|ملف)\s+(?:منفصل\s+|مستقل\s+)?لكل\s+\p{L}+|(?:قسّم|قسم|قسمي|وزّع|وزع)\s+(?:لي\s+)?(?:ال)?(?:ملف|اكسل|إكسل|شيت|نتايج|نتائج)|رتّ?ب(?:ها|ه|لي|لنا)?\s+(?:(?:ال)?(?:ملف|شيت|اكسل|إكسل|نتايج|نتائج|سجلات|بيانات)\s+)?(?:حسب|بحسب|على\s+حسب)|فلتر(?:ها|ه)?\s+(?:(?:ال)?(?:ملف|شيت|اكسل|إكسل|نتايج|نتائج|سجلات|بيانات)\s+)?(?:على|حسب|ب)|(?:سيب|خلي|اعرض|اظهر|أظهر)\s+(?:لي\s+)?(?:بس\s+|فقط\s+)?(?:الأعمدة|الاعمدة|عمود)/u.test(t);
 }
 
 /** Arabic word without diacritics or the article, with the usual letter variants folded, for matching column words. */
@@ -250,6 +250,8 @@ const GROUP_WORD_KEYS: Record<string, string> = {
   "نشاط": "industry", "انشطه": "industry", "مجال": "industry", "مجالات": "industry", "قطاع": "industry", "قطاعات": "industry", "صناعه": "industry",
   "منصه": "platform", "منصات": "platform",
   "لغه": "language", "لغات": "language",
+  "هاتف": "phone", "تليفون": "phone", "موبايل": "phone", "جوال": "phone",
+  "ايميل": "work_email", "بريد": "work_email", "موقع": "website",
 };
 
 const GROUP_PHRASES: RegExp[] = [
@@ -280,19 +282,93 @@ export function resolveGroupColumn(name: string, columns: DatasetColumn[]): Data
   const direct = resolveColumn(name, columns);
   if (direct) return direct;
   const key = GROUP_WORD_KEYS[arabicWordKey(name)];
-  return (key && columns.find((c) => c.key === key)) || null;
+  if (key) return columns.find((c) => c.key === key) || null;
+  // «المتابعين» and «المتابعون» (and any title that differs only in the plural ending or the article) name one column.
+  const fold = (value: string) => arabicWordKey(value).replace(/(?:ون|ين)$/u, "ين");
+  const wanted = fold(name);
+  return (wanted && columns.find((c) => fold(c.titleAr) === wanted || fold(c.key) === wanted)) || null;
+}
+
+const FILLER_TAIL = /\s*(?:لو\s+سمحت|من\s+فضلك|please)\s*$/iu;
+const FILE_WORDS = "(?:(?:ال)?(?:ملف|شيت|اكسل|إكسل|نتايج|نتائج|سجلات|بيانات)\\s+)?";
+const SORT_PHRASE = new RegExp(`رتّ?ب(?:ها|ه|لي|لنا)?\\s+${FILE_WORDS}(?:حسب|بحسب|على\\s+حسب)\\s+([^،,.!؟?\\n]+)`, "u");
+const FILTER_PHRASE = new RegExp(`فلتر(?:ها|ه)?\\s+${FILE_WORDS}(?:على|حسب|ب)\\s+([^،,.!؟?\\n]+)`, "u");
+const COLUMNS_PHRASE = /(?:سيب|خلي|اعرض|اظهر|أظهر)(?:\s+لي)?\s+(?:بس\s+|فقط\s+)?(?:ال)?(?:أعمدة|اعمدة|عمودين|عمود)\s+([^.!؟?\n]+)/u;
+const DESC_WORDS = /(?:تنازلي(?:اً|ًا|ا)?|من\s+(?:الأكبر|الاكبر|الأعلى|الاعلى)(?:\s+(?:إلى|الى|ل)\s*\S+)?)/u;
+const ASC_WORDS = /(?:تصاعدي(?:اً|ًا|ا)?|من\s+(?:الأصغر|الاصغر|الأقل|الاقل)(?:\s+(?:إلى|الى|ل)\s*\S+)?)/u;
+
+/** The shaping steps a message carries; a message with more than one is compound and is left to the model. */
+function shapingSteps(text: string): number {
+  const t = String(text || "");
+  // «رتب الشيت حسب المدينة» is a sort, not also a split: look for a split in what the other phrases leave over.
+  const rest = t.replace(SORT_PHRASE, " ").replace(FILTER_PHRASE, " ").replace(COLUMNS_PHRASE, " ");
+  return [GROUP_PHRASES.some((p) => p.test(rest)), SORT_PHRASE.test(t), FILTER_PHRASE.test(t), COLUMNS_PHRASE.test(t)].filter(Boolean).length;
+}
+
+function sortSpec(text: string, columns: DatasetColumn[]): FileSpec | null {
+  const hit = SORT_PHRASE.exec(text);
+  if (!hit) return null;
+  const direction: "asc" | "desc" = DESC_WORDS.test(text) ? "desc" : "asc";
+  if (DESC_WORDS.test(text) && ASC_WORDS.test(text)) return null;
+  const name = hit[1].replace(DESC_WORDS, "").replace(ASC_WORDS, "").replace(FILLER_TAIL, "").replace(/[\u064B-\u0652]/g, "").trim();
+  if (!name || name.length > FILE_SPEC_LIMITS.maxColumnNameLength || /(?:^|\s)(?:و|ثم)\s/u.test(` ${name} `) || name.split(/\s+/).length > 3) return null;
+  const column = resolveGroupColumn(name, columns);
+  return { version: 1, sortBy: [{ column: column ? column.key : name, direction }] };
+}
+
+const FILTER_OPS: Array<{ re: RegExp; op: FilterOperator }> = [
+  { re: /^(.+?)\s+(?:أكبر|اكبر)\s+من\s+(.+)$/u, op: "gt" },
+  { re: /^(.+?)\s+(?:أقل|اقل)\s+من\s+(.+)$/u, op: "lt" },
+  { re: /^(.+?)\s+(?:يحتوي|يحتوى|فيه|يشمل|بيشمل)\s+(.+)$/u, op: "contains" },
+  { re: /^(.+?)\s+(?:يساوي|=|هو|هي)\s+(.+)$/u, op: "equals" },
+];
+
+/** «فلتر الملف على <عمود> أكبر من <قيمة>»: only with an explicit operator word; a bare value is ambiguous and the model's. */
+function filterSpec(text: string, columns: DatasetColumn[]): FileSpec | null {
+  const hit = FILTER_PHRASE.exec(text);
+  if (!hit) return null;
+  const rest = hit[1].replace(FILLER_TAIL, "").trim();
+  if (/(?:^|\s)(?:و|ثم)\s/u.test(` ${rest} `)) return null;
+  for (const { re, op } of FILTER_OPS) {
+    const parts = re.exec(rest);
+    if (!parts) continue;
+    const name = parts[1].trim();
+    const raw = parts[2].trim();
+    if (!name || name.split(/\s+/).length > 3 || !raw || raw.length > FILE_SPEC_LIMITS.maxTextLength) return null;
+    const column = resolveGroupColumn(name, columns);
+    const value: string | number = op === "gt" || op === "lt" ? Number(num(raw) ?? NaN) : raw;
+    if ((op === "gt" || op === "lt") && !Number.isFinite(value)) return null;
+    return { version: 1, filters: [{ column: column ? column.key : name, op, value }] };
+  }
+  return null;
+}
+
+/** «سيب الأعمدة الاسم والمدينة والهاتف فقط»: the named columns, in that order. */
+function columnsSpec(text: string, columns: DatasetColumn[]): FileSpec | null {
+  const hit = COLUMNS_PHRASE.exec(text);
+  if (!hit) return null;
+  const list = hit[1].replace(/\s*(?:بس|فقط)\s*$/u, "").replace(FILLER_TAIL, "").trim();
+  const names = list.split(/\s*(?:،|,|\sو\s|\sو(?=\S)|\sثم\s)\s*/u).map((n) => n.replace(/^و(?=\p{L}{3,})/u, "").trim()).filter(Boolean);
+  if (names.length === 0 || names.length > 12 || names.some((n) => n.split(/\s+/).length > 3 || n.length > FILE_SPEC_LIMITS.maxColumnNameLength)) return null;
+  return { version: 1, columns: names.map((n) => resolveGroupColumn(n, columns)?.key ?? n) };
 }
 
 /**
- * «Sheet per X» read by code against the REAL columns of the delivered file: no model call, no guessing. A column that
- * exists gives a spec with its real key; one that does not gives a spec naming the word as written, which the usual
- * validation turns into ONE question listing the columns the file has. Null when the text is not a split request.
+ * A shaping request read by code against the REAL columns of the delivered file: no model call, no guessing. Covers one
+ * step: a sheet per column, a sort, a filter with an explicit operator, or a column choice. A column that exists gives
+ * a spec with its real key; one that does not gives a spec naming the word as written, which the usual validation
+ * turns into a question about the columns the file has. Null when the text is compound or ambiguous (the model's) or
+ * is not a shaping request.
  */
 export function deterministicShapeSpec(text: string, columns: DatasetColumn[]): FileSpec | null {
-  const name = shapingGroupName(text);
-  if (!name) return null;
-  const column = resolveGroupColumn(name, columns);
-  return { version: 1, groupBy: { column: column ? column.key : name, mode: "sheets" } };
+  const t = String(text || "").trim();
+  if (!t || t.length > 300 || shapingSteps(t) !== 1) return null;
+  const name = shapingGroupName(t);
+  if (name) {
+    const column = resolveGroupColumn(name, columns);
+    return { version: 1, groupBy: { column: column ? column.key : name, mode: "sheets" } };
+  }
+  return sortSpec(t, columns) ?? filterSpec(t, columns) ?? columnsSpec(t, columns);
 }
 
 /** Plain-Arabic description of what the spec will do, shown to the customer before they download. */

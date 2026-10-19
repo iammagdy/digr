@@ -431,6 +431,9 @@ export function formatClarificationMessageForAssistant(message: string): string 
       if (answer?.questionId === "shape_column_required" && typeof answer?.value === "string" && answer.value.trim()) {
         return `قسّم الملف شيت لكل ${sanitizeClarificationText(answer.value, 80)}`;
       }
+      if ((answer?.questionId === "shape_sort_asc_required" || answer?.questionId === "shape_sort_desc_required") && typeof answer?.value === "string" && answer.value.trim()) {
+        return `رتب الملف حسب ${sanitizeClarificationText(answer.value, 80)}${answer.questionId === "shape_sort_desc_required" ? " تنازلياً" : ""}`;
+      }
       const label = labels[answer?.questionId] || `إجابة عن ${sanitizeClarificationText(String(answer?.question || "السؤال"), 120)}`;
       const values = Array.isArray(answer?.value)
         ? answer.value.filter((value: unknown) => typeof value === "string").map((value: string) => sanitizeClarificationText(value, 40))

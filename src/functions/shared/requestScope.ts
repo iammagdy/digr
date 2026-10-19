@@ -13,6 +13,7 @@ import { looksLikeFileShapingRequest } from "../../lib/fileSpec";
 
 const REQUEST_VERB = /(?:^|\s)(?:جيب|جيبلي|تجيبلي|تجبلي|لاقي|ممكن|لو سمحت|هات|هاتلي|هات لي|اجمع|اجمعلي|ابحث|دورلي|دور على|عايز|عاوز|عايزة|أريد|اريد|أبغى|ابغى|أبي|ابي|محتاج|محتاجة|استخرج|طلعلي|جمع|اعطني|أعطني|جهزلي|قارن)(?=\s|$)/;
 const REQUEST_OBJECT = /(?:تعليق|تعليقات|كومنت|كومنتس|كومنتات|تغريد|تويت|بوست|منشور|فيديو|فيديوهات|شرك|مدير|مديري|دراس|بحث|أبحاث|ابحاث|مقال|حساب|متابع|ايميل|إيميل|رقم|صناع|مصنع|مستشف|مطعم|مكتب|مورد|عملاء|جامع|دكتور|أطباء|اطباء|محامي)/;
+const SHAPING_VERB_START = /^(?:رتّ?ب|فلتر|قسّ?م|وزّ?ع|سيب|خلي)(?:ها|ه|لي|لنا)?(?=\s)/u;
 const TOPIC_MARKER = /(?:^|\s)(?:عن|حول|بخصوص|في|من|لدى|داخل)\s/;
 const PLAN_REFERENCE = /(?:الخطة|الخطه|العرض|السعر|عرض السعر|النقاط|الرصيد|الملف|الشيت|الاكسل|الإكسل|اللي فات|السابق)/;
 /** An answer to one of our questions (the card answers are stored as labelled text) never starts a new request. */
@@ -46,7 +47,11 @@ export function isStandaloneResearchRequest(text: string): boolean {
  * a layout ("منشورات من حسابات مشهورة، ملف لكل منصة") carries a research object and is not one.
  */
 export function isFileShapingMessage(text: string): boolean {
-  return looksLikeFileShapingRequest(text) && !REQUEST_OBJECT.test(text || "");
+  const t = String(text || "").trim();
+  if (!looksLikeFileShapingRequest(t)) return false;
+  // A message that BEGINS with a shaping verb is about the file even when a column it names looks like a research object
+  // («رتب النتائج حسب المتابعين»); one that begins with a request verb and names an object is research.
+  return !REQUEST_OBJECT.test(t) || SHAPING_VERB_START.test(t);
 }
 
 /** A turn that carries no research request: a greeting, an identity question, or how the delivered file should look. */

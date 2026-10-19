@@ -1,6 +1,6 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
-import { FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn } from "../../lib/fileSpec";
+import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, looksLikeFileShapingRequest, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { planExplanationLinesAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
@@ -111,6 +111,9 @@ function customerAuthoredRequirementText(message: string): string {
         // The column chosen to split the delivered file: the shaping request it completes, not a research answer.
         if (answer?.questionId === "shape_column_required" && typeof answer?.value === "string" && answer.value.trim()) {
           return [`قسّم الملف شيت لكل ${sanitizeClarificationText(answer.value, 80)}`];
+        }
+        if ((answer?.questionId === "shape_sort_asc_required" || answer?.questionId === "shape_sort_desc_required") && typeof answer?.value === "string" && answer.value.trim()) {
+          return [`رتب الملف حسب ${sanitizeClarificationText(answer.value, 80)}${answer.questionId === "shape_sort_desc_required" ? " تنازلياً" : ""}`];
         }
         const label = labels[answer?.questionId] || "الإجابة";
         if (typeof answer?.value === "string") return [`${label}: ${sanitizeClarificationText(answer.value, 200)}`];
@@ -1218,6 +1221,24 @@ interface TurnUsageLog {
   messageId?: string;
 }
 
+const REVISION_UNAVAILABLE_AR = "هذا التعديل غير متاح الآن. أما تغيير شكل الملف فمجاني: شيت لكل عمود، أو ترتيب، أو تصفية، أو اختيار الأعمدة التي تريدها.";
+
+/** The file spec a model-written sort, filter or column choice stands for, or null for any other edit. */
+function shapeSpecFromEditArtifact(output: { action?: string; parameters?: Record<string, any> }): FileSpec | null {
+  const params = output.parameters || {};
+  if (output.action === "sort" && typeof params.field === "string" && params.field.trim()) {
+    return { version: 1, sortBy: [{ column: params.field, direction: params.direction === "asc" ? "asc" : "desc" }] };
+  }
+  if (output.action === "select_columns" && Array.isArray(params.columns) && params.columns.length > 0 && params.columns.every((c: unknown) => typeof c === "string")) {
+    return { version: 1, columns: params.columns };
+  }
+  if (output.action === "filter" && typeof params.field === "string" && params.field.trim()) {
+    const op = (FILTER_OPERATORS as readonly string[]).includes(params.operator) ? params.operator : "contains";
+    return { version: 1, filters: [{ column: params.field, op, ...(params.value !== undefined && params.value !== "" ? { value: params.value } : {}) }] } as FileSpec;
+  }
+  return null;
+}
+
 export class ChatHandler {
   private tables: TablesDB | any;
   private llm: LlmClient;
@@ -2259,7 +2280,8 @@ export class ChatHandler {
       }
 
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
-      if (requiredDiscoveryQuestion) {
+      // A turn about the delivered file never asks research questions (a column named «الشركة» is not a company request).
+      if (requiredDiscoveryQuestion && !isFileShapingTurn) {
         const intro = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
         const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
           capabilities: allCapabilities,
@@ -2699,18 +2721,27 @@ export class ChatHandler {
         }
       }
 
+      // A sort, a filter or a column choice is file shaping (free, no model-built file); the paid-revision card is retired.
+      if (output.type === "edit_artifact" && shapingColumns.length > 0) {
+        const spec = shapeSpecFromEditArtifact(output as any);
+        if (spec) output = { type: "shape_file", replyAr: "تمام", spec } as any;
+      }
+
       // 7f. File shaping: the spec is checked against the real columns of the delivered result. An unknown column is never
       // guessed: the customer is told which columns exist and asked ONE question.
       if (output.type === "shape_file" && shapingColumns.length > 0) {
         const checked = validateFileSpec((output as any).spec, shapingColumns);
         if (checked.ok) {
           (output as any).spec = checked.spec;
-        } else if ((output as any).spec?.groupBy) {
-          const choices = columnChoicesAr(shapingColumns, 8, true);
+        } else if ((output as any).spec?.groupBy || (output as any).spec?.sortBy?.length) {
+          const isSort = !(output as any).spec?.groupBy;
+          const sortDesc = isSort && (output as any).spec.sortBy[0]?.direction === "desc";
+          const choices = columnChoicesAr(shapingColumns, 8, !isSort);
+          const questionText = isSort ? "بأي عمود تريد ترتيب الملف؟" : "بأي عمود تريد تقسيم الملف إلى شيتات؟";
           const question = {
-            id: "shape_column_required",
-            text: "بأي عمود تريد تقسيم الملف إلى شيتات؟",
-            question: "بأي عمود تريد تقسيم الملف إلى شيتات؟",
+            id: isSort ? (sortDesc ? "shape_sort_desc_required" : "shape_sort_asc_required") : "shape_column_required",
+            text: questionText,
+            question: questionText,
             type: "single" as const,
             options: choices,
             allowOther: false,
@@ -3574,46 +3605,9 @@ export class ChatHandler {
           finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.`;
         }
       } else if (output.type === "edit_artifact") {
-        let latestJobId: string | null = null;
-        try {
-          if (sb) {
-            awaitsCount++;
-            const { data: jobDoc } = await sb
-              .from("jobs")
-              .select("id, status")
-              .eq("conversation_id", conversationId)
-              .eq("user_id", userId)
-              .in("status", ["done", "completed"])
-              .order("created_at", { ascending: false })
-              .limit(1)
-              .maybeSingle();
-            latestJobId = jobDoc?.id || null;
-          }
-        } catch {}
-
-        let operation: any = { action: "convert_formats", formats: ["xlsx", "pdf", "csv"] };
-        const actionType = (output as any).action;
-        const params = (output as any).parameters || {};
-        if (actionType === "dedupe") {
-          operation = { action: "dedupe", keys: Array.isArray(params.keys) ? params.keys : ["id", "username", "profileUrl"] };
-        } else if (actionType === "sort") {
-          operation = { action: "sort", field: params.field || "followers", direction: params.direction || "desc" };
-        } else if (actionType === "select_columns") {
-          operation = { action: "select_columns", columns: Array.isArray(params.columns) ? params.columns : ["username", "displayName", "followers", "likes"] };
-        } else if (actionType === "filter") {
-          operation = { action: "filter", field: params.field || "username", operator: params.operator || "contains", value: params.value ?? "" };
-        } else if (actionType === "anonymize") {
-          operation = { action: "anonymize", fields: Array.isArray(params.fields) ? params.fields : ["username", "displayName", "bio", "bioLink", "profileUrl"] };
-        }
-
-        const revisionDesc = (output as any).reasonAr || "تعديل تنسيق وإخراج ملفات النتائج";
-        revisionQuoteData = {
-          jobId: latestJobId || "current",
-          revisionDescription: revisionDesc,
-          operation,
-          points: 10,
-        };
-        finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n• التعديل المطلوب: ${revisionDesc}\n• التكلفة: 10 نقاط\n• سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
+        // The paid revision service is not offered: no price, no card. Shaping the file is free and is answered above.
+        finalContentAr = REVISION_UNAVAILABLE_AR;
+        output = { type: "answer_question", answerAr: REVISION_UNAVAILABLE_AR } as any;
       }
 
       // Post-job artifact revision detector: if user requests deliverable formatting fix on existing completed job
@@ -3621,11 +3615,9 @@ export class ChatHandler {
         const mLower = message.toLowerCase();
         const isRtlFix = mLower.includes("rtl") || mLower.includes("يمين") || mLower.includes("يسار") || mLower.includes("اتجاه الشيت");
         const isDedupe = mLower.includes("احذف التكرار") || mLower.includes("حذف التكرار") || mLower.includes("إزالة التكرار");
-        const isSort = mLower.includes("رتب") || mLower.includes("ترتيب");
         const isAnonymize = mLower.includes("اخفي") || mLower.includes("إخفاء الهوية");
-        const isColumns = mLower.includes("أعمدة") || mLower.includes("اعمدة");
 
-        if (isRtlFix || isDedupe || isSort || isAnonymize || isColumns) {
+        if (isRtlFix || isDedupe || isAnonymize) {
           let completedJobId: string | null = null;
           try {
             if (sb) {
@@ -3644,30 +3636,9 @@ export class ChatHandler {
           } catch {}
 
           if (completedJobId) {
-            let op: any = { action: "convert_formats", formats: ["xlsx", "pdf", "csv"] };
-            let desc = "إعادة ضبط اتجاه وتنسيق الجداول (RTL) والأعمدة القياسية";
-            if (isDedupe) {
-              op = { action: "dedupe", keys: ["id", "username", "profileUrl"] };
-              desc = "حذف السجلات المكررة والاحتفاظ بالسجلات الفريدة فقط";
-            } else if (isSort) {
-              op = { action: "sort", field: "followers", direction: "desc" };
-              desc = "إعادة ترتيب السجلات تنازلياً";
-            } else if (isAnonymize) {
-              op = { action: "anonymize", fields: ["username", "displayName", "bio", "bioLink", "profileUrl"] };
-              desc = "إخفاء أسماء ومعرفات المستخدمين لحماية الخصوصية";
-            } else if (isColumns) {
-              op = { action: "select_columns", columns: ["username", "displayName", "followers", "likes"] };
-              desc = "تحديد واختيار الأعمدة الأساسية فقط";
-            }
-
-            revisionQuoteData = {
-              jobId: completedJobId,
-              revisionDescription: desc,
-              operation: op,
-              points: 10,
-            };
-            output = { type: "edit_artifact", reasonAr: desc } as any;
-            finalContentAr = `أعددت لك عرض تعديل المخرجات بدون إعادة جمع البيانات:\n- التعديل المطلوب: ${desc}\n- التكلفة: 10 نقاط\n- سيتم حفظ التعديل كنسخة جديدة مع الاحتفاظ بالنسخ السابقة.`;
+            // Retired: the paid revision card. Say plainly that this edit is not available, and what is free.
+            output = { type: "answer_question", answerAr: REVISION_UNAVAILABLE_AR } as any;
+            finalContentAr = REVISION_UNAVAILABLE_AR;
           }
         }
       }

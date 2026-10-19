@@ -63,9 +63,10 @@ describe("«sheet per X» is read by code against the real columns", () => {
     if (!checked.ok) expect(checked.errorAr).toContain("«محافظة»");
   });
 
-  it("a request that is not a split gives nothing, so the model keeps it", () => {
-    expect(deterministicShapeSpec("رتّب الملف حسب اسم الشركة", columns)).toBeNull();
-    expect(deterministicShapeSpec("سيب بس الأعمدة اسم الشركة والهاتف", columns)).toBeNull();
+  it("a sort or a column choice is read by code too; a compound request gives nothing, so the model keeps it", () => {
+    expect(deterministicShapeSpec("رتّب الملف حسب اسم الشركة", columns)).toEqual({ version: 1, sortBy: [{ column: "company_name", direction: "asc" }] });
+    expect(deterministicShapeSpec("سيب بس الأعمدة اسم الشركة والهاتف", columns)).toEqual({ version: 1, columns: ["company_name", "phone"] });
+    expect(deterministicShapeSpec("قسّم الملف شيت لكل مدينة ورتبها حسب الاسم", columns)).toBeNull();
   });
 
   it("the choices offered for a split leave out contact, link, id and status columns; the default list is unchanged", () => {
@@ -133,7 +134,7 @@ describe("chat turn about the delivered file: no model call for a split", () => 
     expect(options.length).toBeLessThanOrEqual(8);
   });
 
-  it("a card answer to that question and any other shaping (a sort) still go to the model, as before", async () => {
+  it("a sort is read by code (no model call); a card answer to the column question still goes to the model, as before", async () => {
     const { executeTurn, send, handler } = await session();
     const seen: string[] = [];
     (handler as any).llm.executeTurn = async (opts: any) => {
@@ -141,11 +142,11 @@ describe("chat turn about the delivered file: no model call for a split", () => 
       return { output: { type: "shape_file", replyAr: "تمام", spec: { sortBy: [{ column: "المدينة", direction: "asc" }] } }, inputTokens: 500, outputTokens: 30, costUsd: 0.0005, model: "claude-haiku-5-5", promptVersion: "t" };
     };
     const sorted: any = await send("رتّب الملف حسب المدينة");
-    expect(seen).toHaveLength(1);
+    expect(seen).toHaveLength(0);
     expect(sorted.fileShape.spec.sortBy).toEqual([{ column: "city", direction: "asc" }]);
     const answer = JSON.stringify({ type: "clarification_answers", answers: [{ questionId: "shape_column_required", question: "بأي عمود تريد تقسيم الملف إلى شيتات؟", value: "المدينة" }] });
     await send(answer);
-    expect(seen).toHaveLength(2);
+    expect(seen).toHaveLength(1);
     expect(executeTurn).not.toHaveBeenCalled();
   });
 });
