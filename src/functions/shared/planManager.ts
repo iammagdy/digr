@@ -26,7 +26,7 @@ import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINT
 import { callAtomicOrFallback } from "./atomicRpc";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
-import { quoteScopeGaps } from "../../lib/quoteScopeGaps";
+import { containsMissingToken, quoteScopeGaps } from "../../lib/quoteScopeGaps";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -582,6 +582,8 @@ export async function createAndSaveManagedQuote(
   // Opt-in scope guard for production callers: incomplete plans with scope gaps are rejected
   if (input.enforceScope) {
     const gaps = quoteScopeGaps(plan.items);
+    // A summary that carries «undefined» or «null» as a value would be shown to the customer as it is: the plan is incomplete.
+    if (containsMissingToken(plan.summaryAr) && !gaps.includes("placeholder")) gaps.push("placeholder");
     if (gaps.length > 0) {
       throw new Error(`الخطة غير مكتملة: ${gaps.join(", ")}`);
     }

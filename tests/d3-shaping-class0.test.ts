@@ -115,14 +115,14 @@ describe("chat turns about the delivered file", () => {
     expect(res.clarificationItems[0].options).toContain("المدينة");
     expect(res.contentAr).toContain("لن يُخصم أي رصيد");
     const answer = JSON.stringify({ type: "clarification_answers", answers: [{ questionId: "shape_sort_desc_required", question: "بأي عمود تريد ترتيب الملف؟", value: "المدينة" }] });
-    // The answer turn is the model's, as for a split: it sees the answer as the sort request it completes.
+    // The answer turn is resolved by code too: the chosen option plus the direction carried by the question id.
     const seen: string[] = [];
     (handler as any).llm.executeTurn = async (opts: any) => {
       seen.push(opts.messages.at(-1).content);
       return { output: { type: "shape_file", replyAr: "تمام", spec: { sortBy: [{ column: "المدينة", direction: "desc" }] } }, inputTokens: 500, outputTokens: 30, costUsd: 0.0005, model: "claude-haiku-5-5", promptVersion: "t" };
     };
     const sorted: any = await send(answer);
-    expect(seen).toEqual(["رتب الملف حسب المدينة تنازلياً"]);
+    expect(seen).toEqual([]);
     expect(sorted.fileShape.spec.sortBy).toEqual([{ column: "city", direction: "desc" }]);
   });
 

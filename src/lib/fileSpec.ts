@@ -371,6 +371,126 @@ export function deterministicShapeSpec(text: string, columns: DatasetColumn[]): 
   return sortSpec(t, columns) ?? filterSpec(t, columns) ?? columnsSpec(t, columns);
 }
 
+/** The questions asked when a shaping request names a column the delivered file does not have. Each is answered in code. */
+export const SHAPE_QUESTION_IDS = [
+  "shape_column_required",
+  "shape_sort_asc_required",
+  "shape_sort_desc_required",
+  "shape_filter_column_required",
+  "shape_columns_required",
+] as const;
+export type ShapeQuestionId = (typeof SHAPE_QUESTION_IDS)[number];
+
+export function isShapeQuestionId(id: unknown): id is ShapeQuestionId {
+  return typeof id === "string" && (SHAPE_QUESTION_IDS as readonly string[]).includes(id);
+}
+
+/** The customer's answer to a shaping question, read from the card payload; null when the message is anything else. */
+export function shapeAnswerFromMessage(message: string): { questionId: ShapeQuestionId; value: string } | null {
+  const text = String(message || "").trim();
+  if (!text.startsWith("{") || !text.includes("clarification_answers")) return null;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return null;
+    for (const answer of parsed.answers) {
+      if (isShapeQuestionId(answer?.questionId)) {
+        const value = Array.isArray(answer.value) ? answer.value.find((v: unknown) => typeof v === "string") : answer.value;
+        return { questionId: answer.questionId, value: typeof value === "string" ? value.trim() : "" };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export interface ShapeQuestion {
+  id: ShapeQuestionId;
+  textAr: string;
+  /** the word the customer wrote for a column the file does not have */
+  unknownName: string;
+}
+
+const isKnownColumn = (name: string, columns: DatasetColumn[]) => resolveGroupColumn(name, columns) !== null;
+
+/** Which question a spec with an unknown column needs, or null when every column it names exists. */
+export function shapeQuestionForSpec(spec: FileSpec | null | undefined, columns: DatasetColumn[]): ShapeQuestion | null {
+  if (!spec) return null;
+  if (spec.groupBy && !isKnownColumn(spec.groupBy.column, columns)) {
+    return { id: "shape_column_required", textAr: "بأي عمود تريد تقسيم الملف إلى شيتات؟", unknownName: spec.groupBy.column };
+  }
+  const sort = spec.sortBy?.find((entry) => !isKnownColumn(entry.column, columns));
+  if (sort) {
+    return { id: sort.direction === "desc" ? "shape_sort_desc_required" : "shape_sort_asc_required", textAr: "بأي عمود تريد ترتيب الملف؟", unknownName: sort.column };
+  }
+  const filter = spec.filters?.find((entry) => !isKnownColumn(entry.column, columns));
+  if (filter) {
+    return { id: "shape_filter_column_required", textAr: "على أي عمود تريد تطبيق الفلتر؟", unknownName: filter.column };
+  }
+  const column = spec.columns?.find((name) => !isKnownColumn(name, columns));
+  if (column) {
+    return { id: "shape_columns_required", textAr: "أي عمود من أعمدة ملفك تقصد؟", unknownName: column };
+  }
+  return null;
+}
+
+export type ShapeAnswerResolution =
+  | { ok: true; spec: FileSpec; ignored: string[] }
+  | { ok: false; errorAr: string };
+
+const SHAPE_ANSWER_FAILED_AR = "لم أستطع تحديد الشكل المطلوب للملف من اختيارك. اكتب مثلًا: رتب الملف حسب المدينة، أو شيت لكل مدينة. لن يُخصم أي رصيد.";
+
+/**
+ * The answer to a shaping question, resolved in code: the chosen column plus the shaping step the question belongs to give
+ * the spec, validated against the REAL columns. A split and a sort carry their step in the question id; a filter and a
+ * column choice recover theirs (operator, value, the other columns) from the customer's original request. No model, no price.
+ */
+export function resolveShapeAnswer(input: {
+  questionId: ShapeQuestionId;
+  value: string;
+  originalText?: string;
+  columns: DatasetColumn[];
+}): ShapeAnswerResolution {
+  const failed: ShapeAnswerResolution = { ok: false, errorAr: SHAPE_ANSWER_FAILED_AR };
+  const chosen = input.value ? resolveGroupColumn(input.value, input.columns) : null;
+  if (!chosen) return failed;
+  let spec: FileSpec | null = null;
+  const ignored: string[] = [];
+  switch (input.questionId) {
+    case "shape_column_required":
+      spec = { version: 1, groupBy: { column: chosen.key, mode: "sheets" } };
+      break;
+    case "shape_sort_asc_required":
+      spec = { version: 1, sortBy: [{ column: chosen.key, direction: "asc" }] };
+      break;
+    case "shape_sort_desc_required":
+      spec = { version: 1, sortBy: [{ column: chosen.key, direction: "desc" }] };
+      break;
+    case "shape_filter_column_required": {
+      const original = input.originalText ? deterministicShapeSpec(input.originalText, input.columns) : null;
+      const filter = original?.filters?.[0];
+      if (!filter) return failed;
+      spec = { version: 1, filters: [{ ...filter, column: chosen.key }] };
+      break;
+    }
+    case "shape_columns_required": {
+      const original = input.originalText ? deterministicShapeSpec(input.originalText, input.columns) : null;
+      if (!original?.columns?.length) return failed;
+      let replaced = false;
+      const kept: string[] = [];
+      for (const name of original.columns) {
+        if (isKnownColumn(name, input.columns)) kept.push(resolveGroupColumn(name, input.columns)!.key);
+        else if (!replaced) { kept.push(chosen.key); replaced = true; }
+        else ignored.push(name);
+      }
+      spec = { version: 1, columns: [...new Set(kept)] };
+      break;
+    }
+  }
+  const checked = validateFileSpec(spec, input.columns);
+  return checked.ok ? { ok: true, spec: checked.spec, ignored } : failed;
+}
+
 /** Plain-Arabic description of what the spec will do, shown to the customer before they download. */
 export function describeFileSpecAr(spec: FileSpec, columns: DatasetColumn[]): string {
   const title = (key: string) => columns.find((c) => c.key === key)?.titleAr || key;

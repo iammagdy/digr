@@ -1,5 +1,6 @@
 "use client";
 
+import { persistedFileShape } from "@/lib/fileShapeMessage";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -821,6 +822,7 @@ export default function ChatWorkspacePage() {
             role: document.role as "user" | "assistant",
             content: String(document.content_ar || document.content || "").slice(0, 20000),
             clarificationItems: document.clarification_items,
+            fileShape: persistedFileShape(document.plan),
             planQuote: savedQuote
               ? { ...savedQuote, status: quoteStatusById.get(quoteId) || "unknown" }
               : null,

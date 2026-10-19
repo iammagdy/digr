@@ -134,7 +134,7 @@ describe("chat turn about the delivered file: no model call for a split", () => 
     expect(options.length).toBeLessThanOrEqual(8);
   });
 
-  it("a sort is read by code (no model call); a card answer to the column question still goes to the model, as before", async () => {
+  it("a sort is read by code (no model call); a card answer to the column question is resolved by code too (no model call)", async () => {
     const { executeTurn, send, handler } = await session();
     const seen: string[] = [];
     (handler as any).llm.executeTurn = async (opts: any) => {
@@ -145,8 +145,9 @@ describe("chat turn about the delivered file: no model call for a split", () => 
     expect(seen).toHaveLength(0);
     expect(sorted.fileShape.spec.sortBy).toEqual([{ column: "city", direction: "asc" }]);
     const answer = JSON.stringify({ type: "clarification_answers", answers: [{ questionId: "shape_column_required", question: "بأي عمود تريد تقسيم الملف إلى شيتات؟", value: "المدينة" }] });
-    await send(answer);
-    expect(seen).toHaveLength(1);
+    const answered: any = await send(answer);
+    expect(seen).toHaveLength(0);
+    expect(answered.fileShape.spec.groupBy).toEqual({ column: "city", mode: "sheets" });
     expect(executeTurn).not.toHaveBeenCalled();
   });
 });
