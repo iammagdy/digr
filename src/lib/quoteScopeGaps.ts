@@ -75,11 +75,27 @@ export function containsMissingToken(text: unknown): boolean {
  * leave the phrase out itself; this is the last line of defence before a message is saved or a card is drawn.
  */
 export function stripMissingValueWords(text: string): string {
-  return String(text ?? "")
+  const original = String(text ?? "");
+  // Nothing to remove: the text, with its line breaks, is returned exactly as it came.
+  if (!/(?:^|[\s،,:؛(«"'])(?:undefined|null|NaN)(?=$|[\s،,.:؛)»"'!؟?])/.test(original)) return original;
+  return original
     .replace(/\s+(?:في|من|على|إلى|حول|بـ?)\s+(?:undefined|null|NaN)(?=$|[\s،,.:؛)»"'!؟?])/g, "")
     .replace(/(?:^|(?<=[\s،,:؛(«"']))(?:undefined|null|NaN)(?=$|[\s،,.:؛)»"'!؟?])/g, "")
-    .replace(/\s{2,}/g, " ")
+    .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+/**
+ * A quote whose customer-facing texts carry no missing-value word. Applied where a quote is created and again where a stored one
+ * is drawn, so an old card saved with «في undefined» reads cleanly without the stored row being touched.
+ */
+export function scrubQuoteTexts<T extends { summaryAr?: string; methodologyNotes?: string }>(quote: T): T {
+  const clean = (text: unknown) => (typeof text === "string" ? stripMissingValueWords(text) : text);
+  return {
+    ...quote,
+    ...(typeof quote.summaryAr === "string" ? { summaryAr: clean(quote.summaryAr) as string } : {}),
+    ...(typeof quote.methodologyNotes === "string" ? { methodologyNotes: clean(quote.methodologyNotes) as string } : {}),
+  };
 }
 
 /** A string that says something: not empty, not a missing-value word, not a «يلزم تحديد» placeholder. */

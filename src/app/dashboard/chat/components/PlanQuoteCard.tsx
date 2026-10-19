@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
-import { quoteScopeGaps, planScopeRows } from "@/lib/quoteScopeGaps";
+import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { socialSubjectForDisplay } from "@/lib/socialTasks";
@@ -122,7 +122,7 @@ export { extractParamDisplayString, extractInterpretedParameters };
 
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
 export default function PlanQuoteCard({
-  quote,
+  quote: storedQuote,
   conversationTitle = "",
   onStart,
   onSaveEdit,
@@ -135,6 +135,7 @@ export default function PlanQuoteCard({
   locked = false,
   onExplore,
 }: PlanQuoteCardProps) {
+  const quote = useMemo(() => scrubQuoteTexts(storedQuote), [storedQuote]);
   const [isEditing, setIsEditing] = useState(false);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
