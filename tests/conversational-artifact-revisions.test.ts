@@ -116,8 +116,8 @@ describe("Conversational Artifact Revisions", () => {
     expect(response.outputType).toBe("ask_clarification");
     expect(response.revisionQuote).toBeUndefined();
     expect(response.clarificationItems).toHaveLength(1);
-    expect(response.clarificationItems[0].id).toBe("shape_sort_desc_required");
-    expect(response.clarificationItems[0].options).toContain("عدد المتابعين");
+    expect(response.clarificationItems![0].id).toBe("shape_sort_desc_required");
+    expect(response.clarificationItems![0].options).toContain("عدد المتابعين");
     expect(response.contentAr).toContain("لن يُخصم أي رصيد");
     expect(response.contentAr).not.toMatch(/نقاط|نقطة|10|١٠/);
   });

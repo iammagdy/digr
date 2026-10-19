@@ -64,6 +64,10 @@ const LEGACY_COLUMN_LABELS: Record<string, string> = {
   source_id: "معرّف المصدر", extractedAt: "تاريخ الجمع",
 };
 
+/** The paid-revision service is not offered: its save is refused, so the controls that call it stay hidden. */
+const ARTIFACT_EDIT_TOOLS_AVAILABLE = false;
+const RETIRED_SUGGESTION_TYPES = new Set(["dedupe", "change_columns", "anonymize", "export_variant"]);
+
 const SEVERITY_TONE: Record<string, StatusTone> = {
   critical: "danger",
   warning: "warning",
@@ -207,6 +211,7 @@ export default function ResultsCanvas({
     );
   });
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
+  const visibleSuggestions = (review?.suggestions ?? []).filter((suggestion) => !RETIRED_SUGGESTION_TYPES.has(suggestion.type));
 
   const quickEdits: Array<{ label: string; op: ArtifactEditOperation; needsSearch?: boolean; needsNotes?: boolean }> = [
     { label: "حذف التكرار", op: { action: "dedupe", keys: ["id", "username", "profileUrl"] } },
@@ -273,9 +278,9 @@ export default function ResultsCanvas({
             </Badge>
           </div>
           <p className="text-xs leading-6 text-sand-700">{review.comparisonAr}</p>
-          {review.suggestions.length > 0 && (
+          {visibleSuggestions.length > 0 && (
             <div className="mt-2.5 flex flex-wrap gap-2">
-              {review.suggestions.slice(0, 3).map((suggestion, index) => (
+              {visibleSuggestions.slice(0, 3).map((suggestion, index) => (
                 <button
                   key={`${suggestion.type}-${index}`}
                   type="button"
@@ -313,8 +318,8 @@ export default function ResultsCanvas({
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {tab === "table" && (
           <div className="space-y-4">
-            {/* Quick artifact edits */}
-            {jobId && (
+            {/* Quick artifact edits: hidden while the paid-revision service is not offered (the save is refused). */}
+            {ARTIFACT_EDIT_TOOLS_AVAILABLE && jobId && (
               <details className="group rounded-[20px] border border-sand-200 bg-sand-50/60">
                 <summary className="min-h-11 cursor-pointer list-none px-4 py-3 text-xs font-bold text-ink-900 [&::-webkit-details-marker]:hidden">
                   <span className="inline-flex items-center gap-2">
