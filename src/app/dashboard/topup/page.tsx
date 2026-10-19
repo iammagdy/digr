@@ -11,6 +11,7 @@ import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/hones
 import { formatAr } from "@/lib/arabicDigits";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
+import { hasApprovedTopupTransition } from "@/lib/topupStatusTransition";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import PromoCodeBox from "./PromoCodeBox";
@@ -51,6 +52,7 @@ export default function WalletPage() {
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
   const [amount, setAmount] = useState(100);
   const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
+  const knownTopupStatuses = useRef(new Map<string, string>());
   const [ipa, setIpa] = useState<string | null>(isIpaAvailable(ipaFromEnv) ? ipaFromEnv! : null);
   const [loadingIpa, setLoadingIpa] = useState(!isIpaAvailable(ipaFromEnv));
   const [ipaLoadFailed, setIpaLoadFailed] = useState(false);
@@ -172,6 +174,23 @@ export default function WalletPage() {
   }, [user]);
 
   useEffect(() => { void loadLedger(); void loadTopups(); }, [loadLedger, loadTopups]);
+
+  // Realtime is the fast path. Poll while a review is pending so progress still
+  // updates if the websocket is unavailable or the table is not published yet.
+  useEffect(() => {
+    if (!user || !(submitted?.status === "pending" || topups.some((t) => t.status === "pending"))) return;
+    const timer = window.setInterval(() => { void loadTopups(); }, 12000);
+    return () => window.clearInterval(timer);
+  }, [user, submitted?.status, topups, loadTopups]);
+
+  useEffect(() => {
+    const approved = hasApprovedTopupTransition(topups, knownTopupStatuses.current, submitted);
+    for (const topup of topups) {
+      knownTopupStatuses.current.set(topup.$id, topup.status);
+    }
+    setSubmitted((current) => current ? topups.find((t) => t.$id === current.$id) || current : null);
+    if (approved) { void refreshBalance(); void loadLedger(); }
+  }, [topups, submitted, refreshBalance, loadLedger]);
 
   /* records delivered this month (for «خُصم هذا الشهر … على N سجلًا») */
   useEffect(() => {
@@ -349,7 +368,7 @@ export default function WalletPage() {
             ipaLoadFailed={ipaLoadFailed}
             pendingCount={pendingCount}
             maxPending={maxPending}
-            onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
+            onSubmitted={(t) => { knownTopupStatuses.current.set(t.$id, t.status); setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
           />
         ) : (
           <SubmittedCard topup={displaySubmitted || submitted} creditValue={creditValue} onBack={() => setSubmitted(null)} onContinue={() => router.push(returnTo.current)} />

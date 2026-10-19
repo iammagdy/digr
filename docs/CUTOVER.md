@@ -134,12 +134,14 @@ Configure the following settings in the **Supabase Dashboard** (`Authentication`
 Open **Authentication** -> **Email Templates** and paste these RTL Arabic templates:
 
 #### 1. Confirm Signup (`تأكيد بريدك الإلكتروني في ديجر`)
+
+Use the token-hash link below instead of `{{ .ConfirmationURL }}`. The confirmation page waits for the customer to press its button before using this one-time token, so link scanners do not consume the confirmation before the customer opens the message. Apply this template in Supabase Authentication settings; a repository change cannot update the hosted template.
 ```html
 <div dir="rtl" style="font-family: Tahoma, Arial, sans-serif; text-align: right; color: #1c1917; line-height: 1.8;">
   <h2>مرحباً بك في ديجر</h2>
   <p>شكراً لتسجيلك في منصة ديجر للبيانات البحثية. لتفعيل حسابك والبدء في استخدام المنصة، يرجى الضغط على الزر التالي:</p>
   <p style="margin: 24px 0;">
-    <a href="{{ .ConfirmationURL }}" style="background: #1c1917; color: #ffffff; padding: 12px 24px; border-radius: 999px; text-decoration: none; display: inline-block;">تفعيل البريد الإلكتروني</a>
+    <a href="{{ .RedirectTo }}?token_hash={{ .TokenHash }}&amp;type=signup" style="background: #1c1917; color: #ffffff; padding: 12px 24px; border-radius: 999px; text-decoration: none; display: inline-block;">تفعيل البريد الإلكتروني</a>
   </p>
   <p style="font-size: 12px; color: #78716c;">إذا لم تقم بإنشاء هذا الحساب، يمكنك تجاهل هذه الرسالة بأمان.</p>
 </div>

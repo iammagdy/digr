@@ -61,6 +61,14 @@ export function useNotifications(userId: string | undefined) {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Realtime is the fast path; refresh occasionally in case a connection drops
+  // or the notifications table is not published in the current environment.
+  useEffect(() => {
+    if (!userId) return;
+    const timer = window.setInterval(() => { void load(); }, 20000);
+    return () => window.clearInterval(timer);
+  }, [userId, load]);
+
   useEffect(() => {
     if (!userId) return;
     try {
