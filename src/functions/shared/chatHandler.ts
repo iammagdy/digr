@@ -224,6 +224,8 @@ export interface ChatHandlerInput {
   personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
   /** Columns of the result on screen, sent by the page so the model can name real columns when the customer shapes a file. */
   resultColumns?: Array<{ key?: unknown; titleAr?: unknown }>;
+  authMs?: number;
+  rateLimitMs?: number;
 }
 
 /** Column hints are untrusted: keep short plain names only. They are validated again against the real data at download. */
@@ -275,19 +277,103 @@ export interface ChatHandlerResponse {
       tCatalogSearchMs: number;
       tPlanLlmMs: number;
       tQuoteMs: number;
+      authMs?: number;
+      rateLimitMs?: number;
+      conversationMs?: number;
+      briefSavesMs?: number;
+      briefMs?: number;
+      historyMs?: number;
+      quoteRpcMs?: number;
+      writesMs?: number;
+      awaitsCount?: number;
+      auth?: number;
+      rateLimit?: number;
+      conversation?: number;
+      briefSaves?: number;
+      history?: number;
+      catalog?: number;
+      quoteRpc?: number;
+      writes?: number;
+      [key: string]: number | undefined;
     };
   };
 }
 
 /** Turn stats for replies that finish before any model call or catalog search (greeting, required-input question). */
-function zeroModelTurnStats(conversationId: string, messageId: string, turnStartTime: number): NonNullable<ChatHandlerResponse["turnStats"]> {
+function zeroModelTurnStats(
+  conversationId: string,
+  messageId: string,
+  turnStartTime: number,
+  stageTimings?: {
+    supabaseMs?: number;
+    catalogMs?: number;
+    llmMs?: number;
+    quoteMs?: number;
+    authMs?: number;
+    rateLimitMs?: number;
+    conversationMs?: number;
+    briefSavesMs?: number;
+    historyMs?: number;
+    quoteRpcMs?: number;
+    writesMs?: number;
+    awaitsCount?: number;
+    tExtractMs?: number;
+  },
+): NonNullable<ChatHandlerResponse["turnStats"]> {
   const latencyMs = Date.now() - turnStartTime;
   console.log(`[chat:turn] conversationId=${conversationId} messageId=${messageId} modelCalls=0 catalogSearches=0 latencyMs=${latencyMs}`);
+  const authMs = stageTimings?.authMs ?? 0;
+  const rateLimitMs = stageTimings?.rateLimitMs ?? 0;
+  const conversationMs = stageTimings?.conversationMs ?? 0;
+  const briefSavesMs = stageTimings?.briefSavesMs ?? 0;
+  const historyMs = stageTimings?.historyMs ?? 0;
+  const catalogMs = stageTimings?.catalogMs ?? 0;
+  const quoteRpcMs = stageTimings?.quoteRpcMs ?? 0;
+  const writesMs = stageTimings?.writesMs ?? 0;
+  const awaitsCount = stageTimings?.awaitsCount ?? 0;
+  const supabaseMs = stageTimings?.supabaseMs ?? 0;
+  const llmMs = stageTimings?.llmMs ?? 0;
+  const quoteMs = stageTimings?.quoteMs ?? quoteRpcMs;
+  const tExtractMs = stageTimings?.tExtractMs ?? 0;
+
+  const stepTimings = {
+    supabaseMs,
+    catalogMs,
+    llmMs,
+    quoteMs,
+    totalMs: latencyMs,
+    tExtractMs,
+    tCatalogSearchMs: catalogMs,
+    tPlanLlmMs: llmMs,
+    tQuoteMs: quoteMs,
+    authMs,
+    rateLimitMs,
+    conversationMs,
+    briefSavesMs,
+    briefMs: briefSavesMs,
+    historyMs,
+    quoteRpcMs,
+    writesMs,
+    awaitsCount,
+    auth: authMs,
+    rateLimit: rateLimitMs,
+    conversation: conversationMs,
+    briefSaves: briefSavesMs,
+    brief: briefSavesMs,
+    history: historyMs,
+    catalog: catalogMs,
+    quoteRpc: quoteRpcMs,
+    quote: quoteMs,
+    writes: writesMs,
+  };
+
+  console.info(JSON.stringify({ tag: "chat_stage_timings", ...stepTimings, awaitsCount }));
+
   return {
     modelCalls: 0,
     catalogSearches: 0,
     latencyMs,
-    stepTimings: { totalMs: latencyMs, tExtractMs: 0, tCatalogSearchMs: 0, tPlanLlmMs: 0, tQuoteMs: 0 },
+    stepTimings,
   };
 }
 
@@ -1148,6 +1234,14 @@ export class ChatHandler {
     let tCatalogSearchMs = 0;
     let tPlanLlmMs = 0;
     let tQuoteMs = 0;
+    const authMs = input.authMs ?? 0;
+    const rateLimitMs = input.rateLimitMs ?? 0;
+    let conversationMs = 0;
+    let briefSavesMs = 0;
+    let historyMs = 0;
+    let quoteRpcMs = 0;
+    let writesMs = 0;
+    let awaitsCount = (input.authMs !== undefined ? 1 : 0) + (input.rateLimitMs !== undefined ? 1 : 0);
     const sb =
       this.tables && typeof (this.tables as any).from === "function"
         ? (this.tables as any)
@@ -1182,6 +1276,7 @@ export class ChatHandler {
       if (!conversationId) {
         conversationId = ID.unique();
         if (sb) {
+          awaitsCount++;
           const { error: convCreateErr } = await sb.from("conversations").insert({
             id: conversationId,
             user_id: userId,
@@ -1192,6 +1287,7 @@ export class ChatHandler {
           });
           if (convCreateErr) throw convCreateErr;
         } else {
+          awaitsCount++;
           await this.tables.createRow({
             databaseId: "digr",
             tableId: "conversations",
@@ -1209,6 +1305,7 @@ export class ChatHandler {
         }
       } else if (sb) {
         try {
+          awaitsCount++;
           const { data: conv } = await sb
             .from("conversations")
             .select("id, user_id, status, brief, title")
@@ -1228,6 +1325,7 @@ export class ChatHandler {
 
           if (!conv) {
             conversationId = ID.unique();
+            awaitsCount++;
             const { error: convCreateErr } = await sb.from("conversations").insert({
               id: conversationId,
               user_id: userId,
@@ -1243,6 +1341,7 @@ export class ChatHandler {
         }
       } else {
         try {
+          awaitsCount++;
           const conv: any = await this.tables.getRow({
             databaseId: "digr",
             tableId: "conversations",
@@ -1261,14 +1360,19 @@ export class ChatHandler {
           conversationId = ID.unique();
         }
       }
-      supabaseMs += Date.now() - tSbConvStart;
+      const tSbConvDelta = Date.now() - tSbConvStart;
+      supabaseMs += tSbConvDelta;
+      conversationMs += tSbConvDelta;
 
       // 2. Fetch User Points Balance from Ledger
       currentStep = "balance_fetch";
       if (userBalance === undefined) {
         const tSbBalStart = Date.now();
+        awaitsCount++;
         userBalance = await (balanceRead ?? getBalance(this.tables, userId));
-        supabaseMs += Date.now() - tSbBalStart;
+        const balDelta = Date.now() - tSbBalStart;
+        supabaseMs += balDelta;
+        conversationMs += balDelta;
       }
 
       // 2b. Fetch User Profile for Dynamic Persona Context
@@ -1276,9 +1380,11 @@ export class ChatHandler {
       const tSbProfStart = Date.now();
       try {
         if (sb) {
+          awaitsCount++;
           const { data: prof } = await (profileRead as Promise<any>);
           userProfile = prof || undefined;
         } else {
+          awaitsCount++;
           userProfile = await this.tables.getRow({
             databaseId: "digr",
             tableId: "profiles",
@@ -1301,7 +1407,9 @@ export class ChatHandler {
           ...(typeof input.personaProfile.full_name === "string" ? { full_name: input.personaProfile.full_name } : {}),
         };
       }
-      supabaseMs += Date.now() - tSbProfStart;
+      const profDelta = Date.now() - tSbProfStart;
+      supabaseMs += profDelta;
+      conversationMs += profDelta;
 
       // 3. Save User Message & 4. Assistant Placeholder
       userMsgId = ID.unique();
@@ -1309,6 +1417,7 @@ export class ChatHandler {
       const tSbMsgStart = Date.now();
 
       if (sb) {
+        awaitsCount += 2;
         const [uRes, aRes] = await Promise.all([
           sb.from("messages").insert({
             id: userMsgId,
@@ -1331,6 +1440,7 @@ export class ChatHandler {
         if (uRes?.error) throw uRes.error;
         if (aRes?.error) throw aRes.error;
       } else {
+        awaitsCount += 2;
         await this.tables.createRow({
           databaseId: "digr",
           tableId: "messages",
@@ -1359,12 +1469,18 @@ export class ChatHandler {
           },
         });
       }
-      supabaseMs += Date.now() - tSbMsgStart;
+      const msgDelta = Date.now() - tSbMsgStart;
+      supabaseMs += msgDelta;
+      writesMs += msgDelta;
 
       // 5. Research Brief & Two-Phase Routing
       currentStep = "brief_resolution";
       const tSbBriefStart = Date.now();
-      const currentBrief = convBriefFromDb || await getConversationBrief(this.tables, conversationId);
+      let currentBrief = convBriefFromDb;
+      if (!currentBrief) {
+        awaitsCount++;
+        currentBrief = await getConversationBrief(this.tables, conversationId);
+      }
       let brief = extractBriefFromMessage(message, currentBrief);
       followupBrief = brief;
 
@@ -1383,9 +1499,28 @@ export class ChatHandler {
         followupBrief = brief;
       }
     }
+    awaitsCount++;
     await saveConversationBrief(this.tables, conversationId, userId, brief);
-    supabaseMs += Date.now() - tSbBriefStart;
+    const briefDelta = Date.now() - tSbBriefStart;
+    supabaseMs += briefDelta;
+    briefSavesMs += briefDelta;
     tExtractMs = Date.now() - turnStartTime;
+    const currentTurnStats = () =>
+      zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime, {
+        supabaseMs,
+        catalogMs,
+        llmMs,
+        quoteMs: quoteRpcMs || quoteMs,
+        authMs,
+        rateLimitMs,
+        conversationMs,
+        briefSavesMs,
+        historyMs,
+        quoteRpcMs,
+        writesMs,
+        awaitsCount,
+        tExtractMs,
+      });
 
     const userComplained = isRepetitionComplaint(message);
     const greetingOrGeneral = isGreetingOrGeneralQuestion(message);
@@ -1399,6 +1534,7 @@ export class ChatHandler {
     let shapingColumns = sanitizeResultColumns(input.resultColumns);
     let deliveredResultJobId: string | null = null;
     if (looksShaping && shapingColumns.length === 0 && sb) {
+      awaitsCount++;
       const saved = await loadLatestResultColumns(sb, { conversationId, userId });
       shapingColumns = saved.columns;
       deliveredResultJobId = saved.jobId;
@@ -1426,7 +1562,12 @@ export class ChatHandler {
           corporateDomains: topFile.corporateDomains || [],
           normalizedEntities: topFile.normalizedEntities || [],
         };
+        const tExclSave = Date.now();
+        awaitsCount++;
         await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const exclDelta = Date.now() - tExclSave;
+        supabaseMs += exclDelta;
+        briefSavesMs += exclDelta;
       }
     }
 
@@ -1463,6 +1604,7 @@ export class ChatHandler {
       let alreadyAskedName = false;
       if (!displayName && sb) {
         try {
+          awaitsCount++;
           const { data: priorNamePrompts } = await sb.from("messages")
             .select("id")
             .eq("conversation_id", conversationId)
@@ -1482,15 +1624,21 @@ export class ChatHandler {
           : alreadyAskedName
             ? `أهلًا بك، ${balanceLine}كيف أساعدك اليوم؟`
             : `أهلًا بك، ${NAME_PROMPT_AR}`;
+      const tGreetingWrite = Date.now();
       if (sb) {
+        awaitsCount += 2;
         await Promise.all([
           sb.from("messages").update({ content_ar: greeting }).eq("id", assistantMsgId),
           sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
         ]);
       } else {
+        awaitsCount += 2;
         await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: greeting, status: "ready" } });
         await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
       }
+      const greetingDelta = Date.now() - tGreetingWrite;
+      writesMs += greetingDelta;
+      supabaseMs += greetingDelta;
       return {
         conversationId,
         messageId: assistantMsgId,
@@ -1499,7 +1647,7 @@ export class ChatHandler {
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
-        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+        turnStats: currentTurnStats(),
       };
     }
 
@@ -1508,15 +1656,21 @@ export class ChatHandler {
     const identityKind = !isTestSearchScenario ? identityQuestionKind(message) : null;
     if (identityKind) {
       const answer = identityAnswerAr(identityKind);
+      const tIdentityWrite = Date.now();
       if (sb) {
+        awaitsCount += 2;
         await Promise.all([
           sb.from("messages").update({ content_ar: answer }).eq("id", assistantMsgId),
           sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
         ]);
       } else {
+        awaitsCount += 2;
         await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: answer, status: "ready" } });
         await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
       }
+      const identityDelta = Date.now() - tIdentityWrite;
+      writesMs += identityDelta;
+      supabaseMs += identityDelta;
       return {
         conversationId,
         messageId: assistantMsgId,
@@ -1525,7 +1679,7 @@ export class ChatHandler {
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
-        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+        turnStats: currentTurnStats(),
       };
     }
 
@@ -1534,15 +1688,21 @@ export class ChatHandler {
       ? "تعذّرت قراءة أعمدة ملفك الآن، ولم يُخصم أي رصيد. افتح نتائج طلبك ثم أعد كتابة الشكل المطلوب."
       : null;
     if (shapingBlockedReplyAr) {
+      const tShapingWrite = Date.now();
       if (sb) {
+        awaitsCount += 2;
         await Promise.all([
           sb.from("messages").update({ content_ar: shapingBlockedReplyAr }).eq("id", assistantMsgId),
           sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
         ]);
       } else {
+        awaitsCount += 2;
         await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: shapingBlockedReplyAr, status: "ready" } });
         await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
       }
+      const shapingDelta = Date.now() - tShapingWrite;
+      writesMs += shapingDelta;
+      supabaseMs += shapingDelta;
       return {
         conversationId,
         messageId: assistantMsgId,
@@ -1551,7 +1711,7 @@ export class ChatHandler {
         outputType: "answer_question",
         intent: "chat",
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
-        turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+        turnStats: currentTurnStats(),
       };
     }
 
@@ -1589,10 +1749,13 @@ export class ChatHandler {
         ],
         tokensUsed: { input: 0, output: 0, costUsd: 0 },
       };
+      const tExclWrite = Date.now();
       if (sb) {
+        awaitsCount += 2;
         await sb.from("messages").update({ content_ar: q.questionAr }).eq("id", assistantMsgId);
         await sb.from("messages").update({ request_status: "needs_input" }).eq("id", userMsgId);
       } else {
+        awaitsCount += 2;
         await this.tables.updateRow({
           databaseId: "digr",
           tableId: "messages",
@@ -1606,8 +1769,20 @@ export class ChatHandler {
           data: { requestStatus: "needs_input" },
         });
       }
+      const exclWriteDelta = Date.now() - tExclWrite;
+      writesMs += exclWriteDelta;
+      supabaseMs += exclWriteDelta;
+      assistantMsg.turnStats = currentTurnStats();
       return assistantMsg;
     } else if (userComplained) {
+      const persistBrief = async () => {
+        const tBr = Date.now();
+        awaitsCount++;
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const brDelta = Date.now() - tBr;
+        briefSavesMs += brDelta;
+        supabaseMs += brDelta;
+      };
       if (brief.platforms.length === 0) {
         brief.platforms = researchIntent.platforms.value.length > 0
           ? [...researchIntent.platforms.value]
@@ -1618,9 +1793,17 @@ export class ChatHandler {
       }
       if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) brief.targetVolume = 10;
       if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx"];
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      await persistBrief();
       isPhase2 = true;
     } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
+      const persistBrief = async () => {
+        const tBr = Date.now();
+        awaitsCount++;
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const brDelta = Date.now() - tBr;
+        briefSavesMs += brDelta;
+        supabaseMs += brDelta;
+      };
       if (brief.platforms.length === 0) {
         brief.platforms = researchIntent.platforms.value.length > 0
           ? [...researchIntent.platforms.value]
@@ -1654,13 +1837,21 @@ export class ChatHandler {
             ? [...researchIntent.outputTypes.value]
             : ["xlsx"];
         }
-        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        await persistBrief();
         isPhase2 = true;
       } else {
-        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        await persistBrief();
         isPhase2 = false;
       }
     } else if (isCardAnswer) {
+      const persistBrief = async () => {
+        const tBr = Date.now();
+        awaitsCount++;
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const brDelta = Date.now() - tBr;
+        briefSavesMs += brDelta;
+        supabaseMs += brDelta;
+      };
       if (brief.platforms.length === 0) brief.platforms.push("tiktok");
       if (brief.topics.length === 0) brief.topics.push("البيانات المطلوبة");
       if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
@@ -1668,9 +1859,17 @@ export class ChatHandler {
       }
       if (!brief.dateRange) brief.dateRange = "آخر شهر";
       if (!brief.language) brief.language = "العربية";
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      await persistBrief();
       isPhase2 = true;
     } else if (hasPlatform && hasTopic && ((brief.targetVolume !== undefined && brief.targetVolume > 0) || Boolean(brief.postCount && brief.commentsPerPost) || wantsPriceOrProceed || Boolean(brief.dateRange))) {
+      const persistBrief = async () => {
+        const tBr = Date.now();
+        awaitsCount++;
+        await saveConversationBrief(this.tables, conversationId, userId, brief);
+        const brDelta = Date.now() - tBr;
+        briefSavesMs += brDelta;
+        supabaseMs += brDelta;
+      };
       // Platform & topic known with volume, plan intent, or dates: DECIDE, never interrogate! Apply sensible defaults
       if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
         brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 10;
@@ -1681,7 +1880,7 @@ export class ChatHandler {
       if (!brief.formats || brief.formats.length === 0) {
         brief.formats = ["xlsx"];
       }
-      await saveConversationBrief(this.tables, conversationId, userId, brief);
+      await persistBrief();
       isPhase2 = true;
     } else if (isComplete || (brief.platforms.length > 0 && brief.topics.length > 0 && brief.targetVolume && brief.dateRange)) {
       isPhase2 = true;
@@ -1693,12 +1892,15 @@ export class ChatHandler {
 
       currentStep = "capabilities_load";
       const tSbCapsStart = Date.now();
+      awaitsCount += 2;
       const [loadedCapabilities, catalogCapabilities] = await Promise.all([
         getEnabledCapabilitiesWithCoreServices(this.tables),
         getCatalogCapabilities(this.tables),
       ]);
       const capabilities = loadedCapabilities;
-      supabaseMs += Date.now() - tSbCapsStart;
+      const capsDelta = Date.now() - tSbCapsStart;
+      supabaseMs += capsDelta;
+      catalogMs += capsDelta;
 
       let liveCatalogEndpoints: CatalogEndpointSummary[] = [];
       const tSearchStart = Date.now();
@@ -1726,6 +1928,7 @@ export class ChatHandler {
           const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
             setTimeout(() => resolve([]), 1200)
           );
+          awaitsCount++;
           let res = await Promise.race([searchCatalog(topic, p), timeoutPromise]);
           catalogMs += Date.now() - tCat0;
           if (res && res.length > 0) return res;
@@ -1740,6 +1943,7 @@ export class ChatHandler {
             const timeoutPromise = new Promise<CatalogEndpointSummary[]>((resolve) =>
               setTimeout(() => resolve([]), 800)
             );
+            awaitsCount++;
             const res = await Promise.race([searchCatalog(p, p), timeoutPromise]);
             catalogMs += Date.now() - tCat1;
             if (res && res.length > 0) return res;
@@ -1757,12 +1961,15 @@ export class ChatHandler {
       if (isPhase2) {
         currentStep = "catalog_search";
         // Progress line during Phase 2 pricing
+        const tProgWrite = Date.now();
         if (sb) {
+          awaitsCount++;
           await sb
             .from("messages")
             .update({ content_ar: "أبحث وأحسب السعر..." })
             .eq("id", assistantMsgId);
         } else {
+          awaitsCount++;
           await this.tables.updateRow({
             databaseId: "digr",
             tableId: "messages",
@@ -1773,10 +1980,14 @@ export class ChatHandler {
             },
           });
         }
+        const progDelta = Date.now() - tProgWrite;
+        writesMs += progDelta;
+        supabaseMs += progDelta;
 
         // Server-side: run catalog search once per platform in brief (24h cache)
         const platformsToSearch = detectedPlatforms;
         if (platformsToSearch.length > 0) {
+          awaitsCount += platformsToSearch.length;
           const results = await Promise.all(
             platformsToSearch.map((p) => runCatalogSearchWithRetries(searchTopic, p))
           );
@@ -1793,6 +2004,7 @@ export class ChatHandler {
         const mentionedPlatforms = detectMentionedPlatforms(message);
         const platformHint = mentionedPlatforms[0] || undefined;
         const tCat2 = Date.now();
+        awaitsCount++;
         liveCatalogEndpoints = await searchCatalog(message, platformHint);
         catalogMs += Date.now() - tCat2;
       } else if (!isGreeting && !isGeneralQuestion && detectedPlatforms.length > 0) {
@@ -1816,6 +2028,7 @@ export class ChatHandler {
       currentStep = "message_history";
       const tSbHistStart = Date.now();
       if (sb) {
+        awaitsCount++;
         const { data: rows, error: histErr } = await sb
           .from("messages")
           .select("id, role, content_ar, created_at, quote, plan, request_status, request_quote_id")
@@ -1836,6 +2049,7 @@ export class ChatHandler {
             requestQuoteId: r.request_quote_id,
           }));
       } else {
+        awaitsCount++;
         const historyRes = await this.tables.listRows({
           databaseId: "digr",
           tableId: "messages",
@@ -1859,7 +2073,9 @@ export class ChatHandler {
             requestQuoteId: r.requestQuoteId,
           }));
       }
-      supabaseMs += Date.now() - tSbHistStart;
+      const histDelta = Date.now() - tSbHistStart;
+      supabaseMs += histDelta;
+      historyMs += histDelta;
 
       // Clarification card answers arrive as a small JSON payload. Keep the
       // original user request in scope so explicit counts and company filters
@@ -1880,8 +2096,10 @@ export class ChatHandler {
 
       const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
       if (resultFeedbackReply) {
+        const tFollowupWrite = Date.now();
         try {
           if (sb) {
+            awaitsCount += 2;
             const [assistantUpdate, userUpdate] = await Promise.all([
               sb.from("messages").update({
                 content_ar: resultFeedbackReply,
@@ -1894,6 +2112,7 @@ export class ChatHandler {
             if (assistantUpdate?.error) throw assistantUpdate.error;
             if (userUpdate?.error) throw userUpdate.error;
           } else {
+            awaitsCount += 2;
             await this.tables.updateRow({
               databaseId: "digr",
               tableId: "messages",
@@ -1910,6 +2129,9 @@ export class ChatHandler {
         } catch (persistError) {
           console.warn(`[chat:result_followup_persist_failed] reason=${toSafeReasonCode(persistError, "result_followup_persist")}`);
         }
+        const followupDelta = Date.now() - tFollowupWrite;
+        writesMs += followupDelta;
+        supabaseMs += followupDelta;
         return {
           conversationId,
           messageId: assistantMsgId,
@@ -1918,7 +2140,7 @@ export class ChatHandler {
           outputType: "answer_question",
           intent: "research",
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
-          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+          turnStats: currentTurnStats(),
         };
       }
 
@@ -1927,15 +2149,21 @@ export class ChatHandler {
       const studiesRequest = !isTestSearchScenario && !input.isGuest && !isFileShapingTurn ? detectTopicGathering(conversationRequestText) : null;
       if (studiesRequest && !hasTopicResearchService(APPROVED_CAPABILITY_CATALOG)) {
         const studiesReplyAr = studiesUnavailableReplyAr(studiesRequest);
+        const tStudiesWrite = Date.now();
         if (sb) {
+          awaitsCount += 2;
           await Promise.all([
             sb.from("messages").update({ content_ar: studiesReplyAr }).eq("id", assistantMsgId),
             sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
           ]);
         } else {
+          awaitsCount += 2;
           await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: studiesReplyAr, status: "ready" } });
           await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
         }
+        const studiesDelta = Date.now() - tStudiesWrite;
+        writesMs += studiesDelta;
+        supabaseMs += studiesDelta;
         return {
           conversationId,
           messageId: assistantMsgId,
@@ -1944,7 +2172,7 @@ export class ChatHandler {
           outputType: "answer_question",
           intent: "chat",
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
-          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+          turnStats: currentTurnStats(),
         };
       }
 
@@ -1957,15 +2185,21 @@ export class ChatHandler {
           persona: userProfile?.persona,
         })[0] || requiredDiscoveryQuestion;
         const textAr = `${intro}\n${normalizedQuestion.text || normalizedQuestion.question}`;
+        const tDiscoveryWrite = Date.now();
         if (sb) {
+          awaitsCount += 2;
           await Promise.all([
             sb.from("messages").update({ content_ar: textAr }).eq("id", assistantMsgId),
             sb.from("messages").update({ request_status: "needs_input" }).eq("id", userMsgId),
           ]);
         } else {
+          awaitsCount += 2;
           await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: textAr, status: "ready" } });
           await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "needs_input" } });
         }
+        const discoveryDelta = Date.now() - tDiscoveryWrite;
+        writesMs += discoveryDelta;
+        supabaseMs += discoveryDelta;
         return {
           conversationId,
           messageId: assistantMsgId,
@@ -1977,7 +2211,7 @@ export class ChatHandler {
           clarificationQuestions: [normalizedQuestion.text || normalizedQuestion.question],
           clarificationItems: [normalizedQuestion],
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
-          turnStats: zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime),
+          turnStats: currentTurnStats(),
         };
       }
 
@@ -2947,6 +3181,7 @@ export class ChatHandler {
           }
           currentStep = "quote_save";
           const tQuoteStart = Date.now();
+          awaitsCount++;
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
             conversationId,
             userId,
@@ -2964,6 +3199,7 @@ export class ChatHandler {
           });
           tQuoteMs = Date.now() - tQuoteStart;
           quoteMs = tQuoteMs;
+          quoteRpcMs += quoteMs;
 
           planQuoteData = {
             quoteId: managedQuote.quoteId,
@@ -3120,6 +3356,8 @@ export class ChatHandler {
               finalContentAr = `تعذر تطبيق التعديل المطلوب: ${validation.errors.join(", ")}`;
             } else {
               currentStep = "quote_save";
+              const tQuoteEditStart = Date.now();
+              awaitsCount++;
               const managedQuote = await createAndSaveManagedQuote(this.tables, {
                 conversationId,
                 userId,
@@ -3128,6 +3366,10 @@ export class ChatHandler {
                 capabilities: allCapabilities,
                 enforceScope: true,
               });
+              const qEditDelta = Date.now() - tQuoteEditStart;
+              quoteRpcMs += qEditDelta;
+              quoteMs += qEditDelta;
+              tQuoteMs = quoteMs;
 
               planQuoteData = {
                 quoteId: managedQuote.quoteId,
@@ -3204,6 +3446,8 @@ export class ChatHandler {
         }
 
         // Log request in capability_requests table
+        awaitsCount++;
+        const tCapReqStart = Date.now();
         if (sb) {
           await sb.from("capability_requests").insert({
             id: ID.unique(),
@@ -3224,6 +3468,7 @@ export class ChatHandler {
             },
           });
         }
+        writesMs += Date.now() - tCapReqStart;
       } else if (output.type === "refuse") {
         finalContentAr = output.reasonAr;
       } else if (output.type === "shape_file") {
@@ -3242,6 +3487,7 @@ export class ChatHandler {
         let latestJobId: string | null = null;
         try {
           if (sb) {
+            awaitsCount++;
             const { data: jobDoc } = await sb
               .from("jobs")
               .select("id, status")
@@ -3293,6 +3539,7 @@ export class ChatHandler {
           let completedJobId: string | null = null;
           try {
             if (sb) {
+              awaitsCount++;
               const { data: jobDoc } = await sb
                 .from("jobs")
                 .select("id, status")
@@ -3339,6 +3586,7 @@ export class ChatHandler {
       currentStep = "assistant_message_save";
       finalContentAr = scrubAssistantIdentity(deduplicateIntroText(finalContentAr));
       const tSbMsgUpdateStart = Date.now();
+      awaitsCount++;
       if (sb) {
         const { error: msgUpdateErr } = await sb
           .from("messages")
@@ -3363,7 +3611,9 @@ export class ChatHandler {
           },
         });
       }
-      supabaseMs += Date.now() - tSbMsgUpdateStart;
+      const msgUpdateDuration = Date.now() - tSbMsgUpdateStart;
+      supabaseMs += msgUpdateDuration;
+      writesMs += msgUpdateDuration;
 
       // Keep planning attempts in the request history even when no quote/job
       // was created. This write is best-effort so history cannot block replies.
@@ -3373,6 +3623,8 @@ export class ChatHandler {
         hasQuote: Boolean(planQuoteData?.quoteId),
       });
       try {
+        awaitsCount++;
+        const tReqStatusStart = Date.now();
         if (sb) {
           const { error: requestStatusError } = await sb
             .from("messages")
@@ -3396,6 +3648,7 @@ export class ChatHandler {
             },
           });
         }
+        writesMs += Date.now() - tReqStatusStart;
       } catch (requestStatusError: any) {
         console.warn("[chat:request_history_update_failed]", requestStatusError?.message || "unknown_error");
       }
@@ -3405,6 +3658,8 @@ export class ChatHandler {
       currentStep = "usage_log";
       const tSbLogStart = Date.now();
       try {
+        awaitsCount++;
+        const tUsageStart = Date.now();
         if (sb) {
           await sb.from("llm_usage").insert({
             user_id: userId,
@@ -3433,14 +3688,18 @@ export class ChatHandler {
             },
           });
         }
+        writesMs += Date.now() - tUsageStart;
       } catch (usageErr) {
         console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
       }
+      awaitsCount++;
+      const tCostStart = Date.now();
       await logProviderCost(this.tables, {
         provider: "llm",
         units: turnUsage.inputTokens + turnUsage.outputTokens,
         costUsd: turnUsage.costUsd,
       });
+      writesMs += Date.now() - tCostStart;
 
       // 11. Update Conversation Stats
       currentStep = "conversation_update";
@@ -3454,6 +3713,8 @@ export class ChatHandler {
         ? generatedTitle
         : currentConversationTitle;
       const newTotalTokens = totalConvTokens + llmResult.inputTokens + llmResult.outputTokens;
+      awaitsCount++;
+      const tConvUpdStart = Date.now();
       if (sb) {
         const { error: convUpdateErr } = await sb
           .from("conversations")
@@ -3476,9 +3737,43 @@ export class ChatHandler {
           },
         });
       }
-      supabaseMs += Date.now() - tSbLogStart;
+      const convUpdDuration = Date.now() - tConvUpdStart;
+      supabaseMs += convUpdDuration;
+      writesMs += convUpdDuration;
 
       const totalLatencyMs = Date.now() - turnStartTime;
+      const stepTimings = {
+        auth: authMs,
+        authMs,
+        rateLimit: rateLimitMs,
+        rateLimitMs,
+        conversation: conversationMs,
+        conversationMs,
+        briefSaves: briefSavesMs,
+        briefSavesMs,
+        brief: briefSavesMs,
+        briefMs: briefSavesMs,
+        history: historyMs,
+        historyMs,
+        catalog: catalogMs,
+        catalogMs,
+        quoteRpc: quoteRpcMs,
+        quoteRpcMs,
+        quote: quoteMs,
+        quoteMs,
+        writes: writesMs,
+        writesMs,
+        awaitsCount,
+        supabaseMs,
+        llmMs,
+        totalMs: totalLatencyMs,
+        tExtractMs,
+        tCatalogSearchMs: catalogMs,
+        tPlanLlmMs: llmMs,
+        tQuoteMs: quoteMs,
+      };
+
+      console.info(JSON.stringify({ tag: "chat_stage_timings", ...stepTimings, awaitsCount }));
       console.log("[chat:turn_breakdown]", {
         supabaseMs,
         catalogMs,
@@ -3489,17 +3784,7 @@ export class ChatHandler {
       console.log(
         `[chat:turn] conversationId=${conversationId} messageId=${assistantMsgId} modelCalls=${modelCallCount} catalogSearches=${catalogSearchCount} latencyMs=${totalLatencyMs}`,
       );
-      console.log("[chat:step_timings]", {
-        supabaseMs,
-        catalogMs,
-        llmMs,
-        quoteMs,
-        tExtractMs,
-        tCatalogSearchMs: catalogMs,
-        tPlanLlmMs: llmMs,
-        tQuoteMs: quoteMs,
-        totalMs: totalLatencyMs,
-      });
+      console.log("[chat:step_timings]", stepTimings);
 
       const computedIntent: "chat" | "research" =
         (output as any).intent ||
@@ -3554,17 +3839,7 @@ export class ChatHandler {
           modelCalls: modelCallCount,
           catalogSearches: catalogSearchCount,
           latencyMs: totalLatencyMs,
-          stepTimings: {
-            supabaseMs,
-            catalogMs,
-            llmMs,
-            quoteMs,
-            totalMs: totalLatencyMs,
-            tExtractMs,
-            tCatalogSearchMs: catalogMs,
-            tPlanLlmMs: llmMs,
-            tQuoteMs: quoteMs,
-          },
+          stepTimings,
         },
       };
     } catch (err: any) {
