@@ -194,9 +194,9 @@ export function timelineWaitingText(status: JobStatus): string {
     case "queued":
       return "الطلب في قائمة الانتظار — لم تُسجَّل أي مرحلة بعد.";
     case "running":
-      return "التنفيذ جارٍ — بانتظار أول حدث مسجَّل من الخادم.";
+      return "التنفيذ جارٍ — بانتظار أول حدث مسجَّل من النظام.";
     case "done":
-      return "اكتمل التنفيذ وفق سجلّ الخادم — لا توجد أحداث مسجَّلة لعرضها.";
+      return "اكتمل التنفيذ وفق سجلّ النظام — لا توجد أحداث مسجَّلة لعرضها.";
     case "failed":
       return "توقّف التنفيذ — لا توجد أحداث مسجَّلة لعرضها.";
     case "cancelled":
