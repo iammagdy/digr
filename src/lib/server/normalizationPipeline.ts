@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, toIsoDate, type SocialRowKind } from "./socialRows";
 import { toArabicDigits } from "../arabicDigits";
 import { localizeCityFromAddress } from "./addressParser";
+import { resolveCompanyLinks } from "../companyUrls";
 
 export interface CodebookEntry {
   field: string;
@@ -301,6 +302,28 @@ export function normalizeRecord(raw: any, index: number): Record<string, any> {
   const urlVal = scrubbed.url || scrubbed.link || scrubbed.tweet_url || scrubbed.video_url || scrubbed.profileUrl;
   if (urlVal) {
     out.url = String(urlVal);
+  }
+
+  // Company links normalization: website never social/LinkedIn, linkedin_url separate
+  const hasWebsiteInput = Boolean(
+    scrubbed.website !== undefined ||
+    scrubbed.website_url !== undefined ||
+    scrubbed.domain !== undefined ||
+    scrubbed.company_website !== undefined
+  );
+  const hasLinkedinInput = Boolean(
+    scrubbed.linkedin !== undefined ||
+    scrubbed.linkedin_url !== undefined ||
+    scrubbed.company_linkedin !== undefined
+  );
+  if (hasWebsiteInput || hasLinkedinInput || scrubbed.company_name) {
+    const { website, linkedin } = resolveCompanyLinks(scrubbed);
+    if (hasWebsiteInput || website) {
+      out.website = website ? escapeFormula(website) : "";
+    }
+    if (linkedin || hasLinkedinInput) {
+      out.linkedin_url = linkedin ? escapeFormula(linkedin) : "";
+    }
   }
 
   // Preserve any remaining arbitrary columns from raw dataset that haven't been mapped

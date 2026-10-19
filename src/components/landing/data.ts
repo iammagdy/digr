@@ -1,4 +1,5 @@
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { customerFormatLabelAr } from "@/lib/customerFormatLabels";
 
 export const PROMPTS = [
   "بيانات حساب @unicef على تيك توك مع الإحصائيات العامة",
@@ -19,13 +20,13 @@ export const CHIP_ICONS = [
 export const STATEMENTS = [
   { big: "تسأل بالعربية.", small: "بالفصحى أو بالعامية. المساعد يفهم السياق، ويوضّح معك التفاصيل التي تحدد الحجم والتكلفة." },
   { big: "توافق على السعر.", small: "خطة قابلة للتعديل وعرض سعر بالنقاط من الخادم. لا يبدأ أي جمع قبل موافقتك الصريحة." },
-  { big: "تستلم ملفاتك.", small: "Excel وPDF وCSV مع دليل المنهجية — وتدفع على السجلات المسلَّمة فعلًا فقط." },
+  { big: "تستلم ملفاتك.", small: "ملفات إكسل وبي دي إف وسي إس في — وتدفع على السجلات المسلَّمة فعلًا فقط." },
 ];
 
 export const SHEETS = [
-  { name: "CSV", ext: ".csv", desc: "بيانات جدولية للتحليل البرمجي", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
-  { name: "PDF", ext: ".pdf", desc: "ملخص تنفيذي", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
-  { name: "Excel", ext: ".xlsx", desc: "البيانات ودليل الحقول", z: 3, to: "translateY(-6%)", delay: "0s" },
+  { name: customerFormatLabelAr("csv"), ext: ".csv", desc: "بيانات جدولية للتحليل البرمجي", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
+  { name: customerFormatLabelAr("pdf"), ext: ".pdf", desc: "ملخص تنفيذي", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
+  { name: customerFormatLabelAr("xlsx"), ext: ".xlsx", desc: "البيانات ودليل الحقول", z: 3, to: "translateY(-6%)", delay: "0s" },
 ];
 
 export const FAQS: [string, string][] = [
