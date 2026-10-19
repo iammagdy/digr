@@ -270,9 +270,10 @@ export interface IcypeasCompanyQueryOptions {
 }
 
 /**
- * The activity filters of a company request: the industry labels AND the activity keywords together (the provider
- * ANDs them, so a broad label alone no longer decides what comes back). A broad label is never sent alone: when a
- * sector has no keywords, «Utilities» is dropped from its labels.
+ * The activity filters of a company request. For every sector the previous rule holds exactly: the industry labels are the
+ * filter, and keywords are sent alone only when there is no taxonomy. The one exception is a taxonomy that includes the
+ * broad label «Utilities» (electricity, general energy): that label returns water, filters and travel when it stands
+ * alone, so it is sent together with the activity keywords (the provider ANDs them), and never without keywords.
  */
 function companyActivityFilters(
   industry: string[],
@@ -283,12 +284,13 @@ function companyActivityFilters(
   let words = keyword;
   if (labels.length === 0 && words.length === 0) {
     const detected = textFallback();
-    labels = detected.exactTaxonomy || [];
-    words = detected.englishKeywords || [];
-  } else if (labels.length > 0 && words.length === 0) {
-    words = textFallback().englishKeywords || [];
+    if (detected.exactTaxonomy?.length) labels = detected.exactTaxonomy;
+    else words = detected.englishKeywords || [];
   }
-  if (labels.includes(BROAD_INDUSTRY_LABEL) && words.length === 0) labels = labels.filter((label) => label !== BROAD_INDUSTRY_LABEL);
+  if (labels.length === 0) return { industry: [], keyword: words };
+  if (!labels.includes(BROAD_INDUSTRY_LABEL)) return { industry: labels, keyword: [] };
+  if (words.length === 0) words = textFallback().englishKeywords || [];
+  if (words.length === 0) labels = labels.filter((label) => label !== BROAD_INDUSTRY_LABEL);
   return { industry: labels, keyword: words };
 }
 
