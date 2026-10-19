@@ -116,8 +116,10 @@ describe("Artifact Revision Financial Guard & Storage Verification", () => {
     expect(json.success).toBe(false);
     expect(json.blocked).toBe(true);
     expect(json.reason).toBe("revision_charging_pending_owner_approval");
-    expect(json.error).toContain("١٠ نقاط");
-    expect(json.error).toContain("purchase_revision_atomic");
+    expect(json.error).toContain("هذا التعديل غير متاح الآن");
+    expect(json.error).toContain("فمجاني");
+    expect(json.error).not.toMatch(/purchase_revision_atomic|atomic|[A-Za-z_]{4,}/);
+    expect(json.error).not.toContain("إدارة المنصة");
   });
 
   it("reads data.json correctly from partials bucket when results bucket does not yet contain it", async () => {

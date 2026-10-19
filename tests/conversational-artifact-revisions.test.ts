@@ -71,7 +71,7 @@ function createMockSupabase(initialData?: any) {
 }
 
 describe("Conversational Artifact Revisions", () => {
-  it("detects RTL formatting correction and returns a 10-point revision quote", async () => {
+  it("answers an RTL formatting request plainly: not available now, no price, no revision card", async () => {
     const mockDb = createMockSupabase();
     const handler = new ChatHandler(mockDb);
 
@@ -81,19 +81,13 @@ describe("Conversational Artifact Revisions", () => {
       message: "الشيت اللي طلع مش RTL، عدل التنسيق لو سمحت",
     });
 
-    expect(response.outputType).toBe("edit_artifact");
-    expect(response.revisionQuote).toBeDefined();
-    expect(response.revisionQuote.jobId).toBe("job_rev_123");
-    expect(response.revisionQuote.points).toBe(10);
-    expect(response.revisionQuote.operation).toEqual({
-      action: "convert_formats",
-      formats: ["xlsx", "pdf", "csv"],
-    });
-    expect(response.contentAr).toContain("10 نقاط");
-    expect(response.contentAr).toContain("بدون إعادة جمع البيانات");
+    expect(response.outputType).toBe("answer_question");
+    expect(response.revisionQuote).toBeUndefined();
+    expect(response.contentAr).toContain("غير متاح الآن");
+    expect(response.contentAr).not.toMatch(/نقاط|نقطة|10|١٠/);
   });
 
-  it("detects deduplication request and bounds revision quote to completed job", async () => {
+  it("answers a deduplication request plainly: not available now, no price, no revision card", async () => {
     const mockDb = createMockSupabase();
     const handler = new ChatHandler(mockDb);
 
@@ -103,14 +97,13 @@ describe("Conversational Artifact Revisions", () => {
       message: "احذف التكرار من ملف النتيجة",
     });
 
-    expect(response.outputType).toBe("edit_artifact");
-    expect(response.revisionQuote).toBeDefined();
-    expect(response.revisionQuote.jobId).toBe("job_rev_123");
-    expect(response.revisionQuote.points).toBe(10);
-    expect(response.revisionQuote.operation.action).toBe("dedupe");
+    expect(response.outputType).toBe("answer_question");
+    expect(response.revisionQuote).toBeUndefined();
+    expect(response.contentAr).toContain("غير متاح الآن");
+    expect(response.contentAr).not.toMatch(/نقاط|نقطة|10|١٠/);
   });
 
-  it("detects sorting request and maps to sort operation", async () => {
+  it("answers a sort request as free file shaping: one question naming the real columns, no price, no revision card", async () => {
     const mockDb = createMockSupabase();
     const handler = new ChatHandler(mockDb);
 
@@ -120,10 +113,13 @@ describe("Conversational Artifact Revisions", () => {
       message: "رتب النتائج حسب المتابعين تنازلياً",
     });
 
-    expect(response.outputType).toBe("edit_artifact");
-    expect(response.revisionQuote).toBeDefined();
-    expect(response.revisionQuote.operation.action).toBe("sort");
-    expect(response.revisionQuote.operation.direction).toBe("desc");
+    expect(response.outputType).toBe("ask_clarification");
+    expect(response.revisionQuote).toBeUndefined();
+    expect(response.clarificationItems).toHaveLength(1);
+    expect(response.clarificationItems[0].id).toBe("shape_sort_desc_required");
+    expect(response.clarificationItems[0].options).toContain("عدد المتابعين");
+    expect(response.contentAr).toContain("لن يُخصم أي رصيد");
+    expect(response.contentAr).not.toMatch(/نقاط|نقطة|10|١٠/);
   });
 
   it("applies revision and regenerates a data-only Excel deliverable that is right-to-left on every sheet", async () => {
