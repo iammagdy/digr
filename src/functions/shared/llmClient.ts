@@ -356,6 +356,8 @@ export interface LlmCallResult {
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
   uncachedInputTokens?: number;
+  /** Set only on a provider-error refusal: the short code of why the call failed (for the usage log, never shown). */
+  fallbackCode?: string;
 }
 
 // ================= White-Label Scrubber =================
@@ -380,6 +382,24 @@ export function scrubWhiteLabelText(text: string): string {
     cleaned = cleaned.replace(regex, "منصة Diger");
   }
   return cleaned;
+}
+
+const SYSTEM_NOTE_MAX_CHARS = 3000;
+const SYSTEM_NOTES_MAX_CHARS = 9000;
+
+/**
+ * The Anthropic path sends only user and assistant turns (sanitizeMessagesForAnthropic drops every other role), so the
+ * turn's system notes (research brief, catalog results, independent-request note, history summary, plan-fix prompts) used
+ * to be lost. They are returned here as one block for the per-turn (uncached) system text, in their original order, each
+ * and the whole capped. Empty string when the turn has no system note.
+ */
+export function collectSystemNotesForTurn(messages: Array<{ role: string; content: string }>): string {
+  const notes = messages
+    .filter((m) => m.role === "system")
+    .map((m) => (m.content || "").trim().slice(0, SYSTEM_NOTE_MAX_CHARS))
+    .filter((text) => text.length > 0);
+  if (notes.length === 0) return "";
+  return `INTERNAL NOTES FOR THIS TURN (from the system, not from the customer; never quote them to the customer):\n${notes.join("\n\n").slice(0, SYSTEM_NOTES_MAX_CHARS)}`;
 }
 
 export function sanitizeMessagesForAnthropic(
@@ -2201,7 +2221,12 @@ export class LlmClient {
    * Return short Arabic error ("المساعد غير متاح الآن، حاول لاحقًا"), 0 tokens, 0 cost, so no points are held.
    * Records a short reason code in server logs and llm-status without ever logging keys or secrets.
    */
-  private handleProviderError(err: any, provider: string, detail?: string | null): LlmCallResult {
+  private handleProviderError(
+    err: any,
+    provider: string,
+    detail?: string | null,
+    billed?: { inputTokens: number; outputTokens: number; costUsd: number } | null,
+  ): LlmCallResult {
     const model = this.getModel();
     let reasonAr = "المساعد غير متاح الآن، حاول لاحقًا.";
     let fallbackCode = "provider_unreachable";
@@ -2276,16 +2301,19 @@ export class LlmClient {
     const logDetail = sanitizedDetail ? ` detail=${sanitizedDetail}` : "";
     console.warn(`[llm:error] provider=${provider} model=${model} reason=${fallbackCode}${logDetail}`);
 
+    // A reply that arrived (and was billed) but could not be used still carries its real usage; a call that never
+    // got a usable HTTP answer carries none.
     return {
       output: {
         type: "refuse",
         reasonAr,
       },
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
+      inputTokens: billed?.inputTokens ?? 0,
+      outputTokens: billed?.outputTokens ?? 0,
+      costUsd: billed?.costUsd ?? 0,
       model,
       promptVersion: PROMPT_VERSION,
+      fallbackCode,
     };
   }
 
@@ -2355,7 +2383,7 @@ export class LlmClient {
       { type: "text", text: promptParts.staticText, cache_control: { type: "ephemeral" } },
       { type: "text", text: promptParts.capabilityText, cache_control: { type: "ephemeral" } },
       { type: "text", text: promptParts.profileText, cache_control: { type: "ephemeral" } },
-      { type: "text", text: promptParts.turnText },
+      { type: "text", text: [promptParts.turnText, collectSystemNotesForTurn(options.messages)].filter(Boolean).join("\n\n") },
     ];
 
     const formattedMessages = sanitizeMessagesForAnthropic(options.messages, {
@@ -2366,6 +2394,8 @@ export class LlmClient {
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     const llmStartTime = Date.now();
+    // Usage of a reply that arrived but could not be turned into a valid turn: it was billed, so it is reported.
+    let billedUsage: { inputTokens: number; outputTokens: number; costUsd: number } | null = null;
     try {
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -2432,6 +2462,18 @@ export class LlmClient {
       }
 
       const data: any = await response.json();
+      if (data?.usage && typeof data.usage === "object") {
+        const billedUncached = Number(data.usage.input_tokens) || 0;
+        const billedRead = Number(data.usage.cache_read_input_tokens) || 0;
+        const billedWrite = Number(data.usage.cache_creation_input_tokens) || 0;
+        const billedOut = Number(data.usage.output_tokens) || 0;
+        const billedPricing = getLlmPricingSettings("anthropic", model, options.pricingSettings || this.customPricing);
+        billedUsage = {
+          inputTokens: billedUncached + billedRead + billedWrite,
+          outputTokens: billedOut,
+          costUsd: ((billedUncached + billedRead * 0.1 + billedWrite * 1.25) * billedPricing.inputCostPerMillion + billedOut * billedPricing.outputCostPerMillion) / 1_000_000,
+        };
+      }
 
       let rawPayload: any = null;
       const textBlocks = data.content?.filter(
@@ -2484,7 +2526,7 @@ export class LlmClient {
       }
 
       if (!rawPayload || typeof rawPayload !== "object") {
-        return this.handleProviderError(new Error("Invalid response format from Anthropic"), "anthropic");
+        return this.handleProviderError(new Error("Invalid response format from Anthropic"), "anthropic", null, billedUsage);
       }
 
       const scrubField = (val: any): any => {
@@ -2665,7 +2707,7 @@ export class LlmClient {
       };
     } catch (err: any) {
       clearTimeout(timeoutId);
-      return this.handleProviderError(err, "anthropic");
+      return this.handleProviderError(err, "anthropic", null, billedUsage);
     }
   }
 

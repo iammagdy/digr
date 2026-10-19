@@ -203,14 +203,18 @@ export function renderCapabilityCard(card: CapabilityCard): string {
   ].join("\n");
 }
 
-/**
- * All capabilities as cards. Every card and every older-route note is ALWAYS listed (the full list never depends on what a
- * catalog search returned); a capability passed in that has neither (a newly seeded one) is added with its slug, platform
- * and parameter names, so the list is never shortened either.
- */
-export function renderCapabilityCards(capabilities: Array<{ slug?: string; id?: string; platform?: string; category?: string; nameAr?: string; paramsSchema?: unknown; maxRows?: number }> = []): string {
+type CardCapability = { slug?: string; id?: string; platform?: string; category?: string; nameAr?: string; paramsSchema?: unknown; maxRows?: number };
+
+/** The fixed part of the inventory: every card and every older-route note. It never depends on a catalog search. */
+function fixedCapabilityBlocks(): string[] {
   const blocks: string[] = CAPABILITY_CARDS.map(renderCapabilityCard);
   blocks.push(...Object.entries(LEGACY_CAPABILITY_NOTES).map(([slug, note]) => `[${slug}] ${note}`));
+  return blocks;
+}
+
+/** One short line per capability passed in that has neither a card nor an older-route note (a newly seeded or live-catalog one). */
+function extraCapabilityBlocks(capabilities: CardCapability[] = []): string[] {
+  const blocks: string[] = [];
   const seen = new Set<string>([...CAPABILITY_CARDS.map((c) => c.slug), ...Object.keys(LEGACY_CAPABILITY_NOTES)]);
   for (const cap of capabilities || []) {
     const slug = String(cap.slug || cap.id || "");
@@ -223,5 +227,27 @@ export function renderCapabilityCards(capabilities: Array<{ slug?: string; id?: 
     } catch { /* no schema */ }
     blocks.push(`[${slug}] ${cap.nameAr || slug} (${cap.platform || cap.category || "-"}) مدخلات: ${names.join(", ") || "-"}${cap.maxRows ? ` حتى ${cap.maxRows} سجل` : ""}`);
   }
-  return [SOCIAL_COMMON_RULES_AR, ...blocks].join("\n");
+  return blocks;
+}
+
+/**
+ * The cacheable part of the prompt: the common social rules, every card and every older-route note. Byte-identical for
+ * every user and every turn, so a live catalog search can never change it (and break the prompt cache).
+ */
+export function renderFixedCapabilityCards(): string {
+  return [SOCIAL_COMMON_RULES_AR, ...fixedCapabilityBlocks()].join("\n");
+}
+
+/** The per-turn part: services beyond the fixed inventory (empty string when there are none). */
+export function renderCapabilityExtras(capabilities: CardCapability[] = []): string {
+  return extraCapabilityBlocks(capabilities).join("\n");
+}
+
+/**
+ * All capabilities as cards. Every card and every older-route note is ALWAYS listed (the full list never depends on what a
+ * catalog search returned); a capability passed in that has neither (a newly seeded one) is added with its slug, platform
+ * and parameter names, so the list is never shortened either.
+ */
+export function renderCapabilityCards(capabilities: CardCapability[] = []): string {
+  return [SOCIAL_COMMON_RULES_AR, ...fixedCapabilityBlocks(), ...extraCapabilityBlocks(capabilities)].join("\n");
 }
