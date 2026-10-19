@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, toIsoDate, type SocialRowKind } from "./socialRows";
 import { toArabicDigits } from "../arabicDigits";
+import { localizeCityFromAddress } from "./addressParser";
 
 export interface CodebookEntry {
   field: string;
@@ -145,6 +146,7 @@ const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; typ
   industry: { titleAr: "مجال النشاط", descAr: "التخصص أو القطاع التجاري والصناعي", type: "نص (String)" },
   website: { titleAr: "الموقع الإلكتروني", descAr: "رابط النطاق الرقمي الرسمي للمنشأة", type: "رابط (URL)" },
   linkedin_url: { titleAr: "رابط لينكد إن", descAr: "رابط الصفحة المهنية للشركة على منصة لينكد إن", type: "رابط (URL)" },
+  city: { titleAr: "المدينة", descAr: "المدينة المستخرجة من عنوان الجهة؛ تُترك فارغة إن لم يتضمن العنوان مدينة معروفة", type: "نص (String)" },
   location: { titleAr: "المقر والنطاق الجغرافي", descAr: "العنوان أو المدينة والدولة المسجلة للمقر", type: "نص (String)" },
   headcount: { titleAr: "حجم العمالة", descAr: "العدد التقديري للعاملين بالمنشأة", type: "رقم صحيح (Integer)" },
   description: { titleAr: "نبذة عن النشاط", descAr: "الوصف التعريفي المعتمد لطبيعة خدمات ومنتجات الشركة", type: "نص طويل (Text)" },
@@ -547,6 +549,17 @@ export function normalizeDataset(
         return out;
       })
     : rawRows.map((r, i) => normalizeRecord(r, i));
+
+  // The city of a company row, read from its address the same way the workbook does: a customer can split or sort
+  // by «المدينة» because that column exists in the delivered data. A country is never a city.
+  if (!socialKind) {
+    for (const row of mappedRows) {
+      if (row && typeof row === "object" && !row.city && (row.company_name || row.website || row.domain) && (row.location || row.address)) {
+        const city = localizeCityFromAddress(String(row.address || row.location || ""), String(meta.country || ""));
+        if (city !== "غير متاح") row.city = city;
+      }
+    }
+  }
 
   // 3. Deduplicate and organize relational comment hierarchy
   const { uniqueRows: dedupedRows, duplicatesCount } = deduplicateRecords(mappedRows);

@@ -123,6 +123,21 @@ const borderThin = {
   right: { style: "thin" as const, color: { argb: COLOR_BORDER } },
 };
 
+/** The record id a customer sees is a plain number («١» in the sheet), never the internal «rec_1» key. */
+function plainRecordId(value: unknown, index: number): number | string {
+  const text = String(value ?? "").trim().replace(/^rec_/i, "");
+  return /^\d+$/.test(text) ? Number(text) : text || index + 1;
+}
+
+/** A city cell never holds a country: «مصر» in the city column is the country, so the cell stays empty. */
+function cityNotCountry(city: string): string {
+  if (city === "غير متاح") return city;
+  // Country detection also recognises big cities as their country («دبي» is the Emirates), so only a value that IS the country's name is blanked.
+  const country = detectCountryFromText(city);
+  const name = city.trim().toLowerCase();
+  return country && (name === country.arabicLabel.toLowerCase() || name === country.canonicalEnglish.toLowerCase()) ? "غير متاح" : city;
+}
+
 function workbookHyperlink(value: unknown): ExcelJS.CellValue {
   const url = String(value ?? "").trim();
   if (!/^https?:\/\//i.test(url)) return url || "غير متاح";
@@ -214,7 +229,7 @@ function addGenericReviewSheet(wb: ExcelJS.Workbook, uncertain: any[], pick: { t
   uncertain.forEach((row, i) => {
     const link = pick.link(row);
     const out = review.addRow([
-      String(row?.source_id || row?.id || `review_${i + 1}`),
+      plainRecordId(row?.id ?? row?.source_id, i),
       escapeFormula(String(pick.text(row) || "غير متاح")),
       /^https?:\/\//i.test(link) ? workbookHyperlink(link) : "غير متاح",
       escapeFormula(String(row?._relevance_reason || "غير متاح")),
@@ -269,6 +284,7 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
       norm.columns.map((key) => {
         const value = record[key];
         if (value === null || value === undefined) return "";
+        if (key === "id") return plainRecordId(value, index);
         if (typeof value === "boolean") return value ? "نعم" : "لا";
         if (typeof value === "string" && /^https?:\/\//i.test(value.trim()) && /(?:^url$|_url$)/i.test(key)) return workbookHyperlink(value);
         return escapeFormula(value);
@@ -380,6 +396,7 @@ async function generateStructuredDataWorkbook(payload: any, norm: NormalizedData
       const row = sheet.addRow(dataset.columns.map((key) => {
         const value = record[key];
         if (value === null || value === undefined) return "";
+        if (key === "id") return plainRecordId(value, index);
         if (typeof value === "boolean") return value ? "نعم" : "لا";
         if (typeof value === "string" && /^(?:https?:\/\/)/i.test(value.trim()) && /(?:^url$|_url$|link$|permalink$)/i.test(key)) return workbookHyperlink(value);
         return escapeFormula(value);
@@ -515,12 +532,12 @@ async function generateCompanyDataWorkbook(
   rows.forEach((r, index) => {
     const rawAddress = cleanCellText(r.address || r.full_address || r.location);
     const rawCity = cleanCellText(r.city);
-    const city = rawCity !== "غير متاح"
+    const city = cityNotCountry(rawCity !== "غير متاح"
       ? localizeCityName(rawCity, String((norm.metadata as any).country || ""))
-      : localizeCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || ""));
+      : localizeCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || "")));
     const { website, linkedin } = resolveCompanyLinks(r);
     const values: ExcelJS.CellValue[] = [
-      cleanCellText(r.company_id || r.source_id || r.id || `rec_${index + 1}`),
+      plainRecordId(r.company_id || r.source_id || r.id, index),
       companyName(r, index),
       sectorLabel(r.industry || r.activity || r.sector || r.category),
       /^https?:\/\//i.test(String(website)) ? workbookHyperlink(website) : "غير متاح",
@@ -571,7 +588,7 @@ async function generateCompanyDataWorkbook(
   };
   const branchRows: ExcelJS.CellValue[][] = [];
   rows.forEach((r, index) => {
-    const companyId = cleanCellText(r.company_id || r.source_id || r.id || `rec_${index + 1}`);
+    const companyId = String(plainRecordId(r.company_id || r.source_id || r.id, index));
     parseBranches(r.branches).forEach((branch, branchIndex) => {
       const branchAddress = cleanCellText(branch.address || branch.full_address);
       const branchCity = cleanCellText(branch.city);
@@ -622,7 +639,7 @@ async function generateCompanyDataWorkbook(
     review.views = [{ state: "frozen", ySplit: 2, rightToLeft: true }];
     reviewHeaders.forEach((_, i) => { review.getColumn(i + 1).width = [22, 36, 32, 38, 56][i]; });
     uncertain.forEach((r, i) => review.addRow([
-      cleanCellText(r.id || `review_${i + 1}`), companyName(r, i),
+      plainRecordId(r.id, i), companyName(r, i),
       industryLabelForCell(cleanCellText(r.industry || r.activity || r.sector)),
       localizeAddressAr(cleanCellText(r.location || r.city || r.address)),
       cleanCellText(r._relevance_reason),

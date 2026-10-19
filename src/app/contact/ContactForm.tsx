@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Logo } from "@/components/Brand";
+import { toArabicDigits } from "@/lib/arabicDigits";
 import { SUPPORT_PLACEHOLDER_AR, validateSupportMessage, whatsappHref, type SupportSettings } from "@/lib/supportContact";
 
 /** «تواصل معنا»: a form that stores the message, the support email and WhatsApp number from the admin settings. */
@@ -66,7 +67,7 @@ export default function ContactForm({ initialSettings = { supportEmail: "", what
           {(wa || !hasAnyChannel) && <div className="rounded-[18px] border border-ln bg-sf p-4">
             <p className="m-0 text-xs text-mut">واتساب</p>
             <p className="mb-0 mt-1.5 text-[15px] text-ink" dir="ltr" style={{ textAlign: "right" }}>
-              {wa ? <a href={wa} className="text-ink" rel="noopener noreferrer" target="_blank">{`+${settings.whatsappNumber}`}</a> : <span dir="rtl">{SUPPORT_PLACEHOLDER_AR}</span>}
+              {wa ? <a href={wa} dir="ltr" className="text-ink" rel="noopener noreferrer" target="_blank">{`+${toArabicDigits(settings.whatsappNumber)}`}</a> : <span dir="rtl">{SUPPORT_PLACEHOLDER_AR}</span>}
             </p>
           </div>}
         </div>

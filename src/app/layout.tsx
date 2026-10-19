@@ -21,13 +21,13 @@ const markazi = localFont({
   display: "swap",
 });
 
-const TITLE = "Diger — مصادر متاحة جاهزة للتحليل";
+const TITLE = "ديجر — مصادر متاحة جاهزة للتحليل";
 const DESCRIPTION =
   "منصة عربية ذكية لاستخراج مجموعات البيانات من المصادر المتاحة وتجهيزها للتحليل في ملفات Excel و PDF مع دليل المتغيرات ومنهجية الجمع.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: { default: TITLE, template: "%s — Diger" },
+  title: { default: TITLE, template: "%s — ديجر" },
   description: DESCRIPTION,
   applicationName: SITE_NAME,
   alternates: { canonical: "/" },
