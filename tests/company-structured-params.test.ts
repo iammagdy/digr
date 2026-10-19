@@ -22,6 +22,7 @@ describe("company search sends the planner's structured query", () => {
       query: {
         location: { include: ["Egypt"] },
         industry: { include: ["Electrical/Electronic Manufacturing", "Utilities"] },
+        keyword: { include: ["electrical", "electricity", "electrical engineering"] },
       },
       pagination: { size: 6 },
     });
@@ -39,11 +40,11 @@ describe("company search sends the planner's structured query", () => {
     });
   });
 
-  it("industry and keywords are never both sent (the source combines them with AND): the industry filter is primary", () => {
+  it("a taxonomy with the broad label «Utilities» is sent together with the keywords (the source combines them with AND)", () => {
     const request = normalizeIcypeasCompanyParams({
       query: { location: { include: ["Egypt"] }, industry: { include: ["Utilities"] }, keyword: { include: ["electrical"] } },
     }, 6);
-    expect(request.query).toEqual({ location: { include: ["Egypt"] }, industry: { include: ["Utilities"] } });
+    expect(request.query).toEqual({ location: { include: ["Egypt"] }, industry: { include: ["Utilities"] }, keyword: { include: ["electrical"] } });
   });
 
   it("an Arabic or unknown country in the structured query is not trusted: the text is read the old way", () => {
@@ -58,6 +59,10 @@ describe("company search sends the planner's structured query", () => {
 
   it("with a structured country and no activity, the activity is read from the text", () => {
     const request = normalizeIcypeasCompanyParams({ query: { location: { include: ["Egypt"] } }, industry: "كهرباء" }, 6);
-    expect(request.query).toEqual({ location: { include: ["Egypt"] }, industry: { include: ["Electrical/Electronic Manufacturing", "Utilities"] } });
+    expect(request.query).toEqual({
+      location: { include: ["Egypt"] },
+      industry: { include: ["Electrical/Electronic Manufacturing", "Utilities"] },
+      keyword: { include: ["electrical", "electricity", "electrical engineering"] },
+    });
   });
 });

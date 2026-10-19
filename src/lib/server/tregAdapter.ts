@@ -255,26 +255,61 @@ function structuredCompanyQuery(rawParams: Record<string, any>): { country: stri
   return null;
 }
 
+/**
+ * A cursor produced by the keywords-only retry belongs to THAT query, so it carries this marker and the next page is
+ * sent with the same query. A page never changes the query it paginates.
+ */
+export const KEYWORDS_ONLY_CURSOR_PREFIX = "kw~";
+
+/** The broad source label that returns water, filters, travel and junk when it is the only activity filter. */
+const BROAD_INDUSTRY_LABEL = "Utilities";
+
+export interface IcypeasCompanyQueryOptions {
+  /** Send the activity keywords only (no industry labels): the one retry of a narrow query that found nothing. */
+  keywordsOnly?: boolean;
+}
+
+/**
+ * The activity filters of a company request. For every sector the previous rule holds exactly: the industry labels are the
+ * filter, and keywords are sent alone only when there is no taxonomy. The one exception is a taxonomy that includes the
+ * broad label «Utilities» (electricity, general energy): that label returns water, filters and travel when it stands
+ * alone, so it is sent together with the activity keywords (the provider ANDs them), and never without keywords.
+ */
+function companyActivityFilters(
+  industry: string[],
+  keyword: string[],
+  textFallback: () => { exactTaxonomy?: string[]; englishKeywords?: string[] },
+): { industry: string[]; keyword: string[] } {
+  let labels = industry;
+  let words = keyword;
+  if (labels.length === 0 && words.length === 0) {
+    const detected = textFallback();
+    if (detected.exactTaxonomy?.length) labels = detected.exactTaxonomy;
+    else words = detected.englishKeywords || [];
+  }
+  if (labels.length === 0) return { industry: [], keyword: words };
+  if (!labels.includes(BROAD_INDUSTRY_LABEL)) return { industry: labels, keyword: [] };
+  if (words.length === 0) words = textFallback().englishKeywords || [];
+  if (words.length === 0) labels = labels.filter((label) => label !== BROAD_INDUSTRY_LABEL);
+  return { industry: labels, keyword: words };
+}
+
 export function normalizeIcypeasCompanyParams(
   rawParams: Record<string, any>,
   pageSize: number,
-  cursor?: string | null
+  cursor?: string | null,
+  options: IcypeasCompanyQueryOptions = {},
 ): Record<string, any> {
   const structured = structuredCompanyQuery(rawParams);
+  const size = Math.max(1, Math.min(100, pageSize || 5));
+  const pagination: Record<string, any> = { size };
+  if (cursor && String(cursor).trim()) pagination.token = String(cursor).trim();
+
   if (structured) {
+    const filters = companyActivityFilters(structured.industry, structured.keyword, () => detectIndustryFromText(extractAllStrings(rawParams).join(" ")));
     const finalStructuredQuery: Record<string, any> = { location: { include: [structured.country] } };
-    // Icypeas combines the industry and keyword filters with AND, so the industry filter is primary and the
-    // keywords are sent only when the plan has no industry filter.
-    if (structured.industry.length > 0) finalStructuredQuery.industry = { include: structured.industry };
-    else if (structured.keyword.length > 0) finalStructuredQuery.keyword = { include: structured.keyword };
-    else {
-      const fromText = detectIndustryFromText(extractAllStrings(rawParams).join(" "));
-      if (fromText.exactTaxonomy?.length) finalStructuredQuery.industry = { include: fromText.exactTaxonomy };
-      else if (fromText.englishKeywords?.length) finalStructuredQuery.keyword = { include: fromText.englishKeywords };
-    }
-    const size = Math.max(1, Math.min(100, pageSize || 5));
-    const pagination: Record<string, any> = { size };
-    if (cursor && String(cursor).trim()) pagination.token = String(cursor).trim();
+    if (filters.industry.length > 0 && !options.keywordsOnly) finalStructuredQuery.industry = { include: filters.industry };
+    if (filters.keyword.length > 0) finalStructuredQuery.keyword = { include: filters.keyword };
     return { query: finalStructuredQuery, pagination };
   }
 
@@ -296,29 +331,15 @@ export function normalizeIcypeasCompanyParams(
     finalQuery.location = { include: [detectedCountry.canonicalEnglish] };
   }
 
-  if (!missingRequirements.includes("industry") && detectedIndustry.exactTaxonomy && detectedIndustry.exactTaxonomy.length > 0) {
-    finalQuery.industry = { include: detectedIndustry.exactTaxonomy };
-  }
-
-  // Icypeas combines the structured industry and free-keyword filters with AND.
-  // Keep taxonomy as the primary filter when it is known; keyword matching is
-  // only a fallback for custom sectors with no taxonomy mapping.
-  if (!missingRequirements.includes("industry") && !(detectedIndustry.exactTaxonomy && detectedIndustry.exactTaxonomy.length > 0)) {
-    finalQuery.keyword = { include: detectedIndustry.englishKeywords };
-  }
-
-  const effectiveSize = Math.max(1, Math.min(100, pageSize || 5));
-  const paginationObj: Record<string, any> = {
-    size: effectiveSize,
-  };
-
-  if (cursor && String(cursor).trim()) {
-    paginationObj.token = String(cursor).trim();
+  if (!missingRequirements.includes("industry")) {
+    const filters = companyActivityFilters(detectedIndustry.exactTaxonomy || [], [], () => detectedIndustry);
+    if (filters.industry.length > 0 && !options.keywordsOnly) finalQuery.industry = { include: filters.industry };
+    if (filters.keyword.length > 0) finalQuery.keyword = { include: filters.keyword };
   }
 
   return {
     query: finalQuery,
-    pagination: paginationObj,
+    pagination,
   };
 }
 
@@ -806,9 +827,13 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     allowedParamKeys = [...new Set([...allowedParamKeys, "username", "uniqueId"])];
   }
 
+  // A cursor made by the keywords-only retry paginates THAT query: the next page keeps it (a page never changes its query).
+  const cursorFromKeywordsQuery = isIcypeasCompanies && typeof input.cursor === "string" && input.cursor.startsWith(KEYWORDS_ONLY_CURSOR_PREFIX);
+  const providerCursor = cursorFromKeywordsQuery ? String(input.cursor).slice(KEYWORDS_ONLY_CURSOR_PREFIX.length) : input.cursor;
+
   let pageParams: Record<string, any>;
   if (isIcypeasCompanies) {
-    pageParams = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, input.cursor);
+    pageParams = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, providerCursor, { keywordsOnly: cursorFromKeywordsQuery });
   } else if (isIcypeasPeople) {
     pageParams = normalizeIcypeasPeopleParams(input.params || {}, input.pageSize, input.cursor);
   } else if (isTregPeople) {
@@ -861,19 +886,21 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     };
   }
 
-  const callResult = await executeTregCallWithRetry(
-    {
-      endpointId: effectiveEndpointId,
-      method: effectiveMethod,
-      params: pageParams,
-      allowedParamKeys,
-      userId: input.userId,
-      jobId: input.jobId,
-      stepId: `step_${input.step}`,
-      page,
-      routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
-      timeoutMs: 12000,
-    },
+  const callOptions = (params: Record<string, any>, stepSuffix = "") => ({
+    endpointId: effectiveEndpointId,
+    method: effectiveMethod,
+    params,
+    allowedParamKeys,
+    userId: input.userId,
+    jobId: input.jobId,
+    // The retry gets its own idempotency key: it is a different request and must not replay the narrow one's answer.
+    stepId: `step_${input.step}${stepSuffix}`,
+    page,
+    routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
+    timeoutMs: 12000,
+  });
+  let callResult = await executeTregCallWithRetry(
+    callOptions(pageParams, cursorFromKeywordsQuery ? "_kw" : ""),
     retries,
     input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
   );
@@ -881,6 +908,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   let costMicro = Math.max(0, Number(callResult.costMicro) || 0);
   let costUsd = Number((costMicro / 1_000_000).toFixed(6));
   let providerCallCount = 1;
+  let keywordsRetryUsed = false;
 
   if (!callResult.ok) {
     const errorMessageAr = providerFailureMessageAr(callResult);
@@ -918,9 +946,29 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       rows = extractAndFlattenRows(callResult.data);
     }
   } else if (isIcypeas) {
-    const parsed = parseIcypeasCompaniesResponse(callResult.data);
+    let parsed = parseIcypeasCompaniesResponse(callResult.data);
+    // The narrow query (industry AND keywords) found nothing at all: retry ONCE with the keywords only, same country, on
+    // the first request of the job only (a cursor belongs to its query, so a later page never widens). Never taxonomy-only.
+    if (isIcypeasCompanies && parsed.rows.length === 0 && !input.cursor && pageParams.query?.industry && pageParams.query?.keyword?.include?.length) {
+      const keywordsOnly = normalizeIcypeasCompanyParams(input.params || {}, input.pageSize, null, { keywordsOnly: true });
+      if (keywordsOnly.query?.keyword?.include?.length && !keywordsOnly.query.industry) {
+        const retry = await executeTregCallWithRetry(
+          callOptions(keywordsOnly, "_kw"),
+          retries,
+          input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
+        );
+        costMicro += Math.max(0, Number(retry.costMicro) || 0);
+        costUsd = Number((costMicro / 1_000_000).toFixed(6));
+        providerCallCount += 1;
+        keywordsRetryUsed = true;
+        if (retry.ok) {
+          callResult = retry;
+          parsed = parseIcypeasCompaniesResponse(retry.data);
+        }
+      }
+    }
     rows = parsed.rows;
-    nextCursor = parsed.nextCursor;
+    nextCursor = parsed.nextCursor && (keywordsRetryUsed || cursorFromKeywordsQuery) ? `${KEYWORDS_ONLY_CURSOR_PREFIX}${parsed.nextCursor}` : parsed.nextCursor;
   } else if (isTregPeople) {
     rows = parseTregPeopleRows(callResult.data);
     if (rows.length === 0) rows = extractAndFlattenRows(callResult.data?.output ?? callResult.data?.raw ?? callResult.data);

@@ -95,10 +95,11 @@ describe("structured industry is primary, free keywords are only a fallback (pro
     expect(params.query.location).toEqual({ include: ["Saudi Arabia"] });
   });
 
-  it("an electricity request is no longer sent as an Arabic free keyword", () => {
+  it("an electricity request carries its English keywords with the labels, never an Arabic free keyword", () => {
     const params = normalizeIcypeasCompanyParams({ query: "خمس شركات في مجال الكهرباء في مصر", country: "Egypt" } as any, 5, null);
     expect(params.query.industry?.include).toContain("Electrical/Electronic Manufacturing");
-    expect(params.query.keyword).toBeUndefined();
+    expect(params.query.keyword).toEqual({ include: ["electrical", "electricity", "electrical engineering"] });
+    expect(JSON.stringify(params.query.keyword)).not.toMatch(/[\u0600-\u06FF]/);
   });
 
   it("a custom sector with no taxonomy falls back to keywords so the search still runs", () => {
