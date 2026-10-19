@@ -8,6 +8,7 @@ import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../..
 import { recordWorkerStartFailure, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
+import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -105,6 +106,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { success: false, error: PEOPLE_SETTLEMENT_UNAVAILABLE_AR },
         { status: 503 }
+      );
+    }
+
+    // Scope guard: incomplete plans with scope gaps are never accepted or reserved
+    const gaps = quoteScopeGaps(readinessItems);
+    if (gaps.length > 0) {
+      return NextResponse.json(
+        { success: false, error: "الخطة غير مكتملة", gaps },
+        { status: 409 }
       );
     }
 

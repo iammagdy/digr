@@ -26,6 +26,7 @@ import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINT
 import { callAtomicOrFallback } from "./atomicRpc";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
+import { quoteScopeGaps } from "../../lib/quoteScopeGaps";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -524,6 +525,7 @@ export interface QuoteCreationInput {
   userBalance: number;
   capabilities: Capability[];
   pricingSettings?: PricingSettings;
+  enforceScope?: boolean;
 }
 
 export interface ManagedQuoteResult {
@@ -576,6 +578,14 @@ export async function createAndSaveManagedQuote(
     safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
     minPoints: DEFAULT_PRICING_SETTINGS.minPoints,
   };
+
+  // Opt-in scope guard for production callers: incomplete plans with scope gaps are rejected
+  if (input.enforceScope) {
+    const gaps = quoteScopeGaps(plan.items);
+    if (gaps.length > 0) {
+      throw new Error(`الخطة غير مكتملة: ${gaps.join(", ")}`);
+    }
+  }
 
   // 1. Calculate pricing for all plan items independently
   let totalQuotedPoints = 0;
