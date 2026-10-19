@@ -764,8 +764,10 @@ export function buildAutoPlanProposal(
     stepParams.username = topicLabel.replace(/^@/, "").trim();
   }
 
-  const dateRangeHint = brief.dateRange || message;
-  if (dateRangeHint && !isCompanySearch && !isProfileCapability) {
+  // The brief's window may be the system default («آخر 3 شهور»), which suits a feed of posts or comments but not a directory
+  // of people or companies. For those, only a period the customer wrote in this request applies.
+  const dateRangeHint = isPeopleCapability || isCompanySearch ? extractDateHint(message) || "" : brief.dateRange || message;
+  if (dateRangeHint && !isProfileCapability) {
     const dateFilters = dateFiltersFromHint(dateRangeHint);
     if (dateFilters.from) stepParams.dateFrom = dateFilters.from;
     if (dateFilters.to) stepParams.dateTo = dateFilters.to;
@@ -800,19 +802,26 @@ export function buildAutoPlanProposal(
   };
 }
 
+/** «آخر ٣ شهور», «خلال شهرين», «آخر أسبوعين»: the relative window words of a request, singular, plural and dual. A unit followed by a year («خلال سنة 2024») is that year, not a relative window. */
+const RELATIVE_WINDOW_RE = /(?:آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهرين|أسبوعين|اسبوعين|يومين|سنتين|عامين|شهور|أشهر|اشهر|شهر|سنوات|سنين|سنة|أعوام|اعوام|عام|أسابيع|اسابيع|أسبوع|اسبوع|أيام|ايام|يوم)(?!\s*(?:19|20)\d{2})/i;
+
 export function dateFiltersFromHint(hint: string, now = new Date()): { from?: string; to?: string } {
   const dates = hint.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
   if (dates.length >= 2) return { from: dates[0], to: dates[1] };
   if (dates.length === 1) return { from: dates[0], to: dates[0] };
   const year = /\b((?:19|20)\d{2})\b/.exec(hint)?.[1];
   if (year) return { from: `${year}-01-01`, to: `${year}-12-31` };
-  const relative = /(?:آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/i.exec(hint);
+  const relative = RELATIVE_WINDOW_RE.exec(hint);
   if (!relative) return {};
-  const count = Number((relative[1] || "1").replace(/[٠-٩]/g, (digit) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(digit)])) || 1;
+  const digits = (relative[1] || "").replace(/[٠-٩]/g, (digit) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(digit)]);
+  const unit = relative[2];
+  // The dual forms («شهرين», «أسبوعين», «يومين», «سنتين», «عامين») carry their own count of two.
+  const count = /^(?:شهرين|أسبوعين|اسبوعين|يومين|سنتين|عامين)$/.test(unit) ? 2 : Number(digits) || 1;
   const from = new Date(now);
-  if (/شهر/i.test(relative[2])) from.setMonth(from.getMonth() - count);
-  else if (/سنة|عام/i.test(relative[2])) from.setFullYear(from.getFullYear() - count);
-  else if (/أسبوع/i.test(relative[2])) from.setDate(from.getDate() - count * 7);
+  // «شهور» and «أشهر» are the plurals of «شهر»: tested by the whole word, not by the substring «شهر».
+  if (/^(?:شهر|شهرين|شهور|أشهر|اشهر)$/.test(unit)) from.setMonth(from.getMonth() - count);
+  else if (/^(?:سنة|سنتين|سنوات|سنين|عام|عامين|أعوام|اعوام)$/.test(unit)) from.setFullYear(from.getFullYear() - count);
+  else if (/^(?:أسبوع|اسبوع|أسبوعين|اسبوعين|أسابيع|اسابيع)$/.test(unit)) from.setDate(from.getDate() - count * 7);
   else from.setDate(from.getDate() - count);
   return { from: from.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
 }
@@ -1152,7 +1161,7 @@ export function extractDateHint(userMessage: string): string | undefined {
   if (rangeMatch) {
     return rangeMatch[0].trim();
   }
-  const m = /(آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهر|شهور|أشهر|سنة|سنوات|عام|أعوام|أسبوع|أسابيع|يوم|أيام)/i.exec(userMessage);
+  const m = RELATIVE_WINDOW_RE.exec(userMessage);
   if (m) return m[0].trim();
   const year = /(?:في|سنة|عام|خلال|منذ|since|during|in|year)\s+((?:19|20)\d{2})\b/i.exec(userMessage);
   return year?.[1];
