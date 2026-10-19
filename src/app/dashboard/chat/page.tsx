@@ -1556,7 +1556,7 @@ export default function ChatWorkspacePage() {
     }
     return (
       <div key={m.id}>
-        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
+        {m.content && !(m.content === POST_APPROVAL_MESSAGE_AR && !(activeJob && activeJob.jobId === m.jobId && !isTerminalJobStatus(activeJob.status))) && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
         {m.revisionQuote && (
           <RevisionQuoteCard
             quote={m.revisionQuote}
