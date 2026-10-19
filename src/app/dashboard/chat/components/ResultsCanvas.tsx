@@ -145,10 +145,66 @@ export default function ResultsCanvas({
   const filteredRecords = records.filter((record) =>
     Object.values(record).some((value) => String(value ?? "").toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()))
   );
-  const rawColumns = Array.from(new Set(records.flatMap((record) => Object.keys(record).filter((key) => key !== "id" && !key.startsWith("_") && !key.endsWith("_relevance_status")))));
-  const tableColumns = rawColumns.filter((key, index) => {
+  const isCompanyDataset = records.some((record) => record.company_name);
+  const COMPANY_PREFERRED = [
+    "company_name",
+    "industry",
+    "city",
+    "address",
+    "website",
+    "linkedin_url",
+    "phone",
+    "work_email",
+  ];
+
+  const hasDescription = records.some(
+    (record) => record.description !== undefined && record.description !== null && record.description !== ""
+  );
+  const hasCity = records.some(
+    (record) => record.city !== undefined && record.city !== null && record.city !== ""
+  );
+
+  const rawColumns = Array.from(
+    new Set(
+      records.flatMap((record) =>
+        Object.keys(record).filter(
+          (key) => key !== "id" && !key.startsWith("_") && !key.endsWith("_relevance_status")
+        )
+      )
+    )
+  );
+
+  let candidateColumns = rawColumns;
+  if (hasDescription) {
+    candidateColumns = candidateColumns.filter((key) => key !== "text");
+  }
+  if (hasCity) {
+    candidateColumns = candidateColumns.filter((key) => key !== "location");
+  }
+
+  let orderedColumns: string[] = [];
+  if (isCompanyDataset) {
+    for (const key of COMPANY_PREFERRED) {
+      if (candidateColumns.includes(key)) {
+        orderedColumns.push(key);
+      }
+    }
+    for (const key of candidateColumns) {
+      if (!orderedColumns.includes(key)) {
+        orderedColumns.push(key);
+      }
+    }
+  } else {
+    orderedColumns = candidateColumns;
+  }
+
+  const tableColumns = orderedColumns.filter((key, index) => {
     const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key);
-    return rawColumns.findIndex((candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate)) === label) === index;
+    return (
+      orderedColumns.findIndex(
+        (candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate)) === label
+      ) === index
+    );
   });
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
 

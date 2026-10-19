@@ -741,9 +741,15 @@ export function generateCsvReport(payload: any): Buffer {
   const headerLine = headers.map(escapeCsv).join(",");
 
   const rowLines = norm.rows.map((row: any) => {
+    const isCompany = Boolean(row.company_name || row.website || row.linkedin_url || row.domain);
+    const links = isCompany ? resolveCompanyLinks(row) : null;
     return norm.columns
       .map((col) => {
-        const val = row[col];
+        let val = row[col];
+        if (links) {
+          if (col === "website") val = links.website;
+          if (col === "linkedin_url" || col === "linkedin") val = links.linkedin || val;
+        }
         if (val === null || val === undefined) return '""';
         if (typeof val === "boolean") return escapeCsv(val ? "نعم" : "لا");
         if (typeof val === "number") return String(val);
