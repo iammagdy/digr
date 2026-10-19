@@ -229,11 +229,55 @@ function extractAllStrings(val: any): string[] {
  * POST /find-companies with { query: { location, keyword, industry }, pagination: { size, token } }
  * NEVER defaults country to Egypt. Extracts true country and industry from user parameters.
  */
+/** Latin-only, trimmed, non-empty strings of a `{ include: [...] }` filter; the source's data is English. */
+function latinIncludeList(filter: unknown): string[] {
+  const list = (filter as any)?.include;
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0 && /^[\x20-\x7E]+$/.test(value)))];
+}
+
+/**
+ * The structured query the planner produced (country in English, activity as the source's industry filter or English
+ * keywords). It is what gets sent when its country is a real one; the sentence text only fills what it leaves out.
+ */
+function structuredCompanyQuery(rawParams: Record<string, any>): { country: string; industry: string[]; keyword: string[] } | null {
+  const query = rawParams?.query;
+  if (!query || typeof query !== "object" || Array.isArray(query)) return null;
+  for (const name of latinIncludeList(query.location)) {
+    const country = detectCountryFromText(name);
+    if (country && name.trim().toLowerCase() === country.canonicalEnglish.toLowerCase()) {
+      return { country: country.canonicalEnglish, industry: latinIncludeList(query.industry), keyword: latinIncludeList(query.keyword) };
+    }
+  }
+  return null;
+}
+
 export function normalizeIcypeasCompanyParams(
   rawParams: Record<string, any>,
   pageSize: number,
   cursor?: string | null
 ): Record<string, any> {
+  const structured = structuredCompanyQuery(rawParams);
+  if (structured) {
+    const finalStructuredQuery: Record<string, any> = { location: { include: [structured.country] } };
+    // Icypeas combines the industry and keyword filters with AND, so the industry filter is primary and the
+    // keywords are sent only when the plan has no industry filter.
+    if (structured.industry.length > 0) finalStructuredQuery.industry = { include: structured.industry };
+    else if (structured.keyword.length > 0) finalStructuredQuery.keyword = { include: structured.keyword };
+    else {
+      const fromText = detectIndustryFromText(extractAllStrings(rawParams).join(" "));
+      if (fromText.exactTaxonomy?.length) finalStructuredQuery.industry = { include: fromText.exactTaxonomy };
+      else if (fromText.englishKeywords?.length) finalStructuredQuery.keyword = { include: fromText.englishKeywords };
+    }
+    const size = Math.max(1, Math.min(100, pageSize || 5));
+    const pagination: Record<string, any> = { size };
+    if (cursor && String(cursor).trim()) pagination.token = String(cursor).trim();
+    return { query: finalStructuredQuery, pagination };
+  }
+
   const fullPromptText = extractAllStrings(rawParams).join(" ");
 
   // 1. Detect Country without hidden default
