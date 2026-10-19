@@ -10,6 +10,8 @@ const ANNOUNCE = "تمام، هجهز لك خطة لجمع التغريدات د
 function handlerWith(executeTurn: (...args: any[]) => any) {
   const db = createChatDb();
   const handler = new ChatHandler(db as any);
+  // These tests exercise the MODEL path (a stalled or failed model call); the code-planned fast path has its own tests.
+  handler.deterministicPlanning = false;
   const calls = vi.fn(executeTurn);
   (handler as any).llm.executeTurn = calls;
   return { handler, calls, db };

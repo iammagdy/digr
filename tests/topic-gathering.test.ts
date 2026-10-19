@@ -41,36 +41,36 @@ describe("3. a studies request with a topic and a country gets a specific questi
     expect(getDeterministicDiscoveryQuestion(STUDIES, extractBriefFromMessage(STUDIES), withService)).toBeNull();
   });
 
-  it("in the chat: one specific question with no model turn, never the generic sentence", async () => {
+  it("in the chat: an honest «not available yet» answer, no model turn, no social platform offered as a source, no plan, nothing charged", async () => {
     const { responses } = await runConversation([STUDIES]);
     const r = responses[0];
-    expect(r.outputType).toBe("ask_clarification");
-    expect(r.clarificationQuestions).toHaveLength(1);
-    expect(r.clarificationQuestions![0]).toContain("الطاقة الشمسية");
-    expect(r.clarificationQuestions![0]).toContain("ألمانيا");
+    expect(r.outputType).toBe("answer_question");
+    expect(r.contentAr).toContain("غير متاح بعد");
+    expect(r.contentAr).toContain("الطاقة الشمسية");
+    expect(r.contentAr).toContain("ألمانيا");
+    // what IS available is listed, and the answer is not a question, a card, a quote or a charge
+    expect(r.contentAr).toContain("قوائم الشركات");
+    expect(r.contentAr).toContain("صناع القرار");
+    expect(r.clarificationQuestions ?? []).toHaveLength(0);
+    expect(r.planQuote).toBeUndefined();
     expect(r.contentAr).not.toMatch(GENERIC);
     expect(r.tokensUsed?.costUsd ?? 0).toBe(0);
+    // none of the old source options is offered
+    for (const option of TOPIC_SOURCE_OPTIONS_AR) expect(r.contentAr).not.toContain(option);
   });
 
-  it("answering with a source continues to the one remaining question, then to a plan built from the original topic", async () => {
-    const source = JSON.stringify({ type: "clarification_answers", answers: [{ questionId: "topic_source_required", question: "من أي مصدر؟", value: "منشورات من منصة إكس" }] });
-    const when = JSON.stringify({ type: "clarification_answers", answers: [{ questionId: "social_time_required", question: "ما الفترة؟", value: "آخر شهر" }] });
-    const db = createChatDb();
-    const handler = new ChatHandler(db as any);
-    // The model only announces a plan; the plan must then come from the brief the answers built (code path).
-    (handler as any).llm.executeTurn = vi.fn(async () => ({ output: { type: "answer_question", answerAr: "هجهز لك خطة دلوقتي" }, inputTokens: 500, outputTokens: 20, costUsd: 0.0005, model: "claude-haiku-5-5", promptVersion: "t" }));
-    await db.createRow({ tableId: "conversations", rowId: "c_topic", data: { userId: "u_topic", title: "x", status: "active", totalTokens: 0 } });
-    const send = (message: string) => handler.handleUserMessage({ userId: "u_topic", conversationId: "c_topic", message, userBalance: 5000 });
-    const first = await send(STUDIES);
-    const second = await send(source);
-    const third = await send(when);
-    expect(first.outputType).toBe("ask_clarification");
-    expect(second.outputType).toBe("ask_clarification");
-    expect(second.clarificationQuestions).toEqual(["ما الفترة الزمنية التي تريد البحث فيها؟"]);
-    expect(third.outputType).toBe("propose_plan");
-    expect(third.planQuote.items[0].capabilitySlug).toBe("social-x-posts");
-    expect(third.planQuote.items[0].params.query).toContain("الطاقة الشمسية");
-    expect(third.planQuote.items[0].targetVolumeMax).toBe(10);
+  it("every wording of a studies request gets the same honest answer, and a request for tweets on the same topic still gets a plan", async () => {
+    for (const text of ["اجمع ١٠ دراسات عن الطاقة الشمسية في ألمانيا", "عايز أبحاث عن الذكاء الاصطناعي", "هات مقالات علمية عن الطاقة المتجددة", "عايز مواد علمية عن الطاقة الشمسية في ألمانيا"]) {
+      const { responses } = await runConversation([text]);
+      expect(responses[0].outputType, text).toBe("answer_question");
+      expect(responses[0].contentAr, text).toContain("غير متاح بعد");
+    }
+    // After the honest answer, the customer's next request is read on its own: tweets on the topic are planned.
+    const { responses } = await runConversation([STUDIES, "هات ١٠ تغريدات عن الطاقة الشمسية"]);
+    expect(responses[1].outputType).toBe("propose_plan");
+    expect(responses[1].planQuote.items[0].capabilitySlug).toBe("social-x-posts");
+    expect(responses[1].planQuote.items[0].params.query).toContain("الطاقة الشمسية");
+    expect(responses[1].planQuote.items[0].targetVolumeMax).toBe(10);
   });
 
   it("when the model answers «suggest_alternative» for a request with a topic, the generic sentence is replaced by the one specific question", async () => {
@@ -80,8 +80,8 @@ describe("3. a studies request with a topic and a country gets a specific questi
       output: { type: "suggest_alternative", unsupportedService: "الدراسات الأكاديمية", explanationAr: "غير متاح مباشرة", suggestedAlternativeAr: "منصات التواصل" },
       inputTokens: 500, outputTokens: 40, costUsd: 0.0005, model: "claude-haiku-5-5", promptVersion: "t",
     }));
-    // a wording the deterministic detector does not catch, so the model is reached
-    const res: any = await handler.handleUserMessage({ userId: "u_alt", message: "عايز مواد علمية عن الطاقة الشمسية في ألمانيا", userBalance: 5000 });
+    // not a studies wording (those are answered by code), so the model is reached
+    const res: any = await handler.handleUserMessage({ userId: "u_alt", message: "عايز بيانات استثمارية عن الطاقة الشمسية في ألمانيا", userBalance: 5000 });
     expect(res.outputType).toBe("ask_clarification");
     expect(res.clarificationQuestions).toHaveLength(1);
     expect(res.clarificationQuestions[0]).toContain("الطاقة الشمسية");

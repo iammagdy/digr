@@ -1,3 +1,4 @@
+import { stripConstraintPhrases } from "./requestConstraints";
 /**
  * Utility for parsing and normalizing Arabic and English number words into integer values.
  * Supports:
@@ -270,7 +271,8 @@ function extractNumberFromWords(text: string): number | undefined {
 export function extractNumberFromText(text: string): number | undefined {
   if (!text || typeof text !== "string") return undefined;
 
-  const normalized = normalizeEasternArabicDigits(text).toLowerCase().trim();
+  // A company-size or founding-year constraint carries numbers that are not the record count.
+  const normalized = normalizeEasternArabicDigits(stripConstraintPhrases(text)).toLowerCase().trim();
 
   // 1. Explicit digits with context: "5 شركات", "30 شركة", "حجم 50", "عايز 10".
   const digitMatchWithEntity = normalized.match(
@@ -292,5 +294,8 @@ export function extractNumberFromText(text: string): number | undefined {
   }
 
   // 2. Number words, including compounds ("مية وخمسين" is 150, "ألف وخمسمية" is 1500).
-  return extractNumberFromWords(normalized);
+  // 3. The dual noun itself says two: "شركتين", "تغريدتين", "تعليقين" ("عايز شركتين كهرباء في مصر" asks for 2).
+  return extractNumberFromWords(normalized) ?? (DUAL_NOUN_RE.test(normalized) ? 2 : undefined);
 }
+
+const DUAL_NOUN_RE = /(?<![\p{L}\p{N}])(?:شركتين|شركتان|مؤسستين|مؤسستان|تغريدتين|تغريدتان|تويتتين|منشورين|منشوران|بوستين|تعليقين|تعليقان|كومنتين|فيديوهين|فيديوهان|مقطعين|مقطعان|شخصين|شخصان|سجلين|سجلان|عينتين|صفحتين|حسابين)(?![\p{L}\p{N}])/u;

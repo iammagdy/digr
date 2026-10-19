@@ -9,7 +9,7 @@ export default function ServicesCatalogPage() {
   const options = getPublicCalculatorOptions();
   const optionSlugs = new Set(options.map((option) => option.slug));
   const services = buildPlatformGuideServices().filter((service) =>
-    optionSlugs.has(service.slug) || service.slug === "topic-news-academic-research"
+    optionSlugs.has(service.slug)
   );
   return (
     <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">

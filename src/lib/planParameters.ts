@@ -1,3 +1,4 @@
+import { stripConstraintPhrases } from "./requestConstraints";
 const GREETING_WORDS = new Set([
   "ازيك",
   "ازيكوا",
@@ -207,6 +208,14 @@ export function detectIndustryFromText(text: string): IndustryMapping {
       englishKeywords: ["electrical", "electricity", "electrical engineering"],
       arabicLabel: "الكهرباء والطاقة الكهربائية",
       exactTaxonomy: ["Electrical/Electronic Manufacturing", "Utilities"],
+    };
+  }
+  if (t.includes("الطاقة") || t.includes("طاقة") || hasLatinWord("energy") || t.includes("بترول") || t.includes("نفط") || t.includes("oil and gas") || t.includes("oil & gas")) {
+    // General energy (after the more specific solar and electricity cases above).
+    return {
+      englishKeywords: ["energy", "power", "utilities", "oil and gas"],
+      arabicLabel: "الطاقة",
+      exactTaxonomy: ["Oil & Energy", "Utilities", "Renewables & Environment"],
     };
   }
   if (t.includes("أغذية") || t.includes("اغذية") || t.includes("طعام") || t.includes("مطاعم") || t.includes("أطعمة") || t.includes("food") || t.includes("beverage")) {
@@ -736,7 +745,8 @@ export function getCompanyRequirementItems(
 export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
 
 export function isPeopleSearchRequest(text: string): boolean {
-  const normalized = (text || "").toLowerCase();
+  // «شركات حجمها أكثر من ٥٠ موظف» is a company filter, not a request for employees.
+  const normalized = stripConstraintPhrases(text || "").toLowerCase();
   const explicitPeopleIntent = PEOPLE_ROLE_PATTERN.test(normalized) || /decision[\s-]*makers?|executives?|people search|\bpeople\b|job titles?|contacts?\b|employees?|individuals?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|صناع الأعمال|المديرين التنفيذيين|مسؤولين تنفيذيين|المسمى الوظيفي|جهات الاتصال|بيانات الأشخاص|أشخاص|شخص|موظفين|موظف/.test(normalized);
   if (explicitPeopleIntent) return true;
 
