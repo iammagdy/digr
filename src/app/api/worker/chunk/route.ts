@@ -470,7 +470,7 @@ export async function POST(req: NextRequest) {
     if (spendErr || !spendReserve?.allowed) {
       const capErrorMsg = ceilingHit
         ? CEILING_MESSAGE_AR[ceilingHit]
-        : "تم تجاوز الحد اليومي لاستهلاك مزود البيانات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+        : "تم الوصول إلى حد المعالجة اليومي؛ حاول مرة أخرى لاحقاً. تم استرداد كامل الرصيد المحجوز دون أي خصم.";
       if (effectiveDelivered > 0) {
         // Do not make another billable call. Keep the matching rows already
         // collected and let the existing atomic settlement charge only them.

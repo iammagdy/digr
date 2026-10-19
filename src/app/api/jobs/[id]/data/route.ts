@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
-import { producedFormats } from "@/lib/producedFormats";
+import { deliveredNothing, producedFormats } from "@/lib/producedFormats";
 
 export const dynamic = "force-dynamic";
 
@@ -139,6 +139,8 @@ export async function GET(
         finishedAt: jobDoc.finished_at,
         fileIds,
         producedFormats: producedFormats(fileIds),
+        // A failed request that delivered no record has no file to offer.
+        ...(deliveredNothing({ status: jobDoc.status, delivered: jobDoc.delivered_units }) ? { producedFormats: [] } : {}),
       });
     } catch {
       // If JSON file doesn't exist yet (e.g. still running, failed, or older job)

@@ -6,6 +6,25 @@ import {
   socialContentTopicFromTitle,
 } from "./planParameters";
 
+/** The job title a customer sees for the provider's English title word; the stored params keep the provider value. */
+const ROLE_TITLE_AR: Record<string, string> = {
+  director: "مدير",
+  manager: "مدير",
+  ceo: "الرئيس التنفيذي",
+  cfo: "المدير المالي",
+  cto: "المدير التقني",
+  coo: "مدير التشغيل",
+  "general manager": "مدير عام",
+  chairman: "رئيس مجلس الإدارة",
+  founder: "مؤسس",
+  owner: "مالك",
+};
+
+export function roleTitleDisplayAr(title: string): string {
+  const key = String(title || "").trim().toLowerCase();
+  return ROLE_TITLE_AR[key] || title;
+}
+
 export interface PlanScopeChip {
   label: string;
   value: string;
@@ -200,7 +219,7 @@ export function planScopeRows(
     const titleVal = params.title || params.jobTitle || query.title || query.jobTitle?.include?.[0];
     const kwVal = params.keywords || params.keyword || query.keywords || query.keyword?.include?.[0];
     const scopeVal =
-      (typeof titleVal === "string" && titleVal.trim()) ||
+      (typeof titleVal === "string" && titleVal.trim() && roleTitleDisplayAr(titleVal)) ||
       (typeof kwVal === "string" && kwVal.trim()) ||
       "صناع القرار والمهنيون";
     chips.push({
