@@ -210,6 +210,8 @@ export default function ResultsCanvas({
       ) === index
     );
   });
+  // A failed request that delivered no record has no file to offer.
+  const nothingDelivered = jobStatus === "failed" && (records.length > 0 ? records.length : rowsCollected) === 0;
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
   const visibleSuggestions = (review?.suggestions ?? []).filter((suggestion) => !RETIRED_SUGGESTION_TYPES.has(suggestion.type));
 
@@ -259,7 +261,7 @@ export default function ResultsCanvas({
             { id: "terminal" as const, label: "سجل النشاط" },
             { id: "table" as const, label: "البيانات" },
             // The report tab exists only when this request produced a PDF.
-            ...(producedFormats(fileIds).includes("pdf") ? [{ id: "pdf" as const, label: "التقرير" }] : []),
+            ...(!nothingDelivered && producedFormats(fileIds).includes("pdf") ? [{ id: "pdf" as const, label: "التقرير" }] : []),
             { id: "notes" as const, label: "الملاحظات" },
             { id: "files" as const, label: "الملفات" },
           ]}
@@ -465,11 +467,12 @@ export default function ResultsCanvas({
 
         {tab === "files" && (
           <div className="space-y-3">
-            {[
+            {nothingDelivered && <p className="text-xs leading-6 text-sand-600" role="status">لا توجد ملفات لهذا الطلب لأنه لم يُسلّم أي سجل، ولم يُخصم منك أي رصيد.</p>}
+            {(nothingDelivered ? [] : [
               { ext: "xlsx" as const, label: "إكسل", title: "ملف إكسل", desc: "جدول البيانات فقط." },
               { ext: "pdf" as const, label: "بي دي إف", title: "الدليل المنهجي", desc: "منهجية الجمع وحدود البيانات." },
               { ext: "csv" as const, label: "سي إس في", title: "بيانات جدولية", desc: "للاستخدام في التحليل." },
-            ].filter((f) => producedFormats(fileIds).includes(f.ext)).map((f) => (
+            ]).filter((f) => producedFormats(fileIds).includes(f.ext)).map((f) => (
               <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ac text-xs font-semibold text-onac">{f.label}</span>

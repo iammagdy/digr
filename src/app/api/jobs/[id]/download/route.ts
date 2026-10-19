@@ -8,6 +8,7 @@ import {
 } from "@/functions/shared/fileGenerators";
 import { decodeFileSpec, validateFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
+import { deliveredNothing } from "@/lib/producedFormats";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
@@ -62,6 +63,14 @@ export async function GET(
     const isAdmin = user.app_metadata?.role === "admin";
     if (job.user_id !== user.id && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح لك بتحميل نتائج هذا الطلب." }, { status: 403 });
+    }
+
+    // A failed request that delivered no record has no file: say so plainly, before anything is read, created or priced.
+    if (deliveredNothing({ status: job.status, delivered: job.delivered_units })) {
+      return NextResponse.json(
+        { success: false, error: "لا يوجد ملف لتحميله لأن هذا الطلب لم يُسلّم أي سجل، ولم يُخصم منك أي رصيد." },
+        { status: 409 }
+      );
     }
 
     // File formats can be generated later from the saved dataset, even when

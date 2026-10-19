@@ -72,7 +72,7 @@ export function Calculator() {
         <p className="mx-auto mb-0 mt-6 max-w-[480px] text-sm font-light leading-[2] text-mut">
           هذه هي التكلفة المتوقعة للعدد المحدد. يُخصم فقط مقابل السجلات المطابقة التي يتم تسليمها.
         </p>
-        <p className="mb-0 mt-2.5 text-[11px] text-fnt">مثال توضيحي — السعر النهائي يُحسب من الخادم لكل خطة.</p>
+        <p className="mb-0 mt-2.5 text-[11px] text-fnt">مثال توضيحي — السعر النهائي يُحسب من النظام لكل خطة.</p>
       </div>
     </section>
   );
