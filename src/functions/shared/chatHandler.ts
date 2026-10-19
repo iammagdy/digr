@@ -1167,6 +1167,14 @@ export class ChatHandler {
       let userProfile: any = undefined;
       let convBriefFromDb: any = undefined;
 
+      // The balance and the profile do not depend on the conversation row: start both reads now so the three
+      // database round-trips of the turn overlap instead of running one after another.
+      const balanceRead: Promise<number> | null = userBalance === undefined ? getBalance(this.tables, userId) : null;
+      balanceRead?.catch(() => {});
+      const profileRead: Promise<any> | null = sb
+        ? (async () => sb.from("profiles").select("*").eq("id", userId).maybeSingle())().catch(() => ({ data: null }))
+        : null;
+
       const isGreetingMsg = isGreetingOrGeneralQuestion(message).isGreeting;
       const initialTitle = "محادثة جديدة";
       let currentConversationTitle = initialTitle;
@@ -1259,7 +1267,7 @@ export class ChatHandler {
       currentStep = "balance_fetch";
       if (userBalance === undefined) {
         const tSbBalStart = Date.now();
-        userBalance = await getBalance(this.tables, userId);
+        userBalance = await (balanceRead ?? getBalance(this.tables, userId));
         supabaseMs += Date.now() - tSbBalStart;
       }
 
@@ -1268,11 +1276,7 @@ export class ChatHandler {
       const tSbProfStart = Date.now();
       try {
         if (sb) {
-          const { data: prof } = await sb
-            .from("profiles")
-            .select("*")
-            .eq("id", userId)
-            .maybeSingle();
+          const { data: prof } = await (profileRead as Promise<any>);
           userProfile = prof || undefined;
         } else {
           userProfile = await this.tables.getRow({
