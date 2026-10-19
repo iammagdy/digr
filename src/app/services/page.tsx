@@ -36,8 +36,8 @@ export default function ServicesCatalogPage() {
                 ? `${formatAr(peoplePrice.basePerson)} نقطة للشخص، و${formatAr(peoplePrice.workEmail)} نقطة للبريد المهني عند توفره، و${formatAr(peoplePrice.phone)} نقطة للهاتف المكتبي عند توفره.`
                 : quote
                   ? `${formatAr(quote.unitPricePoints)} نقطة لكل ${options.find((option) => option.slug === service.slug)?.unitLabelAr || "سجل"}.`
-                  : "يحسب الخادم السعر بالنقاط بعد تحديد الخدمة المطابقة لموضوعك."}</p>
-              <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من الخادم بعد تحديد العدد والنطاق، وبحد أقصى {formatAr(PLATFORM_GUIDE.product.pointCap)} نقطة للمهمة.</p>
+                  : "يحسب النظام السعر بالنقاط بعد تحديد الخدمة المطابقة لموضوعك."}</p>
+              <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من النظام بعد تحديد العدد والنطاق، وبحد أقصى {formatAr(PLATFORM_GUIDE.product.pointCap)} نقطة للمهمة.</p>
             </article>;
           })}
         </section>

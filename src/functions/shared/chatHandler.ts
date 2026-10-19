@@ -782,7 +782,7 @@ export function buildAutoPlanProposal(
   };
 
   const summaryAr = isPeopleCapability
-    ? `بحث ${toArabicDigits(volume)} من صناع القرار والمهنيين${countryNameAr ? ` في ${countryNameAr}` : ""}`
+    ? `بحث ${toArabicDigits(volume)} من صناع القرار والمهنيين${hasDetectedIndustry ? ` في قطاع ${industryDisplayLabelAr(detectedIndustry.arabicLabel)}` : ""}${countryNameAr ? ` في ${countryNameAr}` : ""}`
     : isAccountProfileRequest
       ? `بيانات الحساب العام ${topicLabel} على ${platformLabel}`
       : isCompanySearch
