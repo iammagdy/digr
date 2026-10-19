@@ -5,6 +5,8 @@ import { formatAr } from "@/lib/arabicDigits";
 import { publicCapabilityId } from "@/lib/publicCapabilityIds";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "@/functions/shared/decisionMakerPricing";
 
+export const metadata = { title: "كتالوج الخدمات" };
+
 export default function ServicesCatalogPage() {
   const options = getPublicCalculatorOptions();
   const optionSlugs = new Set(options.map((option) => option.slug));
@@ -38,9 +40,6 @@ export default function ServicesCatalogPage() {
               <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من الخادم بعد تحديد العدد والنطاق، وبحد أقصى {formatAr(PLATFORM_GUIDE.product.pointCap)} نقطة للمهمة.</p>
             </article>;
           })}
-          {PLATFORM_GUIDE.futureSources.map((future) => <article key={future.slug} className="rounded-[20px] border border-ln bg-sf2 p-5">
-            <div className="flex items-center justify-between gap-3"><h2 className="m-0 text-lg font-semibold">{future.nameAr}</h2><span className="rounded-full bg-bg px-3 py-1 text-xs text-mut">{future.statusAr}</span></div>
-          </article>)}
         </section>
       </div>
     </main>

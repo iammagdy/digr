@@ -111,6 +111,8 @@ interface MessageItem {
   suggestedAlternative?: any;
   refusalReason?: string;
   jobId?: string;
+  /** The in-progress notice: shown only while the job it belongs to is still running. */
+  progressNotice?: boolean;
   /** Internal turns (clarification-answer summaries) are shown through the details sentence instead. */
   hidden?: boolean;
   errorRetryPrompt?: string;
@@ -1083,6 +1085,7 @@ export default function ChatWorkspacePage() {
           id: `start_${Date.now()}`,
           role: "assistant",
           content: POST_APPROVAL_MESSAGE_AR,
+          progressNotice: true,
           jobId: data.jobId,
           createdAt: new Date().toISOString(),
         },
@@ -1556,7 +1559,7 @@ export default function ChatWorkspacePage() {
     }
     return (
       <div key={m.id}>
-        {m.content && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
+        {m.content && !(m.progressNotice && !(activeJob && activeJob.jobId === m.jobId && !isTerminalJobStatus(activeJob.status))) && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
         {m.revisionQuote && (
           <RevisionQuoteCard
             quote={m.revisionQuote}

@@ -12,6 +12,14 @@ function hostOf(value: string): string {
   }
 }
 
+/** Social and video pages are never a company's own website. */
+const SOCIAL_HOST_RE = /(?:^|\.)(?:youtube\.com|youtu\.be|facebook\.com|fb\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com|t\.me|wa\.me|snapchat\.com|pinterest\.com|linktr\.ee)$/i;
+
+export function isSocialOrVideoUrl(value: unknown): boolean {
+  const text = String(value ?? "").trim();
+  return Boolean(text) && SOCIAL_HOST_RE.test(hostOf(text));
+}
+
 export function isLinkedInUrl(value: unknown): boolean {
   const text = String(value ?? "").trim();
   if (!text) return false;
@@ -32,7 +40,7 @@ export function resolveCompanyLinks(row: Record<string, any>): { website: string
   const linkedinCandidates = [row.linkedin_url, row.linkedin, row.company_linkedin]
     .map((value) => String(value ?? "").trim())
     .filter(Boolean);
-  const websiteCandidate = candidates.find((value) => !isLinkedInUrl(value)) ?? "";
+  const websiteCandidate = candidates.find((value) => !isLinkedInUrl(value) && !isSocialOrVideoUrl(value)) ?? "";
   const linkedin =
     linkedinCandidates.find((value) => isLinkedInUrl(value) && /^https?:\/\//i.test(value)) ??
     // A LinkedIn page that came in through the website field belongs in the LinkedIn column.

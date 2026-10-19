@@ -346,7 +346,7 @@ export default function ResultsCanvas({
                           {tableColumns.map((column) => {
                             const value = column === "headcount" && Number(r[column]) === 0 ? "غير متاح" : r[column];
                             return (
-                              <td key={column} dir={column === "username" ? "ltr" : undefined} className={`max-w-55 truncate px-3 py-2.5 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
+                              <td key={column} dir={column === "username" ? "ltr" : undefined} className={`min-w-28 max-w-64 whitespace-normal break-words px-3 py-2.5 align-top leading-6 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
                                 {formatCell(value)}
                               </td>
                             );

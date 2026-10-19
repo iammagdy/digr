@@ -28,15 +28,6 @@ interface JobDoc {
   fileIds: { xlsx: string | null; pdf: string | null; csv: string | null };
 }
 interface QuoteInfo { conversationId: string; targetVolumeMax: number; summaryAr?: string }
-interface RequestAttemptDoc {
-  id: string;
-  conversationId: string;
-  title: string;
-  status: "planning" | "needs_input" | "quoted" | "refused" | "failed";
-  errorAr?: string;
-  createdAt: string;
-}
-
 type Kind = RequestKind;
 const kindOfJob = (j: JobDoc): Kind =>
   resolveRequestKind({ status: j.status, delivered: j.rowsCollected, requested: j.targetVolumeMax });
@@ -105,7 +96,6 @@ export default function RequestsPage() {
   const { user } = useUser();
   const router = useRouter();
   const [jobs, setJobs] = useState<JobDoc[]>([]);
-  const [attempts, setAttempts] = useState<RequestAttemptDoc[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteInfo>>({});
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -118,7 +108,7 @@ export default function RequestsPage() {
     if (!user) return;
     try {
       const supabase = createClient();
-      const [jobsRes, quotesRes, convRes, msgsRes, artifactsRes, attemptsRes] = await Promise.all([
+      const [jobsRes, quotesRes, convRes, msgsRes, artifactsRes] = await Promise.all([
         supabase
           .from(JOBS_COLLECTION)
           .select("*")
@@ -151,34 +141,8 @@ export default function RequestsPage() {
           .eq("user_id", user.id)
           .order("version_number", { ascending: false })
           .limit(100),
-        supabase
-          .from("messages")
-          .select("id, conversation_id, content_ar, request_status, request_error, created_at")
-          .eq("user_id", user.id)
-          .eq("role", "user")
-          .not("request_status", "is", null)
-          .order("created_at", { ascending: false })
-          .limit(100),
       ]);
       if (jobsRes.error) throw jobsRes.error;
-      if (attemptsRes.error) throw attemptsRes.error;
-      const attemptConversationIds = Array.from(new Set((attemptsRes.data || []).map((row: any) => row.conversation_id).filter(Boolean)));
-      const firstUserMessageByConversation = new Map<string, string>();
-      if (attemptConversationIds.length) {
-        const { data: firstMessages } = await supabase
-          .from("messages")
-          .select("conversation_id, content_ar, created_at")
-          .eq("user_id", user.id)
-          .eq("role", "user")
-          .in("conversation_id", attemptConversationIds)
-          .order("created_at", { ascending: true });
-        for (const message of firstMessages || []) {
-          if (!firstUserMessageByConversation.has(message.conversation_id) && typeof message.content_ar === "string") {
-            const title = customerFacingConversationTitle(message.content_ar);
-            if (title !== "محادثة جديدة") firstUserMessageByConversation.set(message.conversation_id, title);
-          }
-        }
-      }
       const conversationTitles = new Map<string, string>();
       for (const conversation of convRes.data || []) {
         conversationTitles.set(conversation.id, customerFacingConversationTitle(conversation.title || ""));
@@ -210,28 +174,6 @@ export default function RequestsPage() {
         },
       }));
       setJobs(mappedJobs);
-      setAttempts((attemptsRes.data || []).flatMap((r: any) => {
-        const status = String(r.request_status || "");
-        if (status === "accepted") return [];
-        if (!["planning", "needs_input", "quoted", "refused", "failed"].includes(status)) return [];
-        const savedTitle = conversationTitles.get(r.conversation_id) || "محادثة جديدة";
-        const originalRequestTitle = customerFacingConversationTitle(firstUserMessageByConversation.get(r.conversation_id) || "");
-        const rawAttemptTitle = customerFacingConversationTitle(String(r.content_ar || ""));
-        const title = savedTitle !== "محادثة جديدة"
-          ? savedTitle
-          : originalRequestTitle !== "محادثة جديدة"
-            ? originalRequestTitle
-            : rawAttemptTitle !== "محادثة جديدة" ? rawAttemptTitle : "طلب بحث";
-        return [{
-          id: r.id,
-          conversationId: r.conversation_id,
-          title: title.slice(0, 160),
-          status: status as RequestAttemptDoc["status"],
-          errorAr: r.request_error || undefined,
-          createdAt: r.created_at || new Date().toISOString(),
-        }];
-      }));
-
       // Map quoteId to conversationId and summaryAr from messages table
       const quoteToConv: Record<string, { conversationId: string; summaryAr?: string }> = {};
       for (const m of (msgsRes?.data || []) as any[]) {
@@ -294,18 +236,13 @@ export default function RequestsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load, jobStatusesKey]);
 
-  const visibleAttempts = attempts;
-  const attemptTab = (attempt: RequestAttemptDoc): "running" | "refunded" =>
-    attempt.status === "refused" || attempt.status === "failed" ? "refunded" : "running";
-  const attemptsForFilter = visibleAttempts.filter((attempt) =>
-    filter === "all" || attemptTab(attempt) === kindOfTab(filter as Kind)
-  );
+  // Orders are real jobs only: a planning attempt or a clarification-only conversation is not an order.
   const counts = useMemo(() => ({
-    all: jobs.length + visibleAttempts.length,
+    all: jobs.length,
     done: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "done").length,
-    running: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "running").length + visibleAttempts.filter((a) => attemptTab(a) === "running").length,
-    refunded: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "refunded").length + visibleAttempts.filter((a) => attemptTab(a) === "refunded").length,
-  }), [jobs, visibleAttempts]);
+    running: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "running").length,
+    refunded: jobs.filter((j) => kindOfTab(kindOfJob(j)) === "refunded").length,
+  }), [jobs]);
   const list = jobs.filter((j) => filter === "all" || kindOfTab(kindOfJob(j)) === filter);
 
   async function download(job: JobDoc, ext: "xlsx" | "pdf" | "csv") {
@@ -396,34 +333,6 @@ export default function RequestsPage() {
         {dlError && <p role="alert" className="m-0 text-[13px] text-bad">{dlError}</p>}
         {loading && [0, 1, 2].map((i) => <div key={i} className="h-40 rounded-3xl bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />)}
 
-        {!loading && attemptsForFilter.map((attempt) => {
-          const pending = attemptTab(attempt) === "running";
-          const label = attempt.status === "quoted" ? "بانتظار موافقتك"
-            : attempt.status === "needs_input" ? "مطلوب توضيح"
-            : attempt.status === "planning" ? "جاري إعداد الخطة"
-            : attempt.status === "refused" ? "غير متاح"
-            : "تعذر إعداد الطلب";
-          const detail = attempt.errorAr || (attempt.status === "quoted"
-            ? "الخطة والسعر جاهزان للمراجعة في المحادثة."
-            : attempt.status === "needs_input"
-            ? "أكمل التفاصيل المطلوبة لمتابعة إعداد الخطة."
-            : attempt.status === "planning"
-            ? "جاري تجهيز طلبك."
-            : "لم يبدأ جمع البيانات ولم تُخصم نقاط.");
-          return (
-            <article key={`attempt_${attempt.id}`} className="flex flex-col gap-3.5 rounded-3xl border border-ln bg-sf p-[18px]">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="m-0 text-base font-medium leading-[1.6] text-ink">{attempt.title}</p>
-                  <p className="mb-0 mt-1 text-xs text-fnt">محاولة تخطيط · {dayLabel(attempt.createdAt)}</p>
-                </div>
-                <span className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium" style={{ background: `color-mix(in oklab, ${pending ? "var(--gold)" : "var(--mut)"} 13%, transparent)`, color: pending ? "var(--gold)" : "var(--mut)" }}>{label}</span>
-              </div>
-              <p className="m-0 text-[13px] leading-[1.8] text-ink2">{detail}</p>
-              <button type="button" onClick={() => router.push(`/dashboard/chat?c=${encodeURIComponent(attempt.conversationId)}`)} className="min-h-11 cursor-pointer self-start rounded-full border-0 bg-sf2 px-4 text-xs text-ink hover:bg-sf">عرض المحادثة</button>
-            </article>
-          );
-        })}
 
         {!loading && list.map((j) => {
           const k = kindOfJob(j);
@@ -487,7 +396,7 @@ export default function RequestsPage() {
           );
         })}
 
-        {!loading && !failed && list.length === 0 && attemptsForFilter.length === 0 && (
+        {!loading && !failed && list.length === 0 && (
           <div className="flex flex-col items-center gap-3 rounded-3xl border border-dashed border-ln2 px-5 py-10 text-center">
             <span className="flex h-[52px] w-[52px] items-center justify-center rounded-full bg-sf2 text-mut">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>

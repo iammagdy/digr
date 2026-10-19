@@ -42,13 +42,13 @@ export const PLATFORM_GUIDE = {
                 ? ["topic_or_account_handle"]
               : ["facebook_page"],
       maxRecords: cap.maxRows,
-      exampleAr: cap.slug === "social-youtube-comments" ? "هات ١٠ تعليقات على فيديو يوتيوب ده: [رابط]" :
+      exampleAr: cap.slug === "social-youtube-comments" ? "هات ١٠ تعليقات على فيديو يوتيوب، وألصق رابط الفيديو في رسالتك" :
         cap.slug === "social-tiktok-videos" ? "عايز ١٠ فيديوهات ترند على تيك توك في مصر" :
-        cap.slug === "social-facebook-comments" ? "هات كومنتات بوست فيسبوك ده: [رابط]" :
-        cap.slug === "social-tiktok-comments" ? "هات ١٠ كومنتس على فيديو تيك توك ده: [رابط]" :
-        cap.slug === "social-youtube-videos" ? "هات ١٠ فيديوهات من قناة يوتيوب دي: [اسم القناة]" :
+        cap.slug === "social-facebook-comments" ? "هات كومنتات بوست فيسبوك، وألصق رابط البوست في رسالتك" :
+        cap.slug === "social-tiktok-comments" ? "هات ١٠ كومنتس على فيديو تيك توك، وألصق رابط الفيديو في رسالتك" :
+        cap.slug === "social-youtube-videos" ? "هات ١٠ فيديوهات من قناة يوتيوب، واكتب اسم القناة أو رابطها في رسالتك" :
         cap.slug === "social-x-posts" ? "هات ٢٠ تغريدة عن كرة السلة من الأسبوع الماضي" :
-        "هات ١٠ بوستات من صفحة فيسبوك دي: [اسم الصفحة]",
+        "هات ١٠ بوستات من صفحة فيسبوك، واكتب اسم الصفحة أو رابطها في رسالتك",
       examplePlanAr: cap.slug.includes("comments") ? "خطوة واحدة: حتى ١٠ تعليقات من الرابط أو الموضوع المحدد." : cap.slug === "social-x-posts" ? "خطوة واحدة: حتى ٢٠ منشوراً عن كرة السلة خلال الأسبوع الماضي." : "خطوة واحدة: حتى ١٠ منشورات أو فيديوهات من القناة أو الموضوع المحدد.",
     })),
     { slug: "tiktok-profile", nameAr: "فيديوهات القنوات والملفات الاجتماعية", descriptionAr: "محتوى قناة أو حساب محدد حسب الخدمة المطلوبة.", requiredInputs: ["account_handle"], maxRecords: 200, exampleAr: "هات آخر ١٠ فيديوهات من حساب تيك توك أحدده لك", examplePlanAr: "خطوة واحدة: حتى ١٠ فيديوهات من القناة المحددة." },

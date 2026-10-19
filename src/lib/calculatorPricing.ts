@@ -145,7 +145,7 @@ export function computePublicCalculatorQuote(
 
   return {
     capabilitySlug: cap.slug,
-    nameAr: cap.nameAr,
+    nameAr: cleanArText(cap.nameAr),
     targetVolumeMax: isCapped ? maxCappedVolume : safeTarget,
     deliveredVolume: cappedDelivered,
     unitPricePoints,
