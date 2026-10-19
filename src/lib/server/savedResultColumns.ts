@@ -1,3 +1,4 @@
+import { latestDeliveredJob } from "./conversationJobs";
 import { normalizeDataset } from "./normalizationPipeline";
 import { inferSocialRowKind } from "./socialRows";
 import type { DatasetColumn } from "../fileSpec";
@@ -12,7 +13,6 @@ export interface SavedResultColumns {
   columns: DatasetColumn[];
 }
 
-const DELIVERED = ["done", "completed", "partial", "completed_partial"];
 
 export async function readJobDatasetText(admin: any, job: { id: string; user_id: string }): Promise<string> {
   const candidatePaths = [`${job.user_id}/${job.id}/data.json`, `${job.id}/data.json`, `json_${job.id}`];
@@ -34,15 +34,7 @@ export async function loadLatestResultColumns(
   const none: SavedResultColumns = { jobId: null, columns: [] };
   if (!admin || typeof admin.from !== "function") return none;
   try {
-    const { data: job } = await admin
-      .from("jobs")
-      .select("id, user_id, status, template_slug, endpoint_id, capability_slug, platform")
-      .eq("conversation_id", scope.conversationId)
-      .eq("user_id", scope.userId)
-      .in("status", DELIVERED)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const job = await latestDeliveredJob(admin, scope);
     if (!job?.id) return none;
     const text = await readJobDatasetText(admin, job);
     if (!text) return { jobId: job.id, columns: [] };

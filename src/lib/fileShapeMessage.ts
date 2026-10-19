@@ -4,6 +4,8 @@ import { FileSpecSchema, type FileSpec } from "./fileSpec";
 export interface MessageFileShape {
   spec: FileSpec;
   descriptionAr: string;
+  /** The delivered job the file is made from, when the server knew it: the download needs no restored page state. */
+  jobId?: string;
 }
 
 /**
@@ -12,8 +14,9 @@ export interface MessageFileShape {
  * show a download action the route would refuse; the route still validates the spec against the real columns.
  */
 export function persistedFileShape(plan: unknown): MessageFileShape | undefined {
-  const stored = (plan as { fileShape?: { spec?: unknown; descriptionAr?: unknown } } | null | undefined)?.fileShape;
+  const stored = (plan as { fileShape?: { spec?: unknown; descriptionAr?: unknown; jobId?: unknown } } | null | undefined)?.fileShape;
   if (!stored || typeof stored.descriptionAr !== "string" || !stored.descriptionAr.trim()) return undefined;
   const parsed = FileSpecSchema.safeParse(stored.spec);
-  return parsed.success ? { spec: parsed.data, descriptionAr: stored.descriptionAr } : undefined;
+  if (!parsed.success) return undefined;
+  return { spec: parsed.data, descriptionAr: stored.descriptionAr, ...(typeof stored.jobId === "string" && stored.jobId ? { jobId: stored.jobId } : {}) };
 }

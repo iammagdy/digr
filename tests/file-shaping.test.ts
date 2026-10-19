@@ -312,7 +312,7 @@ describe("10. the model's spec reaches the customer as a free download, through 
     expect(prompt).toContain("Building the file is free");
     expect(readFileSync("src/app/api/chat/route.ts", "utf8")).toContain("resultColumns: Array.isArray(body.resultColumns)");
     const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(page).toContain('handleDownload("xlsx", m.fileShape!.spec as FileSpec)');
+    expect(page).toContain('handleDownload("xlsx", m.fileShape!.spec as FileSpec, m.fileShape!.jobId)');
     expect(page).toContain("resultColumns: activeJob.resultColumns");
   });
 });

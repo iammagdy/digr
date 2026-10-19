@@ -371,6 +371,37 @@ export function deterministicShapeSpec(text: string, columns: DatasetColumn[]): 
   return sortSpec(t, columns) ?? filterSpec(t, columns) ?? columnsSpec(t, columns);
 }
 
+/** An edit of the delivered file that is not a shaping step and is not offered: it is answered by code, never priced. */
+export type FileEditKind = "dedupe" | "direction" | "anonymize" | "export";
+
+const FILE_EDIT_PATTERNS: Array<{ kind: FileEditKind; re: RegExp }> = [
+  { kind: "dedupe", re: /(?:احذف|حذف|إزالة|ازالة|شيل|امسح|نظف)\s+(?:ال)?(?:تكرار(?:ات)?|مكرر(?:ات|ة)?|السجلات\s+المكررة)|remove\s+duplicates?|\bdedup/iu },
+  { kind: "direction", re: /\brtl\b|\bltr\b|اتجاه\s+(?:ال)?(?:شيت|ملف|ورقة|جدول|كتابة)|من\s+(?:ال)?يمين\s+(?:ل|إلى|الى)\s*(?:ال)?يسار|من\s+(?:ال)?يسار\s+(?:ل|إلى|الى)\s*(?:ال)?يمين/iu },
+  { kind: "anonymize", re: /(?:اخف|أخف|إخف)[يى]?\s+(?:ال)?(?:هوية|أسماء|اسماء|بيانات)|(?:إخفاء|اخفاء)\s+(?:ال)?(?:هوية|أسماء|اسماء|بيانات)|anonymi[sz]e/iu },
+  { kind: "export", re: /(?:حو[ّ]?ل|صد[ّ]?ر|نز[ّ]?ل|حم[ّ]?ل)\s+(?:لي\s+)?(?:ال)?(?:ملف|شيت|نتائج)\s+(?:إلى|الى|ك|ب|بصيغة)\s*(?:pdf|csv|json|بي\s*دي\s*اف|بي\s*دي\s*إف|سي\s*اس\s*في|سي\s*إس\s*في)/iu },
+];
+
+/** Which unsupported edit of the delivered file a short message asks for, or null. */
+export function unsupportedFileEdit(text: string): FileEditKind | null {
+  const t = String(text || "");
+  if (!t.trim() || t.length > 300) return null;
+  return FILE_EDIT_PATTERNS.find((entry) => entry.re.test(t))?.kind ?? null;
+}
+
+const FILE_EDIT_TAIL_AR = "أما تغيير شكل الملف فمجاني: شيت لكل عمود، أو ترتيب، أو تصفية، أو اختيار الأعمدة التي تريدها.";
+
+/** The one plain sentence for an unsupported edit: not available now, what is true of the file, and what is free. */
+export function fileEditAnswerAr(kind: FileEditKind): string {
+  switch (kind) {
+    case "dedupe":
+      return `ملفك يُسلَّم دون سجلات مكررة أصلًا، فلا حاجة لحذف التكرار، وهذا التعديل غير متاح الآن. ${FILE_EDIT_TAIL_AR}`;
+    case "direction":
+      return `أوراق ملفك مضبوطة من اليمين إلى اليسار أصلًا، وتغيير الاتجاه غير متاح الآن. ${FILE_EDIT_TAIL_AR}`;
+    default:
+      return `هذا التعديل غير متاح الآن. ${FILE_EDIT_TAIL_AR}`;
+  }
+}
+
 /** The questions asked when a shaping request names a column the delivered file does not have. Each is answered in code. */
 export const SHAPE_QUESTION_IDS = [
   "shape_column_required",

@@ -1,6 +1,6 @@
 import { detectMentionedPlatforms } from "./capabilityRegistry";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
-import { looksLikeFileShapingRequest } from "../../lib/fileSpec";
+import { looksLikeFileShapingRequest, unsupportedFileEdit } from "../../lib/fileSpec";
 
 /**
  * Which earlier messages may inform the CURRENT research request.
@@ -48,6 +48,8 @@ export function isStandaloneResearchRequest(text: string): boolean {
  */
 export function isFileShapingMessage(text: string): boolean {
   const t = String(text || "").trim();
+  // An edit of the delivered file that is not offered («احذف التكرار», «عدل اتجاه الشيت») is about the file too.
+  if (unsupportedFileEdit(t)) return true;
   if (!looksLikeFileShapingRequest(t)) return false;
   // A message that BEGINS with a shaping verb is about the file even when a column it names looks like a research object
   // («رتب النتائج حسب المتابعين»); one that begins with a request verb and names an object is research.
