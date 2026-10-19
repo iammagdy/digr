@@ -1,7 +1,8 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
+import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
-import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
+import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, fileEditAnswerAr, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, unsupportedFileEdit, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
 import { planExplanationLinesAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
@@ -256,7 +257,7 @@ export interface ChatHandlerResponse {
   planQuote?: any;
   revisionQuote?: any;
   /** A validated file spec for the result on screen; the page turns it into a download of the shaped file. */
-  fileShape?: { spec: any; descriptionAr: string };
+  fileShape?: { spec: any; descriptionAr: string; jobId?: string };
   clarificationQuestions?: string[];
   clarificationItems?: NormalizedClarificationQuestion[];
   clarificationIntro?: string;
@@ -1659,7 +1660,9 @@ export class ChatHandler {
       deliveredResultJobId = saved.jobId;
     }
     // Only a message about the file, with a delivered result to shape; a research request that merely names a layout ("... ملف لكل منصة") is not one.
-    const isFileShapingTurn = looksShaping && (Boolean(shapeAnswer) || !isStandaloneResearchRequest(shapingText)) && (shapingColumns.length > 0 || Boolean(deliveredResultJobId));
+    // The answer to a shaping question is about the file whatever else is known (its id proves the context); any other message
+    // needs a delivered result to shape.
+    const isFileShapingTurn = Boolean(shapeAnswer) || (looksShaping && !isStandaloneResearchRequest(shapingText) && (shapingColumns.length > 0 || Boolean(deliveredResultJobId)));
     const isGeneralQuestion = greetingOrGeneral.isGeneralQuestion || isFileShapingTurn;
     const wantsPriceOrProceed = isPriceOrProceedIntent(message);
     const isComplete = isBriefComplete(brief);
@@ -2451,6 +2454,7 @@ export class ChatHandler {
       // It never reaches the model and never becomes a plan, whatever the history holds.
       let shapeAnswerOutput: any = null;
       let shapeIgnoredNames: string[] = [];
+      let shapeQuestionIssued = false;
       if (shapeAnswer && !isTestSearchScenario && !testScenario) {
         const originalText = [...rawUserHistoryTexts].reverse().find((text) => text && text !== message && !shapeAnswerFromMessage(text) && isFileShapingMessage(formatClarificationMessageForAssistant(text)));
         const resolution = shapingColumns.length > 0
@@ -2463,7 +2467,11 @@ export class ChatHandler {
           shapeAnswerOutput = { type: "answer_question", answerAr: resolution.errorAr };
         }
       }
-      const codeBuiltOutput: any = shapeAnswerOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
+      // An edit of the delivered file that is not offered (remove duplicates, text direction, hide identities, other formats) is
+      // answered by code in one plain sentence: no model, no question, no plan.
+      const fileEditKind = isFileShapingTurn && !shapeAnswer && !isTestSearchScenario && !testScenario ? unsupportedFileEdit(shapingText) : null;
+      const fileEditOutput: any = fileEditKind ? { type: "answer_question", answerAr: fileEditAnswerAr(fileEditKind) } : null;
+      const codeBuiltOutput: any = shapeAnswerOutput ?? fileEditOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
       if (!codeBuiltOutput) modelCallCount++;
       const resolvedDisplayName =
         (userProfile?.name && String(userProfile.name).trim()) ||
@@ -2602,7 +2610,7 @@ export class ChatHandler {
       let finalContentAr = "";
       let planQuoteData: any = undefined;
       let revisionQuoteData: any = undefined;
-      let fileShapeData: { spec: any; descriptionAr: string } | undefined = undefined;
+      let fileShapeData: { spec: any; descriptionAr: string; jobId?: string } | undefined = undefined;
       let clarificationQuestionsList: string[] | undefined = undefined;
       let clarificationItemsList: NormalizedClarificationQuestion[] | undefined = undefined;
 
@@ -2783,6 +2791,7 @@ export class ChatHandler {
             options: choices,
             allowOther: false,
           };
+          shapeQuestionIssued = true;
           clarificationItemsList = [question as any];
           clarificationQuestionsList = [question.text];
           finalContentAr = `${checked.errorAr.replace(/ اختر من الأعمدة الموجودة في الملف\.$/, "")} الأعمدة المتاحة في ملفك مذكورة أدناه، ولن يُخصم أي رصيد.`;
@@ -2795,9 +2804,13 @@ export class ChatHandler {
 
       // A turn about the delivered file, and every answer to a shaping question, can never become a priced plan: the
       // shape of a file is free, and a plan would reserve points the customer never asked to spend.
-      if (isFileShapingTurn && (output.type === "propose_plan" || output.type === "edit_plan")) {
+      // Nothing else a model may say about the file reaches a priced flow either: no plan, no search, and no research question
+      // (the country question of a company request) after a shaping turn. Only the shaping question we raised ourselves stays.
+      if (isFileShapingTurn && !shapeQuestionIssued && !["shape_file", "answer_question", "refuse", "edit_artifact"].includes(output.type)) {
         finalContentAr = SHAPING_NEVER_A_PLAN_AR;
         output = { type: "answer_question", answerAr: SHAPING_NEVER_A_PLAN_AR } as any;
+        clarificationItemsList = undefined;
+        clarificationQuestionsList = undefined;
       }
 
       // The language model can incorrectly suggest an unrelated alternative for a
@@ -3645,46 +3658,19 @@ export class ChatHandler {
         } else {
           const hintColumns = shapingColumns;
           const descriptionAr = describeFileSpecAr(parsedSpec.data, hintColumns);
-          fileShapeData = { spec: parsedSpec.data, descriptionAr };
+          // The job the file is made from travels with it, so a reloaded page can offer the download without restoring anything else.
+          let shapedJobId: string | null = deliveredResultJobId;
+          if (!shapedJobId && sb) {
+            awaitsCount++;
+            shapedJobId = (await latestDeliveredJob(sb, { conversationId, userId }))?.id ?? null;
+          }
+          fileShapeData = { spec: parsedSpec.data, descriptionAr, ...(shapedJobId ? { jobId: shapedJobId } : {}) };
           finalContentAr = `جهزت لك الملف بالشكل المطلوب: ${descriptionAr}. اضغط «تحميل الملف المخصص» أدناه. لا يُخصم أي رصيد لأن الملف يُبنى من بياناتك المحفوظة دون جمع جديد.${shapeIgnoredNames.length ? ` لم أجد في ملفك: ${shapeIgnoredNames.map((name) => `«${name}»`).join("، ")} فتجاهلتها.` : ""}`;
         }
       } else if (output.type === "edit_artifact") {
         // The paid revision service is not offered: no price, no card. Shaping the file is free and is answered above.
         finalContentAr = REVISION_UNAVAILABLE_AR;
         output = { type: "answer_question", answerAr: REVISION_UNAVAILABLE_AR } as any;
-      }
-
-      // Post-job artifact revision detector: if user requests deliverable formatting fix on existing completed job
-      if (!revisionQuoteData && !fileShapeData && output.type !== "shape_file" && output.type !== "propose_plan" && output.type !== "edit_plan") {
-        const mLower = message.toLowerCase();
-        const isRtlFix = mLower.includes("rtl") || mLower.includes("يمين") || mLower.includes("يسار") || mLower.includes("اتجاه الشيت");
-        const isDedupe = mLower.includes("احذف التكرار") || mLower.includes("حذف التكرار") || mLower.includes("إزالة التكرار");
-        const isAnonymize = mLower.includes("اخفي") || mLower.includes("إخفاء الهوية");
-
-        if (isRtlFix || isDedupe || isAnonymize) {
-          let completedJobId: string | null = null;
-          try {
-            if (sb) {
-              awaitsCount++;
-              const { data: jobDoc } = await sb
-                .from("jobs")
-                .select("id, status")
-                .eq("conversation_id", conversationId)
-                .eq("user_id", userId)
-                .in("status", ["done", "completed"])
-                .order("created_at", { ascending: false })
-                .limit(1)
-                .maybeSingle();
-              completedJobId = jobDoc?.id || null;
-            }
-          } catch {}
-
-          if (completedJobId) {
-            // Retired: the paid revision card. Say plainly that this edit is not available, and what is free.
-            output = { type: "answer_question", answerAr: REVISION_UNAVAILABLE_AR } as any;
-            finalContentAr = REVISION_UNAVAILABLE_AR;
-          }
-        }
       }
 
       // 9. Update Assistant Message to 'ready'

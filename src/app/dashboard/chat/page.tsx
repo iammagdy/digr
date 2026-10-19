@@ -1,6 +1,7 @@
 "use client";
 
 import { persistedFileShape } from "@/lib/fileShapeMessage";
+import { pickRestoredJobId } from "@/lib/jobs/restoredJob";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -103,7 +104,7 @@ interface MessageItem {
   intent?: "chat" | "research";
   planQuote?: PlanQuoteData;
   /** A validated file spec for the result on screen («شيت لكل محافظة»): becomes a download of the shaped file. */
-  fileShape?: { spec: Record<string, unknown>; descriptionAr: string };
+  fileShape?: { spec: Record<string, unknown>; descriptionAr: string; jobId?: string };
   clarificationQuestions?: string[];
   clarificationItems?: unknown;
   clarificationIntro?: string;
@@ -678,6 +679,7 @@ export default function ChatWorkspacePage() {
           conversationId: conversationId || undefined,
           jwt: jwtToken,
           clarificationAnswers: { type: "clarification_answers", answers },
+          ...(activeJob?.resultColumns?.length ? { resultColumns: activeJob.resultColumns } : {}),
         }),
       });
       const data = await res.json();
@@ -865,9 +867,14 @@ export default function ChatWorkspacePage() {
         }
       }
       const uniqueRelatedJobs = Array.from(new Map(relatedJobs.map((item) => [item.jobId, item])).values());
-      const selectedJob = targetJobId
-        ? uniqueRelatedJobs.find((item) => item.jobId === targetJobId)
-        : uniqueRelatedJobs[uniqueRelatedJobs.length - 1];
+      // A plan card that was never approved has no job: the job to show is the latest one that exists.
+      const existingJobIds = new Set<string>();
+      if (!targetJobId && uniqueRelatedJobs.length > 1) {
+        const { data: existingJobs } = await supabase.from("jobs").select("id").in("id", uniqueRelatedJobs.map((item) => item.jobId));
+        for (const row of existingJobs || []) if (typeof row?.id === "string") existingJobIds.add(row.id);
+      }
+      const restoredJobId = pickRestoredJobId(uniqueRelatedJobs.map((item) => item.jobId), existingJobIds, targetJobId);
+      const selectedJob = uniqueRelatedJobs.find((item) => item.jobId === restoredJobId);
       const quoteJobId = selectedJob?.jobId;
       if (selectedJob?.quote) {
         quoteTargetMax = selectedJob.quote.targetVolumeMax;
@@ -1125,15 +1132,16 @@ export default function ChatWorkspacePage() {
   }
 
   // Download File Handler
-  async function handleDownload(ext: "xlsx" | "pdf" | "csv", spec?: FileSpec) {
-    if (!activeJob?.jobId || downloadingKey) return;
+  async function handleDownload(ext: "xlsx" | "pdf" | "csv", spec?: FileSpec, jobIdOverride?: string) {
+    const downloadJobId = jobIdOverride || activeJob?.jobId;
+    if (!downloadJobId || downloadingKey) return;
     setDownloadingKey(spec ? `${ext}:shaped` : ext);
 
     try {
       const jwtToken = await getAccessToken();
       const headers: Record<string, string> = {};
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
-      const res = await fetch(`/api/jobs/${activeJob.jobId}/download?format=${ext}${spec ? `&spec=${encodeFileSpec(spec)}` : ""}`, { headers });
+      const res = await fetch(`/api/jobs/${downloadJobId}/download?format=${ext}${spec ? `&spec=${encodeFileSpec(spec)}` : ""}`, { headers });
       const payload = await res.json();
       if (!res.ok || !payload?.success || !payload?.signedUrl) {
         throw new Error(payload?.error || "الملف غير متاح للتحميل حالياً");
@@ -1151,7 +1159,7 @@ export default function ChatWorkspacePage() {
       // The download route saves a format made on request; it is now one of this job's ready files.
       // A shaped file is a separate download and never changes which files the job has.
       if (!spec) {
-        setActiveJob((previous) => previous && previous.jobId === activeJob.jobId
+        setActiveJob((previous) => previous && previous.jobId === downloadJobId
           ? { ...previous, fileIds: { ...(previous.fileIds || { xlsx: "ready" }), [ext]: "ready" } }
           : previous);
       }
@@ -1159,7 +1167,7 @@ export default function ChatWorkspacePage() {
       if (blobUrl) {
         const link = document.createElement("a");
         link.href = blobUrl;
-        link.download = payload.downloadFileName || `diger_${activeJob.templateSlug}_${activeJob.jobId.slice(0, 8)}.${ext}`;
+        link.download = payload.downloadFileName || `diger_${activeJob?.templateSlug || "results"}_${downloadJobId.slice(0, 8)}.${ext}`;
         document.body.appendChild(link);
         link.click();
         setTimeout(() => { URL.revokeObjectURL(blobUrl!); link.remove(); }, 30000);
@@ -1557,12 +1565,12 @@ export default function ChatWorkspacePage() {
             {customerFacingAssistantCopy(m.content)}
           </p>
         )}
-        {m.fileShape && activeJob && (
+        {m.fileShape && (m.fileShape.jobId || activeJob) && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
               type="button"
               data-testid="download-shaped-file"
-              onClick={() => void handleDownload("xlsx", m.fileShape!.spec as FileSpec)}
+              onClick={() => void handleDownload("xlsx", m.fileShape!.spec as FileSpec, m.fileShape!.jobId)}
               disabled={downloadingKey !== null}
               className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-wait disabled:opacity-60"
             >
