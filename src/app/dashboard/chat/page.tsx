@@ -39,6 +39,7 @@ import Composer, { AttachedFile } from "./components/Composer";
 import RevisionQuoteCard, { RevisionQuoteData } from "./components/RevisionQuoteCard";
 import { getJobIdForQuote } from "@/lib/md5";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
+import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
@@ -166,6 +167,12 @@ export default function ChatWorkspacePage() {
   // Active Job & Canvas Data
   const [startingQuoteId, setStartingQuoteId] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveJobState | null>(null);
+  const activeJobRef = useRef<ActiveJobState | null>(null);
+  activeJobRef.current = activeJob;
+  const [terminalJobs, setTerminalJobs] = useState<Map<string, boolean>>(() => new Map());
+  const markJobTerminal = (jId: string) => {
+    setTerminalJobs((prev) => (prev.has(jId) ? prev : new Map(prev).set(jId, true)));
+  };
   const [extractedRecords, setExtractedRecords] = useState<ExtractedRecord[]>([]);
   const [extractedProfile, setExtractedProfile] = useState<any>(null);
   const loadedResultJobs = useRef(new Set<string>());
@@ -335,6 +342,7 @@ export default function ChatWorkspacePage() {
   async function loadJobResults(jobId: string) {
     if (loadedResultJobs.current.has(jobId)) return;
     loadedResultJobs.current.add(jobId);
+    markJobTerminal(jobId);
     void loadBalance();
     try {
       const [dataRes, versionsRes] = await Promise.all([
@@ -370,77 +378,62 @@ export default function ChatWorkspacePage() {
 
   // 5. Poll and subscribe to active job status
   useEffect(() => {
-    if (!activeJob || isTerminalJobStatus(activeJob.status)) {
+    const jId = activeJob?.jobId;
+    if (!jId) {
+      return;
+    }
+
+    if (isTerminalJobStatus(activeJobRef.current?.status)) {
+      markJobTerminal(jId);
       return;
     }
 
     const supabase = createClient();
+    let stopped = false;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-    // Instant real-time listener for job events
-    const channel = supabase
-      .channel(`job_events_live_${activeJob.jobId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "job_events",
-          filter: `job_id=eq.${activeJob.jobId}`,
-        },
-        (payload) => {
-          const newEvt = payload.new;
-          if (!newEvt) return;
-          setActiveJob((prev) => {
-            if (!prev || prev.jobId !== activeJob.jobId) return prev;
-            const mapped = mapJobEvents([newEvt]);
-            const nextEvents = dedupeAndSortChronological([...prev.events, ...mapped]);
-            const newUnits =
-              typeof newEvt.units === "number" && newEvt.units > prev.rowsCollected
-                ? newEvt.units
-                : prev.rowsCollected;
-            return {
-              ...prev,
-              events: nextEvents,
-              rowsCollected: newUnits,
-            };
-          });
-        }
-      )
-      .subscribe();
+    const poll = async () => {
+      if (stopped) return;
+      if (isTerminalJobStatus(activeJobRef.current?.status)) {
+        if (pollTimer) clearInterval(pollTimer);
+        markJobTerminal(jId);
+        return;
+      }
 
-    const interval = setInterval(async () => {
       try {
         const [jobRes, eventsRes] = await Promise.all([
-          supabase.from("jobs").select("*").eq("id", activeJob.jobId).maybeSingle(),
+          supabase.from("jobs").select("*").eq("id", jId).maybeSingle(),
           supabase
             .from("job_events")
             .select("*")
-            .eq("job_id", activeJob.jobId)
+            .eq("job_id", jId)
             .order("created_at", orderDesc)
             .limit(EVENT_HISTORY_LIMIT),
         ]);
+        if (stopped) return;
         const jobDoc: any = jobRes.data;
         if (!jobDoc) return;
+
+        const isTerminal = isTerminalJobStatus(jobDoc.status);
+        if (isTerminal) {
+          markJobTerminal(jId);
+          if (pollTimer) clearInterval(pollTimer);
+        }
 
         setActiveJob((prev) => {
           // A late reply for a job that is no longer the one on screen must not overwrite the current one.
           if (!prev || prev.jobId !== activeJob.jobId) return prev;
+          const updated = applyJobRow(prev, jobDoc);
+          const nextEvents = eventsRes.data
+            ? dedupeAndSortChronological(mapJobEvents(eventsRes.data))
+            : prev.events;
           return {
-            ...prev,
-            status: toChatJobStatus(jobDoc.status),
-            updatedAt: jobDoc.updated_at ?? prev.updatedAt,
-            rowsCollected: jobDoc.delivered_units ?? jobDoc.rows_collected ?? jobDoc.rowsCollected ?? 0,
-            chargedCredits: jobDoc.charged_credits ?? jobDoc.chargedCredits,
-            reservedCredits: jobDoc.reserved_credits ?? jobDoc.reservedCredits,
-            requestedRows: jobDoc.target_volume_max ?? prev.requestedRows,
-            errorAr: jobDoc.error_message ?? jobDoc.error_ar ?? jobDoc.errorAr,
-            // Latest events first from the server, restored to reading order for display.
-            events: dedupeAndSortChronological(mapJobEvents(eventsRes.data)),
+            ...updated,
+            events: nextEvents,
           };
         });
 
-        const jId = jobDoc.id || jobDoc.$id;
-        if (isTerminalJobStatus(jobDoc.status)) {
+        if (isTerminal) {
           void loadBalance();
         }
         if ((jobDoc.status === "completed" || jobDoc.status === "done") && !loadedResultJobs.current.has(jId)) {
@@ -463,13 +456,38 @@ export default function ChatWorkspacePage() {
       } catch (err) {
         console.warn("Polling job status error:", err);
       }
-    }, 2000);
+    };
+
+    // Immediate poll on mount / job change
+    void poll();
+
+    // 3 s cadence (stop on terminal)
+    pollTimer = setInterval(poll, 3000);
+
+    // Immediate poll on visibilitychange and focus
+    const onVisibleOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        void poll();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibleOrFocus);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", onVisibleOrFocus);
+    }
 
     return () => {
-      supabase.removeChannel(channel);
-      clearInterval(interval);
+      stopped = true;
+      if (pollTimer) clearInterval(pollTimer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibleOrFocus);
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", onVisibleOrFocus);
+      }
     };
-  }, [activeJob, loadBalance, extractedRecords.length]);
+  }, [activeJob?.jobId, loadBalance]);
 
   // Send message
   async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null): Promise<boolean> {
@@ -871,6 +889,9 @@ export default function ChatWorkspacePage() {
         const jobDoc: any = jobRes.data;
         if (jobDoc && sequence === conversationLoadSequence.current) {
           const jId = jobDoc.id || jobDoc.$id;
+          if (isTerminalJobStatus(jobDoc.status)) {
+            markJobTerminal(jId);
+          }
           setActiveJob({
             jobId: jId,
             updatedAt: jobDoc.updated_at ?? undefined,
@@ -1559,7 +1580,11 @@ export default function ChatWorkspacePage() {
     }
     return (
       <div key={m.id}>
-        {m.content && !(m.progressNotice && !(activeJob && activeJob.jobId === m.jobId && !isTerminalJobStatus(activeJob.status))) && <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>{customerFacingAssistantCopy(m.content)}</p>}
+        {m.content && (!m.progressNotice || shouldShowProgressNotice(m, activeJob, terminalJobs)) && (
+          <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>
+            {customerFacingAssistantCopy(m.content)}
+          </p>
+        )}
         {m.revisionQuote && (
           <RevisionQuoteCard
             quote={m.revisionQuote}
