@@ -590,6 +590,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         (process.env as any).NODE_ENV = "test";
         process.env.ENABLE_MOCK_PROVIDER = "true";
         mockWorkerDb.recordedFailures = [];
+        mockWorkerDb.deliveredUnits = 0;
 
         const workerRoute = await import("../src/app/api/worker/chunk/route");
         const reqErr = new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
@@ -888,7 +889,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       }
     });
 
-    it("A3: provider error mid-run (chunk 0 succeeds, chunk 1 fails) releases full reserve with zero charge and never settles", async () => {
+    it("A3: provider error mid-run (chunk 0 succeeds, chunk 1 fails) settles the rows already collected and never releases", async () => {
       const originalNodeEnv = process.env.NODE_ENV;
       const originalEnableMock = process.env.ENABLE_MOCK_PROVIDER;
       const { setProviderAdapterForTesting } = await import("../src/lib/server/tregAdapter");
@@ -945,7 +946,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         );
         expect(res0.status).toBe(200);
 
-        // Chunk 1 fails mid-run -> records chunk failure & releases full reserve with zero charge
+        // Chunk 1 fails mid-run AFTER chunk 0 delivered 5 rows -> the collection ends and the 5 rows are settled and charged
         const res1 = await workerRoute.POST(
           new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
             method: "POST",
@@ -957,23 +958,18 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
             }),
           })
         );
-        expect(res1.status).toBe(500);
+        expect(res1.status).toBe(200);
         const json1 = await res1.json();
-        expect(json1.success).toBe(false);
-        expect(json1.released).toBe(true);
-        expect(json1.chargedCredits).toBe(0);
-        expect(mockWorkerDb.settled).toBe(false);
-        expect(mockWorkerDb.recordedFailures).toHaveLength(1);
-        expect(mockWorkerDb.recordedFailures[0]).toEqual({
-          p_job_id: "job_midrun_fail",
-          p_error_message: "تعذر استخراج البيانات من المصدر في الدفعة الثانية.",
-        });
-        expect(mockWorkerDb.releasedJobs).toHaveLength(1);
-        expect(mockWorkerDb.releasedJobs[0]).toEqual({
-          p_job_id: "job_midrun_fail",
-          p_error_message: "تعذر استخراج البيانات من المصدر في الدفعة الثانية.",
-          p_force: true,
-        });
+        expect(json1.success).toBe(true);
+        expect(json1.done).toBe(true);
+        expect(json1.deliveredUnits).toBe(5);
+        expect(mockWorkerDb.settled).toBe(true);
+        const settledNow = mockWorkerDb.settledJobs.filter((entry: any) => entry.args.p_job_id === "job_midrun_fail");
+        expect(settledNow).toHaveLength(1);
+        // charge = ceil(5 delivered x unit price), never above the reserve
+        expect(settledNow[0].result.charged_credits).toBe(Math.min(Math.ceil(5 * mockWorkerDb.unitPrice), mockWorkerDb.reservedCredits));
+        expect(mockWorkerDb.recordedFailures).toHaveLength(0);
+        expect(mockWorkerDb.releasedJobs).toHaveLength(0);
       } finally {
         setProviderAdapterForTesting(null);
         (process.env as any).NODE_ENV = originalNodeEnv;
