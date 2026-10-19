@@ -553,7 +553,9 @@ export async function POST(req: NextRequest) {
     const providerRows = adapterResult.ok ? (adapterResult.rows || []) : [];
     const requestedDateFrom = typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
     const requestedDateTo = typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
-    const dateFiltered = filterRowsByDateRange(providerRows, requestedDateFrom, requestedDateTo);
+    // People and companies are directories with no publication date: an explicit window never removes a row that has none.
+    const directoryJob = isPeopleJob || /compan|icypeas/i.test(`${spec.capabilitySlug} ${spec.endpointId}`);
+    const dateFiltered = filterRowsByDateRange(providerRows, requestedDateFrom, requestedDateTo, { keepUndated: directoryJob });
     let rawRows = dateFiltered.rows;
     const rawPageRowCount = rawRows.length;
     if (dateFiltered.excludedCount > 0) {

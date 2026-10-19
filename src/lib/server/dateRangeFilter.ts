@@ -49,6 +49,7 @@ export function filterRowsByDateRange<T>(
   input: T[],
   from?: string,
   to?: string,
+  options: { keepUndated?: boolean } = {},
 ): DateRangeFilterResult<T> {
   if (!from && !to) return { rows: input, excludedCount: 0 };
   const start = from ? boundary(from, false) : Number.NEGATIVE_INFINITY;
@@ -59,7 +60,9 @@ export function filterRowsByDateRange<T>(
   const rows = input.filter((value) => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const timestamp = rowTimestamp(value as Record<string, unknown>);
-    return timestamp !== null && timestamp >= start && timestamp <= end;
+    // A directory of people or companies has no publication date: a row without one is not outside the window.
+    if (timestamp === null) return Boolean(options.keepUndated);
+    return timestamp >= start && timestamp <= end;
   });
   return { rows, excludedCount: input.length - rows.length };
 }
