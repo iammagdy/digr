@@ -45,6 +45,7 @@ import EmptyChat from "./components/EmptyChat";
 import { FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
 import { getJobIdForQuote } from "@/lib/md5";
+import { shouldShowPlanPanel } from "@/lib/quoteApprovalState";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
@@ -1518,7 +1519,17 @@ export default function ChatWorkspacePage() {
 
     if (convId && /^[A-Za-z0-9_-]{1,64}$/.test(convId)) {
       void handleOpenConversation(convId, jobId || undefined).then(() => {
-        if (retry) setTimeout(() => void sendRef.current(RETRY_SAME_PLAN_MESSAGE), 350);
+        if (retry) {
+          // The link asked for one retry; the parameter is removed so a reload or a copied link never asks again.
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("retry");
+            window.history.replaceState(null, "", url.toString());
+          } catch {
+            // the address stays as it is
+          }
+          setTimeout(() => void sendRef.current(RETRY_SAME_PLAN_MESSAGE), 350);
+        }
       });
     } else if (jobId) {
       // Direct job link without conversation ID in query param
@@ -1765,7 +1776,12 @@ export default function ChatWorkspacePage() {
       locked={locked}
     />
   );
-  const panelShowsPlan = latestPlanQuote !== null && (!activeJob || restPlanQuoteId === latestPlanQuote.quoteId);
+  const panelShowsPlan = shouldShowPlanPanel({
+    latestQuote: latestPlanQuote ? { quoteId: latestPlanQuote.quoteId, status: latestPlanQuote.status, expiresAt: latestPlanQuote.expiresAt } : null,
+    activeJob: activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null,
+    restPlanQuoteId,
+    jobIdForQuote: getJobIdForQuote,
+  });
 
   // The remaining time comes from the real pace of this job (when each count of delivered records was seen), never a guess.
   // Live progress from the REAL chunks the job has finished (rolling average, widened when it slows or retries), and the stalled line.

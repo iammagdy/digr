@@ -42,11 +42,23 @@ export const VOLUME_LIMIT_REASON_AR = "يتحدد الحد بسبب سقف ال�
  * What the customer asked, what fits one job now, and why, in two short sentences. The numbers come from the plan; nothing is
  * shrunk without saying so. Null when the plan holds everything that was asked.
  */
-export function volumeLimitStatementAr(input: { askedUnits: number; fittedUnits: number; unitLabelAr?: string }): string | null {
+export function volumeLimitStatementAr(input: {
+  askedUnits: number;
+  fittedUnits: number;
+  unitLabelAr?: string;
+  /** `capacity`: what the live extraction capacity allows right now cut the count, not the job's points cap. */
+  reason?: "capacity";
+  /** The points the plan holds back, said in the sentence when the cut came from the live capacity. */
+  reservedPoints?: number;
+}): string | null {
   const asked = Math.round(input.askedUnits);
   const fitted = Math.round(input.fittedUnits);
   if (!Number.isFinite(asked) || !Number.isFinite(fitted) || fitted < 1 || fitted >= asked) return null;
   const unit = input.unitLabelAr || "سجل";
+  if (input.reason === "capacity") {
+    const reserved = input.reservedPoints && input.reservedPoints > 0 ? `، وسيُحجز للخطة حتى ${n(input.reservedPoints)} نقطة ولا يُخصم منها إلا ما يُسلَّم` : "";
+    return `طلبت ${n(asked)} ${unit}، والذي تتسع له سعة الاستخراج المتاحة الآن ${n(fitted)} ${unit}${reserved}.`;
+  }
   return `طلبت ${n(asked)} ${unit}، والذي يناسب الطلب الواحد الآن ${n(fitted)} ${unit}. ${VOLUME_LIMIT_REASON_AR}`;
 }
 
