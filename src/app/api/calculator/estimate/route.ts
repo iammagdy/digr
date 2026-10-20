@@ -3,6 +3,10 @@ import { estimateMission, estimateSummaryAr, parseEstimateText, type EstimateInp
 import { RATE_LIMITED_MESSAGE_AR, clientKey, createRateLimiter } from "@/lib/server/publicRateLimit";
 import type { SocialPlatformId } from "@/lib/socialTasks";
 import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
+import { longJobDriverMode } from "@/lib/driverMode";
+import { missionDurationForPlan } from "@/lib/missionDuration";
+import { loadMeasuredTimings } from "@/lib/server/jobTimings";
+import { createAdminClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -47,9 +51,21 @@ export async function POST(req: NextRequest) {
   if (!input) return NextResponse.json({ success: true, result: null, understoodAr, missingAr });
   // The same live limit the detailed calculator and the segment pages use, so all three size one job alike.
   const result = estimateMission({ ...input, dailyCapPoints: await liveDailyCapPoints() });
+  // The same duration logic the plan panel uses (records, records per call, dependent steps, measured chunk times), for ONE request.
+  let duration = null as ReturnType<typeof missionDurationForPlan>;
+  if (result.status === "ok") {
+    try {
+      const measured = await loadMeasuredTimings(createAdminClient());
+      const records = result.fitsInOneJob ? result.volume : Math.max(1, result.maxVolumeInOneJob);
+      duration = missionDurationForPlan([{ capabilitySlug: result.slug, targetVolumeMax: records, params: {} }], longJobDriverMode(), measured);
+    } catch {
+      duration = null;
+    }
+  }
   return NextResponse.json({
     success: true,
     result,
+    duration,
     summaryAr: result.status === "ok" ? estimateSummaryAr(result) : null,
     understoodAr,
     missingAr,

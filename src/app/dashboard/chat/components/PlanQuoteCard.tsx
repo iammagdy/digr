@@ -65,6 +65,8 @@ export interface PlanQuoteData {
   understoodAr?: string;
   /** The period a feed plan applies, why (a known event) and any date that was corrected. */
   window?: { labelAr: string; source: string; reasonAr?: string; noteAr?: string };
+  /** How long the mission will take: a range written by code from real numbers (never a promise), labelled as an estimate. */
+  duration?: { rangeAr: string; labelAr: string; driversAr: string; promiseAr: string; longNoteAr?: string };
 }
 
 interface PlanQuoteCardProps {
@@ -316,6 +318,19 @@ export default function PlanQuoteCard({
         <p className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2" data-testid="plan-after-sample">
           هذا هو الباقي من طلبك بعد العينة: {formatAr(quote.afterSample.remainingUnits)} سجل دون ما وصلك فيها ({formatAr(quote.afterSample.deliveredInSample)} سجل، خُصم عنها {formatAr(quote.afterSample.sampleChargedPoints)} نقطة). الإجمالي التقريبي مع العينة حوالي {formatAr(quote.afterSample.approximateTotalPoints)} نقطة.
         </p>
+      )}
+
+      {quote.duration && (
+        <div className="mt-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9]" data-testid="plan-duration">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-mut">المدة المتوقعة</span>
+            <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink" data-testid="plan-duration-range">{quote.duration.rangeAr}</span>
+            <span className="rounded-md border border-ln px-1.5 py-0.5 text-[11px] text-mut">{quote.duration.labelAr}</span>
+          </div>
+          <p className="mb-0 mt-1 font-light text-ink2">{quote.duration.driversAr}</p>
+          {quote.duration.longNoteAr && <p className="mb-0 mt-1 font-light text-ink2" data-testid="plan-duration-long">{quote.duration.longNoteAr}</p>}
+          <p className="mb-0 mt-1 font-light text-ink2" data-testid="plan-duration-promise">{quote.duration.promiseAr}</p>
+        </div>
       )}
 
       {quote.window && (
