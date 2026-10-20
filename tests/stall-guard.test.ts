@@ -111,6 +111,10 @@ describe("2. a turn never ends on «هجهز خطة» without a plan or one conc
     expect(page).toMatch(/setLoading\(false\)/);
     expect(page).toMatch(/finally\s*\{[\s\S]*?setLoading\(false\)/);
     expect(page).not.toMatch(/أكثر من 35 ثانية/);
-    expect(page).toContain("استغرق المساعد وقتًا أطول من المتوقع");
+    // the timeout sentence moved from the page into the shared helper: an aborted request still ends in one Arabic sentence
+    const { customerFacingFailure } = await import("../src/lib/customerError");
+    const abort = Object.assign(new Error("aborted"), { name: "AbortError" });
+    expect(customerFacingFailure(abort, { noCharge: true }).text).toBe("حصل تعثر مؤقت، لم يُخصم أي رصيد، جرّب مرة أخرى.");
+    expect(page).toContain("customerFacingFailure(err, { noCharge: true })");
   });
 });

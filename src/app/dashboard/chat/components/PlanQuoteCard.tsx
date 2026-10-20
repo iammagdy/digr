@@ -1,5 +1,6 @@
 "use client";
 
+import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
@@ -246,8 +247,8 @@ export default function PlanQuoteCard({
         safeMsg = "انتهت الجلسة أو غير مصرح. يرجى تسجيل الدخول والمحاولة مرة أخرى.";
       } else if (rawMsg.includes("صلاحية") || rawMsg.includes("expired")) {
         safeMsg = "انتهت صلاحية عرض السعر. يرجى تحديث السعر أولاً.";
-      } else if (rawMsg.length > 0 && !rawMsg.includes("TypeError") && !rawMsg.includes("SyntaxError")) {
-        safeMsg = rawMsg;
+      } else if (rawMsg.length > 0) {
+        safeMsg = customerFacingFailure(err, { fallback: safeMsg }).text;
       }
       setEditError(safeMsg);
     } finally {
