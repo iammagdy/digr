@@ -31,10 +31,12 @@ describe("big-mission templates", () => {
   });
 
   it("each template, once its brackets are filled, is understood as the mission it names", () => {
-    const channels = understandMission(byId("channels_top_videos_comments").promptAr.replace("[@القناة_الأولى و@القناة_الثانية]", "@AlArabiya و@SkyNewsArabia"), { today: TODAY });
+    const channels = understandMission(byId("channels_top_videos_comments").promptAr.replace("[@القناة_الأولى و@القناة_الثانية و@القناة_الثالثة]", "@AlArabiya و@SkyNewsArabia و@AlJazeera"), { today: TODAY });
     // the template carries its own comment cap, so the filled template goes straight to the plan
     expect(channels).toMatchObject({ kind: "social_ranked_comments", platform: "youtube", topPerChannel: 10, volume: 2000 });
-    expect(channels.channels.named).toEqual(["@AlArabiya", "@SkyNewsArabia"]);
+    expect(channels.channels.named).toEqual(["@AlArabiya", "@SkyNewsArabia", "@AlJazeera"]);
+    // the template says how many channels it is for, so fewer given later is noticed
+    expect(channels.channels.count).toBe(3);
     expect(nextStep(channels)).toEqual({ type: "plan" });
 
     const x = understandMission(byId("event_monitoring_x").promptAr.replace("[اسم الحدث أو الموضوع]", "ماتش مصر والمغرب").replace("[الفترة: من تاريخ إلى تاريخ]", "من ١ يونيو ٢٠٢٦ إلى ٣٠ يونيو ٢٠٢٦"), { today: TODAY });

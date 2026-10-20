@@ -3730,6 +3730,8 @@ export class ChatHandler {
             maxChannels: MAX_CHANNELS_PER_JOB,
           });
           for (const line of coverageLines) planSummaryText += `\n- ${line}`;
+          // The plan card shows the same sentences (fewer channels than the template said, a lower top, videos found by a topic).
+          if (coverageLines.length > 0) planQuoteData.coverageLinesAr = coverageLines;
           // Videos and comments are two quantities: the plan names both, so «٣ فيديوهات» can never read as three comments.
           if (videosStatedForPlan && managedQuote.items.length === 1) {
             planSummaryText += `\n- الفيديوهات: ${videosCountAr(videosStatedForPlan.count, videosStatedForPlan.noun)}، والتعليقات: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} تعليق من كل ما فيها.`;
