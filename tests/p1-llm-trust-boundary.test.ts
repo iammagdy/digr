@@ -100,7 +100,7 @@ describe("P1: LLM Trust Boundary & Prompt Injection Suite", () => {
     expect(scrubbed).not.toContain("GPT-6");
     expect(scrubbed).not.toContain("TREG");
     expect(scrubbed).not.toContain("TikHub");
-    expect(scrubbed).toContain("منصة Diger");
+    expect(scrubbed).toContain("منصة ديجر");
   });
 
   it("should validate valid output against LlmTurnOutputSchema strictly", () => {

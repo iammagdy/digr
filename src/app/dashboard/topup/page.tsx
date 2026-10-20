@@ -15,6 +15,7 @@ import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import PromoCodeBox from "./PromoCodeBox";
 import { CREDIT_KIND_LABEL_AR, classifyLedgerRow, type CreditKind } from "@/lib/creditKinds";
+import { walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
 type LedgerKind = "topup" | "charge" | "refund";
@@ -22,7 +23,7 @@ const kindOf = (row: LedgerRow): LedgerKind => {
   const kind: CreditKind = classifyLedgerRow({ type: row.type, kind: row.kind });
   return kind === "release" ? "refund" : kind === "reserve" || kind === "charge" ? "charge" : "topup";
 };
-const ledgerLabel = (row: LedgerRow): string => row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })];
+const ledgerLabel = (row: LedgerRow): string => walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]);
 const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "استرداد"]];
 
 const ipaFromEnv = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
@@ -404,7 +405,7 @@ export default function WalletPage() {
                 <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
                 <div className="min-w-0 flex-1">
                   <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
-                  <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{l.note ? `${l.note} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
+                  <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
                 </div>
                 <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--goldT)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
               </div>

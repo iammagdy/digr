@@ -379,7 +379,7 @@ const FORBIDDEN_WORDS = [
 export function scrubWhiteLabelText(text: string): string {
   let cleaned = text;
   for (const regex of FORBIDDEN_WORDS) {
-    cleaned = cleaned.replace(regex, "منصة Diger");
+    cleaned = cleaned.replace(regex, "منصة ديجر");
   }
   return cleaned;
 }
@@ -1455,7 +1455,7 @@ export class LlmClient {
       promptLower.includes("ما هي الملفات") ||
       promptLower.includes("كم يستغرق")
     ) {
-      let answerText = "تتيح لك منصة Diger جمع البيانات من المصادر المتاحة وتسليمها في ملفات منظمة.";
+      let answerText = "تتيح لك منصة ديجر جمع البيانات من المصادر المتاحة وتسليمها في ملفات منظمة.";
       if (promptLower.includes("شحن") || promptLower.includes("إنستاباي") || promptLower.includes("instapay")) {
         answerText = "يتم شحن الرصيد عبر إنستاباي (Instapay) من صفحة الرصيد. بعد التحويل ترفع إيصال المعاملة ويتم اعتماد النقاط فورياً لحسابك.";
       } else if (promptLower.includes("ملفات")) {

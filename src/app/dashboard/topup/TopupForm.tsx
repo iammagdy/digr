@@ -12,7 +12,7 @@ import type { TopupRecord } from "./types";
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
 const ALLOWED = ["image/png", "image/jpeg", "image/jpg", "image/webp", "application/pdf"];
 
-/** Design «اشحن عبر Instapay». Only amount preset and receipt image upload required. */
+/** Design «اشحن عبر إنستاباي». Only amount preset and receipt image upload required. */
 export default function TopupForm({
   amount,
   onAmount,
@@ -143,7 +143,7 @@ export default function TopupForm({
 
   return (
     <div className="mt-6 flex flex-col gap-4 rounded-[22px] border border-ln bg-sf p-[18px]">
-      <h2 className="m-0 text-[15px] font-semibold text-ink">اشحن عبر Instapay</h2>
+      <h2 className="m-0 text-[15px] font-semibold text-ink">اشحن عبر إنستاباي</h2>
 
       <div className="flex flex-wrap gap-2">
         {TOPUP_PRESETS_EGP.map((egp) => {
@@ -170,7 +170,7 @@ export default function TopupForm({
 
       <div className="flex items-center justify-between gap-2.5 rounded-[20px] bg-sf2 px-[18px] py-3.5">
         <div className="min-w-0">
-          <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي (IPA) · منصة Diger</p>
+          <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي · منصة ديجر</p>
           {loadingIpa ? (
             <p className="mb-0 mt-1 animate-pulse text-sm text-mut">جاري تحميل بيانات الدفع...</p>
           ) : ipa ? (
