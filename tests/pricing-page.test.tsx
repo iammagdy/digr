@@ -10,6 +10,7 @@ import CapacityCalculator from "../src/components/pricing/CapacityCalculator";
 import { CAPACITY_AMOUNTS_EGP, PRICING_FAQ_AR, buildPriceRows, capacityForAmount, capacityLineAr, pointsForAmountEgp } from "../src/lib/pricingPage";
 import { computePublicCalculatorQuote } from "../src/lib/calculatorPricing";
 import { volumeForPointsCap } from "../src/lib/pointsCap";
+import { FAILURE_STATE_AR } from "../src/lib/publicCopy";
 
 const html = renderToStaticMarkup(createElement(PricingPage));
 const text = html.replace(/<[^>]+>/g, " ");
@@ -45,7 +46,8 @@ describe("the pricing page", () => {
   it("explains when money is taken, the failure state, the one-job limit and the honest limits", () => {
     const faq = PRICING_FAQ_AR.map(([q, a]) => `${q} ${a}`).join(" ");
     expect(faq).toContain("لا يُخصم شيء أثناء المحادثة");
-    expect(faq).toContain("ما اتخصمش حاجة");
+    expect(faq).toContain(FAILURE_STATE_AR);
+    expect(FAILURE_STATE_AR).toContain("لم يُخصم أي رصيد");
     expect(faq).toContain("أكثر من طلب");
     expect(text).toContain("حدود نذكرها بصراحة");
     expect(html).toContain('href="/calculator"');

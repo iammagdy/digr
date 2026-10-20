@@ -3,6 +3,7 @@ import { estimateMission, type EstimateInput } from "./missionEstimate";
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
 import { volumeForPointsCap } from "./pointsCap";
+import { FAILURE_STATE_AR } from "./publicCopy";
 
 /**
  * What the pricing page shows. Every number is computed from the same unit prices as the quote writer (through the public
@@ -69,7 +70,7 @@ export function capacityLineAr(line: CapacityLine): string {
 export const PRICING_FAQ_AR: Array<[string, string]> = [
   ["متى يُخصم الرصيد؟", "لا يُخصم شيء أثناء المحادثة أو إعداد الخطة. عند موافقتك يُحجز مبلغ مؤقت، ثم يُخصم فقط مقابل السجلات المطابقة التي وصلتك فعلًا، ويعود الباقي إلى رصيدك."],
   ["ماذا لو وصلني أقل مما طلبت؟", "تدفع مقابل ما وصلك فقط. إن لم تتوفر سجلات كافية بالمواصفات التي حددتها، يعود الفرق إلى رصيدك كاملًا."],
-  ["ماذا لو تعذّر تنفيذ الطلب؟", "ما اتخصمش حاجة: يعود كل ما حُجز لطلبك إلى رصيدك."],
+  ["ماذا لو تعذّر تنفيذ الطلب؟", FAILURE_STATE_AR],
   ["هل هناك حد لحجم الطلب الواحد؟", "نعم، لكل طلب حد أقصى للمبلغ المحجوز لحماية رصيدك. الأحجام الكبيرة تُقسَّم على أكثر من طلب، وتحسب لك الحاسبة عدد الطلبات المتوقع."],
   ["هل الأسعار ثابتة؟", "الأسعار المعروضة هنا هي أسعار النقاط الحالية، وتظهر في خطتك قبل أن توافق. أي رقم في هذه الصفحة تقريبي ويحسبه النظام، والرقم النهائي هو الذي يظهر في خطتك."],
 ];
