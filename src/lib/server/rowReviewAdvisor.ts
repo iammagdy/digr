@@ -137,6 +137,7 @@ function buildPrompt(input: RowAdvisoryInput): string {
       "The customer asked for posts, comments or videos ABOUT a topic. \"match\" only if the text itself is about that topic.",
       "A text about another subject that merely shares a word with the topic is \"no_match\". An empty text is \"no_match\". A reply or comment that only agrees or reacts (for example \"agreed\", \"true\", an emoji) says nothing about the topic: \"uncertain\".",
       "For a comment, the video title is context only, never evidence by itself that the comment is about the topic.",
+      "If the request names a country, a text about another country's clubs, league, team or events (for example a Spanish club for a request about Egypt) is not a match for that request.",
     ] : []),
     "Judge only from the row's own fields. Never guess a match. Give a short Arabic reason (at most twelve words, no emoji).",
     "Reply with ONLY JSON: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\",\"reasonAr\":\"...\"}]}",

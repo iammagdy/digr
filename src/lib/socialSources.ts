@@ -246,7 +246,8 @@ const TIKTOK_SEARCH: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 20,
     paging: "offset",
-    build: (r) => (r.query ? { keyword: r.query, count: Math.min(20, Math.max(1, r.limit)), offset: Number(r.cursor || 0) } : null),
+    // The country goes to the source's own `region` filter when the request names one: it is the only place the source can apply it.
+    build: (r) => (r.query ? { keyword: r.query, count: Math.min(20, Math.max(1, r.limit)), offset: Number(r.cursor || 0), ...(r.region ? { region: r.region } : {}) } : null),
     nextCursor: (rowCount, r) => (rowCount > 0 ? String(Number(r.cursor || 0) + rowCount) : null),
   },
   {

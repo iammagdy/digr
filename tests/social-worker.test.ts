@@ -101,6 +101,7 @@ import { setProviderAdapterForTesting, type ProviderAdapterCallInput } from "../
 import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "../src/lib/server/socialAdapter";
 import { estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/socialSources";
 import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
+import { setReviewSampleRandomForTesting } from "../src/lib/server/sampledReview";
 
 const JOB = jobIdForQuote("quote_social");
 const YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
@@ -141,6 +142,7 @@ describe("worker: social jobs", () => {
     setProviderAdapterForTesting(null);
     setRowAdvisorForTesting(null);
     setStrictSocialReviewForTesting(false);
+    setReviewSampleRandomForTesting(null);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete (process.env as any)[key];
       else (process.env as any)[key] = value;
@@ -414,6 +416,72 @@ describe("worker: social jobs", () => {
       expect(json.settle.charged_credits).toBe(5 * 6);
     });
   });
+  describe("TikTok topic search in a country: the region goes to the source and the review decides what is about the topic", () => {
+    const VIDEO_ID = "7231337071831321900";
+    const ON_TOPIC = ["الأهلي أحسن فريق في مصر", "ماتش المنتخب المصري كان جامد", "الزمالك محتاج مدرب جديد", "هدف صلاح في الماتش ده تحفة"];
+    const REAL_MADRID = ["When Madrid was Madrid", "هلا مدريد", "ريال مدريد بطل أوروبا"];
+    const UNRELATED = ["افتح التنزيل عليك الله", "سوي العراق ضد اليابان"];
+    const isEgyptFootball = (text: string) => /الأهلي|المنتخب المصري|الزمالك|صلاح/.test(text);
+    const usage = (costUsd: number) => ({ inputTokens: 2000, outputTokens: 500, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
+    const secs = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+    const lines = () => db.events.map((event) => String(event.message));
+    const run = async (texts: string[], target: number) => {
+      resetDb("social-tiktok-comments", { query: "كرة القدم", region: "EG", perVideo: 30, dateFrom: "2026-09-20", dateTo: "2026-10-20" }, target, 6);
+      const searchParams: Array<Record<string, any>> = [];
+      useSource(async (source, params) => {
+        if (params.aweme_id) {
+          return ok({ data: { comments: texts.map((text, i) => ({ cid: `c${i}`, text, user: { nickname: "منى" }, create_time: secs("2026-10-05T10:00:00Z") })), cursor: 0, has_more: 0 } });
+        }
+        searchParams.push(params);
+        return ok({ aweme_list: [{ aweme_id: VIDEO_ID, desc: "فيديو عن كرة القدم", share_url: `https://www.tiktok.com/@u/video/${VIDEO_ID}`, create_time: secs("2026-10-05T10:00:00Z") }] });
+      });
+      const briefs: string[] = [];
+      const calls: number[] = [];
+      setStrictSocialReviewForTesting(true);
+      setReviewSampleRandomForTesting(() => 0);
+      setRowAdvisorForTesting(async (input) => {
+        calls.push(input.rows.length);
+        briefs.push(String(input.customerRequest));
+        return {
+          verdicts: new Map(input.rows.map(({ index, row }) => [index, isEgyptFootball(String(row.text)) ? { verdict: "match" as const, reasonAr: "عن كرة القدم في مصر" } : { verdict: "no_match" as const, reasonAr: "لا يتعلق بكرة القدم في مصر" }])),
+          usage: usage(0.004), failure: null,
+        };
+      });
+      const result = await runAllChunks();
+      return { ...result, searchParams, briefs, calls };
+    };
+
+    it("a page that is mostly about something else is reviewed in full: only the football-in-Egypt comments are delivered and charged", async () => {
+      const texts = [...REAL_MADRID, ...UNRELATED, ...ON_TOPIC, ...REAL_MADRID.map((text) => `${text} 2`), ...UNRELATED.map((text) => `${text} 2`), ...Array.from({ length: 8 }, (_, i) => `تعليق عن شيء آخر رقم ${i}`)];
+      expect(texts).toHaveLength(22);
+      const { json, searchParams, briefs, calls } = await run(texts, 30);
+      expect(searchParams[0].region).toBe("EG");
+      expect(briefs[0]).toContain("الدولة المطلوبة: مصر");
+      expect(calls).toEqual([15, 7]);
+      expect(json.deliveredUnits).toBe(4);
+      expect(json.settle.charged_credits).toBe(4 * 6);
+      const delivered = db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8");
+      for (const text of [...REAL_MADRID, ...UNRELATED]) expect(delivered).not.toContain(text);
+      for (const text of ON_TOPIC) expect(delivered).toContain(text);
+      expect(lines().some((line) => line.includes("راجعنا كل سجلاتها قبل التسليم"))).toBe(true);
+    });
+
+    it("a page that is mostly on topic is delivered after one call on a sample; a single off-topic comment in the sample is not a reason to hold the page", async () => {
+      const texts = [...ON_TOPIC.map((text, i) => `${text} ${i}`), ...Array.from({ length: 11 }, (_, i) => `${ON_TOPIC[i % 4]} ${i + 10}`), REAL_MADRID[0]];
+      const { json, calls } = await run(texts, 30);
+      expect(calls).toEqual([15]);
+      expect(json.deliveredUnits).toBe(16);
+      expect(json.settle.charged_credits).toBe(16 * 6);
+      expect(lines().some((line) => line.includes("راجعنا كل سجلاتها قبل التسليم"))).toBe(false);
+    });
+
+    it("the bare reply «اتفقت» is delivered only when the review confirms it, and here it does not", async () => {
+      const texts = [...ON_TOPIC, "اتفقت"];
+      const { json } = await run(texts, 10);
+      expect(json.deliveredUnits).toBe(4);
+      expect(db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8")).not.toContain("اتفقت");
+    });
+  });
   describe("X posts of a topic search: the rows are presumed on topic, and the doubtful ones need the automatic review", () => {
     const TOPIC = "مباراة مصر والمغرب كأس العالم";
     const ordinary = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `p${i}`, text: `منشور ${i} عن ${TOPIC} في البطولة` }));
@@ -422,7 +490,7 @@ describe("worker: social jobs", () => {
     const strict = (advisor: RowAdvisorFn) => { setStrictSocialReviewForTesting(true); setRowAdvisorForTesting(advisor); };
     const lines = () => db.events.map((event) => String(event.message));
 
-    it("ordinary rows are delivered without any review call; a doubtful one is delivered only when the review confirms it", async () => {
+    it("ordinary rows are delivered (a sample of them is checked); a doubtful one is delivered only when the review confirms it", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
       const philosophical = { tweet_id: "f1", text: "الحياة رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع" };
       useSource(async () => ok({ ok: true, rows: [...ordinary(8), philosophical, reactions(1)[0]] }, 600));
@@ -438,22 +506,23 @@ describe("worker: social jobs", () => {
       const { json } = await runAllChunks();
 
       expect(json.done).toBe(true);
+      // one call: the two doubtful rows and a sample (here all eight) of the ordinary ones
       expect(asked).toHaveLength(1);
-      expect(asked[0]).toHaveLength(2);
+      expect(asked[0]).toHaveLength(10);
       expect(json.deliveredUnits).toBe(9);
       // charge = delivered matching rows x unit price (the settlement function, unchanged)
       expect(json.settle.charged_credits).toBe(9 * 5);
       expect(lines().some((line) => line.includes("قيد المراجعة ١"))).toBe(true);
     });
 
-    it("a page of ordinary rows never calls the reviewer", async () => {
-      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
-      useSource(async () => ok({ ok: true, rows: ordinary(10) }, 600));
-      let calls = 0;
-      strict(async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.004), failure: null }; });
+    it("a page of ordinary rows is checked once, on a sample of at most fifteen rows, and delivered", async () => {
+      resetDb("social-x-posts", { query: TOPIC }, 30, 5);
+      useSource(async () => ok({ ok: true, rows: ordinary(30) }, 600));
+      const asked: number[] = [];
+      strict(async (input) => { asked.push(input.rows.length); return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.004), failure: null }; });
       const { json } = await runAllChunks();
-      expect(calls).toBe(0);
-      expect(json.deliveredUnits).toBe(10);
+      expect(asked).toEqual([15]);
+      expect(json.deliveredUnits).toBe(30);
     });
 
     it("a review that cannot be read holds the doubtful rows back but never the ordinary ones, and the job goes on", async () => {
@@ -499,13 +568,15 @@ describe("worker: social jobs", () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
       const rows = [...ordinary(3), { tweet_id: "e1", text: "" }, { tweet_id: "e2", text: "😂😂" }, { tweet_id: "ad", text: "للتواصل واتساب 01012345678 خصم خاص" }];
       useSource(async () => ok({ ok: true, rows }, 600));
-      let calls = 0;
-      strict(async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.003), failure: null }; });
+      const asked: number[][] = [];
+      strict(async (input) => { asked.push(input.rows.map(({ index }) => index)); return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.003), failure: null }; });
 
       const { json } = await runAllChunks();
 
       expect(json.deliveredUnits).toBe(3);
-      expect(calls).toBe(0);
+      // only the three ordinary rows were ever shown to the reviewer: the empty, the emoji and the ad were dropped before
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toHaveLength(3);
     });
 
     it("what every review call did is kept in the step file: failure code, stop reason and tokens", async () => {
@@ -518,7 +589,7 @@ describe("worker: social jobs", () => {
 
       const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
       expect(stepFile.reviewFailures).toEqual(["bad_reply"]);
-      expect(stepFile.reviewCalls).toEqual([{ rows: 2, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 }]);
+      expect(stepFile.reviewCalls).toEqual([{ rows: 4, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 }]);
       expect(stepFile.reviewUsd).toBe(0.003);
     });
   });
