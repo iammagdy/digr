@@ -81,7 +81,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
-import { consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, nextStep, questionForStep, understandMission, understoodLineAr } from "../../lib/consultantCopy";
+import { capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, nextStep, questionForStep, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
@@ -192,7 +192,8 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     // channel, a country); the generic topic question below does not apply to it.
     if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) {
       if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
-      return null;
+      // «كل التعليقات / كل المنشورات» always carries a cap the customer chooses.
+      return capQuestionFor(mission);
     }
   }
   if (isSocialTopic) {
@@ -3507,6 +3508,7 @@ export class ChatHandler {
             unitPricePoints: managedQuote.unitPricePoints,
             quotedPoints: managedQuote.quotedPoints,
             pointsCapConstrained: managedQuote.pointsCapConstrained,
+            requestedVolumeMax: managedQuote.requestedVolumeMax,
           });
           if (explorationCandidate) {
             const offer = explorationOffer(managedQuote);

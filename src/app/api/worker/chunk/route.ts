@@ -588,6 +588,10 @@ export async function POST(req: NextRequest) {
     if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(String(currentCursor));
     if ((isCompanyCapability || socialCapability || isPeopleJob) && (rawRows.length > 0 || currentStep > 0)) {
       const seen = new Set<string>();
+      // Rows a sample job already delivered (the «عينة أولًا» remainder): never delivered again, never billed again.
+      for (const key of Array.isArray(spec.params?.excludeRowKeys) ? spec.params.excludeRowKeys : []) {
+        if (typeof key === "string" && key) seen.add(key);
+      }
       // Rows reused from a failed earlier run are already accepted rows of this job.
       for (const row of retrySeed?.rows || []) {
         const identity = dedupeIdentity(row);

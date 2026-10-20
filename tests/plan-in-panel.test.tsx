@@ -54,7 +54,7 @@ describe("the chat stream", () => {
 
 describe("the panel", () => {
   it("shows the plan until a run is approved, then the results with the plan as a read-only tab", () => {
-    expect(page).toContain("const panelShowsPlan = !activeJob && latestPlanQuote !== null;");
+    expect(page).toContain("const panelShowsPlan = latestPlanQuote !== null && (!activeJob || restPlanQuoteId === latestPlanQuote.quoteId);");
     expect(page).toContain('data-testid="plan-panel"');
     expect(canvas).toContain('{ id: "plan" as const, label: "الخطة" }');
     expect(canvas).toContain('{tab === "plan" && planNode}');
