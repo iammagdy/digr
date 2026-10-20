@@ -30,7 +30,7 @@ import OnboardingModal from "./components/OnboardingModal";
 import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
-import { PLAN_READY_AR } from "@/lib/consultantCopy";
+import { PLAN_READY_DESKTOP_AR, PLAN_READY_MOBILE_AR } from "@/lib/consultantCopy";
 import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
 import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
@@ -1689,7 +1689,9 @@ export default function ChatWorkspacePage() {
       <div key={m.id}>
         {m.content && (!m.progressNotice || shouldShowProgressNotice(m, activeJob, terminalJobs)) && (
           <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>
-            {m.planQuote ? PLAN_READY_AR : customerFacingAssistantCopy(m.content)}
+            {m.planQuote
+              ? <><span className="lg:hidden">{PLAN_READY_MOBILE_AR}</span><span className="hidden lg:inline">{PLAN_READY_DESKTOP_AR}</span></>
+              : customerFacingAssistantCopy(m.content)}
           </p>
         )}
         {m.fileShape && (m.fileShape.jobId || activeJob) && (

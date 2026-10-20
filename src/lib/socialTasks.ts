@@ -273,6 +273,9 @@ const LOCATION_PREPOSITIONS = new Set(["في", "فى", "من", "داخل"]);
 
 interface AnalyzedToken { token: string; location: boolean }
 
+/** «٥٠٠ سجل» (the answer to a cap card) is a quantity, never part of a subject; a «السجل التجاري» without a number stays. */
+const COUNT_PHRASE_RE = /[0-9٠-٩۰-۹]+\s*(?:سجلات|سجل|نتيجة|نتائج)(?=\s|$)/gu;
+
 /**
  * The words of a request, each marked as a location or not. A country is a location only when the customer says so with a
  * preposition («في مصر»); a country that is part of the topic («مباراة مصر والمغرب», «الأهلي والزمالك») is an entity and stays in it.
@@ -282,6 +285,7 @@ function analyzeTokens(text: string): AnalyzedToken[] {
   const tokens = (text || "")
     .replace(URL_RE, " ")
     .toLowerCase()
+    .replace(COUNT_PHRASE_RE, " ")
     .replace(/[0-9٠-٩۰-۹]+/g, " ")
     .replace(/[^\p{L}\p{N}#@_]+/gu, " ")
     .split(/\s+/);
@@ -303,7 +307,7 @@ function analyzeTokens(text: string): AnalyzedToken[] {
 }
 
 function topicTokens(text: string): string[] {
-  const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
+  const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(COUNT_PHRASE_RE, " ").replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
   return analyzeTokens(text)
     .filter(({ token, location }, index) => {
       if (!token) return false;

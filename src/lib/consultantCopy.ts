@@ -237,6 +237,9 @@ const KIND_NOUN_AR: Record<string, string> = {
 
 const num = (n: number) => toArabicDigits(n);
 
+/** The same hedge the plan carries: the source may not return replies, and the customer is told so up front. */
+export const REPLIES_HEDGE_AR = "إن أعادها المصدر";
+
 /** One sentence: what the assistant understood, built from the structured understanding. Null when nothing useful was understood. */
 export function understoodLineAr(u: MissionUnderstanding): string | null {
   const where = u.platform ? ` على ${SOCIAL_PLATFORM_LABEL_AR[u.platform]}` : "";
@@ -255,9 +258,10 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
     }
     case "social_feed": {
       const about = u.subject ? ` عن «${u.subject}»` : "";
+      // The replies come only if the source returns them: the sentence says so, as the plan does.
       const what = u.volume
-        ? `حتى ${amount(u.volume, u.includeReplies ? "منشور مع ردودها" : "سجل")}`
-        : u.includeReplies ? "المنشورات مع ردودها" : "المحتوى";
+        ? `حتى ${amount(u.volume, u.includeReplies ? `منشور مع ردودها ${REPLIES_HEDGE_AR}` : "سجل")}`
+        : u.includeReplies ? `المنشورات مع ردودها ${REPLIES_HEDGE_AR}` : "المحتوى";
       return `فهمت أنك تريد ${what}${about}${where}${windowText}.`;
     }
     case "social_comments_url":
@@ -316,7 +320,9 @@ export function isFormStyleIntro(text: string): boolean {
 }
 
 /** The only line the chat shows when a plan is ready: the plan itself lives in the results panel. */
-export const PLAN_READY_AR = "جهزت لك الخطة، راجعها على اليمين.";
+// In the RTL page the chat is the first column (right) and the plan panel the second (left); on a phone the panel is a bottom sheet.
+export const PLAN_READY_DESKTOP_AR = "جهزت لك الخطة، راجعها على اليسار.";
+export const PLAN_READY_MOBILE_AR = "جهزت لك الخطة، راجعها في النافذة التي ظهرت من الأسفل.";
 
 /** The clarification question object the chat renders for a next step (one question, tappable options where it is a choice). */
 export function questionForStep(step: Extract<NextStep, { type: "ask_one" }>) {
