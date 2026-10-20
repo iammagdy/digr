@@ -79,6 +79,12 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
     event.preventDefault();
     const value = sanitizeDiscoveryText(draft, current.type === "multi" ? 40 : 200);
     if (!value) return;
+    // A typed answer to the only open question is the answer: it goes straight on, with no second «add» then «continue».
+    if (qs.length === 1 && current.type !== "multi" && !disabled) {
+      onComplete([{ questionId: current.id, question: current.text, value }]);
+      setDraft("");
+      return;
+    }
     if (current.type === "multi") save(current, [...selected, value].slice(0, 4));
     else save(current, value);
     setDraft("");
@@ -132,8 +138,8 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
 
         {(customInputOpen || current.type === "free" || current.options.length === 0 || current.parameterType === "volume" || current.id.includes("volume")) && (
           <form onSubmit={submitCustom} className="mt-3 flex items-center gap-2">
-            <input value={draft} onChange={(event) => setDraft(event.target.value)} disabled={disabled} maxLength={200} type={current.parameterType === "volume" || current.id.includes("volume") ? "number" : "text"} inputMode={current.parameterType === "volume" || current.id.includes("volume") ? "numeric" : "text"} min={current.parameterType === "volume" || current.id.includes("volume") ? 1 : undefined} max={current.parameterType === "volume" || current.id.includes("volume") ? 5000 : undefined} placeholder={current.options.length ? "اكتب اختيارك" : "اكتب إجابتك"} className="min-h-11 min-w-0 flex-1 rounded-full border border-ln bg-bg px-4 text-base text-ink outline-none focus:border-ln2 disabled:opacity-50" />
-            <button type="submit" disabled={disabled || !draft.trim()} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">إضافة</button>
+            <input value={draft} onChange={(event) => setDraft(event.target.value)} disabled={disabled} maxLength={200} type="text" inputMode={current.parameterType === "volume" || current.id.includes("volume") ? "numeric" : "text"} placeholder={current.options.length ? "اكتب اختيارك" : "اكتب إجابتك"} className="min-h-11 min-w-0 flex-1 rounded-full border border-ln bg-bg px-4 text-base text-ink outline-none focus:border-ln2 disabled:opacity-50" />
+            <button type="submit" disabled={disabled || !draft.trim()} className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40">{qs.length === 1 ? "إجابة ومتابعة" : "إضافة"}</button>
           </form>
         )}
       </div>

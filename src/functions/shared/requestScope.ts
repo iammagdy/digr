@@ -1,6 +1,7 @@
 import { detectMentionedPlatforms } from "./capabilityRegistry";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
 import { looksLikeFileShapingRequest, unsupportedFileEdit } from "../../lib/fileSpec";
+import { extractUrls, hasSocialSubject } from "../../lib/socialTasks";
 
 /**
  * Which earlier messages may inform the CURRENT research request.
@@ -16,8 +17,34 @@ const REQUEST_OBJECT = /(?:تعليق|تعليقات|كومنت|كومنتس|ك�
 const SHAPING_VERB_START = /^(?:رتّ?ب|فلتر|قسّ?م|وزّ?ع|سيب|خلي)(?:ها|ه|لي|لنا)?(?=\s)/u;
 const TOPIC_MARKER = /(?:^|\s)(?:عن|حول|بخصوص|في|من|لدى|داخل)\s/;
 const PLAN_REFERENCE = /(?:الخطة|الخطه|العرض|السعر|عرض السعر|النقاط|الرصيد|الملف|الشيت|الاكسل|الإكسل|اللي فات|السابق)/;
+/**
+ * The words that label a stored card answer in the text a routing decision reads. An answer never starts a new request, and its label
+ * is a noise word of the subject (see TOPIC_NOISE), so a label can never become the topic.
+ */
+export const CLARIFICATION_ANSWER_LABELS: Record<string, string> = {
+  company_country_required: "الدولة المطلوبة",
+  company_industry_required: "المجال المطلوب",
+  company_count_required: "عدد الشركات المطلوب",
+  people_country_required: "دولة صناع القرار المطلوبة",
+  people_scope_required: "نطاق صناع القرار",
+  people_roles_required: "المسميات الوظيفية المطلوبة",
+  people_count_required: "عدد صناع القرار المطلوب",
+  social_account_required: "اسم الحساب المطلوب",
+  social_topic_required: "موضوع البحث المطلوب",
+  social_platform_required: "منصة البحث المطلوبة",
+  social_time_required: "الفترة المطلوبة",
+  social_comment_target_required: "مصدر الفيديوهات المطلوب",
+  social_channel_required: "القنوات المطلوبة",
+  social_x_topic_required: "موضوع البحث المطلوب",
+  social_x_account_required: "اسم الحساب المطلوب",
+  volume_cap_required: "الحد الأقصى المطلوب",
+  topic_source_required: "المصدر المطلوب",
+};
+const ANSWER_LABEL_ALTERNATION = Array.from(new Set([...Object.values(CLARIFICATION_ANSWER_LABELS), "إجابة هدف التواصل"]))
+  .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+  .join("|");
 /** An answer to one of our questions (the card answers are stored as labelled text) never starts a new request. */
-const ANSWER_PREFIX = /^\s*(?:إجابة عن|الإجابة\s*:|الدولة المطلوبة\s*:|المجال المطلوب\s*:|عدد الشركات المطلوب\s*:|دولة صناع القرار المطلوبة\s*:|نطاق صناع القرار\s*:|المسميات الوظيفية المطلوبة\s*:|عدد صناع القرار المطلوب\s*:|اسم الحساب المطلوب\s*:|موضوع البحث المطلوب\s*:|منصة البحث المطلوبة\s*:|الفترة المطلوبة\s*:|المصدر المطلوب\s*:|إجابة هدف التواصل\s*:)/;
+const ANSWER_PREFIX = new RegExp(`^\\s*(?:إجابة عن|الإجابة\\s*:|(?:${ANSWER_LABEL_ALTERNATION})\\s*:)`);
 const LEADING_COUNT_OBJECT = new RegExp(`^[0-9٠-٩]+\\s+\\S*${REQUEST_OBJECT.source}`);
 
 export function isClarificationAnswerPayload(text: string): boolean {
@@ -62,8 +89,33 @@ export function isGreetingOrIdentityTurn(text: string): boolean {
   return isGreeting || isGeneralQuestion || isFileShapingMessage(text);
 }
 
-/** At most this many earlier customer messages can complete a follow-up. */
+/**
+ * «على يوتيوب» sent after a request that never named a platform completes that request: it names a platform and a count but no
+ * subject, link or channel of its own, so the earlier request's subject and channel still apply and nothing is asked twice.
+ */
+function completesEarlierRequest(own: string, prior: string[]): boolean {
+  const text = own.trim();
+  if (hasSocialSubject(text) || extractUrls(text).length > 0 || /@[\p{L}\p{N}_.]{2,}/u.test(text)) return false;
+  for (let i = prior.length - 1, scanned = 0; i >= 0 && scanned < MAX_SCAN_BACK; i--, scanned++) {
+    const earlier = (prior[i] || "").trim();
+    if (!earlier || isGreetingOrIdentityTurn(earlier) || ANSWER_PREFIX.test(earlier)) continue;
+    // the nearest earlier request: it must be a research request that named no platform
+    return isStandaloneResearchRequest(earlier) === false
+      ? false
+      : detectMentionedPlatforms(earlier).filter((p) => p !== "companies").length === 0;
+  }
+  return false;
+}
+
+/** At most this many earlier customer messages (not counting card answers) can complete a follow-up. */
 export const MAX_FOLLOW_UP_CHAIN = 4;
+/** How far back the nearest research request is searched; card answers never push it out of reach. */
+const MAX_SCAN_BACK = 30;
+
+/** True when the text is a stored card answer (labelled value). */
+export function isCardAnswerText(text: string): boolean {
+  return ANSWER_PREFIX.test((text || "").trim());
+}
 
 /**
  * The text every routing decision of this turn reads (country, topic, platform, contact fields).
@@ -73,14 +125,21 @@ export function scopeRequestText(priorUserMessages: string[], current: string, e
   const own = (current || "").trim();
   // How the delivered file should look is about the saved result: it never reads (or routes by) an earlier research request.
   if (isFileShapingMessage(own)) return own;
-  if (isStandaloneResearchRequest(own)) return [own, ...extraNotes].filter(Boolean).join(" ");
+  if (isStandaloneResearchRequest(own) && !completesEarlierRequest(own, priorUserMessages)) return [own, ...extraNotes].filter(Boolean).join(" ");
 
+  // Card answers always travel with the request they complete, however many there are: only the other follow-ups are limited,
+  // so a request the customer stated (its platform, its topic) is never pushed out by a chain of answers.
   const chain: string[] = [];
-  for (let i = priorUserMessages.length - 1; i >= 0 && chain.length < MAX_FOLLOW_UP_CHAIN; i--) {
+  let followUps = 0;
+  for (let i = priorUserMessages.length - 1, scanned = 0; i >= 0 && scanned < MAX_SCAN_BACK; i--, scanned++) {
     const earlier = (priorUserMessages[i] || "").trim();
     if (!earlier || isGreetingOrIdentityTurn(earlier)) continue;
+    const isAnswer = ANSWER_PREFIX.test(earlier);
+    if (!isAnswer && followUps >= MAX_FOLLOW_UP_CHAIN) break;
     chain.unshift(earlier);
-    if (isStandaloneResearchRequest(earlier)) break;
+    if (!isAnswer) followUps++;
+    // A request that only named the platform of the one before it does not anchor the chain: the one before it still applies.
+    if (isStandaloneResearchRequest(earlier) && !completesEarlierRequest(earlier, priorUserMessages.slice(0, i))) break;
   }
   return [...chain, own, ...extraNotes].filter(Boolean).join(" ");
 }

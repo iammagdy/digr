@@ -1,4 +1,5 @@
 import { stripMissingValueWords } from "./quoteScopeGaps";
+import { scrubPlaceholderPhrases } from "./customerScrub";
 
 const UNSAFE_ALTERNATIVE_PATTERNS = [
   /أقرب خدمة متاحة/i,
@@ -10,5 +11,5 @@ export function customerFacingAssistantCopy(content: string): string {
   if (UNSAFE_ALTERNATIVE_PATTERNS.some((pattern) => pattern.test(content))) {
     return "لم نتمكن من تحديد نوع الطلب المناسب. راجع تفاصيل طلبك وحاول مجددًا.";
   }
-  return stripMissingValueWords(content);
+  return scrubPlaceholderPhrases(stripMissingValueWords(content));
 }
