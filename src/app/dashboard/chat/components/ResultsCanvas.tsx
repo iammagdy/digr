@@ -6,7 +6,7 @@ import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
-import { customerResultColumnLabel } from "@/lib/customerResultColumns";
+import { customerResultColumnLabel, previewColumns } from "@/lib/customerResultColumns";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
 
@@ -209,10 +209,10 @@ export default function ResultsCanvas({
     orderedColumns = candidateColumns;
   }
 
-  const tableColumns = orderedColumns.filter((key, index) => {
+  const tableColumns = previewColumns(orderedColumns, isCompanyDataset).filter((key, index, shown) => {
     const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key);
     return (
-      orderedColumns.findIndex(
+      shown.findIndex(
         (candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate)) === label
       ) === index
     );

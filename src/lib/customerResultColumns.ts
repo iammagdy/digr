@@ -60,8 +60,52 @@ const RESULT_COLUMN_LABELS: Record<string, string> = {
   phone_verification_status: "حالة التحقق من الهاتف",
   founded_year: "سنة التأسيس",
   headcount: "حجم العمالة",
+  contact_name: "اسم جهة الاتصال",
+  contact_name_presence_status: "توفر اسم جهة الاتصال",
+  job_title: "المسمى الوظيفي",
+  city: "المدينة",
+  tweet_id: "معرّف المنشور",
+  video_id: "معرّف المقطع",
+  comment_id: "معرّف التعليق",
+  parent_id: "معرّف التعليق الأصلي",
+  display_name: "الاسم المعروض",
+  bio: "النبذة التعريفية",
+  author_verified: "حساب موثّق",
+  followers: "عدد المتابعين",
+  following: "الحسابات المتابَعة",
+  following_count: "الحسابات المتابَعة",
+  retweets_count: "عدد مرات إعادة النشر",
+  quotes_count: "عدد الاقتباسات",
+  views: "عدد المشاهدات",
+  videos_count: "عدد مقاطع الفيديو",
+  profile_url: "رابط الملف الشخصي",
+  bio_link: "الرابط الخارجي بالملف",
+  pinned: "تعليق مثبّت",
+  hearted_by_creator: "أعجب به صاحب المحتوى",
+  hashtags: "الوسوم",
+  collected_date: "تاريخ الاستخراج",
 };
 
+/** Shown for a field with no known Arabic title: the customer never sees a technical field name. */
+export const UNKNOWN_COLUMN_LABEL_AR = "بيانات إضافية";
+
 export function customerResultColumnLabel(key: string): string {
-  return RESULT_COLUMN_LABELS[key] || key;
+  const known = RESULT_COLUMN_LABELS[key];
+  if (known) return known;
+  // A title already in Arabic stays; anything with Latin letters or underscores is a technical name.
+  return /[A-Za-z_]/.test(key) ? UNKNOWN_COLUMN_LABEL_AR : key;
+}
+
+/**
+ * Identifiers and links of a social record belong in the delivered file, not in the on-screen preview: the preview shows
+ * what the customer reads (the text, the author, the date, the counts). A company's website is its own content and stays.
+ */
+const PREVIEW_HIDDEN_SOCIAL_COLUMNS = new Set([
+  "id", "source_id", "tweet_id", "video_id", "comment_id", "parent_id",
+  "url", "video_url", "profile_url", "bio_link",
+]);
+
+export function previewColumns(columns: string[], isCompanyDataset: boolean): string[] {
+  if (isCompanyDataset) return columns.filter((key) => key !== "id" && key !== "source_id");
+  return columns.filter((key) => !PREVIEW_HIDDEN_SOCIAL_COLUMNS.has(key));
 }
