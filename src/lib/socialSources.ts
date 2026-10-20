@@ -15,6 +15,7 @@ import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
+import { withXDateOperators } from "./xSearchWindow";
 
 export type SocialKind = "comments" | "videos" | "posts";
 export type SocialMode = "url" | "query" | "channel" | "trending";
@@ -39,6 +40,9 @@ export interface SocialSourceRequest {
   /** Rows wanted from this call. */
   limit: number;
   cursor?: string | null;
+  /** The customer's window (YYYY-MM-DD), for sources whose search text can carry it. */
+  dateFrom?: string;
+  dateTo?: string;
 }
 
 export interface SocialSource {
@@ -436,7 +440,7 @@ const X_TOPIC_POSTS: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 50,
     paging: "cursor",
-    build: (r) => r.query ? { query: r.query, limit: Math.min(50, Math.max(1, r.limit)), queryType: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
+    build: (r) => r.query ? { query: withXDateOperators(r.query, r.dateFrom, r.dateTo), limit: Math.min(50, Math.max(1, r.limit)), queryType: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
   },
   {
     endpointId: "tikhub.x.twitter-web-fetch-search-timeline",
@@ -447,7 +451,7 @@ const X_TOPIC_POSTS: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
-    build: (r) => r.query ? { keyword: r.query, search_type: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
+    build: (r) => r.query ? { keyword: withXDateOperators(r.query, r.dateFrom, r.dateTo), search_type: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
   },
 ];
 
