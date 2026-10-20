@@ -164,7 +164,11 @@ export function detectCountryFromText(text: string): CountryMapping | null {
 }
 
 export function detectIndustryFromText(text: string): IndustryMapping {
-  const t = (text || "").toLowerCase().trim();
+  const lowered = (text || "").toLowerCase().trim();
+  // The sector words are written without the definite article («تطوير عقاري»); the customer's text and the plan's own Arabic
+  // label carry it («التطوير العقاري»). Both spellings are searched, so a label is always read back as the sector it names.
+  const withoutArticle = lowered.replace(/(^|[\s،,.:؛()«»"'])(?:وال|بال|لل|ال)(?=[\u0621-\u064A])/g, "$1");
+  const t = withoutArticle === lowered ? lowered : `${lowered} ${withoutArticle}`;
 
   const hasLatinWord = (word: string) => new RegExp(`(?<![a-z0-9])${word}(?![a-z0-9])`).test(t);
 

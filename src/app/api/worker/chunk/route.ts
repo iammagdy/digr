@@ -746,7 +746,7 @@ export async function POST(req: NextRequest) {
       const strictCompanyReview = isCompanyCapability && (!useMockProvider || hasInjectedCompanyReviewer());
 
       if (strictCompanyReview) {
-        const reviewKeywords = [...companyActivityKeywords(spec.params), ...(recognizedSector?.englishKeywords || [])];
+        const reviewKeywords = [...new Set([...companyActivityKeywords(spec.params), ...companyActivityKeywords({ industry: expectedIndustry }), ...(recognizedSector?.englishKeywords || [])])];
         const reviewModel = (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
         let outcome: CompanyReviewOutcome = { verdicts: new Map(), failure: null, attempts: 0 };
         if (matchedForAdvice.length > 0) {
