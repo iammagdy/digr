@@ -11,6 +11,7 @@ import { useBalance } from "@/hooks/useBalance";
 import { topupContinuationMessageAr } from "@/lib/lowBalance";
 import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploration";
 import { approximateTotalPoints, remainingUnits, sampleRestMessageAr } from "@/lib/sampleFirst";
+import { estimateRemainingSeconds, etaTextAr, type ProgressSample } from "@/lib/jobEta";
 import { encodeFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
@@ -217,6 +218,19 @@ export default function ChatWorkspacePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationLoadSequence = useRef(0);
   const sendInFlight = useRef(false);
+
+  // Progress samples of the running job, for the remaining-time estimate.
+  const progressSamples = useRef<{ jobId: string; samples: ProgressSample[] }>({ jobId: "", samples: [] });
+  useEffect(() => {
+    if (!activeJob) return;
+    if (progressSamples.current.jobId !== activeJob.jobId) progressSamples.current = { jobId: activeJob.jobId, samples: [] };
+    const samples = progressSamples.current.samples;
+    const last = samples[samples.length - 1];
+    if (!last || last.delivered !== activeJob.rowsCollected) {
+      samples.push({ at: Date.now(), delivered: activeJob.rowsCollected });
+      if (samples.length > 40) samples.shift();
+    }
+  }, [activeJob?.jobId, activeJob?.rowsCollected]);
 
   // A new plan opens the panel (a bottom sheet on mobile). A plan already in a restored conversation does not: the
   // «افتح الخطة» button under it does. The first settled render only records which plan is already there.
@@ -1747,6 +1761,12 @@ export default function ChatWorkspacePage() {
   );
   const panelShowsPlan = latestPlanQuote !== null && (!activeJob || restPlanQuoteId === latestPlanQuote.quoteId);
 
+  // The remaining time comes from the real pace of this job (when each count of delivered records was seen), never a guess.
+  const etaSeconds = activeJob && (activeJob.status === "running" || activeJob.status === "queued") && activeJob.requestedRows
+    ? estimateRemainingSeconds(progressSamples.current.jobId === activeJob.jobId ? progressSamples.current.samples : [], activeJob.requestedRows)
+    : null;
+  const etaText = etaTextAr(etaSeconds);
+
   const runNode = activeJob ? (
     activeJob.status !== "failed" ? (
       <div className="space-y-3">
@@ -1759,6 +1779,9 @@ export default function ChatWorkspacePage() {
           reservedPoints={activeJob.reservedCredits}
           requestedRows={activeJob.requestedRows}
         />
+        {etaText && (
+          <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-eta">الوقت المتبقي التقريبي: {etaText}، محسوب من سرعة التنفيذ الفعلية وقد يتغير.</p>
+        )}
         {!canvasOpen && (
           <div className="flex justify-start">
             <button

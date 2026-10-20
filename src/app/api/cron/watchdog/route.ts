@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import { verifyCronSecret } from "../../../../lib/server/cronAuth";
+import { insertJobNotice, jobStalledNotice } from "../../../../lib/server/jobNotices";
+import { getRecipient, sendPlatformEmail } from "../../../../lib/server/sendPlatformEmail";
+import { getBalance } from "../../../../lib/supabase/ledger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -71,31 +74,25 @@ export async function GET(req: NextRequest) {
           alreadyReleased: releaseData.already_released,
         });
 
-        // Notify user if newly released
+        // Notify user if newly released: in-app, and by e-mail (the refund e-mail, with the points returned)
         if (job.user_id && !releaseData.already_released) {
+          const delivered = await insertJobNotice(adminClient, job.user_id, jobStalledNotice());
+          if (!delivered) console.error("[watchdog:notification_insert_failed]");
           try {
-            const notifRes = await adminClient.from("notifications").insert({
-              id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              user_id: job.user_id,
-              title: "إلغاء واسترجاع طلب متوقف",
-              body: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم إرجاع كامل نقاطك المحجوزة لرصيدك دون أي خصم.",
-              link: "/dashboard/jobs",
-              read: false,
-              created_at: new Date().toISOString(),
-            });
-            if (notifRes?.error) {
-              console.error(
-                `[watchdog:notification_insert_failed] reason=db_error code=${
-                  notifRes.error.code || "unknown"
-                }`
-              );
+            const releasedCredits = Number(releaseData.released_credits) || 0;
+            const rcpt = releasedCredits > 0 ? await getRecipient(adminClient, job.user_id, "refund") : null;
+            if (rcpt) {
+              const balance = await getBalance(adminClient, job.user_id);
+              await sendPlatformEmail("refund", rcpt.email, {
+                Name: rcpt.name,
+                Points: String(Math.round(releasedCredits)),
+                JobTitle: "طلبك الذي توقف",
+                Reason: "توقف تنفيذ الطلب عن التقدم قبل اكتماله",
+                Balance: String(balance),
+              }, `stalled-refund:${job.id}`);
             }
-          } catch (notifErr: any) {
-            console.error(
-              `[watchdog:notification_insert_failed] reason=exception code=${
-                notifErr?.code || "unknown"
-              }`
-            );
+          } catch (emailErr) {
+            console.error("[email:stalled_refund_failed]", emailErr);
           }
         }
       } else {
