@@ -2,7 +2,7 @@ export interface WorkerChunkDispatchResult {
   started: boolean;
   status: number;
   body: any;
-  failureCode?: "protection_redirect" | "worker_auth_rejected" | "worker_route_missing" | "worker_http_error" | "invalid_acknowledgement";
+  failureCode?: "protection_redirect" | "worker_auth_rejected" | "worker_route_missing" | "worker_http_error" | "invalid_acknowledgement" | "dispatch_timeout" | "dispatch_exception";
 }
 
 /** Executes one bounded worker chunk and waits for its acknowledgement. */

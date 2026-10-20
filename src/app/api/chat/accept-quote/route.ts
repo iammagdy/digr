@@ -7,7 +7,7 @@ import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/pr
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
 import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../../lib/server/workerDispatch";
-import { recordWorkerStartFailure, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
+import { recordWorkerStartFailure, startFailureEventAr, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
@@ -165,15 +165,31 @@ export async function POST(req: NextRequest) {
       }
     } catch (chunkErr: any) {
       console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} code=${chunkErr?.name || "dispatch_failed"}`);
-      workerDispatch = { started: false, status: 0, body: { dispatchFailed: true } };
+      const timedOut = chunkErr?.name === "TimeoutError" || chunkErr?.name === "AbortError";
+      workerDispatch = { started: false, status: 0, body: { dispatchFailed: true }, failureCode: timedOut ? "dispatch_timeout" : "dispatch_exception" };
     }
 
     if (!workerDispatch.started && workerDispatch.body?.claimed !== false) {
-      const outcome = await recordWorkerStartFailure(adminClient, acceptedJobId);
+      // The job is already accepted and reserved: a failure while recording the attempt must never turn the answer into an error.
+      const outcome = await recordWorkerStartFailure(adminClient, acceptedJobId).catch(() => ({ attemptCount: null, failed: false, released: false, releaseConfirmed: false }));
       workerDispatch = {
         ...workerDispatch,
         body: { ...workerDispatch.body, retrying: !outcome.failed, failed: outcome.failed },
       };
+      // The reason goes into the request's activity as a plain sentence and a number, so the conversation, «طلباتي» and support agree.
+      if (!outcome.failed) {
+        try {
+          await adminClient.from("job_events").insert({
+            job_id: acceptedJobId,
+            user_id: user.id,
+            message: startFailureEventAr(workerDispatch.failureCode).message,
+            units: 0,
+            event_type: "warning",
+          });
+        } catch {
+          // the retry itself never depends on this line
+        }
+      }
     }
 
     // A large request is announced in-app when it starts (never blocks or fails the acceptance).
