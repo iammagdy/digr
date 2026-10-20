@@ -55,13 +55,30 @@ described the first pages; it now reads the newest 30.
 
 ## 3. Final assembly and the workbook
 
-- There is **no 40,000-row constant** in the code. The limit is memory: `generateExcelReport` builds the whole workbook in memory
-  (`src/functions/shared/fileGenerators.ts:262` `new ExcelJS.Workbook()`, a styled row per record at `:282`), `generateCsvReport`
-  builds one string of all rows (`:729`, `:743`), and the worker holds every row of the job in one array before generating either
-  (`route.ts:1186` onward, files at `:1428`, `:1446`, `:1464`). Peak memory therefore grows with rows x columns x styles. The size
-  of the produced file is also bounded by the storage bucket's object size limit (**estimate**: the platform default is 50 MB; the
-  bucket's own setting was not read). PR 4c measures the real generators and stages the assembly.
-- The result files are uploaded before settlement and the delivered-rows reconciliation (`route.ts:1247`) stays exactly as it is.
+There is **no 40,000-row constant** in the code; the limit is memory, and it was measured with the real generators (comments, 8 columns, default Node, forced
+garbage collection before each run; these are measurements on the development container, not on the production function):
+
+| Rows | In-memory workbook (before) | CSV |
+|---|---|---|
+| 5,000 | 1.7 s, +51 MB resident | 1.8 MB file, 0.4 s |
+| 20,000 | 5.3 s, +274 MB resident | 7.3 MB, 1.2 s |
+| 40,000 | 8.9 s, +481 MB resident, **706 MB of heap still held** | 14.6 MB, 3.0 s |
+
+About 18 MB of heap per 1,000 rows: a 1 GB function (the platform default; **not read from the project**) cannot build a workbook much past 40,000 to 50,000 rows, and the
+time (about 11 s at 50,000) still fits the 45 s deadline. The workbook is built whole in memory (`src/functions/shared/fileGenerators.ts`, `new ExcelJS.Workbook()` and a
+styled row per record), the worker holds every row of the job before generating (`route.ts` final assembly), and `JSON.stringify` of the whole payload plus the CSV string
+were further full copies.
+
+**After PR 4c:**
+- A comments/posts result above `LONG_JOB_STREAM_XLSX_ROWS` rows (default 5,000; below it the file is byte-for-byte what it was) is written row by row to a stream
+  (`generateSocialDataWorkbookStreaming`) and split over sheets of at most `LONG_JOB_ROWS_PER_SHEET` rows (default 100,000; the spreadsheet limit is 1,048,576), each sheet with its header,
+  record numbers running on, the review sheet unchanged. Measured peak heap for 30,000 rows: **about 140 MB streamed against about 550 MB in memory**.
+- The CSV is written in blocks of 2,000 records and concatenated once (identical content; no giant string next to its list of lines).
+- Companies, people and structured workbooks are unchanged: their volumes are in the hundreds.
+- **Not solved, by design:** several FILES for one format (for example `result_1.xlsx`, `result_2.xlsx`). The download routes, `artifact_versions` (one path per format) and the page know one file per
+  format; several files would need a manifest and a new download path (and a column or a manifest file in storage: SQL). Several SHEETS cover the spreadsheet limit; the storage
+  bucket's object size limit (the platform default is 50 MB; **the bucket's own setting was not read**) is what would stop a CSV of about 170,000 comment rows (14.6 MB per 40,000). That is a proposal for the owner if jobs ever approach it.
+- The result files are uploaded before settlement and the delivered-rows reconciliation stays exactly as it was.
 
 ## 4. Reads that silently stop at 1,000 rows
 
