@@ -35,6 +35,8 @@ interface ResultsCanvasProps {
   onRequestDocxMethodology: () => void;
   /** Read from the ledger row `chg_meth_<jobId>`: a bought file shows a download button and never the purchase dialog again. */
   methodologyPurchased?: boolean;
+  /** The approved plan, read-only: the «الخطة» tab. */
+  planNode?: React.ReactNode;
   onCloseMobile: () => void;
   onClose?: () => void;
   review?: ResultReview | null;
@@ -119,6 +121,7 @@ export default function ResultsCanvas({
   onExplainMethodology,
   onRequestDocxMethodology,
   methodologyPurchased = false,
+  planNode,
   onCloseMobile,
   onClose,
   review,
@@ -133,7 +136,7 @@ export default function ResultsCanvas({
   onArtifactEdit,
   onUndoVersion,
 }: ResultsCanvasProps) {
-  const [tab, setTab] = useState<"terminal" | "table" | "pdf" | "notes" | "files">(
+  const [tab, setTab] = useState<"terminal" | "table" | "pdf" | "notes" | "files" | "plan">(
     jobStatus === "running" || jobStatus === "queued" || records.length === 0 ? "terminal" : "table"
   );
 
@@ -269,6 +272,7 @@ export default function ResultsCanvas({
             ...(!nothingDelivered && producedFormats(fileIds).includes("pdf") ? [{ id: "pdf" as const, label: "التقرير" }] : []),
             { id: "notes" as const, label: "الملاحظات" },
             { id: "files" as const, label: "الملفات" },
+            ...(planNode ? [{ id: "plan" as const, label: "الخطة" }] : []),
           ]}
           active={tab}
           onChange={setTab}
@@ -323,6 +327,7 @@ export default function ResultsCanvas({
         </div>
       ) : (
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {tab === "plan" && planNode}
         {tab === "table" && (
           <div className="space-y-4">
             {/* Quick artifact edits: hidden while the paid-revision service is not offered (the save is refused). */}

@@ -28,6 +28,7 @@ import OnboardingModal from "./components/OnboardingModal";
 import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
+import { PLAN_READY_AR } from "@/lib/consultantCopy";
 import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
 import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
@@ -213,6 +214,23 @@ export default function ChatWorkspacePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationLoadSequence = useRef(0);
   const sendInFlight = useRef(false);
+
+  // A new plan opens the panel (a bottom sheet on mobile). A plan already in a restored conversation does not: the
+  // «افتح الخطة» button under it does. The first settled render only records which plan is already there.
+  const announcedPlanId = useRef<string | null | undefined>(undefined);
+  const latestPlanId = [...messages].reverse().find((m) => m.planQuote)?.planQuote?.quoteId ?? null;
+  useEffect(() => {
+    if (conversationLoading) {
+      announcedPlanId.current = undefined;
+      return;
+    }
+    if (announcedPlanId.current === undefined) {
+      announcedPlanId.current = latestPlanId;
+      return;
+    }
+    if (latestPlanId && latestPlanId !== announcedPlanId.current && !activeJob) setCanvasOpen(true);
+    announcedPlanId.current = latestPlanId;
+  }, [latestPlanId, conversationLoading, activeJob]);
 
   // Sync canvasOpen and activeJob to sessionStorage for reload persistence
   useEffect(() => {
@@ -1602,7 +1620,7 @@ export default function ChatWorkspacePage() {
       <div key={m.id}>
         {m.content && (!m.progressNotice || shouldShowProgressNotice(m, activeJob, terminalJobs)) && (
           <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>
-            {customerFacingAssistantCopy(m.content)}
+            {m.planQuote ? PLAN_READY_AR : customerFacingAssistantCopy(m.content)}
           </p>
         )}
         {m.fileShape && (m.fileShape.jobId || activeJob) && (
@@ -1619,21 +1637,16 @@ export default function ChatWorkspacePage() {
             <span className="text-xs font-light text-fnt">{m.fileShape.descriptionAr}</span>
           </div>
         )}
-        {m.planQuote && (
-          <PlanQuoteCard
-            quote={m.planQuote}
-            conversationTitle={conversationTitle}
-            onStart={handleStartExecution}
-            onSaveEdit={handleSaveDirectEdit}
-            onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
-            isStarting={startingQuoteId === m.planQuote.quoteId}
-            available={balanceValue}
-            creditValue={creditValue}
-            onTopupShort={handleTopupShort}
-            onExplore={handleExplore}
-            onRefresh={handleRefreshQuote}
-            locked={!!activeJob}
-          />
+        {m.planQuote && !canvasOpen && (
+          <button
+            type="button"
+            data-testid="open-plan-btn"
+            onClick={() => setCanvasOpen(true)}
+            aria-controls="results-canvas"
+            className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
+          >
+            افتح الخطة
+          </button>
         )}
         {m.errorRetryPrompt && (
           <button
@@ -1655,6 +1668,26 @@ export default function ChatWorkspacePage() {
       </div>
     );
   };
+
+  // The plan lives in the results panel (a bottom sheet on mobile), never in the chat stream: the latest plan is the one to act on.
+  const latestPlanQuote = [...messages].reverse().find((m) => m.planQuote)?.planQuote ?? null;
+  const planCard = (quote: PlanQuoteData, locked: boolean) => (
+    <PlanQuoteCard
+      quote={quote}
+      conversationTitle={conversationTitle}
+      onStart={handleStartExecution}
+      onSaveEdit={handleSaveDirectEdit}
+      onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
+      isStarting={startingQuoteId === quote.quoteId}
+      available={balanceValue}
+      creditValue={creditValue}
+      onTopupShort={handleTopupShort}
+      onExplore={handleExplore}
+      onRefresh={handleRefreshQuote}
+      locked={locked}
+    />
+  );
+  const panelShowsPlan = !activeJob && latestPlanQuote !== null;
 
   const runNode = activeJob ? (
     activeJob.status !== "failed" ? (
@@ -1838,7 +1871,25 @@ export default function ChatWorkspacePage() {
             aria-hidden="true"
             className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-xs lg:hidden"
           />
-          <div id="results-canvas" role="region" aria-label="لوحة النتائج" className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf shadow-2xl motion-reduce:animate-none lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
+          <div id="results-canvas" role="region" aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf shadow-2xl motion-reduce:animate-none lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
+            {panelShowsPlan && latestPlanQuote ? (
+              <div className="flex h-full min-h-0 flex-col bg-sf" data-testid="plan-panel">
+                <div className="flex items-center justify-between border-b border-sand-200 bg-sand-50/70 px-4 py-3">
+                  <h2 className="text-sm font-bold text-ink-900">الخطة والسعر</h2>
+                  <button
+                    type="button"
+                    onClick={() => setCanvasOpen(false)}
+                    aria-label="إغلاق لوحة الخطة"
+                    className="touch-target inline-flex items-center justify-center rounded-xl text-sand-500 hover:bg-sand-200 hover:text-ink-900"
+                  >
+                    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+                      <path strokeLinecap="round" d="m6 6 12 12M18 6 6 18" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">{planCard(latestPlanQuote, false)}</div>
+              </div>
+            ) : (
             <ResultsCanvas
               records={extractedRecords}
               profile={extractedProfile}
@@ -1869,7 +1920,9 @@ export default function ChatWorkspacePage() {
               artifactEditing={artifactEditing}
               onArtifactEdit={(operation) => void submitArtifactAction({ operation })}
               onUndoVersion={(targetVersionId) => void submitArtifactAction({ undoToVersionId: targetVersionId })}
+              planNode={latestPlanQuote ? planCard(latestPlanQuote, true) : undefined}
             />
+            )}
           </div>
         </>
       )}

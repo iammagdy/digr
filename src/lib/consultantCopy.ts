@@ -285,3 +285,6 @@ export function isFormStyleIntro(text: string): boolean {
   if (!body) return true;
   return /[:：]\s*$/.test(body) || /محتاج أعرف|جاوبني على الأسئلة|أحتاج أعدّل الخطة|لحظة\.?\s*$/u.test(body);
 }
+
+/** The only line the chat shows when a plan is ready: the plan itself lives in the results panel. */
+export const PLAN_READY_AR = "جهزت لك الخطة، راجعها على اليمين.";
