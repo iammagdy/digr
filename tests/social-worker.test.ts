@@ -305,7 +305,7 @@ describe("worker: social jobs", () => {
       expect(json.released).toBe(true);
       // The step file of a page that ended the chunk keeps at most three dates, never row content.
       const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
-      expect(stepFile.dateWindow).toEqual({ missing: 0, outside: 20, oldest: "2026-10-12", newest: "2026-10-13", sampleDates: ["2026-10-12", "2026-10-12", "2026-10-12"] });
+      expect(stepFile.dateWindow).toEqual({ missing: 0, outside: 20, inside: 0, oldest: "2026-10-12", newest: "2026-10-13", sampleDates: ["2026-10-12", "2026-10-12", "2026-10-12"] });
     });
 
     it("rows inside the window are delivered and charged as usual", async () => {
@@ -318,6 +318,90 @@ describe("worker: social jobs", () => {
       const settle = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
       expect(settle).toBeDefined();
       expect(db.events.some((event) => String(event.message).includes("وكلها داخل الفترة المطلوبة"))).toBe(true);
+    });
+  });
+  describe("TikTok comments with a time window", () => {
+    const secs = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+    const WINDOW = { dateFrom: "2026-09-20", dateTo: "2026-10-20" };
+    const VIDEO_ID = "7231337071831321900";
+    type CommentSpec = { time?: string; text?: string };
+    const runCommentsJob = async (opts: { videoTime?: string; videoDesc?: string; comments: CommentSpec[]; target?: number }) => {
+      resetDb("social-tiktok-comments", { query: "كرة القدم", region: "EG", perVideo: 30, ...WINDOW }, opts.target ?? 30, 6);
+      useSource(async (_source, params) => {
+        if (params.aweme_id) {
+          return ok({ data: { comments: opts.comments.map((c, i) => ({ cid: `c${i}`, text: c.text ?? `هدف رائع في مباراة كرة القدم ${i}`, user: { nickname: "منى", unique_id: "mona" }, digg_count: i, ...(c.time ? { create_time: secs(c.time) } : {}) })), cursor: 0, has_more: 0 } });
+        }
+        return ok({ aweme_list: [{ aweme_id: VIDEO_ID, desc: opts.videoDesc ?? "فيديو عن كرة القدم", share_url: `https://www.tiktok.com/@u/video/${VIDEO_ID}`, ...(opts.videoTime ? { create_time: secs(opts.videoTime) } : {}) }] });
+      });
+      return runAllChunks();
+    };
+    const lines = () => db.events.map((event) => String(event.message));
+    const dateLines = () => lines().filter((line) => line.includes("من هذه الصفحة"));
+
+    it("judges each comment by its own time, never by the video's: old video, recent comments are delivered", async () => {
+      const { json } = await runCommentsJob({ videoTime: "2026-04-01T10:00:00Z", comments: Array.from({ length: 5 }, (_, i) => ({ time: `2026-10-0${i + 1}T10:00:00Z` })) });
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(5);
+      expect(dateLines()[0]).toContain("وكلها داخل الفترة المطلوبة");
+      expect(dateLines()[0]).toContain("أقدم تاريخ نشر ٢٠٢٦-١٠-٠١ وأحدث تاريخ ٢٠٢٦-١٠-٠٥");
+      expect(lines().some((line) => line.includes("المصدر لا يعرض تاريخ كتابة التعليقات"))).toBe(false);
+    });
+
+    it("comments whose own time is outside the window are dropped, and the line never claims they are inside", async () => {
+      const comments: CommentSpec[] = [
+        ...Array.from({ length: 3 }, (_, i) => ({ time: `2026-10-1${i}T10:00:00Z` })),
+        ...Array.from({ length: 4 }, (_, i) => ({ time: `2026-0${4 + i}-01T10:00:00Z` })),
+      ];
+      const { json } = await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", comments });
+      expect(json.deliveredUnits).toBe(3);
+      const line = dateLines()[0];
+      expect(line).toContain("تم استبعاد ٤ سجل من هذه الصفحة بسبب التاريخ: ٤ خارج الفترة المطلوبة");
+      expect(line).toContain("وبقي ٣ داخلها");
+      expect(line).not.toContain("وكلها داخل");
+    });
+
+    it("all comments outside the window: the line says so and the reason says the same, not the topic", async () => {
+      await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", comments: Array.from({ length: 6 }, (_, i) => ({ time: `2026-0${3 + (i % 4)}-15T10:00:00Z` })) });
+      expect(dateLines()[0]).toContain("٦ خارج الفترة المطلوبة");
+      expect(dateLines()[0]).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
+      expect(dateLines()[0]).not.toContain("وكلها داخل");
+      const release = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      expect(String(release!.args.p_error_message)).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
+    });
+
+    it("no comment has a date of its own: the window is applied to the video's date, plainly said, and nothing internal is delivered", async () => {
+      const { json } = await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", comments: Array.from({ length: 5 }, () => ({})) });
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(5);
+      expect(dateLines()[0]).toContain("المصدر لا يعرض تاريخ كتابة التعليقات، فطبّقنا الفترة المطلوبة على تاريخ نشر الفيديو الذي كُتبت عليه (٥ تعليق)");
+      const stored = [...db.partials.entries()].map(([, v]) => v.toString("utf-8")).join("\n");
+      expect(stored).not.toContain("_date_basis");
+      expect(stored).not.toContain("_video_published_at");
+      expect(db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8")).not.toContain("_date_basis");
+    });
+
+    it("no comment date and the video itself is outside the window: nothing is delivered, said in plain Arabic, full release", async () => {
+      await runCommentsJob({ videoTime: "2026-04-01T10:00:00Z", comments: Array.from({ length: 5 }, () => ({})) });
+      expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
+      expect(dateLines()[0]).toContain("٥ خارج الفترة المطلوبة");
+      expect(dateLines()[0]).toContain("المصدر لا يعرض تاريخ كتابة التعليقات");
+      expect(db.rpcCalls.some((c) => c.name === "release_job_atomic")).toBe(true);
+    });
+
+    it("no date anywhere (neither comments nor video): rows are excluded as undated and said so, never reported inside", async () => {
+      await runCommentsJob({ comments: Array.from({ length: 4 }, () => ({})) });
+      expect(dateLines()[0]).toContain("٤ بلا تاريخ نشر يمكن التحقق منه");
+      expect(dateLines()[0]).not.toContain("وكلها داخل");
+      expect(dateLines()[0]).toContain("لم يظهر تاريخ نشر في أي سجل");
+    });
+
+    it("dates are fine but none of the comments is about the topic: the reason names the topic, not the scope or the dates", async () => {
+      await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", videoDesc: "فيديو عام", comments: Array.from({ length: 6 }, (_, i) => ({ time: `2026-10-0${i + 1}T10:00:00Z`, text: `رأيي في السياسة رقم ${i}` })) });
+      const release = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      const reason = String(release!.args.p_error_message);
+      expect(reason).toContain("وتواريخها داخل الفترة التي حددتها، لكن لم يتحقق في أيٍّ منها موضوع طلبك");
+      expect(reason).not.toContain("نطاق طلبك");
+      expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
     });
   });
 });

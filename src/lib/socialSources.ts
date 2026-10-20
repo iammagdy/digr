@@ -16,6 +16,7 @@ import { channelsCountAr, videosCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 import { withXDateOperators } from "./xSearchWindow";
+import { rowDateMs } from "./server/dateRangeFilter";
 
 export type SocialKind = "comments" | "videos" | "posts";
 export type SocialMode = "url" | "query" | "channel" | "trending";
@@ -30,6 +31,8 @@ export interface SocialRef {
   views?: number;
   /** The channel the video was found under, when the job covers several channels. */
   channel?: string;
+  /** When the video was published (ms), when the provider's row said so: the date the window is applied to if the comments carry none. */
+  publishedAtMs?: number;
 }
 
 export interface SocialSourceRequest {
@@ -690,7 +693,8 @@ export function extractSocialRef(platform: SocialPlatformId, row: Record<string,
   const ref = extractSocialRefBase(platform, row);
   if (!ref) return null;
   const views = viewCountOf(row);
-  return views === null ? ref : { ...ref, views };
+  const publishedAtMs = rowDateMs(row);
+  return { ...ref, ...(views === null ? {} : { views }), ...(publishedAtMs === null ? {} : { publishedAtMs }) };
 }
 
 function extractSocialRefBase(platform: SocialPlatformId, row: Record<string, any>): SocialRef | null {

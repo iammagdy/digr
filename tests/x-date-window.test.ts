@@ -95,12 +95,12 @@ describe("summarizeRowDates", () => {
 
   it("splits missing from outside, reports the oldest and newest day, keeps at most three sample dates", () => {
     const summary = summarizeRowDates(rows, "2026-06-11", "2026-07-19");
-    expect(summary).toEqual({ missing: 1, outside: 2, oldest: "2026-06-20", newest: "2026-10-18", sampleDates: ["2026-10-18", "2026-10-12", null] });
+    expect(summary).toEqual({ missing: 1, outside: 2, inside: 1, oldest: "2026-06-20", newest: "2026-10-18", sampleDates: ["2026-10-18", "2026-10-12", null] });
   });
 
   it("agrees with the filter: rows inside the window are neither missing nor outside", () => {
     expect(summarizeRowDates([{ published_at: "2026-06-20" }], "2026-06-11", "2026-07-19")).toMatchObject({ missing: 0, outside: 0 });
-    expect(summarizeRowDates([], "2026-06-11", "2026-07-19")).toEqual({ missing: 0, outside: 0, oldest: null, newest: null, sampleDates: [] });
+    expect(summarizeRowDates([], "2026-06-11", "2026-07-19")).toEqual({ missing: 0, outside: 0, inside: 0, oldest: null, newest: null, sampleDates: [] });
   });
 });
 

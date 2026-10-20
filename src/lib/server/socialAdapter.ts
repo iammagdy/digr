@@ -30,6 +30,7 @@ import {
   type SocialSourceRequest,
 } from "../socialSources";
 import { timeNeededForAnotherCallMs } from "./chunkSizing";
+import { DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "./tregAdapter";
 
@@ -266,6 +267,18 @@ function success(
   };
 }
 
+/**
+ * Comments are judged by their OWN creation time. When the source gives a window's worth of comments of one video and not
+ * one of them carries a date of its own, the only date there is, is the video's: those comments are marked so the worker
+ * applies the window to the video's publication date (and says so), instead of silently dropping every comment as undated.
+ */
+function markVideoDateBasis(rows: Record<string, any>[], ref: SocialRef | undefined, params: Record<string, any>): Record<string, any>[] {
+  const windowed = typeof params.dateFrom === "string" || typeof params.dateTo === "string";
+  if (!windowed || !ref || ref.publishedAtMs === undefined || rows.length === 0) return rows;
+  if (rows.some((row) => rowDateMs(row) !== null)) return rows;
+  return rows.map((row) => ({ ...row, [DATE_BASIS_KEY]: "video", [VIDEO_PUBLISHED_AT_KEY]: ref.publishedAtMs }));
+}
+
 function annotateComment(row: Record<string, any>, ref: SocialRef | undefined): Record<string, any> {
   if (!ref) return row;
   return {
@@ -381,7 +394,7 @@ async function runMissionChunk(
     }
     commentsAnswered = true;
     const fresh = dedupe(chain.rows, seen).slice(0, Math.max(0, Math.min(need, rowCap - rows.length)));
-    for (const row of fresh) rows.push(annotateComment(row, ref));
+    for (const row of markVideoDateBasis(fresh, ref, params)) rows.push(annotateComment(row, ref));
     const taken: number = (state.n ?? 0) + fresh.length;
     const more: boolean = Boolean(chain.nextCursor) && taken < perVideo && fresh.length > 0;
     state = more ? { ...state, cc: chain.nextCursor, n: taken, si: chain.sourceIndex } : { ...state, i: index + 1, cc: null, n: 0, si: null };
@@ -546,7 +559,7 @@ async function runCommentsChunk(
 
     commentsAnswered = true;
     const fresh = dedupe(chain.rows, seen).slice(0, Math.max(0, Math.min(need, wanted - rows.length)));
-    for (const row of fresh) rows.push(annotateComment(row, ref));
+    for (const row of markVideoDateBasis(fresh, ref, params)) rows.push(annotateComment(row, ref));
     const taken: number = (state.n ?? 0) + fresh.length;
     const moreOnThisVideo: boolean = Boolean(chain.nextCursor) && taken < perVideo && fresh.length > 0;
     state = moreOnThisVideo
