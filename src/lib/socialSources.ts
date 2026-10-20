@@ -11,7 +11,7 @@
  */
 
 import { normalizeDigits } from "./arabicDigits";
-import { extractUrls, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
+import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 
 export type SocialKind = "comments" | "videos" | "posts";
@@ -781,7 +781,8 @@ export function canonicalSocialParams(
 ): Record<string, any> {
   const params: Record<string, any> = {};
   const model = modelParams || {};
-  const country = detectCountryFromText(requestText);
+  // Only a place the customer named as a location («في مصر») filters by country; a country inside the topic («مباراة مصر والمغرب») does not.
+  const country = detectCountryFromText(socialLocationText(requestText));
   const region = country ? isoCountryCodeFromName(country.canonicalEnglish) : undefined;
   // Keep the customer's explicit country available to both region-aware routes and plan display.
   if (region) params.region = region;

@@ -251,7 +251,7 @@ export function hasRegionHint(text: string): boolean {
 /** Words that add nothing to a topic: request verbs, platform names, quantities and the task words themselves. */
 const TOPIC_NOISE = new Set([
   "عايز", "عايزه", "عايزة", "عاوز", "عاوزه", "اريد", "أريد", "محتاج", "محتاجة", "ابغى", "أبغى", "هات", "هاتلي", "اسحب", "سحب", "استخرج", "جمع", "اجمع", "ابحث", "لي", "لى", "ليا", "لنا",
-  "من", "على", "علي", "في", "فى", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
+  "من", "على", "علي", "في", "فى", "داخل", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
   "ردود", "وردود", "ردودها", "وردودها", "ردودهم", "وردودهم", "ردوده", "replies", "reply",
   "فيديو", "فيديوهات", "مقطع", "مقاطع", "بوست", "بوستات", "منشور", "منشورات", "تغريدة", "تغريدات", "تويت", "تويتة", "تويتات", "tweets", "tweet", "كومنت", "كومنتس", "كومنتات", "تعليق", "تعليقات", "ترند", "تريند", "تراند", "الترند", "التريند",
   "ستراندنج", "الستراندنج", "استراندنج", "الاستراندنج", "ترندنج", "الترندنج", "رائج", "الرائج", "الاكثر", "الأكثر", "مشاهدة", "تفاعل", "انتشار", "فيرال",
@@ -266,23 +266,59 @@ const TOPIC_NOISE = new Set([
   "tiktok", "youtube", "facebook", "instagram", "twitter", "videos", "video", "posts", "post", "comments", "comment", "trending", "trend", "viral", "get", "me", "the", "of", "on", "from", "about", "for", "with", "and", "a", "an", "i", "want", "need",
 ]);
 
-function topicTokens(text: string): string[] {
-  const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
-  return (text || "")
+/** Words that make the country after them a LOCATION («في مصر», «من مصر», «داخل مصر», «بمصر»), not part of the topic. */
+const LOCATION_PREPOSITIONS = new Set(["في", "فى", "من", "داخل"]);
+
+interface AnalyzedToken { token: string; location: boolean }
+
+/**
+ * The words of a request, each marked as a location or not. A country is a location only when the customer says so with a
+ * preposition («في مصر»); a country that is part of the topic («مباراة مصر والمغرب», «الأهلي والزمالك») is an entity and stays in it.
+ * A second country joined with «و» right after a location («في مصر والسعودية») is a location too.
+ */
+function analyzeTokens(text: string): AnalyzedToken[] {
+  const tokens = (text || "")
     .replace(URL_RE, " ")
     .toLowerCase()
     .replace(/[0-9٠-٩۰-۹]+/g, " ")
     .replace(/[^\p{L}\p{N}#@_]+/gu, " ")
-    .split(/\s+/)
-    .filter((token, index, all) => {
+    .split(/\s+/);
+  const out: AnalyzedToken[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    let location = false;
+    if (token && REGION_HINT_RE.test(token)) {
+      const previous = tokens[i - 1] || "";
+      const previousLocation = i > 0 && out[i - 1]?.location === true;
+      location =
+        LOCATION_PREPOSITIONS.has(previous) ||
+        (token.length > 2 && token.startsWith("ب") && REGION_HINT_RE.test(token.slice(1)) && !REGION_HINT_RE.test(token.slice(0, 1))) ||
+        (previousLocation && token.startsWith("و"));
+    }
+    out.push({ token, location });
+  }
+  return out;
+}
+
+function topicTokens(text: string): string[] {
+  const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
+  return analyzeTokens(text)
+    .filter(({ token, location }, index) => {
       if (!token) return false;
       if (periodFlags[index]) return false;
       const bare = token.replace(/^ال/u, "");
       if (bare.length < 2) return false;
       if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare)) return false;
-      if (REGION_HINT_RE.test(token)) return false;
+      // A location is a filter, not a topic word; an entity that is a country stays in the topic.
+      if (location) return false;
       return true;
-    });
+    })
+    .map(({ token }) => token);
+}
+
+/** The places the customer named as a location («في مصر», «من السعودية»): the only words a country filter may come from. */
+export function socialLocationText(text: string): string {
+  return analyzeTokens(text).filter((entry) => entry.location).map((entry) => entry.token).join(" ");
 }
 
 /** True when the text names a subject (a keyword, hashtag or name) beyond verbs, platform, region and task words. */

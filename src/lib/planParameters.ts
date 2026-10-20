@@ -746,7 +746,7 @@ export function getCompanyRequirementItems(
  * Decision-maker roles in a request: a specific title (CEO, مدير, مؤسس ...) or the generic phrase
  * itself (صناع القرار, decision makers, executives), which already names who is wanted.
  */
-export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|مالك(?:ي|ين)?|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
+export const PEOPLE_ROLE_PATTERN = /\b(?:ceos?|ctos?|cfos?|coos?|founders?|co-?founders?|owners?|directors?|managers?|presidents?|heads? of|vps?|executives?|decision[\s-]*makers?|c-?level)\b|الرئيس التنفيذي|الرؤساء التنفيذيين|مدير(?:ين)?|مدراء|مؤسس(?:ين)?|(?<![\p{L}])[وبلفك]?(?:ال)?مالك(?:ي|ين)?(?![\p{L}])|أصحاب الشركات|رئيس مجلس الإدارة|مسؤول(?:ين)?|صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|أصحاب القرار|المديرين التنفيذيين|مسؤولين تنفيذيين/iu;
 
 export function isPeopleSearchRequest(text: string): boolean {
   // «شركات حجمها أكثر من ٥٠ موظف» is a company filter, not a request for employees.
