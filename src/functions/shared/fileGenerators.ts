@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
+import { PassThrough } from "node:stream";
 import * as path from "path";
 import * as fs from "fs";
 import { normalizeDataset, escapeFormula, type NormalizedDataset } from "../../lib/server/normalizationPipeline";
@@ -11,6 +12,7 @@ import { arabicVerificationStatus } from "../../lib/contactVerification";
 import { industryLabelForCell } from "../../lib/industryLabels";
 import { normalizeSocialRow } from "../../lib/server/socialRows";
 import { resolveCompanyLinks } from "../../lib/companyUrls";
+import { scaleValue } from "../../lib/scaleConfig";
 import { FILE_SPEC_LIMITS, applySpecToRows, groupRows, sheetNames, specColumns, type FileSpec } from "../../lib/fileSpec";
 
 let cachedRegularBuffer: Buffer | null = null;
@@ -257,8 +259,115 @@ export async function generateExcelReport(
   return generateStructuredDataWorkbook(payload, norm);
 }
 
+/** The cells of one social record, in column order (the same in the in-memory workbook and in the streamed one). */
+function socialRowValues(norm: NormalizedDataset, record: Record<string, any>, index: number): ExcelJS.CellValue[] {
+  return norm.columns.map((key) => {
+    const value = record[key];
+    if (value === null || value === undefined) return "";
+    if (key === "id") return plainRecordId(value, index);
+    if (typeof value === "boolean") return value ? "نعم" : "لا";
+    if (typeof value === "string" && /^https?:\/\//i.test(value.trim()) && /(?:^url$|_url$)/i.test(key)) return workbookHyperlink(value);
+    return escapeFormula(value);
+  });
+}
+
+const socialSheetName = (norm: NormalizedDataset) =>
+  norm.metadata.socialKind === "comments" ? "التعليقات" : norm.metadata.socialKind === "videos" ? "الفيديوهات والمنشورات" : "المنشورات";
+
+const socialColumnWidths = (norm: NormalizedDataset) =>
+  norm.columns.map((key) => ({
+    width: /comment_text|video_caption|video_title/.test(key) ? 48 : /url/.test(key) ? 32 : /hashtags|author_name|channel_name/.test(key) ? 24 : 16,
+  }));
+
+/**
+ * A large result of comments or posts, written row by row to a stream instead of built in memory: memory stays flat whatever the number
+ * of rows (the in-memory workbook needs about 18 MB per 1,000 rows), and the rows are split over several sheets of at most
+ * `rowsPerSheet` rows, the first row of each sheet being the header. The columns, cell values, styles and the review sheet are the same
+ * as in the in-memory workbook; only a result above `scaleValue("streamXlsxAboveRows")` rows takes this path.
+ */
+async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
+  const out = new PassThrough();
+  const pieces: Buffer[] = [];
+  out.on("data", (piece: Buffer) => pieces.push(piece));
+  const finished = new Promise<void>((resolve, reject) => { out.on("end", () => resolve()); out.on("error", reject); });
+  const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: out, useStyles: true, useSharedStrings: false });
+  wb.creator = "Diger";
+  const labels = new Map(norm.codebook.map((entry) => [entry.field, entry.titleAr]));
+  const headers = norm.columns.map((key) => labels.get(key) || key);
+  const perSheet = scaleValue("rowsPerSheet");
+  const sheetCount = Math.max(1, Math.ceil(norm.rows.length / perSheet));
+  for (let part = 0; part < sheetCount; part += 1) {
+    const sheet = wb.addWorksheet(sheetCount === 1 ? socialSheetName(norm) : `${socialSheetName(norm)} ${toArabicDigits(part + 1)}`, {
+      views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
+    });
+    sheet.columns = socialColumnWidths(norm);
+    const header = sheet.addRow(headers);
+    header.eachCell((cell) => {
+      cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    });
+    header.height = 30;
+    header.commit();
+    const from = part * perSheet;
+    const to = Math.min(norm.rows.length, from + perSheet);
+    for (let index = from; index < to; index += 1) {
+      const row = sheet.addRow(socialRowValues(norm, norm.rows[index], index));
+      row.height = 22;
+      row.alignment = { vertical: "middle", wrapText: true };
+      row.eachCell((cell) => {
+        cell.border = borderThin;
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+        if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+      });
+      row.commit();
+    }
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, to - from + 1), column: Math.max(1, headers.length) } };
+    sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+    sheet.commit();
+  }
+  const review = (Array.isArray(uncertainRows) ? uncertainRows : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason }));
+  if (review.length > 0) {
+    const sheet = wb.addWorksheet("سجلات تحتاج مراجعة", { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
+    sheet.columns = [22, 60, 36, 56].map((width) => ({ width }));
+    const notice = sheet.addRow([REVIEW_SHEET_NOTICE_AR]);
+    sheet.mergeCells(1, 1, 1, 4);
+    const noticeCell = notice.getCell(1);
+    noticeCell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF7A2E0E" } };
+    noticeCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4E5" } };
+    noticeCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true, readingOrder: "rtl" as any };
+    notice.height = 48;
+    notice.commit();
+    const head = sheet.addRow(["معرّف السجل", "ما ورد في السجل", "الرابط", "سبب المراجعة"]);
+    head.eachCell((cell) => {
+      cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+      cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    });
+    head.commit();
+    review.forEach((row: any, i: number) => {
+      const link = String(row.url || row.video_url || "");
+      const out2 = sheet.addRow([
+        plainRecordId(row?.id ?? row?.source_id, i),
+        escapeFormula(String(row.comment_text || row.text || row.video_caption || row.video_title || "غير متاح")),
+        /^https?:\/\//i.test(link) ? workbookHyperlink(link) : "غير متاح",
+        escapeFormula(String(row?._relevance_reason || "غير متاح")),
+      ]);
+      out2.alignment = { vertical: "middle", wrapText: true };
+      out2.eachCell((cell) => { cell.border = borderThin; if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true }; });
+      out2.commit();
+    });
+    sheet.autoFilter = { from: { row: 2, column: 1 }, to: { row: review.length + 2, column: 4 } };
+    sheet.commit();
+  }
+  await wb.commit();
+  await finished;
+  return Buffer.concat(pieces);
+}
+
 /** One data sheet of comments or videos with the fixed Arabic columns, readable dates and live links. */
 async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
+  if (norm.rows.length > scaleValue("streamXlsxAboveRows")) return generateSocialDataWorkbookStreaming(norm, uncertainRows);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = customerFacingTitle(norm.metadata.title);
@@ -280,16 +389,7 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
   });
   header.height = 30;
   norm.rows.forEach((record, index) => {
-    const row = sheet.addRow(
-      norm.columns.map((key) => {
-        const value = record[key];
-        if (value === null || value === undefined) return "";
-        if (key === "id") return plainRecordId(value, index);
-        if (typeof value === "boolean") return value ? "نعم" : "لا";
-        if (typeof value === "string" && /^https?:\/\//i.test(value.trim()) && /(?:^url$|_url$)/i.test(key)) return workbookHyperlink(value);
-        return escapeFormula(value);
-      }),
-    );
+    const row = sheet.addRow(socialRowValues(norm, record, index));
     row.height = 22;
     row.alignment = { vertical: "middle", wrapText: true };
     row.eachCell((cell) => {
@@ -298,9 +398,7 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
       if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
     });
   });
-  sheet.columns = norm.columns.map((key) => ({
-    width: /comment_text|video_caption|video_title/.test(key) ? 48 : /url/.test(key) ? 32 : /hashtags|author_name|channel_name/.test(key) ? 24 : 16,
-  }));
+  sheet.columns = socialColumnWidths(norm);
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, norm.rows.length + 1), column: Math.max(1, headers.length) } };
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
   // Rows the gate could not decide are normalised like delivered rows and listed apart, never charged.
@@ -726,6 +824,9 @@ export function shapedPayload(payload: any, spec: FileSpec): any {
 /**
  * Generate a white-label CSV file with UTF-8 BOM and formula injection protection
  */
+/** Rows turned into text at a time when a CSV file is written. */
+const CSV_ROWS_PER_BLOCK = 2000;
+
 export function generateCsvReport(payload: any): Buffer {
   const norm: NormalizedDataset = normalizeDataset(payload);
 
@@ -740,7 +841,7 @@ export function generateCsvReport(payload: any): Buffer {
   const headers = norm.columns.map((c) => codebookMap.get(c) || c);
   const headerLine = headers.map(escapeCsv).join(",");
 
-  const rowLines = norm.rows.map((row: any) => {
+  const csvLine = (row: any) => {
     const isCompany = Boolean(row.company_name || row.website || row.linkedin_url || row.domain);
     const links = isCompany ? resolveCompanyLinks(row) : null;
     return norm.columns
@@ -756,11 +857,18 @@ export function generateCsvReport(payload: any): Buffer {
         return escapeCsv(escapeFormula(val));
       })
       .join(",");
-  });
+  };
 
+  // Written in blocks of rows (the BOM, the header, then each block), so a very large result never exists as one giant string next to
+  // its list of lines and its buffer; the bytes are exactly those of the single-string version.
   // UTF-8 BOM (\uFEFF) ensures Excel and statistical software open Arabic without mojibake
-  const csvContent = "\uFEFF" + headerLine + "\n" + rowLines.join("\n") + "\n";
-  return Buffer.from(csvContent, "utf-8");
+  const blocks: Buffer[] = [Buffer.from("\uFEFF" + headerLine + "\n", "utf-8")];
+  for (let start = 0; start < norm.rows.length; start += CSV_ROWS_PER_BLOCK) {
+    const text = norm.rows.slice(start, start + CSV_ROWS_PER_BLOCK).map(csvLine).join("\n");
+    blocks.push(Buffer.from((start > 0 ? "\n" : "") + text, "utf-8"));
+  }
+  blocks.push(Buffer.from("\n", "utf-8"));
+  return Buffer.concat(blocks);
 }
 
 /**

@@ -9,7 +9,7 @@
  * its own [min, max], so a typo can neither switch a ceiling off nor set it to a number the worker cannot honour.
  */
 
-export type ScaleKey = "absoluteMaxPages" | "largeJobPageAllowance" | "socialMaxRows" | "maxPerVideo" | "maxVideosPerJob";
+export type ScaleKey = "absoluteMaxPages" | "largeJobPageAllowance" | "socialMaxRows" | "maxPerVideo" | "maxVideosPerJob" | "streamXlsxAboveRows" | "rowsPerSheet";
 
 interface ScaleSpec {
   env: string;
@@ -31,6 +31,11 @@ export const SCALE_SPECS: Record<ScaleKey, ScaleSpec> = {
   // Most comments taken from one video, and most videos one job reads.
   maxPerVideo: { env: "LONG_JOB_MAX_PER_VIDEO", def: 500, min: 1, max: 5000, whatAr: "أكبر عدد تعليقات من فيديو واحد" },
   maxVideosPerJob: { env: "LONG_JOB_MAX_VIDEOS", def: 20, min: 1, max: 200, whatAr: "أكبر عدد فيديوهات لمهمة واحدة" },
+  // A comments/posts workbook with more rows than this is written as a stream (flat memory); the in-memory workbook needs about 18 MB per
+  // 1,000 rows and passes 700 MB at 40,000 rows. Below it nothing changes: the same file as before.
+  streamXlsxAboveRows: { env: "LONG_JOB_STREAM_XLSX_ROWS", def: 5000, min: 0, max: 1_000_000, whatAr: "عدد الصفوف الذي يبدأ بعده كتابة الملف على دفعات" },
+  // Rows per sheet of a streamed workbook (a spreadsheet allows 1,048,576).
+  rowsPerSheet: { env: "LONG_JOB_ROWS_PER_SHEET", def: 100_000, min: 1, max: 1_000_000, whatAr: "أكبر عدد صفوف في ورقة واحدة" },
 };
 
 let testOverrides: Partial<Record<ScaleKey, number>> | null = null;
