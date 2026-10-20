@@ -7,7 +7,7 @@ import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
 import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, fileEditAnswerAr, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, unsupportedFileEdit, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
-import { planExplanationLinesAr } from "../../lib/planExplanation";
+import { planExplanationLinesAr, recordNounAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
@@ -94,7 +94,7 @@ import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocia
 import { loadMeasuredTimings } from "../../lib/server/jobTimings";
 import { missionDurationForPlan } from "../../lib/missionDuration";
 import { longJobDriverMode } from "../../lib/driverMode";
-import { DEFAULT_COMMENTS_CAP, DEFAULT_RECORDS_CAP, defaultCapFittedLineAr, defaultCapLineAr } from "../../lib/planDefaults";
+import { DEFAULT_COMMENTS_CAP, DEFAULT_RECORDS_CAP, defaultCapFittedLineAr, defaultCapLineAr, type DefaultNoun } from "../../lib/planDefaults";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
 import { scrubPlaceholderPhrases } from "../../lib/customerScrub";
@@ -3259,7 +3259,7 @@ export class ChatHandler {
         // What the customer asked for a single social item, before any ceiling (the capability's rows or the job's points cap).
         let askedVolumeForCard = null as number | null;
         /** Set when the plan's count is a default (the customer left it open): the plan says so and the customer can edit it. */
-        let defaultCapUsed = null as { noun: "comments" | "records"; units: number } | null;
+        let defaultCapUsed = null as { noun: DefaultNoun; units: number } | null;
         /** The number of videos the customer asked for in a comments request: a quantity of its own, shown next to the comment count. */
         let videosStatedForPlan = null as { count: number; noun: "videos" | "posts" } | null;
         /** The top videos found by a topic because the customer skipped the channels: the plan says so. */
@@ -3307,10 +3307,13 @@ export class ChatHandler {
               const writtenCount = understanding.volume || (researchIntent.sampleSize.provenance === "EXPLICIT" ? researchIntent.sampleSize.value : 0);
               capIsDefault = !(writtenCount && writtenCount > 0);
               statedVolume = capIsDefault ? DEFAULT_RECORDS_CAP : Number(writtenCount);
-            } else if (explicitRequestedVolume && explicitRequestedVolume > 0) {
-              statedVolume = explicitRequestedVolume;
             } else {
-              statedVolume = item.targetVolumeMax || 1;
+              // A count the customer wrote (or tapped on the cap card). The brief's own «10» is a placeholder, and a card answer to another
+              // question (the period) does not make it the customer's: without a count of theirs the plan's number is a default, and says so.
+              const videosWritten = Number(/(?:^|[^\d])(\d{1,6})\s*(?:فيديو|فيديوهات|مقطع|مقاطع|ريلز|شورتس)/u.exec(normalizeDigits(conversationRequestText))?.[1]) || 0;
+              const writtenCount = understanding.volume || (researchIntent.sampleSize.provenance === "EXPLICIT" ? researchIntent.sampleSize.value : 0) || videosWritten;
+              capIsDefault = !(writtenCount && writtenCount > 0);
+              statedVolume = capIsDefault ? item.targetVolumeMax || 1 : Number(writtenCount);
             }
             const askedVideos = commentsOfPosts && !byTopic ? understanding.videos ?? videoCountBrief : undefined;
             const perVideoForPlan = byTopic && topicVideoCount
@@ -3339,7 +3342,7 @@ export class ChatHandler {
             const reachable = params.videoCount && params.perVideo ? Number(params.videoCount) * Number(params.perVideo) : Infinity;
             const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows, reachable));
             askedVolumeForCard = items.length === 1 ? statedVolume : null;
-            if ((missionCap && mission && mission.volume === null) || capIsDefault) defaultCapUsed = { noun: isCommentsKind ? "comments" : "records", units: statedVolume };
+            if ((missionCap && mission && mission.volume === null) || capIsDefault) defaultCapUsed = { noun: isCommentsKind ? "comments" : verifiedSocialDef.kind === "videos" ? "videos" : "records", units: statedVolume };
             if (isCommentsKind && understanding.videos && !isMission && !byTopic) videosStatedForPlan = { count: understanding.videos, noun: understanding.videosNoun };
             if (byTopic && mission?.subject) missionByTopicSubject = mission.subject;
             return {
@@ -3706,6 +3709,11 @@ export class ChatHandler {
               countStated: Boolean(extractNumberFromText(conversationRequestText)),
             });
             planSummaryText += `\n- ${explanation.join("\n- ")}`;
+            // The proposed sample size of a plan with no count of the customer's is a default on the card too, in the plan's own word.
+            if (!verifiedSocialDef && !extractNumberFromText(conversationRequestText)) {
+              const slug = String(managedQuote.items[0]?.capabilitySlug || "");
+              planQuoteData.defaultCap = { noun: /comment/i.test(slug) ? "comments" : /video|tiktok|youtube/i.test(slug) ? "videos" : "records", units: managedQuote.targetVolumeMax, wordAr: recordNounAr(slug) };
+            }
           }
           const unsupportedNote = unsupportedConstraintsNoteAr(extractRequestIntent(conversationRequestText));
           if (unsupportedNote) planSummaryText += `\n- ${unsupportedNote}`;
@@ -3730,6 +3738,8 @@ export class ChatHandler {
           }
           // A count the customer left open is a visible default on the plan, never a hidden number.
           const defaultCapNow = defaultCapUsed && managedQuote.items.length === 1 ? defaultCapUsed : null;
+          // The plan card shows the same default sentence (never «you asked for»): it reads this field, not the count alone.
+          if (defaultCapNow) planQuoteData.defaultCap = { noun: defaultCapNow.noun, units: defaultCapNow.units };
           if (defaultCapNow) {
             planSummaryText += `\n- ${defaultCapLineAr(defaultCapNow.noun, defaultCapNow.units)}`;
             // A default is not something the customer asked for: when the job cuts it, the plan says what it holds, never «you asked for».
