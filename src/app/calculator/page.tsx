@@ -8,6 +8,7 @@ import {
   getPublicCalculatorOptions,
 } from "@/lib/calculatorPricing";
 
+import MissionEstimator from "@/components/calculator/MissionEstimator";
 import { capabilitySlugFromPublicId, publicCapabilityId } from "@/lib/publicCapabilityIds";
 
 export default function PublicCalculatorPage() {
@@ -100,6 +101,10 @@ export default function PublicCalculatorPage() {
             تستخدم هذه الحاسبة نفس معادلة التسعير المعتمدة في النظام عند إصدار عرض السعر. تُقاس التكلفة بالنقاط والجنيه المصري فقط (كل نقطة تساوي {formatAr(0.1)} ج.م)، ولا يُخصم من رصيدك إلا مقابل العمل المسلَّم فعليًا.
           </p>
         </section>
+
+        <MissionEstimator />
+
+        <h2 className="m-0 mt-2 font-display text-[24px] font-medium text-ink">حاسبة تفصيلية لكل خدمة</h2>
 
         {/* Controls */}
         <section className="grid grid-cols-1 gap-6 rounded-[22px] border border-ln bg-sf p-6 min-[720px]:grid-cols-2">
@@ -212,8 +217,9 @@ export default function PublicCalculatorPage() {
         )}
 
         {/* Discrepancy Comparison Table (10 Samples) */}
-        <section className="rounded-[20px] border border-ln bg-sf p-6">
-          <h2 className="m-0 text-base font-semibold text-ink">
+        <details className="rounded-[20px] border border-ln bg-sf p-6">
+          <summary className="cursor-pointer text-base font-semibold text-ink">أسعار نماذج من الكتالوج</summary>
+          <h2 className="m-0 mt-4 text-base font-semibold text-ink">
             جدول التدقيق والمطابقة القياسية (١٠ نماذج من الكتالوج)
           </h2>
           <p className="mt-1 text-xs text-mut">
@@ -270,7 +276,7 @@ export default function PublicCalculatorPage() {
               </tbody>
             </table>
           </div>
-        </section>
+        </details>
 
         {/* Unit rate & accounting rules */}
         <section className="rounded-[20px] border border-ln bg-sf2 p-6">
