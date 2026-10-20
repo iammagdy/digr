@@ -173,6 +173,7 @@ export function FinalCta({ initialSignedIn }: { initialSignedIn?: boolean } = {}
       <div className="mt-[72px] flex flex-wrap items-center justify-center gap-x-[18px] gap-y-1.5 text-xs font-light text-fnt">
         <span>© ٢٠٢٦ ديجر — من مصادر متاحة · موافقة صريحة قبل أي جمع</span>
         <Link href="/pricing" className="flex min-h-11 items-center text-xs text-mut">الأسعار</Link>
+        <Link href="/for/marketing-agencies" className="flex min-h-11 items-center text-xs text-mut">لمن نخدم</Link>
         <Link href="/calculator" className="flex min-h-11 items-center text-xs text-mut">حاسبة التكلفة</Link>
         <Link href="/legal/terms" className="flex min-h-11 items-center text-xs text-mut">الشروط والأحكام</Link>
         <Link href="/legal/privacy" className="flex min-h-11 items-center text-xs text-mut">سياسة الخصوصية</Link>
