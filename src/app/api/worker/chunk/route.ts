@@ -55,7 +55,7 @@ import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisi
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
-import { filterRowsByDateRange, summarizeRowDates, type RowDateSummary } from "../../../../lib/server/dateRangeFilter";
+import { DATE_BASIS_KEY, filterRowsByDateRange, summarizeRowDates, VIDEO_PUBLISHED_AT_KEY, type RowDateSummary } from "../../../../lib/server/dateRangeFilter";
 import { allRowsOutsideWindow, dateWindowPageEventAr, OUTSIDE_WINDOW_SENTENCE_AR } from "../../../../lib/server/dateWindowNotes";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
@@ -573,13 +573,21 @@ export async function POST(req: NextRequest) {
       ? summarizeRowDates(providerRows, requestedDateFrom, requestedDateTo)
       : null;
     const allRowsOutside = dateSummary ? allRowsOutsideWindow(dateSummary, providerRows.length) : false;
+    // Comments the source gave no date for were judged by the date of their video; the marks are internal and never delivered.
+    const videoBasisRows = providerRows.filter((row: any) => row && row[DATE_BASIS_KEY] === "video").length;
+    if (videoBasisRows > 0) {
+      for (const row of rawRows as any[]) {
+        delete row[DATE_BASIS_KEY];
+        delete row[VIDEO_PUBLISHED_AT_KEY];
+      }
+    }
     if (dateSummary || dateFiltered.excludedCount > 0) {
       try {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
           message: dateSummary
-            ? dateWindowPageEventAr(dateSummary, providerRows.length)
+            ? dateWindowPageEventAr(dateSummary, providerRows.length, { videoBasis: videoBasisRows })
             : `تم استبعاد ${toArabicDigits(dateFiltered.excludedCount)} سجل لوقوع تاريخه خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
           units: effectiveDelivered,
           event_type: "progress",
@@ -1000,7 +1008,10 @@ export async function POST(req: NextRequest) {
       const emptyErrorAr = reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
         : receivedFromSource > 0
-        ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+        ? socialCapability && rawPageRowCount > 0
+          // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
+          ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+          : `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
       const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
       if (!rel.confirmed) {
@@ -1028,7 +1039,7 @@ export async function POST(req: NextRequest) {
       cursor: adapterResult.nextCursor,
       batchUnits: acceptedRows.length,
       rawRowsCount: rawPageRowCount,
-      ...(dateSummary ? { dateWindow: { missing: dateSummary.missing, outside: dateSummary.outside, oldest: dateSummary.oldest, newest: dateSummary.newest, sampleDates: dateSummary.sampleDates } } : {}),
+      ...(dateSummary ? { dateWindow: { missing: dateSummary.missing, outside: dateSummary.outside, inside: dateSummary.inside, ...(videoBasisRows > 0 ? { videoBasis: videoBasisRows } : {}), oldest: dateSummary.oldest, newest: dateSummary.newest, sampleDates: dateSummary.sampleDates } } : {}),
       baselineExcludedCount: duplicateExcludedCount,
       relevanceExcludedCount,
       uncertainRowsCount: uncertainRows.length,
