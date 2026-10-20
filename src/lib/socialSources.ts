@@ -11,7 +11,7 @@
  */
 
 import { normalizeDigits } from "./arabicDigits";
-import { extractUrls, socialSubjectText, type SocialIntent, type SocialPlatformId } from "./socialTasks";
+import { extractUrls, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 
 export type SocialKind = "comments" | "videos" | "posts";
@@ -851,7 +851,8 @@ export function socialPlanSummaryAr(
     case "query":
       return cap.kind === "comments"
         ? `سحب ${what} من فيديوهات ${platform} عن «${query}»${commentLimit}`
-        : `سحب ${what} على ${platform} عن «${query}»`;
+        // On X the replies come with the search when the source returns them; the plan says so instead of promising them.
+        : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}`;
     case "channel":
       return cap.kind === "comments"
         ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${commentLimit}`
