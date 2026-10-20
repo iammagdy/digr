@@ -19,9 +19,12 @@ import { parseExclusionFile } from "../../../lib/server/exclusionFileParser";
 import { sanitizeCustomerErrorMessage } from "../../../functions/shared/catalogClient";
 import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../functions/shared/chatErrors";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "../../../lib/researchPlaceholders";
+import { withDeadline } from "../../../functions/shared/deadline";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+/** Answer before the platform's 60 s limit kills the function, so the page gets a coded error instead of a dropped connection. */
+const CHAT_DEADLINE_MS = 50_000;
 
 function guestSessionToUuid(sessionId: string): string {
   const hash = crypto.createHash("sha256").update(`guest_session:${sessionId}`).digest("hex");
@@ -493,7 +496,7 @@ export async function POST(req: NextRequest) {
     // 6. Delegate to ChatHandler
     currentStep = "chat_handler";
     const chatHandler = new ChatHandler(tables);
-    const result = await chatHandler.handleUserMessage({
+    const result = await withDeadline(chatHandler.handleUserMessage({
       userId: verifiedUserId,
       conversationId: conversationId || undefined,
       message: message.trim(),
@@ -505,7 +508,7 @@ export async function POST(req: NextRequest) {
       resultColumns: Array.isArray(body.resultColumns) ? body.resultColumns.slice(0, 60) : undefined,
       authMs,
       rateLimitMs,
-    });
+    }), CHAT_DEADLINE_MS, "chat_handler");
 
     const response = NextResponse.json({
       success: true,

@@ -45,6 +45,7 @@ import { getJobIdForQuote } from "@/lib/md5";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
+import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr } from "@/lib/customerError";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -636,10 +637,7 @@ export default function ChatWorkspacePage() {
 
       clearTimeout(timeoutId);
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "فشل الاتصال بالمساعد الذكي");
-      }
+      const data = await readChatResponse(res);
 
       if (data.isGuest) {
         setGuestRemaining(data.remainingGuestMessages ?? 0);
@@ -672,10 +670,9 @@ export default function ChatWorkspacePage() {
       return true;
     } catch (err: any) {
       clearTimeout(timeoutId);
-      const isTimeout = err.name === "AbortError";
-      const errorContent = isTimeout
-        ? "استغرق المساعد وقتًا أطول من المتوقع، ولم يُخصم أي رصيد. اضغط «إعادة المحاولة» أو أعد صياغة طلبك بتفاصيل أقل."
-        : (err.message || "حدث خطأ غير متوقع في الاتصال. يرجى إعادة المحاولة.");
+      const failure = customerFacingFailure(err, { noCharge: true });
+      logClientFailure("send", failure.code);
+      const errorContent = failure.text;
 
       setMessages((prev) => [
         ...prev,
@@ -737,8 +734,7 @@ export default function ChatWorkspacePage() {
           ...(activeJob?.resultColumns?.length ? { resultColumns: activeJob.resultColumns } : {}),
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "تعذر إرسال إجابات الاستكشاف");
+      const data = await readChatResponse(res);
 
       setMessages((previous) => [
         ...previous.map((message) => message.id === assistantMessageId
@@ -766,10 +762,9 @@ export default function ChatWorkspacePage() {
       }
       loadConversations();
     } catch (err: any) {
-      const isTimeout = err.name === "AbortError";
-      const errorContent = isTimeout
-        ? "استغرق إرسال الإجابات وقتاً أطول من المتوقع. يرجى الضغط على زر إعادة المحاولة."
-        : err.message || "تعذر إرسال إجابات الاستكشاف. يرجى المحاولة مرة أخرى.";
+      const failure = customerFacingFailure(err, { noCharge: true });
+      logClientFailure("answers", failure.code);
+      const errorContent = failure.text;
       setMessages((previous) => [...previous, {
         id: `err_${Date.now()}`,
         role: "assistant",
@@ -1110,7 +1105,7 @@ export default function ChatWorkspacePage() {
         undefined, undefined, { fullVolume: offer.fullUnits, fullQuotedPoints: quote.quotedPoints },
       );
     } catch (err: any) {
-      setMessages((prev) => [...prev, { id: `err_explore_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الاستكشاف. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `err_explore_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تجهيز الاستكشاف. حاول مرة أخرى." }).text, createdAt: new Date().toISOString() }]);
     }
   }
 
@@ -1180,7 +1175,7 @@ export default function ChatWorkspacePage() {
         {
           id: `err_start_${Date.now()}`,
           role: "assistant",
-          content: `تعذر بدء الاستخراج: ${err.message}`,
+          content: startFailureMessageAr(err),
           createdAt: new Date().toISOString(),
         },
       ]);
@@ -1236,7 +1231,7 @@ export default function ChatWorkspacePage() {
       console.error("[chat:download_error]", err);
       if (spec) {
         // The reason (for example a split into too many sheets) is Arabic and written by the server: show it in the chat.
-        setMessages((prev) => [...prev, { id: `err_shape_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الملف بالتنسيق المطلوب.", createdAt: new Date().toISOString() }]);
+        setMessages((prev) => [...prev, { id: `err_shape_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تجهيز الملف بالتنسيق المطلوب." }).text, createdAt: new Date().toISOString() }]);
       }
     } finally {
       setDownloadingKey(null);
@@ -1317,7 +1312,7 @@ export default function ChatWorkspacePage() {
       setMessages((previous) => [...previous, {
         id: `artifact_error_${Date.now()}`,
         role: "assistant",
-        content: error.message || "تعذر حفظ التعديل. النتيجة الأصلية لم تتغير.",
+        content: customerFacingFailure(error, { fallback: "تعذر حفظ التعديل. النتيجة الأصلية لم تتغير." }).text,
         createdAt: new Date().toISOString(),
       }]);
     } finally {
@@ -1468,7 +1463,7 @@ export default function ChatWorkspacePage() {
     try {
       await handleSaveDirectEdit(quote, quote.targetVolumeMax, "", quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]);
     } catch (err: any) {
-      setMessages((prev) => [...prev, { id: `err_refresh_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تحديث السعر. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `err_refresh_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تحديث السعر. حاول مرة أخرى." }).text, createdAt: new Date().toISOString() }]);
     }
   }
 
@@ -1626,7 +1621,7 @@ export default function ChatWorkspacePage() {
       if (planQuote?.quoteId) { setRestPlanQuoteId(planQuote.quoteId); setCanvasOpen(true); }
       setMessages((prev) => [...prev, { id: `rest_${planQuote?.quoteId || Date.now()}`, role: "assistant", content: String(data.messageAr || ""), ...(planQuote ? { planQuote } : {}), createdAt: new Date().toISOString() }]);
     } catch (err: any) {
-      setMessages((prev) => [...prev, { id: `err_rest_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الباقي حالياً. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
+      setMessages((prev) => [...prev, { id: `err_rest_${Date.now()}`, role: "assistant", content: customerFacingFailure(err, { fallback: "تعذر تجهيز الباقي حالياً. حاول مرة أخرى." }).text, createdAt: new Date().toISOString() }]);
     } finally {
       setRequestingRest(false);
     }

@@ -60,6 +60,8 @@ export function reasonCodeToCustomerMessage(reason: string, defaultMsg?: string)
       return "واجه المساعد الذكي صعوبة في صياغة الرد في الوقت الحالي. يرجى المحاولة مرة أخرى.";
     case "timeout":
       return "استغرقت معالجة الطلب وقتاً أطول من المتوقع. يرجى المحاولة مرة أخرى أو اختصار الطلب.";
+    case "deadline_exceeded":
+      return "حصل تعثر مؤقت، لم يُخصم أي رصيد، جرّب مرة أخرى.";
     case "rate_limit_exceeded":
       return "تم تجاوز الحد الأقصى المؤقت للطلبات. يرجى الانتظار دقيقة والمحاولة مجدداً.";
     case "auth_failed":

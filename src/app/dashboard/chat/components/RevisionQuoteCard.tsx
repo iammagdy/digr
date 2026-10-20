@@ -1,5 +1,6 @@
 "use client";
 
+import { customerFacingFailure } from "@/lib/customerError";
 import { useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
 import { formatNumber } from "@/lib/honestDisplay";
@@ -36,7 +37,7 @@ export default function RevisionQuoteCard({
     try {
       await onApply(quote);
     } catch (err: any) {
-      setError(err?.message || "تعذر تطبيق التعديل على الملفات");
+      setError(customerFacingFailure(err, { fallback: "تعذر تطبيق التعديل على الملفات" }).text);
     }
   }
 
