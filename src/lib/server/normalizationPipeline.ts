@@ -134,7 +134,7 @@ export function detectPlatform(text?: string): string {
 /**
  * Standard column dictionary for dynamic codebook mapping.
  */
-const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; type: string }> = {
+export const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: string; type: string }> = {
   id: { titleAr: "معرف السجل", descAr: "المعرف الرقمي المتسلسل للسجل داخل المنصة", type: "نص (String)" },
   source_id: { titleAr: "معرف المصدر الأصلي", descAr: "المعرف الفريد للمنشور أو التعليق على المنصة المصدر", type: "نص (String)" },
   company_name: { titleAr: "اسم الشركة", descAr: "الاسم التجاري الرسمي للشركة أو المؤسسة", type: "نص (String)" },
