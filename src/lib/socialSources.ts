@@ -10,6 +10,7 @@
  * This module is pure data and pure functions (no network), so it can be tested exhaustively.
  */
 
+import { normalizeDigits } from "./arabicDigits";
 import { extractUrls, socialSubjectText, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 
@@ -22,6 +23,10 @@ export interface SocialRef {
   id?: string;
   url?: string;
   title?: string;
+  /** View count the provider reported for the video, when it did (used to rank a channel's videos). */
+  views?: number;
+  /** The channel the video was found under, when the job covers several channels. */
+  channel?: string;
 }
 
 export interface SocialSourceRequest {
@@ -597,11 +602,33 @@ export function socialCapabilityFor(platform: SocialPlatformId | null | undefine
 export function resolveSocialMode(params: Record<string, any> | undefined): SocialMode | null {
   const p = params || {};
   if (typeof p.url === "string" && p.url.trim()) return "url";
+  // A mission over several channels (their top videos, then the comments): a channel list, with or without a topic.
+  if (channelsOf(p).length > 0) return "channel";
   if (typeof p.query === "string" && p.query.trim()) return "query";
   if (typeof p.channel === "string" && p.channel.trim()) return "channel";
   if (p.trending === true || p.trending === "true") return "trending";
   return null;
 }
+
+/** The channels a mission covers: a list of names, handles or links, cleaned and capped. */
+export function channelsOf(params: Record<string, any> | undefined): string[] {
+  const list = params?.channels;
+  if (!Array.isArray(list)) return [];
+  const out: string[] = [];
+  for (const entry of list) {
+    const value = typeof entry === "string" ? entry.trim() : "";
+    if (value && !out.includes(value)) out.push(value);
+    if (out.length >= MAX_CHANNELS_PER_JOB) break;
+  }
+  return out;
+}
+
+/** Channels one mission may cover, the most videos kept per channel, and how many of a channel's latest videos are ranked. */
+export const MAX_CHANNELS_PER_JOB = 10;
+export const MAX_TOP_PER_CHANNEL = 20;
+export const DISCOVER_VIDEOS_PER_CHANNEL = 30;
+/** Videos a mission may keep in all (channels x top per channel): the list travels in the chunk cursor, so it stays small. */
+export const MAX_MISSION_VIDEOS = 100;
 
 /** True when the capability's trending feed is specific to a country (so the country is a required input). */
 export function trendingNeedsRegion(cap: SocialCapabilityDef): boolean {
@@ -634,8 +661,30 @@ function firstValue(row: Record<string, any>, keys: RegExp): string | undefined 
   return undefined;
 }
 
-/** The video or post a discovered row stands for, read from whichever fields the provider used. */
+/** A view count as providers write it: 1234, "1,234", "1.2M views", "٣٤٥ ألف". Null when the row carries none. */
+export function viewCountOf(row: Record<string, any>): number | null {
+  for (const [key, value] of Object.entries(row || {})) {
+    if (!/^(?:views?|view_?count|play_?count|plays|views_?count)$/i.test(key)) continue;
+    if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.floor(value);
+    const text = normalizeDigits(String(value ?? "")).replace(/[,\s]/g, "").toLowerCase();
+    const match = /^([0-9]+(?:\.[0-9]+)?)(k|m|b|ألف|الف|مليون)?/.exec(text);
+    if (!match) continue;
+    const base = Number(match[1]);
+    const factor = match[2] === "k" || match[2] === "ألف" || match[2] === "الف" ? 1e3 : match[2] === "m" || match[2] === "مليون" ? 1e6 : match[2] === "b" ? 1e9 : 1;
+    return Math.floor(base * factor);
+  }
+  return null;
+}
+
+/** The video or post a discovered row stands for, read from whichever fields the provider used (with its views, when reported). */
 export function extractSocialRef(platform: SocialPlatformId, row: Record<string, any>): SocialRef | null {
+  const ref = extractSocialRefBase(platform, row);
+  if (!ref) return null;
+  const views = viewCountOf(row);
+  return views === null ? ref : { ...ref, views };
+}
+
+function extractSocialRefBase(platform: SocialPlatformId, row: Record<string, any>): SocialRef | null {
   const title = firstValue(row, /^(?:title|desc|description|text|caption|video_desc|message|name)$/i);
   const urlCandidate = firstValue(row, /(?:^|_)(?:share_?url|web_?video_?url|video_?url|permalink(?:_url)?|post_?url|url|link)$/i);
   const url = urlCandidate && /^https?:\/\//i.test(urlCandidate) ? urlCandidate : undefined;
@@ -711,6 +760,11 @@ export interface SocialParamHints {
   /** Comments wanted from each video, and how many videos, when the customer said so. */
   perVideo?: number;
   videoCount?: number;
+  /** A mission over several channels: the channels, the top videos kept per channel (ranked by views), and an optional topic filter. */
+  channels?: string[];
+  topPerChannel?: number;
+  rankBy?: "views";
+  topic?: string;
 }
 
 /**
@@ -743,6 +797,19 @@ export function canonicalSocialParams(
   }
   if (hints.dateFrom) params.dateFrom = hints.dateFrom;
   if (hints.dateTo) params.dateTo = hints.dateTo;
+  // The channel list of a mission replaces the single channel: top videos per channel, then their comments.
+  const missionChannels = cap.kind === "comments" && intent.discover !== "target" ? channelsOf({ channels: hints.channels }) : [];
+  if (missionChannels.length > 0) {
+    delete params.channel;
+    delete params.query;
+    delete params.trending;
+    params.channels = missionChannels;
+    if (hints.topPerChannel && hints.topPerChannel > 0) {
+      params.topPerChannel = Math.max(1, Math.min(MAX_TOP_PER_CHANNEL, Math.floor(MAX_MISSION_VIDEOS / missionChannels.length), Math.floor(hints.topPerChannel)));
+    }
+    if (hints.rankBy === "views") params.rankBy = "views";
+    if (hints.topic && hints.topic.trim()) params.topic = hints.topic.trim().slice(0, 120);
+  }
   if (cap.kind === "comments" && intent.discover !== "target") {
     if (hints.perVideo && hints.perVideo > 0) params.perVideo = Math.min(MAX_PER_VIDEO, Math.floor(hints.perVideo));
     if (hints.videoCount && hints.videoCount > 0) params.videoCount = Math.min(MAX_VIDEOS_PER_JOB, Math.floor(hints.videoCount));
@@ -770,6 +837,14 @@ export function socialPlanSummaryAr(
     ? `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو، و${formatNumber(volume)} تعليقاً إجمالاً`
     : "";
   const query = mode === "query" && requestText ? socialSubjectText(requestText) : String(params.query || "").trim();
+  const missionChannels = channelsOf(params);
+  if (cap.kind === "comments" && missionChannels.length > 0) {
+    const top = Number(params.topPerChannel) > 0 ? Number(params.topPerChannel) : 0;
+    const ranking = top ? `أعلى ${formatNumber(top)} فيديوهات${params.rankBy === "views" ? " مشاهدة" : ""} لكل قناة` : "فيديوهات القنوات";
+    const channelsText = missionChannels.length > 1 ? `${formatNumber(missionChannels.length)} قنوات` : "القناة المحددة";
+    const topic = typeof params.topic === "string" && params.topic.trim() ? ` عن «${params.topic.trim()}»` : "";
+    return `سحب تعليقات ${ranking} من ${channelsText} على ${platform}${topic}، حتى ${formatNumber(volume)} تعليقاً إجمالاً`;
+  }
   switch (mode) {
     case "url":
       return `سحب ${what} للرابط المحدد على ${platform}`;

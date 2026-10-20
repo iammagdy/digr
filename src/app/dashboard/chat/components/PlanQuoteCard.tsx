@@ -8,6 +8,7 @@ import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScope
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { socialSubjectForDisplay } from "@/lib/socialTasks";
+import { missionStepsAr } from "@/lib/dependentSteps";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -299,7 +300,17 @@ export default function PlanQuoteCard({
         </div>
       )}
 
-      {/* Execution Steps */}
+      {/* A channel mission (channels, then their top videos, then the comments) shows its own steps */}
+      {Array.isArray(primaryItem?.params?.channels) && primaryItem.params.channels.length > 0 ? (
+        <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]" data-testid="mission-steps">
+          <p className="m-0 font-medium text-ink">خطوات التنفيذ:</p>
+          <ol className="m-0 list-none space-y-1 p-0 font-light text-ink2">
+            {missionStepsAr(primaryItem.params, quote.targetVolumeMax).map((line, i) => (
+              <li key={i} className="flex items-start gap-2"><span className="font-bold text-ac">{formatAr(i + 1)}.</span><span>{line}</span></li>
+            ))}
+          </ol>
+        </div>
+      ) : (
       <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]">
         <p className="m-0 font-medium text-ink">خطوات التنفيذ المنهجية:</p>
         <ul className="m-0 list-inside space-y-1 pr-1 font-light text-ink2">
@@ -339,6 +350,7 @@ export default function PlanQuoteCard({
           </li>
         </ul>
       </div>
+      )}
 
       {/* Deliverable format choices chips directly on the main card */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">

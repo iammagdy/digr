@@ -12,6 +12,9 @@
 
 import { extractAndFlattenRows } from "../../functions/shared/multiStepWorker";
 import {
+  DISCOVER_VIDEOS_PER_CHANNEL,
+  MAX_TOP_PER_CHANNEL,
+  channelsOf,
   SOCIAL_COMMENTS_PER_VIDEO,
   SOCIAL_MAX_CALLS_PER_CHUNK,
   extractSocialRef,
@@ -61,6 +64,8 @@ const MIN_TIME_FOR_ANOTHER_CALL_MS = 9_000;
 const MAX_CALLS_PER_CHUNK = SOCIAL_MAX_CALLS_PER_CHUNK;
 const MAX_VIDEOS = 20;
 const MAX_COMMENTS_PER_VIDEO = 500;
+/** Rows a mission chunk may return: whole videos are finished inside a chunk where possible, so a source that cannot page is never truncated. */
+const MISSION_ROWS_PER_CHUNK = 500;
 
 interface SocialState {
   /** Stage: d = discovering videos, c = collecting comments. */
@@ -76,6 +81,9 @@ interface SocialState {
   n?: number;
   /** Index of the source whose paging the cursors belong to. */
   si?: number | null;
+  /** Mission over several channels: the channel being read (discovery stage) and how many could not be read. */
+  ci?: number;
+  fc?: number;
 }
 
 function encodeState(state: SocialState): string {
@@ -255,7 +263,127 @@ function annotateComment(row: Record<string, any>, ref: SocialRef | undefined): 
     ...row,
     ...(ref.url ? { video_url: ref.url } : {}),
     ...(ref.title ? { video_title: ref.title } : {}),
+    ...(ref.channel ? { channel_name: ref.channel } : {}),
+    ...(typeof ref.views === "number" ? { video_views: ref.views } : {}),
   };
+}
+
+const norm = (text: string) => String(text || "").toLowerCase().replace(/[ً-ٰٟـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+
+/** The words a video title must contain (any of them) to count as «about the topic»; none when no topic was asked. */
+function topicWords(topic: unknown): string[] {
+  return norm(String(topic || ""))
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length >= 3 && !["عن", "في", "من", "على", "الي", "كل", "مع"].includes(word));
+}
+
+/**
+ * A mission over several channels: for each channel, its latest videos are read, the topic filter (if any) is applied,
+ * they are ranked by views and the top N are kept; then the comments of every kept video are collected, video by video,
+ * up to the job's volume. The state travels in the chunk cursor, so a restarted chunk resumes where the last ended.
+ * A channel that cannot be read is skipped; if none can be read and nothing was delivered, the job fails (and is released).
+ */
+async function runMissionChunk(
+  cap: SocialCapabilityDef,
+  input: ProviderAdapterCallInput,
+  params: Record<string, any>,
+  wanted: number,
+  deps: Required<SocialAdapterDeps>,
+  clock: ChunkClock,
+  keyPrefix: string,
+  totals: { costMicro: number; callIds: string[] },
+  absorb: (chain: ChainResult) => void,
+): Promise<ProviderAdapterCallOutput> {
+  const channels = channelsOf(params);
+  const sources = cap.discover.channel || [];
+  const commentSources = cap.comments || [];
+  const topN = Math.max(1, Math.min(MAX_TOP_PER_CHANNEL, Math.floor(Number(params.topPerChannel) || 10)));
+  const words = topicWords(params.topic);
+  const rankByViews = params.rankBy === "views";
+  const askedPerVideo = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : MAX_COMMENTS_PER_VIDEO;
+  const target = Math.max(1, input.targetVolumeMax || wanted);
+  const perVideo = Math.min(MAX_COMMENTS_PER_VIDEO, askedPerVideo, target);
+  const rowCap = Math.min(MISSION_ROWS_PER_CHUNK, Math.max(1, input.remainingNeeded || wanted));
+  const needAtLeast = Math.max(1, Math.ceil(words.length / 2));
+
+  let state: SocialState = decodeState(input.cursor) || { ph: "d", ci: 0, refs: [], fc: 0 };
+  const rows: Record<string, any>[] = [];
+  const seen = new Set<string>();
+  let lastError: Pick<ChainResult, "httpStatus" | "errorCode" | "errorMessageAr"> | null = null;
+  let commentsAnswered = false;
+
+  while (rows.length < rowCap && clock.canCallAgain()) {
+    if (state.ph === "d") {
+      const ci = state.ci ?? 0;
+      if (ci >= channels.length) {
+        const refs = state.refs || [];
+        if (refs.length === 0) {
+          // Nothing to collect: every channel failed (a source failure) or none had a matching video (an empty result).
+          if ((state.fc ?? 0) >= channels.length && lastError && (input.deliveredSoFar || 0) === 0) {
+            return failure({ ...totals, httpStatus: lastError.httpStatus, errorCode: lastError.errorCode, errorMessageAr: lastError.errorMessageAr });
+          }
+          return success([], null, totals);
+        }
+        state = { ph: "c", refs, i: 0, cc: null, n: 0, si: null };
+        continue;
+      }
+      const channel = channels[ci];
+      const chain = await runChain(sources, { channel, limit: DISCOVER_VIDEOS_PER_CHANNEL, cursor: null }, null, deps, clock, `${keyPrefix}_m${ci}`);
+      absorb(chain);
+      if (!chain.ok) {
+        lastError = chain;
+        state = { ...state, ci: ci + 1, fc: (state.fc ?? 0) + 1 };
+        continue;
+      }
+      const found: SocialRef[] = [];
+      const foundKeys = new Set<string>();
+      for (const row of chain.rows) {
+        const ref = extractSocialRef(cap.platform, row);
+        const key = ref?.id || ref?.url;
+        if (!ref || !key || foundKeys.has(key)) continue;
+        foundKeys.add(key);
+        found.push(ref);
+      }
+      const matching = words.length > 0 ? found.filter((ref) => words.filter((word) => norm(ref.title || "").includes(word)).length >= needAtLeast) : found;
+      const ranked = rankByViews
+        ? [...matching].sort((a, b) => (b.views ?? -1) - (a.views ?? -1))
+        : matching;
+      const kept = ranked.slice(0, topN).map((ref) => ({ ...ref, channel, ...(ref.title ? { title: ref.title.slice(0, 80) } : {}) }));
+      state = { ...state, ci: ci + 1, refs: [...(state.refs || []), ...kept] };
+      continue;
+    }
+
+    const refs = state.refs || [];
+    const index: number = state.i ?? 0;
+    if (index >= refs.length) return success(rows, null, totals);
+    const ref = refs[index];
+    const wantFromVideo = Math.max(1, Math.min(perVideo - (state.n ?? 0), Math.max(1, (input.remainingNeeded || wanted) - rows.length)));
+    const room = rowCap - rows.length;
+    // A video is started whole: when this chunk has no room for it, it is read in the next chunk (a source that cannot
+    // page would otherwise be cut short and the rest of the video lost).
+    if (rows.length > 0 && (state.n ?? 0) === 0 && !state.cc && room < wantFromVideo) break;
+    const need = Math.max(1, Math.min(wantFromVideo, room));
+    const chain = await runChain(commentSources, { ref, limit: need, cursor: state.cc ?? null }, state.cc ? state.si ?? null : null, deps, clock, `${keyPrefix}_v${index}`, false);
+    absorb(chain);
+    if (!chain.ok) {
+      lastError = chain;
+      state = { ...state, i: index + 1, cc: null, n: 0, si: null };
+      continue;
+    }
+    commentsAnswered = true;
+    const fresh = dedupe(chain.rows, seen).slice(0, Math.max(0, Math.min(need, rowCap - rows.length)));
+    for (const row of fresh) rows.push(annotateComment(row, ref));
+    const taken: number = (state.n ?? 0) + fresh.length;
+    const more: boolean = Boolean(chain.nextCursor) && taken < perVideo && fresh.length > 0;
+    state = more ? { ...state, cc: chain.nextCursor, n: taken, si: chain.sourceIndex } : { ...state, i: index + 1, cc: null, n: 0, si: null };
+  }
+
+  const finished = state.ph === "c" && (state.i ?? 0) >= (state.refs?.length ?? 0) && state.refs !== undefined;
+  if (rows.length === 0 && finished && !commentsAnswered && lastError && (input.deliveredSoFar || 0) === 0) {
+    return failure({ ...totals, httpStatus: lastError.httpStatus, errorCode: lastError.errorCode, errorMessageAr: lastError.errorMessageAr });
+  }
+  const reachedTarget = rows.length >= Math.max(1, input.remainingNeeded || wanted);
+  return success(rows, finished || reachedTarget ? null : encodeState(state), totals);
 }
 
 function discoveryRequest(mode: Exclude<SocialMode, "url">, params: Record<string, any>, limit: number, cursor: string | null): SocialSourceRequest {
@@ -334,6 +462,9 @@ async function runCommentsChunk(
   totals: { costMicro: number; callIds: string[] },
   absorb: (chain: ChainResult) => void,
 ): Promise<ProviderAdapterCallOutput> {
+  if (channelsOf(params).length > 0) {
+    return runMissionChunk(cap, input, params, wanted, deps, clock, keyPrefix, totals, absorb);
+  }
   const commentSources = cap.comments || [];
   const target = Math.max(1, input.targetVolumeMax || wanted);
   const askedPerVideo = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : SOCIAL_COMMENTS_PER_VIDEO;

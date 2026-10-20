@@ -20,7 +20,9 @@ const TODAY = new Date(Date.UTC(2026, 9, 20));
 
 const M1 = "عايز أجيب أكتر ١٠ فيديوهات مشاهدة من ٥ قنوات أخبار على يوتيوب مع كل التعليقات ورابط الفيديو";
 const M1_NAMED = "عايز أكتر ١٠ فيديوهات مشاهدة من قناة @AlArabiya وقناة @SkyNewsArabia على يوتيوب مع كل التعليقات";
+const M1_NAMED_WITH_CAP = "عايز أكتر ١٠ فيديوهات مشاهدة من قناة @AlArabiya وقناة @SkyNewsArabia على يوتيوب مع كل التعليقات حتى ٢٠٠٠ تعليق";
 const M2 = "عايز كل فيديوهات قناة الفيفا الرسمية على يوتيوب عن منتخب مصر في كأس العالم ٢٠٢٦ مع كل التعليقات";
+const M2_WITH_CAP = "عايز كل فيديوهات قناة الفيفا الرسمية على يوتيوب عن منتخب مصر في كأس العالم ٢٠٢٦ مع كل التعليقات حتى ٣٠٠٠ تعليق";
 const M3 = "عايز ٣٧٥٠٠ بوست وردود على إكس عن ماتش مصر والمغرب";
 const M3_WITH_WINDOW = "عايز 37,500 بوست وردود على إكس عن ماتش مصر والمغرب آخر شهر";
 const M4 = "عايز فيديوهات وبوستات فيسبوك عن الجواز وقايمة المنقولات والطلاق في مصر من ١ يناير ٢٠٢٦ إلى ٣١ سبتمبر ٢٠٢٦";
@@ -30,18 +32,26 @@ const COMPANY = "عايز شركتين كهرباء في مصر";
 const understand = (text: string) => understandMission(text, { today: TODAY });
 
 describe("M1: five channels, top 10 by views, all comments with the video link", () => {
-  it("is understood as ranked comments, asks only which channels, and notes the cap it needs", () => {
+  it("is understood as ranked comments and asks ONE thing at a time: the channels first, then the comment cap", () => {
     const u = understand(M1);
     expect(u).toMatchObject({ kind: "social_ranked_comments", platform: "youtube", topPerChannel: 10, rankedBy: "views", allComments: true, needsCap: true });
     expect(u.channels).toEqual({ count: 5, named: [] });
     expect(u.window).toMatchObject({ status: "resolved", source: "open_scope" });
-    expect(u.missing).toEqual(["channels"]);
+    expect(u.missing).toEqual(["channels", "cap"]);
     expect(nextStep(u)).toMatchObject({ type: "ask_one", id: "social_channel_required" });
   });
 
-  it("with the channels named, goes straight to the plan", () => {
+  it("with the channels named but «all comments» uncapped, asks only for the cap", () => {
     const u = understand(M1_NAMED);
     expect(u.channels.named).toEqual(["@AlArabiya", "@SkyNewsArabia"]);
+    expect(u.missing).toEqual(["cap"]);
+    expect(nextStep(u)).toMatchObject({ type: "ask_one", id: "volume_cap_required" });
+  });
+
+  it("with the channels and a cap, goes straight to the plan; the cap is the 2000, never the top 10", () => {
+    const u = understand(M1_NAMED_WITH_CAP);
+    expect(u.volume).toBe(2000);
+    expect(u.topPerChannel).toBe(10);
     expect(u.missing).toEqual([]);
     expect(nextStep(u)).toEqual({ type: "plan" });
   });
@@ -54,7 +64,9 @@ describe("M2: the official FIFA channel, Egypt's national team, the 2026 World C
     expect(u.channels.named[0]).toContain("الفيفا");
     expect(u.subject).toContain("منتخب مصر");
     expect(u.window).toMatchObject({ status: "resolved", source: "event", dateFrom: "2026-06-11", dateTo: "2026-07-19" });
-    expect(nextStep(u)).toEqual({ type: "plan" });
+    // «all comments» always carries a cap: asked once, then the plan
+    expect(nextStep(u)).toMatchObject({ type: "ask_one", id: "volume_cap_required" });
+    expect(nextStep(understand(M2_WITH_CAP))).toEqual({ type: "plan" });
   });
 });
 
@@ -111,7 +123,7 @@ describe("a request with no goal", () => {
 });
 
 describe("the voice: what was understood, then at most one question", () => {
-  const requests = [M1, M1_NAMED, M2, M3, M3_WITH_WINDOW, M4, B2B, COMPANY];
+  const requests = [M1, M1_NAMED, M1_NAMED_WITH_CAP, M2, M2_WITH_CAP, M3, M3_WITH_WINDOW, M4, B2B, COMPANY];
 
   it.each(requests)("the understanding line is one Arabic sentence with Arabic digits: %s", (text) => {
     const line = understoodLineAr(understand(text))!;

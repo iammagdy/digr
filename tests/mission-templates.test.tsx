@@ -32,7 +32,8 @@ describe("big-mission templates", () => {
 
   it("each template, once its brackets are filled, is understood as the mission it names", () => {
     const channels = understandMission(byId("channels_top_videos_comments").promptAr.replace("[@القناة_الأولى و@القناة_الثانية]", "@AlArabiya و@SkyNewsArabia"), { today: TODAY });
-    expect(channels).toMatchObject({ kind: "social_ranked_comments", platform: "youtube", topPerChannel: 10, allComments: true });
+    // the template carries its own comment cap, so the filled template goes straight to the plan
+    expect(channels).toMatchObject({ kind: "social_ranked_comments", platform: "youtube", topPerChannel: 10, volume: 2000 });
     expect(channels.channels.named).toEqual(["@AlArabiya", "@SkyNewsArabia"]);
     expect(nextStep(channels)).toEqual({ type: "plan" });
 

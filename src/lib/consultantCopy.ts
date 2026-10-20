@@ -42,6 +42,7 @@ export type MissingInput =
   | "industry"
   | "roles"
   | "goal"
+  | "cap"
   | "count";
 
 const CHANNEL_WORD = "(?:قنوات|قناة|قناه|حسابات|حساب|صفحات|صفحة)";
@@ -123,7 +124,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   else if (intent.dataType === "people") kind = "people";
   else if (social.targetUrl) kind = "social_comments_url";
   else if (channelMode && (top !== null || rankedBy) && (social.wantsComments || allComments)) kind = "social_ranked_comments";
-  else if (channelMode && (social.wantsComments || /فيديو|فيديوهات/u.test(text))) kind = "social_channel_topic";
+  else if (channelMode && (social.wantsComments || allComments)) kind = "social_channel_topic";
   else if (hasContentWords) kind = "social_feed";
 
   // The count of the records themselves: never a number that means channels or top-N.
@@ -139,7 +140,8 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   }
 
   const feedKind = kind === "social_feed" || kind === "social_channel_topic" || kind === "social_ranked_comments";
-  const needsWindow = feedKind && !social.wantsTrending && !social.targetUrl;
+  // A named channel's own videos or posts are scoped by the channel (the latest N), not by a period.
+  const needsWindow = feedKind && !social.wantsTrending && !social.targetUrl && !(kind === "social_feed" && channelMode);
   const window = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" });
 
   const subjectRaw = kind === "social_feed" || kind === "social_channel_topic" ? subjectAfterAbout(text) || socialSubjectText(text) : "";
@@ -159,7 +161,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     if (!platform) missing.push("platform");
     if (kind === "social_ranked_comments" && channels.named.length === 0 && !(channels.count && social.discover === "channel" && social.channelRef)) missing.push("channels");
     if (kind === "social_channel_topic" && channels.named.length === 0 && !social.channelRef) missing.push("channels");
-    if (kind === "social_feed" && !subject) missing.push("subject");
+    if (kind === "social_feed" && !subject && !channelMode) missing.push("subject");
+    // «كل التعليقات» or an unstated volume over channels always carries a cap the customer chooses.
+    if ((kind === "social_ranked_comments" || kind === "social_channel_topic") && volume === null) missing.push("cap");
     if (window.status === "missing") missing.push("window");
   }
 
@@ -193,6 +197,7 @@ const QUESTION_BY_MISSING: Record<MissingInput, { id: string; textAr: string; op
   country: { id: "company_country_required", textAr: "في أي دولة تريد البحث؟" },
   industry: { id: "company_industry_required", textAr: "ما المجال أو القطاع المطلوب؟" },
   goal: { id: "goal_required", textAr: "ما نوع البيانات التي تريد جمعها؟", options: ["بيانات منصات اجتماعية", "شركات", "صناع قرار"] },
+  cap: { id: "volume_cap_required", textAr: "ما الحد الأقصى لعدد التعليقات الذي تريده؟", options: ["٥٠٠ تعليق", "١٠٠٠ تعليق", "٢٠٠٠ تعليق", "٥٠٠٠ تعليق"] },
   roles: { id: "people_roles_required", textAr: "ما المسميات الوظيفية التي تريدها؟" },
   count: { id: "company_count_required", textAr: "كم سجلًا تريد في النتائج؟" },
 };
@@ -255,6 +260,7 @@ const WHY_AR: Record<string, string> = {
   company_country_required: "وأحتاج أن أعرف الدولة حتى لا أفترضها.",
   company_industry_required: "وأحتاج أن أعرف المجال حتى تأتي النتائج مطابقة.",
   goal_required: "وأحتاج أن أعرف نوع البيانات لأبدأ.",
+  volume_cap_required: "وطلب كل التعليقات يحتاج حدًا أقصى حتى لا يكبر السعر دون سقف.",
   people_roles_required: "وأحتاج أن أعرف المسميات الوظيفية المقصودة.",
   company_count_required: "وأحتاج أن أعرف العدد المطلوب.",
 };
@@ -288,3 +294,15 @@ export function isFormStyleIntro(text: string): boolean {
 
 /** The only line the chat shows when a plan is ready: the plan itself lives in the results panel. */
 export const PLAN_READY_AR = "جهزت لك الخطة، راجعها على اليمين.";
+
+/** The clarification question object the chat renders for a next step (one question, tappable options where it is a choice). */
+export function questionForStep(step: Extract<NextStep, { type: "ask_one" }>) {
+  return {
+    id: step.id,
+    text: step.textAr,
+    question: step.textAr,
+    type: step.options?.length ? "single" : "free",
+    options: step.options ?? [],
+    allowOther: true,
+  };
+}
