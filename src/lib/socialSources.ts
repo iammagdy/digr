@@ -11,6 +11,7 @@
  */
 
 import { normalizeDigits } from "./arabicDigits";
+import { channelsCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 
@@ -765,6 +766,8 @@ export interface SocialParamHints {
   topPerChannel?: number;
   rankBy?: "views";
   topic?: string;
+  /** The subject words of a search, when the customer's answer to the topic question is the subject (the request text also holds other words). */
+  subject?: string;
 }
 
 /**
@@ -792,7 +795,7 @@ export function canonicalSocialParams(
     params.trending = true;
   } else if (intent.discover === "keyword") {
     // The subject the customer named wins; a model-written query is only the fallback.
-    const subject = socialSubjectText(requestText);
+    const subject = hints.subject?.trim() || socialSubjectText(requestText);
     const query = subject || (typeof model.query === "string" ? model.query.trim() : "");
     if (query) params.query = query;
   }
@@ -842,7 +845,7 @@ export function socialPlanSummaryAr(
   if (cap.kind === "comments" && missionChannels.length > 0) {
     const top = Number(params.topPerChannel) > 0 ? Number(params.topPerChannel) : 0;
     const ranking = top ? `أعلى ${formatNumber(top)} فيديوهات${params.rankBy === "views" ? " مشاهدة" : ""} لكل قناة` : "فيديوهات القنوات";
-    const channelsText = missionChannels.length > 1 ? `${formatNumber(missionChannels.length)} قنوات` : "القناة المحددة";
+    const channelsText = missionChannels.length > 1 ? channelsCountAr(missionChannels.length) : "القناة المحددة";
     const topic = typeof params.topic === "string" && params.topic.trim() ? ` عن «${params.topic.trim()}»` : "";
     return `سحب تعليقات ${ranking} من ${channelsText} على ${platform}${topic}، حتى ${formatNumber(volume)} تعليقاً إجمالاً`;
   }

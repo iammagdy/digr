@@ -2,6 +2,8 @@ import { formatAr, normalizeDigits, toArabicDigits } from "./arabicDigits";
 import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, type SocialPlatformId } from "./socialTasks";
 import { resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
 import { extractRequestIntent, missingInputsForIntent, type RequestIntent } from "./requestIntent";
+import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
+import { channelKey, channelsCountAr, handlesInText, parseChannelAnswer } from "./channelNames";
 
 /**
  * How the assistant talks: a data consultant, not a form.
@@ -31,6 +33,8 @@ export interface MissionUnderstanding {
   needsCap: boolean;
   /** What is still missing, in the order they are asked; the first is the ONE question. */
   missing: MissingInput[];
+  /** The customer skipped the channels of a mission: the videos are found by a topic instead, and the plan says so. */
+  channelsSkipped: boolean;
 }
 
 export type MissingInput =
@@ -64,10 +68,22 @@ function channelCount(text: string): number | null {
 
 const CHANNEL_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "مع", "من", "ال", "يوتيوب", "اليوتيوب", "فيسبوك", "تيك", "توك", "كل", "بتاعة", "بتاعت"]);
 
+const CHANNEL_ANSWER_LABEL = CLARIFICATION_ANSWER_LABELS.social_channel_required;
+const ANY_ANSWER_LABEL_RE = `(?:${Array.from(new Set([...Object.values(CLARIFICATION_ANSWER_LABELS), "إجابة هدف التواصل"])).join("|")})`;
+/** Closes an answer typed or tapped for one of our questions, so a later message of the customer is never read as part of it. */
+export const ANSWER_END = "\u2063";
+const CHANNEL_ANSWER_RE = new RegExp(`${CHANNEL_ANSWER_LABEL}\\s*:\\s*([\\s\\S]*?)(?=${ANSWER_END}|\\s${ANY_ANSWER_LABEL_RE}\\s*:|$)`, "gu");
+
+/** The channels the customer named, in any form: an answer to the channel question (names, handles with or without «@», links), handles and links anywhere, «قناة X». */
 function namedChannels(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/(?:^|[^\w@])@([\w.]{2,30})/gu)) out.push(`@${m[1]}`);
-  const m = /(?:قناة|قناه|صفحة)\s+((?:[\p{L}\p{N}_.]+\s?){1,3})/u.exec(text);
+  const add = (name: string) => {
+    const key = channelKey(name);
+    if (key && !out.some((existing) => channelKey(existing) === key)) out.push(name);
+  };
+  for (const m of text.matchAll(CHANNEL_ANSWER_RE)) for (const name of parseChannelAnswer(m[1])) add(name);
+  for (const handle of handlesInText(text)) add(handle);
+  const m = /(?:قناة|قناه|صفحة)\s+((?:[\p{L}\p{N}_.]+\s?){1,3})/u.exec(text.replace(CHANNEL_ANSWER_RE, " "));
   if (m) {
     const words = m[1].trim().split(/\s+/);
     const kept: string[] = [];
@@ -75,10 +91,16 @@ function namedChannels(text: string): string[] {
       if (CHANNEL_NAME_STOP.has(w)) break;
       kept.push(w);
     }
-    if (kept.length && !/^\d+$/.test(kept[0])) out.push(kept.join(" "));
+    if (kept.length && !/^\d+$/.test(kept[0])) add(kept.join(" "));
   }
-  return [...new Set(out)];
+  return out;
 }
+
+const CAP_ANSWER_RE = new RegExp(`${CLARIFICATION_ANSWER_LABELS.volume_cap_required}\\s*:\\s*(\\d{1,8})`, "u");
+
+/** What a skipped channel question leaves in the text a routing decision reads (a word that is never a subject). */
+export const CHANNELS_SKIPPED_VALUE = "تخطي";
+const CHANNELS_SKIPPED_RE = new RegExp(`${CLARIFICATION_ANSWER_LABELS.social_channel_required}\\s*:\\s*${CHANNELS_SKIPPED_VALUE}(?![\\p{L}])`, "u");
 
 function topPerChannel(text: string): { top: number | null; rankedBy: "views" | null } {
   const m = /(?:اعلي|اعلى|أعلى|اكتر|أكتر|اكثر|أكثر|اعلا|توب|top)\s*(\d+)\s*(?:فيديو|فيديوهات|مقطع|مقاطع|بوست|منشور)/iu.exec(text)
@@ -115,6 +137,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   const social = detectSocialIntent(text);
   const intent: RequestIntent = extractRequestIntent(text);
   const channels = { count: channelCount(text), named: namedChannels(text) };
+  const channelsSkipped = channels.named.length === 0 && CHANNELS_SKIPPED_RE.test(text);
   const { top, rankedBy } = topPerChannel(text);
   const allComments = ALL_COMMENTS_RE.test(text);
   const allItems = ALL_ITEMS_RE.test(text);
@@ -140,7 +163,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     if (channels.count) stripped = stripped.replace(new RegExp(`${COUNT}\\s*${CHANNEL_WORD}`), " ");
     if (top !== null) stripped = stripped.replace(/(?:اعلي|اعلى|أعلى|اكتر|أكتر|اكثر|أكثر|اعلا|توب|top)?\s*\d+\s*(?:فيديو|فيديوهات|مقطع|مقاطع)/iu, " ");
     const counted = /(\d{2,7})\s*(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة)/iu.exec(stripped);
-    volume = counted ? Number(counted[1]) : null;
+    // The answer to the cap question is stored as «الحد الأقصى المطلوب: N»; a bare number there is the cap too.
+    const capAnswer = CAP_ANSWER_RE.exec(text);
+    volume = capAnswer ? Number(capAnswer[1]) : counted ? Number(counted[1]) : null;
   } else {
     volume = intent.count;
   }
@@ -148,9 +173,11 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   const feedKind = kind === "social_feed" || kind === "social_channel_topic" || kind === "social_ranked_comments";
   // A named channel's own videos or posts are scoped by the channel (the latest N), not by a period.
   const needsWindow = feedKind && !social.wantsTrending && !social.targetUrl && !(kind === "social_feed" && channelMode);
-  const window = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" });
+  // Without channels the top videos are found by a topic: a search, which needs its period like any other.
+  const window = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" && !channelsSkipped });
 
-  const subjectRaw = kind === "social_feed" || kind === "social_channel_topic" ? subjectAfterAbout(text) || socialSubjectText(text) : "";
+  const topicAnswer = channelsSkipped ? topicAnswerFromText(text) : null;
+  const subjectRaw = topicAnswer || (kind === "social_feed" || kind === "social_channel_topic" ? subjectAfterAbout(text) || socialSubjectText(text) : "");
   const subject = subjectRaw || (intent.industry?.arabic ?? null) || null;
 
   const missing: MissingInput[] = [];
@@ -165,7 +192,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     missing.push("platform");
   } else if (feedKind || kind === "social_comments_url") {
     if (!platform) missing.push("platform");
-    if (kind === "social_ranked_comments" && channels.named.length === 0 && !(channels.count && social.discover === "channel" && social.channelRef)) missing.push("channels");
+    if (kind === "social_ranked_comments" && channelsSkipped) {
+      if (!subject) missing.push("subject");
+    } else if (kind === "social_ranked_comments" && channels.named.length === 0 && !(channels.count && social.discover === "channel" && social.channelRef)) missing.push("channels");
     if (kind === "social_channel_topic" && channels.named.length === 0 && !social.channelRef) missing.push("channels");
     if (kind === "social_feed" && !subject && !channelMode) missing.push("subject");
     // «كل التعليقات» or an unstated volume over channels always carries a cap the customer chooses.
@@ -187,6 +216,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     window,
     needsCap: allComments || allItems || (feedKind && volume === null && kind !== "social_feed"),
     missing,
+    channelsSkipped,
   };
 }
 
@@ -209,12 +239,36 @@ const QUESTION_BY_MISSING: Record<MissingInput, { id: string; textAr: string; op
   count: { id: "company_count_required", textAr: "كم سجلًا تريد في النتائج؟" },
 };
 
+/** The question that asks for the channels of a mission, and the different one asked when the customer skipped it. */
+export const CHANNEL_QUESTION_AR = QUESTION_BY_MISSING.channels.textAr;
+export const TOPIC_INSTEAD_OF_CHANNELS_QUESTION_AR = "ما موضوع الفيديوهات التي تريد تعليقاتها؟ سأبحث عن أعلاها مشاهدة بدل القنوات.";
+export const TOPIC_INSTEAD_OF_CHANNELS_ID = "social_topic_required";
+
+/**
+ * The label of the stored answer a plain typed message gives, when the assistant's last message asked one of the questions below.
+ * A message typed instead of tapping the card is read exactly like the card's answer.
+ */
+export function typedAnswerLabelFor(assistantText: string): string | null {
+  const text = String(assistantText || "");
+  if (text.includes(TOPIC_INSTEAD_OF_CHANNELS_QUESTION_AR)) return CLARIFICATION_ANSWER_LABELS.social_topic_required;
+  if (text.includes(CHANNEL_QUESTION_AR)) return CLARIFICATION_ANSWER_LABELS.social_channel_required;
+  return null;
+}
+
+/** The answer to the topic question asked instead of the channels, from the stored labelled text; null when there is none. */
+export function topicAnswerFromText(text: string): string | null {
+  const m = new RegExp(`${CLARIFICATION_ANSWER_LABELS.social_topic_required}\\s*:\\s*([\\s\\S]*?)(?=${ANSWER_END}|\\s${ANY_ANSWER_LABEL_RE}\\s*:|$)`, "u").exec(text || "");
+  const topic = m?.[1]?.trim();
+  return topic ? topic : null;
+}
+
 /** What the assistant does next: ask the ONE missing thing, or go to the plan. Never more than one question. */
 export function nextStep(understanding: MissionUnderstanding, ignore?: ReadonlySet<string>): NextStep {
   // A question the customer skipped and that may be answered by a stated default (the period, the cap) is not asked again.
   const first = ignore && ignore.size > 0 ? understanding.missing.find((item) => !ignore.has(QUESTION_BY_MISSING[item].id)) : understanding.missing[0];
   if (!first) return { type: "plan" };
   const q = QUESTION_BY_MISSING[first];
+  if (first === "subject" && understanding.channelsSkipped) return { type: "ask_one", id: TOPIC_INSTEAD_OF_CHANNELS_ID, textAr: TOPIC_INSTEAD_OF_CHANNELS_QUESTION_AR };
   // The cap is a count of what the customer asked for: comments, or records for anything else.
   if (first === "cap" && !(understanding.allComments || understanding.kind === "social_ranked_comments" || understanding.kind === "social_channel_topic" || understanding.kind === "social_comments_url")) {
     return { type: "ask_one", id: q.id, textAr: "ما الحد الأقصى لعدد السجلات الذي تريده؟", options: ["٥٠٠ سجل", "١٠٠٠ سجل", "٢٠٠٠ سجل", "٥٠٠٠ سجل"] };
@@ -247,7 +301,14 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
   const amount = (n: number, noun: string) => `${formatAr(n)} ${noun}`;
   switch (u.kind) {
     case "social_ranked_comments": {
-      const channelsText = u.channels.count ? `${num(u.channels.count)} قنوات` : u.channels.named.length > 1 ? `القنوات ${u.channels.named.join(" و")}` : u.channels.named.length ? `قناة ${u.channels.named[0]}` : "عدة قنوات";
+      if (u.channelsSkipped) {
+        const ranking = u.topPerChannel ? `أعلى ${num(u.topPerChannel)} فيديوهات${u.rankedBy === "views" ? " مشاهدة" : ""}` : "فيديوهات";
+        const about = u.subject ? ` عن «${u.subject}»` : "";
+        return `فهمت أنك تريد ${u.allComments ? "كل تعليقات" : "تعليقات"} ${ranking}${about}${where}، بلا قنوات محددة${windowText}.`;
+      }
+      // What the customer named is what the plan covers; the count in the template only counts when no name was given.
+      const named = u.channels.named;
+      const channelsText = named.length > 1 ? (named.length <= 3 ? `القنوات ${named.join(" و")}` : channelsCountAr(named.length)) : named.length ? `قناة ${named[0]}` : u.channels.count ? channelsCountAr(u.channels.count) : "عدة قنوات";
       const ranking = u.topPerChannel ? `أعلى ${num(u.topPerChannel)} فيديوهات${u.rankedBy === "views" ? " مشاهدة" : ""} لكل قناة` : "فيديوهات القنوات";
       return `فهمت أنك تريد ${u.allComments ? "كل تعليقات" : "تعليقات"} ${ranking} من ${channelsText}${where}، مع رابط كل فيديو${windowText}.`;
     }
@@ -273,6 +334,30 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
     default:
       return null;
   }
+}
+
+/**
+ * The plan lines about the channels of a mission when what was planned differs from what the template asked: fewer channels than it
+ * said, more than one job holds, a lower top-per-channel, or the videos found by a topic because no channel was given.
+ */
+export function missionCoverageLinesAr(u: MissionUnderstanding, planned: { channels: string[]; topPerChannel?: number | null; maxChannels: number }): string[] {
+  const lines: string[] = [];
+  if (u.kind !== "social_ranked_comments" && u.kind !== "social_channel_topic") return lines;
+  if (u.channelsSkipped) {
+    if (u.subject) lines.push(`القنوات: لم تحدد قنوات، فأبحث عن أعلى الفيديوهات مشاهدة عن «${u.subject}».`);
+    return lines;
+  }
+  const given = u.channels.named.length;
+  if (given > 0 && u.channels.count && given < u.channels.count) {
+    lines.push(`القنوات: ذكرت ${channelsCountAr(given)} من ${channelsCountAr(u.channels.count)}، فجهزت الخطة على ما كتبته.`);
+  }
+  if (given > planned.maxChannels) {
+    lines.push(`القنوات: كتبت ${channelsCountAr(given)}، واعتمدت أول ${channelsCountAr(planned.maxChannels)} لأن المهمة الواحدة لا تتسع لأكثر، ويمكنك تقديم طلب آخر لبقية القنوات.`);
+  }
+  if (u.topPerChannel && planned.topPerChannel && planned.topPerChannel < u.topPerChannel) {
+    lines.push(`الفيديوهات: خفّضت أعلى ${num(u.topPerChannel)} فيديوهات لكل قناة إلى ${num(planned.topPerChannel)} حتى لا تتجاوز المهمة الواحدة حدّ الفيديوهات.`);
+  }
+  return lines;
 }
 
 const WHY_AR: Record<string, string> = {

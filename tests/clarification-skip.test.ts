@@ -105,15 +105,16 @@ describe("the big-mission template (channels, top videos by views, all comments)
     expect(visible(responses[0])).not.toMatch(PLACEHOLDER);
   });
 
-  it("skipping the channels does not show the same card: one plain sentence, then typed channel names go on to the cap", async () => {
+  it("skipping the channels does not show the same card or a refusal: one different question (the topic), then typed channel names go on to the cap", async () => {
     const { responses } = await runConversation([
       TEMPLATE,
       answer("social_channel_required", CHANNELS_Q),
       "@aljazeera و@alarabiya و@skynews",
     ]);
-    expect(responses[1].outputType).toBe("answer_question");
-    expect(responses[1].clarificationItems ?? []).toHaveLength(0);
-    expect(responses[1].contentAr).toContain("اسم قناة واحدة على الأقل");
+    expect(responses[1].outputType).toBe("ask_clarification");
+    expect(responses[1].clarificationItems.map((q: any) => q.id)).toEqual(["social_topic_required"]);
+    expect(responses[1].clarificationItems.map((q: any) => q.id)).not.toContain("social_channel_required");
+    expect(responses[1].contentAr).not.toContain("لا أستطيع");
     expect(responses[2].clarificationItems.map((q: any) => q.id)).toEqual(["volume_cap_required"]);
     for (const r of responses) expect(visible(r)).not.toMatch(PLACEHOLDER);
     expect(visible(responses[2])).not.toContain("ما أسماء القنوات");

@@ -2,6 +2,9 @@ import { detectMentionedPlatforms } from "./capabilityRegistry";
 import { isGreetingOrGeneralQuestion } from "./briefManager";
 import { looksLikeFileShapingRequest, unsupportedFileEdit } from "../../lib/fileSpec";
 import { extractUrls, hasSocialSubject } from "../../lib/socialTasks";
+import { CLARIFICATION_ANSWER_LABELS } from "../../lib/clarificationLabels";
+
+export { CLARIFICATION_ANSWER_LABELS };
 
 /**
  * Which earlier messages may inform the CURRENT research request.
@@ -17,29 +20,6 @@ const REQUEST_OBJECT = /(?:تعليق|تعليقات|كومنت|كومنتس|ك�
 const SHAPING_VERB_START = /^(?:رتّ?ب|فلتر|قسّ?م|وزّ?ع|سيب|خلي)(?:ها|ه|لي|لنا)?(?=\s)/u;
 const TOPIC_MARKER = /(?:^|\s)(?:عن|حول|بخصوص|في|من|لدى|داخل)\s/;
 const PLAN_REFERENCE = /(?:الخطة|الخطه|العرض|السعر|عرض السعر|النقاط|الرصيد|الملف|الشيت|الاكسل|الإكسل|اللي فات|السابق)/;
-/**
- * The words that label a stored card answer in the text a routing decision reads. An answer never starts a new request, and its label
- * is a noise word of the subject (see TOPIC_NOISE), so a label can never become the topic.
- */
-export const CLARIFICATION_ANSWER_LABELS: Record<string, string> = {
-  company_country_required: "الدولة المطلوبة",
-  company_industry_required: "المجال المطلوب",
-  company_count_required: "عدد الشركات المطلوب",
-  people_country_required: "دولة صناع القرار المطلوبة",
-  people_scope_required: "نطاق صناع القرار",
-  people_roles_required: "المسميات الوظيفية المطلوبة",
-  people_count_required: "عدد صناع القرار المطلوب",
-  social_account_required: "اسم الحساب المطلوب",
-  social_topic_required: "موضوع البحث المطلوب",
-  social_platform_required: "منصة البحث المطلوبة",
-  social_time_required: "الفترة المطلوبة",
-  social_comment_target_required: "مصدر الفيديوهات المطلوب",
-  social_channel_required: "القنوات المطلوبة",
-  social_x_topic_required: "موضوع البحث المطلوب",
-  social_x_account_required: "اسم الحساب المطلوب",
-  volume_cap_required: "الحد الأقصى المطلوب",
-  topic_source_required: "المصدر المطلوب",
-};
 const ANSWER_LABEL_ALTERNATION = Array.from(new Set([...Object.values(CLARIFICATION_ANSWER_LABELS), "إجابة هدف التواصل"]))
   .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
   .join("|");
