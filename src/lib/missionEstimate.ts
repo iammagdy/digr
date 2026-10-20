@@ -5,6 +5,7 @@ import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { SOCIAL_PLATFORM_LABEL_AR, type SocialPlatformId } from "./socialTasks";
 import { understandMission, understoodLineAr } from "./consultantCopy";
 import { volumeForPointsCap } from "./pointsCap";
+import { recordsInOneJob, reserveInOneJob } from "./jobSizing";
 
 /**
  * The public estimate: what a request would cost, from the SAME unit prices and reserve formula the quote writer uses
@@ -107,11 +108,15 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   }
 
   const expectedPoints = Math.ceil(volume * perUnit);
-  const reservePoints = isPeople
+  // One shared rule for the one-job size (the quote writer's own: see jobSizing).
+  const sizing = { unitPricePoints: perUnit, capPoints: jobCapPoints, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople };
+  const maxVolumeInOneJob = recordsInOneJob(sizing);
+  const fitsInOneJob = maxVolumeInOneJob >= volume;
+  const unclippedReserve = isPeople
     ? decisionMakerQuotePoints(volume, fields, DECISION_MAKER_UNIT_PRICES_POINTS, settings.safetyBuffer, Number.MAX_SAFE_INTEGER)
     : Math.ceil(volume * perUnit * (1 + settings.safetyBuffer));
-  const maxVolumeInOneJob = Math.max(0, volumeForPointsCap(jobCapPoints, perUnit, settings.safetyBuffer));
-  const fitsInOneJob = reservePoints <= jobCapPoints;
+  // Inside one job the writer clips a decision-maker hold to the cap; a request that needs several jobs shows the whole hold.
+  const reservePoints = fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve;
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
 
   const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${n(reservePoints)} نقطة) يشمل احتياطيًا يعود إليك ما لم يُستخدم.`];

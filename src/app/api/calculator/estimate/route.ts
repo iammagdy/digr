@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { estimateMission, estimateSummaryAr, parseEstimateText, type EstimateInput, type EstimateKind } from "@/lib/missionEstimate";
 import { RATE_LIMITED_MESSAGE_AR, clientKey, createRateLimiter } from "@/lib/server/publicRateLimit";
 import type { SocialPlatformId } from "@/lib/socialTasks";
+import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, error: "اختر نوع البيانات أو اكتب طلبك." }, { status: 400 });
   }
   if (!input) return NextResponse.json({ success: true, result: null, understoodAr, missingAr });
-  const result = estimateMission(input);
+  // The same live limit the detailed calculator and the segment pages use, so all three size one job alike.
+  const result = estimateMission({ ...input, dailyCapPoints: await liveDailyCapPoints() });
   return NextResponse.json({
     success: true,
     result,

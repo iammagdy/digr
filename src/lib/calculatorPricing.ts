@@ -10,6 +10,8 @@ import {
   type Capability,
 } from "../functions/shared/capabilityRegistry";
 import { PLATFORM_GUIDE } from "../functions/shared/platformGuide";
+import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
+import { recordsInOneJob, reserveInOneJob } from "./jobSizing";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 export const DEFAULT_JOB_POINTS_CAP = 600;
 
@@ -108,8 +110,12 @@ export function computePublicCalculatorQuote(
     capabilities.find((c) => (capabilitySlug.includes("compan") || capabilitySlug.includes("search")) && c.slug.includes("compan")) ||
     capabilities[0];
 
-  // Same basis as the quote writer: the customer rate when the service has one, otherwise its cost basis.
-  const unitPricePoints = calculateCapabilityUnitPricePoints(cap.customerPriceUsdPerItem && cap.customerPriceUsdPerItem > 0 ? cap.customerPriceUsdPerItem : cap.unitCostUsd, settings);
+  // Same basis as the quote writer: the customer rate when the service has one, otherwise its cost basis. Decision makers are
+  // priced per person plus the contact fields (the writer's default asks for both), never at the base rate alone.
+  const isPeople = cap.slug === "professional-people-search";
+  const unitPricePoints = isPeople
+    ? DECISION_MAKER_UNIT_PRICES_POINTS.basePerson + DECISION_MAKER_UNIT_PRICES_POINTS.workEmail + DECISION_MAKER_UNIT_PRICES_POINTS.phone
+    : calculateCapabilityUnitPricePoints(cap.customerPriceUsdPerItem && cap.customerPriceUsdPerItem > 0 ? cap.customerPriceUsdPerItem : cap.unitCostUsd, settings);
   const rawPoints = safeTarget * unitPricePoints;
   const reservedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
 
@@ -118,14 +124,12 @@ export function computePublicCalculatorQuote(
     : dailyCapPointsFor(dailySpendCapUsd, settings);
   const effectiveMaxCap = Math.min(jobPointsCap, dailyCapPoints);
 
-  const isCapped = reservedPoints > effectiveMaxCap;
+  // One shared rule for the one-job size (the quote writer's own: see jobSizing).
+  const sizing = { unitPricePoints, capPoints: effectiveMaxCap, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople };
+  const isCapped = safeTarget > recordsInOneJob(sizing);
 
-  const maxCappedVolume = isCapped
-    ? Math.max(1, Math.floor(effectiveMaxCap / Math.max(1, unitPricePoints * (1 + settings.safetyBuffer))))
-    : safeTarget;
-  const cappedReservedPoints = isCapped
-    ? Math.ceil(maxCappedVolume * unitPricePoints * (1 + settings.safetyBuffer))
-    : reservedPoints;
+  const maxCappedVolume = isCapped ? Math.max(1, recordsInOneJob(sizing)) : safeTarget;
+  const cappedReservedPoints = reserveInOneJob(maxCappedVolume, sizing);
 
   const settlement = calculateFinalSettlement(
     safeDelivered,

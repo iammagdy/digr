@@ -82,8 +82,8 @@ export interface SegmentExample {
 
 const TODAY = new Date(Date.UTC(2026, 9, 20));
 
-export function segmentExample(segment: Segment): SegmentExample {
-  const result = estimateMission(segment.estimate);
+export function segmentExample(segment: Segment, dailyCapPoints?: number): SegmentExample {
+  const result = estimateMission({ ...segment.estimate, dailyCapPoints });
   return {
     understoodAr: understoodLineAr(understandMission(segment.exampleRequestAr, { today: TODAY })),
     priceAr: result.status === "ok" ? estimateSummaryAr(result) : "",
