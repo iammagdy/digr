@@ -532,7 +532,7 @@ async function runCommentsChunk(
       if (chain.rows.length > 0 && refs.length === 0) {
         return failure(totals, "تعذر تحديد روابط الفيديوهات من نتائج البحث؛ لم يُحتسب أي خصم.");
       }
-      if (refs.length === 0) return success([], null, totals);
+      if (refs.length === 0) return { ...success([], null, totals), emptyReason: "no_videos" };
       state = { ph: "c", refs, i: 0, cc: null, n: 0, si: null };
       continue;
     }

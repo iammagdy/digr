@@ -7,6 +7,9 @@ export const OUTSIDE_WINDOW_SENTENCE_AR = "المصدر أعاد منشورات 
 /** Said when the source gives no date for the comments themselves and the window was applied to the date of their video. */
 export const VIDEO_DATE_BASIS_SENTENCE_AR = "المصدر لا يعرض تاريخ كتابة التعليقات، فطبّقنا الفترة المطلوبة على تاريخ نشر الفيديو الذي كُتبت عليه";
 
+/** Said when some dates were read from a «منذ …» text: they are real but coarse, so the window is applied to them approximately. */
+export const APPROXIMATE_DATES_SENTENCE_AR = "بعض التواريخ تقريبية لأن المصدر يعرضها بصيغة «منذ …»، لذلك تُطبَّق الفترة عليها بشكل تقريبي";
+
 /** True when the page returned rows, each with a readable date, and none of them is inside the window. */
 export function allRowsOutsideWindow(summary: RowDateSummary, returned: number): boolean {
   return returned > 0 && summary.missing === 0 && summary.outside === returned && summary.inside === 0;
@@ -17,7 +20,7 @@ export function allRowsOutsideWindow(summary: RowDateSummary, returned: number):
  * the source returned. The three numbers always add up to the rows returned, because they come from the classification
  * the filter itself uses; "inside" is only ever claimed for rows the filter kept.
  */
-export function dateWindowPageEventAr(summary: RowDateSummary, returned: number, options: { videoBasis?: number } = {}): string {
+export function dateWindowPageEventAr(summary: RowDateSummary, returned: number, options: { videoBasis?: number; approximate?: number } = {}): string {
   const dropped = summary.missing + summary.outside;
   const range = summary.oldest && summary.newest
     ? `أقدم تاريخ نشر ${toArabicDigits(summary.oldest)} وأحدث تاريخ ${toArabicDigits(summary.newest)}`
@@ -25,13 +28,16 @@ export function dateWindowPageEventAr(summary: RowDateSummary, returned: number,
   const basis = options.videoBasis && options.videoBasis > 0
     ? ` ${VIDEO_DATE_BASIS_SENTENCE_AR} (${toArabicDigits(options.videoBasis)} تعليق).`
     : "";
+  const approximate = options.approximate && options.approximate > 0
+    ? ` ${APPROXIMATE_DATES_SENTENCE_AR} (${toArabicDigits(options.approximate)} سجل).`
+    : "";
   if (dropped === 0) {
-    return `فحصنا تواريخ ${toArabicDigits(returned)} سجل من هذه الصفحة وكلها داخل الفترة المطلوبة (${range}).${basis}`;
+    return `فحصنا تواريخ ${toArabicDigits(returned)} سجل من هذه الصفحة وكلها داخل الفترة المطلوبة (${range}).${basis}${approximate}`;
   }
   const parts: string[] = [];
   if (summary.outside > 0) parts.push(`${toArabicDigits(summary.outside)} خارج الفترة المطلوبة`);
   if (summary.missing > 0) parts.push(`${toArabicDigits(summary.missing)} بلا تاريخ نشر يمكن التحقق منه`);
   const remaining = summary.inside > 0 ? `، وبقي ${toArabicDigits(summary.inside)} داخلها` : "";
   const verdict = allRowsOutsideWindow(summary, returned) ? ` ${OUTSIDE_WINDOW_SENTENCE_AR}.` : "";
-  return `تم استبعاد ${toArabicDigits(dropped)} سجل من هذه الصفحة بسبب التاريخ: ${parts.join(" و")}${remaining}. ${range}.${verdict}${basis}`;
+  return `تم استبعاد ${toArabicDigits(dropped)} سجل من هذه الصفحة بسبب التاريخ: ${parts.join(" و")}${remaining}. ${range}.${verdict}${basis}${approximate}`;
 }
