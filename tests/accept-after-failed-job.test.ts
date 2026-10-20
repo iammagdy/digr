@@ -13,6 +13,9 @@ const state = vi.hoisted(() => ({
   ledger: [] as any[],
   messages: [] as any[],
   dispatched: [] as string[],
+  events: [] as any[],
+  dispatch: "ok" as "ok" | "http_503" | "html" | "timeout" | "throws" | "auth",
+  recordFailureThrows: false,
 }));
 
 vi.mock("../src/lib/supabase/server", () => ({
@@ -41,9 +44,10 @@ vi.mock("../src/lib/supabase/server", () => ({
           }),
         };
       }
-      return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }), insert: async () => ({ error: null }) };
+      return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }), insert: async (row: any) => { if (table === "job_events") state.events.push(row); return { error: null }; } };
     },
     rpc: async (name: string, args: any) => {
+      if (name === "record_chunk_failure" && state.recordFailureThrows) throw new Error("rpc down");
       if (name !== "accept_quote_atomic") return { data: { success: true }, error: null };
       const q = state.quotes.find((item) => item.id === args.p_quote_id);
       if (!q) return { data: { success: false, error: "quote_not_found" }, error: null };
@@ -64,7 +68,15 @@ vi.mock("../src/lib/supabase/server", () => ({
 }));
 
 vi.mock("../src/lib/server/workerDispatch", () => ({
-  dispatchWorkerChunk: vi.fn(async (_base: string, jobId: string) => { state.dispatched.push(jobId); return { started: true, status: 200, body: {} }; }),
+  dispatchWorkerChunk: vi.fn(async (_base: string, jobId: string) => {
+    state.dispatched.push(jobId);
+    if (state.dispatch === "throws") throw new Error("socket closed");
+    if (state.dispatch === "timeout") throw Object.assign(new Error("timed out"), { name: "TimeoutError" });
+    if (state.dispatch === "http_503") return { started: false, status: 503, body: {}, failureCode: "worker_http_error" };
+    if (state.dispatch === "html") return { started: false, status: 200, body: {}, failureCode: "protection_redirect" };
+    if (state.dispatch === "auth") return { started: false, status: 401, body: {}, failureCode: "worker_auth_rejected" };
+    return { started: true, status: 200, body: {} };
+  }),
 }));
 vi.mock("../src/lib/server/jobNotices", async (importOriginal) => ({ ...(await importOriginal<any>()), sendJobNotice: vi.fn(async () => undefined) }));
 
@@ -99,6 +111,9 @@ describe("approving a new quote after a failed, fully released job in the same c
       { id: "m3", user_id: "user_1", request_quote_id: "q_retry_new", request_status: "quoted" },
     ];
     state.dispatched = [];
+    state.events = [];
+    state.dispatch = "ok";
+    state.recordFailureThrows = false;
   });
   afterEach(() => { process.env = { ...env }; });
 
@@ -138,5 +153,48 @@ describe("approving a new quote after a failed, fully released job in the same c
   it("a failed job does not count against the active-job limit", async () => {
     state.jobs.push({ id: "job_a", user_id: "user_1", status: "failed" }, { id: "job_b", user_id: "user_1", status: "failed" }, { id: "job_c", user_id: "user_1", status: "completed" });
     expect((await approve("q_retry_new")).status).toBe(200);
+  });
+
+  describe("a start that does not go through says what is true and records a reason code", () => {
+    const startLines = () => state.events.filter((e) => e.job_id === "job_quote_q_retry_new").map((e) => `${e.event_type}|${e.message}`);
+
+    it.each([
+      ["http_503", "١٤"], ["html", "١٢"], ["auth", "١١"], ["throws", "١٦"], ["timeout", "١٧"],
+    ] as const)("worker %s: the request stays reserved and queued for an automatic retry, the answer is a success with the retry sentence, and the activity carries code %s", async (mode, code) => {
+      state.dispatch = mode;
+      const { status, json } = await approve("q_retry_new");
+      expect(status).toBe(200);
+      expect(json).toMatchObject({ success: true, jobId: "job_quote_q_retry_new", reservedCredits: 207 });
+      expect(json.workerDispatch.started).toBe(false);
+      expect(json.messageAr).toBe("تعذر بدء البحث الآن. ستتم إعادة المحاولة تلقائياً.");
+      expect(json.messageAr).not.toContain("رصيد");
+      const line = startLines().find((entry) => entry.includes("رمز السبب"));
+      expect(line).toBe(`warning|تعثر بدء المعالجة مؤقتاً، وستُعاد المحاولة تلقائياً، ولن يُخصم من رصيدك إلا ما يُسلَّم (رمز السبب ${code}).`);
+      expect(line!.split("|")[1]).not.toMatch(/[A-Za-z]/);
+      // the reserve is exactly the quote's, made once, and nothing was released by this path
+      expect(state.ledger.filter((row) => row.job_id === "job_quote_q_retry_new")).toEqual([expect.objectContaining({ type: "reserve", delta: -207 })]);
+    });
+
+    it("a failure while recording the attempt never turns an accepted request into an error", async () => {
+      state.dispatch = "http_503";
+      state.recordFailureThrows = true;
+      const { status, json } = await approve("q_retry_new");
+      expect(status).toBe(200);
+      expect(json.success).toBe(true);
+      expect(state.jobs.find((job) => job.id === "job_quote_q_retry_new")?.status).toBe("queued");
+    });
+
+    it("a started request writes no start-failure line", async () => {
+      await approve("q_retry_new");
+      expect(startLines().some((entry) => entry.includes("رمز السبب"))).toBe(false);
+    });
+
+    it("insufficient balance is the only start failure that talks about the balance, in the server's own sentence", async () => {
+      const { acceptQuoteSupabase } = await import("../src/lib/supabase/quoteAccept");
+      const rpc = async () => ({ data: { success: false, error: "insufficient_balance", balance: 50 }, error: null });
+      const result = await acceptQuoteSupabase({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: null, error: new Error("x") }) }) }) }), rpc } as any, { userId: "user_1", quoteId: "q", expectedPlanHash: HASH });
+      expect(result.statusCode).toBe(402);
+      expect(result.errorAr).toBe("رصيدك الحالي (٥٠ نقطة) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.");
+    });
   });
 });

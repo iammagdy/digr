@@ -50,7 +50,8 @@ import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
 import { waitProgressText } from "@/lib/waitProgress";
-import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr } from "@/lib/customerError";
+import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
+import { startFailureText, type StartedJobState } from "@/lib/startFailure";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -1120,30 +1121,64 @@ export default function ChatWorkspacePage() {
   }
 
   // Start Job Execution
+  /** Whether the job of a quote exists (its reserve is made in the same step, so no job means nothing is held). */
+  async function lookupQuoteJobState(quoteId: string): Promise<StartedJobState> {
+    const jobId = getJobIdForQuote(quoteId);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const { data, error } = await createClient().from("jobs").select("id").eq("id", jobId).maybeSingle();
+        if (error) return "unknown";
+        if (data?.id) return "exists";
+      } catch {
+        return "unknown";
+      }
+      // The request may still be finishing on the server: look again before saying it did not start.
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+    return "none";
+  }
+
   async function handleStartExecution(quote: PlanQuoteData) {
     if (startingQuoteId || !user) return;
     setStartingQuoteId(quote.quoteId);
 
     try {
-      const jwtToken = await getAccessToken();
+      let data: any;
+      try {
+        const jwtToken = await getAccessToken();
 
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
 
-      const res = await fetch("/api/chat/accept-quote", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          quoteId: quote.quoteId,
-          expectedPlanHash: quote.planHash,
-          explicitApproval: true,
-          jwt: jwtToken,
-        }),
-      });
+        const res = await fetch("/api/chat/accept-quote", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            quoteId: quote.quoteId,
+            expectedPlanHash: quote.planHash,
+            explicitApproval: true,
+            jwt: jwtToken,
+          }),
+        });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "فشل بدء تنفيذ الخطة");
+        data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || "فشل بدء تنفيذ الخطة");
+        }
+      } catch (err: any) {
+        // A dropped answer is not a failed start: the job of the quote is looked up first, and only the truth is said.
+        const deliberate = customerFacingFailure(err).text !== TEMPORARY_FAILURE_AR;
+        const jobState = deliberate ? "unknown" : await lookupQuoteJobState(quote.quoteId);
+        const text = startFailureText({ deliberateText: deliberate ? customerFacingFailure(err).text : null, jobState });
+        if (text !== null) {
+          setMessages((prev) => [
+            ...prev,
+            { id: `err_start_${Date.now()}`, role: "assistant", content: text, createdAt: new Date().toISOString() },
+          ]);
+          return;
+        }
+        // The request did start; only the answer was lost. It is shown as started, and its real progress comes from its own events.
+        data = { success: true, jobId: getJobIdForQuote(quote.quoteId), workerDispatch: { started: true }, reservedCredits: quote.quotedPoints };
       }
 
       loadBalance();
@@ -1180,6 +1215,7 @@ export default function ChatWorkspacePage() {
         },
       ]);
     } catch (err: any) {
+      // Only the display of an accepted request can fail here: it is not a failed start, so the balance is not blamed.
       setMessages((prev) => [
         ...prev,
         {

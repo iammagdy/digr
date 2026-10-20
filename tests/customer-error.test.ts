@@ -47,7 +47,9 @@ describe("a failed request never shows English or technical text", () => {
     const failure = customerFacingFailure(new TypeError("Failed to fetch"));
     expect(failure.text).toBe(TEMPORARY_FAILURE_AR);
     expect(failure.text).not.toContain("لم يُخصم");
-    expect(startFailureMessageAr(new TypeError("Failed to fetch"))).toBe("تعذر بدء الاستخراج الآن. تحقق من رصيدك في المحفظة قبل المحاولة مرة أخرى.");
+    // A failed start no longer blames the balance: only the server's own insufficient-balance sentence does (next line).
+    expect(startFailureMessageAr(new TypeError("Failed to fetch"))).toBe("حصل تعثر مؤقت أثناء بدء الطلب. افتح «طلباتي» لتعرف إن كان قد بدأ؛ ولا يُخصم رصيد إلا مقابل ما يُسلَّم.");
+    expect(startFailureMessageAr(new TypeError("Failed to fetch"))).not.toContain("رصيدك في المحفظة");
     expect(startFailureMessageAr(new ChatRequestError("الرصيد غير كافٍ لبدء هذه المهمة.", 402))).toBe("تعذر بدء الاستخراج: الرصيد غير كافٍ لبدء هذه المهمة.");
   });
 
