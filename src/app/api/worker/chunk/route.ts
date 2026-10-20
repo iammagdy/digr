@@ -1,5 +1,7 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
-import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, reviewSocialRows, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
+import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
+import { highOffTopicEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { regionNameAr } from "../../../../lib/regionNames";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
 import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
@@ -717,6 +719,7 @@ export async function POST(req: NextRequest) {
     let reviewUsdThisChunk = 0;
     let reviewFailureCodes: string[] = [];
     let reviewDiagnostics: Array<Record<string, unknown>> = [];
+    let reviewSampleSummary: Record<string, unknown> | null = null;
     let relevanceExcludedCount = 0;
     let relevanceSkipReasons: string[] = [];
     // Set when the automatic relevance review could not review some candidate rows: they go to the review sheet, paging
@@ -773,7 +776,8 @@ export async function POST(req: NextRequest) {
         }),
       }));
 
-      const reviewCustomerRequest = [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
+      const requestedRegionAr = regionNameAr(spec.params?.region);
+      const reviewCustomerRequest = [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", requestedRegionAr ? `الدولة المطلوبة: ${requestedRegionAr}` : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
         .filter((part) => typeof part === "string" && part.trim()).join(" ").slice(0, 400);
       const matchedForAdvice = reviews
         .filter((rev) => rev.decision === "match")
@@ -861,15 +865,14 @@ export async function POST(req: NextRequest) {
         // Posts and comments: a deterministic match is delivered only when the review confirms it. A failed or unreadable review, or the
         // job's review budget being used up, leaves the rows in the review sheet (not delivered, not charged) and stops paging.
         const suspiciousIndexes = new Set(reviews.filter((rev) => rev.decision === "match" && (rev as any).suspicious === true).map((rev) => rev.index));
-        const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match" && !suspiciousIndexes.has(rev.index)).length;
-        const rowsToReview = matchedForAdvice.filter((entry) => suspiciousIndexes.has(entry.index));
-        if (rowsToReview.length > 0) {
+        if (matchedForAdvice.length > 0) {
           const priorReviewUsd = runningSet?.reviewUsd ?? 0;
-          const outcome = await reviewSocialRows({
+          const outcome = await reviewSocialPage({
             advisor: getRowAdvisor(),
             customerRequest: reviewCustomerRequest,
             kind: String(spec.capabilitySlug || ""),
-            rows: rowsToReview,
+            rows: matchedForAdvice,
+            suspicious: suspiciousIndexes,
             budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
             deadlineMs: deadlineMs - 8_000,
           });
@@ -880,6 +883,7 @@ export async function POST(req: NextRequest) {
             rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
             tokensIn: attempt.usage?.inputTokens ?? 0, tokensOut: attempt.usage?.outputTokens ?? 0, latencyMs: attempt.usage?.latencyMs ?? 0,
           }));
+          if (outcome.sample) reviewSampleSummary = { size: outcome.sample.size, reviewed: outcome.sample.reviewed, off: outcome.sample.off, rate: outcome.sample.rate === null ? null : Number(outcome.sample.rate.toFixed(3)), strictPage: outcome.sample.strictPage };
           if (userId) {
             for (const attempt of outcome.attempts) {
               try {
@@ -899,8 +903,20 @@ export async function POST(req: NextRequest) {
               if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure} stop=${attempt.stopReason || ""}`);
             }
           }
-          const applied = applyStrictAdvisory(reviews, outcome.verdicts, { only: (rev) => suspiciousIndexes.has(rev.index) });
+          // Rows delivered without the review: presumed rows that did not have to be confirmed (a page that is mostly off topic confirms all).
+          const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match" && !outcome.mustConfirm.has(rev.index)).length;
+          const applied = applyStrictAdvisory(reviews, outcome.verdicts, { only: (rev) => outcome.mustConfirm.has(rev.index) });
           reviews = applied.reviews;
+          // A reviewed sample row that is off topic is not delivered, whether or not the rest of the page had to be confirmed.
+          const sampleVerdicts = new Map([...outcome.verdicts].filter(([index]) => outcome.sampleOnly.has(index)));
+          reviews = applyAdvisoryToReviews(reviews, sampleVerdicts).reviews;
+          if (outcome.sample?.strictPage && outcome.sample.rate !== null) {
+            try {
+              await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: highOffTopicEventAr(outcome.sample.rate), units: effectiveDelivered, event_type: "info" });
+            } catch (evtErr: any) {
+              console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+            }
+          }
           if (applied.unreviewed > 0) {
             // Paging stops only when nothing on the page could be delivered without the review; otherwise the doubtful rows wait
             // in the review sheet and the rest of the job goes on.
@@ -1122,6 +1138,7 @@ export async function POST(req: NextRequest) {
       ...(reviewUsdThisChunk > 0 ? { reviewUsd: Number(reviewUsdThisChunk.toFixed(6)) } : {}),
       ...(reviewFailureCodes.length > 0 ? { reviewFailures: reviewFailureCodes } : {}),
       ...(reviewDiagnostics.length > 0 ? { reviewCalls: reviewDiagnostics } : {}),
+      ...(reviewSampleSummary ? { reviewSample: reviewSampleSummary } : {}),
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
       uncertainRows,
