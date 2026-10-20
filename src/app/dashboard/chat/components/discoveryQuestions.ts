@@ -55,7 +55,7 @@ export function sanitizeDiscoveryText(value: unknown, maxLength: number): string
     .replace(/<\/?[a-z][^>]*>/gi, " ")
     .replace(/\b(?:https?:\/\/|www\.)[^\s<>()]+/gi, " ")
     .replace(/\]\((?:https?:\/\/|www\.)[^)]*\)/gi, "]")
-    .replace(/\b(?:openai|chatgpt|gpt[-\s]?[3456][\w.-]*|treg|tikhub|serpapi)\b/gi, "منصة Diger")
+    .replace(/\b(?:openai|chatgpt|gpt[-\s]?[3456][\w.-]*|treg|tikhub|serpapi)\b/gi, "منصة ديجر")
     .replace(/[\u2066-\u2069\u200e\u200f]/g, "")
     .replace(/\s+/g, " ")
     .trim()

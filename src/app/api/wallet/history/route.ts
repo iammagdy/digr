@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateUser } from "@/lib/server/userAuth";
 import { fetchTypedLedger } from "@/lib/server/typedLedger";
 import { CREDIT_KIND_LABEL_AR } from "@/lib/creditKinds";
+import { walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
 
 export const dynamic = "force-dynamic";
 
@@ -17,10 +18,11 @@ export async function GET(req: NextRequest) {
       delta: r.delta,
       type: r.type,
       kind: r.kind,
-      labelAr: CREDIT_KIND_LABEL_AR[r.kind],
+      labelAr: walletDisplayText(CREDIT_KIND_LABEL_AR[r.kind]),
       jobId: r.jobId,
       topupId: r.topupId,
-      note: r.kind === "admin_grant" ? "" : r.note,
+      // The stored note is never rewritten: it is cleaned (internal ids, Latin names) only in what the customer is sent.
+      note: r.kind === "admin_grant" ? "" : walletNoteForDisplay(r.note),
       createdAt: r.createdAt,
     }));
     return NextResponse.json({ success: true, rows: newestFirst });

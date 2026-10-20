@@ -236,6 +236,7 @@ export function DemoConversations() {
               </ul>
               <p className="m-0 text-[16px] font-medium text-ink" data-testid="demo-price">{demo.priceAr}</p>
               <p className="m-0 text-[13px] font-light leading-[1.9] text-mut">{demo.outputAr}</p>
+              <Link href="/register" data-testid="demo-cta" className="mt-1 inline-flex min-h-11 items-center self-start rounded-full bg-ac px-5 text-[14px] text-onac no-underline">ابدأ مهمتك</Link>
             </article>
           ))}
         </div>
