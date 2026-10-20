@@ -33,6 +33,8 @@ export interface PlanQuoteData {
   requestedVolumeMax?: number;
   /** What the customer asked, when the plan holds fewer records than that (set by the server). */
   askedVolumeMax?: number;
+  /** What a channels mission covers when that differs from what the template said (fewer channels, a lower top): plain sentences from code. */
+  coverageLinesAr?: string[];
   pointsCap?: number;
   userBalance: number;
   downscaledOffer?: {
@@ -289,6 +291,12 @@ export default function PlanQuoteCard({
       {quote.understoodAr && (
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
+
+      {quote.coverageLinesAr?.length ? (
+        <ul data-testid="plan-coverage" className="mb-0 mt-3 list-none space-y-1 p-0 text-[12.5px] font-light leading-[1.9] text-ink">
+          {quote.coverageLinesAr.map((line) => (<li key={line}>{line}</li>))}
+        </ul>
+      ) : null}
 
       {volumeLimit ? (
         <p data-testid="plan-volume-limit" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">

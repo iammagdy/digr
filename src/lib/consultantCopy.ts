@@ -82,10 +82,18 @@ const ANY_ANSWER_LABEL_RE = `(?:${Array.from(new Set([...Object.values(CLARIFICA
 export const ANSWER_END = "\u2063";
 const CHANNEL_ANSWER_RE = new RegExp(`${CHANNEL_ANSWER_LABEL}\\s*:\\s*([\\s\\S]*?)(?=${ANSWER_END}|\\s${ANY_ANSWER_LABEL_RE}\\s*:|$)`, "gu");
 
+/**
+ * The placeholders of the mission template («@القناة_الأولى» ...): a sample the customer replaces, never a channel they named. An
+ * unedited placeholder left in the text is not planned as a channel, and a plan is never built on one.
+ */
+const CHANNEL_PLACEHOLDER_RE = /^@?القناة_(?:الأولى|الاولى|الثانية|الثالثة|الرابعة|الخامسة)$/u;
+export const isChannelPlaceholder = (name: string): boolean => CHANNEL_PLACEHOLDER_RE.test(String(name || "").trim());
+
 /** The channels the customer named, in any form: an answer to the channel question (names, handles with or without «@», links), handles and links anywhere, «قناة X». */
 function namedChannels(text: string): string[] {
   const out: string[] = [];
   const add = (name: string) => {
+    if (isChannelPlaceholder(name)) return;
     const key = channelKey(name);
     if (key && !out.some((existing) => channelKey(existing) === key)) out.push(name);
   };
@@ -385,7 +393,8 @@ export function missionCoverageLinesAr(u: MissionUnderstanding, planned: { chann
   }
   const given = u.channels.named.length;
   if (given > 0 && u.channels.count && given < u.channels.count) {
-    lines.push(`القنوات: ذكرت ${channelsCountAr(given)} من ${channelsCountAr(u.channels.count)}، فجهزت الخطة على ما كتبته.`);
+    // One plain sentence: the template said more channels than the customer gave, and the plan is built on what they gave.
+    lines.push(`ذكرت ${channelsCountAr(given)} من ${channelsCountAr(u.channels.count)}، فخططت على ما ذكرته.`);
   }
   if (given > planned.maxChannels) {
     lines.push(`القنوات: كتبت ${channelsCountAr(given)}، واعتمدت أول ${channelsCountAr(planned.maxChannels)} لأن المهمة الواحدة لا تتسع لأكثر، ويمكنك تقديم طلب آخر لبقية القنوات.`);

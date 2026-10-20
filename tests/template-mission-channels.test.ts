@@ -64,7 +64,7 @@ describe("a template mission reaches a plan with any number of channels", () => 
     const plan = planOf(responses);
     expect(plan).toBeTruthy();
     expect(plan.planQuote.items[0].params.channels).toEqual(["@aljazeera"]);
-    expect(plan.contentAr).toContain("ذكرت قناة واحدة من ٣ قنوات، فجهزت الخطة على ما كتبته.");
+    expect(plan.contentAr).toContain("ذكرت قناة واحدة من ٣ قنوات، فخططت على ما ذكرته.");
     expect(plan.contentAr).not.toContain("قيمة افتراضية");
     for (const r of responses) expect(visible(r)).not.toMatch(BANNED);
   });
