@@ -10,7 +10,7 @@ type Kind = "up" | "scale" | "fan";
  * content stays visible without JS, and prefers-reduced-motion skips the effect.
  */
 export function Reveal({
-  as: Tag = "div", kind = "up", delay = 0, fan, className, style, children,
+  as: Tag = "div", kind = "up", delay = 0, fan, className, style, children, "data-testid": testId,
 }: {
   as?: "div" | "p" | "h2" | "span";
   kind?: Kind;
@@ -19,6 +19,7 @@ export function Reveal({
   className?: string;
   style?: React.CSSProperties;
   children: React.ReactNode;
+  "data-testid"?: string;
 }) {
   const ref = useRef<HTMLElement>(null);
 
@@ -48,5 +49,5 @@ export function Reveal({
   }, [kind, delay, fan]);
 
   const Comp = Tag as React.ElementType;
-  return <Comp ref={ref} className={className} style={style}>{children}</Comp>;
+  return <Comp ref={ref} className={className} style={style} data-testid={testId}>{children}</Comp>;
 }

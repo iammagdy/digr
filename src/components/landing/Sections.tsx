@@ -7,6 +7,7 @@ import { SAMPLE_FILES, SAMPLE_LABEL_AR, samplePreview, type OutputKind } from "@
 import { computePublicCalculatorQuote } from "@/lib/calculatorPricing";
 import { FAQS, SHEETS, STATEMENTS } from "./data";
 import { Reveal } from "./Reveal";
+import { DEMO_LABEL_AR, PRODUCT_LINES, TEN_SECOND_STORY_AR, buildLandingDemos } from "@/lib/landingDemos";
 
 const BORDER_TOP = "border-t border-ln";
 
@@ -180,3 +181,67 @@ export function FinalCta({ initialSignedIn }: { initialSignedIn?: boolean } = {}
   );
 }
 
+
+/** Two product lines, the ten-second story and a sign-up path (the hero's box already routes the typed mission to sign-up). */
+export function ProductLines() {
+  return (
+    <section className={`${BORDER_TOP} px-5 py-[100px]`} aria-labelledby="product-lines-title">
+      <div className="mx-auto max-w-[1000px]">
+        <Reveal as="p" className="m-0 text-center text-sm font-light text-mut">ماذا نقدّم</Reveal>
+        <Reveal as="h2" delay={120} className="mb-0 mt-3 text-center font-extralight text-ink" style={{ fontSize: "clamp(30px,4.6cqi,52px)" }}>
+          <span id="product-lines-title">خدمتان واضحتان</span>
+        </Reveal>
+        <div className="mt-12 grid grid-cols-1 gap-5 min-[760px]:grid-cols-2">
+          {PRODUCT_LINES.map((line) => (
+            <Reveal key={line.id} className="rounded-[22px] border border-ln bg-sf p-7 text-right" data-testid={`product-line-${line.id}`}>
+              <h3 className="m-0 text-[22px] font-medium text-ink">{line.titleAr}</h3>
+              <p className="mb-0 mt-3 text-[15px] font-light leading-[2] text-ink2">{line.taglineAr}</p>
+              <ul className="mb-0 mt-4 flex list-none flex-col gap-2 p-0 text-[14px] font-light text-mut">
+                {line.pointsAr.map((point) => <li key={point}>— {point}</li>)}
+              </ul>
+            </Reveal>
+          ))}
+        </div>
+        <ol data-testid="ten-second-story" className="mx-auto mb-0 mt-12 flex max-w-[700px] list-none flex-col items-center justify-center gap-3 p-0 text-center text-[17px] font-light text-ink min-[760px]:flex-row min-[760px]:gap-8">
+          {TEN_SECOND_STORY_AR.map((step, index) => <li key={step}><span className="text-mut">{toArabicDigits(index + 1)}. </span>{step}</li>)}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
+/** Four static example conversations. Each is marked as an example; none is a live run. */
+export function DemoConversations() {
+  const demos = buildLandingDemos();
+  return (
+    <section className={`${BORDER_TOP} px-5 py-[100px]`} aria-labelledby="demos-title">
+      <div className="mx-auto max-w-[1000px]">
+        <Reveal as="p" className="m-0 text-center text-sm font-light text-mut">كيف يبدو الطلب</Reveal>
+        <Reveal as="h2" delay={120} className="mb-0 mt-3 text-center font-extralight text-ink" style={{ fontSize: "clamp(30px,4.6cqi,52px)" }}>
+          <span id="demos-title">أربعة أمثلة من الطلب إلى الملف</span>
+        </Reveal>
+        <div className="mt-12 grid grid-cols-1 gap-5 min-[860px]:grid-cols-2">
+          {demos.map((demo) => (
+            <article key={demo.id} data-testid="landing-demo" className="flex flex-col gap-3 rounded-[22px] border border-ln bg-sf p-6 text-right">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="m-0 text-[17px] font-medium text-ink">{demo.titleAr}</h3>
+                <span data-testid="demo-label" className="shrink-0 rounded-full border border-ln2 px-2.5 py-0.5 text-[11px] text-mut">{DEMO_LABEL_AR}</span>
+              </div>
+              <p className="m-0 rounded-[14px] bg-sf2 p-3.5 text-[14px] font-light leading-[1.9] text-ink">{demo.requestAr}</p>
+              {demo.understoodAr ? <p className="m-0 text-[14px] font-light leading-[1.9] text-ink2">{demo.understoodAr}</p> : null}
+              <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[13px] font-light text-mut">
+                {demo.planAr.map((line) => <li key={line}>— {line}</li>)}
+              </ul>
+              <p className="m-0 text-[16px] font-medium text-ink" data-testid="demo-price">{demo.priceAr}</p>
+              <p className="m-0 text-[13px] font-light leading-[1.9] text-mut">{demo.outputAr}</p>
+            </article>
+          ))}
+        </div>
+        <p className="mx-auto mb-0 mt-6 max-w-[560px] text-center text-[12px] font-light leading-[1.9] text-mut">هذه أمثلة توضيحية؛ السعر النهائي يظهر في خطتك قبل أن توافق، ولا يُخصم شيء قبل موافقتك.</p>
+        <div className="mt-6 text-center">
+          <Link href="/register" className="inline-flex min-h-12 items-center rounded-full bg-ac px-7 text-[15px] text-onac no-underline">جرّب طلبك بنفسك</Link>
+        </div>
+      </div>
+    </section>
+  );
+}
