@@ -6,11 +6,11 @@ import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
 import { volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
+import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
 import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
-import { socialSubjectForDisplay } from "@/lib/socialTasks";
 import { missionStepsAr } from "@/lib/dependentSteps";
 
 export interface PlanItem {
@@ -165,8 +165,9 @@ export default function PlanQuoteCard({
   const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
+  // A social plan names its topic from its own parameters; the title (cut at fifty characters) is only a fallback, and a cut title is ignored.
   const titleTopic = isSocialContentPlan
-    ? socialSubjectForDisplay(conversationTitle, primaryItem?.params?.trending === true) || socialContentTopicFromTitle(conversationTitle)
+    ? socialTopicForDisplay({ params: primaryItem?.params, conversationTitle, trending: primaryItem?.params?.trending === true })
     : socialContentTopicFromTitle(conversationTitle);
   const displayIndustry = isPeoplePlan
     ? interpreted.industryAr

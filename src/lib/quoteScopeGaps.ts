@@ -278,7 +278,8 @@ export function planScopeRows(
       params.query ||
       params.channel ||
       params.url ||
-      (conversationTitle ? socialContentTopicFromTitle(conversationTitle) : "") ||
+      // a title cut at fifty characters («… عن «كرة…») is not a topic
+      (conversationTitle && !/[…]$|\.\.\.$/u.test(conversationTitle.trim()) ? socialContentTopicFromTitle(conversationTitle) : "") ||
       "الموضوع المطلوب";
     chips.push({
       label: "موضوع المحتوى:",

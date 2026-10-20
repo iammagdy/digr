@@ -7,6 +7,7 @@
  * every turn and can be tested.
  */
 import { periodWordFlags } from "./timeWindow";
+import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
 
 
 export type SocialPlatformId = "facebook" | "youtube" | "tiktok" | "instagram" | "x" | "reddit" | "linkedin";
@@ -410,11 +411,55 @@ export function socialTaskQuestion(id: MissingSocialTaskInput): SocialTaskQuesti
   }
 }
 
+/** Closes a stored card answer (see consultantCopy ANSWER_END). */
+const STORED_ANSWER_END = "\u2063";
+/** The stored card answers that never carry a topic word: how many, which period, which platform, which channels. */
+const NON_TOPIC_ANSWER_LABELS = ["volume_cap_required", "social_time_required", "social_platform_required", "social_channel_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
+const TOPIC_ANSWER_LABELS = ["social_topic_required", "social_x_topic_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
+const ANY_STORED_LABEL = Array.from(new Set(Object.values(CLARIFICATION_ANSWER_LABELS)));
+const answerSegmentRe = (labels: string[], flags: string) =>
+  new RegExp(`(?:${labels.join("|")})\\s*:\\s*([\\s\\S]*?)(?=${STORED_ANSWER_END}|\\s(?:${ANY_STORED_LABEL.join("|")})\\s*:|$)`, flags);
+/** «أعلى ١٠ فيديوهات»: how many top videos is a ranking, never part of the topic. */
+const RANKING_PHRASE_RE = /(?:أعلى|اعلى|اعلي|الأعلى|الاعلى|أكتر|اكتر|أكثر|اكثر|توب|top)\s*[0-9٠-٩۰-۹]+\s*(?:فيديو|فيديوهات|مقطع|مقاطع|بوست|بوستات|منشور|منشورات)/giu;
+/** The first word of a two-word topic: a cut between the two would leave «كرة» for «كرة القدم». */
+const TOPIC_PHRASE_HEADS = new Set(["كرة", "كره", "كورة", "كوره", "كأس", "كاس", "دوري", "ذكاء", "الذكاء", "حرب", "الحرب"]);
+/** The most words a subject keeps. */
+const MAX_SUBJECT_WORDS = 8;
+
+/**
+ * The text a subject is read from. A stored card answer to the topic question is the topic itself and wins over everything the
+ * request said before; the answers to the other cards (cap, period, platform, channels) carry no topic, so their label AND value are
+ * removed instead of being read as topic words.
+ */
+function subjectSource(text: string): string {
+  const raw = String(text || "");
+  const topicAnswers = Array.from(raw.matchAll(answerSegmentRe(TOPIC_ANSWER_LABELS, "gu"))).map((m) => m[1].trim()).filter((value) => value && !/^تخطي(?![\p{L}])/u.test(value));
+  if (topicAnswers.length > 0) return topicAnswers[topicAnswers.length - 1];
+  return raw.replace(answerSegmentRe(NON_TOPIC_ANSWER_LABELS, "gu"), " ").split(STORED_ANSWER_END).join(" ");
+}
+
+function cleanSubjectTokens(text: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const token of topicTokens(String(text || "").replace(RANKING_PHRASE_RE, " "))) {
+    // a phrase the request repeats (the request, then the answer to the topic card) is said once
+    if (seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+  }
+  return out;
+}
+
 /** The subject words of a request (a keyword or name), for a search the customer did not spell out as a query. */
 export function socialSubjectText(text: string): string {
-  const hashtag = /(?:^|\s)#([\p{L}\p{N}_]{2,})/u.exec(text || "")?.[1];
+  const source = subjectSource(text);
+  const hashtag = /(?:^|\s)#([\p{L}\p{N}_]{2,})/u.exec(source)?.[1];
   if (hashtag) return hashtag.replace(/_/g, " ");
-  return topicTokens(text).slice(0, 6).join(" ");
+  const tokens = cleanSubjectTokens(source);
+  let end = Math.min(tokens.length, MAX_SUBJECT_WORDS);
+  // never end on the first word of a two-word topic
+  while (end < tokens.length && TOPIC_PHRASE_HEADS.has(tokens[end - 1])) end += 1;
+  return tokens.slice(0, end).join(" ");
 }
 
 /** Customer-facing social subject; trending feeds are a task type rather than a keyword topic. */

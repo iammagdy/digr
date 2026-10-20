@@ -143,8 +143,11 @@ const SUBJECT_STOP = new Set([
 function subjectAfterAbout(text: string): string {
   const m = /(?:^|\s)(?:عن|حول|بخصوص)\s+(.+)/u.exec(text);
   if (!m) return "";
+  // The stored answer to a card (the cap, the period, the channels) follows the subject in the text: «... عن منتخب مصر الحد الأقصى المطلوب: ٥٠٠
+  // تعليق». The label and the answer are never part of the subject, so the phrase ends where the first label begins.
+  const phrase = m[1].split(new RegExp(`${ANSWER_END}|\\s?${ANY_ANSWER_LABEL_RE}\\s*:`, "u"))[0];
   const kept: string[] = [];
-  for (const word of m[1].trim().split(/\s+/)) {
+  for (const word of phrase.trim().split(/\s+/)) {
     if (SUBJECT_STOP.has(word) || /^\d/.test(word)) break;
     kept.push(word);
     if (kept.length >= 8) break;
