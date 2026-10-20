@@ -1,5 +1,6 @@
 "use client";
 
+import { openJobHref } from "@/lib/requestLinks";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -338,12 +339,7 @@ export default function RequestsPage() {
     } catch {
       // Non-blocking storage fallback
     }
-    const c = quotes[job.$id]?.conversationId;
-    const query = new URLSearchParams();
-    query.set("jobId", job.$id);
-    if (c) query.set("c", c);
-    if (retry) query.set("retry", "1");
-    router.push(`/dashboard/chat?${query.toString()}`);
+    router.push(openJobHref({ jobId: job.$id, conversationId: quotes[job.$id]?.conversationId, retry }));
   };
 
   return (
@@ -399,7 +395,9 @@ export default function RequestsPage() {
                 <div className="min-w-0">
                   <button
                     type="button"
-                    onClick={() => openFile(j, k === "refunded")}
+                    data-testid="request-title"
+                    // Opening a request only shows it; a retry is the «إعادة المحاولة» button below, never a tap on the title.
+                    onClick={() => openFile(j)}
                     className="m-0 cursor-pointer border-0 bg-transparent p-0 text-right text-base font-medium leading-[1.6] text-ink hover:underline focus-visible:outline-2"
                   >
                     {title}

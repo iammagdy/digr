@@ -58,7 +58,12 @@ describe("the chat stream", () => {
 
 describe("the panel", () => {
   it("shows the plan until a run is approved, then the results with the plan as a read-only tab", () => {
-    expect(page).toContain("const panelShowsPlan = latestPlanQuote !== null && (!activeJob || restPlanQuoteId === latestPlanQuote.quoteId);");
+    // Same two conditions as before (no open request, or the plan of the rest of a request), now with one more: a plan that can still be
+    // approved takes the panel when the open request is finished or failed (tests/plan-card-states.test.tsx pins every case).
+    expect(page).toContain("const panelShowsPlan = shouldShowPlanPanel({");
+    expect(page).toContain("latestQuote: latestPlanQuote ? { quoteId: latestPlanQuote.quoteId, status: latestPlanQuote.status, expiresAt: latestPlanQuote.expiresAt } : null,");
+    expect(page).toContain("activeJob: activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null,");
+    expect(page).toContain("restPlanQuoteId,");
     expect(page).toContain('data-testid="plan-panel"');
     expect(canvas).toContain('{ id: "plan" as const, label: "الخطة" }');
     expect(canvas).toContain('{tab === "plan" && planNode}');

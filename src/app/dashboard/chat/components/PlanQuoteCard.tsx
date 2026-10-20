@@ -7,7 +7,7 @@ import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
 import { volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
-import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
+import { getQuoteApprovalState, isQuotePlanComplete, planApprovalNoteAr } from "@/lib/quoteApprovalState";
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
@@ -31,6 +31,8 @@ export interface PlanQuoteData {
   quotedPoints: number;
   isAffordable: boolean;
   pointsCapConstrained?: boolean;
+  /** The live extraction capacity (not the points cap) cut the count (set by the server). */
+  capacityConstrained?: boolean;
   requestedVolumeMax?: number;
   /** What the customer asked, when the plan holds fewer records than that (set by the server). */
   askedVolumeMax?: number;
@@ -208,7 +210,11 @@ export default function PlanQuoteCard({
     ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || 600, wordAr: quote.defaultCap.wordAr })
     : null;
   const volumeLimit = defaultStatement ? null : (quote.items?.length ?? 1) <= 1
-    ? volumeLimitStatementAr({ askedUnits: Math.max(quote.askedVolumeMax ?? 0, quote.requestedVolumeMax ?? 0), fittedUnits: quote.targetVolumeMax })
+    ? volumeLimitStatementAr({
+        askedUnits: Math.max(quote.askedVolumeMax ?? 0, quote.requestedVolumeMax ?? 0),
+        fittedUnits: quote.targetVolumeMax,
+        ...(quote.capacityConstrained && !quote.pointsCapConstrained ? { reason: "capacity" as const, reservedPoints: quote.quotedPoints } : {}),
+      })
     : null;
   const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
   const approvalState = { ...baseApprovalState, canApprove: baseApprovalState.canApprove && planComplete };
@@ -557,10 +563,18 @@ export default function PlanQuoteCard({
           <p className="m-0 text-sm leading-[1.8] text-ink">
             {quote.status === "unknown"
               ? "تعذر التأكد من صلاحية عرض السعر. أعد تحميل المحادثة قبل الموافقة."
-              : "هذا العرض لم يعد صالحاً للموافقة. استخدم أحدث عرض سعر في هذه المحادثة."}
+              : quote.status === "accepted"
+                ? planApprovalNoteAr({ locked, status: quote.status, expiredByTime: false, planComplete })
+                : "هذا العرض لم يعد صالحاً للموافقة. استخدم أحدث عرض سعر في هذه المحادثة."}
           </p>
         </div>
       )}
+
+      {(() => {
+        // The states that used to hide the button without a word: an incomplete plan, and a plan shown read-only beside a running request.
+        const note = approvalState.inactiveStatus ? null : planApprovalNoteAr({ locked, status: quote.status, expiredByTime: baseApprovalState.expiredByTime, planComplete });
+        return note ? <div role="status" data-testid="plan-approval-note" className="mt-[18px] flex items-center rounded-[18px] bg-sf2 px-4 py-3.5"><p className="m-0 text-sm leading-[1.8] text-ink">{note}</p></div> : null;
+      })()}
 
       {!locked && approvalState.expiredByTime && !approvalState.inactiveStatus && (
         <div className="mt-[18px] flex flex-wrap items-center justify-between gap-3 rounded-[18px] bg-sf2 px-4 py-3.5" style={{ animation: "up .4s both" }}>

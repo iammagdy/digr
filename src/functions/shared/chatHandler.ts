@@ -3788,7 +3788,12 @@ export class ChatHandler {
           // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
           const askedUnitsForText = Math.max(askedVolumeForCard ?? 0, managedQuote.requestedVolumeMax || 0, managedQuote.targetVolumeMax);
           const volumeLimitLine = managedQuote.items.length === 1 && !defaultCapNow
-            ? volumeLimitStatementAr({ askedUnits: askedUnitsForText, fittedUnits: managedQuote.targetVolumeMax })
+            ? volumeLimitStatementAr({
+                askedUnits: askedUnitsForText,
+                fittedUnits: managedQuote.targetVolumeMax,
+                // The count was cut by the live extraction capacity, not by the points cap: say so, and say what is held back.
+                ...(managedQuote.capacityConstrained && !managedQuote.pointsCapConstrained ? { reason: "capacity" as const, reservedPoints: managedQuote.quotedPoints } : {}),
+              })
             : null;
           if (volumeLimitLine) planSummaryText += `\n- ${volumeLimitLine}`;
           if (managedQuote.pointsCapConstrained && !defaultCapNow) {
