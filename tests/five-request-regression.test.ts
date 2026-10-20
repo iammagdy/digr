@@ -11,8 +11,8 @@ import { createChatDb } from "./helpers/chatSession";
  */
 const COMPANIES = "عايز شركتين كهرباء في مصر";
 const PEOPLE = "٣ مديرين في شركات الطاقة في السعودية مع إيميلاتهم وأرقامهم";
-const COMMENTS = "١٠ كومنتس تيك توك عن كرة السلة في مصر";
-const TWEETS = "هات ١٠ تغريدات عن كرة السلة";
+const COMMENTS = "١٠ كومنتس تيك توك عن كرة السلة في مصر في ٢٠٢٥";
+const TWEETS = "هات ١٠ تغريدات عن كرة السلة في ٢٠٢٥";
 const STUDIES = "اجمع ١٠ دراسات عن الطاقة الشمسية في ألمانيا";
 
 const TAXONOMY = ["Electrical/Electronic Manufacturing", "Utilities"];
@@ -95,7 +95,7 @@ describe("five-request regression (no model call)", () => {
     expect(r.outputType).toBe("propose_plan");
     const item = r.planQuote.items[0];
     expect(item.capabilitySlug).toBe("social-x-posts");
-    expect(item.params).toEqual({ query: "كرة السلة" });
+    expect(item.params).toEqual({ query: "كرة السلة", dateFrom: "2025-01-01", dateTo: "2025-12-31" });
     expect(item.targetVolumeMax).toBe(10);
     expect(quoteScopeGaps(r.planQuote.items)).toEqual([]);
     const chips = planScopeRows(r.planQuote.items);

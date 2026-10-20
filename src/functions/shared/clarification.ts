@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WINDOW_OPTIONS_AR } from "../../lib/timeWindow";
 import type { Capability } from "./capabilityRegistry";
 import { SOCIAL_TASK_QUESTION_IDS } from "../../lib/socialTasks";
 
@@ -214,7 +215,7 @@ export function getClarificationOptionBank(
     case "platform":
       return enabledPlatformOptions(context);
     case "time_window":
-      return ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"];
+      return [...WINDOW_OPTIONS_AR];
     case "volume":
       return balanceAwareVolumeOptions(context);
     case "output_format":
@@ -234,7 +235,8 @@ function defaultForParameter(
   persona?: string,
 ): string | undefined {
   if (!options.length) return undefined;
-  if (parameterType === "time_window") return options.find((option) => option === "آخر ٣ شهور");
+  // A window is never preselected: the customer picks it, so no period is applied without being chosen.
+  if (parameterType === "time_window") return undefined;
   if (parameterType === "output_format") return "Excel";
   if (parameterType === "anonymize") return persona === "researcher" ? options[0] : options[1];
   if (parameterType === "language") return "العربية";

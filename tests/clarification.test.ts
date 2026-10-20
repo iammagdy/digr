@@ -64,7 +64,7 @@ describe("strict discovery clarification", () => {
   it("uses only enabled platforms and supplies canonical known-parameter choices", () => {
     expect(getClarificationOptionBank("platform", { capabilities: [...capabilities] })).toEqual(["تيك توك"]);
     expect(getClarificationOptionBank("time_window", { capabilities: [] })).toEqual([
-      "آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة",
+      "آخر شهر", "آخر ٣ شهور", "آخر ٦ شهور", "آخر سنة",
     ]);
     expect(getClarificationOptionBank("output_format", { capabilities: [] })).toEqual(["Excel", "CSV", "PDF"]);
     expect(getClarificationOptionBank("anonymize", { capabilities: [] })).toEqual([

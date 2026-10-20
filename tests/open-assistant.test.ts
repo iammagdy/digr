@@ -216,7 +216,7 @@ describe("open assistant (feat/open-assistant)", () => {
     const tables = makeMockTables();
     const res = await new ChatHandler(tables as any).handleUserMessage({
       userId: "u5",
-      message: "هاتلي تعليقات فيسبوك عن البطالة",
+      message: "هاتلي تعليقات فيسبوك عن البطالة في ٢٠٢٥",
       userBalance: 300,
       testScenario: "search_then_plan",
     });

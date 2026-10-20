@@ -6,6 +6,8 @@
  * cost money (which service, which inputs are required) are made here so they are identical on
  * every turn and can be tested.
  */
+import { periodWordFlags } from "./timeWindow";
+
 
 export type SocialPlatformId = "facebook" | "youtube" | "tiktok" | "instagram" | "x" | "reddit" | "linkedin";
 export type SocialTask = "comments" | "trending" | "channel_videos" | "video_search" | "page_posts" | "x_posts";
@@ -255,14 +257,16 @@ const TOPIC_NOISE = new Set([
 ]);
 
 function topicTokens(text: string): string[] {
+  const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
   return (text || "")
     .replace(URL_RE, " ")
     .toLowerCase()
     .replace(/[0-9٠-٩۰-۹]+/g, " ")
     .replace(/[^\p{L}\p{N}#@_]+/gu, " ")
     .split(/\s+/)
-    .filter((token) => {
+    .filter((token, index, all) => {
       if (!token) return false;
+      if (periodFlags[index]) return false;
       const bare = token.replace(/^ال/u, "");
       if (bare.length < 2) return false;
       if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare)) return false;

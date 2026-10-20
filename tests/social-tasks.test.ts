@@ -94,7 +94,8 @@ describe("only the missing input is asked, one question at a time, with tappable
 
   it("topic tweets use keyword search; account-only tweets ask for one handle question", () => {
     expect(getMissingSocialTaskInputs("هات تغريدات عن كرة السلة")).toEqual([]);
-    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة", brief)).toBeNull();
+    // The subject is complete; the only thing still open is the period, asked once (see the time-window test below).
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في ٢٠٢٥", brief)).toBeNull();
     expect(getMissingSocialTaskInputs("هات تغريدات من حساب محدد على تويتر")).toEqual(["social_x_account_required"]);
     const question = getDeterministicDiscoveryQuestion("هات تغريدات من حساب محدد على تويتر", brief);
     expect(question?.text).toBe("ما اسم حساب إكس أو رابطه؟");
@@ -116,13 +117,16 @@ describe("only the missing input is asked, one question at a time, with tappable
     expect(getMissingSocialTaskInputs("فيديوهات ترند في مصر على تيك توك")).toEqual([]);
   });
 
-  it("asks for a time window after a country is known for broad topic searches", () => {
-    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة", brief)).toBeNull();
-
-    const question = getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في مصر", brief);
-    expect(question?.id).toBe("social_time_required");
-    expect(question?.text).toBe("ما الفترة الزمنية التي تريد البحث فيها؟");
-    expect(question?.options).toEqual(["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"]);
+  it("asks ONE time-window question for any feed search without a period, with or without a country", () => {
+    for (const text of ["هات تغريدات عن كرة السلة", "هات تغريدات عن كرة السلة في مصر"]) {
+      const question = getDeterministicDiscoveryQuestion(text, brief);
+      expect(question?.id, text).toBe("social_time_required");
+      expect(question?.text).toBe("ما الفترة الزمنية التي تهمّك؟");
+      expect(question?.options).toEqual(["آخر شهر", "آخر ٣ شهور", "آخر ٦ شهور", "آخر سنة"]);
+    }
+    // a period the customer wrote, a relative period or a known event removes the question
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في ٢٠٢٥", brief)).toBeNull();
+    expect(getDeterministicDiscoveryQuestion("هات تغريدات عن منتخب مصر في كأس العالم ٢٠٢٦", brief)).toBeNull();
 
     expect(getDeterministicDiscoveryQuestion("هات تغريدات عن كرة السلة في مصر خلال آخر شهر", brief)).toBeNull();
     expect(getDeterministicDiscoveryQuestion("فيديوهات ترند في مصر على تيك توك", brief)).toBeNull();

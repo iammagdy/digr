@@ -24,7 +24,7 @@ describe("item 9: section-by-section token estimate of a real model request", ()
     const original = llm.executeTurn.bind(llm);
     llm.executeTurn = async (options: any) => { calls.push(options); return original(options); };
     await db.createRow({ tableId: "conversations", rowId: "c1", data: { userId: "u1", title: "x", status: "active", totalTokens: 0 } });
-    for (const message of ["مساء الخير", "هات ١٠ تغريدات عن كرة السلة"]) {
+    for (const message of ["مساء الخير", "هات ١٠ تغريدات عن كرة السلة في ٢٠٢٥"]) {
       await handler.handleUserMessage({ userId: "u1", conversationId: "c1", message, userBalance: 5000 });
     }
     return calls[calls.length - 1];

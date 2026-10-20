@@ -149,7 +149,7 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
     const response = await handler.handleUserMessage({
       userId: "user-1",
       conversationId: "conv-1",
-      message: "عايز تعليقات فيسبوك عن قائمة المنقولات",
+      message: "عايز تعليقات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
       userBalance: 100,
     });
 
