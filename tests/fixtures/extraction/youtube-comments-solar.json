@@ -32,8 +32,8 @@
    }
   },
   {
-   "expect": "uncertain",
-   "note": "related term but not the exact topic words",
+   "expect": "match",
+   "note": "topic search result: a related term, presumed on topic",
    "row": {
     "comment_id": "yc_3",
     "text": "الألواح الشمسية غالية",
@@ -44,8 +44,8 @@
    }
   },
   {
-   "expect": "no_match",
-   "note": "generic",
+   "expect": "match",
+   "note": "topic search result: a real short comment, presumed on topic",
    "row": {
     "comment_id": "yc_4",
     "text": "شكرا على المعلومات",
@@ -80,8 +80,8 @@
    }
   },
   {
-   "expect": "uncertain",
-   "note": "other energy: shares one word",
+   "expect": "match",
+   "note": "topic search result: the source returned it for the topic, presumed on topic",
    "row": {
     "comment_id": "yc_7",
     "text": "الطاقة الكهربائية غالية في مصر",
@@ -92,8 +92,8 @@
    }
   },
   {
-   "expect": "no_match",
-   "note": "generic",
+   "expect": "uncertain",
+   "note": "a bare reaction with no content: delivered only if the automatic review confirms it",
    "row": {
     "comment_id": "yc_8",
     "text": "ممتاز",

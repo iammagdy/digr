@@ -1,6 +1,6 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
-import { matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
+import { hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 
 export interface ResearchRelevanceContext {
@@ -17,6 +17,11 @@ export interface ResearchRelevanceResult {
   reasonCode?: "no_evidence";
   /** `own_text`: the match rests on the company's own text (not on the source label); see evaluateDeterministicRelevance. */
   evidence?: "own_text";
+  /**
+   * A row of a topic search that is presumed on topic but looks doubtful (a bare «اتفقت», or a long text with no word of the topic
+   * anywhere): it is delivered only when the automatic review confirms it. Every other presumed row is delivered without review.
+   */
+  suspicious?: boolean;
 }
 
 function normalizeText(value: string): string {
@@ -48,7 +53,7 @@ function textOf(row: Record<string, any>, keys: string[]): string {
 /** Words that only agree, react or acknowledge: a comment made of them (and nothing else) says nothing about any topic. */
 const REACTION_WORDS = new Set([
   "اتفقت", "اتفق", "موافق", "موافقه", "صح", "صحيح", "تمام", "ايوه", "ايوا", "اه", "اها", "لا", "نعم", "فعلا", "بالظبط", "بالضبط",
-  "شكرا", "الله", "تماما", "طبعا", "اكيد", "بالتاكيد", "كلامك", "معاك", "معك", "ايوه", "فعلا", "يا", "ما", "شاء", "بارك", "جميل", "حلو", "رائع", "جدا", "اوي", "كده", "ده", "دي", "هذا", "هذه", "ان", "و", "ف", "ب",
+  "شكرا", "ممتاز", "جيد", "مفيد", "احسنت", "مبدع", "جزاك", "خيرا", "فيك", "عليك", "يسلمو", "تسلم", "ايديك", "يعطيك", "العافيه", "الله", "تماما", "طبعا", "اكيد", "بالتاكيد", "كلامك", "معاك", "معك", "ايوه", "فعلا", "يا", "ما", "شاء", "بارك", "جميل", "حلو", "رائع", "جدا", "اوي", "كده", "ده", "دي", "هذا", "هذه", "ان", "و", "ف", "ب",
   "ok", "okay", "yes", "no", "lol", "wow", "nice", "true", "agree", "agreed", "thanks", "good",
 ]);
 
@@ -56,6 +61,53 @@ const REACTION_WORDS = new Set([
 export function isReactionOnly(text: string): boolean {
   const words = normalizeText(text).split(/\s+/u).filter(Boolean);
   return words.length > 0 && words.every((word) => REACTION_WORDS.has(word));
+}
+
+/** The request carries a source-side topic filter: the source searched for the topic itself, so what it returned is on topic until shown otherwise. */
+export function isTopicSearchRequest(params: Record<string, any>): boolean {
+  const query = typeof params.query === "string" ? params.query.trim() : "";
+  if (!query) return false;
+  return !["channel", "channels", "url", "handle", "account", "trending", "ref"].some((key) => {
+    const value = params[key];
+    return Array.isArray(value) ? value.length > 0 : Boolean(value);
+  });
+}
+
+const URL_RE = /(?:https?:\/\/|www\.|t\.me\/|wa\.me\/)\S+/gi;
+const PHONE_RE = /\+?\d[\d\s().-]{8,}\d/;
+const AD_RE = /(للتواصل|واتساب|واتس اب|اشترك|تابعني|تابعونا|تابع حسابي|خصم|عرض خاص|اطلب(?:ي)? الان|اطلب(?:ي)? الآن|للطلب|رابط البايو|الرابط في البايو|كود خصم|اربح|ربح مضمون|follow me|dm me|dm for|promo code|link in bio|subscribe|whatsapp)/i;
+
+function rawTextOf(row: Record<string, any>, keys: string[]): string {
+  return keys.map((key) => row[key]).filter((value) => typeof value === "string").join(" ");
+}
+
+/**
+ * A row that came back from the source's own topic search is on topic unless it is empty, a bare ad or link, or written in a script
+ * with no Arabic or Latin letters at all. A short real comment («ماتش حلو») does not have to repeat the topic's words. Only rows
+ * that look doubtful are flagged for the automatic review.
+ */
+function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commentRow: boolean): ResearchRelevanceResult {
+  const ownKeys = commentRow ? COMMENT_OWN_KEYS : ["text", "full_text", "fullText", "content", "comment", "comment_text", "commentText", "message", "title", "description", "caption", "video_caption", "video_title", "post_text", "body", "summary"];
+  const rawOwn = rawTextOf(row, ownKeys);
+  const own = normalizeText(rawOwn);
+  const noText = { decision: "no_match" as RelevanceDecision, reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
+  if (!/\p{L}/u.test(own)) return noText;
+  // A link, a mention or a number on its own is no content.
+  if (!/\p{L}/u.test(rawOwn.replace(URL_RE, " ").replace(/[@#]?\w*\d\w*/g, " ").replace(/@\S+/g, " ")) ) return noText;
+  const letters = [...own].filter((ch) => /\p{L}/u.test(ch));
+  if (!letters.some((ch) => /[\u0600-\u06FF\u0750-\u077Fa-z]/i.test(ch))) {
+    return { decision: "no_match", reasonAr: "لغة النص لا تحمل محتوى يمكن مطابقته مع موضوع البحث" };
+  }
+  const evidence = hasTopicEvidence(stems, own);
+  if ((URL_RE.test(rawOwn) || PHONE_RE.test(rawOwn) || AD_RE.test(rawOwn)) && !evidence) {
+    URL_RE.lastIndex = 0;
+    return { decision: "no_match", reasonAr: "المحتوى إعلان أو ترويج لا يتناول موضوع البحث" };
+  }
+  URL_RE.lastIndex = 0;
+  const context = commentRow ? textOf(row, COMMENT_CONTEXT_KEYS) : "";
+  const words = own.split(/\s+/u).filter(Boolean);
+  const suspicious = isReactionOnly(own) || (words.length >= 6 && !evidence && !hasTopicEvidence(stems, context));
+  return { decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب", ...(suspicious ? { suspicious: true } : {}) };
 }
 
 function countMatches(value: string, pattern: RegExp): number {
@@ -139,6 +191,10 @@ export function evaluateResearchRowRelevance(
   if (!basketball && stems.length === 0) return { decision: "match", reasonAr: "لا يتضمن الطلب موضوعاً نصياً يلزم مطابقته" };
 
   const commentRow = /comment/i.test(kindText);
+  // The source filtered by the topic itself: presume the rows on topic (see presumeTopicSearchRow). The strict evidence rule below
+  // stays for feeds with no topic filter (an account, a channel, a link), for videos (the title IS the deliverable) and for the
+  // basketball/football separation.
+  if (/^social-(?:x-posts|tiktok-comments|youtube-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow);
   const ownContent = commentRow ? textOf(row, COMMENT_OWN_KEYS) : "";
   // A comment is judged by its own words first. The video it sits under is context: it can support a comment that has content of
   // its own, never a bare «اتفقت». Posts, videos and everything else are judged by their own text as before.

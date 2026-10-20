@@ -398,60 +398,94 @@ describe("worker: social jobs", () => {
       expect(dateLines()[0]).toContain("لم يظهر تاريخ نشر في أي سجل");
     });
 
-    it("dates are fine but none of the comments is about the topic: the reason names the topic, not the scope or the dates", async () => {
-      await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", videoDesc: "فيديو عام", comments: Array.from({ length: 6 }, (_, i) => ({ time: `2026-10-0${i + 1}T10:00:00Z`, text: `رأيي في السياسة رقم ${i}` })) });
+    it("dates are fine but no comment has any content (emoji only): the reason names the topic, not the scope or the dates", async () => {
+      await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", videoDesc: "فيديو عام", comments: Array.from({ length: 6 }, (_, i) => ({ time: `2026-10-0${i + 1}T10:00:00Z`, text: "😂😂" })) });
       const release = db.rpcCalls.find((c) => c.name === "release_job_atomic");
       const reason = String(release!.args.p_error_message);
       expect(reason).toContain("وتواريخها داخل الفترة التي حددتها، لكن لم يتحقق في أيٍّ منها موضوع طلبك");
       expect(reason).not.toContain("نطاق طلبك");
       expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
     });
+
+    it("short real comments of a topic search are delivered even though they do not repeat the topic words", async () => {
+      const { json } = await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", videoDesc: "فيديو عام", comments: ["ماتش حلو", "الأهلي أحسن", "جامد اوي", "هدف رائع", "بالتوفيق للمنتخب"].map((text, i) => ({ time: `2026-10-0${i + 1}T10:00:00Z`, text })) });
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(5);
+      expect(json.settle.charged_credits).toBe(5 * 6);
+    });
   });
-  describe("X posts: the automatic review is a condition of delivery", () => {
+  describe("X posts of a topic search: the rows are presumed on topic, and the doubtful ones need the automatic review", () => {
     const TOPIC = "مباراة مصر والمغرب كأس العالم";
-    const posts = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `p${i}`, text: `منشور ${i} عن ${TOPIC} في البطولة` }));
+    const ordinary = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `p${i}`, text: `منشور ${i} عن ${TOPIC} في البطولة` }));
+    const reactions = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `r${i}`, text: i % 2 ? "اتفقت" : "اتفقت تماما", is_reply: true }));
     const usage = (costUsd: number) => ({ inputTokens: 2000, outputTokens: 500, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
     const strict = (advisor: RowAdvisorFn) => { setStrictSocialReviewForTesting(true); setRowAdvisorForTesting(advisor); };
     const lines = () => db.events.map((event) => String(event.message));
 
-    it("rows the review confirms are delivered and charged; a post it doubts goes to the review sheet and is not charged", async () => {
+    it("ordinary rows are delivered without any review call; a doubtful one is delivered only when the review confirms it", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
-      useSource(async () => ok({ ok: true, rows: posts(10) }, 600));
-      const demoted = new Set([2, 5]);
-      strict(async (input) => ({
-        verdicts: new Map(input.rows.map(({ index }) => [index, demoted.has(index) ? { verdict: "no_match" as const, reasonAr: "منشور فلسفي لا يتناول المباراة" } : { verdict: "match" as const, reasonAr: "يتناول المباراة" }])),
-        usage: usage(0.004), failure: null,
-      }));
+      const philosophical = { tweet_id: "f1", text: "الحياة رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع" };
+      useSource(async () => ok({ ok: true, rows: [...ordinary(8), philosophical, reactions(1)[0]] }, 600));
+      const asked: Array<Array<{ index: number }>> = [];
+      strict(async (input) => {
+        asked.push(input.rows.map(({ index }) => ({ index })));
+        return {
+          verdicts: new Map(input.rows.map(({ index, row }) => [index, row.tweet_id === "f1" ? { verdict: "no_match" as const, reasonAr: "منشور فلسفي لا يتناول المباراة" } : { verdict: "match" as const, reasonAr: "رد على المباراة" }])),
+          usage: usage(0.004), failure: null,
+        };
+      });
 
       const { json } = await runAllChunks();
 
       expect(json.done).toBe(true);
-      expect(json.deliveredUnits).toBe(8);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toHaveLength(2);
+      expect(json.deliveredUnits).toBe(9);
       // charge = delivered matching rows x unit price (the settlement function, unchanged)
-      expect(json.settle.charged_credits).toBe(8 * 5);
-      expect(lines().some((line) => line.includes("قيد المراجعة ٢"))).toBe(true);
+      expect(json.settle.charged_credits).toBe(9 * 5);
+      expect(lines().some((line) => line.includes("قيد المراجعة ١"))).toBe(true);
     });
 
-    it("a review that cannot be read delivers nothing by default: the whole page waits in the review sheet, the reserve is released and paging stops", async () => {
+    it("a page of ordinary rows never calls the reviewer", async () => {
+      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
+      useSource(async () => ok({ ok: true, rows: ordinary(10) }, 600));
+      let calls = 0;
+      strict(async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.004), failure: null }; });
+      const { json } = await runAllChunks();
+      expect(calls).toBe(0);
+      expect(json.deliveredUnits).toBe(10);
+    });
+
+    it("a review that cannot be read holds the doubtful rows back but never the ordinary ones, and the job goes on", async () => {
+      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
+      useSource(async () => ok({ ok: true, rows: [...ordinary(6), ...reactions(4)] }, 600));
+      strict(async () => ({ verdicts: new Map(), usage: usage(0.002), failure: "bad_reply", stopReason: "max_tokens" }));
+
+      const { json } = await runAllChunks();
+
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(6);
+      expect(json.settle.charged_credits).toBe(6 * 5);
+      expect(lines().some((line) => line.includes("تعذّر التحقق الآلي من ملاءمة ٤ سجل"))).toBe(true);
+    });
+
+    it("when nothing on the page could be delivered without the review and the review fails, the reserve is released and paging stops", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
       let providerCalls = 0;
-      useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: posts(10), next_cursor: `c${providerCalls}` }, 600); });
+      useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: reactions(10), next_cursor: `c${providerCalls}` }, 600); });
       strict(async () => ({ verdicts: new Map(), usage: usage(0.002), failure: "bad_reply" }));
 
       const { json } = await runAllChunks();
 
       expect(json.released).toBe(true);
       expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
-      const release = db.rpcCalls.find((call) => call.name === "release_job_atomic");
-      expect(String(release!.args.p_error_message)).toContain("تعذّر التحقق الآلي");
       expect(providerCalls).toBe(1);
-      expect(lines().some((line) => line.includes("تعذّر التحقق الآلي من ملاءمة ١٠ سجل"))).toBe(true);
     });
 
-    it("the review's budget per job is capped: rows past it are not delivered, and it is said plainly", async () => {
+    it("the review's budget per job is capped: doubtful rows past it are not delivered, and it is said plainly", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 30, 5);
-      useSource(async () => ok({ ok: true, rows: posts(30) }, 600));
-      strict(async (input) => ({ verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.06), failure: null }));
+      useSource(async () => ok({ ok: true, rows: reactions(30) }, 600));
+      strict(async (input) => ({ verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "رد على المباراة" }])), usage: usage(0.06), failure: null }));
 
       const { json } = await runAllChunks();
 
@@ -461,25 +495,31 @@ describe("worker: social jobs", () => {
       expect(lines().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ٥ سجل في شيت المراجعة ولم يُحتسب"))).toBe(true);
     });
 
-    it("an empty post, a philosophical post and a bare «اتفقت» never reach the reviewer or the customer", async () => {
+    it("an empty post, an emoji and an ad are dropped before anything else", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
-      const rows = [
-        ...posts(3),
-        { tweet_id: "e1", text: "" },
-        { tweet_id: "f1", text: "الحياة رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده" },
-        { tweet_id: "a1", text: "اتفقت", is_reply: true },
-      ];
+      const rows = [...ordinary(3), { tweet_id: "e1", text: "" }, { tweet_id: "e2", text: "😂😂" }, { tweet_id: "ad", text: "للتواصل واتساب 01012345678 خصم خاص" }];
       useSource(async () => ok({ ok: true, rows }, 600));
-      const asked: number[][] = [];
-      strict(async (input) => {
-        asked.push(input.rows.map(({ index }) => index));
-        return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.003), failure: null };
-      });
+      let calls = 0;
+      strict(async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.003), failure: null }; });
 
       const { json } = await runAllChunks();
 
       expect(json.deliveredUnits).toBe(3);
-      expect(asked.flat()).toEqual([0, 1, 2]);
+      expect(calls).toBe(0);
+    });
+
+    it("what every review call did is kept in the step file: failure code, stop reason and tokens", async () => {
+      resetDb("social-x-posts", { query: TOPIC }, 30, 5);
+      let page = 0;
+      useSource(async () => { page += 1; return ok({ ok: true, rows: page === 1 ? [...ordinary(2), ...reactions(2)] : [], next_cursor: page === 1 ? "next" : undefined }, 600); });
+      strict(async () => ({ verdicts: new Map(), usage: { inputTokens: 900, outputTokens: 1200, costUsd: 0.003, model: "claude-haiku-5-5", latencyMs: 40 }, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100" }));
+
+      await callWorker();
+
+      const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
+      expect(stepFile.reviewFailures).toEqual(["bad_reply"]);
+      expect(stepFile.reviewCalls).toEqual([{ rows: 2, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 }]);
+      expect(stepFile.reviewUsd).toBe(0.003);
     });
   });
 });
