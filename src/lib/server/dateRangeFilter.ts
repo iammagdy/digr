@@ -1,3 +1,5 @@
+import { RELATIVE_DATE_FIELDS, relativeRowDate } from "./relativeDate";
+
 type DateRangeFilterResult<T> = {
   rows: T[];
   excludedCount: number;
@@ -31,7 +33,28 @@ function rowTimestamp(row: Record<string, unknown>): number | null {
     const timestamp = parseRowDate(row[field]);
     if (timestamp !== null) return timestamp;
   }
-  return null;
+  // The same fields hold an ISO date in some sources.
+  for (const field of RELATIVE_DATE_FIELDS) {
+    const value = row[field];
+    if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value.trim())) {
+      const timestamp = parseRowDate(value);
+      if (timestamp !== null) return timestamp;
+    }
+  }
+  // «منذ ٣ أسابيع» / «3 weeks ago»: a coarse but real date, read against the time of collection.
+  return relativeRowDate(row)?.ms ?? null;
+}
+
+/** How many of these rows are dated only by a «منذ …» / «… ago» text (their dates are approximate). */
+export function countApproximateDates(rows: unknown[]): number {
+  let count = 0;
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const record = row as Record<string, unknown>;
+    if (DATE_FIELDS.some((field) => parseRowDate(record[field]) !== null)) continue;
+    if (relativeRowDate(record)) count += 1;
+  }
+  return count;
 }
 
 function boundary(value: string, endOfDay: boolean): number {
@@ -141,4 +164,28 @@ export function summarizeRowDates<T = unknown>(
   if (Number.isFinite(oldest)) summary.oldest = isoDay(oldest);
   if (Number.isFinite(newest)) summary.newest = isoDay(newest);
   return summary;
+}
+
+/**
+ * For the rows no date could be read from: which date-like fields they carry and what those values look like (names and the first
+ * characters of short values only, never the text of the row). Kept in the step file so a source that shows its dates in a form
+ * we do not read proves it, instead of the rows silently counting as undated.
+ */
+export function sampleUndatedFields(rows: unknown[], limit = 3): Array<Record<string, string | number>> {
+  const out: Array<Record<string, string | number>> = [];
+  for (const row of rows) {
+    if (out.length >= limit) break;
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const record = row as Record<string, unknown>;
+    if (windowDateMs(record) !== null) continue;
+    const fields: Record<string, string | number> = {};
+    for (const [key, value] of Object.entries(record)) {
+      if (!/date|time|publish|ago|posted|created|age|when|stamp/i.test(key)) continue;
+      if (typeof value === "number") fields[key] = value;
+      else if (typeof value === "string" && value.length <= 60) fields[key] = value.slice(0, 40);
+      else if (value !== null && value !== undefined) fields[key] = `(${typeof value})`;
+    }
+    out.push(fields);
+  }
+  return out;
 }

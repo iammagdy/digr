@@ -626,6 +626,8 @@ export interface ProviderAdapterCallOutput {
   tregCallId: string;
   errorCode?: string;
   errorMessageAr?: string;
+  /** An answer that is empty for a known reason: the search for the videos found none (the comments were never asked for). */
+  emptyReason?: "no_videos";
 }
 
 export type ProviderAdapterFn = (
