@@ -48,8 +48,8 @@ const CHANNEL_WORD = "(?:قنوات|قناة|قناه|حسابات|حساب|صف
 const COUNT = "([0-9]+)";
 
 function digits(text: string): string {
-  // «37,500» and «٣٧٬٥٠٠» are one number
-  return normalizeDigits(text).replace(/(\d)[,٬،.](?=\d{3}(?!\d))/g, "$1");
+  // «37,500» and «٣٧٬٥٠٠» are one number; the brackets of an unedited template default («[١٠]») are not part of the request.
+  return normalizeDigits(text).replace(/(\d)[,٬،.](?=\d{3}(?!\d))/g, "$1").replace(/[\[\]【】]/g, " ");
 }
 
 const NUMBER_WORDS: Record<string, number> = { خمس: 5, خمسة: 5, ست: 6, ستة: 6, سبع: 7, سبعة: 7, ثمان: 8, ثمانية: 8, تسع: 9, تسعة: 9, عشر: 10, عشرة: 10, ثلاث: 3, ثلاثة: 3, اربع: 4, أربع: 4, اربعة: 4, أربعة: 4 };
@@ -65,7 +65,7 @@ const CHANNEL_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "
 
 function namedChannels(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/(?:^|\s)@([\w.]{2,30})/gu)) out.push(`@${m[1]}`);
+  for (const m of text.matchAll(/(?:^|[^\w@])@([\w.]{2,30})/gu)) out.push(`@${m[1]}`);
   const m = /(?:قناة|قناه|صفحة)\s+((?:[\p{L}\p{N}_.]+\s?){1,3})/u.exec(text);
   if (m) {
     const words = m[1].trim().split(/\s+/);

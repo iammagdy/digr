@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/hooks/useUser";
 import { savePendingQuestion } from "@/lib/pendingQuestion";
 import { CHIP_ICONS, DEFAULT_Q, EXAMPLES, FIELD_ITEMS, PROMPTS } from "./data";
+import { MISSION_TEMPLATES } from "@/lib/missionTemplates";
 
 const FIELD_STYLE: React.CSSProperties = {
   position: "absolute", inset: 0, padding: 12, fontSize: 13, lineHeight: 2.2, display: "flex", flexWrap: "wrap",
@@ -217,6 +218,17 @@ export function HeroLens() {
     router.push(user ? "/dashboard/chat" : "/register");
   };
 
+  /** A mission template only fills the input; the visitor edits it and sends it (to sign-up). */
+  const useTemplate = (prompt: string) => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.value = prompt;
+    setHasText(true);
+    setPicked(null);
+    el.focus();
+    try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* not supported */ }
+  };
+
   const useExample = (i: number) => {
     const el = inputRef.current;
     if (!el) return;
@@ -343,6 +355,24 @@ export function HeroLens() {
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={CHIP_ICONS[i]} /></svg>
                 </span>
                 <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mx-auto mt-3 max-w-[680px]" style={{ animation: "up 1s .7s both" }}>
+          <p className="m-0 mb-2.5 text-xs font-normal text-mut">
+            <span className="inline-block rounded-full px-3 py-[3px]" style={{ background: "color-mix(in oklab, var(--bg) 90%, transparent)", WebkitBackdropFilter: "blur(12px)", backdropFilter: "blur(12px)" }}>أو مهمة كبيرة</span>
+          </p>
+          <div className={mobile ? "grid grid-cols-1 gap-2 pb-2" : "flex flex-wrap justify-center gap-2 pb-2"} data-testid="landing-mission-templates">
+            {MISSION_TEMPLATES.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => useTemplate(t.promptAr)}
+                className="min-h-[46px] cursor-pointer rounded-full border border-ln px-4 py-2 text-right text-[13px] font-normal leading-[1.5] text-ink transition-[border-color,transform] duration-[250ms] hover:-translate-y-0.5 hover:border-gold"
+                style={{ background: "color-mix(in oklab, var(--sf) 94%, transparent)" }}
+              >
+                {t.titleAr}
               </button>
             ))}
           </div>
