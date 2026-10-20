@@ -13,6 +13,8 @@ import { startNewResearch } from "@/lib/newResearchNavigation";
 import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
+import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
+import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
 
 interface JobDoc {
   $id: string;
@@ -25,6 +27,11 @@ interface JobDoc {
   targetVolumeMax?: number;
   errorAr?: string;
   createdAt: string;
+  /** From the jobs row, for the live progress and stalled lines of a running request. */
+  updatedAt?: string;
+  leaseUntil?: string | null;
+  nextAttemptAt?: string | null;
+  attemptCount?: number;
   fileIds: { xlsx: string | null; pdf: string | null; csv: string | null };
 }
 interface QuoteInfo { conversationId: string; targetVolumeMax: number; summaryAr?: string }
@@ -101,6 +108,7 @@ export default function RequestsPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [filter, setFilter] = useState<"all" | Kind>("all");
+  const [progressByJob, setProgressByJob] = useState<Record<string, string>>({});
   const [dl, setDl] = useState<string | null>(null);
   const [dlError, setDlError] = useState("");
 
@@ -167,6 +175,10 @@ export default function RequestsPage() {
         targetVolumeMax: typeof r.target_volume_max === "number" ? r.target_volume_max : undefined,
         errorAr: r.error_message ?? r.error_ar ?? r.errorAr ?? undefined,
         createdAt: r.created_at || r.createdAt || new Date().toISOString(),
+        updatedAt: r.updated_at ?? undefined,
+        leaseUntil: r.lease_until ?? null,
+        nextAttemptAt: r.next_attempt_at ?? null,
+        attemptCount: typeof r.attempt_count === "number" ? r.attempt_count : undefined,
         fileIds: {
           xlsx: fileIdsByJob.get(r.id)?.xlsx || (String(r.result_file_id || "").endsWith(".xlsx") ? r.result_file_id : null),
           pdf: fileIdsByJob.get(r.id)?.pdf || (String(r.result_file_id || "").endsWith(".pdf") ? r.result_file_id : null),
@@ -174,6 +186,37 @@ export default function RequestsPage() {
         },
       }));
       setJobs(mappedJobs);
+      // Live progress of the running requests, from the page lines their chunks wrote (one read for all of them, recomputed every refresh).
+      try {
+        const live = mappedJobs.filter((j) => (j.status === "queued" || j.status === "running") && (j.targetVolumeMax || 0) > 0);
+        if (live.length > 0) {
+          const { data: lines } = await supabase
+            .from("job_events")
+            .select("job_id, message, units, created_at")
+            .in("job_id", live.map((j) => j.$id))
+            .eq("event_type", "progress")
+            .like("message", "الصفحة%")
+            .order("created_at", { ascending: false })
+            .limit(live.length * 24);
+          const byJob = new Map<string, any[]>();
+          for (const line of (lines || []) as any[]) byJob.set(line.job_id, [...(byJob.get(line.job_id) || []), line]);
+          const next: Record<string, string> = {};
+          for (const j of live) {
+            next[j.$id] = computeJobProgress({
+              delivered: j.rowsCollected ?? 0,
+              target: j.targetVolumeMax as number,
+              marks: chunkMarksFromEvents(byJob.get(j.$id) || []),
+              startedAt: Date.parse(j.createdAt),
+              retrying: Boolean(j.nextAttemptAt && new Date(j.nextAttemptAt).getTime() > Date.now()) || Number(j.attemptCount || 0) > 0,
+            }).lineAr;
+          }
+          setProgressByJob(next);
+        } else {
+          setProgressByJob({});
+        }
+      } catch {
+        // progress is a courtesy line; the list never fails because of it
+      }
       // Map quoteId to conversationId and summaryAr from messages table
       const quoteToConv: Record<string, { conversationId: string; summaryAr?: string }> = {};
       for (const m of (msgsRes?.data || []) as any[]) {
@@ -342,6 +385,7 @@ export default function RequestsPage() {
           const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
+          const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
             : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
             : k === "partial" ? partialDeliveryText(rows, requested || rows) : "";
@@ -370,6 +414,8 @@ export default function RequestsPage() {
                 <span>الملفات<br /><strong className="text-sm font-semibold text-ink">{hasFiles ? formatAr(availableFormats.length) : "—"}</strong></span>
               </div>
               {k === "running" && <div className="h-1 overflow-hidden rounded bg-sf2"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>}
+              {k === "running" && progressByJob[j.$id] && <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="request-progress">{progressByJob[j.$id]}</p>}
+              {stalled && <p role="status" className="m-0 text-[13px] font-medium leading-[1.8] text-ink" data-testid="request-stalled">{STALLED_LINE_AR}</p>}
               {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{note}</p>}
               {(k === "refunded" || k === "partial") && <ReportProblemButton jobId={j.$id} className="self-start" />}
               <div className="flex flex-wrap gap-2">

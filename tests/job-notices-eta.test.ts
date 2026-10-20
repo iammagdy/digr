@@ -46,12 +46,15 @@ describe("the remaining time comes from the job's real pace", () => {
     for (const seconds of [30, 61, 300, 660, 5400, 11000]) expect(etaTextAr(seconds)).not.toMatch(/[A-Za-z0-9]/);
   });
 
-  it("the page records real samples and shows the estimate only when there is one", () => {
+  it("the page computes the remaining time from the real chunk lines of the job and shows it only when there is one", () => {
     const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
-    expect(page).toContain("progressSamples.current.samples");
-    expect(page).toContain("estimateRemainingSeconds(");
-    expect(page).toContain('data-testid="job-eta"');
-    expect(page).toContain("محسوب من سرعة التنفيذ الفعلية وقد يتغير");
+    expect(page).toContain("chunkMarksFromEvents(");
+    expect(page).toContain("computeJobProgress(");
+    expect(page).toContain('data-testid="job-progress"');
+    expect(page).toContain("تقديري ويتحدث مع كل دفعة");
+    // shown only while a chunk-based estimate exists; with too few chunks the line says it will be computed later, never a made-up time
+    expect(page).toContain("progress.remainingAr ?");
+    expect(page).not.toContain("progressSamples");
   });
 });
 
@@ -63,13 +66,23 @@ describe("the notices of a long job", () => {
     expect(isLongJob(Number.NaN)).toBe(false);
   });
 
-  it("the start notice says it runs in the background, that the page can be closed, and what happens if it cannot finish", () => {
-    const notice = jobStartedNotice({ targetVolumeMax: 1500 });
+  it("the start notice says it runs in the background, what happens if it cannot finish, and says the page can be closed ONLY with the always-on driver", () => {
+    const notice = jobStartedNotice({ targetVolumeMax: 1500, driver: "cron" });
     expect(notice.title).toBe("بدأ تنفيذ طلبك الكبير");
     expect(notice.body).toContain("حتى ١٥٠٠ سجل");
     expect(notice.body).toContain("يمكنك إغلاق الصفحة");
     expect(notice.body).toContain("سنخبرك عند اكتماله");
     expect(notice.body).toContain("تعود نقاطك المحجوزة كاملة");
+    // without the driver (the default, and anything that is not «cron») the notice is the honest one
+    for (const driver of ["tab", undefined] as const) {
+      const honest = jobStartedNotice({ targetVolumeMax: 1500, driver });
+      expect(honest.body).not.toContain("يمكنك إغلاق الصفحة");
+      expect(honest.body).toContain("أبقِ الصفحة مفتوحة");
+      expect(honest.body).toContain("فستكمل عند عودتك");
+      expect(honest.body).toContain("حتى ١٥٠٠ سجل");
+      expect(honest.body).toContain("سنخبرك عند اكتماله");
+      expect(honest.body).toContain("تعود نقاطك المحجوزة كاملة");
+    }
   });
 
   it("the stall notice says the request stopped and the whole reserve came back with no charge", () => {

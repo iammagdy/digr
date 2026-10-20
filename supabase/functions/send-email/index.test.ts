@@ -16,6 +16,7 @@ const TEMPLATES = [
   "topup-rejected",
   "job-done",
   "refund",
+  "job-update",
 ] as const;
 
 const SAMPLE_VARS: Record<(typeof TEMPLATES)[number], Record<string, string>> = {
@@ -25,6 +26,7 @@ const SAMPLE_VARS: Record<(typeof TEMPLATES)[number], Record<string, string>> = 
   "topup-rejected": { Name: "Magdy", AmountEgp: "500", Reference: "REF-1", RejectReason: "الإيصال غير واضح" },
   "job-done": { Name: "Magdy", JobTitle: "بحث تجريبي" },
   "refund": { Name: "Magdy", Points: "200", JobTitle: "بحث تجريبي", Reason: "تغطية ناقصة", Balance: "5400" },
+  "job-update": { Name: "Magdy", Subject: "اكتمل طلبك جزئيًا", Heading: "اكتمل طلبك جزئيًا", Lead: "وصلك ٤٠ من ١٠٠.", DetailOne: "خُصم ٣٦٠ نقطة.", DetailTwo: "", ButtonLabel: "افتح طلباتي", JobURL: "https://diger.tech/dashboard/requests" },
 };
 
 for (const id of TEMPLATES) {

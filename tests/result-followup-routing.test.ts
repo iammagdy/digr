@@ -131,7 +131,7 @@ describe("plan approval copy and selected output formats", () => {
       chatPage.indexOf("// Download File Handler"),
     );
     const acceptedCheck = startHandler.indexOf("if (!res.ok || !data.success)");
-    const postApproval = startHandler.indexOf("content: POST_APPROVAL_MESSAGE_AR");
+    const postApproval = startHandler.indexOf("content: postApprovalMessageAr(data.driverMode)");
     expect(acceptedCheck).toBeGreaterThan(-1);
     expect(postApproval).toBeGreaterThan(acceptedCheck);
     expect(startHandler).toContain("explicitApproval: true");

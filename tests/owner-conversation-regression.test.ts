@@ -9,7 +9,7 @@ vi.mock("../src/functions/shared/catalogClient", () => ({
 
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
-import { POST_APPROVAL_MESSAGE_AR } from "../src/lib/postApproval";
+import { postApprovalMessageAr } from "../src/lib/postApproval";
 
 /** In-memory tables that honour the equal / orderDesc / limit queries the handler uses for history. */
 function makeTables() {
@@ -98,7 +98,7 @@ describe("A6: the owner's exact conversation, offline", () => {
     await nextTick();
     await tables.createRow({
       tableId: "messages",
-      data: { conversationId, userId: "owner_test_user", role: "assistant", content: POST_APPROVAL_MESSAGE_AR, status: "ready", createdAt: new Date().toISOString() },
+      data: { conversationId, userId: "owner_test_user", role: "assistant", content: postApprovalMessageAr("tab"), status: "ready", createdAt: new Date().toISOString() },
     });
     await nextTick();
     await tables.createRow({
@@ -185,7 +185,7 @@ describe("A2: «جاري سحب البيانات» appears only after an explici
     });
 
   it("the sentence has exactly one source and exactly one place that shows it", () => {
-    const users = walk("src").filter((file) => readFileSync(file, "utf8").includes("POST_APPROVAL_MESSAGE_AR"));
+    const users = walk("src").filter((file) => readFileSync(file, "utf8").includes("postApprovalMessageAr"));
     expect(users.map((file) => file.replaceAll("\\", "/")).sort()).toEqual([
       "src/app/dashboard/chat/page.tsx",
       "src/lib/postApproval.ts",
@@ -202,11 +202,11 @@ describe("A2: «جاري سحب البيانات» appears only after an explici
     expect(handler).toContain("explicitApproval: true");
     const accepted = handler.indexOf("if (!res.ok || !data.success)");
     expect(accepted).toBeGreaterThan(-1);
-    expect(handler.indexOf("content: POST_APPROVAL_MESSAGE_AR")).toBeGreaterThan(accepted);
+    expect(handler.indexOf("content: postApprovalMessageAr(data.driverMode)")).toBeGreaterThan(accepted);
     // The throw on failure comes first, so a refused approval never reaches the message.
     expect(handler.slice(accepted, accepted + 160)).toContain("throw new Error");
     // The only use in the page, and the only caller of the handler is the card's onStart.
-    expect(page.match(/POST_APPROVAL_MESSAGE_AR/g)!.length).toBe(2); // import + the one push
+    expect(page.match(/postApprovalMessageAr/g)!.length).toBe(2); // import + the one push
     expect(page.match(/handleStartExecution/g)!.length).toBe(2); // definition + onStart wiring
     expect(page).toContain("onStart={handleStartExecution}");
     const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");

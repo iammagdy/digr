@@ -26,6 +26,7 @@ import {
   type RejectedRowSampleEntry,
 } from "../../../../lib/server/rejectedRowSample";
 import { sendPlatformEmail, getRecipient } from "../../../../lib/server/sendPlatformEmail";
+import { completionNoticeFull, releasedNoticeFull, sendJobNotice } from "../../../../lib/server/jobNotices";
 import { getBalance } from "../../../../lib/supabase/ledger";
 import {
   getConfiguredProviderSpendCapUsd,
@@ -155,6 +156,9 @@ async function executeReleaseConfirmation(
             } catch (evtErr: any) {
               console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
             }
+
+            // In-app: the request could not finish and the whole reserve came back (once per job; the refund e-mail below is its e-mail).
+            await sendJobNotice(adminClient, jobRow.user_id, jobId, releasedNoticeFull(releasedCredits));
 
             const rcpt = await getRecipient(adminClient, jobRow.user_id, "refund");
             if (rcpt) {
@@ -1662,37 +1666,26 @@ export async function POST(req: NextRequest) {
         console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
       }
 
-      // Emit notification to user matching tracked migrations schema: (id, user_id, title, body, read, link, created_at)
+      // The completion notice of the job, in plain Arabic: complete, or partial with what was delivered, charged and returned.
+      // One notice per job (a deterministic id), never blocks the request. A partial completion is e-mailed with its own wording.
+      const completionFacts = {
+        delivered: finalRows.length,
+        requested: targetMax,
+        chargedPoints: Math.round(Number(settleData?.charged_credits) || 0),
+        refundedPoints: refundedPointsFromSettle(settleData),
+      };
+      const completionIsPartial = finalRows.length < targetMax;
       if (userId) {
         try {
-          const notifRes = await adminClient.from("notifications").insert({
-            id: `notif_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            user_id: userId,
-            title: "اكتمل طلب استخراج البيانات بنجاح",
-            body: `تم استخراج ${finalRows.length} عنصر بنجاح. يمكنك الآن مراجعة وتحميل النتائج.`,
-            link: `/dashboard/jobs`,
-            read: false,
-            created_at: completedAtIso,
-          });
-          if (notifRes?.error) {
-            console.error(
-              `[worker:notification_insert_failed] reason=db_error code=${
-                notifRes.error.code || "unknown"
-              }`
-            );
-          }
+          await sendJobNotice(adminClient, userId, jobId, completionNoticeFull(completionFacts), () => new Date(completedAtIso));
         } catch (notifErr: any) {
-          console.error(
-            `[worker:notification_insert_failed] reason=exception code=${
-              notifErr?.code || "unknown"
-            }`
-          );
+          console.error(`[worker:notification_insert_failed] reason=exception code=${notifErr?.code || "unknown"}`);
         }
       }
 
-      // Email: job-done (never blocks or fails the request)
+      // Email: job-done for a full completion (never blocks or fails the request); a partial one was e-mailed above by its notice
       try {
-        const rcpt = await getRecipient(adminClient, userId, "job-done");
+        const rcpt = completionIsPartial ? null : await getRecipient(adminClient, userId, "job-done");
         if (rcpt) {
           const chargedPoints = Math.round(Number(settleData?.charged_credits) || 0);
           await sendPlatformEmail("job-done", rcpt.email, {
@@ -1797,6 +1790,16 @@ export async function POST(req: NextRequest) {
           } else {
             releaseConfirmed = false;
             releaseDiagnostic = rel.diagnostic;
+          }
+        }
+
+        // The failure path released the job itself (after the allowed retries): tell the customer once, in the app.
+        if (releaseConfirmed && lastFailureData?.released) {
+          try {
+            const { data: failedJob } = await adminClient.from("jobs").select("user_id").eq("id", jobId).maybeSingle();
+            if (failedJob?.user_id) await sendJobNotice(adminClient, failedJob.user_id, jobId, releasedNoticeFull(Number(lastFailureData?.released_credits) || 0));
+          } catch {
+            // a notice never changes the failure response
           }
         }
 
