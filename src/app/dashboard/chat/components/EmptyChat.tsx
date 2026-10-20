@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { MISSION_TEMPLATES } from "@/lib/missionTemplates";
 
 interface StarterItem {
   label: string;
@@ -53,6 +54,30 @@ export default function EmptyChat({
           اختر قالباً للتعديل عليه أو اكتب سؤالك البحثي بالعربية، وسنحدد التفاصيل والسعر معًا قبل أي جمع.
         </p>
       </div>
+      <div>
+        <p className="m-0 mb-2 text-xs font-medium text-mut">مهام كبيرة</p>
+        <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,260px),1fr))" }} data-testid="mission-templates">
+          {MISSION_TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              data-testid={`mission-template-${t.id}`}
+              onClick={() => onStart(t.promptAr)}
+              className="flex min-h-[108px] cursor-pointer flex-col items-start justify-between gap-2 rounded-[14px] border border-ln bg-sf p-3.5 text-right transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-gold"
+            >
+              <span className="flex items-center gap-2.5">
+                <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-sf2 text-goldT">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={t.iconPath} /></svg>
+                </span>
+                <span className="text-[13px] font-medium leading-[1.7] text-ink">{t.titleAr}</span>
+              </span>
+              <span className="text-xs font-light leading-[1.8] text-mut">{t.flowAr}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="m-0 mb-2 text-xs font-medium text-mut">أمثلة سريعة</p>
       <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,150px),1fr))" }}>
         {STARTERS.map((s) => (
           <button
@@ -67,6 +92,7 @@ export default function EmptyChat({
             <span className="text-[13px] leading-[1.7] text-ink">{s.label}</span>
           </button>
         ))}
+      </div>
       </div>
       {zeroBalance && (
         <p className="m-0 flex items-center justify-between gap-2.5 rounded-[18px] px-4 py-3 text-[13px] leading-[1.8] text-ink" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)" }}>
