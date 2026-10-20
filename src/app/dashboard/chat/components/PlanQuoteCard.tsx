@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
 import { volumeLimitStatementAr } from "@/lib/jobCaps";
+import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
@@ -33,6 +34,8 @@ export interface PlanQuoteData {
   requestedVolumeMax?: number;
   /** What the customer asked, when the plan holds fewer records than that (set by the server). */
   askedVolumeMax?: number;
+  /** The count is a default the plan chose because the customer left it open (set by the server): the card says so, never «you asked for». */
+  defaultCap?: { noun: DefaultNoun; units: number; wordAr?: string };
   pointsCap?: number;
   userBalance: number;
   downscaledOffer?: {
@@ -198,7 +201,10 @@ export default function PlanQuoteCard({
 
   const baseApprovalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
   // Never shrink silently: what was asked, what fits one job now, and why (one plain sentence from the plan's own numbers).
-  const volumeLimit = (quote.items?.length ?? 1) <= 1
+  const defaultStatement = quote.defaultCap && (quote.items?.length ?? 1) <= 1
+    ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || 600, wordAr: quote.defaultCap.wordAr })
+    : null;
+  const volumeLimit = defaultStatement ? null : (quote.items?.length ?? 1) <= 1
     ? volumeLimitStatementAr({ askedUnits: Math.max(quote.askedVolumeMax ?? 0, quote.requestedVolumeMax ?? 0), fittedUnits: quote.targetVolumeMax })
     : null;
   const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
@@ -290,11 +296,17 @@ export default function PlanQuoteCard({
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
 
+      {defaultStatement ? (
+        <p data-testid="plan-default-volume" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
+          {defaultStatement}
+        </p>
+      ) : null}
+
       {volumeLimit ? (
         <p data-testid="plan-volume-limit" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {volumeLimit} يمكنك تقليل العدد أكثر إذا أردت.
         </p>
-      ) : quote.pointsCapConstrained ? (
+      ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
             ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`

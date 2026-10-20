@@ -7,18 +7,33 @@ import { toArabicDigits } from "./arabicDigits";
 export const DEFAULT_COMMENTS_CAP = 500;
 export const DEFAULT_RECORDS_CAP = 500;
 
-export function defaultCapFor(noun: "comments" | "records"): number {
+/** What a default count counts: comments, posts or other records, or videos. */
+export type DefaultNoun = "comments" | "records" | "videos";
+const NOUN_WORD_AR: Record<DefaultNoun, string> = { comments: "تعليق", records: "سجل", videos: "فيديو" };
+
+export function defaultCapFor(noun: DefaultNoun): number {
   return noun === "comments" ? DEFAULT_COMMENTS_CAP : DEFAULT_RECORDS_CAP;
 }
 
 /** The plan line that says the count is a default and can be edited. */
-export function defaultCapLineAr(noun: "comments" | "records", units: number): string {
-  const word = noun === "comments" ? "تعليق" : "سجل";
+export function defaultCapLineAr(noun: DefaultNoun, units: number, wordAr?: string): string {
+  const word = wordAr || NOUN_WORD_AR[noun];
   return `العدد المطلوب: ${toArabicDigits(units)} ${word} (قيمة افتراضية لأنك لم تحدد عددًا)، وتقدر تعدّله من الخطة.`;
 }
 
 /** When the default count does not fit one job: what the plan holds instead, in plain words (the numbers come from the quote). */
-export function defaultCapFittedLineAr(input: { noun: "comments" | "records"; fittedUnits: number; quotedPoints: number; pointsCap: number }): string {
-  const word = input.noun === "comments" ? "تعليق" : "سجل";
+export function defaultCapFittedLineAr(input: { noun: DefaultNoun; fittedUnits: number; quotedPoints: number; pointsCap: number; wordAr?: string }): string {
+  const word = input.wordAr || NOUN_WORD_AR[input.noun];
   return `لكن الطلب الواحد يتسع الآن لـ${toArabicDigits(input.fittedUnits)} ${word} بحجز ${toArabicDigits(input.quotedPoints)} نقطة ضمن سقف ${toArabicDigits(input.pointsCap)} نقطة، ويمكنك طلب الباقي في طلب منفصل.`;
+}
+
+/**
+ * The whole sentence the plan card shows when the count is a default: the default and that it can be edited, and, when one job holds
+ * fewer, what it holds instead. It is never «طلبت ...»: the customer did not ask for the default.
+ */
+export function defaultVolumeStatementAr(input: { noun: DefaultNoun; defaultUnits: number; fittedUnits: number; quotedPoints: number; pointsCap: number; wordAr?: string }): string {
+  const first = defaultCapLineAr(input.noun, input.defaultUnits, input.wordAr);
+  return input.fittedUnits < input.defaultUnits
+    ? `${first} ${defaultCapFittedLineAr({ noun: input.noun, fittedUnits: input.fittedUnits, quotedPoints: input.quotedPoints, pointsCap: input.pointsCap, wordAr: input.wordAr })}`
+    : first;
 }
