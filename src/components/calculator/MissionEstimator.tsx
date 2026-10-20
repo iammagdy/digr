@@ -26,8 +26,11 @@ const PLATFORMS: Array<{ id: string; label: string }> = [
   { id: "tiktok", label: "تيك توك" },
 ];
 
+type DurationAnswer = { rangeAr: string; labelAr: string; driversAr: string; promiseAr: string; longNoteAr?: string };
+
 type Answer = {
   result: EstimateResult | null;
+  duration: DurationAnswer | null;
   summaryAr: string | null;
   understoodAr: string | null;
   missingAr: string[];
@@ -57,7 +60,7 @@ export default function MissionEstimator() {
         setAnswer(null);
         setError(typeof data?.error === "string" ? data.error : "تعذّر الحساب الآن، حاول بعد قليل.");
       } else {
-        setAnswer({ result: data.result ?? null, summaryAr: data.summaryAr ?? null, understoodAr: data.understoodAr ?? null, missingAr: Array.isArray(data.missingAr) ? data.missingAr : [] });
+        setAnswer({ result: data.result ?? null, duration: data.duration ?? null, summaryAr: data.summaryAr ?? null, understoodAr: data.understoodAr ?? null, missingAr: Array.isArray(data.missingAr) ? data.missingAr : [] });
       }
     } catch {
       setAnswer(null);
@@ -140,6 +143,14 @@ export default function MissionEstimator() {
             </>
           ) : null}
           {result && result.status !== "ok" ? <p className="m-0 text-sm text-ink">{result.notesAr.join(" ")}</p> : null}
+          {result?.status === "ok" && answer.duration ? (
+            <div data-testid="estimate-duration" className="flex flex-col gap-1 rounded-[14px] border border-ln bg-sf p-3">
+              <p className="m-0 text-sm text-ink">المدة المتوقعة للطلب الواحد: <strong data-testid="estimate-duration-range">{answer.duration.rangeAr}</strong> <span className="text-xs text-mut">({answer.duration.labelAr})</span></p>
+              <p className="m-0 text-xs font-light leading-[1.8] text-mut">{answer.duration.driversAr}</p>
+              {answer.duration.longNoteAr ? <p className="m-0 text-xs font-light leading-[1.8] text-mut">{answer.duration.longNoteAr}</p> : null}
+              <p className="m-0 text-xs font-light leading-[1.8] text-mut">{answer.duration.promiseAr}</p>
+            </div>
+          ) : null}
           {result?.status === "ok" ? result.notesAr.map((note) => <p key={note} className="m-0 text-xs font-light leading-[1.8] text-mut">{note}</p>) : null}
           {result?.status === "ok" && result.slug === "professional-people-search" ? (
             <p data-testid="people-per-request" className="m-0 text-xs font-light leading-[1.8] text-mut">{decisionMakersPerRequestLineAr(result.maxVolumeInOneJob)}</p>

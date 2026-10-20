@@ -91,6 +91,9 @@ import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissi
 import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
 import { videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { loadMeasuredTimings } from "../../lib/server/jobTimings";
+import { missionDurationForPlan } from "../../lib/missionDuration";
+import { longJobDriverMode } from "../../lib/driverMode";
 import { DEFAULT_COMMENTS_CAP, DEFAULT_RECORDS_CAP, defaultCapFittedLineAr, defaultCapLineAr } from "../../lib/planDefaults";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
@@ -3668,6 +3671,15 @@ export class ChatHandler {
           const planMission = understandMission(conversationRequestText);
           const planUnderstood = understoodLineAr(planMission);
           if (planUnderstood) planQuoteData.understoodAr = planUnderstood;
+          // How long the mission will take: a range computed by code from the plan's own numbers (records, records per call, dependent
+          // steps) and the measured chunk times of finished jobs, never decided by the model. It carries no money value.
+          try {
+            const measuredTimings = sb ? await loadMeasuredTimings(sb) : undefined;
+            const durationView = missionDurationForPlan(managedQuote.items as any[], longJobDriverMode(), measuredTimings);
+            if (durationView) planQuoteData.duration = durationView;
+          } catch (durationErr: any) {
+            console.warn("[chat:duration_estimate_skipped]", durationErr?.message || "");
+          }
           const planWindowNow = windowOrProposedDefault(planMission.window);
           if (planWindowNow.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
             planQuoteData.window = {
