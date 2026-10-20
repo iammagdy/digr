@@ -497,6 +497,12 @@ export function formatBriefForSystemPrompt(brief: ResearchBrief): string {
   return lines.join("\n");
 }
 
+/** The brief this server instance already holds for a conversation (no database read), or null. */
+export function peekConversationBrief(conversationId: string): ResearchBrief | null {
+  const cached = briefCache.get(conversationId);
+  return cached ? { ...cached } : null;
+}
+
 /**
  * Retrieve the persistent brief for a conversation.
  */

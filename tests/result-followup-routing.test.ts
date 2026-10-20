@@ -86,10 +86,12 @@ describe("company result follow-up conversation", () => {
 
   it("uses the newest ten messages so a recent pending plan is not hidden by old greetings", () => {
     const chatHandler = readFileSync("src/functions/shared/chatHandler.ts", "utf8");
+    // The query now starts in the same wave as the message writes (const historyRead) and is consumed at the history step.
     const history = chatHandler.slice(
-      chatHandler.indexOf("const { data: rows, error: histErr }"),
-      chatHandler.indexOf("supabaseMs += Date.now() - tSbHistStart", chatHandler.indexOf("const { data: rows, error: histErr }")),
+      chatHandler.indexOf("const historyRead:"),
+      chatHandler.indexOf("const histDelta = Date.now() - tSbHistStart"),
     );
+    expect(history.length).toBeGreaterThan(500);
 
     expect(history).toContain('.order("created_at", { ascending: false })');
     expect(history).toContain("Query.orderDesc(\"createdAt\")");
