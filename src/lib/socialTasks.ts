@@ -27,7 +27,7 @@ const PLATFORM_RES: Array<[SocialPlatformId, RegExp]> = [
   ["youtube", /يوتيوب|يوتوب|اليوتيوب|youtube|youtu\.be|\bshorts?\b|شورتس/iu],
   ["facebook", /فيسبوك|فيس\s*بوك|الفيس(?![\p{L}])|فيس(?![\p{L}])|facebook|\bfb\b|fb\.watch/iu],
   ["instagram", /انستغرام|إنستغرام|انستجرام|إنستجرام|انستا(?![\p{L}])|instagram|\binsta\b/iu],
-  ["x", /تويتر|تغريد|منصة\s*(?:x|إكس|اكس)|twitter|\bx\b|\bx\.com\b/iu],
+  ["x", /تويتر|تغريد|منصة\s*(?:x|إكس|اكس)|(?:على|علي|في|من)\s+(?:إكس|اكس)(?![\p{L}])|twitter|\bx\b|\bx\.com\b/iu],
   ["reddit", /ريديت|reddit/iu],
   ["linkedin", /لينكد\s*إن|لينكدإن|لينكدان|linkedin/iu],
 ];

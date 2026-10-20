@@ -1,3 +1,4 @@
+import { GENERIC_ASK_ONE_INTRO_AR } from "../src/lib/consultantCopy";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../src/functions/shared/catalogClient", () => ({
@@ -112,7 +113,11 @@ describe("cut-off reply fix (Task 1: render text + tool blocks, colon retry & di
       testScenario: "text_plus_tool_turn",
     });
 
-    expect(res.contentAr).toBe("عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+    // The reply says what was understood (the subject and platform), never «محتاج أعرف:» followed by a list.
+    expect(res.contentAr).toMatch(/^فهمت أنك تريد/);
+    expect(res.contentAr).toContain("«الدهب وأسعار الدهب»");
+    expect(res.contentAr).toContain("فيسبوك");
+    expect(res.contentAr).not.toContain("محتاج أعرف");
     expect(res.outputType).toBe("ask_clarification");
     expect(res.clarificationItems).toBeDefined();
     expect(res.clarificationItems!.length).toBeGreaterThan(0);
@@ -129,7 +134,9 @@ describe("cut-off reply fix (Task 1: render text + tool blocks, colon retry & di
       testScenario: "colon_cutoff_then_questions",
     });
 
-    expect(res.contentAr).toBe("عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+    expect(res.contentAr).toMatch(/^فهمت أنك تريد/);
+    expect(res.contentAr).toContain("«الدهب وأسعار الدهب»");
+    expect(res.contentAr).not.toContain("محتاج أعرف");
     expect(res.outputType).toBe("ask_clarification");
     expect(res.clarificationItems).toBeDefined();
     expect(res.clarificationItems!.length).toBeGreaterThan(0);
@@ -145,7 +152,8 @@ describe("cut-off reply fix (Task 1: render text + tool blocks, colon retry & di
     });
 
     // Content ends with colon or retains intro
-    expect(res.contentAr).toContain("عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+    expect(res.contentAr).toMatch(/^فهمت أنك تريد/);
+    expect(res.contentAr).not.toContain("محتاج أعرف");
     // OutputType is ask_clarification so UI renders ClarificationReply
     expect(res.outputType).toBe("ask_clarification");
     expect(res.clarificationItems).toBeDefined();
@@ -165,7 +173,8 @@ describe("cut-off reply fix (Task 1: render text + tool blocks, colon retry & di
       true,
     );
 
-    expect(fallback.intro).toBe("عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+    expect(fallback.intro).toBe(GENERIC_ASK_ONE_INTRO_AR);
+    expect(fallback.intro).not.toContain("محتاج أعرف");
     expect(fallback.items.length).toBe(3);
     const ids = fallback.items.map((i) => i.id);
     expect(ids).toEqual(["code_topic_angle", "code_post_count", "code_comments_per_post"]);

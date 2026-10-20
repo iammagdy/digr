@@ -1,4 +1,4 @@
-import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowQuestion, WINDOW_LONG_RANGE_WARNING_AR, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
+import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
@@ -81,6 +81,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
+import { consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, understandMission } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
@@ -208,9 +209,6 @@ function socialTimeWindowQuestion() {
     allowOther: true,
   };
 }
-
-/** The sentence that introduces the window question: why it is asked, and the plain warning about long periods. */
-const SOCIAL_TIME_WINDOW_INTRO_AR = `لم تذكر فترة زمنية للبحث، وبدونها قد تكون النتائج كبيرة جدًا. ${WINDOW_LONG_RANGE_WARNING_AR}`;
 
 /**
  * A feed search (posts, videos or comments found by a subject) needs a period. It is asked for ONCE, whatever else is known,
@@ -531,7 +529,7 @@ export function buildCodeDiscoveryFallback(
   colonFallback: boolean = false,
   brief?: ResearchBrief,
 ): { intro: string; items: NormalizedClarificationQuestion[] } {
-  const intro = "عشان أجهز لك خطة دقيقة، محتاج أعرف:";
+  const intro = GENERIC_ASK_ONE_INTRO_AR;
   const chips = extractTopicChips(userMessage);
   const dateHint = extractDateHint(userMessage);
 
@@ -1225,9 +1223,9 @@ export function buildClarificationPresentation(
 
   const clarificationQuestions = clarificationItems.map((item) => item.text);
   const intro = sanitizeClarificationText(
-    output.reasonAr || "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:",
+    output.reasonAr || GENERIC_ASK_ONE_INTRO_AR,
     200,
-  ) || "قبل ما أجهز الخطة، جاوبني على الأسئلة دي:";
+  ) || GENERIC_ASK_ONE_INTRO_AR;
 
   return {
     contentAr: intro,
@@ -2330,7 +2328,7 @@ export class ChatHandler {
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
       // A turn about the delivered file never asks research questions (a column named «الشركة» is not a company request).
       if (requiredDiscoveryQuestion && !isFileShapingTurn) {
-        const intro = requiredDiscoveryQuestion.id === "social_time_required" ? SOCIAL_TIME_WINDOW_INTRO_AR : "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+        const intro = consultantIntroAr(conversationRequestText, requiredDiscoveryQuestion.id);
         const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
           capabilities: allCapabilities,
           userBalancePoints: userBalance,
@@ -2666,7 +2664,7 @@ export class ChatHandler {
         } else {
           clarificationQuestionsList = undefined;
           clarificationItemsList = undefined;
-          finalContentAr = deduplicateIntroText(customIntro || "عشان أجهز لك خطة دقيقة، محتاج أعرف المنصة والموضوع المطلوب بحثه.");
+          finalContentAr = deduplicateIntroText(customIntro || "فهمت أنك تريد جمع بيانات، وأحتاج أن أعرف المنصة والموضوع أولًا.");
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -2778,7 +2776,7 @@ export class ChatHandler {
                 clarificationItemsList = [normalizedOne];
                 clarificationQuestionsList = [normalizedOne.text || normalizedOne.question];
                 finalContentAr = deduplicateIntroText(
-                  budgetLeft() <= MIN_MODEL_CALL_BUDGET_MS ? SLOW_TURN_INTRO_AR : "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.",
+                  budgetLeft() <= MIN_MODEL_CALL_BUDGET_MS ? SLOW_TURN_INTRO_AR : consultantIntroAr(conversationRequestText, one.id),
                 );
                 output = {
                   type: "ask_clarification",
@@ -2893,7 +2891,7 @@ export class ChatHandler {
             : filterQuestionsAlreadyInBrief(normalized, brief);
           clarificationQuestionsList = clarificationItemsList.map((q) => q.text);
           if (clarificationItemsList.length > 0) {
-            finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "عشان أجهز لك خطة دقيقة، محتاج أعرف:");
+            finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || GENERIC_ASK_ONE_INTRO_AR);
             output = {
               type: "ask_clarification",
               reasonAr: finalContentAr,
@@ -2908,7 +2906,7 @@ export class ChatHandler {
           } else {
             clarificationItemsList = undefined;
             clarificationQuestionsList = undefined;
-            finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
+            finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "سجلت طلبك، وأجهز لك الخطة فور اكتمال التفاصيل.");
             output = {
               type: "answer_question",
               answerAr: finalContentAr,
@@ -2921,7 +2919,7 @@ export class ChatHandler {
         } else {
           clarificationItemsList = undefined;
           clarificationQuestionsList = undefined;
-          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "تم تسجيل متطلبات البحث بنجاح.");
+          finalContentAr = deduplicateIntroText(output.replyAr || (llmResult.textBlockAr?.trim()) || "سجلت طلبك، وأجهز لك الخطة فور اكتمال التفاصيل.");
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -2965,7 +2963,7 @@ export class ChatHandler {
         } else {
           clarificationItemsList = undefined;
           clarificationQuestionsList = undefined;
-          finalContentAr = "عشان أجهز لك خطة دقيقة، محتاج أعرف المنصة والموضوع المطلوب بحثه.";
+          finalContentAr = "فهمت أنك تريد جمع بيانات، وأحتاج أن أعرف المنصة والموضوع أولًا.";
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -3191,7 +3189,7 @@ export class ChatHandler {
           ...missingSocialFields,
         ];
         if (missingRequiredFields.length > 0) {
-          finalContentAr = "قبل إعداد عرض السعر، أحتاج معلومة واحدة حتى تكون الخطة مطابقة لطلبك.";
+          finalContentAr = consultantIntroAr(requiredFieldsText, undefined);
           const firstMissing = missingRequiredFields[0];
           const companyItems = companyPlan && !isPeopleSearchRequest(requiredFieldsText)
             ? getCompanyRequirementItems(missingCompanyFields, requiredFieldsText)
@@ -3269,7 +3267,7 @@ export class ChatHandler {
           const planFallback = buildCodeDiscoveryFallback(allCapabilities, message, true, brief);
           clarificationQuestionsList = planFallback.items.map((item) => item.text);
           clarificationItemsList = planFallback.items;
-          finalContentAr = deduplicateIntroText(`أحتاج أعدّل الخطة، لحظة.\n${planFallback.intro}`);
+          finalContentAr = deduplicateIntroText(planFallback.intro);
           output = {
             type: "ask_clarification",
             reasonAr: finalContentAr,
@@ -3329,7 +3327,7 @@ export class ChatHandler {
           });
           clarificationItemsList = [sourceQuestion as any];
           clarificationQuestionsList = [sourceQuestion.text];
-          finalContentAr = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+          finalContentAr = consultantIntroAr(conversationRequestText, undefined);
           output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
         } else {
           finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
@@ -3444,6 +3442,12 @@ export class ChatHandler {
           }
           const unsupportedNote = unsupportedConstraintsNoteAr(extractRequestIntent(conversationRequestText));
           if (unsupportedNote) planSummaryText += `\n- ${unsupportedNote}`;
+          // A feed plan states its window and why (a known event), and any date it corrected: the customer sees what will be applied.
+          const missionWindow = understandMission(conversationRequestText).window;
+          if (missionWindow.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
+            planSummaryText += `\n- الفترة الزمنية: ${missionWindow.labelAr}${missionWindow.reasonAr ? ` — ${missionWindow.reasonAr}` : ""}`;
+            if (missionWindow.noteAr) planSummaryText += `\n- ملاحظة: ${missionWindow.noteAr}`;
+          }
           if (managedQuote.pointsCapConstrained) {
             const requestedUnits = managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
@@ -3644,7 +3648,7 @@ export class ChatHandler {
           });
           clarificationItemsList = [sourceQuestion as any];
           clarificationQuestionsList = [sourceQuestion.text];
-          finalContentAr = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+          finalContentAr = consultantIntroAr(conversationRequestText, undefined);
           output = { type: "ask_clarification", reasonAr: finalContentAr, intro: finalContentAr, questions: clarificationItemsList, questionsAr: clarificationQuestionsList } as any;
         } else {
           finalContentAr = "اكتب الموضوع أو أرسل رابط المصدر الذي تريد جمع بياناته، وسأجهز خطة تناسب طلبك.";
@@ -3933,7 +3937,10 @@ export class ChatHandler {
         clarificationItemsList = clarificationItemsList.slice(0, 1);
         clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
         // The period question always carries its plain warning about long periods.
-        if (clarificationItemsList[0]?.id === "social_time_required") finalContentAr = SOCIAL_TIME_WINDOW_INTRO_AR;
+        // The intro of the ONE question says what was understood; a form-style intro (a colon and a list, «محتاج أعرف») never reaches the customer.
+        if (clarificationItemsList[0]?.id === "social_time_required" || isFormStyleIntro(finalContentAr)) {
+          finalContentAr = consultantIntroAr(conversationRequestText, clarificationItemsList[0]?.id);
+        }
       } else if (clarificationQuestionsList?.length) {
         clarificationQuestionsList = clarificationQuestionsList.slice(0, 1);
       }

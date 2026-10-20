@@ -18,7 +18,7 @@ describe("Phase 3: System Prompt v4 & Mocked Client Scenarios", () => {
   });
 
   it("upgrades PROMPT_VERSION to 4.0.0, sends identical system prompt to OpenAI and Anthropic, and enforces v4 guardrails (no emoji, no provider names, no legality promises)", async () => {
-    expect(["4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.0.0", "8.1.0"]).toContain(PROMPT_VERSION);
+    expect(["4.0.0", "5.0.0", "6.0.0", "7.0.0", "8.0.0", "8.1.0", "8.2.0"]).toContain(PROMPT_VERSION);
 
     const sanitized = sanitizeCapabilitiesForLlm(APPROVED_CAPABILITY_CATALOG);
     const prompt = buildSystemPrompt({

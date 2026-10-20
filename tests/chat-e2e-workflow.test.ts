@@ -515,8 +515,11 @@ describe("Real Runtime Path Integration: /api/chat -> ChatHandler -> Exclusion -
 
     expect(resYt.status).toBe(200);
     expect(dataYt.success).toBe(true);
-    // Should NOT ask for any file clarification
-    expect(dataYt.outputType).not.toBe("ask_clarification");
+    // Should NOT ask for any file clarification. A video search with no period asks exactly ONE question, the period (never a file).
+    const ytQuestionIds = (dataYt.clarificationItems || []).map((q: any) => q.id);
+    expect(ytQuestionIds.every((id: string) => id === "social_time_required")).toBe(true);
+    expect(ytQuestionIds.length).toBeLessThanOrEqual(1);
+    expect(JSON.stringify(dataYt.clarificationItems || [])).not.toMatch(/ملف|استبعاد|ارفع|إرفاق/);
     expect(dataYt.contentAr).not.toContain("يرجى إرفاق ملف الاستبعاد");
   });
 
