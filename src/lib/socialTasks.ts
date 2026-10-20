@@ -44,6 +44,14 @@ const URL_HOST_PLATFORM: Array<[SocialPlatformId, RegExp]> = [
 
 /** Comments, in every spelling customers use (كومنت، كومنتس، كومنتات، تعليقات، ردود الناس، آراء). */
 export const COMMENT_WORDS_RE = /كومنت|كومينت|كمنت|تعليق|تعليقات|ردود\s*(?:الناس|المتابعين|الجمهور)?|آراء|اراء|ريفيو|reviews?|comments?/iu;
+/** The same words without «ردود»: on X a reply is part of the posts collection, not a comments request (X has no comments service). */
+const COMMENT_WORDS_NO_REPLIES_RE = /كومنت|كومينت|كمنت|تعليق|تعليقات|آراء|اراء|ريفيو|reviews?|comments?/iu;
+/** «ردود / ردودها / replies»: the customer wants the replies to the posts as well. */
+export const REPLY_WORDS_RE = /(?:^|[\s،,؛.])(?:و?ردود(?:ها|هم|ه)?|replies|reply)(?=$|[\s،,؛.])/iu;
+
+export function wantsReplies(text: string): boolean {
+  return REPLY_WORDS_RE.test(text || "");
+}
 
 /** Trending, in every spelling (ترند، تريند، تراند، ستراندنج، استراندنج، رائج، الأكثر مشاهدة). */
 export const TREND_WORDS_RE = /ترند|تريند|تراند|ترندنج|تريندنج|تراندنج|ستراندنج|استراندنج|سترندنج|ستريندنج|رائج|الرائج|رايج|الأكثر\s*(?:مشاهدة|تفاعل|انتشار)|الاكثر\s*(?:مشاهدة|تفاعل|انتشار)|فيرال|viral|trending|trends?/iu;
@@ -141,7 +149,8 @@ export function detectSocialIntent(text: string): SocialIntent {
   const body = text || "";
   const urls = extractUrls(body);
   const platform = detectPlatform(body, urls);
-  const wantsComments = COMMENT_WORDS_RE.test(body);
+  // On X, «posts and their replies» is one posts collection; only the other comment words make it a comments request.
+  const wantsComments = (platform === "x" ? COMMENT_WORDS_NO_REPLIES_RE : COMMENT_WORDS_RE).test(body);
   const wantsTrending = TREND_WORDS_RE.test(body);
   const wantsPosts = POST_WORDS_RE.test(body);
   const wantsXTweets = platform === "x" && (X_POST_WORDS_RE.test(body) || POST_WORDS_RE.test(body));
@@ -243,6 +252,7 @@ export function hasRegionHint(text: string): boolean {
 const TOPIC_NOISE = new Set([
   "عايز", "عايزه", "عايزة", "عاوز", "عاوزه", "اريد", "أريد", "محتاج", "محتاجة", "ابغى", "أبغى", "هات", "هاتلي", "اسحب", "سحب", "استخرج", "جمع", "اجمع", "ابحث", "لي", "لى", "ليا", "لنا",
   "من", "على", "علي", "في", "فى", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
+  "ردود", "وردود", "ردودها", "وردودها", "ردودهم", "وردودهم", "ردوده", "replies", "reply",
   "فيديو", "فيديوهات", "مقطع", "مقاطع", "بوست", "بوستات", "منشور", "منشورات", "تغريدة", "تغريدات", "تويت", "تويتة", "تويتات", "tweets", "tweet", "كومنت", "كومنتس", "كومنتات", "تعليق", "تعليقات", "ترند", "تريند", "تراند", "الترند", "التريند",
   "ستراندنج", "الستراندنج", "استراندنج", "الاستراندنج", "ترندنج", "الترندنج", "رائج", "الرائج", "الاكثر", "الأكثر", "مشاهدة", "تفاعل", "انتشار", "فيرال",
   "تيك", "توك", "تيكتوك", "يوتيوب", "يوتوب", "فيسبوك", "فيس", "انستغرام", "إنستغرام", "انستا", "تويتر", "إكس", "اكس", "ريديت", "لينكد", "منصة", "منصه",

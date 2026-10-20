@@ -289,7 +289,11 @@ export const GENERIC_ASK_ONE_INTRO_AR = "فهمت أنك تريد جمع بيا�
 export function consultantIntroAr(rawText: string, questionId?: string, options: { today?: Date } = {}): string {
   const understanding = understandMission(rawText, options);
   const line = understoodLineAr(understanding);
-  const why = questionId ? WHY_AR[questionId] : undefined;
+  let why = questionId ? WHY_AR[questionId] : undefined;
+  // «all posts» is not «all comments»: the cap sentence names what is collected.
+  if (why && questionId === "volume_cap_required" && understanding.kind === "social_feed" && !/تعليق|كومنت|كومينت/.test(rawText)) {
+    why = why.replace("كل التعليقات", "كل المنشورات");
+  }
   if (line && why) return `${line} ${why}`;
   if (line) return line;
   if (why) return `سأجهز لك الخطة، ${why.replace(/^و/u, "لكن ")}`;
