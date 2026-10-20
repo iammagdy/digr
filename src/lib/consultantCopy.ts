@@ -1,9 +1,10 @@
 import { formatAr, normalizeDigits, toArabicDigits } from "./arabicDigits";
+import { extractNumberFromText } from "./arabicNumbers";
 import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, type SocialPlatformId } from "./socialTasks";
-import { resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
+import { proposedDefaultWindow, resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
 import { extractRequestIntent, missingInputsForIntent, type RequestIntent } from "./requestIntent";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
-import { channelKey, channelsCountAr, handlesInText, parseChannelAnswer } from "./channelNames";
+import { channelKey, channelsCountAr, handlesInText, parseChannelAnswer, videosCountAr } from "./channelNames";
 
 /**
  * How the assistant talks: a data consultant, not a form.
@@ -26,8 +27,15 @@ export interface MissionUnderstanding {
   rankedBy: "views" | null;
   allComments: boolean;
   includeReplies: boolean;
-  /** A count the customer stated for the records themselves (posts, comments, companies). */
+  /** A count the customer stated for the records themselves (posts, comments, companies); never the number of videos or channels. */
   volume: number | null;
+  /** «كل تعليقات ٣ فيديوهات»: the videos (or posts) whose comments are wanted. A quantity of its own, never the comment count. */
+  videos: number | null;
+  videosNoun: "videos" | "posts";
+  /** «٥٠ تعليق لكل فيديو»: the comments wanted from each video, when said. */
+  commentsPerVideo: number | null;
+  /** The request is about comments (of videos or posts found by a topic, a channel or a link). */
+  commentsFlow: boolean;
   window: ResolvedWindow;
   /** An open-ended volume («كل التعليقات») must always carry a customer cap on the plan. */
   needsCap: boolean;
@@ -96,7 +104,11 @@ function namedChannels(text: string): string[] {
   return out;
 }
 
-const CAP_ANSWER_RE = new RegExp(`${CLARIFICATION_ANSWER_LABELS.volume_cap_required}\\s*:\\s*(\\d{1,8})`, "u");
+const CAP_ANSWER_RE = new RegExp(`${CLARIFICATION_ANSWER_LABELS.volume_cap_required}\\s*:\\s*([\\s\\S]*?)(?=${ANSWER_END}|\\s${ANY_ANSWER_LABEL_RE}\\s*:|$)`, "u");
+
+const CONTAINER_NOUNS = "(?:فيديوهات|فيديو|مقاطع|مقطع|بوستات|بوست|منشورات|منشور|ريلز|ريل|شورتس)";
+const CONTAINER_COUNT_RE = new RegExp(`(?:^|[^\\d])(\\d{1,4})\\s*${CONTAINER_NOUNS}`, "u");
+const PER_VIDEO_RE = /(\d{1,5})\s*(?:تعليق\S*|كومنت\S*)\s*(?:لكل|من كل|في كل|على كل)\s*(?:فيديو|مقطع|منشور|بوست)/u;
 
 /** What a skipped channel question leaves in the text a routing decision reads (a word that is never a subject). */
 export const CHANNELS_SKIPPED_VALUE = "تخطي";
@@ -143,6 +155,14 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   const allItems = ALL_ITEMS_RE.test(text);
   const includeReplies = REPLIES_RE.test(text);
 
+  const commentsFlow = social.wantsComments || allComments;
+  // In a comments request «٣ فيديوهات» counts the videos; «٥٠ تعليق لكل فيديو» counts comments per video. Neither is the comment cap.
+  const perVideoMatch = commentsFlow ? PER_VIDEO_RE.exec(text) : null;
+  const commentsPerVideo = perVideoMatch ? Number(perVideoMatch[1]) : null;
+  const containerMatch = commentsFlow && top === null ? CONTAINER_COUNT_RE.exec(text.replace(PER_VIDEO_RE, " ")) : null;
+  const videos = containerMatch ? Number(containerMatch[1]) : null;
+  const videosNoun: "videos" | "posts" = containerMatch && /بوست|منشور/u.test(containerMatch[0]) ? "posts" : "videos";
+
   const isDirectory = intent.dataType === "companies" || intent.dataType === "people";
   const channelMode = Boolean(channels.count || channels.named.length || social.discover === "channel" || social.channelRef);
   const hasContentWords = social.task !== null || /منشور|بوست|بوستات|تغريد|فيديو|فيديوهات|تعليق|تعليقات|كومنت/iu.test(text);
@@ -160,12 +180,17 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   let volume: number | null = null;
   if (!isDirectory) {
     let stripped = text;
+    if (commentsFlow) {
+      stripped = stripped.replace(PER_VIDEO_RE, " ");
+      if (videos !== null) stripped = stripped.replace(CONTAINER_COUNT_RE, " ");
+    }
     if (channels.count) stripped = stripped.replace(new RegExp(`${COUNT}\\s*${CHANNEL_WORD}`), " ");
     if (top !== null) stripped = stripped.replace(/(?:اعلي|اعلى|أعلى|اكتر|أكتر|اكثر|أكثر|اعلا|توب|top)?\s*\d+\s*(?:فيديو|فيديوهات|مقطع|مقاطع)/iu, " ");
     const counted = /(\d{2,7})\s*(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة)/iu.exec(stripped);
     // The answer to the cap question is stored as «الحد الأقصى المطلوب: N»; a bare number there is the cap too.
     const capAnswer = CAP_ANSWER_RE.exec(text);
-    volume = capAnswer ? Number(capAnswer[1]) : counted ? Number(counted[1]) : null;
+    const capNumber = capAnswer ? extractNumberFromText(capAnswer[1]) : undefined;
+    volume = capNumber && capNumber > 0 ? capNumber : counted ? Number(counted[1]) : null;
   } else {
     volume = intent.count;
   }
@@ -174,7 +199,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   // A named channel's own videos or posts are scoped by the channel (the latest N), not by a period.
   const needsWindow = feedKind && !social.wantsTrending && !social.targetUrl && !(kind === "social_feed" && channelMode);
   // Without channels the top videos are found by a topic: a search, which needs its period like any other.
-  const window = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" && !channelsSkipped });
+  const asked = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" && !channelsSkipped });
+  // A comments request never stops to ask for a period: the plan proposes the last month (or the dates of a known event) and the customer edits it there.
+  const window = commentsFlow && asked.status === "missing" ? proposedDefaultWindow(options.today) : asked;
 
   const topicAnswer = channelsSkipped ? topicAnswerFromText(text) : null;
   const subjectRaw = topicAnswer || (kind === "social_feed" || kind === "social_channel_topic" ? subjectAfterAbout(text) || socialSubjectText(text) : "");
@@ -213,6 +240,10 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     allComments,
     includeReplies,
     volume,
+    videos,
+    videosNoun,
+    commentsPerVideo,
+    commentsFlow,
     window,
     needsCap: allComments || allItems || (feedKind && volume === null && kind !== "social_feed"),
     missing,
@@ -319,6 +350,11 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
     }
     case "social_feed": {
       const about = u.subject ? ` عن «${u.subject}»` : "";
+      if (u.commentsFlow) {
+        const container = u.videos ? videosCountAr(u.videos, u.videosNoun) : u.videosNoun === "posts" ? "منشورات" : "فيديوهات";
+        const cap = u.volume ? `، حتى ${formatAr(u.volume)} تعليق` : "";
+        return `فهمت أنك تريد ${u.allComments ? "كل تعليقات" : "تعليقات"} ${container}${about}${where}${cap}${windowText}.`;
+      }
       // The replies come only if the source returns them: the sentence says so, as the plan does.
       const what = u.volume
         ? `حتى ${amount(u.volume, u.includeReplies ? `منشور مع ردودها ${REPLIES_HEDGE_AR}` : "سجل")}`
@@ -387,6 +423,10 @@ export function consultantIntroAr(rawText: string, questionId?: string, options:
   // «all posts» is not «all comments»: the cap sentence names what is collected.
   if (why && questionId === "volume_cap_required" && understanding.kind === "social_feed" && !/تعليق|كومنت|كومينت/.test(rawText)) {
     why = why.replace("كل التعليقات", "كل المنشورات");
+  }
+  // The cap question of a comments request also names the period the plan will propose, so one step settles both.
+  if (why && questionId === "volume_cap_required" && understanding.commentsFlow && understanding.window.status === "resolved" && understanding.window.source === "default") {
+    why = `${why} وسأقترح في الخطة ${understanding.window.labelAr.replace(/\s*\(.*\)\s*$/u, "")} كفترة، وتقدر تعدّلها.`;
   }
   if (line && why) return `${line} ${why}`;
   if (line) return line;

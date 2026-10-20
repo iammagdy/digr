@@ -18,7 +18,7 @@ export const WINDOW_OPTIONS_AR = ["آخر شهر", "آخر ٣ شهور", "آخر
 export const WINDOW_LONG_RANGE_WARNING_AR =
   "كلما طالت الفترة زاد حجم البيانات وقد يصل إلى أعداد كبيرة جدًا، لذلك يفضّل تحديد سقف للنقاط في الخطة.";
 
-export type WindowSource = "stated" | "relative" | "event" | "open_scope";
+export type WindowSource = "stated" | "relative" | "event" | "open_scope" | "default";
 
 export type ResolvedWindow =
   | {
@@ -283,6 +283,8 @@ export interface KnownEvent {
 /** Events with fixed, published dates. Add an entry only with a source-confirmed range; the window is a proposal the customer can edit. */
 export const KNOWN_EVENTS: readonly KnownEvent[] = [
   { id: "world_cup_2026", nameAr: "كأس العالم ٢٠٢٦", from: "2026-06-11", to: "2026-07-19", re: /(?:كاس\s*العالم|مونديال|world\s*cup)\s*(?:ل|لسنه|لعام)?\s*(?:سنه|عام)?\s*2026|2026\s*world\s*cup/ },
+  // «كأس العالم» with no year and no other tournament word after it («للأندية», «للشباب», «لكرة اليد»): the latest edition, said so in the reason.
+  { id: "world_cup_latest", nameAr: "كأس العالم (أحدث نسخة، ٢٠٢٦)", from: "2026-06-11", to: "2026-07-19", re: /(?:كاس\s*العالم|مونديال|world\s*cup)(?!\s*ل(?!سنه|عام)\p{L}+)(?!\s*(?:ل|لسنه|لعام)?\s*(?:سنه|عام)?\s*(?:19|20)\d\d)(?!\s*(?:club|youth|women))/u },
   { id: "afcon_2025", nameAr: "كأس الأمم الأفريقية ٢٠٢٥", from: "2025-12-21", to: "2026-01-18", re: /(?:كاس\s*(?:الامم|امم)\s*(?:الافريقيه|افريقيا)|afcon|africa\s*cup\s*of\s*nations)\s*(?:ل|لسنه|لعام)?\s*(?:سنه|عام)?\s*2025/ },
 ];
 
@@ -298,6 +300,29 @@ export function knownEventWindow(text: string, today: Date = new Date()): { from
     labelAr: windowLabelAr(event.from, event.to),
     reasonAr: `${event.nameAr} ${verb} من ${formatDateAr(event.from)} إلى ${formatDateAr(event.to)}، فاقترحت هذه الفترة وتقدر تعدّلها في الخطة.`,
   };
+}
+
+/* ---------------------------------------------------------------- proposed default */
+
+/**
+ * The window a plan proposes when the customer gave none (a skipped question, or a request that does not ask for one): the last month,
+ * with a one-line reason the plan shows, so it can be edited. Never applied without the plan saying so.
+ */
+export function proposedDefaultWindow(today: Date = new Date()): Extract<ResolvedWindow, { status: "resolved" }> {
+  const relative = parseRelativeWindow("آخر شهر", today)!;
+  return {
+    status: "resolved",
+    source: "default",
+    dateFrom: relative.from,
+    dateTo: relative.to,
+    labelAr: relative.labelAr,
+    reasonAr: "لم تحدد فترة، فاقترحت آخر شهر وتقدر تعدّلها في الخطة.",
+  };
+}
+
+/** A window the customer's words produced, or else the proposed default (for the plan, never for deciding whether to ask). */
+export function windowOrProposedDefault(window: ResolvedWindow, today: Date = new Date()): ResolvedWindow {
+  return window.status === "missing" ? proposedDefaultWindow(today) : window;
 }
 
 /* ---------------------------------------------------------------- year only */

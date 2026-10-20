@@ -19,6 +19,9 @@ function run(message: string) {
 
 const BARE_FEED_REQUESTS = [
   "هات ١٠ تغريدات عن كرة السلة",
+];
+/** Comments never stop to ask for a period: the plan proposes the last month and shows it. */
+const BARE_COMMENT_REQUESTS = [
   "١٠ كومنتس تيك توك عن كرة السلة في مصر",
   "عايز ١٠٠ كومنت من فيديوهات عن القهوة على يوتيوب",
 ];
@@ -40,7 +43,20 @@ describe("a feed request with no time frame", () => {
     expect(r.contentAr).not.toMatch(/[A-Za-z0-9]|undefined|null|NaN/);
   });
 
-  it("applies no default window: the saved brief carries none", async () => {
+  it.each(BARE_COMMENT_REQUESTS)("comments «%s»: no period question; the plan proposes the last month, says so with the reason, and applies exactly those dates", async (message) => {
+    const { model, send } = run(message);
+    const r = await send();
+    expect(model).not.toHaveBeenCalled();
+    expect(r.outputType).toBe("propose_plan");
+    expect(r.clarificationItems ?? []).toHaveLength(0);
+    const params = r.planQuote.items[0].params;
+    expect(Math.round((Date.parse(params.dateTo) - Date.parse(params.dateFrom)) / 86400000 / 30)).toBe(1);
+    expect(r.planQuote.window).toMatchObject({ source: "default", reasonAr: "لم تحدد فترة، فاقترحت آخر شهر وتقدر تعدّلها في الخطة." });
+    expect(r.contentAr).toContain("الفترة الزمنية: آخر شهر");
+    expect(r.contentAr).toContain("لم تحدد فترة، فاقترحت آخر شهر وتقدر تعدّلها في الخطة.");
+  });
+
+  it("applies no default window to the brief: the saved brief carries none (the plan proposes it, the brief never holds it)", async () => {
     const { db, send } = run("هات ١٠ تغريدات عن كرة السلة");
     await send();
     const briefs = [...(db.store.get("conversations") || []), ...(db.store.get("briefs") || [])];

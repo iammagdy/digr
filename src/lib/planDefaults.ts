@@ -16,3 +16,9 @@ export function defaultCapLineAr(noun: "comments" | "records", units: number): s
   const word = noun === "comments" ? "تعليق" : "سجل";
   return `العدد المطلوب: ${toArabicDigits(units)} ${word} (قيمة افتراضية لأنك لم تحدد عددًا)، وتقدر تعدّله من الخطة.`;
 }
+
+/** When the default count does not fit one job: what the plan holds instead, in plain words (the numbers come from the quote). */
+export function defaultCapFittedLineAr(input: { noun: "comments" | "records"; fittedUnits: number; quotedPoints: number; pointsCap: number }): string {
+  const word = input.noun === "comments" ? "تعليق" : "سجل";
+  return `لكن الطلب الواحد يتسع الآن لـ${toArabicDigits(input.fittedUnits)} ${word} بحجز ${toArabicDigits(input.quotedPoints)} نقطة ضمن سقف ${toArabicDigits(input.pointsCap)} نقطة، ويمكنك طلب الباقي في طلب منفصل.`;
+}

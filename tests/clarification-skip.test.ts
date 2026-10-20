@@ -30,12 +30,12 @@ describe("the live YouTube conversation, replayed offline", () => {
       "عايز كل تعليقات فيديوهات قناة الفيفا الرسمية عن منتخب مصر",
       "كل تعليقات ٣ فيديوهات على يوتيوب",
       answer("volume_cap_required", CAP_Q, "٢٠٠٠ تعليق"),
-      answer("social_time_required", TIME_Q, "آخر ٣ شهور"),
     ]);
     expect(responses[0].clarificationItems.map((q: any) => q.id)).toEqual(["social_platform_required"]);
     expect(responses[1].clarificationItems.map((q: any) => q.id)).toEqual(["volume_cap_required"]);
-    expect(responses[2].clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
-    expect(responses[3].outputType).toBe("propose_plan");
+    // the period is no longer a question of its own: the plan proposes one and shows it
+    expect(responses[2].outputType).toBe("propose_plan");
+    expect(responses.flatMap((r: any) => (r.clarificationItems || []).map((q: any) => q.id))).not.toContain("social_time_required");
     for (const r of responses.slice(1)) {
       // the chat sentence is the understanding line, then the question on its own last line; only the understanding must be clean
       const prose = [String(r.contentAr || "").split("\n")[0], r.planQuote?.summaryAr].filter(Boolean).join(" ");
@@ -46,7 +46,11 @@ describe("the live YouTube conversation, replayed offline", () => {
       expect(visible(r)).toContain("منتخب مصر");
     }
     expect(responses.flatMap((r: any) => (r.clarificationItems || []).map((q: any) => q.id)).filter((id: string) => id === "social_platform_required")).toHaveLength(1);
-    expect(responses[3].planQuote.summaryAr).toContain("«منتخب مصر»");
+    expect(responses[2].planQuote.summaryAr).toContain("«منتخب مصر»");
+    // the three videos are a quantity of their own (three videos of the named channel), never the comment count
+    expect(responses[2].planQuote.items[0].params.topPerChannel).toBe(3);
+    expect(responses[2].planQuote.summaryAr).toContain("أعلى ٣ فيديوهات");
+    expect(responses[2].planQuote.askedVolumeMax).toBe(2000);
   });
 
   it("the same card is not shown twice in a row when the same answer is sent again (a card clicked twice)", async () => {
@@ -55,8 +59,10 @@ describe("the live YouTube conversation, replayed offline", () => {
       answer("volume_cap_required", CAP_Q, "٢٠٠٠ تعليق"),
       answer("volume_cap_required", CAP_Q, "٢٠٠٠ تعليق"),
     ]);
-    expect(responses[1].clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
-    expect(responses[2].clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
+    expect(responses[0].clarificationItems.map((q: any) => q.id)).toEqual(["volume_cap_required"]);
+    expect(responses[1].outputType).toBe("propose_plan");
+    expect(responses[2].clarificationItems ?? []).toHaveLength(0);
+    expect(responses[2].outputType).toBe("propose_plan");
     for (const r of responses) expect(visible(r)).not.toMatch(PLACEHOLDER);
   });
 });
@@ -72,9 +78,10 @@ describe("«كل التعليقات» of N videos without a link", () => {
     expect(responses[0].contentAr).not.toContain("على أي منصة");
   });
 
-  it("a typed topic is accepted and moves on to the next different question", async () => {
+  it("a typed topic is accepted and moves on to the next different question (the cap; the period is proposed on the plan)", async () => {
     const { responses } = await runConversation(["عايز كل تعليقات ٣ فيديوهات على يوتيوب", "منتخب مصر"]);
-    expect(responses[1].clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
+    expect(responses[1].clarificationItems.map((q: any) => q.id)).toEqual(["volume_cap_required"]);
+    expect(responses[1].contentAr).toContain("وسأقترح في الخطة آخر شهر كفترة");
     expect(visible(responses[1])).toContain("منتخب مصر");
     expect(visible(responses[1])).not.toMatch(PLACEHOLDER);
   });
@@ -89,7 +96,7 @@ describe("«كل التعليقات» of N videos without a link", () => {
     expect(responses[1].clarificationItems ?? []).toHaveLength(0);
     expect(responses[1].contentAr).toContain("اكتب موضوع الفيديوهات أو اسم القناة");
     expect(responses[1].contentAr).not.toMatch(PLACEHOLDER);
-    expect(responses[2].clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
+    expect(responses[2].clarificationItems.map((q: any) => q.id)).toEqual(["volume_cap_required"]);
     expect(visible(responses[2])).toContain("«منتخب مصر»");
   });
 });
@@ -122,15 +129,19 @@ describe("the big-mission template (channels, top videos by views, all comments)
 });
 
 describe("skipping a question that has a stated default", () => {
-  it("the period: the plan goes ahead and says plainly that no period limits the results", async () => {
+  it("the period: the plan goes ahead with a proposed window (the last month) and says so with the reason", async () => {
     const { responses } = await runConversation([
       "عايز ١٠٠ تغريدة عن الغلاء على إكس",
       answer("social_time_required", TIME_Q),
     ]);
     expect(responses[0].clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
     expect(responses[1].outputType).toBe("propose_plan");
-    expect(responses[1].contentAr).toContain("لم تحدّد فترة، فلن نقيّد النتائج بتاريخ");
-    expect(responses[1].planQuote.items[0].params).not.toHaveProperty("dateFrom");
+    expect(responses[1].contentAr).toContain("الفترة الزمنية: آخر شهر");
+    expect(responses[1].contentAr).toContain("لم تحدد فترة، فاقترحت آخر شهر وتقدر تعدّلها في الخطة.");
+    expect(responses[1].contentAr).not.toContain("لن نقيّد النتائج بتاريخ");
+    const params = responses[1].planQuote.items[0].params;
+    expect(Math.round((Date.parse(params.dateTo) - Date.parse(params.dateFrom)) / 86400000 / 30)).toBe(1);
+    expect(responses[1].planQuote.window).toMatchObject({ source: "default", reasonAr: "لم تحدد فترة، فاقترحت آخر شهر وتقدر تعدّلها في الخطة." });
     expect(visible(responses[1])).not.toMatch(PLACEHOLDER);
   });
 

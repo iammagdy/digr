@@ -1,4 +1,4 @@
-import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
+import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
@@ -89,8 +89,9 @@ import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/conta
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
+import { videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
-import { DEFAULT_COMMENTS_CAP, defaultCapLineAr } from "../../lib/planDefaults";
+import { DEFAULT_COMMENTS_CAP, DEFAULT_RECORDS_CAP, defaultCapFittedLineAr, defaultCapLineAr } from "../../lib/planDefaults";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
 import { scrubPlaceholderPhrases } from "../../lib/customerScrub";
@@ -293,13 +294,16 @@ function socialTimeWindowQuestion() {
 }
 
 /**
- * A feed search (posts, videos or comments found by a subject) needs a period. It is asked for ONCE, whatever else is known,
- * unless the customer wrote dates or a relative period, or named a known event (the plan then shows that window, editable).
+ * A feed search (posts or videos found by a subject) needs a period. It is asked for ONCE, whatever else is known,
+ * unless the customer wrote dates or a relative period, or named a known event (the plan then shows that window, editable);
+ * a skipped question gets the proposed default window on the plan. Comments are never asked for a period (the plan proposes one).
  * Trending feeds, a single link and a named channel have their own scope.
  */
 function shouldAskSocialTimeWindow(text: string): boolean {
   const intent = detectSocialIntent(text);
   if (!intent.platform || ACCOUNT_LOOKUP_RE.test(text)) return false;
+  // Comments of videos or posts: the plan proposes the last month (or a known event's dates) instead of a question; one fewer step.
+  if (intent.task === "comments") return false;
   if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
   if (!SOCIAL_CONTENT_WORDS_RE.test(text)) return false;
   return resolveTimeWindow(text, { needsWindow: true }).status === "missing";
@@ -929,10 +933,12 @@ export function buildDeterministicPlanFromIntent(
   requestText: string,
   brief: ResearchBrief,
   capabilities: Capability[],
+  skipped?: ReadonlySet<string>,
 ): any | null {
   if (!["companies", "people", "posts", "comments", "videos"].includes(intent.dataType)) return null;
   if (missingInputsForIntent(intent, requestText).length > 0) return null;
-  if (getDeterministicDiscoveryQuestion(requestText, brief, capabilities)) return null;
+  // A question the customer skipped and that has a stated default (the period, the cap) no longer stands in the way of the plan.
+  if (getDeterministicDiscoveryQuestion(requestText, brief, capabilities, { skipped })) return null;
   const enabled = (capability: Capability) => capability.enabled !== false && (capability.status === "verified" || capability.status === undefined);
   if (intent.dataType === "companies") {
     if (!capabilities.some((c) => enabled(c) && /compan/i.test(`${c.slug} ${c.platform || ""}`))) return null;
@@ -2622,7 +2628,7 @@ export class ChatHandler {
       const turnUsage = turn.usage;
       const fastIntent = extractRequestIntent(conversationRequestText);
       const fastPlanOutput = (this.deterministicPlanning && !input.isGuest && !isGreeting && !isGeneralQuestion && !isFileShapingTurn && !isTestSearchScenario && !testScenario)
-        ? buildDeterministicPlanFromIntent(fastIntent, conversationRequestText, brief, allCatalogCapabilities as Capability[])
+        ? buildDeterministicPlanFromIntent(fastIntent, conversationRequestText, brief, allCatalogCapabilities as Capability[], skippedQuestionIds)
         : null;
       // «Sheet per X» about a delivered file is read by code against the file's REAL columns: no model call and no guessing.
       // (A card answer to the column question still goes to the model, as before.) Anything else about the file is the model's.
@@ -3251,6 +3257,8 @@ export class ChatHandler {
         let askedVolumeForCard = null as number | null;
         /** Set when the plan's count is a default (the customer left it open): the plan says so and the customer can edit it. */
         let defaultCapUsed = null as { noun: "comments" | "records"; units: number } | null;
+        /** The number of videos the customer asked for in a comments request: a quantity of its own, shown next to the comment count. */
+        let videosStatedForPlan = null as { count: number; noun: "videos" | "posts" } | null;
         /** The top videos found by a topic because the customer skipped the channels: the plan says so. */
         let missionByTopicSubject = null as string | null;
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
@@ -3259,43 +3267,77 @@ export class ChatHandler {
           if (verifiedSocialDef && verifiedSocialCap) {
             // Only a period the customer wrote filters the results. The brief's own default window ("آخر شهر") would
             // silently discard every comment on an older video and then report that nothing matched.
-            const dates = requestDateFilters(conversationRequestText);
-            const perVideo = brief.commentsPerPost && brief.commentsPerPost > 0 ? brief.commentsPerPost : undefined;
-            const videoCount = brief.postCount && brief.postCount > 0 ? brief.postCount : undefined;
+            const understanding = understandMission(conversationRequestText);
+            // A feed request with no period of its own gets the proposed default (the plan states it and why): never silently none.
+            const planWindow = windowOrProposedDefault(understanding.window);
+            const statedDates = requestDateFilters(conversationRequestText);
+            const dates = statedDates.from
+              ? statedDates
+              : planWindow.status === "resolved" && planWindow.source === "default" && planWindow.dateFrom && planWindow.dateTo
+              ? { from: planWindow.dateFrom, to: planWindow.dateTo }
+              : {};
+            const isCommentsKind = verifiedSocialDef.kind === "comments";
+            const commentsOfPosts = isCommentsKind && socialIntent.discover !== "channel";
+            const perVideoBrief = brief.commentsPerPost && brief.commentsPerPost > 0 ? brief.commentsPerPost : undefined;
+            const videoCountBrief = brief.postCount && brief.postCount > 0 ? brief.postCount : undefined;
             // A mission over channels: the channels, the top videos kept per channel (ranked by views) and the topic come
             // from the customer's words; the number they stated is the comment cap, never the top-N or the channel count.
-            const mission = verifiedSocialDef.kind === "comments" ? understandMission(conversationRequestText) : null;
+            const mission = isCommentsKind ? understanding : null;
             const isMission = Boolean(mission && (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") && mission.channels.named.length > 0);
             // The channels were skipped and a topic was given: the top videos are searched by that topic, as many as the template asked for in all.
             const byTopic = Boolean(mission && mission.kind === "social_ranked_comments" && mission.channelsSkipped && mission.subject && !isMission);
             // A mission's count is the comment cap: the customer's, or an explicit default the plan shows (never a hidden 10).
             const missionCap = (isMission || byTopic) && mission ? mission.volume ?? DEFAULT_COMMENTS_CAP : null;
             const topicVideoCount = byTopic && mission ? Math.min(MAX_VIDEOS_PER_JOB, Math.max(1, (mission.topPerChannel ?? 10) * Math.max(1, mission.channels.count ?? 1))) : undefined;
+            // Comments of videos found by a topic or a link: the number of videos and the number of comments are two quantities. «٣ فيديوهات»
+            // is never the comment cap; the cap is the customer's number, or an explicit default the plan shows.
+            let statedVolume: number;
+            let capIsDefault = false;
+            if (missionCap) {
+              statedVolume = missionCap;
+            } else if (isCommentsKind) {
+              if (understanding.volume) statedVolume = understanding.volume;
+              else if (understanding.commentsPerVideo && understanding.videos) statedVolume = understanding.commentsPerVideo * understanding.videos;
+              else { statedVolume = DEFAULT_COMMENTS_CAP; capIsDefault = true; }
+            } else if (verifiedSocialDef.kind === "posts") {
+              // A count the customer wrote (or tapped on the card); the brief's own «10» is a placeholder, never a stated number.
+              const writtenCount = understanding.volume || (researchIntent.sampleSize.provenance === "EXPLICIT" ? researchIntent.sampleSize.value : 0);
+              capIsDefault = !(writtenCount && writtenCount > 0);
+              statedVolume = capIsDefault ? DEFAULT_RECORDS_CAP : Number(writtenCount);
+            } else if (explicitRequestedVolume && explicitRequestedVolume > 0) {
+              statedVolume = explicitRequestedVolume;
+            } else {
+              statedVolume = item.targetVolumeMax || 1;
+            }
+            const askedVideos = commentsOfPosts && !byTopic ? understanding.videos ?? videoCountBrief : undefined;
+            const perVideoForPlan = byTopic && topicVideoCount
+              ? Math.min(MAX_PER_VIDEO, Math.ceil(statedVolume / topicVideoCount))
+              : isMission
+              ? undefined
+              : commentsOfPosts
+              ? understanding.commentsPerVideo ?? (askedVideos ? Math.min(MAX_PER_VIDEO, Math.ceil(statedVolume / askedVideos)) : perVideoBrief)
+              : perVideoBrief;
             const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
               dateFrom: dates.from,
               dateTo: dates.to,
               // The «١٠ فيديوهات» of a mission is the top-N per channel, not a per-video or video-count setting.
-              perVideo: byTopic && topicVideoCount && missionCap ? Math.min(MAX_PER_VIDEO, Math.ceil(missionCap / topicVideoCount)) : isMission ? undefined : perVideo,
-              videoCount: byTopic ? topicVideoCount : isMission ? undefined : videoCount,
+              perVideo: perVideoForPlan,
+              videoCount: byTopic ? topicVideoCount : isMission ? undefined : askedVideos ?? (isCommentsKind ? undefined : videoCountBrief),
               ...(byTopic && mission ? { subject: mission.subject ?? undefined } : {}),
               ...(isMission && mission ? {
                 channels: mission.channels.named,
-                topPerChannel: mission.topPerChannel ?? undefined,
+                // «كل تعليقات ٣ فيديوهات» from a channel: the three videos of each named channel, a quantity apart from the comment cap.
+                topPerChannel: mission.topPerChannel ?? (mission.kind === "social_channel_topic" ? mission.videos ?? undefined : undefined),
                 rankBy: mission.rankedBy ?? undefined,
                 topic: mission.kind === "social_channel_topic" ? mission.subject ?? undefined : undefined,
               } : {}),
             });
-            // The count the customer stated wins; a videos x comments-per-video request means exactly that many comments.
-            const statedVolume = missionCap
-              ? missionCap
-              : explicitRequestedVolume && explicitRequestedVolume > 0 && !isMission
-              ? explicitRequestedVolume
-              : perVideo && videoCount && verifiedSocialDef.kind === "comments"
-              ? perVideo * videoCount
-              : item.targetVolumeMax || 1;
-            const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows));
+            // Videos x most comments per video is the most that can be read; the plan never promises more than that.
+            const reachable = params.videoCount && params.perVideo ? Number(params.videoCount) * Number(params.perVideo) : Infinity;
+            const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows, reachable));
             askedVolumeForCard = items.length === 1 ? statedVolume : null;
-            if (missionCap && mission && mission.volume === null) defaultCapUsed = { noun: "comments", units: missionCap };
+            if ((missionCap && mission && mission.volume === null) || capIsDefault) defaultCapUsed = { noun: isCommentsKind ? "comments" : "records", units: statedVolume };
+            if (isCommentsKind && understanding.videos && !isMission && !byTopic) videosStatedForPlan = { count: understanding.videos, noun: understanding.videosNoun };
             if (byTopic && mission?.subject) missionByTopicSubject = mission.subject;
             return {
               ...item,
@@ -3626,18 +3668,21 @@ export class ChatHandler {
           const planMission = understandMission(conversationRequestText);
           const planUnderstood = understoodLineAr(planMission);
           if (planUnderstood) planQuoteData.understoodAr = planUnderstood;
-          if (planMission.window.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
+          const planWindowNow = windowOrProposedDefault(planMission.window);
+          if (planWindowNow.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
             planQuoteData.window = {
-              labelAr: planMission.window.labelAr,
-              source: planMission.window.source,
-              ...(planMission.window.reasonAr ? { reasonAr: planMission.window.reasonAr } : {}),
-              ...(planMission.window.noteAr ? { noteAr: planMission.window.noteAr } : {}),
+              labelAr: planWindowNow.labelAr,
+              source: planWindowNow.source,
+              ...(planWindowNow.reasonAr ? { reasonAr: planWindowNow.reasonAr } : {}),
+              ...(planWindowNow.noteAr ? { noteAr: planWindowNow.noteAr } : {}),
             };
           }
 
           planOutput.summaryAr = scrubPlaceholderPhrases(String(planOutput.summaryAr || ""));
           managedQuote.summaryAr = scrubPlaceholderPhrases(String(managedQuote.summaryAr || ""));
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          // A social plan counts what it collects in its own words (comments, posts), not in «records».
+          const planUnitWord = verifiedSocialDef?.kind === "comments" ? "تعليق" : verifiedSocialDef?.kind === "posts" ? "منشور" : "سجل";
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (managedQuote.items.length === 1) {
             const explanation = planExplanationLinesAr({
               capabilitySlug: managedQuote.items[0]?.capabilitySlug,
@@ -3653,11 +3698,7 @@ export class ChatHandler {
           const unsupportedNote = unsupportedConstraintsNoteAr(extractRequestIntent(conversationRequestText));
           if (unsupportedNote) planSummaryText += `\n- ${unsupportedNote}`;
           // A feed plan states its window and why (a known event), and any date it corrected: the customer sees what will be applied.
-          const missionWindow = understandMission(conversationRequestText).window;
-          if (skippedQuestionIds.has("social_time_required") && !managedQuote.items[0]?.params?.dateFrom && managedQuote.items.length === 1) {
-            // The customer skipped the period: the plan says so instead of choosing one for them.
-            planSummaryText += "\n- الفترة الزمنية: لم تحدّد فترة، فلن نقيّد النتائج بتاريخ.";
-          }
+          const missionWindow = windowOrProposedDefault(understandMission(conversationRequestText).window);
           if (missionWindow.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
             planSummaryText += `\n- الفترة الزمنية: ${missionWindow.labelAr}${missionWindow.reasonAr ? ` — ${missionWindow.reasonAr}` : ""}`;
             if (missionWindow.noteAr) planSummaryText += `\n- ملاحظة: ${missionWindow.noteAr}`;
@@ -3669,15 +3710,26 @@ export class ChatHandler {
             maxChannels: MAX_CHANNELS_PER_JOB,
           });
           for (const line of coverageLines) planSummaryText += `\n- ${line}`;
+          // Videos and comments are two quantities: the plan names both, so «٣ فيديوهات» can never read as three comments.
+          if (videosStatedForPlan && managedQuote.items.length === 1) {
+            planSummaryText += `\n- الفيديوهات: ${videosCountAr(videosStatedForPlan.count, videosStatedForPlan.noun)}، والتعليقات: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} تعليق من كل ما فيها.`;
+          }
           // A count the customer left open is a visible default on the plan, never a hidden number.
-          if (defaultCapUsed && managedQuote.items.length === 1) planSummaryText += `\n- ${defaultCapLineAr(defaultCapUsed.noun, defaultCapUsed.units)}`;
+          const defaultCapNow = defaultCapUsed && managedQuote.items.length === 1 ? defaultCapUsed : null;
+          if (defaultCapNow) {
+            planSummaryText += `\n- ${defaultCapLineAr(defaultCapNow.noun, defaultCapNow.units)}`;
+            // A default is not something the customer asked for: when the job cuts it, the plan says what it holds, never «you asked for».
+            if (managedQuote.targetVolumeMax < defaultCapNow.units) {
+              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || 600 })}`;
+            }
+          }
           // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
           const askedUnitsForText = Math.max(askedVolumeForCard ?? 0, managedQuote.requestedVolumeMax || 0, managedQuote.targetVolumeMax);
-          const volumeLimitLine = managedQuote.items.length === 1
+          const volumeLimitLine = managedQuote.items.length === 1 && !defaultCapNow
             ? volumeLimitStatementAr({ askedUnits: askedUnitsForText, fittedUnits: managedQuote.targetVolumeMax })
             : null;
           if (volumeLimitLine) planSummaryText += `\n- ${volumeLimitLine}`;
-          if (managedQuote.pointsCapConstrained) {
+          if (managedQuote.pointsCapConstrained && !defaultCapNow) {
             const requestedUnits = askedUnitsForText;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
             const capStatement = managedQuote.items.length === 1
