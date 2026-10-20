@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { startNotificationPolling } from "@/lib/notificationPolling";
 
 export type NotificationKind = "topup_approved" | "topup_rejected" | "job_done" | "refund" | "welcome";
 
@@ -60,6 +61,17 @@ export function useNotifications(userId: string | undefined) {
   }, [userId, mapRow]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Live delivery is not relied on: the list is refreshed while the tab is visible and when it comes back to the front.
+  useEffect(() => {
+    if (!userId || typeof document === "undefined") return;
+    return startNotificationPolling({
+      load,
+      isVisible: () => document.visibilityState !== "hidden",
+      visibilityTarget: document,
+      focusTarget: window,
+    });
+  }, [userId, load]);
 
   useEffect(() => {
     if (!userId) return;
