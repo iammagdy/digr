@@ -66,7 +66,7 @@ describe("3. a studies request with a topic and a country gets a specific questi
       expect(responses[0].contentAr, text).toContain("غير متاح بعد");
     }
     // After the honest answer, the customer's next request is read on its own: tweets on the topic are planned.
-    const { responses } = await runConversation([STUDIES, "هات ١٠ تغريدات عن الطاقة الشمسية"]);
+    const { responses } = await runConversation([STUDIES, "هات ١٠ تغريدات عن الطاقة الشمسية في ٢٠٢٥"]);
     expect(responses[1].outputType).toBe("propose_plan");
     expect(responses[1].planQuote.items[0].capabilitySlug).toBe("social-x-posts");
     expect(responses[1].planQuote.items[0].params.query).toContain("الطاقة الشمسية");

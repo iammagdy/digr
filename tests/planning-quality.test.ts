@@ -53,7 +53,7 @@ describe("C. plan explanation lines", () => {
 
 describe("C. in the conversation", () => {
   it("a plan for a stated count explains what is delivered and the cost range, and asks nothing", async () => {
-    const { responses } = await runConversation(["هات ١٠ تغريدات عن كرة السلة"]);
+    const { responses } = await runConversation(["هات ١٠ تغريدات عن كرة السلة في ٢٠٢٥"]);
     const r = responses[0];
     expect(r.outputType).toBe("propose_plan");
     expect(r.contentAr).toContain("ما ستستلمه:");
@@ -63,7 +63,7 @@ describe("C. in the conversation", () => {
   });
 
   it("a large social request is offered the priced exploration step", async () => {
-    const { responses } = await runConversation(["هات ٥٠٠ تغريدة عن كرة السلة"]);
+    const { responses } = await runConversation(["هات ٥٠٠ تغريدة عن كرة السلة في ٢٠٢٥"]);
     const r = responses[0];
     expect(r.outputType).toBe("propose_plan");
     expect(r.contentAr).toContain("استكشاف أولًا");

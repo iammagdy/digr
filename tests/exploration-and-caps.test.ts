@@ -90,7 +90,7 @@ describe("8. paid exploration", () => {
 
     it("a large social request gets the offer inside the plan message and on the quote, priced like the plan", async () => {
       const res: any = await new ChatHandler(makeTables() as any).handleUserMessage({
-        userId: "u_explore", message: "عايز ٣٠٠٠ تعليق من تيك توك عن كرة القدم", userBalance: 5000, personaProfile: { name: "سلمى" },
+        userId: "u_explore", message: "عايز ٣٠٠٠ تعليق من تيك توك عن كرة القدم في ٢٠٢٥", userBalance: 5000, personaProfile: { name: "سلمى" },
       });
       expect(res.outputType).toBe("propose_plan");
       const offer = res.planQuote.explorationOffer;

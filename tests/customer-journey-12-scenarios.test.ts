@@ -240,7 +240,7 @@ describe("12-Scenario End-to-End Customer Journey Regression Suite", () => {
     const res = await handler.handleUserMessage({
       userId: "user_fb_1",
       conversationId: "conv_fb_1",
-      message: "عايز 50 تعليق على منشورات صفحة بي بي سي عربي على فيسبوك",
+      message: "عايز 50 تعليق على منشورات صفحة بي بي سي عربي على فيسبوك في ٢٠٢٥",
       userBalance: 300,
     });
 

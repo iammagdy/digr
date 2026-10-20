@@ -1,3 +1,4 @@
+import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowQuestion, WINDOW_LONG_RANGE_WARNING_AR, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
@@ -79,7 +80,7 @@ import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
-import { toArabicDigits } from "../../lib/arabicDigits";
+import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
@@ -195,26 +196,33 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
   return null;
 }
 
+/** The ONE window question: the four periods, never preselected. The warning about long periods rides with its intro. */
 function socialTimeWindowQuestion() {
+  const question = windowQuestion();
   return {
     id: "social_time_required",
-    text: "ما الفترة الزمنية التي تريد البحث فيها؟",
-    question: "ما الفترة الزمنية التي تريد البحث فيها؟",
+    text: question.text,
+    question: question.text,
     type: "single",
-    options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"],
+    options: question.options,
     allowOther: true,
   };
 }
 
-/** A broad topic search is better scoped by time, once the user has supplied a country. */
+/** The sentence that introduces the window question: why it is asked, and the plain warning about long periods. */
+const SOCIAL_TIME_WINDOW_INTRO_AR = `لم تذكر فترة زمنية للبحث، وبدونها قد تكون النتائج كبيرة جدًا. ${WINDOW_LONG_RANGE_WARNING_AR}`;
+
+/**
+ * A feed search (posts, videos or comments found by a subject) needs a period. It is asked for ONCE, whatever else is known,
+ * unless the customer wrote dates or a relative period, or named a known event (the plan then shows that window, editable).
+ * Trending feeds, a single link and a named channel have their own scope.
+ */
 function shouldAskSocialTimeWindow(text: string): boolean {
   const intent = detectSocialIntent(text);
-  if (!intent.platform || !detectCountryFromText(text) || extractDateHint(text)) return false;
-  // Feed, channel, and direct-link requests have their own scope and date behavior.
+  if (!intent.platform || ACCOUNT_LOOKUP_RE.test(text)) return false;
   if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
-  // Comments are never held up for a period: only a period the customer wrote filters them, otherwise all are eligible.
-  if (intent.wantsComments) return false;
-  return SOCIAL_CONTENT_WORDS_RE.test(text) && !ACCOUNT_LOOKUP_RE.test(text);
+  if (!SOCIAL_CONTENT_WORDS_RE.test(text)) return false;
+  return resolveTimeWindow(text, { needsWindow: true }).status === "missing";
 }
 
 export interface ChatHandlerInput {
@@ -770,9 +778,10 @@ export function buildAutoPlanProposal(
 
   // The brief's window may be the system default («آخر 3 شهور»), which suits a feed of posts or comments but not a directory
   // of people or companies. For those, only a period the customer wrote in this request applies.
+  // A feed takes only a window the customer stated, a relative period or a known event: never a default.
   const dateRangeHint = isPeopleCapability || isCompanySearch ? extractDateHint(message) || "" : brief.dateRange || message;
   if (dateRangeHint && !isProfileCapability) {
-    const dateFilters = dateFiltersFromHint(dateRangeHint);
+    const dateFilters = isPeopleCapability || isCompanySearch ? dateFiltersFromHint(dateRangeHint) : requestDateFilters(brief.dateRange, message);
     if (dateFilters.from) stepParams.dateFrom = dateFilters.from;
     if (dateFilters.to) stepParams.dateTo = dateFilters.to;
   }
@@ -810,24 +819,23 @@ export function buildAutoPlanProposal(
 const RELATIVE_WINDOW_RE = /(?:آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهرين|أسبوعين|اسبوعين|يومين|سنتين|عامين|شهور|أشهر|اشهر|شهر|سنوات|سنين|سنة|أعوام|اعوام|عام|أسابيع|اسابيع|أسبوع|اسبوع|أيام|ايام|يوم)(?!\s*(?:19|20)\d{2})/i;
 
 export function dateFiltersFromHint(hint: string, now = new Date()): { from?: string; to?: string } {
-  const dates = hint.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
-  if (dates.length >= 2) return { from: dates[0], to: dates[1] };
-  if (dates.length === 1) return { from: dates[0], to: dates[0] };
+  const stated = parseStatedDates(hint, now);
+  if (stated && "conflictNoteAr" in stated) return {};
+  if (stated) return { from: stated.from, to: stated.to };
   const year = /\b((?:19|20)\d{2})\b/.exec(hint)?.[1];
   if (year) return { from: `${year}-01-01`, to: `${year}-12-31` };
-  const relative = RELATIVE_WINDOW_RE.exec(hint);
-  if (!relative) return {};
-  const digits = (relative[1] || "").replace(/[٠-٩]/g, (digit) => "0123456789"["٠١٢٣٤٥٦٧٨٩".indexOf(digit)]);
-  const unit = relative[2];
-  // The dual forms («شهرين», «أسبوعين», «يومين», «سنتين», «عامين») carry their own count of two.
-  const count = /^(?:شهرين|أسبوعين|اسبوعين|يومين|سنتين|عامين)$/.test(unit) ? 2 : Number(digits) || 1;
-  const from = new Date(now);
-  // «شهور» and «أشهر» are the plurals of «شهر»: tested by the whole word, not by the substring «شهر».
-  if (/^(?:شهر|شهرين|شهور|أشهر|اشهر)$/.test(unit)) from.setMonth(from.getMonth() - count);
-  else if (/^(?:سنة|سنتين|سنوات|سنين|عام|عامين|أعوام|اعوام)$/.test(unit)) from.setFullYear(from.getFullYear() - count);
-  else if (/^(?:أسبوع|اسبوع|أسبوعين|اسبوعين|أسابيع|اسابيع)$/.test(unit)) from.setDate(from.getDate() - count * 7);
-  else from.setDate(from.getDate() - count);
-  return { from: from.toISOString().slice(0, 10), to: now.toISOString().slice(0, 10) };
+  const relative = parseRelativeWindow(hint, now);
+  return relative ? { from: relative.from, to: relative.to } : {};
+}
+
+/** The dates a request stands for, from the first text that states a window: dates, a relative period, a known event or a year. Never a default. */
+export function requestDateFilters(...texts: Array<string | undefined>): { from?: string; to?: string } {
+  for (const text of texts) {
+    if (!text) continue;
+    const window = resolveTimeWindow(text, { needsWindow: true });
+    if (window.status === "resolved" && window.dateFrom && window.dateTo) return { from: window.dateFrom, to: window.dateTo };
+  }
+  return {};
 }
 
 /**
@@ -1161,14 +1169,18 @@ export function extractTopicChips(userMessage: string, maxChips = 4): string[] {
 /** Extract a date-range hint from the user's message, e.g. "آخر 3 شهور" or "خلال الفترة من 1 يناير 2026 إلى 30 سبتمبر 2026". */
 export function extractDateHint(userMessage: string): string | undefined {
   if (!userMessage) return undefined;
-  const rangeMatch = /(?:خلال\s*الفترة\s*)?(?:من|بين)\s+([^\n،,؛!؟?]+?\s+(?:إلى|الى|وحتى|حتى)\s+[^\n،,؛!؟?]+)/i.exec(userMessage);
+  const rangeMatch = /(?:خلال\s*الفترة\s*)?(?:من|بين)\s+([^\n،,؛!؟?]+?\s+(?:إلى|الى|وحتى|حتى|لحد|لغاية|لغايه)\s+[^\n،,؛!؟?]+)/i.exec(userMessage);
   if (rangeMatch) {
     return rangeMatch[0].trim();
   }
   const m = RELATIVE_WINDOW_RE.exec(userMessage);
   if (m) return m[0].trim();
-  const year = /(?:في|سنة|عام|خلال|منذ|since|during|in|year)\s+((?:19|20)\d{2})\b/i.exec(userMessage);
-  return year?.[1];
+  const year = /(?:في|سنة|عام|خلال|منذ|since|during|in|year)\s+((?:19|20)\d{2})\b/i.exec(normalizeDigits(userMessage));
+  if (year) return year[1];
+  // Dates written in other forms (1/9/2026, «١ يناير ٢٠٢٦») and a known event name («كأس العالم ٢٠٢٦») read as a plain range.
+  const stated = parseStatedDates(userMessage);
+  const dates = stated && !("conflictNoteAr" in stated) ? stated : (() => { const event = knownEventWindow(userMessage); return event ? { from: event.from, to: event.to } : null; })();
+  return dates ? `من ${formatDateAr(dates.from)} إلى ${formatDateAr(dates.to)}` : undefined;
 }
 
 export function buildClarificationPresentation(
@@ -1961,7 +1973,8 @@ export class ChatHandler {
         if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
           brief.targetVolume = researchIntent.sampleSize.provenance === "EXPLICIT" ? researchIntent.sampleSize.value : 10;
         }
-        const dateVal = researchIntent.dateRange?.value?.relative || (researchIntent.dateRange?.value?.from ? `${researchIntent.dateRange.value.from} إلى ${researchIntent.dateRange.value.to || ""}` : undefined);
+        // Only a window the customer wrote (EXPLICIT) reaches the brief: the intent reader's own fallback is never applied.
+        const dateVal = researchIntent.dateRange?.provenance !== "EXPLICIT" ? undefined : researchIntent.dateRange?.value?.relative || (researchIntent.dateRange?.value?.from ? `${researchIntent.dateRange.value.from} إلى ${researchIntent.dateRange.value.to || ""}` : undefined);
         if (!brief.dateRange && dateVal) {
           brief.dateRange = dateVal;
         }
@@ -1990,7 +2003,6 @@ export class ChatHandler {
       if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) {
         brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 10;
       }
-      if (!brief.dateRange) brief.dateRange = "آخر شهر";
       if (!brief.language) brief.language = "العربية";
       await persistBrief();
       isPhase2 = true;
@@ -2318,7 +2330,7 @@ export class ChatHandler {
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
       // A turn about the delivered file never asks research questions (a column named «الشركة» is not a company request).
       if (requiredDiscoveryQuestion && !isFileShapingTurn) {
-        const intro = "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
+        const intro = requiredDiscoveryQuestion.id === "social_time_required" ? SOCIAL_TIME_WINDOW_INTRO_AR : "قبل إعداد الخطة، أحتاج معلومة واحدة حتى تكون مطابقة لطلبك.";
         const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
           capabilities: allCapabilities,
           userBalancePoints: userBalance,
@@ -2860,7 +2872,8 @@ export class ChatHandler {
         }
         if (output.targetVolume) brief.targetVolume = output.targetVolume;
         if (output.commentsPerPost) brief.commentsPerPost = output.commentsPerPost;
-        if (output.dateRange) brief.dateRange = output.dateRange;
+        // The model may not invent a period: it is kept only when the customer's own words state one.
+        if (output.dateRange && resolveTimeWindow(conversationRequestText, { needsWindow: true }).status === "resolved") brief.dateRange = output.dateRange;
         if (output.language) brief.language = output.language;
         if (output.formats) brief.formats = output.formats;
         if (output.notes) brief.notes = output.notes;
@@ -2999,7 +3012,7 @@ export class ChatHandler {
             const isRecordSearchCapability = /compan|b2b|people/i.test(capabilityId);
             const isSocialContentCapability = /video|videos|tiktok|youtube|reels|posts?|social|instagram|facebook|reddit|twitter/i.test(capabilityId);
             if (isSocialContentCapability && (!itemParams.dateFrom || !itemParams.dateTo)) {
-              const dateFilters = dateFiltersFromHint(brief.dateRange || conversationRequestText);
+              const dateFilters = requestDateFilters(brief.dateRange, conversationRequestText);
               if (dateFilters.from && !itemParams.dateFrom) itemParams.dateFrom = dateFilters.from;
               if (dateFilters.to && !itemParams.dateTo) itemParams.dateTo = dateFilters.to;
             }
@@ -3083,7 +3096,7 @@ export class ChatHandler {
           if (verifiedSocialDef && verifiedSocialCap) {
             // Only a period the customer wrote filters the results. The brief's own default window ("آخر شهر") would
             // silently discard every comment on an older video and then report that nothing matched.
-            const dates = dateFiltersFromHint(extractDateHint(conversationRequestText) || "");
+            const dates = requestDateFilters(conversationRequestText);
             const perVideo = brief.commentsPerPost && brief.commentsPerPost > 0 ? brief.commentsPerPost : undefined;
             const videoCount = brief.postCount && brief.postCount > 0 ? brief.postCount : undefined;
             const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
@@ -3192,7 +3205,7 @@ export class ChatHandler {
             people_count_required: { id: firstMissing, text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true },
             social_account_required: { id: firstMissing, text: "ما اسم الحساب أو رابطه على تيك توك؟", question: "ما اسم الحساب أو رابطه على تيك توك؟", type: "free", options: [], allowOther: true },
             social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
-            social_time_required: { id: firstMissing, text: "ما الفترة الزمنية المطلوبة؟", question: "ما الفترة الزمنية المطلوبة؟", type: "single", options: ["آخر أسبوع", "آخر شهر", "آخر ٣ شهور", "آخر سنة"], allowOther: true },
+            social_time_required: { id: firstMissing, text: windowQuestion().text, question: windowQuestion().text, type: "single", options: [...WINDOW_OPTIONS_AR], allowOther: true },
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
             social_comment_target_required: socialTaskQuestion("social_comment_target_required"),
             social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
@@ -3919,6 +3932,8 @@ export class ChatHandler {
       if (clarificationItemsList?.length) {
         clarificationItemsList = clarificationItemsList.slice(0, 1);
         clarificationQuestionsList = clarificationItemsList.map((item) => item.text);
+        // The period question always carries its plain warning about long periods.
+        if (clarificationItemsList[0]?.id === "social_time_required") finalContentAr = SOCIAL_TIME_WINDOW_INTRO_AR;
       } else if (clarificationQuestionsList?.length) {
         clarificationQuestionsList = clarificationQuestionsList.slice(0, 1);
       }

@@ -309,7 +309,7 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
       // Turn 1: user mentions platform and topic only
       const res1 = await handler.handleUserMessage({
         userId: "user_test",
-        message: "عايز أجمع تعليقات من فيسبوك عن العقارات",
+        message: "عايز أجمع تعليقات من فيسبوك عن العقارات في ٢٠٢٥",
         userBalance: 500,
       });
 
@@ -349,7 +349,7 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
       // Turn 1: user mentions platform and topic
       const res1 = await handler.handleUserMessage({
         userId: "user_test",
-        message: "بحث عن منشورات فيسبوك عن الاستثمار",
+        message: "بحث عن منشورات فيسبوك عن الاستثمار في ٢٠٢٥",
         userBalance: 500,
       });
 

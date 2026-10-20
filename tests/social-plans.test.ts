@@ -135,10 +135,10 @@ describe("a researcher's social request becomes the right plan or the one missin
   });
 
   it("comments of videos about a subject: the subject, not the whole sentence, is searched", async () => {
-    const { res, item } = await ask("عايز ١٠٠ كومنت من فيديوهات عن القهوة على يوتيوب");
+    const { res, item } = await ask("عايز ١٠٠ كومنت من فيديوهات عن القهوة على يوتيوب في ٢٠٢٥");
     expect(res.outputType).toBe("propose_plan");
     expect(item.capabilitySlug).toBe("social-youtube-comments");
-    expect(item.params).toEqual({ query: "القهوة" });
+    expect(item.params).toEqual({ query: "القهوة", dateFrom: "2025-01-01", dateTo: "2025-12-31" });
     expect(item.targetVolumeMax).toBe(57);
     expect(res.contentAr).toContain("٥٧");
     expect(res.contentAr).toContain("«القهوة»");

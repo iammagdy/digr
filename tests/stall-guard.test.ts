@@ -4,7 +4,7 @@ import { setLastLlmFallbackReason } from "../src/functions/shared/llmClient";
 import { MIN_MODEL_CALL_BUDGET_MS, TURN_BUDGET_MS, isPlanAnnouncementOnly } from "../src/functions/shared/turnGuards";
 import { createChatDb } from "./helpers/chatSession";
 
-const TWEETS = "هات ١٠ تغريدات عن كرة السلة";
+const TWEETS = "هات ١٠ تغريدات عن كرة السلة في ٢٠٢٥";
 const ANNOUNCE = "تمام، هجهز لك خطة لجمع التغريدات دلوقتي...";
 
 function handlerWith(executeTurn: (...args: any[]) => any) {
