@@ -1,4 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
+import { fullEstimatePoints, sampleOffer, sampleOfferLineAr, type SampleQuoteLike } from "./sampleFirst";
 
 /**
  * «استكشاف»: before paying for a large or vague job the customer can pay for a small sample of the same plan. The
@@ -6,63 +7,43 @@ import { toArabicDigits } from "./arabicDigits";
  * and settled like any other job. The sample then tells how many records the source really has, so the customer
  * decides the full volume with facts. The model explains; code prices and counts.
  */
-export const EXPLORATION_SAMPLE_UNITS = 10;
-/** A plan whose reserve reaches this many points is worth a sample first. */
-export const EXPLORATION_MIN_QUOTED_POINTS = 150;
-/** Large per-record volumes, whatever the price. */
-export const EXPLORATION_MIN_UNITS = 200;
+export { SAMPLE_MIN_ESTIMATE_POINTS as EXPLORATION_MIN_ESTIMATE_POINTS } from "./sampleFirst";
 
-export interface ExplorationQuoteLike {
-  items?: Array<{ capabilitySlug?: string; params?: Record<string, any> }>;
-  targetVolumeMax: number;
-  unitPricePoints: number;
+export interface ExplorationQuoteLike extends SampleQuoteLike {
   quotedPoints: number;
   pointsCapConstrained?: boolean;
-  requestedVolumeMax?: number;
 }
 
-const isSocial = (slug?: string) => /^social-/.test(String(slug || ""));
-const NAMED_LINK = /^https?:\/\//i;
-
-/** Large or vague social requests: many records, a capped plan, or discovery by keyword, channel or trending. */
+/** A job worth a sample first: the estimate of the whole request reaches 1,500 points (see sampleFirst). */
 export function isExplorationCandidate(quote: ExplorationQuoteLike): boolean {
-  const item = quote.items?.[0];
-  if (!item || quote.items!.length !== 1 || !isSocial(item.capabilitySlug)) return false;
-  const params = item.params || {};
-  const discovered = !NAMED_LINK.test(String(params.url || ""));
-  const large =
-    quote.quotedPoints >= EXPLORATION_MIN_QUOTED_POINTS ||
-    quote.targetVolumeMax >= EXPLORATION_MIN_UNITS ||
-    Boolean(quote.pointsCapConstrained);
-  return large && discovered && quote.targetVolumeMax > EXPLORATION_SAMPLE_UNITS;
+  return sampleOffer(quote) !== null;
 }
 
 export interface ExplorationOffer {
   sampleUnits: number;
-  /** points held for the sample (with the 15% buffer, at least 1) */
+  /** points held for the sample (reserve, with the 15% buffer); about 5% of the estimate, between 100 and 300 */
   samplePoints: number;
   /** points the sample will cost if it delivers every record */
   sampleExpectedPoints: number;
   fullUnits: number;
   fullQuotedPoints: number;
+  /** expected points of the whole request, before any cap */
+  fullEstimatePoints: number;
 }
 
-export function explorationOffer(quote: ExplorationQuoteLike, safetyBuffer = 0.15, minPoints = 1): ExplorationOffer {
-  const sampleUnits = Math.min(EXPLORATION_SAMPLE_UNITS, quote.targetVolumeMax);
-  const raw = sampleUnits * quote.unitPricePoints;
-  return {
-    sampleUnits,
-    samplePoints: Math.max(minPoints, Math.ceil(raw * (1 + safetyBuffer))),
-    sampleExpectedPoints: Math.max(minPoints, Math.ceil(raw)),
-    fullUnits: quote.targetVolumeMax,
-    fullQuotedPoints: quote.quotedPoints,
-  };
+export function explorationOffer(quote: ExplorationQuoteLike, safetyBuffer = 0.15): ExplorationOffer {
+  const offer = sampleOffer(quote, safetyBuffer);
+  if (!offer) {
+    const units = Math.min(1, quote.targetVolumeMax);
+    return { sampleUnits: units, samplePoints: Math.ceil(units * quote.unitPricePoints * (1 + safetyBuffer)), sampleExpectedPoints: Math.ceil(units * quote.unitPricePoints), fullUnits: quote.targetVolumeMax, fullQuotedPoints: quote.quotedPoints, fullEstimatePoints: fullEstimatePoints(quote) };
+  }
+  return { ...offer, fullQuotedPoints: quote.quotedPoints };
 }
 
 const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 
 export function explorationOfferLineAr(offer: ExplorationOffer, unitLabelAr = "سجل"): string {
-  return `استكشاف أولًا: قبل الحجم الكامل (${n(offer.fullUnits)} ${unitLabelAr} بحجز ${n(offer.fullQuotedPoints)} نقطة) تقدر تجلب عينة من ${n(offer.sampleUnits)} ${unitLabelAr} فقط بحجز ${n(offer.samplePoints)} نقطة، لنعرف كم فيديو وتعليق متاح فعلًا قبل أن تقرر. لا يُخصم إلا ثمن ما يُسلَّم منها.`;
+  return sampleOfferLineAr(offer, unitLabelAr);
 }
 
 export interface ExplorationSample {

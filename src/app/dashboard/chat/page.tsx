@@ -10,6 +10,7 @@ import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { topupContinuationMessageAr } from "@/lib/lowBalance";
 import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploration";
+import { approximateTotalPoints, remainingUnits, sampleRestMessageAr } from "@/lib/sampleFirst";
 import { encodeFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
@@ -104,6 +105,8 @@ interface MessageItem {
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   intent?: "chat" | "research";
   planQuote?: PlanQuoteData;
+  /** After a delivered sample: the offer to quote the rest (a new quote on the remaining volume, without the sample's rows). */
+  sampleRest?: { sampleQuoteId: string; fullVolume: number };
   /** A validated file spec for the result on screen («شيت لكل محافظة»): becomes a download of the shaped file. */
   fileShape?: { spec: Record<string, unknown>; descriptionAr: string; jobId?: string };
   clarificationQuestions?: string[];
@@ -992,7 +995,8 @@ export default function ChatWorkspacePage() {
     newFormats: string[],
     newCountry?: string,
     newIndustry?: string,
-    exploration?: { fullVolume: number; fullQuotedPoints: number }
+    exploration?: { fullVolume: number; fullQuotedPoints: number },
+    pointsCap?: number
   ) {
     const primaryItem = currentQuote.items?.[0] || { capabilitySlug: "company-research", params: {} };
     const slug = primaryItem.capabilitySlug;
@@ -1054,6 +1058,7 @@ export default function ChatWorkspacePage() {
         operations,
         jwt: jwtToken,
         ...(exploration ? { exploration } : {}),
+        ...(pointsCap && pointsCap > 0 ? { pointsCap } : {}),
       }),
     });
 
@@ -1088,7 +1093,7 @@ export default function ChatWorkspacePage() {
     try {
       await handleSaveDirectEdit(
         quote, offer.sampleUnits, "", quote.outputFormats?.length ? quote.outputFormats : ["xlsx"],
-        undefined, undefined, { fullVolume: quote.targetVolumeMax, fullQuotedPoints: quote.quotedPoints },
+        undefined, undefined, { fullVolume: offer.fullUnits, fullQuotedPoints: quote.quotedPoints },
       );
     } catch (err: any) {
       setMessages((prev) => [...prev, { id: `err_explore_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الاستكشاف. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
@@ -1124,6 +1129,7 @@ export default function ChatWorkspacePage() {
 
       loadBalance();
       if (quote.exploration) explorationByJob.current.set(data.jobId, quote);
+      setRestPlanQuoteId(null);
 
       setActiveJob({
         jobId: data.jobId,
@@ -1568,8 +1574,49 @@ export default function ChatWorkspacePage() {
       fullUnits: sample.exploration.fullVolume,
       unitPricePoints: sample.unitPricePoints,
     });
-    setMessages((prev) => [...prev, { id: `explore_done_${activeJob.jobId}`, role: "assistant", content: explorationResultMessageAr(estimate, sample.exploration!.fullVolume), createdAt: new Date().toISOString() }]);
+    // The rest of the request: what came, what is left (without the rows already delivered) and the approximate total with the sample.
+    const left = remainingUnits(sample.exploration.fullVolume, activeJob.rowsCollected);
+    const offerRest = !estimate.sourceExhausted && left > 0;
+    const content = offerRest
+      ? sampleRestMessageAr({
+          deliveredInSample: activeJob.rowsCollected,
+          sampleChargedPoints: activeJob.chargedCredits ?? 0,
+          remainingUnits: left,
+          approximateTotalPoints: approximateTotalPoints({ sampleChargedPoints: activeJob.chargedCredits ?? 0, remainingUnits: left, unitPricePoints: sample.unitPricePoints }),
+        })
+      : explorationResultMessageAr(estimate, sample.exploration.fullVolume);
+    setMessages((prev) => [...prev, {
+      id: `explore_done_${activeJob.jobId}`, role: "assistant", content, createdAt: new Date().toISOString(),
+      ...(offerRest ? { sampleRest: { sampleQuoteId: sample.quoteId, fullVolume: sample.exploration!.fullVolume } } : {}),
+    }]);
   }, [activeJob, jobFinished, extractedRecords]);
+
+  // «اطلب الباقي»: a new quote on the remaining volume, excluding the sample's rows. Nothing is reserved until it is approved.
+  const [requestingRest, setRequestingRest] = useState(false);
+  // The plan for the rest of a request is open for approval while the sample's results are still on screen.
+  const [restPlanQuoteId, setRestPlanQuoteId] = useState<string | null>(null);
+  async function handleRequestRest(sampleQuoteId: string, fullVolume: number) {
+    if (requestingRest || !user) return;
+    setRequestingRest(true);
+    try {
+      const jwtToken = await getAccessToken();
+      const res = await fetch("/api/chat/sample-remainder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}) },
+        body: JSON.stringify({ sampleQuoteId, fullVolume }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) throw new Error(data?.error || "تعذر تجهيز الباقي حالياً. حاول مرة أخرى.");
+      const planQuote: PlanQuoteData | undefined = data.planQuote || data.quote;
+      // The sample's results stay open; the panel switches to the new plan until it is approved (its own run replaces the sample's).
+      if (planQuote?.quoteId) { setRestPlanQuoteId(planQuote.quoteId); setCanvasOpen(true); }
+      setMessages((prev) => [...prev, { id: `rest_${planQuote?.quoteId || Date.now()}`, role: "assistant", content: String(data.messageAr || ""), ...(planQuote ? { planQuote } : {}), createdAt: new Date().toISOString() }]);
+    } catch (err: any) {
+      setMessages((prev) => [...prev, { id: `err_rest_${Date.now()}`, role: "assistant", content: err?.message || "تعذر تجهيز الباقي حالياً. حاول مرة أخرى.", createdAt: new Date().toISOString() }]);
+    } finally {
+      setRequestingRest(false);
+    }
+  }
   useEffect(() => {
     if (balanceValue === null || activeJob) return;
     const lastPlan = [...messages].reverse().find((m) => m.planQuote)?.planQuote;
@@ -1637,6 +1684,17 @@ export default function ChatWorkspacePage() {
             <span className="text-xs font-light text-fnt">{m.fileShape.descriptionAr}</span>
           </div>
         )}
+        {m.sampleRest && (
+          <button
+            type="button"
+            data-testid="request-rest-btn"
+            disabled={requestingRest}
+            onClick={() => void handleRequestRest(m.sampleRest!.sampleQuoteId, m.sampleRest!.fullVolume)}
+            className="mt-2 min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-wait disabled:opacity-60"
+          >
+            {requestingRest ? "جاري تجهيز الباقي..." : "اطلب الباقي"}
+          </button>
+        )}
         {m.planQuote && !canvasOpen && (
           <button
             type="button"
@@ -1676,7 +1734,7 @@ export default function ChatWorkspacePage() {
       quote={quote}
       conversationTitle={conversationTitle}
       onStart={handleStartExecution}
-      onSaveEdit={handleSaveDirectEdit}
+      onSaveEdit={(q, limit, param, formats, country, industry, cap) => handleSaveDirectEdit(q, limit, param, formats, country, industry, undefined, cap)}
       onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
       isStarting={startingQuoteId === quote.quoteId}
       available={balanceValue}
@@ -1687,7 +1745,7 @@ export default function ChatWorkspacePage() {
       locked={locked}
     />
   );
-  const panelShowsPlan = !activeJob && latestPlanQuote !== null;
+  const panelShowsPlan = latestPlanQuote !== null && (!activeJob || restPlanQuoteId === latestPlanQuote.quoteId);
 
   const runNode = activeJob ? (
     activeJob.status !== "failed" ? (

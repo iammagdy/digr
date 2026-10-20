@@ -1,3 +1,4 @@
+import { toArabicDigits } from "../src/lib/arabicDigits";
 import { describe, expect, it } from "vitest";
 import { planExplanationLinesAr, recordNounAr, formatsAr } from "../src/lib/planExplanation";
 import { runConversation } from "./helpers/chatSession";
@@ -66,8 +67,12 @@ describe("C. in the conversation", () => {
     const { responses } = await runConversation(["هات ٥٠٠ تغريدة عن كرة السلة في ٢٠٢٥"]);
     const r = responses[0];
     expect(r.outputType).toBe("propose_plan");
-    expect(r.contentAr).toContain("استكشاف أولًا");
-    expect(r.contentAr).toContain("عينة من ١٠");
+    // «عينة أولًا»: about 5% of the estimate, held between 100 and 300 points
+    const offer = r.planQuote.explorationOffer;
+    expect(offer.samplePoints).toBeGreaterThanOrEqual(100);
+    expect(offer.samplePoints).toBeLessThanOrEqual(300);
+    expect(r.contentAr).toContain("عينة أولًا");
+    expect(r.contentAr).toContain(`${toArabicDigits(offer.sampleUnits)} سجل فقط بحجز ${toArabicDigits(offer.samplePoints)} نقطة`);
   });
 
   it("an unclear request gets at most ONE question, never a questionnaire", async () => {

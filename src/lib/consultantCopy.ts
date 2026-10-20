@@ -88,6 +88,7 @@ function topPerChannel(text: string): { top: number | null; rankedBy: "views" | 
 }
 
 const ALL_COMMENTS_RE = /كل\s*(?:ال)?(?:تعليقات|كومنتات|كومنتس|كومينتات)|(?:التعليقات|الكومنتات)\s*كلها|جميع\s*(?:ال)?(?:تعليقات|كومنتات)|all\s+comments/iu;
+const ALL_ITEMS_RE = /كل\s*(?:ال)?(?:منشورات|بوستات|تغريدات|فيديوهات|مقاطع)|جميع\s*(?:ال)?(?:منشورات|بوستات|تغريدات|فيديوهات|مقاطع)/u;
 const REPLIES_RE = /ردود|replies|وردود/iu;
 
 const SUBJECT_STOP = new Set(["في", "من", "على", "علي", "مع", "خلال", "آخر", "اخر", "لحد", "حتى", "الى", "إلى", "بين", "لمدة"]);
@@ -112,6 +113,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   const channels = { count: channelCount(text), named: namedChannels(text) };
   const { top, rankedBy } = topPerChannel(text);
   const allComments = ALL_COMMENTS_RE.test(text);
+  const allItems = ALL_ITEMS_RE.test(text);
   const includeReplies = REPLIES_RE.test(text);
 
   const isDirectory = intent.dataType === "companies" || intent.dataType === "people";
@@ -164,6 +166,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     if (kind === "social_feed" && !subject && !channelMode) missing.push("subject");
     // «كل التعليقات» or an unstated volume over channels always carries a cap the customer chooses.
     if ((kind === "social_ranked_comments" || kind === "social_channel_topic") && volume === null) missing.push("cap");
+    else if ((kind === "social_feed" || kind === "social_comments_url") && (allComments || allItems) && volume === null) missing.push("cap");
     if (window.status === "missing") missing.push("window");
   }
 
@@ -178,7 +181,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     includeReplies,
     volume,
     window,
-    needsCap: allComments || (feedKind && volume === null && kind !== "social_feed"),
+    needsCap: allComments || allItems || (feedKind && volume === null && kind !== "social_feed"),
     missing,
   };
 }
@@ -207,7 +210,18 @@ export function nextStep(understanding: MissionUnderstanding): NextStep {
   const first = understanding.missing[0];
   if (!first) return { type: "plan" };
   const q = QUESTION_BY_MISSING[first];
+  // The cap is a count of what the customer asked for: comments, or records for anything else.
+  if (first === "cap" && !(understanding.allComments || understanding.kind === "social_ranked_comments" || understanding.kind === "social_channel_topic" || understanding.kind === "social_comments_url")) {
+    return { type: "ask_one", id: q.id, textAr: "ما الحد الأقصى لعدد السجلات الذي تريده؟", options: ["٥٠٠ سجل", "١٠٠٠ سجل", "٢٠٠٠ سجل", "٥٠٠٠ سجل"] };
+  }
   return { type: "ask_one", ...q };
+}
+
+/** The cap question when «كل …» was asked without a number and nothing else stands before it; null otherwise. */
+export function capQuestionFor(understanding: MissionUnderstanding) {
+  if (!understanding.missing.includes("cap")) return null;
+  const step = nextStep({ ...understanding, missing: ["cap"] });
+  return step.type === "ask_one" ? questionForStep(step) : null;
 }
 
 const KIND_NOUN_AR: Record<string, string> = {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
-import { formatAr } from "@/lib/arabicDigits";
+import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
 import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
@@ -48,7 +48,9 @@ export interface PlanQuoteData {
   }>;
   outputFormats: string[];
   /** Large or vague plans: a small priced sample first («استكشاف»). Computed by the server. */
-  explorationOffer?: { sampleUnits: number; samplePoints: number; sampleExpectedPoints: number; fullUnits: number; fullQuotedPoints: number };
+  explorationOffer?: { sampleUnits: number; samplePoints: number; sampleExpectedPoints: number; fullUnits: number; fullQuotedPoints: number; fullEstimatePoints?: number };
+  /** This quote is the rest of a request after a delivered sample: what the sample delivered and cost, and the approximate total with it. */
+  afterSample?: { deliveredInSample: number; sampleChargedPoints: number; remainingUnits: number; approximateTotalPoints: number };
   /** This quote is the sample; the figures describe the full plan it explores. */
   exploration?: { fullVolume: number; fullQuotedPoints: number };
   expiresAt: string;
@@ -71,7 +73,8 @@ interface PlanQuoteCardProps {
     newParam: string,
     newFormats: string[],
     newCountry?: string,
-    newIndustry?: string
+    newIndustry?: string,
+    pointsCap?: number
   ) => Promise<void>;
   onAcceptDownscaled?: (units: number) => void;
   isStarting: boolean;
@@ -164,6 +167,8 @@ export default function PlanQuoteCard({
   const [editCountry, setEditCountry] = useState(interpreted.countryAr);
   const [editIndustry, setEditIndustry] = useState(displayIndustry);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
+  // The customer's own budget cap in points (optional): empty keeps the plan as quoted.
+  const [editCap, setEditCap] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editError, setEditError] = useState("");
@@ -221,7 +226,9 @@ export default function PlanQuoteCard({
     setSavingEdit(true);
     setEditError("");
     try {
-      await onSaveEdit(quote, editLimit, editParamVal, editFormats, editCountry, editIndustry);
+      const capValue = Number(toLatinDigits(editCap));
+      await onSaveEdit(quote, editLimit, editParamVal, editFormats, editCountry, editIndustry, editCap.trim() && Number.isFinite(capValue) && capValue > 0 ? Math.floor(capValue) : undefined);
+      setEditCap("");
       setIsEditing(false);
     } catch (err: any) {
       const rawMsg = err instanceof Error ? err.message : String(err || "");
@@ -265,6 +272,10 @@ export default function PlanQuoteCard({
         </p>
       </div>
 
+      <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
+        سقف هذا الطلب: حتى {formatAr(quote.quotedPoints)} نقطة، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
+      </p>
+
       {quote.understoodAr && (
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
@@ -288,6 +299,12 @@ export default function PlanQuoteCard({
           </div>
         ))}
       </div>
+
+      {quote.afterSample && (
+        <p className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2" data-testid="plan-after-sample">
+          هذا هو الباقي من طلبك بعد العينة: {formatAr(quote.afterSample.remainingUnits)} سجل دون ما وصلك فيها ({formatAr(quote.afterSample.deliveredInSample)} سجل، خُصم عنها {formatAr(quote.afterSample.sampleChargedPoints)} نقطة). الإجمالي التقريبي مع العينة حوالي {formatAr(quote.afterSample.approximateTotalPoints)} نقطة.
+        </p>
+      )}
 
       {quote.window && (
         <div className="mt-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9]" data-testid="plan-window">
@@ -425,6 +442,15 @@ export default function PlanQuoteCard({
               ))}
             </div>
           </div>
+          <div>
+            <label htmlFor={`pq-cap-${quote.quoteId}`} className="mb-1 block font-medium text-ink">حد أقصى للنقاط (اختياري)</label>
+            <input
+              id={`pq-cap-${quote.quoteId}`} type="text" inputMode="numeric" value={editCap} onChange={(e) => setEditCap(e.target.value)} dir="ltr"
+              placeholder={formatAr(quote.quotedPoints)}
+              className="tnum min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
+            />
+            <p className="mb-0 mt-1 font-light leading-[1.8] text-mut">يتوقف الطلب عند هذا الحد، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم.</p>
+          </div>
           {editError && <p role="alert" className="m-0 text-xs text-bad">{editError}</p>}
           <div className="flex items-center justify-end gap-2 pt-1">
             <button type="button" onClick={() => setIsEditing(false)} className="min-h-11 cursor-pointer border-0 bg-transparent px-3 text-xs text-mut">إلغاء</button>
@@ -536,7 +562,7 @@ export default function PlanQuoteCard({
                 disabled={isStarting || quote.isDependent}
                 className={`${SECONDARY_BTN} min-h-11`}
               >
-                استكشاف أولًا: {formatAr(quote.explorationOffer.sampleUnits)} سجل مقابل {formatAr(quote.explorationOffer.samplePoints)} نقطة
+                عينة أولًا: {formatAr(quote.explorationOffer.sampleUnits)} سجل بحجز {formatAr(quote.explorationOffer.samplePoints)} نقطة
               </button>
             )}
           </div>

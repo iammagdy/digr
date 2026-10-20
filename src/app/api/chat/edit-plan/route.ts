@@ -11,6 +11,7 @@ import {
 import { getEnabledCapabilitiesWithCoreServices, getCatalogCapabilities } from "@/functions/shared/capabilityRegistry";
 import { getEndpointDetails, sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
+import { applyCustomerCap } from "@/lib/pointsCap";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
@@ -111,7 +112,26 @@ export async function POST(req: NextRequest) {
       outputFormats: quoteDoc.output_formats || ["xlsx", "pdf", "csv"],
     };
 
-    const updatedPlan = applyPlanOperations(currentPlan, parsedOps.data);
+    // The customer's own budget cap (points): it lowers the volume to what the reserve can hold under it. It never raises a plan.
+    let operationsToApply = parsedOps.data;
+    const requestedCap = body?.pointsCap === undefined || body?.pointsCap === null || body?.pointsCap === "" ? null : Number(body.pointsCap);
+    if (requestedCap !== null) {
+      const capItem = currentItems[0];
+      const limitOp = parsedOps.data.find((op) => op.action === "set_limit") as { targetVolumeMax?: number } | undefined;
+      const currentVolume = Number(limitOp?.targetVolumeMax) || Number(capItem?.targetVolumeMax) || 1;
+      const unit = Number(capItem?.unitPricePoints);
+      if (!Number.isInteger(requestedCap) || requestedCap < 1 || requestedCap > 10_000_000 || !Number.isFinite(unit) || unit <= 0 || !capItem?.capabilitySlug) {
+        return NextResponse.json({ success: false, error: "الحد الأقصى للنقاط غير صالح." }, { status: 400 });
+      }
+      const capped = applyCustomerCap({ capPoints: requestedCap, unitPricePoints: unit, currentVolume });
+      if (!capped.ok) return NextResponse.json({ success: false, error: capped.reasonAr }, { status: 400 });
+      operationsToApply = [
+        ...parsedOps.data.filter((op) => op.action !== "set_limit"),
+        { action: "set_limit", capabilitySlug: capItem.capabilitySlug, targetVolumeMax: capped.volume } as any,
+      ];
+    }
+
+    const updatedPlan = applyPlanOperations(currentPlan, operationsToApply);
 
     // 5. Validate updated plan against all capability schemas (static + catalog)
     const [capabilities, catalogCapabilities] = await Promise.all([

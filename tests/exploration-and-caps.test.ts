@@ -10,7 +10,6 @@ vi.mock("../src/functions/shared/catalogClient", () => ({
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
 import {
-  EXPLORATION_SAMPLE_UNITS,
   estimateFromSample,
   explorationOffer,
   explorationOfferLineAr,
@@ -21,6 +20,8 @@ import { JOB_MAX_POINTS_CAP_LARGE, capStatementAr, largeJobCapEnabled, resolveJo
 import { DEFAULT_JOB_POINTS_CAP, getConfiguredJobPointsCap } from "../src/functions/shared/providerSpend";
 import { calculateCapabilityUnitPricePoints, DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
 import { makeTables } from "./helpers/memoryTables";
+import { sampleOffer, sampleTargetPoints } from "../src/lib/sampleFirst";
+import { toArabicDigits } from "../src/lib/arabicDigits";
 
 const socialQuote = (overrides: Record<string, unknown> = {}) => ({
   items: [{ capabilitySlug: "social-tiktok-comments", params: { query: "كرة القدم" } }],
@@ -31,22 +32,38 @@ const socialQuote = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("8. paid exploration", () => {
-  it("is offered for large or vague social plans only", () => {
-    expect(isExplorationCandidate(socialQuote())).toBe(true);
-    expect(isExplorationCandidate(socialQuote({ targetVolumeMax: 50, quotedPoints: 345 }))).toBe(true); // reserve >= 150
-    expect(isExplorationCandidate(socialQuote({ targetVolumeMax: 20, quotedPoints: 138 }))).toBe(false); // small and cheap
-    expect(isExplorationCandidate(socialQuote({ items: [{ capabilitySlug: "icypeas-companies-search", params: {} }] }))).toBe(false);
+  it("is offered when the estimate of the whole request reaches 1,500 points, for a discovered (not single-link) one-item plan", () => {
+    expect(isExplorationCandidate(socialQuote())).toBe(true); // 500 x 6 = 3000
+    expect(isExplorationCandidate(socialQuote({ targetVolumeMax: 250, quotedPoints: 1725 }))).toBe(true); // 250 x 6 = 1500 exactly
+    expect(isExplorationCandidate(socialQuote({ targetVolumeMax: 249, quotedPoints: 1718 }))).toBe(false); // 1494: just under
+    expect(isExplorationCandidate(socialQuote({ targetVolumeMax: 50, quotedPoints: 345 }))).toBe(false); // 300: a small job
+    // a plan the cap cut down is judged by the whole request, not by what was left of it
+    expect(isExplorationCandidate(socialQuote({ targetVolumeMax: 57, quotedPoints: 400, requestedVolumeMax: 2000, pointsCapConstrained: true }))).toBe(true);
+    // not only social: a large company job is worth a sample too
+    expect(isExplorationCandidate(socialQuote({ unitPricePoints: 3, items: [{ capabilitySlug: "icypeas-companies-search", params: {} }] }))).toBe(true);
     expect(isExplorationCandidate(socialQuote({ items: [{ capabilitySlug: "social-tiktok-comments", params: { url: "https://www.tiktok.com/@x/video/1" } }] }))).toBe(false);
     expect(isExplorationCandidate(socialQuote({ items: [{ capabilitySlug: "social-tiktok-comments" }, { capabilitySlug: "social-tiktok-videos" }] }))).toBe(false);
   });
 
-  it("the sample is priced by the shared formula, at least one point, never free, with the 15% buffer on the reserve only", () => {
+  it("the sample is about 5% of the estimate, held between 100 and 300 points, priced by the shared formula with the 15% buffer on the reserve only", () => {
     const unit = calculateCapabilityUnitPricePoints(0.001, DEFAULT_PRICING_SETTINGS); // 0.001 USD -> 6 points
     expect(unit).toBe(6);
+    // 3000 expected points: 5% is 150 -> 21 records (floor(150 / 6.9)), reserve ceil(21 x 6 x 1.15) = 145, expected 126
     const offer = explorationOffer(socialQuote({ unitPricePoints: unit }));
-    expect(offer.sampleUnits).toBe(EXPLORATION_SAMPLE_UNITS);
-    expect(offer.sampleExpectedPoints).toBe(60);
-    expect(offer.samplePoints).toBe(69); // ceil(60 * 1.15)
+    expect(offer).toMatchObject({ sampleUnits: 21, samplePoints: 145, sampleExpectedPoints: 126, fullUnits: 500, fullEstimatePoints: 3000 });
+    // a very large request is held at 300 points, a request just over 1,500 at 100
+    expect(sampleTargetPoints(60000)).toBe(300);
+    expect(sampleTargetPoints(1500)).toBe(100);
+    expect(sampleTargetPoints(4000)).toBe(200);
+    for (const estimate of [1500, 2200, 6000, 20000, 500000]) {
+      const o = sampleOffer({ items: [{ capabilitySlug: "social-tiktok-comments", params: { query: "x" } }], targetVolumeMax: Math.ceil(estimate / 6), unitPricePoints: 6 })!;
+      expect(o.samplePoints).toBeLessThanOrEqual(sampleTargetPoints(estimate));
+      expect(o.samplePoints).toBeGreaterThanOrEqual(1);
+      expect(o.sampleUnits).toBeLessThan(Math.ceil(estimate / 6));
+      expect(o.fullEstimatePoints).toBeGreaterThanOrEqual(1500);
+    }
+    // never offered when the sample would not be smaller than the plan
+    expect(sampleOffer({ items: [{ capabilitySlug: "social-x-posts", params: { query: "x" } }], targetVolumeMax: 20, unitPricePoints: 400 })).toBeNull(); // one record alone holds 460 points
     const cheapest = explorationOffer(socialQuote({ unitPricePoints: 1, targetVolumeMax: 11, quotedPoints: 13 }));
     expect(cheapest.samplePoints).toBeGreaterThanOrEqual(1);
     expect(explorationOffer({ ...socialQuote(), unitPricePoints: 0.01 } as any).samplePoints).toBe(1);
@@ -54,8 +71,8 @@ describe("8. paid exploration", () => {
 
   it("the offer text is Arabic only, uses only code-computed numbers and promises nothing it cannot", () => {
     const text = explorationOfferLineAr(explorationOffer(socialQuote({ unitPricePoints: 6 })));
-    expect(text).toContain("عينة من ١٠ سجل");
-    expect(text).toContain("بحجز ٦٩ نقطة");
+    expect(text).toContain("عينة أولًا: ٢١ سجل فقط بحجز ١٤٥ نقطة");
+    expect(text).toContain("الطلب الكامل (٥٠٠ سجل) تكلفته المتوقعة حوالي ٣٠٠٠ نقطة");
     expect(text).toContain("لا يُخصم إلا ثمن ما يُسلَّم");
     expect(text).not.toMatch(/[A-Za-z0-9]|\p{Extended_Pictographic}/u);
   });
@@ -94,10 +111,14 @@ describe("8. paid exploration", () => {
       });
       expect(res.outputType).toBe("propose_plan");
       const offer = res.planQuote.explorationOffer;
-      expect(offer.sampleUnits).toBe(10);
-      expect(offer.samplePoints).toBe(Math.max(1, Math.ceil(10 * res.planQuote.unitPricePoints * 1.15)));
-      expect(res.contentAr).toContain("استكشاف أولًا");
-      expect(res.contentAr).toContain("بحجز ٦٩ نقطة");
+      const unit = res.planQuote.unitPricePoints;
+      const expected = sampleOffer({ items: res.planQuote.items, targetVolumeMax: res.planQuote.targetVolumeMax, requestedVolumeMax: res.planQuote.requestedVolumeMax, unitPricePoints: unit })!;
+      expect(offer.sampleUnits).toBe(expected.sampleUnits);
+      expect(offer.samplePoints).toBe(Math.ceil(offer.sampleUnits * unit * 1.15));
+      expect(offer.samplePoints).toBeGreaterThanOrEqual(1);
+      expect(offer.samplePoints).toBeLessThanOrEqual(300);
+      expect(res.contentAr).toContain("عينة أولًا");
+      expect(res.contentAr).toContain(`بحجز ${toArabicDigits(offer.samplePoints)} نقطة`);
     });
 
     it("a company request gets no exploration offer", async () => {
@@ -105,7 +126,7 @@ describe("8. paid exploration", () => {
         userId: "u_company", message: "عايز ٣ شركات كهرباء في مصر", userBalance: 5000, personaProfile: { name: "سلمى" },
       });
       expect(res.planQuote.explorationOffer).toBeUndefined();
-      expect(res.contentAr).not.toContain("استكشاف أولًا");
+      expect(res.contentAr).not.toContain("عينة أولًا");
     });
 
     it("the sample is an ordinary quote: the edit route recalculates it with the shared pricing, and only carries the flag", () => {
@@ -115,7 +136,9 @@ describe("8. paid exploration", () => {
       const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
       expect(page).toContain("onExplore={handleExplore}");
       expect(page).toContain("explorationByJob.current.set(data.jobId, quote)");
-      expect(page).toContain("explorationResultMessageAr(estimate, sample.exploration!.fullVolume)");
+      expect(page).toContain("fullVolume: offer.fullUnits");
+      expect(page).toContain("sampleRestMessageAr(");
+      expect(page).toContain('"/api/chat/sample-remainder"');
     });
   });
 });
