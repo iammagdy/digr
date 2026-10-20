@@ -11,9 +11,9 @@ against the live provider and no money moved. Numbers marked **estimate** are no
 |---|---|---|---|
 | Provider pages (chunks) per job | 30 (`ABSOLUTE_MAX_PAGES`) | `src/lib/server/providerCallCaps.ts:24`, used by `maxPagesForJob` `:42` | `LONG_JOB_MAX_PAGES` (default 30) |
 | Pages per page a job would need if every record matched | 3 | `providerCallCaps.ts:22` | `LONG_JOB_PAGE_ALLOWANCE` (default 3) |
-| Rows a chunk collects (the "page" of a feed job) | 50 (`SOCIAL_ROWS_PER_CHUNK`) | `src/lib/socialSources.ts:727`, `wanted` in `src/lib/server/socialAdapter.ts:415`, spec `pageSize` in `src/lib/server/jobExecutionSpec.ts:124` | not yet (PR 4d sizes it from measured call time) |
+| Rows a chunk collects (the "page" of a feed job) | 50 (`SOCIAL_ROWS_PER_CHUNK`) | `src/lib/socialSources.ts:727`, `wanted` in `src/lib/server/socialAdapter.ts:415`, spec `pageSize` in `src/lib/server/jobExecutionSpec.ts:124` | `LONG_JOB_ROWS_PER_CHUNK` (default 50, 10 to 500; PR 4d) |
 | Calls a chunk may make | 6 (`SOCIAL_MAX_CALLS_PER_CHUNK`) | `socialSources.ts:724` | no: it is the basis of the provider spend estimate of a chunk (money-adjacent), left as is |
-| Chunk time budget / minimum time for one more call | 40 s / 9 s | `socialAdapter.ts:64`, `:65` | PR 4d |
+| Chunk time budget / time that must remain to start another call | 40 s / the slowest call of the chunk x 1.25, between 9 s and 20 s (was a fixed 9 s) | `socialAdapter.ts:64`, `src/lib/server/chunkSizing.ts` | measured (PR 4d); the budget itself is the platform's |
 | Worker deadline per request | 45 s inside a 60 s function | `src/app/api/worker/chunk/route.ts:224`, `:71`, `vercel.json` | no (platform limit) |
 | Rows per plan item (customer-visible "most rows") | 500 (X posts, Facebook comments), 1,000 (TikTok and YouTube comments), 200 / 48 / 60 for videos and Facebook posts (source-limited) | `socialSources.ts:502-585` | `LONG_JOB_SOCIAL_MAX_ROWS` raises only comment services and big post services; never lowers |
 | Comments taken from one video | 500 (`MAX_PER_VIDEO`) | `socialSources.ts:829`; duplicate constant `socialAdapter.ts` now imports it | `LONG_JOB_MAX_PER_VIDEO` (default 500) |
@@ -119,6 +119,15 @@ releases the entire reserve with no charge even when thousands of rows were alre
 loss for one transient error (the customer is not charged, so it is a loss of delivered work and provider spend, not of the customer's points). A proposal for the owner: on an
 unexpected exception with rows already delivered, answer retryable (the driver and the page already resume a job) and release or settle only after a few consecutive failures at
 the same step, settling the delivered rows through the existing `settle_job_atomic`. Not changed: it is the release path. The behaviour of `record_chunk_failure` in SQL (retry counting) was not read.
+
+## 5b. Chunk sizing (PR 4d)
+
+A chunk's calls are sequential, so the time one call takes decides how many fit in the 40 s budget. The old rule started another call whenever 9 s remained; with a
+source that answers in 14 s the third call started with 12 s left, was given an 8 s timeout and was abandoned: a billed call and no rows (reproduced in the harness
+with a 14 s source: before, every chunk ended with an abandoned call; after, none). Now a call starts only if the time left covers the slowest call seen in that chunk times 1.25
+(floor 9 s, cap 20 s). The number of calls per chunk stays 6 (the basis of the chunk's provider spend estimate). Rows per chunk are configurable (default 50, the same as before);
+with 150 allowed and a fast source the 3,000-row job takes 27 chunks instead of 60, which also moves the page ceiling out of the way (30 pages x 50 rows = 1,500 today).
+The duration shown before approval follows the rows per chunk in force.
 
 ## 6. Tests that run through the real worker (`tests/long-job-scale-harness.test.ts`)
 

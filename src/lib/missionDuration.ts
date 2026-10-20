@@ -1,5 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
-import { DISCOVER_VIDEOS_PER_CHANNEL, SOCIAL_MAX_CALLS_PER_CHUNK, SOCIAL_ROWS_PER_CHUNK, getSocialCapability } from "./socialSources";
+import { DISCOVER_VIDEOS_PER_CHANNEL, SOCIAL_MAX_CALLS_PER_CHUNK, getSocialCapability, socialRowsPerChunk } from "./socialSources";
 import { closePageLineAr, type DriverMode } from "./driverMode";
 
 /**
@@ -127,7 +127,7 @@ function stepNumbers(step: DurationStep, side: "optimistic" | "pessimistic"): St
     recordsPerChunk = Math.max(1, Math.floor(budgetCalls / callsPerRecord));
   } else {
     const callsInChunk = Math.min(SOCIAL_MAX_CALLS_PER_CHUNK, budgetCalls);
-    recordsPerChunk = Math.max(1, Math.min(SOCIAL_ROWS_PER_CHUNK, callsInChunk * perCall));
+    recordsPerChunk = Math.max(1, Math.min(socialRowsPerChunk(), callsInChunk * perCall));
   }
   const chunks = records > 0 ? Math.ceil(records / recordsPerChunk) : 0;
   const collectCalls = callsPerRecord > 0 ? Math.ceil(records * callsPerRecord) + Math.ceil(records / perCall) : Math.ceil(records / perCall);

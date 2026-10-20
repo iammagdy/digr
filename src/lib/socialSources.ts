@@ -723,8 +723,9 @@ export function refFromUrl(platform: SocialPlatformId, link: string): SocialRef 
 /** Most calls one chunk may make: one discovery plus a few comment pages. Used for the spend estimate. */
 export const SOCIAL_MAX_CALLS_PER_CHUNK = 6;
 
-/** Rows one worker chunk collects. */
+/** Rows one worker chunk collects: the default (what runs today); the value in force is `socialRowsPerChunk()`. */
 export const SOCIAL_ROWS_PER_CHUNK = 50;
+export const socialRowsPerChunk = (): number => scaleValue("socialRowsPerChunk");
 
 /** Comments taken from each discovered video unless the customer says otherwise. */
 export const SOCIAL_COMMENTS_PER_VIDEO = 50;

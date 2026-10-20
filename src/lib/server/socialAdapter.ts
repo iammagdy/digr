@@ -29,6 +29,7 @@ import {
   type SocialSource,
   type SocialSourceRequest,
 } from "../socialSources";
+import { timeNeededForAnotherCallMs } from "./chunkSizing";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "./tregAdapter";
 
@@ -62,7 +63,6 @@ export interface SocialAdapterDeps {
 
 /** The worker is cut off at 60 s; a chunk stops starting new calls well before that. */
 export const SOCIAL_CHUNK_BUDGET_MS = 40_000;
-const MIN_TIME_FOR_ANOTHER_CALL_MS = 9_000;
 const MAX_CALLS_PER_CHUNK = SOCIAL_MAX_CALLS_PER_CHUNK;
 const MAX_VIDEOS = MAX_VIDEOS_PER_JOB;
 const MAX_COMMENTS_PER_VIDEO = MAX_PER_VIDEO;
@@ -125,6 +125,7 @@ interface ChainResult {
 
 class ChunkClock {
   private calls = 0;
+  private slowestCallMs = 0;
   readonly startedAt: number;
   constructor(private readonly now: () => number) {
     this.startedAt = now();
@@ -135,11 +136,15 @@ class ChunkClock {
   nextCall(): number {
     return ++this.calls;
   }
+  /** The duration of a call of this chunk, so the next call is started only if the time left covers a call as slow as the slowest so far. */
+  noteCallMs(ms: number): void {
+    if (Number.isFinite(ms) && ms > this.slowestCallMs) this.slowestCallMs = ms;
+  }
   remainingMs(): number {
     return SOCIAL_CHUNK_BUDGET_MS - (this.now() - this.startedAt);
   }
   canCallAgain(): boolean {
-    return this.calls < MAX_CALLS_PER_CHUNK && this.remainingMs() >= MIN_TIME_FOR_ANOTHER_CALL_MS;
+    return this.calls < MAX_CALLS_PER_CHUNK && this.remainingMs() >= timeNeededForAnotherCallMs(this.slowestCallMs);
   }
 }
 
@@ -180,10 +185,12 @@ async function runChain(
     if (!clock.canCallAgain() && result.calls > 0) break;
 
     const n = clock.nextCall();
+    const callStartedAt = deps.now();
     const outcome = await deps.call(source, params, {
       idempotencyKey: `${keyPrefix}_c${n}_${source.endpointId}`.slice(0, 120),
       timeoutMs: Math.max(5_000, Math.min(25_000, clock.remainingMs() - 4_000)),
     });
+    clock.noteCallMs(deps.now() - callStartedAt);
     result.calls += 1;
     result.costMicro += Math.max(0, Number(outcome.costMicro) || 0);
     if (outcome.tregCallId) result.callIds.push(outcome.tregCallId);

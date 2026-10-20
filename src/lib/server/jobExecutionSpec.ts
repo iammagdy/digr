@@ -2,7 +2,7 @@ import { isSmallJob, smallJobPageSize } from "./providerCallCaps";
 import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
-import { SOCIAL_ROWS_PER_CHUNK, estimateSocialChunkCostUsd, getSocialCapability } from "../socialSources";
+import { estimateSocialChunkCostUsd, getSocialCapability, socialRowsPerChunk } from "../socialSources";
 
 const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
@@ -121,7 +121,7 @@ export async function resolveJobExecutionSpec(
       paginationStrategy: "cursor",
       pricingUnit: "call",
       unitCostUsd: estimateSocialChunkCostUsd(socialCapability),
-      pageSize: SOCIAL_ROWS_PER_CHUNK,
+      pageSize: socialRowsPerChunk(),
       outputFormats,
       ...(retryOfJobId ? { retryOfJobId } : {}),
     };
