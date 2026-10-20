@@ -2,6 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DEMO_LABEL_AR } from "@/lib/landingDemos";
 import { SEGMENTS, segmentBySlug, segmentExample } from "@/lib/segments";
+import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
+
+/** The one-job size follows the live daily limit, like the calculator: refreshed every five minutes. */
+export const revalidate = 300;
 
 export function generateStaticParams() {
   return SEGMENTS.map((segment) => ({ segment: segment.slug }));
@@ -15,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ segment: 
 export default async function SegmentPage({ params }: { params: Promise<{ segment: string }> }) {
   const segment = segmentBySlug((await params).segment);
   if (!segment) notFound();
-  const example = segmentExample(segment);
+  const example = segmentExample(segment, await liveDailyCapPoints());
   return (
     <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[860px] flex-col gap-9">
