@@ -9,8 +9,8 @@ Nothing in this folder is in `supabase/migrations`, nothing was applied, and no 
 | # | File | What it adds | Ledger ids |
 |---|------|--------------|-----------|
 | 1 | `01_extend_ledger_kinds.sql` | three new kinds in the append-only kinds table | none |
-| 2 | `02_bundle_bonus.sql` | `wallet_bundles`, `grant_topup_bonus_atomic(topup id)` | `bon_<topup id>` |
-| 3 | `03_work_email_bonus.sql` | free-domain list, `grant_work_email_bonus_atomic(user)` | `bon_workemail_<user id>` |
+| 2 | `02_bundle_bonus.sql` | `wallet_bundles` (7 bundles), `topup_bundle_choices`, `record_topup_bundle_choice_atomic`, `grant_topup_bonus_atomic(topup id)` | `bon_<topup id>` |
+| 3 | `03_email_bonus.sql` | free-domain list, bonus accounts, `grant_email_bonus_atomic(topup id)` (+5 percentage points, «بريد عمل أو جامعي») | `bon_email_<topup id>` |
 | 4 | `04_referral.sql` | codes, referrals, `register_referral_atomic`, `grant_referral_reward_atomic` | `ref_<referral id>_referrer` / `_referee` |
 | 5 | `05_job_cap_and_start_gate.sql` | `job_points_cap()`, `provider_spend_today_usd()`, `job_start_gate()` (read-only) | none |
 | 6 | `06_custom_offers.sql` | `custom_offers`, `admin_create_custom_offer_atomic`, `consume_custom_offer_atomic` (no ledger write) | none |
@@ -29,8 +29,7 @@ or row lock, so a repeat can never credit twice. The ledger stays append-only.
    `create_quote_atomic` proposal to `public.job_points_cap()`; in TypeScript `DEFAULT_JOB_POINTS_CAP` (`providerSpend.ts`,
    `calculatorPricing.ts`) and the hard-coded 600 in `decisionMakerPricing.ts`, `platformGuide.ts` read the same setting. The 600-point
    confirmation threshold lives in `src/lib/money/capsProposal.ts` and `job_start_gate`.
-3. **Bonuses and referral (4a-4c):** call `grant_topup_bonus_atomic` and `grant_referral_reward_atomic` from the admin top-up approval
-   route right after `approve_topup_atomic` succeeds (both are idempotent, so a retry is safe).
+3. **Bundles, bonuses and referral (4a-4c):** `approve_topup_atomic` is NOT edited. (a) The top-up submit route (`src/app/api/topup/submit/route.ts`, today only `amount > 0`) enforces the 100 EGP minimum for a free amount (`checkFreeAmount`) and, for a bundle, calls `record_topup_bundle_choice_atomic` after the pending row exists. (b) The admin approval route (`src/app/api/admin/topups/approve/route.ts`), after the approval returns success, calls in order `grant_topup_bonus_atomic`, `grant_email_bonus_atomic`, `grant_referral_reward_atomic`; all three are idempotent so a retry is safe. Note: that route has a TypeScript fallback that writes the ledger row itself when the RPC is missing (`callAtomicOrFallback`, line 77-96); the bonus functions only act when `top_<topup id>` exists, so they are safe after either path.
 4. **Custom offers (4f):** the quote writer reads the customer's open offer for the unit price and the higher reserve limit; plan
    acceptance calls `consume_custom_offer_atomic`.
 5. **Driver (4g):** add `/api/cron/drive` (already on this branch) and apply file 07.

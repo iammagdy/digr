@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billedUnitMicro, chargePoints, proposedPriceFor, reservePoints, PROPOSED_COST_BASIS } from "../../src/lib/money/pricingProposal";
-import { marginImpact } from "../../src/lib/money/bundlesProposal";
+import { billedUnitMicro, blockPricePoints, chargePoints, unitPriceMicro, proposedPriceFor, reservePoints, PROPOSED_COST_BASIS } from "../../src/lib/money/pricingProposal";
 
 /**
  * The numbers quoted in docs/proposals/PROPOSAL_NUMBERS.md, pinned so the document cannot drift from the code.
@@ -16,8 +15,8 @@ const MISSIONS = [
 ] as const;
 
 const EXPECTED: Record<string, { usd: number; charge: number; reserve: number; todayCharge: number }> = {
-  M1: { usd: 0.09, charge: 500, reserve: 575, todayCharge: 18_000 },
-  M2: { usd: 0.135, charge: 750, reserve: 863, todayCharge: 27_000 },
+  M1: { usd: 0.1, charge: 560, reserve: 644, todayCharge: 18_000 },
+  M2: { usd: 0.15, charge: 840, reserve: 966, todayCharge: 27_000 },
   M3: { usd: 0.79875, charge: 4_500, reserve: 5_175, todayCharge: 187_500 },
   M4: { usd: 1.254, charge: 6_900, reserve: 7_935, todayCharge: 22_000 },
   B2B: { usd: 0.0288, charge: 159, reserve: 183, todayCharge: 150 },
@@ -34,19 +33,23 @@ describe("mission prices under the proposed unit prices", () => {
     expect(billedUnitMicro(price.unitMicro)).toBe(price.billedUnitMicro);
   });
 
+  it("the missions at their real sizes (the document's rows)", () => {
+    const yt = proposedPriceFor("social-youtube-comments")!;
+    expect([chargePoints(25_000, yt.billedUnitMicro), reservePoints(25_000, yt.billedUnitMicro)]).toEqual([7_000, 8_050]);
+    expect([chargePoints(5_000, yt.billedUnitMicro), reservePoints(5_000, yt.billedUnitMicro)]).toEqual([1_400, 1_610]);
+    // the first-path price (500 comments per call) is 28 times lower: 1 point per 100
+    expect(blockPricePoints(unitPriceMicro(PROPOSED_COST_BASIS["social-youtube-comments"].primaryCostUsdPerRecord!))).toBe(1);
+    expect(proposedPriceFor("social-x-posts")!.blockPoints).toBe(12);
+    expect(blockPricePoints(unitPriceMicro(PROPOSED_COST_BASIS["social-x-posts"].primaryCostUsdPerRecord!))).toBe(9);
+    expect(blockPricePoints(unitPriceMicro(PROPOSED_COST_BASIS["social-facebook-posts"].primaryCostUsdPerRecord!))).toBe(110);
+  });
+
   it("the proposed price is never below the cost at 10x (margin at least 90% of the markup rule)", () => {
     for (const { slug } of MISSIONS) {
       const price = proposedPriceFor(slug)!;
       const costPerRecordEgp = PROPOSED_COST_BASIS[slug].costUsdPerRecord * 55;
       expect(price.billedUnitMicro / 10_000 * 0.1).toBeGreaterThanOrEqual(costPerRecordEgp * 10 - 1e-9);
     }
-  });
-
-  it("bonus arithmetic: points issued per pound and the margin at the 40% tier", () => {
-    const top = marginImpact(40);
-    expect(top.pointsPerPound).toBeCloseTo(14, 6);
-    expect(top.revenuePerPointEgp).toBeCloseTo(1 / 14, 6);
-    expect(top.grossMargin).toBeCloseTo(0.86, 6);
   });
 
   it("referral arithmetic: 300 points given on a first 100-pound top-up leaves 87% margin before fees", () => {

@@ -78,3 +78,25 @@ describe("proposal 4d: price from the real cost of one delivered record", () => 
     expect(() => unitPriceMicro(Number.NaN)).toThrow();
   });
 });
+
+import { getSocialCapability } from "../../src/lib/socialSources";
+
+describe("the assumed cost bases are the source chain's own numbers (call price / records per call)", () => {
+  const chainOf = (slug: string) => {
+    const cap = getSocialCapability(slug)!;
+    if (cap.comments) return cap.comments;
+    return cap.discover.query || cap.discover.channel || [];
+  };
+  const perRecord = (source: { costUsd: number; maxPerCall: number }) => source.costUsd / source.maxPerCall;
+
+  it.each(["social-x-posts", "social-youtube-comments", "social-tiktok-comments", "social-facebook-comments", "social-facebook-posts"])("%s", (slug) => {
+    const chain = chainOf(slug);
+    const basis = PROPOSED_COST_BASIS[slug];
+    expect(basis.primaryCostUsdPerRecord).toBeCloseTo(perRecord(chain[0]), 9);
+    // the price is built on the worst path (the owner's measured X figure sits between the first and the worst path)
+    const worst = Math.max(...chain.map(perRecord));
+    expect(basis.costUsdPerRecord).toBeGreaterThanOrEqual(basis.primaryCostUsdPerRecord! - 1e-12);
+    if (basis.basis === "assumed") { expect(basis.costUsdPerRecord).toBeGreaterThanOrEqual(worst - 1e-12); expect(basis.costUsdPerRecord / worst).toBeLessThan(1.01); }
+    else expect(basis.costUsdPerRecord).toBeLessThanOrEqual(worst);
+  });
+});

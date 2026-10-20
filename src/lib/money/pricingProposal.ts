@@ -17,8 +17,10 @@ export const MICRO = 10_000;
 export const BLOCK_SIZE = 100;
 
 export interface CostBasis {
-  /** Provider cost of one delivered, matching record, in USD. */
+  /** The cost the proposed price is built on: the WORST source path in the code (or the measured / owner figure). */
   costUsdPerRecord: number;
+  /** The cost when the first source in the chain answers (its call price divided by its records per call); null when measured. */
+  primaryCostUsdPerRecord: number | null;
   /** "measured" = from completed jobs; "owner" = the owner's own run; "assumed" = catalog price per call / records per call. */
   basis: "measured" | "owner" | "assumed";
   noteAr: string;
@@ -66,16 +68,18 @@ export function maxVolumeUnderCap(capPoints: number, unitMicro: number, bufferPe
 
 /**
  * Proposed cost basis per delivered record. Only the X figure is the owner's own run (about 0.80 USD for 37,500 posts) and the
- * company figure is measured on completed jobs; every other figure is a CATALOG PRICE PER CALL divided by the records one
- * call returns, i.e. an ASSUMPTION until the scaled-down verification run measures it.
+ * company figure is measured on completed jobs; every other figure is a CATALOG PRICE PER CALL divided by the records one call
+ * returns (`maxPerCall` in `src/lib/socialSources.ts`), i.e. an ASSUMPTION until the scaled-down verification run measures it.
+ * The price is built on the worst path in the source chain, so a fallback answering never sells below cost; the first (cheaper)
+ * path is kept beside it so the owner can see the gap.
  */
 export const PROPOSED_COST_BASIS: Record<string, CostBasis> = {
-  "social-x-posts": { costUsdPerRecord: 0.0000213, basis: "owner", noteAr: "تشغيل المالك: حوالي ٠٫٨٠ دولار لحوالي ٣٧٬٥٠٠ منشور" },
-  "social-youtube-comments": { costUsdPerRecord: 0.000045, basis: "assumed", noteAr: "سعر الطلب الواحد ٠٫٠٠٠٩ مقسومًا على ٢٠ تعليقًا" },
-  "social-tiktok-comments": { costUsdPerRecord: 0.00005, basis: "assumed", noteAr: "سعر الطلب الواحد ٠٫٠٠١ مقسومًا على ٢٠ تعليقًا" },
-  "social-facebook-comments": { costUsdPerRecord: 0.000188, basis: "assumed", noteAr: "سعر الطلب الواحد ٠٫٠٠١٨٨ مقسومًا على ١٠ تعليقات" },
-  "social-facebook-posts": { costUsdPerRecord: 0.000627, basis: "assumed", noteAr: "أعلى سعر صفحة في الكتالوج" },
-  "icypeas-companies-search": { costUsdPerRecord: 0.000576, basis: "measured", noteAr: "مقاس على ٤٣٤ سجلًا في ٤٤ طلبًا مكتملًا" },
+  "social-x-posts": { costUsdPerRecord: 0.0000213, primaryCostUsdPerRecord: 0.000015, basis: "owner", noteAr: "تشغيل المالك: حوالي ٠٫٨٠ دولار لحوالي ٣٧٬٥٠٠ منشور" },
+  "social-youtube-comments": { costUsdPerRecord: 0.00005, primaryCostUsdPerRecord: 0.0000018, basis: "assumed", noteAr: "أسوأ مسار: ٠٫٠٠١ للطلب الواحد و٢٠ تعليقًا؛ المسار الأول ٠٫٠٠٠٩ و٥٠٠ تعليق" },
+  "social-tiktok-comments": { costUsdPerRecord: 0.00005, primaryCostUsdPerRecord: 0.00005, basis: "assumed", noteAr: "٠٫٠٠١ للطلب الواحد و٢٠ تعليقًا (المسار الأول)" },
+  "social-facebook-comments": { costUsdPerRecord: 0.000188, primaryCostUsdPerRecord: 0.000188, basis: "assumed", noteAr: "٠٫٠٠١٨٨ للطلب الواحد و١٠ تعليقات" },
+  "social-facebook-posts": { costUsdPerRecord: 0.000627, primaryCostUsdPerRecord: 0.0002, basis: "assumed", noteAr: "أسوأ مسار: ٠٫٠٠١٨٨ لكل ٣ منشورات؛ المسار الأول ٠٫٠٠٢ لكل ١٠" },
+  "icypeas-companies-search": { costUsdPerRecord: 0.000576, primaryCostUsdPerRecord: null, basis: "measured", noteAr: "مقاس على ٤٣٤ سجلًا في ٤٤ طلبًا مكتملًا" },
 };
 
 export interface ProposedPrice {

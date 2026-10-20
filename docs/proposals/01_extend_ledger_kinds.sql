@@ -4,4 +4,4 @@
 ALTER TABLE public.credit_ledger_kinds DROP CONSTRAINT IF EXISTS credit_ledger_kinds_kind_check;
 ALTER TABLE public.credit_ledger_kinds
   ADD CONSTRAINT credit_ledger_kinds_kind_check
-  CHECK (kind IN ('topup_instapay', 'promo_code', 'admin_grant', 'bundle_bonus', 'work_email_bonus', 'referral_reward'));
+  CHECK (kind IN ('topup_instapay', 'promo_code', 'admin_grant', 'bundle_bonus', 'email_bonus', 'referral_reward'));
