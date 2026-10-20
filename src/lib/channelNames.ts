@@ -119,3 +119,11 @@ export function channelsCountAr(count: number): string {
   if (count === 2) return "قناتين";
   return `${toArabicDigits(count)} ${count >= 3 && count <= 10 ? "قنوات" : "قناة"}`;
 }
+
+/** «فيديو واحد», «فيديوهين», «٣ فيديوهات», «١١ فيديو» (or the same for posts): a count of videos in correct Arabic. */
+export function videosCountAr(count: number, noun: "videos" | "posts" = "videos"): string {
+  const [one, two, few, many] = noun === "posts" ? ["منشور واحد", "منشورين", "منشورات", "منشور"] : ["فيديو واحد", "فيديوهين", "فيديوهات", "فيديو"];
+  if (count === 1) return one;
+  if (count === 2) return two;
+  return `${toArabicDigits(count)} ${count >= 3 && count <= 10 ? few : many}`;
+}

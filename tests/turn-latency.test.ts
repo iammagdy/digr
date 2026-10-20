@@ -118,7 +118,8 @@ describe("the production path keeps the conversation history after the reorderin
     expect(second.clarificationItems.map((q: any) => q.id)).toEqual(["volume_cap_required"]);
     expect(second.contentAr).toContain("منتخب مصر");
     const third = await send(answer("volume_cap_required", "ما الحد الأقصى لعدد التعليقات الذي تريده؟", "٢٠٠٠ تعليق"));
-    expect(third.clarificationItems.map((q: any) => q.id)).toEqual(["social_time_required"]);
+    // the period is proposed on the plan, not asked: the cap answer completes the request
+    expect(third.outputType).toBe("propose_plan");
     const users = db.tables.messages.filter((row) => row.role === "user");
     expect(users).toHaveLength(3);
     expect(db.tables.messages.filter((row) => row.role === "assistant")).toHaveLength(3);

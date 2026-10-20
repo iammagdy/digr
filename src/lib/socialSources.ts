@@ -11,7 +11,7 @@
  */
 
 import { normalizeDigits } from "./arabicDigits";
-import { channelsCountAr } from "./channelNames";
+import { channelsCountAr, videosCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 
@@ -825,6 +825,12 @@ export function canonicalSocialParams(
 export const MAX_PER_VIDEO = 500;
 export const MAX_VIDEOS_PER_JOB = 20;
 
+/** «٣ فيديوهات يوتيوب» when the plan names how many videos, otherwise «فيديوهات يوتيوب»: the videos and the comments are two quantities. */
+function videoCountPhrase(params: Record<string, any>, platform: string): string {
+  const count = Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0;
+  return count ? `${videosCountAr(count)} على ${platform}` : `فيديوهات ${platform}`;
+}
+
 /** The one-line Arabic goal shown on the plan card, written by the server so it always matches what will run. */
 export function socialPlanSummaryAr(
   cap: SocialCapabilityDef,
@@ -837,8 +843,12 @@ export function socialPlanSummaryAr(
   const mode = resolveSocialMode(params);
   const what = cap.kind === "comments" ? "التعليقات" : cap.kind === "posts" || cap.platform === "facebook" ? "المنشورات" : "الفيديوهات";
   const perVideo = Number(params.perVideo) > 0 ? Number(params.perVideo) : SOCIAL_COMMENTS_PER_VIDEO;
+  // The customer named the number of videos: the plan states the comments in all (two quantities), not a per-video figure that repeats it.
+  const videosNamed = Number(params.videoCount) > 0;
   const commentLimit = cap.kind === "comments" && mode !== "url"
-    ? `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو، و${formatNumber(volume)} تعليقاً إجمالاً`
+    ? videosNamed
+      ? `، حتى ${formatNumber(volume)} تعليقاً إجمالاً`
+      : `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو، و${formatNumber(volume)} تعليقاً إجمالاً`
     : "";
   const query = mode === "query" && requestText ? socialSubjectText(requestText) : String(params.query || "").trim();
   const missionChannels = channelsOf(params);
@@ -854,7 +864,7 @@ export function socialPlanSummaryAr(
       return `سحب ${what} للرابط المحدد على ${platform}`;
     case "query":
       return cap.kind === "comments"
-        ? `سحب ${what} من فيديوهات ${platform} عن «${query}»${commentLimit}`
+        ? `سحب ${what} من ${videoCountPhrase(params, platform)} عن «${query}»${commentLimit}`
         // On X the replies come with the search when the source returns them; the plan says so instead of promising them.
         : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}`;
     case "channel":
