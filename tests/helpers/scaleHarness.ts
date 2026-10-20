@@ -161,7 +161,17 @@ export function supabaseServerMock() {
           return { select: () => ({ eq: (col: string, v: unknown) => ({ maybeSingle: async () => ({ data: db.quotes.find((row) => row[col] === v) ?? null, error: null }), then: (r: any) => r({ data: db.quotes.filter((row) => row[col] === v), error: null }) }) }) };
         }
         if (table === "job_events" || table === "artifact_versions") {
-          const base: any = { select: () => base, eq: () => base, in: () => base, order: () => base, limit: () => base, maybeSingle: async () => ({ data: null, error: null }), then: (r: any) => r({ data: table === "job_events" ? db.events : [], error: null }) };
+          let newestFirst = false;
+          let max = Infinity;
+          const base: any = {
+            select: () => base, eq: () => base, in: () => base, like: () => base, maybeSingle: async () => ({ data: null, error: null }),
+            order: (_col: string, opts?: { ascending?: boolean }) => { newestFirst = opts?.ascending === false; return base; },
+            limit: (n: number) => { max = n; return base; },
+            then: (r: any) => {
+              const rows = table === "job_events" ? (newestFirst ? [...db.events].reverse() : [...db.events]).slice(0, max) : [];
+              return r({ data: rows, error: null });
+            },
+          };
           return { ...base, insert: async (row: any) => { if (table === "job_events") db.events.push({ created_at: iso(nowMs()), ...row }); return { data: row, error: null }; }, upsert: async (row: any) => ({ data: row, error: null }) };
         }
         return jobsQuery();

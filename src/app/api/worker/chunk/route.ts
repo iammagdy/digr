@@ -58,6 +58,7 @@ import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingReq
 import { filterRowsByDateRange } from "../../../../lib/server/dateRangeFilter";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
+import { cursorKey, emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, removeRunningSets, runningSetKey, saveRunningSet, type RunningSet } from "../../../../lib/server/jobRunningSet";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
 import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
 import {
@@ -218,6 +219,9 @@ function buildReleaseFailedResponse(
     { status: 500 }
   );
 }
+
+/** How many of the newest page lines the per-page time estimate reads. */
+const PAGE_EVENTS_FOR_ETA = 30;
 
 export async function POST(req: NextRequest) {
   const routeStart = Date.now();
@@ -588,9 +592,13 @@ export async function POST(req: NextRequest) {
     let duplicateExcludedCount = 0;
     // Accepted rows of each earlier page (null = unreadable): feeds the stop rule for pages that find nothing.
     const priorBatchUnits: Array<number | null> = Array.from({ length: currentStep }, () => null);
+    // Cursors already used by this job, in the form the running set keeps them (see cursorKey).
     const seenProviderCursors = new Set<string>();
-    if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(String(currentCursor));
-    if ((isCompanyCapability || socialCapability || isPeopleJob) && (rawRows.length > 0 || currentStep > 0)) {
+    if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(cursorKey(currentCursor));
+    // What the earlier chunks left behind (row identities, cursors, rows per page), read from ONE running record, not rebuilt from every earlier chunk.
+    const trackRunningSet = isCompanyCapability || Boolean(socialCapability) || isPeopleJob;
+    let runningSet: RunningSet | null = currentStep === 0 ? emptyRunningSet() : null;
+    if (trackRunningSet && (rawRows.length > 0 || currentStep > 0)) {
       const seen = new Set<string>();
       // Rows a sample job already delivered (the «عينة أولًا» remainder): never delivered again, never billed again.
       for (const key of Array.isArray(spec.params?.excludeRowKeys) ? spec.params.excludeRowKeys : []) {
@@ -604,23 +612,24 @@ export async function POST(req: NextRequest) {
       // A provider may repeat its first page or return overlapping cursor pages.
       // De-duplicate against already accepted rows before validating or billing.
       const partials = adminClient.storage.from("partials");
-      for (let step = 0; step < currentStep; step++) {
-        const key = `${jobId}/step_${step}.json`;
-        let prior: any = inMemoryPartialStepFallback.get(key);
-        if (typeof partials?.download === "function") {
-          const { data: blob, error } = await partials.download(key);
-          if (!error && blob) {
-            try { prior = JSON.parse(await blob.text()); } catch { /* retain in-memory fallback */ }
+      runningSet = currentStep === 0 ? emptyRunningSet() : await loadRunningSet(partials, jobId, currentStep - 1);
+      if (!runningSet) {
+        // No readable running record (a job that started before it existed, a lost or damaged file): rebuild it from the earlier chunks' files, as before.
+        runningSet = await rebuildRunningSet(currentStep, dedupeIdentity, async (step) => {
+          const key = `${jobId}/step_${step}.json`;
+          let prior: any = inMemoryPartialStepFallback.get(key);
+          if (typeof partials?.download === "function") {
+            const { data: blob, error } = await partials.download(key);
+            if (!error && blob) {
+              try { prior = JSON.parse(await blob.text()); } catch { /* retain in-memory fallback */ }
+            }
           }
-        }
-        priorBatchUnits[step] = typeof prior?.batchUnits === "number" ? prior.batchUnits : Array.isArray(prior?.rows) ? prior.rows.length : null;
-        if (typeof prior?.cursor === "string" && prior.cursor) seenProviderCursors.add(prior.cursor);
-        // Rows an earlier page sent to review count too: the same row must not reach the review sheet twice.
-        for (const row of [...(Array.isArray(prior?.rows) ? prior.rows : []), ...(Array.isArray(prior?.uncertainRows) ? prior.uncertainRows : [])]) {
-          const identity = dedupeIdentity(row);
-          if (identity) seen.add(identity);
-        }
+          return prior ?? null;
+        });
       }
+      for (const identity of runningSet.identities) seen.add(identity);
+      for (const cursor of runningSet.cursors) seenProviderCursors.add(cursor);
+      runningSet.batchUnits.forEach((units, index) => { if (index < priorBatchUnits.length) priorBatchUnits[index] = units; });
       rawRows = rawRows.filter((row: any) => {
         const identity = dedupeIdentity(row);
         if (!identity) return true;
@@ -946,7 +955,7 @@ export async function POST(req: NextRequest) {
       acceptedRows.length < Math.min(effectivePageSize, remainingUnits) &&
       !adapterResult.nextCursor;
     const cursorWouldRepeat = Boolean(
-      adapterResult.nextCursor && seenProviderCursors.has(String(adapterResult.nextCursor))
+      adapterResult.nextCursor && seenProviderCursors.has(cursorKey(adapterResult.nextCursor))
     );
     // Multi-page fetching continues until the requested matching count is reached,
     // the source is exhausted, a cursor cycles, or the spend gate closes.
@@ -1020,6 +1029,12 @@ export async function POST(req: NextRequest) {
       timestamp: new Date().toISOString(),
     };
 
+    // The running record AFTER this chunk, stored beside the chunk's own file (before complete_chunk, so a chunk that dies and re-runs
+    // reads the same earlier record and writes this one again). A record that cannot be stored only makes the next chunk rebuild it.
+    if (trackRunningSet && runningSet) {
+      await saveRunningSet(adminClient.storage.from("partials"), jobId, extendRunningSet(runningSet, currentStep, partialData, dedupeIdentity));
+    }
+
     const partialUploadRes = await adminClient.storage
       .from("partials")
       .upload(
@@ -1062,6 +1077,8 @@ export async function POST(req: NextRequest) {
     }
 
     const recordedDeliveredUnits: number = compData.delivered_units;
+    // The previous running record can no longer be read by any chunk (this chunk is recorded as done).
+    if (trackRunningSet && currentStep > 0) await removeRunningSets(adminClient.storage.from("partials"), jobId, [currentStep - 1]);
 
     // One concise customer event per real provider page with received,
     // accepted, cumulative and skipped counts; never include row-level PII.
@@ -1074,13 +1091,14 @@ export async function POST(req: NextRequest) {
             .select("message, units, created_at")
             .eq("job_id", jobId)
             .eq("event_type", "progress")
-            .order("created_at", { ascending: true })
-            .limit(100);
+            .order("created_at", { ascending: false })
+            .limit(PAGE_EVENTS_FOR_ETA);
           const { data: startedJob } = await adminClient.from("jobs").select("created_at").eq("id", jobId).maybeSingle();
           // Measured batch durations: job start -> first page, then page -> page, ending now.
           const marks = [
             Date.parse(String(startedJob?.created_at || "")),
-            ...(previousPageEvents || [])
+            // the newest page lines, oldest first: after many pages the estimate follows the recent pace, not the first pages
+            ...[...(previousPageEvents || [])].reverse()
               .filter((event: any) => typeof event.message === "string" && /^الصفحة\s/u.test(event.message))
               .map((event: any) => Date.parse(String(event.created_at || ""))),
             Date.now(),
@@ -1609,6 +1627,7 @@ export async function POST(req: NextRequest) {
           inMemoryPartialStepFallback.delete(k);
           return k;
         });
+        partialPaths.push(runningSetKey(jobId, currentStep), runningSetKey(jobId, currentStep - 1));
         if (
           partialPaths.length > 0 &&
           typeof adminClient.storage.from("partials").remove === "function"

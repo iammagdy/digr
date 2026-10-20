@@ -42,7 +42,16 @@ Two consequences that are not obvious from the table:
 Quadratic: a job of 1,000 chunks (50,000 rows at 50 per chunk) would make about **500,500 downloads and about 9 GB of reads** (33 MB x
 (1000/60)^2). The last chunks would each download about 1,000 files one after the other before making a single provider call; at
 an assumed 30 to 60 ms per storage round trip (**estimate, not measured**) that is 30 to 60 seconds, i.e. past the 45 s deadline. So the
-re-reads, not the provider, would stop such a job. PR 4b replaces them with one running identity set.
+re-reads, not the provider, would stop such a job.
+
+**After PR 4b (measured, same 60-chunk job):** 119 downloads and 2.2 MB read (59 small running records, one per chunk, plus the 60 chunk files the
+final assembly reads once), against 1,830 downloads and 33 MB before. A 200-chunk, 10,000-row run made 399 downloads and 17 MB (the final assembly
+dominates; PR 4c addresses it); the running record after chunk 200 was 138 KB. How it works: `src/lib/server/jobRunningSet.ts` stores the
+state after each chunk in `seen_<n>.json` (row identities, cursors as short hashes, rows accepted per page); chunk n+1 reads only `seen_<n>.json`;
+the previous record is removed once the next chunk is recorded; a missing or damaged record is rebuilt from the chunk files as before (same rows,
+tested); a chunk that dies and re-runs reads the same earlier record, so its own rows are never taken for duplicates (tested). Also in 4b: the
+per-page time estimate written into the page line read the FIRST 100 page lines of the job (`route.ts`, `previousPageEvents`), so after 100 pages it
+described the first pages; it now reads the newest 30.
 
 ## 3. Final assembly and the workbook
 
@@ -84,6 +93,15 @@ these reads (same graceful fallback the ledger already uses) and tests them with
 4. **SQL.** `claim_job_chunk`, `complete_chunk` and `record_chunk_failure` take one lease per chunk and store the whole job state in one row; at 1,000 chunks that is 1,000
    claims and 1,000 completions: no change needed. A real measurement of `job_events` volume (about 3 to 5 rows per chunk) is advised before 1,000-chunk jobs: the page
    reads the newest rows only, so it stays correct.
+
+### An exception late in a long job releases everything (found while testing kill and resume; money path, proposal only, not changed)
+
+In `src/app/api/worker/chunk/route.ts` the final `catch` (from `record_chunk_failure`, about line 1790) calls `release_job_atomic` for the whole job unless the request carries
+`retryOnly: true`, and nothing in the code sends `retryOnly`. So any unexpected exception inside a chunk (a storage write that fails once, a transient error from `complete_chunk`)
+releases the entire reserve with no charge even when thousands of rows were already delivered, and the job is over. For a job of hundreds of chunks over hours that is a large
+loss for one transient error (the customer is not charged, so it is a loss of delivered work and provider spend, not of the customer's points). A proposal for the owner: on an
+unexpected exception with rows already delivered, answer retryable (the driver and the page already resume a job) and release or settle only after a few consecutive failures at
+the same step, settling the delivered rows through the existing `settle_job_atomic`. Not changed: it is the release path. The behaviour of `record_chunk_failure` in SQL (retry counting) was not read.
 
 ## 6. Tests that run through the real worker (`tests/long-job-scale-harness.test.ts`)
 
