@@ -74,7 +74,9 @@ export async function runFixture(fixture: Fixture, options: BenchmarkOptions = {
       const dedupe = dedupeRows([item.row], identityOf, seen);
       if (dedupe.duplicates > 0) { outcomes.push("duplicate"); continue; }
       const verdict = gate(item.row, { capabilitySlug: fixture.capability, endpointId: fixture.endpointId, params: fixture.params, now: BENCHMARK_NOW });
-      if (verdict.decision === "match") { outcomes.push("delivered"); delivered.push(item.row); }
+      // A presumed-on-topic row the gate flags as doubtful is delivered only if the automatic review confirms it, so offline it is a review row.
+      if (verdict.decision === "match" && verdict.suspicious) { outcomes.push("review"); review.push({ ...item.row, _relevance_reason: verdict.reasonAr }); }
+      else if (verdict.decision === "match") { outcomes.push("delivered"); delivered.push(item.row); }
       else if (verdict.decision === "uncertain") { outcomes.push("review"); review.push({ ...item.row, _relevance_reason: verdict.reasonAr }); }
       else outcomes.push("rejected");
     }

@@ -42,6 +42,10 @@ export interface AdvisoryResult {
   verdicts: Map<number, AdvisoryVerdict>;
   usage: AdvisoryUsage | null;
   failure?: AdvisoryFailureCode | null;
+  /** Why the model stopped writing (`end_turn`, `max_tokens`, ...), when the call got an answer: proves a truncated reply. */
+  stopReason?: string | null;
+  /** A short, secret-free note about a failure (the provider's error type), never row content. */
+  detail?: string | null;
 }
 
 export interface RowAdvisoryInput {
@@ -56,6 +60,13 @@ export interface RowAdvisoryInput {
 export type RowAdvisorFn = (input: RowAdvisoryInput) => Promise<AdvisoryResult>;
 
 const ADVISORY_MAX_ROWS = 40;
+/**
+ * Room for the reply: an Arabic verdict with its reason is about 100 tokens, so a fixed 1,200 cut the reply of a page of 20 rows
+ * in the middle (an unreadable reply, recorded as a failure with no tokens). Room for every row, plus a margin.
+ */
+export function advisoryMaxTokens(rows: number): number {
+  return Math.min(6000, Math.max(1200, 300 + Math.max(1, rows) * 160));
+}
 const ADVISORY_TIMEOUT_MS = 8000;
 const SNIPPET_CHARS = 220;
 
@@ -127,7 +138,7 @@ function buildPrompt(input: RowAdvisoryInput): string {
       "A text about another subject that merely shares a word with the topic is \"no_match\". An empty text is \"no_match\". A reply or comment that only agrees or reacts (for example \"agreed\", \"true\", an emoji) says nothing about the topic: \"uncertain\".",
       "For a comment, the video title is context only, never evidence by itself that the comment is about the topic.",
     ] : []),
-    "Judge only from the row's own fields. Never guess a match. Give a short Arabic reason (one sentence, no emoji).",
+    "Judge only from the row's own fields. Never guess a match. Give a short Arabic reason (at most twelve words, no emoji).",
     "Reply with ONLY JSON: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\",\"reasonAr\":\"...\"}]}",
     "Rows:",
     JSON.stringify(rows),
@@ -154,9 +165,18 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       signal: controller.signal,
-      body: JSON.stringify({ model, max_tokens: 1200, messages: [{ role: "user", content: buildPrompt(input) }] }),
+      body: JSON.stringify({ model, max_tokens: advisoryMaxTokens(input.rows.length), messages: [{ role: "user", content: buildPrompt(input) }] }),
     });
-    if (!response.ok) return empty(`http_${response.status}`);
+    if (!response.ok) {
+      let detail: string | null = null;
+      try {
+        const body: any = await response.json();
+        detail = [body?.error?.type, body?.error?.message].filter((part) => typeof part === "string").join(": ").replace(/\s+/g, " ").slice(0, 160) || null;
+      } catch {
+        detail = null;
+      }
+      return { ...empty(`http_${response.status}`), detail };
+    }
     const data: any = await response.json();
     const text = Array.isArray(data?.content) ? data.content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("") : "";
     const inputTokens = Number(data?.usage?.input_tokens) || 0;
@@ -165,7 +185,8 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
     const costUsd = (inputTokens * pricing.inputCostPerMillion + outputTokens * pricing.outputCostPerMillion) / 1_000_000;
     const verdicts = parseAdvisoryReply(text);
     const failure: AdvisoryFailureCode | null = verdicts.size === 0 && input.rows.length > 0 ? "bad_reply" : null;
-    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure };
+    const stopReason = typeof data?.stop_reason === "string" ? data.stop_reason : null;
+    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure, stopReason, detail: failure === "bad_reply" ? `reply_chars=${text.length}` : null };
   } catch (err: any) {
     const isTimeout = err?.name === "AbortError" || controller.signal.aborted;
     return empty(isTimeout ? "timeout" : "network");
@@ -230,6 +251,8 @@ export interface SocialReviewAttempt {
   rows: number;
   usage: AdvisoryUsage | null;
   failure: AdvisoryFailureCode | null;
+  stopReason: string | null;
+  detail: string | null;
 }
 
 export interface SocialReviewOutcome {
@@ -277,7 +300,7 @@ export async function reviewSocialRows(input: {
     } catch {
       result = { verdicts: new Map(), usage: null, failure: "network" };
     }
-    outcome.attempts.push({ rows: batch.length, usage: result.usage, failure: result.failure ?? null });
+    outcome.attempts.push({ rows: batch.length, usage: result.usage, failure: result.failure ?? null, stopReason: result.stopReason ?? null, detail: result.detail ?? null });
     outcome.costUsd += Math.max(0, result.usage?.costUsd ?? 0);
     let missing = 0;
     for (const entry of batch) {
@@ -299,11 +322,17 @@ export const UNREVIEWED_REASON_AR = "تعذّر التحقق الآلي من م�
  * «no match» or no verdict at all moves the row to the labelled review sheet (not delivered, not charged). The review can never
  * turn an excluded or reviewed-out row into a delivered one, so the delivered count and the charge can only go down.
  */
-export function applyStrictAdvisory<T extends RowReviewReason>(reviews: T[], verdicts: Map<number, AdvisoryVerdict>): AdvisoryApplication<T> & { unreviewed: number } {
+export function applyStrictAdvisory<T extends RowReviewReason>(
+  reviews: T[],
+  verdicts: Map<number, AdvisoryVerdict>,
+  options: { only?: (review: T) => boolean } = {},
+): AdvisoryApplication<T> & { unreviewed: number } {
   let demoted = 0;
   let unreviewed = 0;
   const next = reviews.map((review) => {
     if (review.decision !== "match") return review;
+    // Only the rows the caller sent to the review are subject to it; the others were never in doubt.
+    if (options.only && !options.only(review)) return review;
     const advisory = verdicts.get(review.index);
     if (advisory?.verdict === "match") return review;
     demoted += 1;

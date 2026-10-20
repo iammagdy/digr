@@ -82,3 +82,35 @@ export function matchTopic(stems: string[], content: string): TopicMatch {
   const present = contentStems(content);
   return { matched: stems.filter((stem) => hasStem(present, stem)).length, total: stems.length };
 }
+
+/**
+ * Words people use around a topic without naming it: for football, a comment says «الكورة» or «ماتش» or the name of a club, not
+ * «كرة القدم». They count as evidence that a text is on the topic (never as the only reason to reject one). Raw spellings; they are
+ * normalised and stemmed like any other word when compared.
+ */
+const FOOTBALL_FAMILY_WORDS = [
+  "كورة", "كوره", "الكورة", "ماتش", "مباراة", "مباريات", "هدف", "اهداف", "جول", "ركلة", "ضربة", "جزاء", "تسلل", "حكم", "ملعب", "لاعب", "لاعبين",
+  "فريق", "منتخب", "دوري", "كاس", "بطولة", "مونديال", "الاهلي", "الأهلي", "الزمالك", "بيراميدز", "صلاح", "تدريب", "مدرب", "جمهور", "ألتراس",
+  "football", "soccer", "goal", "match", "league", "cup", "referee", "stadium", "striker", "penalty", "var",
+];
+
+const TOPIC_FAMILIES: Array<{ isTopic: (stems: string[]) => boolean; words: string[] }> = [
+  { isTopic: (stems) => stems.includes("كره") && stems.includes("قدم"), words: FOOTBALL_FAMILY_WORDS },
+];
+
+/** The topic's own stems plus the words of its family, as stems; what a short text may use to show it is on the topic. */
+export function topicEvidenceStems(topicStemList: string[]): string[] {
+  const out = new Set(topicStemList);
+  for (const family of TOPIC_FAMILIES) {
+    if (!family.isTopic(topicStemList)) continue;
+    for (const word of family.words) for (const token of normalizeText(word).split(/\s+/u).filter(Boolean)) out.add(stemToken(token));
+  }
+  return [...out];
+}
+
+/** True when the text shows ANY evidence of the topic: one of its stems, an equivalent, or a word of its family. */
+export function hasTopicEvidence(topicStemList: string[], content: string): boolean {
+  if (!content) return false;
+  const present = contentStems(content);
+  return topicEvidenceStems(topicStemList).some((stem) => hasStem(present, stem));
+}

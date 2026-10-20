@@ -238,11 +238,18 @@ describe("B1. the gate understands Arabic and the request", () => {
     expect(matchTopic(topicStems("الطاقة الشمسية"), "solar energy is the future")).toEqual({ matched: 2, total: 2 });
   });
 
-  it("a topic of several words that appears only in part goes to review, not delivery", () => {
-    const params = { query: "الطاقة الشمسية" };
+  it("a feed with no source-side topic filter (an account): a topic of several words that appears only in part goes to review, not delivery", () => {
+    const params = { query: "الطاقة الشمسية", channel: "@energy_page" };
     expect(evaluateResearchRowRelevance({ text: "طاقة شمسية للمنازل بتوفر كتير" }, ctx(params)).decision).toBe("match");
     expect(evaluateResearchRowRelevance({ text: "الطاقة الكهربائية غالية في مصر" }, ctx(params)).decision).toBe("uncertain");
     expect(evaluateResearchRowRelevance({ text: "صباح الخير" }, ctx(params)).decision).toBe("no_match");
+  });
+
+  it("a topic search (the source filtered by the topic itself): the rows it returned are presumed on topic, with no review for ordinary text", () => {
+    const params = { query: "الطاقة الشمسية" };
+    expect(evaluateResearchRowRelevance({ text: "طاقة شمسية للمنازل بتوفر كتير" }, ctx(params))).toMatchObject({ decision: "match" });
+    expect(evaluateResearchRowRelevance({ text: "الطاقة الكهربائية غالية في مصر" }, ctx(params))).toEqual({ decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب" });
+    expect(evaluateResearchRowRelevance({ text: "صباح الخير" }, ctx(params))).toEqual({ decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب" });
   });
 
   it("language: only when the request names one and the row states its own; a topic miss still wins", () => {

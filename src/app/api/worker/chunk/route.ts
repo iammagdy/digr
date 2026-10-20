@@ -714,6 +714,7 @@ export async function POST(req: NextRequest) {
     let uncertainRows: any[] = [];
     let reviewUsdThisChunk = 0;
     let reviewFailureCodes: string[] = [];
+    let reviewDiagnostics: Array<Record<string, unknown>> = [];
     let relevanceExcludedCount = 0;
     let relevanceSkipReasons: string[] = [];
     // Set when the automatic relevance review could not review some candidate rows: they go to the review sheet, paging
@@ -780,8 +781,9 @@ export async function POST(req: NextRequest) {
       // itself does the requested activity AND quotes its own text. Anything else (a doubt, a failure, a timeout, a
       // disabled reviewer) puts the row in the labelled review sheet: not delivered, not charged. Claude never promotes.
       const strictCompanyReview = isCompanyCapability && (!useMockProvider || hasInjectedCompanyReviewer());
-      // Posts and comments on X and TikTok: the same fail-closed rule, with the reviewer of rows and a cost cap per job.
-      const strictSocialReview = ["x", "tiktok"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
+      // Posts and comments of a topic search (X, TikTok, YouTube) are presumed on topic; only the rows the gate flags as doubtful are
+      // reviewed, and those are delivered only when the review confirms them (fail closed). Feeds without a topic filter keep the strict gate., with the reviewer of rows and a cost cap per job.
+      const strictSocialReview = ["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
 
       if (strictCompanyReview) {
         const reviewKeywords = [...new Set([...companyActivityKeywords(spec.params), ...companyActivityKeywords({ industry: expectedIndustry }), ...(recognizedSector?.englishKeywords || [])])];
@@ -856,18 +858,26 @@ export async function POST(req: NextRequest) {
       } else if (strictSocialReview) {
         // Posts and comments: a deterministic match is delivered only when the review confirms it. A failed or unreadable review, or the
         // job's review budget being used up, leaves the rows in the review sheet (not delivered, not charged) and stops paging.
-        if (matchedForAdvice.length > 0) {
+        const suspiciousIndexes = new Set(reviews.filter((rev) => rev.decision === "match" && (rev as any).suspicious === true).map((rev) => rev.index));
+        const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match" && !suspiciousIndexes.has(rev.index)).length;
+        const rowsToReview = matchedForAdvice.filter((entry) => suspiciousIndexes.has(entry.index));
+        if (rowsToReview.length > 0) {
           const priorReviewUsd = runningSet?.reviewUsd ?? 0;
           const outcome = await reviewSocialRows({
             advisor: getRowAdvisor(),
             customerRequest: reviewCustomerRequest,
             kind: String(spec.capabilitySlug || ""),
-            rows: matchedForAdvice,
+            rows: rowsToReview,
             budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
             deadlineMs: deadlineMs - 8_000,
           });
           reviewUsdThisChunk = outcome.costUsd;
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
+          // What each review call really did, kept in the step file so a failure proves its own cause (never row content).
+          reviewDiagnostics = outcome.attempts.map((attempt) => ({
+            rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
+            tokensIn: attempt.usage?.inputTokens ?? 0, tokensOut: attempt.usage?.outputTokens ?? 0, latencyMs: attempt.usage?.latencyMs ?? 0,
+          }));
           if (userId) {
             for (const attempt of outcome.attempts) {
               try {
@@ -877,20 +887,22 @@ export async function POST(req: NextRequest) {
                   tokens_out: attempt.usage?.outputTokens ?? 0,
                   model: attempt.usage?.model ?? (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
                   latency_ms: attempt.usage?.latencyMs ?? 0,
-                  reason: attempt.failure ? "relevance_review_failed" : "relevance_review",
+                  reason: attempt.failure ? `relevance_review_failed:${attempt.failure}` : "relevance_review",
                   cost_usd: Number((attempt.usage?.costUsd ?? 0).toFixed(6)),
                   created_at: new Date().toISOString(),
                 });
               } catch (usageErr: any) {
                 console.warn("[worker:relevance_review_usage_log_failed]", usageErr?.message || "");
               }
-              if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure}`);
+              if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure} stop=${attempt.stopReason || ""}`);
             }
           }
-          const applied = applyStrictAdvisory(reviews, outcome.verdicts);
+          const applied = applyStrictAdvisory(reviews, outcome.verdicts, { only: (rev) => suspiciousIndexes.has(rev.index) });
           reviews = applied.reviews;
           if (applied.unreviewed > 0) {
-            reviewUnavailable = true;
+            // Paging stops only when nothing on the page could be delivered without the review; otherwise the doubtful rows wait
+            // in the review sheet and the rest of the job goes on.
+            reviewUnavailable = deliverableWithoutReview === 0;
             const capped = outcome.stoppedBy === "cap";
             try {
               await adminClient.from("job_events").insert({
@@ -1103,6 +1115,7 @@ export async function POST(req: NextRequest) {
       uncertainRowsCount: uncertainRows.length,
       ...(reviewUsdThisChunk > 0 ? { reviewUsd: Number(reviewUsdThisChunk.toFixed(6)) } : {}),
       ...(reviewFailureCodes.length > 0 ? { reviewFailures: reviewFailureCodes } : {}),
+      ...(reviewDiagnostics.length > 0 ? { reviewCalls: reviewDiagnostics } : {}),
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
       uncertainRows,
