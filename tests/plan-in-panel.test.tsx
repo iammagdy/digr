@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import PlanQuoteCard, { type PlanQuoteData } from "../src/app/dashboard/chat/components/PlanQuoteCard";
-import { PLAN_READY_AR } from "../src/lib/consultantCopy";
+import { PLAN_READY_DESKTOP_AR, PLAN_READY_MOBILE_AR } from "../src/lib/consultantCopy";
 
 /**
  * The plan lives in the results panel, never in the chat stream. The chat says one sentence; the panel carries the plan,
@@ -38,9 +38,13 @@ const render = (q: PlanQuoteData, props: Record<string, unknown> = {}) =>
 
 describe("the chat stream", () => {
   it("shows one short sentence for a plan and no plan card", () => {
-    expect(PLAN_READY_AR).toBe("جهزت لك الخطة، راجعها على اليمين.");
+    // the panel is the second column of an RTL page, so it is on the left; on a phone it is a bottom sheet
+    expect(PLAN_READY_DESKTOP_AR).toBe("جهزت لك الخطة، راجعها على اليسار.");
+    expect(PLAN_READY_MOBILE_AR).toBe("جهزت لك الخطة، راجعها في النافذة التي ظهرت من الأسفل.");
     const renderNote = page.slice(page.indexOf("const renderNote"), page.indexOf("const runNode") > 0 ? page.indexOf("const latestPlanQuote") : undefined);
-    expect(renderNote).toContain("{m.planQuote ? PLAN_READY_AR : customerFacingAssistantCopy(m.content)}");
+    expect(renderNote).toContain("{m.planQuote");
+    expect(renderNote).toContain('<span className="lg:hidden">{PLAN_READY_MOBILE_AR}</span><span className="hidden lg:inline">{PLAN_READY_DESKTOP_AR}</span>');
+    expect(renderNote).toContain(": customerFacingAssistantCopy(m.content)}");
     expect(renderNote).not.toContain("<PlanQuoteCard");
     expect(renderNote).toContain('data-testid="open-plan-btn"');
   });
