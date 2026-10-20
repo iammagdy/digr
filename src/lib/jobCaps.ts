@@ -35,6 +35,21 @@ export interface CapStatementInput {
 
 const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 
+/** The reason sentence shown whenever the plan holds fewer records than the customer asked for. */
+export const VOLUME_LIMIT_REASON_AR = "يتحدد الحد بسبب سقف المهمة الحالي.";
+
+/**
+ * What the customer asked, what fits one job now, and why, in two short sentences. The numbers come from the plan; nothing is
+ * shrunk without saying so. Null when the plan holds everything that was asked.
+ */
+export function volumeLimitStatementAr(input: { askedUnits: number; fittedUnits: number; unitLabelAr?: string }): string | null {
+  const asked = Math.round(input.askedUnits);
+  const fitted = Math.round(input.fittedUnits);
+  if (!Number.isFinite(asked) || !Number.isFinite(fitted) || fitted < 1 || fitted >= asked) return null;
+  const unit = input.unitLabelAr || "سجل";
+  return `طلبت ${n(asked)} ${unit}، والذي يناسب الطلب الواحد الآن ${n(fitted)} ${unit}. ${VOLUME_LIMIT_REASON_AR}`;
+}
+
 /**
  * When a request is larger than the cap allows, say plainly how many records fit and what the full request would
  * have needed. All numbers come from the quote; the model writes none of them. Null when nothing was reduced.
