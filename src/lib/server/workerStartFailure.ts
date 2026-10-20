@@ -4,6 +4,26 @@ export const MAX_WORKER_START_ATTEMPTS = MAX_WORKER_START_RETRIES + 1;
 export const WORKER_START_RETRY_REASON_AR = "تعذر بدء البحث الآن. ستتم إعادة المحاولة تلقائياً.";
 export const WORKER_START_FINAL_REASON_AR = "تعذر بدء البحث بعد عدة محاولات. أُعيدت النقاط المحجوزة إلى رصيدك.";
 
+/**
+ * Why a start did not go through, as a plain sentence plus a number the support team can read back (no technical words reach the
+ * customer). The same text goes into the request's activity so the conversation and «طلباتي» say the same thing.
+ */
+export const START_FAILURE_REASON_CODES: Record<string, number> = {
+  worker_auth_rejected: 11,
+  protection_redirect: 12,
+  worker_route_missing: 13,
+  worker_http_error: 14,
+  invalid_acknowledgement: 15,
+  dispatch_exception: 16,
+  dispatch_timeout: 17,
+};
+
+export function startFailureEventAr(failureCode: string | undefined): { code: number; message: string } {
+  const code = START_FAILURE_REASON_CODES[String(failureCode)] ?? 10;
+  const digits = String(code).replace(/\d/g, (d) => String.fromCharCode(0x0660 + Number(d)));
+  return { code, message: `تعثر بدء المعالجة مؤقتاً، وستُعاد المحاولة تلقائياً، ولن يُخصم من رصيدك إلا ما يُسلَّم (رمز السبب ${digits}).` };
+}
+
 export interface WorkerStartFailureResult {
   attemptCount: number | null;
   failed: boolean;

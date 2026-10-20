@@ -3729,6 +3729,10 @@ export class ChatHandler {
               ...(planWindowNow.reasonAr ? { reasonAr: planWindowNow.reasonAr } : {}),
               ...(planWindowNow.noteAr ? { noteAr: planWindowNow.noteAr } : {}),
             };
+            // YouTube shows when a comment or a video was published only as «منذ ٣ أسابيع»: the plan says the window is applied approximately.
+            if (verifiedSocialDef?.platform === "youtube" && verifiedSocialDef.kind === "comments") {
+              planQuoteData.window.noteAr = [planQuoteData.window.noteAr, "تواريخ يوتيوب تقريبية (مثل «منذ ٣ أسابيع»)، لذلك تُطبَّق الفترة عليها بشكل تقريبي."].filter(Boolean).join(" ");
+            }
           }
 
           planOutput.summaryAr = scrubPlaceholderPhrases(String(planOutput.summaryAr || ""));

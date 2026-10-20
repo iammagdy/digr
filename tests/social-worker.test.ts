@@ -100,6 +100,7 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setProviderAdapterForTesting, type ProviderAdapterCallInput } from "../src/lib/server/tregAdapter";
 import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "../src/lib/server/socialAdapter";
 import { estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/socialSources";
+import { setRelativeDateClockForTesting } from "../src/lib/server/relativeDate";
 import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 import { setReviewSampleRandomForTesting } from "../src/lib/server/sampledReview";
 
@@ -143,6 +144,7 @@ describe("worker: social jobs", () => {
     setRowAdvisorForTesting(null);
     setStrictSocialReviewForTesting(false);
     setReviewSampleRandomForTesting(null);
+    setRelativeDateClockForTesting(null);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete (process.env as any)[key];
       else (process.env as any)[key] = value;
@@ -591,6 +593,54 @@ describe("worker: social jobs", () => {
       expect(stepFile.reviewFailures).toEqual(["bad_reply"]);
       expect(stepFile.reviewCalls).toEqual([{ rows: 4, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 }]);
       expect(stepFile.reviewUsd).toBe(0.003);
+    });
+  });
+  describe("YouTube comments by topic with a window: the source shows dates as «منذ …»", () => {
+    const WINDOW = { dateFrom: "2026-09-20", dateTo: "2026-10-20" };
+    const VIDEO = "dQw4w9WgXcQ";
+    const runYoutube = async (opts: { videos: Array<Record<string, any>>; comments: Array<Record<string, any>> }) => {
+      setRelativeDateClockForTesting(() => Date.parse("2026-10-20T12:00:00Z"));
+      resetDb("social-youtube-comments", { query: "كرة القدم", ...WINDOW }, 30, 9);
+      useSource(async (_source, params) => {
+        if (params.video) return ok({ ok: true, rows: opts.comments });
+        return ok({ ok: true, rows: opts.videos });
+      });
+      return runAllChunks();
+    };
+    const lines = () => db.events.map((event) => String(event.message));
+    const comments = (n: number, extra: Record<string, any>) => Array.from({ length: n }, (_, i) => ({ comment_id: `yc${i}`, text: `تعليق ${i} على الماتش`, author: "أحمد", ...extra }));
+
+    it("comments dated «منذ أسبوعين» are inside the last month: delivered, and the line says the dates are approximate", async () => {
+      const { json } = await runYoutube({ videos: [{ video_id: VIDEO, title: "ملخص الماتش" }], comments: comments(6, { published_time_text: "منذ أسبوعين" }) });
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(6);
+      expect(json.settle.charged_credits).toBe(6 * 9);
+      const line = lines().find((entry) => entry.includes("من هذه الصفحة"))!;
+      expect(line).toContain("وكلها داخل الفترة المطلوبة");
+      expect(line).toContain("بعض التواريخ تقريبية لأن المصدر يعرضها بصيغة «منذ …»");
+      expect(line).toContain("(٦ سجل)");
+    });
+
+    it("comments written «3 months ago» are outside the window: dropped, said plainly, nothing charged", async () => {
+      const { json } = await runYoutube({ videos: [{ video_id: VIDEO, title: "ملخص الماتش" }], comments: comments(5, { time: "3 months ago" }) });
+      expect(json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      expect(lines().some((entry) => entry.includes("٥ خارج الفترة المطلوبة"))).toBe(true);
+    });
+
+    it("comments with no date at all take the date of their video, read from its own «منذ …»", async () => {
+      const { json } = await runYoutube({ videos: [{ video_id: VIDEO, title: "ملخص الماتش", published_time_text: "منذ ٣ أسابيع" }], comments: comments(4, {}) });
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(4);
+      expect(lines().some((entry) => entry.includes("المصدر لا يعرض تاريخ كتابة التعليقات"))).toBe(true);
+    });
+
+    it("the search found no video: the reason says so (not «no matching data») and nothing is charged", async () => {
+      const { json } = await runYoutube({ videos: [], comments: [] });
+      expect(json.released).toBe(true);
+      const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
+      expect(String(release.args.p_error_message)).toBe("لم يجد البحث أي فيديو عن موضوعك على يوتيوب الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.");
+      expect(String(release.args.p_error_message)).not.toContain("لم يُعثر على أي بيانات مطابقة");
     });
   });
 });

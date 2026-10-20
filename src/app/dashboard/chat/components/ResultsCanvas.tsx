@@ -5,6 +5,7 @@ import type { ReviewSeverity, ReviewSuggestion, ResultReview } from "@/functions
 import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
+import { toArabicDigits } from "@/lib/arabicDigits";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import { customerResultColumnLabel, previewColumns } from "@/lib/customerResultColumns";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
@@ -96,11 +97,15 @@ const SOURCE_LABELS: Record<string, string> = {
   linkedin: "لينكد إن",
 };
 
-function formatCell(value: unknown): string {
+/** A date or a date with a time, as the files keep it (ISO text). The preview shows it in Arabic-Indic digits; the files are not touched. */
+const ISO_DATE_TEXT = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
+export function formatCell(value: unknown): string {
   if (typeof value === "number") return formatNumber(value);
   if (typeof value === "boolean") return value ? "نعم" : "لا";
   if (value == null || value === "") return "—";
-  return String(value).replace(/^'+(?=\+?\d)/, "");
+  const text = String(value).replace(/^'+(?=\+?\d)/, "");
+  return ISO_DATE_TEXT.test(text.trim()) ? toArabicDigits(text.trim()) : text;
 }
 
 export default function ResultsCanvas({

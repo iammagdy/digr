@@ -2,6 +2,8 @@
  * What a customer reads when a request fails. A browser or platform error («Failed to fetch», «Unexpected token <», a stack
  * message) is never shown: it becomes one Arabic sentence, and a safe reason code goes to the console instead.
  */
+import { START_UNKNOWN_AR, startFailureText, type StartedJobState } from "./startFailure";
+
 
 /** For the chat, where a turn never spends anything. */
 export const TEMPORARY_FAILURE_NO_CHARGE_AR = "حصل تعثر مؤقت، لم يُخصم أي رصيد، جرّب مرة أخرى.";
@@ -84,9 +86,9 @@ export function logClientFailure(scope: string, code: string): void {
   console.warn(`[chat:client_failure] scope=${scope} code=${code}`);
 }
 
-/** Starting a job reserves points, so a failure here never promises that the balance is untouched: it points to the wallet. */
-export function startFailureMessageAr(err: unknown): string {
+/** The sentence for a failed start when the page could not check whether the request began (see startFailure.ts for the rule). */
+export function startFailureMessageAr(err: unknown, jobState: StartedJobState = "unknown"): string {
   const failure = customerFacingFailure(err);
-  if (failure.text !== TEMPORARY_FAILURE_AR) return `تعذر بدء الاستخراج: ${failure.text}`;
-  return "تعذر بدء الاستخراج الآن. تحقق من رصيدك في المحفظة قبل المحاولة مرة أخرى.";
+  const text = startFailureText({ deliberateText: failure.text !== TEMPORARY_FAILURE_AR ? failure.text : null, jobState });
+  return text ?? START_UNKNOWN_AR;
 }
