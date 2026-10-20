@@ -33,6 +33,8 @@ interface ResultsCanvasProps {
   downloadingKey: string | null;
   onExplainMethodology: () => void;
   onRequestDocxMethodology: () => void;
+  /** Read from the ledger row `chg_meth_<jobId>`: a bought file shows a download button and never the purchase dialog again. */
+  methodologyPurchased?: boolean;
   onCloseMobile: () => void;
   onClose?: () => void;
   review?: ResultReview | null;
@@ -116,6 +118,7 @@ export default function ResultsCanvas({
   downloadingKey,
   onExplainMethodology,
   onRequestDocxMethodology,
+  methodologyPurchased = false,
   onCloseMobile,
   onClose,
   review,
@@ -495,7 +498,7 @@ export default function ResultsCanvas({
                   <p className="mt-0.5 text-xs text-sand-500">ملف بي دي إف يوثّق طريقة جمع البيانات وحدودها.</p>
                 </div>
                 <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum shrink-0">
-                  اكتب المنهجية الرسمية ({formatNumber(METHODOLOGY_POINTS)} نقاط)
+                  {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقاط)`}
                 </Button>
               </div>
             )}
@@ -524,7 +527,7 @@ export default function ResultsCanvas({
               </Button>
               {methodologyOffered({ status: jobStatus, delivered: deliveredCount }) && (
                 <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
-                  اكتب المنهجية الرسمية ({formatNumber(METHODOLOGY_POINTS)} نقاط)
+                  {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقاط)`}
                 </Button>
               )}
             </div>

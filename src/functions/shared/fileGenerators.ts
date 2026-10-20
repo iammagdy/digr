@@ -1007,7 +1007,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       { label: "٣. الجمع والترقيم", value: `${collection.methodLabel || "مسار الجمع غير مسجل"} • ${paginationLabel} • ${Number(collection.pagesFetched) > 0 ? `${toArabicDigits(collection.pagesFetched)} دفعات` : "عدد الدفعات غير مسجل"} • ${stopReason}` },
       { label: "٤. التنظيف والأعداد", value: cleaningCounts },
       { label: "٥. الخصوصية والتحقق", value: [contactVerificationSummary(norm.rows), "لا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها."].filter(Boolean).join(" • ") || "لم ترد حالات تحقق مستقلة للحقول؛ ولا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها." },
-      { label: "٦. ملفات التسليم", value: "Excel: البيانات فقط • CSV: السجلات • PDF: الملخص والمنهجية" },
+      { label: "٦. ملفات التسليم", value: "ملف إكسل: البيانات فقط • ملف سي إس في: السجلات • ملف بي دي إف: الملخص والمنهجية" },
     ];
 
     if (reportFacts.length) {
@@ -1201,7 +1201,7 @@ export function generateMethodologyText(
     `${contactVerificationSummary(norm.rows) || "لم ترد حالات تحقق مستقلة للحقول."} تُعرض السجلات وفق ما أعادته المصادر المتاحة وقواعد الخطة المسجلة؛ ولا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها.`,
     "",
     "٦. ملفات التسليم",
-    `Excel: ${toArabicDigits(rowsCount)} سجل (البيانات فقط) • CSV: سجلات البيانات • PDF: ملخص البحث والمنهجية.`,
+    `ملف إكسل: ${toArabicDigits(rowsCount)} سجل (البيانات فقط) • ملف سي إس في: سجلات البيانات • ملف بي دي إف: ملخص البحث والمنهجية.`,
     "",
     "------------------------------------------------------------",
     "ملاحظات حول البيانات:",

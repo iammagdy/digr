@@ -35,3 +35,13 @@ export function methodologyUnavailableAr(): string {
 export function methodologyAnswerAr(): string {
   return `ملف المنهجية متاح من لوحة النتائج: افتح تبويب «الملفات» ثم اضغط «اكتب المنهجية الرسمية»، وتكلفته ${toArabicDigits(METHODOLOGY_POINTS)} نقاط ولا تُخصم إلا بعد تأكيدك داخل الصفحة.`;
 }
+
+/** The ledger row that records a methodology purchase for a job: the single source of truth for "already purchased". */
+export function methodologyChargeId(jobId: string): string {
+  return `chg_meth_${jobId}`;
+}
+
+/** The answer when the methodology was already bought for the delivered job: where the download button is, and that nothing is charged again. */
+export function methodologyPurchasedAr(): string {
+  return "اشتريت ملف المنهجية لهذا الطلب من قبل؛ ستجد زر «تحميل المنهجية» في تبويب «الملفات» بلوحة النتائج، ولن يُخصم شيء مرة أخرى.";
+}

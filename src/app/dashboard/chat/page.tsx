@@ -162,11 +162,31 @@ export default function ChatWorkspacePage() {
   const [canvasOpen, setCanvasOpen] = useState(false);
   const [methodologyConfirmOpen, setMethodologyConfirmOpen] = useState(false);
   const [methodologyPurchasing, setMethodologyPurchasing] = useState(false);
+  // Which jobs' methodology file is already bought, read from the ledger row `chg_meth_<jobId>` (survives reload, device and conversation).
+  const [methodologyBoughtJobs, setMethodologyBoughtJobs] = useState<Record<string, boolean>>({});
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
 
   // Active Job & Canvas Data
   const [startingQuoteId, setStartingQuoteId] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveJobState | null>(null);
+  const methodologyPurchased = Boolean(activeJob?.jobId && methodologyBoughtJobs[activeJob.jobId]);
+  // Read the purchase from the ledger once a finished job is open, so the files area shows the download button after a reload.
+  const methodologyCheckJobId = activeJob?.jobId && ["done", "completed"].includes(String(activeJob.status)) ? activeJob.jobId : null;
+  useEffect(() => {
+    if (!methodologyCheckJobId || !user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const jwtToken = await getAccessToken();
+        const res = await fetch(`/api/jobs/${methodologyCheckJobId}/methodology`, { headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {} });
+        const data = await res.json();
+        if (!cancelled && data?.success && data.purchased) setMethodologyBoughtJobs((prev) => ({ ...prev, [methodologyCheckJobId]: true }));
+      } catch {
+        // Unknown: the button keeps its purchase wording; the server never charges a job twice.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [methodologyCheckJobId, user]);
   const activeJobRef = useRef<ActiveJobState | null>(null);
   activeJobRef.current = activeJob;
   const [terminalJobs, setTerminalJobs] = useState<Map<string, boolean>>(() => new Map());
@@ -1270,7 +1290,21 @@ export default function ChatWorkspacePage() {
   // Request Academic Methodology (10 points flow)
   function handleGenerateMethodology() {
     if (!activeJob?.jobId || !user) return;
+    // Already bought: download it. The dialog (a second purchase) is never shown, and the server charges nothing again.
+    if (methodologyPurchased) {
+      void confirmGenerateMethodology();
+      return;
+    }
     setMethodologyConfirmOpen(true);
+  }
+
+  function saveMethodologyFile(downloadUrl: string, jobId: string) {
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `منهجية البحث - ${jobId.slice(0, 8)}.pdf`;
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => link.remove(), 1000);
   }
 
   async function confirmGenerateMethodology() {
@@ -1302,13 +1336,19 @@ export default function ChatWorkspacePage() {
         return;
       }
 
-      const methodologyMsg: MessageItem = {
-        id: `meth_${Date.now()}`,
-        role: "assistant",
-        content: methodologyMessageText(data.chargedPoints, data.remainingBalance, data.methodologyText, data.downloadUrl),
-        createdAt: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, methodologyMsg]);
+      const boughtJobId = activeJob.jobId;
+      setMethodologyBoughtJobs((prev) => ({ ...prev, [boughtJobId]: true }));
+      if (typeof data.downloadUrl === "string" && data.downloadUrl) saveMethodologyFile(data.downloadUrl, boughtJobId);
+      // A first purchase is confirmed in the conversation (no link in the text); a repeat download is silent and charges nothing.
+      if (Number(data.chargedPoints) > 0) {
+        const methodologyMsg: MessageItem = {
+          id: `meth_${Date.now()}`,
+          role: "assistant",
+          content: methodologyMessageText(data.chargedPoints, data.remainingBalance, data.methodologyText),
+          createdAt: new Date().toISOString(),
+        };
+        setMessages((prev) => [...prev, methodologyMsg]);
+      }
       loadBalance();
       setMethodologyConfirmOpen(false);
     } catch (err: any) {
@@ -1815,6 +1855,7 @@ export default function ChatWorkspacePage() {
               downloadingKey={downloadingKey}
               onExplainMethodology={handleExplainMethodology}
               onRequestDocxMethodology={handleGenerateMethodology}
+              methodologyPurchased={methodologyPurchased}
               onCloseMobile={() => setCanvasOpen(false)}
               onClose={() => setCanvasOpen(false)}
               review={activeJob?.review}
