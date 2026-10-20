@@ -1,15 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import { verifyCronSecret, resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
+import { MAX_IDLE_MS, MAX_JOBS_PER_TICK } from "../../../../lib/server/driverLimits";
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
-
-/** The most jobs one tick resumes; the next tick picks up the rest. */
-export const MAX_JOBS_PER_TICK = 5;
-/** A job idle for longer than this is left to the daily watchdog (it refunds it). */
-export const MAX_IDLE_MS = 25 * 60 * 1000;
 
 /**
  * PROPOSAL (parked branch, not wired into vercel.json): resumes APPROVED jobs whose chain broke, so a job finishes with the

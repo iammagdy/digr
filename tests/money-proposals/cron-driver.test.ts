@@ -21,7 +21,8 @@ vi.mock("../../src/lib/server/workerDispatch", () => ({
   dispatchWorkerChunk: async (_base: string, jobId: string) => { state.dispatched.push(jobId); return { started: true, status: 200, body: {} }; },
 }));
 
-import { GET, MAX_JOBS_PER_TICK } from "../../src/app/api/cron/drive/route";
+import { GET } from "../../src/app/api/cron/drive/route";
+import { MAX_JOBS_PER_TICK } from "../../src/lib/server/driverLimits";
 
 const req = () => ({ headers: new Headers() }) as any;
 const iso = (offsetMs: number) => new Date(Date.now() + offsetMs).toISOString();
