@@ -91,7 +91,11 @@ const ALL_COMMENTS_RE = /كل\s*(?:ال)?(?:تعليقات|كومنتات|كوم
 const ALL_ITEMS_RE = /كل\s*(?:ال)?(?:منشورات|بوستات|تغريدات|فيديوهات|مقاطع)|جميع\s*(?:ال)?(?:منشورات|بوستات|تغريدات|فيديوهات|مقاطع)/u;
 const REPLIES_RE = /ردود|replies|وردود/iu;
 
-const SUBJECT_STOP = new Set(["في", "من", "على", "علي", "مع", "خلال", "آخر", "اخر", "لحد", "حتى", "الى", "إلى", "بين", "لمدة"]);
+const SUBJECT_STOP = new Set([
+  "في", "من", "على", "علي", "مع", "خلال", "آخر", "اخر", "لحد", "حتى", "الى", "إلى", "بين", "لمدة",
+  // the next request words end the subject («… منتخب مصر كل تعليقات ٣ فيديوهات»): they are never part of it
+  "كل", "جميع", "تعليقات", "تعليق", "كومنتات", "فيديوهات", "فيديو", "منشورات", "بوستات", "تغريدات", "ورابط", "ورابطه",
+]);
 
 /** «عن ماتش مصر والمغرب في …»: the phrase after «عن», cut at the first period/place/platform word. */
 function subjectAfterAbout(text: string): string {
@@ -206,8 +210,9 @@ const QUESTION_BY_MISSING: Record<MissingInput, { id: string; textAr: string; op
 };
 
 /** What the assistant does next: ask the ONE missing thing, or go to the plan. Never more than one question. */
-export function nextStep(understanding: MissionUnderstanding): NextStep {
-  const first = understanding.missing[0];
+export function nextStep(understanding: MissionUnderstanding, ignore?: ReadonlySet<string>): NextStep {
+  // A question the customer skipped and that may be answered by a stated default (the period, the cap) is not asked again.
+  const first = ignore && ignore.size > 0 ? understanding.missing.find((item) => !ignore.has(QUESTION_BY_MISSING[item].id)) : understanding.missing[0];
   if (!first) return { type: "plan" };
   const q = QUESTION_BY_MISSING[first];
   // The cap is a count of what the customer asked for: comments, or records for anything else.

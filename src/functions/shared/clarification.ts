@@ -405,6 +405,32 @@ export function formatStructuredClarificationAnswers(answer: StructuredClarifica
   });
 }
 
+/**
+ * The questions the customer skipped, from the stored card answers in order. A later answer with a value to the same question
+ * clears the skip. A skipped question is never asked again with the same card.
+ */
+export function skippedQuestionIdsFromHistory(rawUserMessages: string[]): Set<string> {
+  const skipped = new Set<string>();
+  for (const raw of rawUserMessages) {
+    const trimmed = String(raw || "").trim();
+    if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) continue;
+      for (const answer of parsed.answers) {
+        const id = typeof answer?.questionId === "string" ? answer.questionId : "";
+        if (!id) continue;
+        const hasValue = typeof answer?.value === "string" ? answer.value.trim().length > 0 : Array.isArray(answer?.value) && answer.value.length > 0;
+        if (hasValue) skipped.delete(id);
+        else if (answer?.skipped === true || answer?.needsUserChoice === true) skipped.add(id);
+      }
+    } catch {
+      /* a malformed stored answer skips nothing */
+    }
+  }
+  return skipped;
+}
+
 /** Convert a stored answer payload into clear customer-authored text before
  * it is sent back to the model. Keeping internal question IDs out of the model
  * prompt prevents them from being copied into a search keyword or quote. */
@@ -446,7 +472,8 @@ export function formatClarificationMessageForAssistant(message: string): string 
           ? [sanitizeClarificationText(answer.value, 200)]
           : [];
       if (values.length > 0) return `${label}: ${values.join("، ")}`;
-      return `لم يحدد المستخدم ${label}؛ اسأله عنها ولا تفترض إجابة.`;
+      // A skipped question: the assistant continues from what is known or asks something different; it never repeats the same question.
+      return `تجاوز العميل هذا السؤال: ${sanitizeClarificationText(String(answer?.question || ""), 120)} — تابع بأفضل استنتاج ممكن أو اسأل سؤالًا مختلفًا، ولا تكرر السؤال نفسه ولا تفترض إجابة.`;
     }).filter(Boolean).join("\n");
   } catch {
     return message;

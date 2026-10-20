@@ -55,6 +55,7 @@ import {
   normalizeClarificationQuestions,
   sanitizeClarificationText,
   formatClarificationMessageForAssistant,
+  skippedQuestionIdsFromHistory,
   type NormalizedClarificationQuestion,
   INTERNAL_DISCOVERY_KEYS,
 } from "./clarification";
@@ -90,7 +91,12 @@ import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, 
 import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
-import { INDEPENDENT_REQUEST_NOTE_AR, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
+import { scrubPlaceholderPhrases } from "../../lib/customerScrub";
+import { CLARIFICATION_ANSWER_LABELS, INDEPENDENT_REQUEST_NOTE_AR, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
+
+/** Customer messages the scope reads, and the latest rows the model is shown. */
+const HISTORY_ROWS_FOR_SCOPE = 30;
+const HISTORY_ROWS_FOR_MODEL = 10;
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -98,20 +104,7 @@ function customerAuthoredRequirementText(message: string): string {
   try {
     const parsed = JSON.parse(trimmed);
     if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) return trimmed;
-    const labels: Record<string, string> = {
-      company_country_required: "الدولة المطلوبة",
-      company_industry_required: "المجال المطلوب",
-      company_count_required: "عدد الشركات المطلوب",
-      people_country_required: "دولة صناع القرار المطلوبة",
-      people_scope_required: "نطاق صناع القرار",
-      people_roles_required: "المسميات الوظيفية المطلوبة",
-      people_count_required: "عدد صناع القرار المطلوب",
-      social_account_required: "اسم الحساب المطلوب",
-      social_topic_required: "موضوع البحث المطلوب",
-      social_platform_required: "منصة البحث المطلوبة",
-      social_time_required: "الفترة المطلوبة",
-      topic_source_required: "المصدر المطلوب",
-    };
+    const labels = CLARIFICATION_ANSWER_LABELS;
     return parsed.answers
       .flatMap((answer: any) => {
         // The column chosen to split the delivered file: the shaping request it completes, not a research answer.
@@ -151,7 +144,42 @@ function hasExplicitPeopleScope(text: string): boolean {
   return /(?:نطاق صناع القرار\s*:|لدى|في\s+(?:شركة|شركات)|شركة محددة|اسم الشركات?|\b(?:company|companies|at)\s*[:=]?\s*)\s*\p{L}/iu.test(text);
 }
 
-export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchBrief, capabilities: Capability[] = []): any | null {
+/** Questions the customer may skip and the plan still go ahead (the period is then left open, the cap is the job's own). */
+const PROCEED_WHEN_SKIPPED = new Set(["social_time_required", "volume_cap_required"]);
+
+/** What to say, in one plain sentence and without a card, when a question that cannot be inferred was skipped. */
+const PLAIN_AFTER_SKIP_AR: Record<string, string> = {
+  social_platform_required: "لا أستطيع تجهيز الخطة قبل أن أعرف المنصة. اكتب اسمها في رسالتك، مثل «يوتيوب» أو «تيك توك» أو «إكس»، وسأكمل من حيث توقفنا.",
+  social_comment_target_required: "لم يتبقَّ سوى مصدر التعليقات. اكتب موضوع الفيديوهات أو اسم القناة في رسالتك، أو الصق رابط فيديو، وسأجهز لك الخطة.",
+  social_channel_required: "لتجهيز الخطة أحتاج اسم قناة واحدة على الأقل. اكتب اسم القناة أو الصق رابطها في رسالتك، أو اكتب موضوعًا وسأبحث لك عن فيديوهاته.",
+  social_topic_required: "لتجهيز الخطة أحتاج الموضوع أو الكلمات المقصودة. اكتبها في رسالتك وسأكمل من حيث توقفنا.",
+  social_x_topic_required: "لتجهيز الخطة أحتاج الموضوع أو الكلمات المقصودة. اكتبها في رسالتك وسأكمل من حيث توقفنا.",
+};
+const PLAIN_AFTER_SKIP_GENERIC_AR = "لا أستطيع إكمال الخطة بدون هذه المعلومة. اكتبها في رسالتك وسأكمل من حيث توقفنا.";
+
+/**
+ * The ONE question this turn needs, or null. Questions the customer skipped are never shown again: a skippable one (the period,
+ * the cap) is left to its default, any other is answered by a plain sentence asking for typed text, not by the same card.
+ */
+export function getDeterministicDiscoveryQuestion(
+  text: string,
+  brief: ResearchBrief,
+  capabilities: Capability[] = [],
+  options: { skipped?: ReadonlySet<string> } = {},
+): any | null {
+  const skipped = options.skipped;
+  if (!skipped || skipped.size === 0) return discoveryQuestionFor(text, brief, capabilities, new Set());
+  const ignore = new Set<string>();
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const question = discoveryQuestionFor(text, brief, capabilities, ignore);
+    if (!question || !skipped.has(question.id)) return question;
+    if (PROCEED_WHEN_SKIPPED.has(question.id)) { ignore.add(question.id); continue; }
+    return { plain: true, id: `skipped_${question.id}`, text: PLAIN_AFTER_SKIP_AR[question.id] ?? PLAIN_AFTER_SKIP_GENERIC_AR };
+  }
+  return null;
+}
+
+function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: Capability[], ignore: ReadonlySet<string>): any | null {
   const normalized = text || "";
   const isAccount = ACCOUNT_LOOKUP_RE.test(normalized);
   const isPeople = isPeopleSearchRequest(normalized);
@@ -180,7 +208,7 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     // and the comment cap are asked ONE at a time, and nothing else is.
     const mission = understandMission(normalized);
     if (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") {
-      const step = nextStep(mission);
+      const step = nextStep(mission, ignore);
       return step.type === "ask_one" ? questionForStep(step) : null;
     }
     const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
@@ -191,16 +219,16 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
     // A request the verified social services understand is decided entirely by their own inputs (a link, a
     // channel, a country); the generic topic question below does not apply to it.
     if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) {
-      if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
+      if (!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
       // «كل التعليقات / كل المنشورات» always carries a cap the customer chooses.
-      return capQuestionFor(mission);
+      return ignore.has("volume_cap_required") ? null : capQuestionFor(mission);
     }
   }
   if (isSocialTopic) {
     const missingSocial = getMissingSocialInputs(normalized);
     if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
     if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
-    if (shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
+    if (!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
   }
   return null;
 }
@@ -2185,12 +2213,14 @@ export class ChatHandler {
           .select("id, role, content_ar, created_at, quote, plan, request_status, request_quote_id")
           .eq("conversation_id", conversationId)
           .order("created_at", { ascending: false })
-          .limit(10);
+          .limit(HISTORY_ROWS_FOR_SCOPE);
         if (histErr) throw histErr;
+        // The scope reads every customer message in range (the request they stated may be far behind a chain of card answers);
+        // the model sees only the latest turns.
         rawUserHistoryTexts = [...(rows || [])].reverse()
           .filter((r: any) => r.role === "user" && r.id !== assistantMsgId)
           .map((r: any) => String(r.content_ar || ""));
-        messagesContext = [...(rows || [])].reverse()
+        messagesContext = [...(rows || [])].reverse().slice(-HISTORY_ROWS_FOR_MODEL)
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
@@ -2210,14 +2240,14 @@ export class ChatHandler {
           queries: [
             Query.equal("conversationId", conversationId),
             Query.orderDesc("createdAt"),
-            Query.limit(10),
+            Query.limit(HISTORY_ROWS_FOR_SCOPE),
           ],
         });
 
         rawUserHistoryTexts = [...historyRes.rows].reverse()
           .filter((r: any) => r.role === "user" && r.$id !== assistantMsgId)
           .map((r: any) => String(r.content || ""));
-        messagesContext = [...historyRes.rows].reverse()
+        messagesContext = [...historyRes.rows].reverse().slice(-HISTORY_ROWS_FOR_MODEL)
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
             role: r.role as "user" | "assistant" | "system",
@@ -2237,9 +2267,8 @@ export class ChatHandler {
       // Clarification card answers arrive as a small JSON payload. Keep the
       // original user request in scope so explicit counts and company filters
       // survive the answer turn instead of being replaced by model defaults.
-      const priorUserRequirements = messagesContext
-        .filter((entry) => entry.role === "user")
-        .map((entry) => customerAuthoredRequirementText(entry.content));
+      // Built from what the customer actually sent (never from the model-facing rewrite, which carries our own question texts).
+      const priorUserRequirements = rawUserHistoryTexts.map((text) => customerAuthoredRequirementText(text));
       const currentRequirement = customerAuthoredRequirementText(message);
       // The current message was persisted before history was fetched. Avoid
       // adding it twice to the deterministic routing text used for plans.
@@ -2333,9 +2362,38 @@ export class ChatHandler {
         };
       }
 
-      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities);
+      const skippedQuestionIds = skippedQuestionIdsFromHistory(rawUserHistoryTexts);
+      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities, { skipped: skippedQuestionIds });
+      // A question the customer skipped and that cannot be inferred: one plain sentence, no card, the composer stays open.
+      if (requiredDiscoveryQuestion?.plain && !isFileShapingTurn) {
+        const plainAr = String(requiredDiscoveryQuestion.text);
+        const tPlainWrite = Date.now();
+        awaitsCount += 2;
+        if (sb) {
+          await Promise.all([
+            sb.from("messages").update({ content_ar: plainAr }).eq("id", assistantMsgId),
+            sb.from("messages").update({ request_status: "needs_input" }).eq("id", userMsgId),
+          ]);
+        } else {
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: plainAr, status: "ready" } });
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "needs_input" } });
+        }
+        const plainDelta = Date.now() - tPlainWrite;
+        writesMs += plainDelta;
+        supabaseMs += plainDelta;
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: plainAr,
+          outputType: "answer_question",
+          intent: "research",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: currentTurnStats(),
+        };
+      }
       // A turn about the delivered file never asks research questions (a column named «الشركة» is not a company request).
-      if (requiredDiscoveryQuestion && !isFileShapingTurn) {
+      if (requiredDiscoveryQuestion && !requiredDiscoveryQuestion.plain && !isFileShapingTurn) {
         const intro = consultantIntroAr(conversationRequestText, requiredDiscoveryQuestion.id);
         const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
           capabilities: allCapabilities,
@@ -3472,6 +3530,8 @@ export class ChatHandler {
             };
           }
 
+          planOutput.summaryAr = scrubPlaceholderPhrases(String(planOutput.summaryAr || ""));
+          managedQuote.summaryAr = scrubPlaceholderPhrases(String(managedQuote.summaryAr || ""));
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (managedQuote.items.length === 1) {
             const explanation = planExplanationLinesAr({
@@ -3489,6 +3549,10 @@ export class ChatHandler {
           if (unsupportedNote) planSummaryText += `\n- ${unsupportedNote}`;
           // A feed plan states its window and why (a known event), and any date it corrected: the customer sees what will be applied.
           const missionWindow = understandMission(conversationRequestText).window;
+          if (skippedQuestionIds.has("social_time_required") && !managedQuote.items[0]?.params?.dateFrom && managedQuote.items.length === 1) {
+            // The customer skipped the period: the plan says so instead of choosing one for them.
+            planSummaryText += "\n- الفترة الزمنية: لم تحدّد فترة، فلن نقيّد النتائج بتاريخ.";
+          }
           if (missionWindow.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
             planSummaryText += `\n- الفترة الزمنية: ${missionWindow.labelAr}${missionWindow.reasonAr ? ` — ${missionWindow.reasonAr}` : ""}`;
             if (missionWindow.noteAr) planSummaryText += `\n- ملاحظة: ${missionWindow.noteAr}`;
