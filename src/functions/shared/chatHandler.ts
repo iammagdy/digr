@@ -83,21 +83,58 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
-import { capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, nextStep, questionForStep, understandMission, understoodLineAr } from "../../lib/consultantCopy";
+import { ANSWER_END, CHANNELS_SKIPPED_VALUE, capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, missionCoverageLinesAr, nextStep, questionForStep, typedAnswerLabelFor, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
-import { canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { DEFAULT_COMMENTS_CAP, defaultCapLineAr } from "../../lib/planDefaults";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
 import { scrubPlaceholderPhrases } from "../../lib/customerScrub";
-import { CLARIFICATION_ANSWER_LABELS, INDEPENDENT_REQUEST_NOTE_AR, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
+import { CLARIFICATION_ANSWER_LABELS, INDEPENDENT_REQUEST_NOTE_AR, isCardAnswerText, isClarificationAnswerPayload, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
 
 /** Customer messages the scope reads, and the latest rows the model is shown. */
 const HISTORY_ROWS_FOR_SCOPE = 30;
 const HISTORY_ROWS_FOR_MODEL = 10;
+
+/** Text only (no markup or control characters), links kept, bounded: the channels a customer typed or pasted. */
+function plainChannelAnswerText(value: string): string {
+  return String(value || "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/<\/?[a-z][^>]*>/gi, " ")
+    .replace(/[\u2066-\u2069\u200e\u200f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 600);
+}
+
+/**
+ * A message typed instead of tapping a card, right after a question this assistant asked (the channels of a mission, the topic asked
+ * instead of them), is read exactly like the card's answer: the same label, so it can never start a new request.
+ */
+function typedAnswerRequirementText(message: string, labelForQuestion: string | null): string {
+  const trimmed = (message || "").trim();
+  if (!labelForQuestion || !trimmed) return customerAuthoredRequirementText(message);
+  if (isClarificationAnswerPayload(trimmed) || isCardAnswerText(trimmed) || isStandaloneResearchRequest(trimmed)) return customerAuthoredRequirementText(message);
+  return `${labelForQuestion}: ${plainChannelAnswerText(trimmed)}${ANSWER_END}`;
+}
+
+/** For each customer message (oldest first), the label of the question the assistant's message just before it asked, if any. */
+function typedAnswerLabelsForUserRows(rowsOldestFirst: Array<{ role: string; content: string }>): Array<string | null> {
+  const labels: Array<string | null> = [];
+  let lastAssistant = "";
+  for (const row of rowsOldestFirst) {
+    if (row.role === "assistant") {
+      if ((row.content || "").trim()) lastAssistant = row.content;
+    } else if (row.role === "user") {
+      labels.push(typedAnswerLabelFor(lastAssistant));
+    }
+  }
+  return labels;
+}
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
@@ -116,6 +153,14 @@ function customerAuthoredRequirementText(message: string): string {
           return [`رتب الملف حسب ${sanitizeClarificationText(answer.value, 80)}${answer.questionId === "shape_sort_desc_required" ? " تنازلياً" : ""}`];
         }
         const label = labels[answer?.questionId] || "الإجابة";
+        // The channels of a mission: links and long lists are the answer itself, so they are kept (text only, no markup).
+        if (answer?.questionId === "social_channel_required") {
+          const channelsText = typeof answer?.value === "string" ? plainChannelAnswerText(answer.value) : Array.isArray(answer?.value) ? plainChannelAnswerText(answer.value.filter((v: unknown): v is string => typeof v === "string").join(" و")) : "";
+          if (channelsText) return [`${label}: ${channelsText}${ANSWER_END}`];
+          // Skipped: the plan goes ahead by topic instead of channels, and says so.
+          if (answer?.skipped === true || answer?.needsUserChoice === true) return [`${label}: ${CHANNELS_SKIPPED_VALUE}`];
+          return [];
+        }
         if (typeof answer?.value === "string") return [`${label}: ${sanitizeClarificationText(answer.value, 200)}`];
         if (Array.isArray(answer?.value)) {
           return answer.value
@@ -150,13 +195,13 @@ const PROCEED_WHEN_SKIPPED = new Set(["social_time_required", "volume_cap_requir
 
 /** What to say, in one plain sentence and without a card, when a question that cannot be inferred was skipped. */
 const PLAIN_AFTER_SKIP_AR: Record<string, string> = {
-  social_platform_required: "لا أستطيع تجهيز الخطة قبل أن أعرف المنصة. اكتب اسمها في رسالتك، مثل «يوتيوب» أو «تيك توك» أو «إكس»، وسأكمل من حيث توقفنا.",
+  social_platform_required: "أحتاج أن أعرف المنصة لأجهز لك الخطة. اكتب اسمها في رسالتك، مثل «يوتيوب» أو «تيك توك» أو «إكس»، وسأكمل من حيث توقفنا.",
   social_comment_target_required: "لم يتبقَّ سوى مصدر التعليقات. اكتب موضوع الفيديوهات أو اسم القناة في رسالتك، أو الصق رابط فيديو، وسأجهز لك الخطة.",
   social_channel_required: "لتجهيز الخطة أحتاج اسم قناة واحدة على الأقل. اكتب اسم القناة أو الصق رابطها في رسالتك، أو اكتب موضوعًا وسأبحث لك عن فيديوهاته.",
-  social_topic_required: "لتجهيز الخطة أحتاج الموضوع أو الكلمات المقصودة. اكتبها في رسالتك وسأكمل من حيث توقفنا.",
-  social_x_topic_required: "لتجهيز الخطة أحتاج الموضوع أو الكلمات المقصودة. اكتبها في رسالتك وسأكمل من حيث توقفنا.",
+  social_topic_required: "اكتب موضوعًا أو اسم قناة في رسالتك، ولو كلمة واحدة، وسأجهز لك الخطة فورًا.",
+  social_x_topic_required: "اكتب موضوعًا أو كلمات البحث في رسالتك، ولو كلمة واحدة، وسأجهز لك الخطة فورًا.",
 };
-const PLAIN_AFTER_SKIP_GENERIC_AR = "لا أستطيع إكمال الخطة بدون هذه المعلومة. اكتبها في رسالتك وسأكمل من حيث توقفنا.";
+const PLAIN_AFTER_SKIP_GENERIC_AR = "تحتاج الخطة هذه المعلومة لتكون دقيقة. اكتبها في رسالتك وسأكمل من حيث توقفنا.";
 
 /**
  * The ONE question this turn needs, or null. Questions the customer skipped are never shown again: a skippable one (the period,
@@ -1415,6 +1460,8 @@ export class ChatHandler {
     let messagesContext: PriorConversationMessage[] = [];
     /** What the customer actually typed in earlier turns (card answers stay as their stored payload). */
     let rawUserHistoryTexts: string[] = [];
+    /** For each of those messages, the label of the question it answers when it was typed instead of tapped on the card. */
+    let rawUserHistoryAnswerLabels: Array<string | null> = [];
     let followupBrief: any = {};
 
     try {
@@ -2258,6 +2305,9 @@ export class ChatHandler {
         rawUserHistoryTexts = [...(rows || [])].reverse()
           .filter((r: any) => r.role === "user" && r.id !== assistantMsgId)
           .map((r: any) => String(r.content_ar || ""));
+        rawUserHistoryAnswerLabels = typedAnswerLabelsForUserRows([...(rows || [])].reverse()
+          .filter((r: any) => r.id !== assistantMsgId)
+          .map((r: any) => ({ role: String(r.role), content: String(r.content_ar || "") })));
         messagesContext = [...(rows || [])].reverse().slice(-HISTORY_ROWS_FOR_MODEL)
           .filter((r: any) => r.id !== assistantMsgId && (r.content_ar || "").trim().length > 0)
           .map((r: any) => ({
@@ -2285,6 +2335,9 @@ export class ChatHandler {
         rawUserHistoryTexts = [...historyRes.rows].reverse()
           .filter((r: any) => r.role === "user" && r.$id !== assistantMsgId)
           .map((r: any) => String(r.content || ""));
+        rawUserHistoryAnswerLabels = typedAnswerLabelsForUserRows([...historyRes.rows].reverse()
+          .filter((r: any) => r.$id !== assistantMsgId)
+          .map((r: any) => ({ role: String(r.role), content: String(r.content || "") })));
         messagesContext = [...historyRes.rows].reverse().slice(-HISTORY_ROWS_FOR_MODEL)
           .filter((r: any) => r.$id !== assistantMsgId && r.status !== "thinking")
           .map((r: any) => ({
@@ -2306,8 +2359,10 @@ export class ChatHandler {
       // original user request in scope so explicit counts and company filters
       // survive the answer turn instead of being replaced by model defaults.
       // Built from what the customer actually sent (never from the model-facing rewrite, which carries our own question texts).
-      const priorUserRequirements = rawUserHistoryTexts.map((text) => customerAuthoredRequirementText(text));
-      const currentRequirement = customerAuthoredRequirementText(message);
+      const priorUserRequirements = rawUserHistoryTexts.map((text, index) => typedAnswerRequirementText(text, rawUserHistoryAnswerLabels[index] ?? null));
+      const currentRequirement = rawUserHistoryTexts.at(-1) === message && rawUserHistoryAnswerLabels.length === rawUserHistoryTexts.length
+        ? typedAnswerRequirementText(message, rawUserHistoryAnswerLabels.at(-1) ?? null)
+        : customerAuthoredRequirementText(message);
       // The current message was persisted before history was fetched. Avoid
       // adding it twice to the deterministic routing text used for plans.
       if (priorUserRequirements.at(-1) === currentRequirement) priorUserRequirements.pop();
@@ -3194,6 +3249,10 @@ export class ChatHandler {
 
         // What the customer asked for a single social item, before any ceiling (the capability's rows or the job's points cap).
         let askedVolumeForCard = null as number | null;
+        /** Set when the plan's count is a default (the customer left it open): the plan says so and the customer can edit it. */
+        let defaultCapUsed = null as { noun: "comments" | "records"; units: number } | null;
+        /** The top videos found by a topic because the customer skipped the channels: the plan says so. */
+        let missionByTopicSubject = null as string | null;
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
           // A social request is served by its verified capability whatever the model proposed; the link, channel,
           // keyword and country are rebuilt from the customer's own words.
@@ -3207,12 +3266,18 @@ export class ChatHandler {
             // from the customer's words; the number they stated is the comment cap, never the top-N or the channel count.
             const mission = verifiedSocialDef.kind === "comments" ? understandMission(conversationRequestText) : null;
             const isMission = Boolean(mission && (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") && mission.channels.named.length > 0);
+            // The channels were skipped and a topic was given: the top videos are searched by that topic, as many as the template asked for in all.
+            const byTopic = Boolean(mission && mission.kind === "social_ranked_comments" && mission.channelsSkipped && mission.subject && !isMission);
+            // A mission's count is the comment cap: the customer's, or an explicit default the plan shows (never a hidden 10).
+            const missionCap = (isMission || byTopic) && mission ? mission.volume ?? DEFAULT_COMMENTS_CAP : null;
+            const topicVideoCount = byTopic && mission ? Math.min(MAX_VIDEOS_PER_JOB, Math.max(1, (mission.topPerChannel ?? 10) * Math.max(1, mission.channels.count ?? 1))) : undefined;
             const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
               dateFrom: dates.from,
               dateTo: dates.to,
               // The «١٠ فيديوهات» of a mission is the top-N per channel, not a per-video or video-count setting.
-              perVideo: isMission ? undefined : perVideo,
-              videoCount: isMission ? undefined : videoCount,
+              perVideo: byTopic && topicVideoCount && missionCap ? Math.min(MAX_PER_VIDEO, Math.ceil(missionCap / topicVideoCount)) : isMission ? undefined : perVideo,
+              videoCount: byTopic ? topicVideoCount : isMission ? undefined : videoCount,
+              ...(byTopic && mission ? { subject: mission.subject ?? undefined } : {}),
               ...(isMission && mission ? {
                 channels: mission.channels.named,
                 topPerChannel: mission.topPerChannel ?? undefined,
@@ -3221,8 +3286,8 @@ export class ChatHandler {
               } : {}),
             });
             // The count the customer stated wins; a videos x comments-per-video request means exactly that many comments.
-            const statedVolume = isMission && mission?.volume
-              ? mission.volume
+            const statedVolume = missionCap
+              ? missionCap
               : explicitRequestedVolume && explicitRequestedVolume > 0 && !isMission
               ? explicitRequestedVolume
               : perVideo && videoCount && verifiedSocialDef.kind === "comments"
@@ -3230,6 +3295,8 @@ export class ChatHandler {
               : item.targetVolumeMax || 1;
             const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows));
             askedVolumeForCard = items.length === 1 ? statedVolume : null;
+            if (missionCap && mission && mission.volume === null) defaultCapUsed = { noun: "comments", units: missionCap };
+            if (byTopic && mission?.subject) missionByTopicSubject = mission.subject;
             return {
               ...item,
               capabilitySlug: verifiedSocialDef.slug,
@@ -3500,7 +3567,7 @@ export class ChatHandler {
         if (platformCheck.valid && planValidation.valid && planOutput) {
           if (verifiedSocialDef && planItems[0]) {
             // The goal line is written by the server so it always matches what will run.
-            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits, socialIntent.discover === "keyword" ? conversationRequestText : undefined);
+            planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits, socialIntent.discover === "keyword" ? (missionByTopicSubject ?? conversationRequestText) : undefined);
           }
           currentStep = "quote_save";
           const plannedSocialVolume = Number(planItems[0]?.targetVolumeMax) || 1;
@@ -3526,7 +3593,7 @@ export class ChatHandler {
           quoteRpcMs += quoteMs;
           // The goal line must not promise the volume that was asked once the job cap has cut it: it states what the plan holds.
           if (verifiedSocialDef && managedQuote.items.length === 1 && managedQuote.targetVolumeMax < plannedSocialVolume) {
-            const fittedSummary = socialPlanSummaryAr(verifiedSocialDef, managedQuote.items[0].params || {}, managedQuote.targetVolumeMax, toArabicDigits, socialIntent.discover === "keyword" ? conversationRequestText : undefined);
+            const fittedSummary = socialPlanSummaryAr(verifiedSocialDef, managedQuote.items[0].params || {}, managedQuote.targetVolumeMax, toArabicDigits, socialIntent.discover === "keyword" ? (missionByTopicSubject ?? conversationRequestText) : undefined);
             managedQuote.summaryAr = fittedSummary;
             planOutput.summaryAr = fittedSummary;
           }
@@ -3595,6 +3662,15 @@ export class ChatHandler {
             planSummaryText += `\n- الفترة الزمنية: ${missionWindow.labelAr}${missionWindow.reasonAr ? ` — ${missionWindow.reasonAr}` : ""}`;
             if (missionWindow.noteAr) planSummaryText += `\n- ملاحظة: ${missionWindow.noteAr}`;
           }
+          // A mission over channels says plainly what it covers when that differs from the template (fewer channels, a topic instead, a lower top).
+          const coverageLines = missionCoverageLinesAr(planMission, {
+            channels: Array.isArray(managedQuote.items[0]?.params?.channels) ? managedQuote.items[0].params.channels : [],
+            topPerChannel: managedQuote.items[0]?.params?.topPerChannel ?? null,
+            maxChannels: MAX_CHANNELS_PER_JOB,
+          });
+          for (const line of coverageLines) planSummaryText += `\n- ${line}`;
+          // A count the customer left open is a visible default on the plan, never a hidden number.
+          if (defaultCapUsed && managedQuote.items.length === 1) planSummaryText += `\n- ${defaultCapLineAr(defaultCapUsed.noun, defaultCapUsed.units)}`;
           // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
           const askedUnitsForText = Math.max(askedVolumeForCard ?? 0, managedQuote.requestedVolumeMax || 0, managedQuote.targetVolumeMax);
           const volumeLimitLine = managedQuote.items.length === 1
