@@ -141,7 +141,10 @@ describe("catalog plan validation + rate limit + question order (fix/catalog-pla
       userBalance: 300,
       testScenario: "plan_ghost_then_stall",
     });
-    expect(res.contentAr).toContain("أحتاج أعدّل الخطة، لحظة");
+    // The internal sentence «أحتاج أعدّل الخطة، لحظة» is never shown: the reply is the plain intro of the one question.
+    expect(res.contentAr).not.toContain("أحتاج أعدّل الخطة");
+    expect(res.contentAr).not.toContain("لحظة");
+    expect(String(res.contentAr).trim().length).toBeGreaterThan(0);
     expect(res.contentAr).not.toContain("facebook-ghost-endpoint");
     expect(res.contentAr).not.toContain("يرجى تدقيق المدخلات");
     expect(res.clarificationItems).toBeDefined();

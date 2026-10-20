@@ -3,7 +3,7 @@ import { extractNumberFromText } from "./arabicNumbers";
 import { COMMENT_WORDS_RE, TREND_WORDS_RE, hasSocialSubject } from "./socialTasks";
 
 /** Social-content requests (videos, posts, comments, trends, tweets) as opposed to an account lookup. */
-const BASE_SOCIAL_CONTENT_WORDS_RE = /(?:فيديوهات?|مقاطع?|منشورات?|تعليقات?|تغريد(?:ات|ة)?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية|tweets?)/iu;
+const BASE_SOCIAL_CONTENT_WORDS_RE = /(?:فيديو(?:هات)?|مقطع|مقاطع|منشور(?:ات)?|بوست(?:ات)?|تعليق(?:ات)?|تغريد(?:ات|ة)?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية|tweets?)/iu;
 export const SOCIAL_CONTENT_WORDS_RE = new RegExp(`${BASE_SOCIAL_CONTENT_WORDS_RE.source}|${COMMENT_WORDS_RE.source}|${TREND_WORDS_RE.source}`, "iu");
 
 /** Request for one public account's profile data rather than content search. */
