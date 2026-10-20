@@ -243,11 +243,11 @@ export function methodologyMessageText(
   chargedPoints: unknown,
   remainingBalance: unknown,
   methodologyText: string,
-  downloadUrl?: string,
 ): string {
   const charged = trustworthyAmount(chargedPoints);
   const balance = trustworthyAmount(remainingBalance);
-  const download = downloadUrl ? `\n\n[تحميل ملف المنهجية](${downloadUrl})` : "";
+  // Never a storage link in the conversation: the file is downloaded from the «الملفات» tab, whose button reads the purchase from the ledger.
+  const download = "\n\nتجد زر «تحميل المنهجية» في تبويب «الملفات» بلوحة النتائج.";
   if (charged === null || balance === null) {
     return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}${download}`;
   }

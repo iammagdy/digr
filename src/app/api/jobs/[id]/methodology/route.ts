@@ -1,10 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { generateMethodologyText, generatePdfReport } from "@/functions/shared/fileGenerators";
+import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
 
 export const dynamic = "force-dynamic";
 
 const METHODOLOGY_DEFAULT_POINTS = 10;
+
+/** Whether the signed-in owner already bought the methodology file for this job, read from the ledger row `chg_meth_<jobId>` (read-only). */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: jobId } = await params;
+    if (!jobId) return NextResponse.json({ success: false, error: "معرف الطلب مطلوب" }, { status: 400 });
+    const supabase = await createServerSideClient();
+    const authHeader = req.headers.get("authorization");
+    const { data } = authHeader?.startsWith("Bearer ")
+      ? await supabase.auth.getUser(authHeader.substring(7).trim())
+      : await supabase.auth.getUser();
+    const user = data?.user;
+    if (!user) return NextResponse.json({ success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." }, { status: 401 });
+    const adminClient = createAdminClient();
+    const { data: jobDoc } = await adminClient.from("jobs").select("id,user_id").eq("id", jobId).maybeSingle();
+    if (!jobDoc) return NextResponse.json({ success: false, error: "الطلب غير موجود." }, { status: 404 });
+    if (jobDoc.user_id !== user.id) return NextResponse.json({ success: false, error: "غير مصرح بالوصول لهذا الطلب." }, { status: 403 });
+    const purchased = await isMethodologyPurchased(adminClient, { userId: user.id, jobId });
+    return NextResponse.json({ success: true, purchased });
+  } catch {
+    return NextResponse.json({ success: false, error: "تعذر التحقق من حالة المنهجية حالياً." }, { status: 500 });
+  }
+}
 
 export async function POST(
   req: NextRequest,
