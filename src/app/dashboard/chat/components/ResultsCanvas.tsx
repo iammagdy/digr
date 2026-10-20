@@ -8,6 +8,7 @@ import { formatNumber } from "@/lib/honestDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import { customerResultColumnLabel } from "@/lib/customerResultColumns";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
+import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
 
 export interface ExtractedRecord {
   id: string;
@@ -211,7 +212,8 @@ export default function ResultsCanvas({
     );
   });
   // A failed request that delivered no record has no file to offer.
-  const nothingDelivered = jobStatus === "failed" && (records.length > 0 ? records.length : rowsCollected) === 0;
+  const deliveredCount = records.length > 0 ? records.length : rowsCollected ?? 0;
+  const nothingDelivered = jobStatus === "failed" && deliveredCount === 0;
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
   const visibleSuggestions = (review?.suggestions ?? []).filter((suggestion) => !RETIRED_SUGGESTION_TYPES.has(suggestion.type));
 
@@ -486,6 +488,17 @@ export default function ResultsCanvas({
                 </Button>
               </div>
             ))}
+            {jobId && methodologyOffered({ status: jobStatus, delivered: deliveredCount }) && (
+              <div className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4" data-testid="methodology-offer">
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-ink-900">المنهجية الرسمية</p>
+                  <p className="mt-0.5 text-xs text-sand-500">ملف بي دي إف يوثّق طريقة جمع البيانات وحدودها.</p>
+                </div>
+                <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum shrink-0">
+                  اكتب المنهجية الرسمية ({formatNumber(METHODOLOGY_POINTS)} نقاط)
+                </Button>
+              </div>
+            )}
           </div>
         )}
 
@@ -509,9 +522,11 @@ export default function ResultsCanvas({
               <Button size="sm" variant="secondary" onClick={onExplainMethodology} className="w-full">
                 اشرح لي كيف تم جمع البيانات
               </Button>
-              <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
-                اكتب المنهجية الرسمية ({formatNumber(10)} نقاط)
-              </Button>
+              {methodologyOffered({ status: jobStatus, delivered: deliveredCount }) && (
+                <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
+                  اكتب المنهجية الرسمية ({formatNumber(METHODOLOGY_POINTS)} نقاط)
+                </Button>
+              )}
             </div>
           </div>
         )}

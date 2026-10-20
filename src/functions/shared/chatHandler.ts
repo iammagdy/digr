@@ -1,6 +1,7 @@
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
+import { asksForMethodology, methodologyAnswerAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, fileEditAnswerAr, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, unsupportedFileEdit, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
@@ -1653,6 +1654,13 @@ export class ChatHandler {
     const looksShaping = isFileShapingMessage(shapingText) || Boolean(shapeAnswer);
     let shapingColumns = sanitizeResultColumns(input.resultColumns);
     let deliveredResultJobId: string | null = null;
+    // A request for the methodology document, in a conversation that has a delivered job: answered by code (where to press, what it costs).
+    const asksMethodology = !looksShaping && !shapeAnswer && asksForMethodology(shapingText) && !isStandaloneResearchRequest(shapingText);
+    let methodologyJobId: string | null = null;
+    if (asksMethodology && sb) {
+      awaitsCount++;
+      methodologyJobId = (await latestDeliveredJob(sb, { conversationId, userId }))?.id ?? null;
+    }
     if (looksShaping && shapingColumns.length === 0 && sb) {
       awaitsCount++;
       const saved = await loadLatestResultColumns(sb, { conversationId, userId });
@@ -2471,7 +2479,10 @@ export class ChatHandler {
       // answered by code in one plain sentence: no model, no question, no plan.
       const fileEditKind = isFileShapingTurn && !shapeAnswer && !isTestSearchScenario && !testScenario ? unsupportedFileEdit(shapingText) : null;
       const fileEditOutput: any = fileEditKind ? { type: "answer_question", answerAr: fileEditAnswerAr(fileEditKind) } : null;
-      const codeBuiltOutput: any = shapeAnswerOutput ?? fileEditOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
+      const methodologyOutput: any = asksMethodology && !isTestSearchScenario && !testScenario
+        ? { type: "answer_question", answerAr: methodologyJobId ? methodologyAnswerAr() : methodologyUnavailableAr() }
+        : null;
+      const codeBuiltOutput: any = shapeAnswerOutput ?? fileEditOutput ?? methodologyOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
       if (!codeBuiltOutput) modelCallCount++;
       const resolvedDisplayName =
         (userProfile?.name && String(userProfile.name).trim()) ||
