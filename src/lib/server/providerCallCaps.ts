@@ -1,3 +1,5 @@
+import { scaleValue } from "../scaleConfig";
+
 /**
  * Caps on provider pages per job. The provider bills per record REQUESTED on every page (a page of 10 costs 10 units
  * of the provider price whether 0 or 10 rows survive our relevance gate), so a search whose pages are mostly rejected
@@ -36,10 +38,11 @@ export function smallJobPageSize(targetMax: number): number {
   return Math.min(SMALL_JOB_MAX_PAGE_SIZE, Math.max(SMALL_JOB_MIN_PAGE_SIZE, Math.floor(targetMax) * 3));
 }
 
+/** The two constants above are the defaults; the values in force come from the scale configuration (same numbers unless the owner sets them). */
 export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKind = "directory"): number {
   if (isSmallJob(targetMax)) return kind === "feed" ? FEED_SMALL_JOB_MAX_PAGES : SMALL_JOB_MAX_PAGES;
   const needed = Math.max(1, Math.ceil(targetMax / Math.max(1, pageSize)));
-  return Math.min(ABSOLUTE_MAX_PAGES, needed * LARGE_JOB_PAGE_ALLOWANCE);
+  return Math.min(scaleValue("absoluteMaxPages"), needed * scaleValue("largeJobPageAllowance"));
 }
 
 /** `review_unavailable` is set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run. */

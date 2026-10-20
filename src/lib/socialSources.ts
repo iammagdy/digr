@@ -9,6 +9,7 @@
  *
  * This module is pure data and pure functions (no network), so it can be tested exhaustively.
  */
+import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig";
 
 import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
@@ -587,6 +588,9 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
   },
 ];
 
+// The row ceiling of each service follows the scale configuration (the defaults above unless the owner raised them).
+for (const cap of SOCIAL_CAPABILITIES) cap.maxRows = effectiveSocialMaxRows(cap.maxRows, cap.kind);
+
 export function getSocialCapability(slug: string | undefined | null): SocialCapabilityDef | undefined {
   return SOCIAL_CAPABILITIES.find((cap) => cap.slug === slug);
 }
@@ -822,8 +826,8 @@ export function canonicalSocialParams(
 }
 
 /** Most comments taken from one video, and most videos one job reads. */
-export const MAX_PER_VIDEO = 500;
-export const MAX_VIDEOS_PER_JOB = 20;
+export const MAX_PER_VIDEO = scaleValue("maxPerVideo");
+export const MAX_VIDEOS_PER_JOB = scaleValue("maxVideosPerJob");
 
 /** «٣ فيديوهات يوتيوب» when the plan names how many videos, otherwise «فيديوهات يوتيوب»: the videos and the comments are two quantities. */
 function videoCountPhrase(params: Record<string, any>, platform: string): string {

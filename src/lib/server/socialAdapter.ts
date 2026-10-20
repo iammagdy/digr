@@ -15,6 +15,8 @@ import {
   DISCOVER_VIDEOS_PER_CHANNEL,
   MAX_TOP_PER_CHANNEL,
   channelsOf,
+  MAX_PER_VIDEO,
+  MAX_VIDEOS_PER_JOB,
   SOCIAL_COMMENTS_PER_VIDEO,
   SOCIAL_MAX_CALLS_PER_CHUNK,
   extractSocialRef,
@@ -62,8 +64,8 @@ export interface SocialAdapterDeps {
 export const SOCIAL_CHUNK_BUDGET_MS = 40_000;
 const MIN_TIME_FOR_ANOTHER_CALL_MS = 9_000;
 const MAX_CALLS_PER_CHUNK = SOCIAL_MAX_CALLS_PER_CHUNK;
-const MAX_VIDEOS = 20;
-const MAX_COMMENTS_PER_VIDEO = 500;
+const MAX_VIDEOS = MAX_VIDEOS_PER_JOB;
+const MAX_COMMENTS_PER_VIDEO = MAX_PER_VIDEO;
 /** Rows a mission chunk may return: whole videos are finished inside a chunk where possible, so a source that cannot page is never truncated. */
 const MISSION_ROWS_PER_CHUNK = 500;
 
