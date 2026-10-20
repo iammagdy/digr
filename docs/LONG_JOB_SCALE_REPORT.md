@@ -90,10 +90,17 @@ PostgREST returns at most 1,000 rows per request unless the client pages. The le
 - `src/lib/server/providerLimitsAdmin.ts:69`, `src/lib/server/providerKeyAdmin.ts:278` (the numbers on the admin pages).
 
 One cost row is written per chunk and per call, so a single 1,000-chunk job passes 1,000 rows by itself, and a busy day passes it without any
-big job. The sums then under-count, so a ceiling that should stop a job does not, and an admin page shows too little spend. PR 4e pages
-these reads (same graceful fallback the ledger already uses) and tests them with 2,500 rows. The client-side fallback balance
-(`src/hooks/useBalance.tsx:43`, used only if `/api/wallet/balance` fails) sums ledger rows without paging: it is ledger-adjacent and is
-**reported, not changed**.
+big job. The sums then under-count: a ceiling that should stop a job does not, and an admin page shows too little spend.
+
+**Fixed in PR 4e (reads only):** `src/lib/server/selectAll.ts` (`selectAllRows`) reads every page with `.range`, ordered by `id` (checked read-only: `provider_costs.id` and `llm_usage.id`
+exist, bigint), and is used by the six sums above plus the model-usage sums on the two admin pages. A query double that cannot page is awaited once, as before. The job ids of the
+per-user ceiling now go to the database in groups of 100 (one request with hundreds of ids is too long a URL). Tested with a client that answers like PostgREST (1,000 rows per request unless
+a range is asked): 2,500 rows of one job, 3,300 rows of one day, 1,800 model-usage rows, all exact. What was NOT changed: the daily cap itself (it is summed inside the SQL function that reserves provider spend, which is not
+affected), the cap values, the ledger code.
+
+Reported, not changed (ledger-adjacent):
+- `src/hooks/useBalance.tsx:43`, the fallback balance used only when `/api/wallet/balance` fails, sums ledger rows without paging.
+- `src/app/api/wallet/history/route.ts` reads the typed ledger oldest first up to 5,000 rows and then shows the newest 500 of THOSE: a customer with more than 5,000 ledger rows would see an old window instead of the latest.
 
 ## 5. What a real 50,000-comment or 37,500-post job would still need that is money code or SQL (proposal only, nothing applied)
 

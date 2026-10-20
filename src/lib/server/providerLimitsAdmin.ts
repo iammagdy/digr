@@ -1,4 +1,5 @@
 import { isMissingAtomicRpc } from "../../functions/shared/atomicRpc";
+import { selectAllRows } from "./selectAll";
 import {
   flushProviderLimitsCache, resolveProviderLimits, spendLevel, spendPercent, validateLimitsInput,
   type LimitsInput, type LimitsSource, type ProviderLimits, type SpendLevel,
@@ -66,11 +67,11 @@ export async function loadProviderLimitsState(client: any, options?: { forceRefr
 
   let todayUsd = 0; let llmTodayUsd = 0;
   try {
-    const { data } = await client.from("provider_costs").select("cost_usd").eq("provider", "treg").gte("created_at", utcStartOfDay());
+    const { data } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").gte("created_at", utcStartOfDay()), { orderBy: "id" });
     todayUsd = sum(data);
   } catch { /* table unavailable: zero */ }
   try {
-    const { data } = await client.from("llm_usage").select("cost_usd").gte("created_at", utcStartOfDay());
+    const { data } = await selectAllRows(() => client.from("llm_usage").select("cost_usd").gte("created_at", utcStartOfDay()), { orderBy: "id" });
     llmTodayUsd = sum(data);
   } catch { /* table unavailable: zero */ }
 
