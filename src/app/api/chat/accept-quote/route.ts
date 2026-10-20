@@ -1,3 +1,4 @@
+import { insertJobNotice, isLongJob, jobStartedNotice } from "@/lib/server/jobNotices";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
@@ -172,6 +173,16 @@ export async function POST(req: NextRequest) {
         ...workerDispatch,
         body: { ...workerDispatch.body, retrying: !outcome.failed, failed: outcome.failed },
       };
+    }
+
+    // A large request is announced in-app when it starts (never blocks or fails the acceptance).
+    try {
+      const { data: startedQuote } = await adminClient.from("plans_quotes").select("items").eq("id", quoteId).maybeSingle();
+      const items = Array.isArray(startedQuote?.items) ? startedQuote.items : [];
+      const volume = items.reduce((sum: number, item: any) => sum + (Number(item?.targetVolumeMax) || 0), 0);
+      if (workerDispatch.started && isLongJob(volume)) await insertJobNotice(adminClient, user.id, jobStartedNotice({ targetVolumeMax: volume }));
+    } catch {
+      // a missing notice never changes the acceptance
     }
 
     return NextResponse.json({
