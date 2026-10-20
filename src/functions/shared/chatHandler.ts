@@ -68,6 +68,7 @@ import {
   isBriefComplete,
   formatBriefForSystemPrompt,
   getConversationBrief,
+  peekConversationBrief,
   saveConversationBrief,
   isRepetitionComplaint,
   extractTargetVolume,
@@ -1433,6 +1434,14 @@ export class ChatHandler {
         ? (async () => sb.from("profiles").select("*").eq("id", userId).maybeSingle())().catch(() => ({ data: null }))
         : null;
 
+      // The capability lists do not depend on the conversation either: read them in the same first wave (a greeting never needs them).
+      const capabilitiesRead = isGreetingOrGeneralQuestion(message).isGreeting
+        ? null
+        : Promise.all([getEnabledCapabilitiesWithCoreServices(this.tables), getCatalogCapabilities(this.tables)]);
+      capabilitiesRead?.catch(() => {});
+      // True when this turn already knows the conversation has no saved brief (a new conversation, or a row read without one).
+      let briefKnownEmpty = false;
+
       const isGreetingMsg = isGreetingOrGeneralQuestion(message).isGreeting;
       const initialTitle = "محادثة جديدة";
       let currentConversationTitle = initialTitle;
@@ -1440,6 +1449,7 @@ export class ChatHandler {
       if (!conversationId) {
         conversationId = ID.unique();
         if (sb) {
+          briefKnownEmpty = true;
           awaitsCount++;
           const { error: convCreateErr } = await sb.from("conversations").insert({
             id: conversationId,
@@ -1485,6 +1495,8 @@ export class ChatHandler {
 
           if (conv?.brief && typeof conv.brief === "object") {
             convBriefFromDb = conv.brief;
+          } else {
+            briefKnownEmpty = true;
           }
 
           if (!conv) {
@@ -1575,77 +1587,25 @@ export class ChatHandler {
       supabaseMs += profDelta;
       conversationMs += profDelta;
 
-      // 3. Save User Message & 4. Assistant Placeholder
+      // 3. Ids for the user message and the assistant placeholder.
       userMsgId = ID.unique();
       assistantMsgId = ID.unique();
       turn.conversationId = conversationId;
       turn.messageId = assistantMsgId;
-      const tSbMsgStart = Date.now();
 
-      if (sb) {
-        awaitsCount += 2;
-        const [uRes, aRes] = await Promise.all([
-          sb.from("messages").insert({
-            id: userMsgId,
-            conversation_id: conversationId,
-            user_id: userId,
-            role: "user",
-            content_ar: message,
-            request_status: "planning",
-            created_at: nowIso,
-          }),
-          sb.from("messages").insert({
-            id: assistantMsgId,
-            conversation_id: conversationId,
-            user_id: userId,
-            role: "assistant",
-            content_ar: "جاري التفكير وتحليل طلبك...",
-            created_at: new Date().toISOString(),
-          }),
-        ]);
-        if (uRes?.error) throw uRes.error;
-        if (aRes?.error) throw aRes.error;
-      } else {
-        awaitsCount += 2;
-        await this.tables.createRow({
-          databaseId: "digr",
-          tableId: "messages",
-          rowId: userMsgId,
-          data: {
-            conversationId,
-            userId,
-            role: "user",
-            content: message,
-            status: "ready",
-            requestStatus: "planning",
-            createdAt: nowIso,
-          },
-        });
-        await this.tables.createRow({
-          databaseId: "digr",
-          tableId: "messages",
-          rowId: assistantMsgId,
-          data: {
-            conversationId,
-            userId,
-            role: "assistant",
-            content: "جاري التفكير وتحليل طلبك...",
-            status: "thinking",
-            createdAt: new Date().toISOString(),
-          },
-        });
-      }
-      const msgDelta = Date.now() - tSbMsgStart;
-      supabaseMs += msgDelta;
-      writesMs += msgDelta;
-
-      // 5. Research Brief & Two-Phase Routing
+      // 4. Research brief: worked out first (it needs no database write) so its save can share one wave with the message writes.
       currentStep = "brief_resolution";
-      const tSbBriefStart = Date.now();
       let currentBrief = convBriefFromDb;
-      if (!currentBrief) {
+      if (!currentBrief && briefKnownEmpty) {
+        // The conversation row was just read (or created) and holds no brief: a second database read would find nothing.
+        currentBrief = peekConversationBrief(conversationId) ?? { platforms: [], topics: [] };
+      } else if (!currentBrief) {
+        const tBriefRead = Date.now();
         awaitsCount++;
         currentBrief = await getConversationBrief(this.tables, conversationId);
+        const briefReadDelta = Date.now() - tBriefRead;
+        supabaseMs += briefReadDelta;
+        briefSavesMs += briefReadDelta;
       }
       let brief = extractBriefFromMessage(message, currentBrief);
       followupBrief = brief;
@@ -1665,11 +1625,83 @@ export class ChatHandler {
         followupBrief = brief;
       }
     }
-    awaitsCount++;
-    await saveConversationBrief(this.tables, conversationId, userId, brief);
-    const briefDelta = Date.now() - tSbBriefStart;
-    supabaseMs += briefDelta;
-    briefSavesMs += briefDelta;
+
+      // One wave instead of three: save the user message and the assistant placeholder, save the brief, and read the
+      // history. The history is read before the current message is stored; the current message is added to it by code below.
+      const tSbMsgStart = Date.now();
+      const writeMessages = async () => {
+        if (sb) {
+          awaitsCount += 2;
+          const [uRes, aRes] = await Promise.all([
+            sb.from("messages").insert({
+              id: userMsgId,
+              conversation_id: conversationId,
+              user_id: userId,
+              role: "user",
+              content_ar: message,
+              request_status: "planning",
+              created_at: nowIso,
+            }),
+            sb.from("messages").insert({
+              id: assistantMsgId,
+              conversation_id: conversationId,
+              user_id: userId,
+              role: "assistant",
+              content_ar: "جاري التفكير وتحليل طلبك...",
+              created_at: new Date().toISOString(),
+            }),
+          ]);
+          if (uRes?.error) throw uRes.error;
+          if (aRes?.error) throw aRes.error;
+        } else {
+          awaitsCount += 2;
+          await this.tables.createRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: userMsgId,
+            data: {
+              conversationId,
+              userId,
+              role: "user",
+              content: message,
+              status: "ready",
+              requestStatus: "planning",
+              createdAt: nowIso,
+            },
+          });
+          await this.tables.createRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: assistantMsgId,
+            data: {
+              conversationId,
+              userId,
+              role: "assistant",
+              content: "جاري التفكير وتحليل طلبك...",
+              status: "thinking",
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
+      };
+      const historyRead: Promise<{ data: any[] | null; error: any }> | null = sb
+        ? (async () => await sb
+            .from("messages")
+            .select("id, role, content_ar, created_at, quote, plan, request_status, request_quote_id")
+            .eq("conversation_id", conversationId)
+            .order("created_at", { ascending: false })
+            .limit(HISTORY_ROWS_FOR_SCOPE))()
+        : null;
+      historyRead?.catch(() => {});
+      awaitsCount += 1 + (sb ? 1 : 0); // the brief save and the history read (the two message writes count themselves)
+      const [, , prefetchedHistory] = await Promise.all([
+        writeMessages(),
+        saveConversationBrief(this.tables, conversationId, userId, brief),
+        historyRead,
+      ]);
+      const msgDelta = Date.now() - tSbMsgStart;
+      supabaseMs += msgDelta;
+      writesMs += msgDelta;
     tExtractMs = Date.now() - turnStartTime;
     const currentTurnStats = () =>
       zeroModelTurnStats(conversationId, assistantMsgId, turnStartTime, {
@@ -1901,6 +1933,33 @@ export class ChatHandler {
       brief.platforms.some((platform) => /compan|b2b|شركة/i.test(platform));
     const requiresExplicitCount = isCompanyIntent || isPeopleSearchRequest(assistantFacingMessage);
 
+    let progressLineWrite: Promise<void> | null = null;
+    const writeProgressLine = (): Promise<void> => {
+      progressLineWrite ??= (async () => {
+        const tProgWrite = Date.now();
+        awaitsCount++;
+        if (sb) {
+          await sb
+            .from("messages")
+            .update({ content_ar: "أبحث وأحسب السعر..." })
+            .eq("id", assistantMsgId);
+        } else {
+          await this.tables.updateRow({
+            databaseId: "digr",
+            tableId: "messages",
+            rowId: assistantMsgId,
+            data: {
+              content: "أبحث وأحسب السعر...",
+              status: "thinking",
+            },
+          });
+        }
+        const progDelta = Date.now() - tProgWrite;
+        writesMs += progDelta;
+        supabaseMs += progDelta;
+      })();
+      return progressLineWrite;
+    };
     if (isTestSearchScenario) {
       isPhase2 = false;
     } else if (isGreeting || isGeneralQuestion) {
@@ -1972,7 +2031,7 @@ export class ChatHandler {
       }
       if ((!brief.targetVolume || brief.targetVolume <= 0) && !requiresExplicitCount) brief.targetVolume = 10;
       if (!brief.formats || brief.formats.length === 0) brief.formats = ["xlsx"];
-      await persistBrief();
+      await Promise.all([persistBrief(), writeProgressLine()]);
       isPhase2 = true;
     } else if (discoveryDecision.action === "PROCEED_TO_PLAN" && !isGreeting && !isGeneralQuestion) {
       const persistBrief = async () => {
@@ -2017,7 +2076,7 @@ export class ChatHandler {
             ? [...researchIntent.outputTypes.value]
             : ["xlsx"];
         }
-        await persistBrief();
+        await Promise.all([persistBrief(), writeProgressLine()]);
         isPhase2 = true;
       } else {
         await persistBrief();
@@ -2038,7 +2097,7 @@ export class ChatHandler {
         brief.targetVolume = (brief.postCount && brief.commentsPerPost) ? (brief.postCount * brief.commentsPerPost) : 10;
       }
       if (!brief.language) brief.language = "العربية";
-      await persistBrief();
+      await Promise.all([persistBrief(), writeProgressLine()]);
       isPhase2 = true;
     } else if (hasPlatform && hasTopic && ((brief.targetVolume !== undefined && brief.targetVolume > 0) || Boolean(brief.postCount && brief.commentsPerPost) || wantsPriceOrProceed || Boolean(brief.dateRange))) {
       const persistBrief = async () => {
@@ -2059,7 +2118,7 @@ export class ChatHandler {
       if (!brief.formats || brief.formats.length === 0) {
         brief.formats = ["xlsx"];
       }
-      await persistBrief();
+      await Promise.all([persistBrief(), writeProgressLine()]);
       isPhase2 = true;
     } else if (isComplete || (brief.platforms.length > 0 && brief.topics.length > 0 && brief.targetVolume && brief.dateRange)) {
       isPhase2 = true;
@@ -2072,10 +2131,10 @@ export class ChatHandler {
       currentStep = "capabilities_load";
       const tSbCapsStart = Date.now();
       awaitsCount += 2;
-      const [loadedCapabilities, catalogCapabilities] = await Promise.all([
+      const [loadedCapabilities, catalogCapabilities] = await (capabilitiesRead ?? Promise.all([
         getEnabledCapabilitiesWithCoreServices(this.tables),
         getCatalogCapabilities(this.tables),
-      ]);
+      ]));
       const capabilities = loadedCapabilities;
       const capsDelta = Date.now() - tSbCapsStart;
       supabaseMs += capsDelta;
@@ -2139,29 +2198,9 @@ export class ChatHandler {
 
       if (isPhase2) {
         currentStep = "catalog_search";
-        // Progress line during Phase 2 pricing
-        const tProgWrite = Date.now();
-        if (sb) {
-          awaitsCount++;
-          await sb
-            .from("messages")
-            .update({ content_ar: "أبحث وأحسب السعر..." })
-            .eq("id", assistantMsgId);
-        } else {
-          awaitsCount++;
-          await this.tables.updateRow({
-            databaseId: "digr",
-            tableId: "messages",
-            rowId: assistantMsgId,
-            data: {
-              content: "أبحث وأحسب السعر...",
-              status: "thinking",
-            },
-          });
-        }
-        const progDelta = Date.now() - tProgWrite;
-        writesMs += progDelta;
-        supabaseMs += progDelta;
+        // Progress line during Phase 2 pricing: usually already started together with the brief save; always finished before
+        // anything else is written to this message, so it can never overwrite the final text.
+        await writeProgressLine();
 
         // Server-side: run catalog search once per platform in brief (24h cache)
         const platformsToSearch = detectedPlatforms;
@@ -2207,14 +2246,13 @@ export class ChatHandler {
       currentStep = "message_history";
       const tSbHistStart = Date.now();
       if (sb) {
-        awaitsCount++;
-        const { data: rows, error: histErr } = await sb
-          .from("messages")
-          .select("id, role, content_ar, created_at, quote, plan, request_status, request_quote_id")
-          .eq("conversation_id", conversationId)
-          .order("created_at", { ascending: false })
-          .limit(HISTORY_ROWS_FOR_SCOPE);
+        // Read in the same wave as the message writes: add the current message (newest) and leave out the placeholder.
+        const { data: fetchedRows, error: histErr } = prefetchedHistory ?? { data: null, error: null };
         if (histErr) throw histErr;
+        const rows = [
+          { id: userMsgId, role: "user", content_ar: message, created_at: nowIso, quote: null, plan: null, request_status: "planning", request_quote_id: null },
+          ...(fetchedRows || []).filter((r: any) => r.id !== userMsgId && r.id !== assistantMsgId),
+        ].slice(0, HISTORY_ROWS_FOR_SCOPE);
         // The scope reads every customer message in range (the request they stated may be far behind a chain of card answers);
         // the model sees only the latest turns.
         rawUserHistoryTexts = [...(rows || [])].reverse()

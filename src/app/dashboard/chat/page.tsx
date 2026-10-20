@@ -45,6 +45,7 @@ import { getJobIdForQuote } from "@/lib/md5";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
+import { waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr } from "@/lib/customerError";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
@@ -156,6 +157,7 @@ export default function ChatWorkspacePage() {
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingStatusText, setLoadingStatusText] = useState("يكتب الرد...");
+  const loadingBaseText = useRef("يكتب الرد...");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
@@ -178,6 +180,13 @@ export default function ChatWorkspacePage() {
   const methodologyPurchased = Boolean(activeJob?.jobId && methodologyBoughtJobs[activeJob.jobId]);
   // Read the purchase from the ledger once a finished job is open, so the files area shows the download button after a reload.
   const methodologyCheckJobId = activeJob?.jobId && ["done", "completed"].includes(String(activeJob.status)) ? activeJob.jobId : null;
+  // A turn that takes a while keeps saying that the work goes on (never a silent, frozen-looking page).
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setLoadingStatusText(waitProgressText(loadingBaseText.current, Date.now() - startedAt)), 2000);
+    return () => clearInterval(timer);
+  }, [loading]);
   useEffect(() => {
     if (!methodologyCheckJobId || !user) return;
     let cancelled = false;
@@ -597,7 +606,9 @@ export default function ChatWorkspacePage() {
         m.intent === "research"
       )
     );
-    setLoadingStatusText(isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : (hasPriorResearch ? "يفكّر في سؤالك ويجهّز الخطوة التالية..." : "يكتب الرد..."));
+    const baseStatus = isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : (hasPriorResearch ? "يفكّر في سؤالك ويجهّز الخطوة التالية..." : "يكتب الرد...");
+    loadingBaseText.current = baseStatus;
+    setLoadingStatusText(baseStatus);
     setMessages((prev) => [...prev, userMsg]);
     // Clear as soon as the message is accepted locally. The request may take
     // several seconds; keep the text in the conversation bubble while the
@@ -714,6 +725,8 @@ export default function ChatWorkspacePage() {
       hidden: true,
       createdAt: new Date().toISOString(),
     }]);
+    loadingBaseText.current = "أجهّز الخطوة التالية...";
+    setLoadingStatusText(loadingBaseText.current);
     setLoading(true);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 55000);
