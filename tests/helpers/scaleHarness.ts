@@ -174,6 +174,9 @@ export const sendPlatformEmailMock = () => ({ sendPlatformEmail: vi.fn(async () 
 
 /* ------------------------------------------------------------------ the fake provider */
 
+/** A TikTok video id is 19 digits; the index of the video is the last six. */
+const VIDEO_ID_PREFIX = "7300000000000";
+
 export type FakeFailure = { kind: "429" | "503" | "402" | "timeout" };
 
 export interface FakeProviderOptions {
@@ -209,7 +212,7 @@ export class FakeProvider {
   }
 
   private videoId(i: number) {
-    return String(7_300_000_000_000_000_000n + BigInt(i));
+    return `${VIDEO_ID_PREFIX}${String(i).padStart(6, "0")}`;
   }
 
   readonly call: SocialCall = async (source, params, context): Promise<SocialCallOutcome> => {
@@ -232,7 +235,7 @@ export class FakeProvider {
       return { ok: true, httpStatus: 200, data: { data: { videos: slice } }, costMicro: 1000, tregCallId: `ok${callNumber}` };
     }
     // comments of one video, paged by a numeric cursor
-    const videoIndex = Number(BigInt(String(params.aweme_id ?? "0")) - 7_300_000_000_000_000_000n);
+    const videoIndex = Number(String(params.aweme_id ?? "").slice(VIDEO_ID_PREFIX.length) || 0);
     const total = this.options.commentsPerVideo;
     const cursor = Number(params.cursor ?? 0);
     const count = Math.min(Number(params.count ?? pageSize), pageSize);
