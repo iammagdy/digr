@@ -1,5 +1,5 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
-import { applyAdvisoryToReviews, getRowAdvisor } from "../../../../lib/server/rowReviewAdvisor";
+import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, reviewSocialRows, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
 import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
@@ -712,6 +712,8 @@ export async function POST(req: NextRequest) {
     }
 
     let uncertainRows: any[] = [];
+    let reviewUsdThisChunk = 0;
+    let reviewFailureCodes: string[] = [];
     let relevanceExcludedCount = 0;
     let relevanceSkipReasons: string[] = [];
     // Set when the automatic relevance review could not review some candidate rows: they go to the review sheet, paging
@@ -778,6 +780,8 @@ export async function POST(req: NextRequest) {
       // itself does the requested activity AND quotes its own text. Anything else (a doubt, a failure, a timeout, a
       // disabled reviewer) puts the row in the labelled review sheet: not delivered, not charged. Claude never promotes.
       const strictCompanyReview = isCompanyCapability && (!useMockProvider || hasInjectedCompanyReviewer());
+      // Posts and comments on X and TikTok: the same fail-closed rule, with the reviewer of rows and a cost cap per job.
+      const strictSocialReview = ["x", "tiktok"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
 
       if (strictCompanyReview) {
         const reviewKeywords = [...new Set([...companyActivityKeywords(spec.params), ...companyActivityKeywords({ industry: expectedIndustry }), ...(recognizedSector?.englishKeywords || [])])];
@@ -847,6 +851,60 @@ export async function POST(req: NextRequest) {
             });
           } catch (evtErr: any) {
             console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+          }
+        }
+      } else if (strictSocialReview) {
+        // Posts and comments: a deterministic match is delivered only when the review confirms it. A failed or unreadable review, or the
+        // job's review budget being used up, leaves the rows in the review sheet (not delivered, not charged) and stops paging.
+        if (matchedForAdvice.length > 0) {
+          const priorReviewUsd = runningSet?.reviewUsd ?? 0;
+          const outcome = await reviewSocialRows({
+            advisor: getRowAdvisor(),
+            customerRequest: reviewCustomerRequest,
+            kind: String(spec.capabilitySlug || ""),
+            rows: matchedForAdvice,
+            budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
+            deadlineMs: deadlineMs - 8_000,
+          });
+          reviewUsdThisChunk = outcome.costUsd;
+          reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
+          if (userId) {
+            for (const attempt of outcome.attempts) {
+              try {
+                await adminClient.from("llm_usage").insert({
+                  user_id: userId,
+                  tokens_in: attempt.usage?.inputTokens ?? 0,
+                  tokens_out: attempt.usage?.outputTokens ?? 0,
+                  model: attempt.usage?.model ?? (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
+                  latency_ms: attempt.usage?.latencyMs ?? 0,
+                  reason: attempt.failure ? "relevance_review_failed" : "relevance_review",
+                  cost_usd: Number((attempt.usage?.costUsd ?? 0).toFixed(6)),
+                  created_at: new Date().toISOString(),
+                });
+              } catch (usageErr: any) {
+                console.warn("[worker:relevance_review_usage_log_failed]", usageErr?.message || "");
+              }
+              if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure}`);
+            }
+          }
+          const applied = applyStrictAdvisory(reviews, outcome.verdicts);
+          reviews = applied.reviews;
+          if (applied.unreviewed > 0) {
+            reviewUnavailable = true;
+            const capped = outcome.stoppedBy === "cap";
+            try {
+              await adminClient.from("job_events").insert({
+                job_id: jobId,
+                user_id: userId,
+                message: capped
+                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(applied.unreviewed)} سجل في شيت المراجعة ولم يُحتسب.`
+                  : `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(applied.unreviewed)} سجل الآن؛ وُضعت في شيت المراجعة ولم تُحتسب.`,
+                units: effectiveDelivered,
+                event_type: "info",
+              });
+            } catch (evtErr: any) {
+              console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+            }
           }
         }
       } else if (matchedForAdvice.length > 0) {
@@ -1043,6 +1101,8 @@ export async function POST(req: NextRequest) {
       baselineExcludedCount: duplicateExcludedCount,
       relevanceExcludedCount,
       uncertainRowsCount: uncertainRows.length,
+      ...(reviewUsdThisChunk > 0 ? { reviewUsd: Number(reviewUsdThisChunk.toFixed(6)) } : {}),
+      ...(reviewFailureCodes.length > 0 ? { reviewFailures: reviewFailureCodes } : {}),
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
       uncertainRows,

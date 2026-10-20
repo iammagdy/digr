@@ -37,6 +37,27 @@ function rowText(row: Record<string, any>): string {
   return normalizeText(candidates.map((key) => row[key]).filter((value) => typeof value === "string").join(" "));
 }
 
+/** The comment's own words, as opposed to the title or caption of the video it was written under (which is context). */
+const COMMENT_OWN_KEYS = ["text", "full_text", "fullText", "content", "comment", "comment_text", "commentText", "message", "body"];
+const COMMENT_CONTEXT_KEYS = ["video_title", "video_caption", "title", "caption", "description", "summary"];
+
+function textOf(row: Record<string, any>, keys: string[]): string {
+  return normalizeText(keys.map((key) => row[key]).filter((value) => typeof value === "string").join(" "));
+}
+
+/** Words that only agree, react or acknowledge: a comment made of them (and nothing else) says nothing about any topic. */
+const REACTION_WORDS = new Set([
+  "اتفقت", "اتفق", "موافق", "موافقه", "صح", "صحيح", "تمام", "ايوه", "ايوا", "اه", "اها", "لا", "نعم", "فعلا", "بالظبط", "بالضبط",
+  "شكرا", "الله", "تماما", "طبعا", "اكيد", "بالتاكيد", "كلامك", "معاك", "معك", "ايوه", "فعلا", "يا", "ما", "شاء", "بارك", "جميل", "حلو", "رائع", "جدا", "اوي", "كده", "ده", "دي", "هذا", "هذه", "ان", "و", "ف", "ب",
+  "ok", "okay", "yes", "no", "lol", "wow", "nice", "true", "agree", "agreed", "thanks", "good",
+]);
+
+/** True when every word of the text only agrees, reacts or acknowledges: it carries no content of its own. */
+export function isReactionOnly(text: string): boolean {
+  const words = normalizeText(text).split(/\s+/u).filter(Boolean);
+  return words.length > 0 && words.every((word) => REACTION_WORDS.has(word));
+}
+
 function countMatches(value: string, pattern: RegExp): number {
   return [...value.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))].length;
 }
@@ -117,16 +138,40 @@ export function evaluateResearchRowRelevance(
   const stems = basketball ? [] : topicStems(topic);
   if (!basketball && stems.length === 0) return { decision: "match", reasonAr: "لا يتضمن الطلب موضوعاً نصياً يلزم مطابقته" };
 
-  const content = rowText(row);
+  const commentRow = /comment/i.test(kindText);
+  const ownContent = commentRow ? textOf(row, COMMENT_OWN_KEYS) : "";
+  // A comment is judged by its own words first. The video it sits under is context: it can support a comment that has content of
+  // its own, never a bare «اتفقت». Posts, videos and everything else are judged by their own text as before.
+  const content = commentRow ? ownContent : rowText(row);
   if (!content) return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
 
   if (basketball) {
-    const basketballTerms = countMatches(content, /كره (?:ال)?سله|basketball|\bnba\b|hoops|(?:دوري|لاعب\w*|مباراه|منتخب|اتحاد|نادي)\s+(?:ال)?سله/);
-    const footballTerms = countMatches(content, /كره (?:ال)?قدم|football|soccer|(?<![\p{L}\p{N}])القدم(?![\p{L}\p{N}])/u);
+    const BASKETBALL = /كره (?:ال)?سله|basketball|\bnba\b|hoops|(?:دوري|لاعب\w*|مباراه|منتخب|اتحاد|نادي)\s+(?:ال)?سله/;
+    let basis = content;
+    if (commentRow && countMatches(basis, BASKETBALL) === 0) {
+      // A comment with no topic word of its own is supported by the video it sits under, unless it only reacts.
+      const context = textOf(row, COMMENT_CONTEXT_KEYS);
+      if (countMatches(context, BASKETBALL) > 0) {
+        if (isReactionOnly(ownContent)) return { decision: "uncertain", reasonAr: "تعليق قصير لا يذكر الموضوع بنفسه؛ أُحيل للمراجعة ولم يُحتسب" };
+        basis = `${basis} ${context}`;
+      }
+    }
+    const basketballTerms = countMatches(basis, BASKETBALL);
+    const footballTerms = countMatches(basis, /كره (?:ال)?قدم|football|soccer|(?<![\p{L}\p{N}])القدم(?![\p{L}\p{N}])/u);
     if (basketballTerms === 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
     if (footballTerms > 0 && footballTerms >= basketballTerms) return { decision: "uncertain", reasonAr: "يذكر السجل كرة السلة وكرة القدم معاً؛ أُحيل للمراجعة ولم يُحتسب" };
   } else {
     const { matched, total } = matchTopic(stems, content);
+    if (commentRow && matched < total) {
+      const context = matchTopic(stems, textOf(row, COMMENT_CONTEXT_KEYS));
+      if (context.total > 0 && context.matched === context.total) {
+        if (isReactionOnly(ownContent)) {
+          return { decision: "uncertain", reasonAr: "تعليق قصير لا يذكر الموضوع بنفسه؛ أُحيل للمراجعة ولم يُحتسب" };
+        }
+        // The comment has content of its own, under a video whose own text is about the topic.
+        return { decision: "match", reasonAr: "تعليق على فيديو موضوعه مطابق لموضوع البحث" };
+      }
+    }
     if (matched === 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
     // A topic of several words that appears only in part («الطاقة الكهربائية» for «الطاقة الشمسية») is not a match.
     if (matched < total) return { decision: "uncertain", reasonAr: "يتضمن النص جزءاً من موضوع البحث فقط؛ أُحيل للمراجعة ولم يُحتسب" };

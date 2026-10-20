@@ -19,6 +19,8 @@ export interface RunningSet {
   cursors: string[];
   /** Accepted rows of each chunk so far, by chunk (null = unknown). */
   batchUnits: Array<number | null>;
+  /** What the automatic review of posts and comments has cost so far, USD (absent for jobs that are not reviewed this way). */
+  reviewUsd?: number;
 }
 
 export const runningSetKey = (jobId: string, step: number) => `${jobId}/seen_${step}.json`;
@@ -35,6 +37,7 @@ export interface StepSummary {
   rows?: unknown;
   uncertainRows?: unknown;
   batchUnits?: unknown;
+  reviewUsd?: unknown;
 }
 
 export const emptyRunningSet = (): RunningSet => ({ step: -1, identities: [], cursors: [], batchUnits: [] });
@@ -53,7 +56,8 @@ export function extendRunningSet(previous: RunningSet, step: number, summary: St
   const batchUnits = previous.batchUnits.slice(0, step);
   while (batchUnits.length < step) batchUnits.push(null);
   batchUnits[step] = typeof summary.batchUnits === "number" ? summary.batchUnits : Array.isArray(summary.rows) ? rows.length : null;
-  return { step, identities: [...identities], cursors: [...cursors], batchUnits };
+  const reviewUsd = Number(((previous.reviewUsd ?? 0) + (typeof summary.reviewUsd === "number" && summary.reviewUsd > 0 ? summary.reviewUsd : 0)).toFixed(6));
+  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}) };
 }
 
 /**
@@ -80,7 +84,8 @@ function isRunningSet(value: any, step: number): value is RunningSet {
     && Array.isArray(value.identities) && value.identities.every((item: unknown) => typeof item === "string")
     && Array.isArray(value.cursors) && value.cursors.every((item: unknown) => typeof item === "string")
     && Array.isArray(value.batchUnits) && value.batchUnits.length === step + 1
-    && value.batchUnits.every((item: unknown) => item === null || typeof item === "number");
+    && value.batchUnits.every((item: unknown) => item === null || typeof item === "number")
+    && (value.reviewUsd === undefined || (typeof value.reviewUsd === "number" && Number.isFinite(value.reviewUsd)));
 }
 
 interface Bucket {
