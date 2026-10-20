@@ -1,6 +1,6 @@
 # send-email Edge Function
 
-Sends the six approved Arabic platform email templates via the **Resend API**.
+Sends the six approved Arabic platform email templates, plus the compact `job-update` template, via the **Resend API**.
 Replaces the cancelled Appwrite Messaging path. No Appwrite code is used.
 
 ## Files
@@ -44,6 +44,7 @@ key never goes to the client.
 | `topup-rejected` | Admin rejects top-up | `Name`, `AmountEgp`, `Reference`, `RejectReason` |
 | `job-done` | Job completes with files | `Name`, `JobTitle` |
 | `refund` | Points refunded | `Name`, `Points`, `JobTitle`, `Reason`, `Balance` |
+| `job-update` | A long job started, stalled temporarily, or completed partially | `Name`, `Subject`, `Heading`, `Lead`, `DetailOne`, `DetailTwo`, `ButtonLabel`, `JobURL` (all plain Arabic, written by the app from real numbers) |
 
 Missing vars render as `""` — no raw `{{ .Var }}` token ever reaches a customer.
 Values are HTML-escaped in the body; the subject is plain text.

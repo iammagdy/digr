@@ -11,14 +11,17 @@ import { useBalance } from "@/hooks/useBalance";
 import { topupContinuationMessageAr } from "@/lib/lowBalance";
 import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploration";
 import { approximateTotalPoints, remainingUnits, sampleRestMessageAr } from "@/lib/sampleFirst";
-import { estimateRemainingSeconds, etaTextAr, type ProgressSample } from "@/lib/jobEta";
+import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
+import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
 import { encodeFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
 import { RETRY_SAME_PLAN_MESSAGE } from "@/lib/retryMessage";
-import { POST_APPROVAL_MESSAGE_AR } from "@/lib/postApproval";
+import { postApprovalMessageAr } from "@/lib/postApproval";
+import { closePageLineAr } from "@/lib/driverMode";
+import { useDriverMode } from "@/hooks/useDriverMode";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
@@ -131,6 +134,11 @@ interface MessageItem {
 interface ActiveJobState {
   jobId: string;
   updatedAt?: string;
+  /** From the jobs row: what the progress line and the stalled line read (timestamps and a count). */
+  startedAt?: string;
+  leaseUntil?: string | null;
+  nextAttemptAt?: string | null;
+  attemptCount?: number;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   templateSlug: string;
   rowsCollected: number;
@@ -177,6 +185,7 @@ export default function ChatWorkspacePage() {
   // Active Job & Canvas Data
   const [startingQuoteId, setStartingQuoteId] = useState<string | null>(null);
   const [activeJob, setActiveJob] = useState<ActiveJobState | null>(null);
+  const driverMode = useDriverMode();
   const methodologyPurchased = Boolean(activeJob?.jobId && methodologyBoughtJobs[activeJob.jobId]);
   // Read the purchase from the ledger once a finished job is open, so the files area shows the download button after a reload.
   const methodologyCheckJobId = activeJob?.jobId && ["done", "completed"].includes(String(activeJob.status)) ? activeJob.jobId : null;
@@ -228,19 +237,6 @@ export default function ChatWorkspacePage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationLoadSequence = useRef(0);
   const sendInFlight = useRef(false);
-
-  // Progress samples of the running job, for the remaining-time estimate.
-  const progressSamples = useRef<{ jobId: string; samples: ProgressSample[] }>({ jobId: "", samples: [] });
-  useEffect(() => {
-    if (!activeJob) return;
-    if (progressSamples.current.jobId !== activeJob.jobId) progressSamples.current = { jobId: activeJob.jobId, samples: [] };
-    const samples = progressSamples.current.samples;
-    const last = samples[samples.length - 1];
-    if (!last || last.delivered !== activeJob.rowsCollected) {
-      samples.push({ at: Date.now(), delivered: activeJob.rowsCollected });
-      if (samples.length > 40) samples.shift();
-    }
-  }, [activeJob?.jobId, activeJob?.rowsCollected]);
 
   // A new plan opens the panel (a bottom sheet on mobile). A plan already in a restored conversation does not: the
   // «افتح الخطة» button under it does. The first settled render only records which plan is already there.
@@ -1176,7 +1172,7 @@ export default function ChatWorkspacePage() {
         {
           id: `start_${Date.now()}`,
           role: "assistant",
-          content: POST_APPROVAL_MESSAGE_AR,
+          content: postApprovalMessageAr(data.driverMode),
           progressNotice: true,
           jobId: data.jobId,
           createdAt: new Date().toISOString(),
@@ -1772,10 +1768,18 @@ export default function ChatWorkspacePage() {
   const panelShowsPlan = latestPlanQuote !== null && (!activeJob || restPlanQuoteId === latestPlanQuote.quoteId);
 
   // The remaining time comes from the real pace of this job (when each count of delivered records was seen), never a guess.
-  const etaSeconds = activeJob && (activeJob.status === "running" || activeJob.status === "queued") && activeJob.requestedRows
-    ? estimateRemainingSeconds(progressSamples.current.jobId === activeJob.jobId ? progressSamples.current.samples : [], activeJob.requestedRows)
+  // Live progress from the REAL chunks the job has finished (rolling average, widened when it slows or retries), and the stalled line.
+  const jobIsLive = Boolean(activeJob && (activeJob.status === "running" || activeJob.status === "queued") && activeJob.requestedRows);
+  const progress = jobIsLive && activeJob
+    ? computeJobProgress({
+        delivered: activeJob.rowsCollected,
+        target: activeJob.requestedRows as number,
+        marks: chunkMarksFromEvents((activeJob.events || []).map((e: any) => ({ message: e.textAr, units: e.count, created_at: e.createdAt }))),
+        startedAt: activeJob.startedAt ? Date.parse(activeJob.startedAt) : undefined,
+        retrying: Boolean(activeJob.nextAttemptAt && new Date(activeJob.nextAttemptAt).getTime() > Date.now()) || Number(activeJob.attemptCount || 0) > 0,
+      })
     : null;
-  const etaText = etaTextAr(etaSeconds);
+  const jobStalled = Boolean(jobIsLive && activeJob && isJobStalled({ status: activeJob.status === "running" ? "running" : "queued", updated_at: activeJob.updatedAt, lease_until: activeJob.leaseUntil }, Date.now()));
 
   const runNode = activeJob ? (
     activeJob.status !== "failed" ? (
@@ -1789,8 +1793,14 @@ export default function ChatWorkspacePage() {
           reservedPoints={activeJob.reservedCredits}
           requestedRows={activeJob.requestedRows}
         />
-        {etaText && (
-          <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-eta">الوقت المتبقي التقريبي: {etaText}، محسوب من سرعة التنفيذ الفعلية وقد يتغير.</p>
+        {progress && (
+          <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-progress">{progress.lineAr}{progress.remainingAr ? "، تقديري ويتحدث مع كل دفعة." : "."}</p>
+        )}
+        {jobIsLive && (
+          <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-close-page">{closePageLineAr(driverMode)}</p>
+        )}
+        {jobStalled && (
+          <p role="status" className="m-0 text-xs font-medium leading-[1.8] text-ink" data-testid="job-stalled">{STALLED_LINE_AR}</p>
         )}
         {!canvasOpen && (
           <div className="flex justify-start">

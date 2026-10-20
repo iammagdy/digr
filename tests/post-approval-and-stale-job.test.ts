@@ -1,18 +1,25 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { POST_APPROVAL_MESSAGE_AR } from "../src/lib/postApproval";
+import { POST_APPROVAL_CRON_AR, POST_APPROVAL_TAB_AR, postApprovalMessageAr } from "../src/lib/postApproval";
 
 const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
 
 describe("post-approval message", () => {
-  it("is the exact approved sentence and the chat page shows it after approval", () => {
-    expect(POST_APPROVAL_MESSAGE_AR).toBe("جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.");
-    expect(chatPage).toContain("content: POST_APPROVAL_MESSAGE_AR");
+  it("«you can close the page» is the approved sentence and is said ONLY when the always-on driver is on; otherwise the honest one", () => {
+    expect(POST_APPROVAL_CRON_AR).toBe("جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.");
+    expect(postApprovalMessageAr("cron")).toBe(POST_APPROVAL_CRON_AR);
+    for (const mode of ["tab", undefined, null, "", "yes", "CRON ", 1]) expect(postApprovalMessageAr(mode as any)).toBe(POST_APPROVAL_TAB_AR);
+    expect(POST_APPROVAL_TAB_AR).not.toContain("ويمكنك إغلاق الصفحة");
+    expect(POST_APPROVAL_TAB_AR).toContain("أبقِ الصفحة مفتوحة");
+    expect(POST_APPROVAL_TAB_AR).toContain("فستكمل المهمة عند عودتك");
+    expect(chatPage).toContain("content: postApprovalMessageAr(data.driverMode)");
   });
 
-  it("contains no English, emoji or technical words", () => {
-    expect(POST_APPROVAL_MESSAGE_AR).not.toMatch(/[A-Za-z]/);
-    expect(POST_APPROVAL_MESSAGE_AR).not.toMatch(/\p{Extended_Pictographic}/u);
+  it("contains no English, emoji or technical words, in both states", () => {
+    for (const text of [POST_APPROVAL_CRON_AR, POST_APPROVAL_TAB_AR]) {
+      expect(text).not.toMatch(/[A-Za-z]/);
+      expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
+    }
   });
 });
 

@@ -66,7 +66,7 @@ export interface PlanQuoteData {
   /** The period a feed plan applies, why (a known event) and any date that was corrected. */
   window?: { labelAr: string; source: string; reasonAr?: string; noteAr?: string };
   /** How long the mission will take: a range written by code from real numbers (never a promise), labelled as an estimate. */
-  duration?: { rangeAr: string; labelAr: string; driversAr: string; promiseAr: string; longNoteAr?: string };
+  duration?: { rangeAr: string; labelAr: string; driversAr: string; promiseAr: string; longNoteAr?: string; closePageAr?: string };
 }
 
 interface PlanQuoteCardProps {
@@ -330,6 +330,7 @@ export default function PlanQuoteCard({
           <p className="mb-0 mt-1 font-light text-ink2">{quote.duration.driversAr}</p>
           {quote.duration.longNoteAr && <p className="mb-0 mt-1 font-light text-ink2" data-testid="plan-duration-long">{quote.duration.longNoteAr}</p>}
           <p className="mb-0 mt-1 font-light text-ink2" data-testid="plan-duration-promise">{quote.duration.promiseAr}</p>
+          {quote.duration.closePageAr && <p className="mb-0 mt-1 font-light text-ink2" data-testid="plan-duration-close">{quote.duration.closePageAr}</p>}
         </div>
       )}
 

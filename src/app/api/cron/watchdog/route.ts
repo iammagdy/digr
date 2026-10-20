@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import { verifyCronSecret } from "../../../../lib/server/cronAuth";
 import { insertJobNotice, jobStalledNotice } from "../../../../lib/server/jobNotices";
+import { notifyStalledJobs } from "../../../../lib/server/jobStallNotifier";
 import { getRecipient, sendPlatformEmail } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
 
@@ -55,6 +56,10 @@ export async function GET(req: NextRequest) {
       }
       staleJobs = data || [];
     }
+
+    // Customers of jobs that stopped moving more than ten minutes ago are told once, before any refund below (notices only; nothing is
+    // settled or released by this call).
+    const stalledNotices = targetJobId ? { considered: 0, notified: 0 } : await notifyStalledJobs(adminClient);
 
     const releasedJobs: any[] = [];
 
@@ -200,6 +205,7 @@ export async function GET(req: NextRequest) {
       success: true,
       scannedAt: new Date().toISOString(),
       staleCount: staleJobs?.length || 0,
+      stalledNotices,
       releasedCount: releasedJobs.length,
       releasedJobs,
       purgedAccountsCount,

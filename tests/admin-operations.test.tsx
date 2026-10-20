@@ -61,7 +61,8 @@ describe("the snapshot", () => {
     });
     expect(snapshot.counts).toEqual({ queued: 1, running: 1, stalled: 1, failedRecent: 1 });
     expect(snapshot.oldestQueuedMinutes).toBe(10);
-    expect(snapshot.stalled[0]).toEqual({ id: "s1", idleMinutes: 10, refundInMinutes: Math.ceil((REFUND_AFTER_MS - 10 * 60_000) / 60_000) });
+    expect(snapshot.stalled[0]).toEqual({ id: "s1", idleMinutes: 10, refundInMinutes: Math.ceil((REFUND_AFTER_MS - 10 * 60_000) / 60_000), customerSeesStalled: true });
+    expect(snapshot.alerts[0].textAr).toContain("يظهر لعميله الآن «متوقف مؤقتًا»");
     expect(snapshot.failed[0]).toMatchObject({ id: "f1", reservedCredits: 120, reasonAr: "انتهت المهلة" });
     expect(snapshot.alerts.map((a) => a.level)).toEqual(["bad", "warn"]);
   });

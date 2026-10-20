@@ -14,3 +14,15 @@ export function longJobDriverMode(env: Record<string, string | undefined> = proc
 
 /** «تقدر تقفل الصفحة» may be said only when the always-on driver is on. */
 export const canClosePage = (mode: DriverMode): boolean => mode === "cron";
+
+/** The line about closing the page, honest for each driver: «تقدر تقفل الصفحة» only when the always-on driver is on. */
+export function closePageLineAr(mode: DriverMode): string {
+  return canClosePage(mode)
+    ? "تقدر تقفل الصفحة؛ المهمة تكمل وحدها وسنبلغك عند الاكتمال."
+    : "أبقِ الصفحة مفتوحة حتى لا يتوقف التنفيذ؛ وإن أغلقتها فستكمل المهمة عند عودتك.";
+}
+
+/** Anything the server did not send is treated as «tab»: never assume the driver is on. */
+export function normalizeDriverMode(value: unknown): DriverMode {
+  return value === "cron" ? "cron" : "tab";
+}

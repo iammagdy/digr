@@ -1,14 +1,15 @@
 /**
  * send-email Edge Function (Supabase / Deno).
  *
- * Renders one of the six approved Arabic platform email templates and sends it
+ * Renders one of the approved Arabic platform email templates (six, plus the compact job-update) and sends it
  * via the Resend API. This replaces the cancelled Appwrite Messaging path —
  * no Appwrite code is used anywhere here.
  *
  * POST /send-email
  *   Headers: Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
  *   Body:    { "template": "welcome" | "topup-received" | "topup-approved"
- *                        | "topup-rejected" | "job-done" | "refund",
+ *                        | "topup-rejected" | "job-done" | "refund"
+ *                        | "job-update",
  *              "to": "customer@example.com",
  *              "vars": { "Name": "...", ... } }
  *   Returns: { "ok": true, "id": "<resend message id>" }
@@ -40,6 +41,7 @@ const TEMPLATE_IDS: readonly PlatformEmailTemplateId[] = [
   "topup-rejected",
   "job-done",
   "refund",
+  "job-update",
 ];
 
 export type SendEmailRequest = {

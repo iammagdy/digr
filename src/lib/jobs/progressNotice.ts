@@ -74,6 +74,10 @@ export function applyJobRow<T extends { jobId?: string; status?: string }>(
   reservedCredits?: number;
   requestedRows?: number;
   errorAr?: string;
+  startedAt?: string;
+  leaseUntil?: string | null;
+  nextAttemptAt?: string | null;
+  attemptCount?: number;
 } {
   const status = toChatJobStatus(row?.status);
   const base = (prev || {}) as T;
@@ -93,5 +97,10 @@ export function applyJobRow<T extends { jobId?: string; status?: string }>(
     reservedCredits: row?.reserved_credits ?? row?.reservedCredits ?? (base as any).reservedCredits,
     requestedRows: row?.target_volume_max ?? (base as any).requestedRows,
     errorAr: row?.error_message ?? row?.error_ar ?? row?.errorAr ?? (base as any).errorAr,
+    // what the progress line and the stalled line read (timestamps and counts only)
+    startedAt: row?.created_at ?? (base as any).startedAt,
+    leaseUntil: row?.lease_until !== undefined ? row.lease_until : (base as any).leaseUntil,
+    nextAttemptAt: row?.next_attempt_at !== undefined ? row.next_attempt_at : (base as any).nextAttemptAt,
+    attemptCount: row?.attempt_count ?? (base as any).attemptCount,
   };
 }

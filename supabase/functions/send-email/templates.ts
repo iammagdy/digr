@@ -15,7 +15,8 @@ export type PlatformEmailTemplateId =
   | "topup-approved"
   | "topup-rejected"
   | "job-done"
-  | "refund";
+  | "refund"
+  | "job-update";
 
 export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = {
   "welcome": `أهلًا {{ .Name }} — حسابك على ديجر جاهز`,
@@ -24,9 +25,19 @@ export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = 
   "topup-rejected": `تعذّر اعتماد طلب الشحن`,
   "job-done": `ملفاتك جاهزة: {{ .JobTitle }}`,
   "refund": `رجعت {{ .Points }} نقطة لرصيدك`,
+  // A status update of a long job (started, stalled, partially completed): the words come from the caller, in plain Arabic.
+  "job-update": `{{ .Subject }}`,
 };
 
+/**
+ * The seventh template: ONE compact layout for the updates of a long job (started, temporarily stalled, completed partially).
+ * Its words (Subject, Heading, Lead, DetailOne, DetailTwo, ButtonLabel) are written by the app in plain Arabic from real numbers;
+ * values are HTML-escaped by the renderer and a missing one renders as "". The six approved templates above are untouched.
+ */
+const JOB_UPDATE_TEMPLATE = `<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><body style="margin:0;background:#F3F0E8;font:16px Arial,sans-serif;color:#16201F"><main style="max-width:560px;margin:24px auto;padding:24px;background:#FFFDF9;border:1px solid #E6E1D7;border-radius:18px"><img src="{{ .SiteURL }}/email/digr-wordmark.png" width="104" alt="Diger ديجر" style="display:block;width:104px;height:auto;border:0;margin:0 0 16px"><h1 style="font-size:22px;line-height:32px;margin:0 0 12px">{{ .Heading }}</h1><p style="margin:0 0 10px;line-height:28px">أهلًا {{ .Name }}، {{ .Lead }}</p><p style="margin:0 0 10px;line-height:28px">{{ .DetailOne }}</p><p style="margin:0 0 18px;line-height:28px">{{ .DetailTwo }}</p><a href="{{ .JobURL }}" style="display:inline-block;padding:12px 26px;background:#0E3B43;color:#FAF8F4;border-radius:999px;text-decoration:none">{{ .ButtonLabel }}</a><p style="margin:22px 0 0;font-size:12px;color:#8A8880">تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:#6F716C">غيّر تفضيلاتك</a>.</p></main></body></html>`;
+
 const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
+  "job-update": JOB_UPDATE_TEMPLATE,
   "welcome": `<!DOCTYPE html>
 <html lang="ar" dir="rtl" xmlns="http://www.w3.org/1999/xhtml">
 <head>

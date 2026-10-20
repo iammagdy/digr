@@ -1,6 +1,6 @@
 import { toArabicDigits } from "./arabicDigits";
 import { DISCOVER_VIDEOS_PER_CHANNEL, SOCIAL_MAX_CALLS_PER_CHUNK, SOCIAL_ROWS_PER_CHUNK, getSocialCapability } from "./socialSources";
-import type { DriverMode } from "./driverMode";
+import { closePageLineAr, type DriverMode } from "./driverMode";
 
 /**
  * How long a mission will take, BEFORE the customer approves it: computed by code from the numbers of the real worker (records per
@@ -427,8 +427,9 @@ export interface MissionDurationView extends DurationPhrasing {
   optimisticSeconds: number;
   pessimisticSeconds: number;
   basis: MissionDuration["basis"];
-  /** True when a closed page can still finish the mission (the always-on driver is on). */
   driver: DriverMode;
+  /** «تقدر تقفل الصفحة» only when the always-on driver is on; otherwise the honest line. */
+  closePageAr: string;
 }
 
 /** Everything the plan panel needs: the numbers and the words, built from one duration. */
@@ -443,7 +444,7 @@ export function durationView(duration: MissionDuration, sequenceAr?: string[]): 
     driver: duration.driver,
     sequenceAr,
   });
-  return { ...phrasing, optimisticSeconds: duration.optimisticSeconds, pessimisticSeconds: duration.pessimisticSeconds, basis: duration.basis, driver: duration.driver };
+  return { ...phrasing, optimisticSeconds: duration.optimisticSeconds, pessimisticSeconds: duration.pessimisticSeconds, basis: duration.basis, driver: duration.driver, closePageAr: closePageLineAr(duration.driver) };
 }
 
 /** The duration view of a plan's items (the one call the chat handler and the calculator make). */

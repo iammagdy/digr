@@ -2,6 +2,8 @@
  * The admin operations snapshot: what is running, what is stuck, what failed, how much of the provider's daily allowance is used
  * and what needs attention. Pure functions over rows the route reads (SELECT only); nothing here writes or calls a provider.
  */
+import { STALL_AFTER_MS as CUSTOMER_STALL_AFTER_MS } from "../jobStall";
+
 export const STALLED_AFTER_MS = 3 * 60 * 1000;
 /** The daily watchdog refunds a job idle for this long. */
 export const REFUND_AFTER_MS = 30 * 60 * 1000;
@@ -49,7 +51,8 @@ export interface OperationsSnapshot {
   counts: { queued: number; running: number; stalled: number; failedRecent: number };
   oldestQueuedMinutes: number | null;
   provider: { todaySpendUsd: number; todayCapUsd: number; percentOfCap: number; level: "ok" | "warn" | "reached"; availableBalanceUsd: number; balanceIsLow: boolean };
-  stalled: Array<{ id: string; idleMinutes: number; refundInMinutes: number }>;
+  /** `customerSeesStalled`: idle long enough that the customer is shown «المهمة متوقفة مؤقتًا» (the job-stall rule). */
+  stalled: Array<{ id: string; idleMinutes: number; refundInMinutes: number; customerSeesStalled: boolean }>;
   failed: Array<{ id: string; at: string | null; reservedCredits: number; reasonAr: string }>;
   alerts: AlertLine[];
 }
@@ -69,7 +72,7 @@ export function buildOperationsSnapshot(input: OperationsInput): OperationsSnaps
     else if (kind === "running") running += 1;
     else if (kind === "stalled") {
       const idle = now - ms(job.updated_at);
-      stalled.push({ id: job.id, idleMinutes: Math.floor(idle / 60000), refundInMinutes: Math.max(0, Math.ceil((REFUND_AFTER_MS - idle) / 60000)) });
+      stalled.push({ id: job.id, idleMinutes: Math.floor(idle / 60000), refundInMinutes: Math.max(0, Math.ceil((REFUND_AFTER_MS - idle) / 60000)), customerSeesStalled: idle >= CUSTOMER_STALL_AFTER_MS });
     } else if (kind === "failed_recent") {
       failed.push({ id: job.id, at: job.updated_at, reservedCredits: Number(job.reserved_credits) || 0, reasonAr: String(job.error_message || "").trim() || "لم يُسجَّل سبب." });
     }
@@ -81,7 +84,8 @@ export function buildOperationsSnapshot(input: OperationsInput): OperationsSnaps
   const balanceIsLow = provider.availableBalanceUsd <= Math.max(0.02, provider.creditUsd * 0.2);
 
   const alerts: AlertLine[] = [];
-  if (stalled.length) alerts.push({ level: "bad", textAr: `${n(stalled.length)} طلب متوقف دون تقدم؛ سيُرجع النظام نقاطه تلقائيًا إن بقي متوقفًا.` });
+  const shownToCustomers = stalled.filter((job) => job.customerSeesStalled).length;
+  if (stalled.length) alerts.push({ level: "bad", textAr: `${n(stalled.length)} طلب متوقف دون تقدم؛ سيُرجع النظام نقاطه تلقائيًا إن بقي متوقفًا.${shownToCustomers ? ` منها ${n(shownToCustomers)} يظهر لعميله الآن «متوقف مؤقتًا» (دون تقدم أكثر من ${n(CUSTOMER_STALL_AFTER_MS / 60000)} دقائق)، ويُستأنف تلقائيًا ولا يُخصم أكثر من المُسلَّم.` : ""}` });
   if (failed.length) alerts.push({ level: "warn", textAr: `${n(failed.length)} طلب فشل خلال آخر ٢٤ ساعة (أُرجعت نقاطه).` });
   if (level === "reached") alerts.push({ level: "bad", textAr: "وصل الإنفاق اليومي للمزود إلى الحد؛ لن تبدأ طلبات جديدة اليوم." });
   else if (level === "warn") alerts.push({ level: "warn", textAr: `استُهلك ${n(percentOfCap)}٪ من الحد اليومي للمزود.` });
