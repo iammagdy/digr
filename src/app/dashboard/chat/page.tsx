@@ -18,7 +18,7 @@ import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
-import { RETRY_SAME_PLAN_MESSAGE } from "@/lib/retryMessage";
+import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE } from "@/lib/retryMessage";
 import { postApprovalMessageAr } from "@/lib/postApproval";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
@@ -1432,7 +1432,7 @@ export default function ChatWorkspacePage() {
   }
 
   function handleEditAndFetch() {
-    handleSendMessage("عايز أراجع الخطة السابقة وأعدّلها. اعرض خطة وعرض سعر جديد فقط، ولا تبدأ أي استخراج قبل ما أوافق بنفسي.");
+    handleSendMessage(REVIEW_PLAN_MESSAGE);
   }
 
   function handleReviewSuggestion(suggestion: ReviewSuggestion) {
