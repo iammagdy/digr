@@ -21,6 +21,7 @@ describe("the public estimate form", () => {
     const source = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
     expect(source).toContain('href="/register"');
     expect(source).toContain("لا يُخصم شيء إلا بعد موافقتك على الخطة");
+    expect(source).toContain("FAILURE_STATE_AR");
   });
 
   it("gets its numbers from the rate-limited code-only endpoint, never from a model", () => {
