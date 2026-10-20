@@ -5,7 +5,7 @@ import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { SOCIAL_PLATFORM_LABEL_AR, type SocialPlatformId } from "./socialTasks";
 import { understandMission, understoodLineAr } from "./consultantCopy";
 import { volumeForPointsCap } from "./pointsCap";
-import { recordsInOneJob, reserveInOneJob } from "./jobSizing";
+import { decisionMakersPerRequestLineAr, recordsInOneJob, reserveInOneJob } from "./jobSizing";
 
 /**
  * The public estimate: what a request would cost, from the SAME unit prices and reserve formula the quote writer uses
@@ -73,6 +73,26 @@ export function estimateSlug(kind: EstimateKind, platform?: SocialPlatformId | n
   return SOCIAL_SLUG[key] ?? null;
 }
 
+/** The price of one decision maker with the contact fields asked for (both by default, like the quote writer). */
+function personUnitPoints(fields: ContactField[]): number {
+  return DECISION_MAKER_UNIT_PRICES_POINTS.basePerson + (fields.includes("work_email") ? DECISION_MAKER_UNIT_PRICES_POINTS.workEmail : 0) + (fields.includes("phone") ? DECISION_MAKER_UNIT_PRICES_POINTS.phone : 0);
+}
+
+/**
+ * How many decision makers ONE request holds, from the shared sizing function: the same one the estimate, the calculator and the
+ * quote writer use, with the live daily limit when the page knows it. A public page states this number; it never types it.
+ */
+export function decisionMakersPerRequest(options: { contactFields?: ContactField[]; dailyCapPoints?: number } = {}): number {
+  const fields: ContactField[] = options.contactFields && options.contactFields.length ? options.contactFields : ["work_email", "phone"];
+  const jobCapPoints = Math.min(DEFAULT_JOB_POINTS_CAP, typeof options.dailyCapPoints === "number" && options.dailyCapPoints >= 0 ? Math.floor(options.dailyCapPoints) : DEFAULT_JOB_POINTS_CAP);
+  return recordsInOneJob({ unitPricePoints: personUnitPoints(fields), capPoints: jobCapPoints, safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer, chargeCapped: true });
+}
+
+/** «الطلب الواحد يتسع حتى ٣ صناع قرار؛ ويمكنك تقديم أكثر من طلب.» for a public page. */
+export function decisionMakersPerRequestLine(options: { contactFields?: ContactField[]; dailyCapPoints?: number } = {}): string {
+  return decisionMakersPerRequestLineAr(decisionMakersPerRequest(options));
+}
+
 const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 const egp = (points: number, creditValueEgp: number) => Number((points * creditValueEgp).toFixed(2));
 
@@ -94,9 +114,7 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const probe = computePublicCalculatorQuote(slug, 1, 1, undefined, settings, undefined, undefined, input.dailyCapPoints);
   const isPeople = input.kind === "people";
   const fields: ContactField[] = input.contactFields && input.contactFields.length ? input.contactFields : ["work_email", "phone"];
-  const perUnit = isPeople
-    ? DECISION_MAKER_UNIT_PRICES_POINTS.basePerson + (fields.includes("work_email") ? DECISION_MAKER_UNIT_PRICES_POINTS.workEmail : 0) + (fields.includes("phone") ? DECISION_MAKER_UNIT_PRICES_POINTS.phone : 0)
-    : probe.unitPricePoints;
+  const perUnit = isPeople ? personUnitPoints(fields) : probe.unitPricePoints;
   const jobCapPoints = Math.min(DEFAULT_JOB_POINTS_CAP, typeof input.dailyCapPoints === "number" && input.dailyCapPoints >= 0 ? Math.floor(input.dailyCapPoints) : DEFAULT_JOB_POINTS_CAP);
 
   let volume = input.volume && input.volume > 0 ? Math.floor(input.volume) : 0;

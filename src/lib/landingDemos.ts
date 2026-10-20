@@ -45,7 +45,7 @@ const SOURCES: DemoSource[] = [
     id: "youtube-comments",
     line: "social",
     titleAr: "تعليقات فيديوهات على يوتيوب",
-    requestAr: "عايز ٥٠ تعليق من أكثر فيديوهات قناة @AlArabiya مشاهدة على يوتيوب",
+    requestAr: "عايز ٥٠ تعليق من أكثر فيديوهات قناة العربية مشاهدة على يوتيوب",
     estimate: { kind: "comments", platform: "youtube", volume: 50 },
     planAr: ["المنصة: يوتيوب", "المصدر: أكثر فيديوهات القناة مشاهدة", "العدد: حتى ٥٠ تعليقًا", "مع رابط كل فيديو"],
     outputAr: "ملف إكسل واحد: نص التعليق، كاتبه، تاريخه، ورابط الفيديو.",

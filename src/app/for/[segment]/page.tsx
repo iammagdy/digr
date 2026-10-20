@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { DEMO_LABEL_AR } from "@/lib/landingDemos";
-import { SEGMENTS, segmentBySlug, segmentExample } from "@/lib/segments";
+import { SEGMENTS, segmentBySlug, segmentExample, segmentPeopleLineAr } from "@/lib/segments";
 import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
 
 /** The one-job size follows the live daily limit, like the calculator: refreshed every five minutes. */
@@ -19,7 +19,9 @@ export async function generateMetadata({ params }: { params: Promise<{ segment: 
 export default async function SegmentPage({ params }: { params: Promise<{ segment: string }> }) {
   const segment = segmentBySlug((await params).segment);
   if (!segment) notFound();
-  const example = segmentExample(segment, await liveDailyCapPoints());
+  const dailyCapPoints = await liveDailyCapPoints();
+  const example = segmentExample(segment, dailyCapPoints);
+  const peopleLine = segmentPeopleLineAr(segment, dailyCapPoints);
   return (
     <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[860px] flex-col gap-9">
@@ -35,6 +37,7 @@ export default async function SegmentPage({ params }: { params: Promise<{ segmen
           <ul className="m-0 flex list-none flex-col gap-2 p-0 text-[15px] font-light text-ink2">
             {segment.usesAr.map((use) => <li key={use}>— {use}</li>)}
           </ul>
+          {peopleLine ? <p data-testid="people-per-request" className="m-0 text-[14px] font-light leading-[1.9] text-mut">صنّاع القرار: {peopleLine}</p> : null}
         </section>
 
         <section aria-labelledby="example-title" data-testid="segment-example" className="flex flex-col gap-3 rounded-[22px] border border-ln bg-sf p-6">

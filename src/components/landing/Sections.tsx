@@ -41,7 +41,7 @@ export function Sheets() {
               className="absolute inset-0 flex flex-col gap-[9px] rounded-[18px] border border-ln bg-sf p-[18px] text-right"
               style={{ boxShadow: "var(--shadow)", zIndex: sh.z, transition: `transform 1.4s cubic-bezier(.2,.7,.2,1) ${sh.delay}` }}
             >
-              <div className="flex items-center justify-between"><span className="text-[15px] font-medium text-ink">{sh.name}</span><span className="text-[11px] text-fnt">{sh.ext}</span></div>
+              <div className="flex items-center justify-between"><span className="text-[15px] font-medium text-ink">{sh.name}</span></div>
               <span className="h-px bg-ln" />
               {[90, 70, 82, 60, 76].map((w) => <span key={w} className="h-[7px] rounded bg-sf2" style={{ width: `${w}%` }} />)}
               <span className="mt-auto text-[11px] font-light leading-[1.7] text-mut">{sh.desc}</span>

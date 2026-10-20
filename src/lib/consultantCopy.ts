@@ -74,7 +74,7 @@ function channelCount(text: string): number | null {
   return word ? NUMBER_WORDS[word[1]] : null;
 }
 
-const CHANNEL_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "مع", "من", "ال", "يوتيوب", "اليوتيوب", "فيسبوك", "تيك", "توك", "كل", "بتاعة", "بتاعت"]);
+const CHANNEL_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "مع", "من", "ال", "يوتيوب", "اليوتيوب", "فيسبوك", "تيك", "توك", "كل", "بتاعة", "بتاعت", "مشاهدة", "مشاهدات", "الأكثر", "الاكثر", "أكثر", "اكثر", "أكتر", "اكتر", "الأعلى", "الاعلى"]);
 
 const CHANNEL_ANSWER_LABEL = CLARIFICATION_ANSWER_LABELS.social_channel_required;
 const ANY_ANSWER_LABEL_RE = `(?:${Array.from(new Set([...Object.values(CLARIFICATION_ANSWER_LABELS), "إجابة هدف التواصل"])).join("|")})`;

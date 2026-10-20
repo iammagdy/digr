@@ -9,6 +9,7 @@ import {
 } from "@/lib/calculatorPricing";
 
 import MissionEstimator from "@/components/calculator/MissionEstimator";
+import { decisionMakersPerRequestLineAr, recordsInOneJob } from "@/lib/jobSizing";
 import { capabilitySlugFromPublicId, publicCapabilityId } from "@/lib/publicCapabilityIds";
 
 export default function PublicCalculatorPage() {
@@ -287,6 +288,11 @@ export default function PublicCalculatorPage() {
             <li>
               تكلفة الوحدة الواحدة لهذه الخدمة: {formatAr(breakdown.unitPricePoints)} نقطة ({formatAr(breakdown.unitPriceEgp)} ج.م لكل {currentOption?.unitLabelAr}).
             </li>
+            {breakdown.capabilitySlug === "professional-people-search" ? (
+              <li data-testid="people-per-request">
+                {decisionMakersPerRequestLineAr(recordsInOneJob({ unitPricePoints: breakdown.unitPricePoints, capPoints: breakdown.maxCapPoints ?? 0, safetyBuffer: breakdown.safetyBufferPercent / 100, chargeCapped: true }))}
+              </li>
+            ) : null}
             <li>
               لا يُخصم أي رصيد أثناء المحادثة أو إعداد الخطة. بعد موافقتك، يُخصم فقط مقابل السجلات المطابقة المسلَّمة.
             </li>

@@ -1,12 +1,13 @@
 import Link from "next/link";
 import CapacityCalculator from "@/components/pricing/CapacityCalculator";
 import { toArabicDigits } from "@/lib/arabicDigits";
-import { CAPACITY_AMOUNTS_EGP, PEOPLE_PRICE_POINTS, PRICING_FAQ_AR, buildPriceRows, capacityForAmount, capacityLineAr, pointsForAmountEgp } from "@/lib/pricingPage";
+import { CAPACITY_AMOUNTS_EGP, PEOPLE_PRICE_POINTS, PRICING_FAQ_AR, buildPriceRows, capacityForAmount, capacityLineAr, peoplePerRequestLineAr, pointsForAmountEgp } from "@/lib/pricingPage";
 
 export const metadata = { title: "الأسعار", description: "كم يكلّف جمع البيانات في ديجر: سعر كل نوع بالنقاط، وما يغطيه كل مبلغ، وحدود الطلب الواحد." };
 
 export default function PricingPage() {
   const rows = buildPriceRows();
+  const peopleLine = peoplePerRequestLineAr();
   const capacity = CAPACITY_AMOUNTS_EGP.map((amount) => ({ amount, points: pointsForAmountEgp(amount), lines: capacityForAmount(amount) }));
   return (
     <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">
@@ -41,6 +42,7 @@ export default function PricingPage() {
               </tbody>
             </table>
           </div>
+          <p data-testid="people-per-request-capacity" className="m-0 text-sm font-light leading-[1.9] text-mut">صنّاع القرار: {peopleLine}</p>
           <CapacityCalculator />
         </section>
 
@@ -59,6 +61,7 @@ export default function PricingPage() {
               </tbody>
             </table>
           </div>
+          <p data-testid="people-per-request-price" className="m-0 text-sm font-light leading-[1.9] text-mut">صنّاع القرار: {peopleLine}</p>
           <p className="m-0 text-sm font-light leading-[1.9] text-mut">هذه أسعار النقاط الحالية. الرقم النهائي لطلبك يظهر في خطتك قبل أن توافق. <Link href="/calculator" className="text-ink">جرّب الحاسبة على طلبك</Link>.</p>
         </section>
 

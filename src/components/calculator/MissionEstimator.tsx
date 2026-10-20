@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { FAILURE_STATE_AR } from "@/lib/publicCopy";
+import { decisionMakersPerRequestLineAr } from "@/lib/jobSizing";
 import type { EstimateKind, EstimateResult } from "@/lib/missionEstimate";
 
 /**
@@ -140,6 +141,9 @@ export default function MissionEstimator() {
           ) : null}
           {result && result.status !== "ok" ? <p className="m-0 text-sm text-ink">{result.notesAr.join(" ")}</p> : null}
           {result?.status === "ok" ? result.notesAr.map((note) => <p key={note} className="m-0 text-xs font-light leading-[1.8] text-mut">{note}</p>) : null}
+          {result?.status === "ok" && result.slug === "professional-people-search" ? (
+            <p data-testid="people-per-request" className="m-0 text-xs font-light leading-[1.8] text-mut">{decisionMakersPerRequestLineAr(result.maxVolumeInOneJob)}</p>
+          ) : null}
           {!result && answer.missingAr.length ? <p className="m-0 text-sm text-ink">{answer.missingAr.join(" ")}</p> : null}
           {result?.status === "ok" && answer.missingAr.length ? <p className="m-0 text-xs text-mut">{answer.missingAr.join(" ")}</p> : null}
           <p className="m-0 text-xs font-light leading-[1.8] text-mut">لا يُخصم شيء إلا بعد موافقتك على الخطة. {FAILURE_STATE_AR}</p>
