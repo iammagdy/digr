@@ -81,7 +81,7 @@ import { customerFacingConversationTitle } from "../../lib/customerFacingConvers
 import { dedupeRecordSearchItems } from "../../lib/recordSearchPlanItems";
 import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
-import { isRetrySamePlanMessage } from "../../lib/retryMessage";
+import { APPROVAL_NEEDS_BUTTON_AR, hasPendingPlan, isChatControlMessage, isRetrySamePlanMessage, isReviewPlanMessage, isTypedApprovalMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
 import { ANSWER_END, CHANNELS_SKIPPED_VALUE, capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, missionCoverageLinesAr, nextStep, questionForStep, typedAnswerLabelFor, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
@@ -121,6 +121,8 @@ function plainChannelAnswerText(value: string): string {
  */
 function typedAnswerRequirementText(message: string, labelForQuestion: string | null): string {
   const trimmed = (message || "").trim();
+  // What the retry and review buttons send is a request for a quote, never part of the research request.
+  if (isRetrySamePlanMessage(trimmed) || isReviewPlanMessage(trimmed)) return "";
   if (!labelForQuestion || !trimmed) return customerAuthoredRequirementText(message);
   if (isClarificationAnswerPayload(trimmed) || isCardAnswerText(trimmed) || isStandaloneResearchRequest(trimmed)) return customerAuthoredRequirementText(message);
   return `${labelForQuestion}: ${plainChannelAnswerText(trimmed)}${ANSWER_END}`;
@@ -142,6 +144,8 @@ function typedAnswerLabelsForUserRows(rowsOldestFirst: Array<{ role: string; con
 
 function customerAuthoredRequirementText(message: string): string {
   const trimmed = (message || "").trim();
+  // Buttons and approval words carry no research content: the request they refer to is read as it was stated.
+  if (isChatControlMessage(trimmed)) return "";
   if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) return trimmed;
   try {
     const parsed = JSON.parse(trimmed);
@@ -2381,6 +2385,40 @@ export class ChatHandler {
         currentRequirement,
         explicitCompanyClarificationNotes(brief.notes),
       );
+
+      // Consent is given with the plan card's button only. A typed «أوافق وابدأ البحث» next to a plan that waits is answered with
+      // where to press: it must not be read as a new request (that priced a second plan and made the first card unusable).
+      if (isTypedApprovalMessage(message) && hasPendingPlan(messagesContext)) {
+        const tApprovalWrite = Date.now();
+        try {
+          if (sb) {
+            awaitsCount += 2;
+            await Promise.all([
+              sb.from("messages").update({ content_ar: APPROVAL_NEEDS_BUTTON_AR, clarification_items: null, plan: null, quote: null }).eq("id", assistantMsgId),
+              sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+            ]);
+          } else {
+            awaitsCount += 2;
+            await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: APPROVAL_NEEDS_BUTTON_AR, status: "ready" } });
+            await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+          }
+        } catch (persistError) {
+          console.warn(`[chat:approval_reply_persist_failed] reason=${toSafeReasonCode(persistError, "approval_reply_persist")}`);
+        }
+        const approvalDelta = Date.now() - tApprovalWrite;
+        writesMs += approvalDelta;
+        supabaseMs += approvalDelta;
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: APPROVAL_NEEDS_BUTTON_AR,
+          outputType: "answer_question",
+          intent: "chat",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: currentTurnStats(),
+        };
+      }
 
       const resultFeedbackReply = buildResultFollowupReply(message, messagesContext, brief);
       if (resultFeedbackReply) {
