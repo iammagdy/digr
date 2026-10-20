@@ -1,5 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
-import { estimateMission, type EstimateInput } from "./missionEstimate";
+import { decisionMakersPerRequestLine, estimateMission, type EstimateInput } from "./missionEstimate";
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
 import { volumeForPointsCap } from "./pointsCap";
@@ -74,3 +74,8 @@ export const PRICING_FAQ_AR: Array<[string, string]> = [
   ["هل هناك حد لحجم الطلب الواحد؟", "نعم، لكل طلب حد أقصى للمبلغ المحجوز لحماية رصيدك. الأحجام الكبيرة تُقسَّم على أكثر من طلب، وتحسب لك الحاسبة عدد الطلبات المتوقع."],
   ["هل الأسعار ثابتة؟", "الأسعار المعروضة هنا هي أسعار النقاط الحالية، وتظهر في خطتك قبل أن توافق. أي رقم في هذه الصفحة تقريبي ويحسبه النظام، والرقم النهائي هو الذي يظهر في خطتك."],
 ];
+
+/** The sentence under the decision-makers numbers: what one request holds, read from the shared sizing function. */
+export function peoplePerRequestLineAr(dailyCapPoints?: number): string {
+  return decisionMakersPerRequestLine({ dailyCapPoints });
+}

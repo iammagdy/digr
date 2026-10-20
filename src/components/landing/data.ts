@@ -25,9 +25,9 @@ export const STATEMENTS = [
 ];
 
 export const SHEETS = [
-  { name: customerFormatLabelAr("csv"), ext: ".csv", desc: "بيانات جدولية للتحليل البرمجي", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
-  { name: customerFormatLabelAr("pdf"), ext: ".pdf", desc: "ملخص تنفيذي", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
-  { name: customerFormatLabelAr("xlsx"), ext: ".xlsx", desc: "البيانات ودليل الحقول", z: 3, to: "translateY(-6%)", delay: "0s" },
+  { name: customerFormatLabelAr("csv"), desc: "بيانات جدولية للتحليل البرمجي", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
+  { name: customerFormatLabelAr("pdf"), desc: "ملخص تنفيذي", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
+  { name: customerFormatLabelAr("xlsx"), desc: "البيانات ودليل الحقول", z: 3, to: "translateY(-6%)", delay: "0s" },
 ];
 
 export const FAQS: [string, string][] = [

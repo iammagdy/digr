@@ -1,3 +1,4 @@
+import { toArabicDigits } from "./arabicDigits";
 import { volumeForPointsCap } from "./pointsCap";
 
 /**
@@ -32,4 +33,21 @@ export function recordsInOneJob(input: JobSizingInput): number {
 export function reserveInOneJob(volume: number, input: JobSizingInput): number {
   const reserve = Math.ceil(Math.max(0, volume) * input.unitPricePoints * (1 + input.safetyBuffer));
   return input.chargeCapped ? Math.min(reserve, Math.max(0, Math.floor(input.capPoints))) : reserve;
+}
+
+/** «صانع قرار واحد», «صانعي قرار», «٣ صناع قرار», «١١ صانع قرار»: a count of decision makers in correct Arabic. */
+export function peopleCountAr(count: number): string {
+  if (count === 1) return "صانع قرار واحد";
+  if (count === 2) return "صانعي قرار";
+  return `${toArabicDigits(count)} ${count >= 3 && count <= 10 ? "صناع قرار" : "صانع قرار"}`;
+}
+
+/**
+ * The one plain sentence every public decision-makers example carries: what ONE request holds. The number is the shared sizing
+ * function's (`recordsInOneJob`), passed in by the page; nothing here knows a price or a cap.
+ */
+export function decisionMakersPerRequestLineAr(countInOneJob: number): string {
+  const count = Math.floor(Number(countInOneJob));
+  if (!Number.isFinite(count) || count < 1) return "الطلب الواحد لا يتسع الآن لصانع قرار واحد بهذه الحقول؛ تواصل معنا لرفع الحد.";
+  return `الطلب الواحد يتسع حتى ${peopleCountAr(count)}؛ ويمكنك تقديم أكثر من طلب.`;
 }

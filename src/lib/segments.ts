@@ -1,5 +1,6 @@
 import { estimateMission, estimateSummaryAr, type EstimateInput, type EstimateResult } from "./missionEstimate";
 import { understandMission, understoodLineAr } from "./consultantCopy";
+import { decisionMakersPerRequestLine } from "./missionEstimate";
 
 /**
  * The segment pages: who the product is for, one big example mission each, and its approximate price from the public estimate
@@ -26,7 +27,7 @@ export const SEGMENTS: readonly Segment[] = [
     painAr: "قراءة آلاف التعليقات يدويًا تأخذ أيامًا، وتفوتك فيها الأنماط.",
     usesAr: ["تعليقات الجمهور على حملات المنافسين", "ردود الفعل على إطلاق منتج", "قياس الانطباع قبل حملة وبعدها"],
     exampleTitleAr: "تعليقات على أكثر فيديوهات قناة منافسة",
-    exampleRequestAr: "عايز ٢٠٠ تعليق من أكثر فيديوهات قناة @AlArabiya مشاهدة على يوتيوب",
+    exampleRequestAr: "عايز ٢٠٠ تعليق من أكثر فيديوهات قناة العربية مشاهدة على يوتيوب",
     examplePlanAr: ["المنصة: يوتيوب", "المصدر: أكثر فيديوهات القناة مشاهدة", "العدد: حتى ٢٠٠ تعليق", "مع رابط كل فيديو"],
     exampleOutputAr: "ملف إكسل واحد: نص التعليق، كاتبه، تاريخه، ورابط الفيديو.",
     estimate: { kind: "comments", platform: "youtube", volume: 200 },
@@ -71,6 +72,12 @@ export const SEGMENTS: readonly Segment[] = [
 
 export function segmentBySlug(slug: string): Segment | null {
   return SEGMENTS.find((segment) => segment.slug === slug) ?? null;
+}
+
+/** A segment whose page speaks of decision makers says, in one sentence, what one request holds (the shared sizing function's number). */
+export function segmentPeopleLineAr(segment: Segment, dailyCapPoints?: number): string | null {
+  const mentionsPeople = [segment.headlineAr, segment.painAr, ...segment.usesAr, segment.exampleRequestAr, ...segment.examplePlanAr].some((line) => /صنّ?اع\s*القرار|صنّ?اع\s*قرار/u.test(line));
+  return mentionsPeople ? decisionMakersPerRequestLine({ dailyCapPoints }) : null;
 }
 
 export interface SegmentExample {
