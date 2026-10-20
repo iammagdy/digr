@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
+import { volumeLimitStatementAr } from "@/lib/jobCaps";
 import { getQuoteApprovalState, isQuotePlanComplete } from "@/lib/quoteApprovalState";
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
@@ -29,6 +30,8 @@ export interface PlanQuoteData {
   isAffordable: boolean;
   pointsCapConstrained?: boolean;
   requestedVolumeMax?: number;
+  /** What the customer asked, when the plan holds fewer records than that (set by the server). */
+  askedVolumeMax?: number;
   pointsCap?: number;
   userBalance: number;
   downscaledOffer?: {
@@ -191,6 +194,10 @@ export default function PlanQuoteCard({
   }, []);
 
   const baseApprovalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
+  // Never shrink silently: what was asked, what fits one job now, and why (one plain sentence from the plan's own numbers).
+  const volumeLimit = (quote.items?.length ?? 1) <= 1
+    ? volumeLimitStatementAr({ askedUnits: Math.max(quote.askedVolumeMax ?? 0, quote.requestedVolumeMax ?? 0), fittedUnits: quote.targetVolumeMax })
+    : null;
   const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
   const approvalState = { ...baseApprovalState, canApprove: baseApprovalState.canApprove && planComplete };
   const expired = !approvalState.canApprove;
@@ -280,13 +287,17 @@ export default function PlanQuoteCard({
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
 
-      {quote.pointsCapConstrained && (
+      {volumeLimit ? (
+        <p data-testid="plan-volume-limit" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
+          {volumeLimit} يمكنك تقليل العدد أكثر إذا أردت.
+        </p>
+      ) : quote.pointsCapConstrained ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
             ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`
             : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${formatAr(quote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`} يمكنك تقليل العدد أكثر إذا أردت.
         </p>
-      )}
+      ) : null}
 
       {/* Interpreted Parameters: Chips from planScopeRows */}
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px]">

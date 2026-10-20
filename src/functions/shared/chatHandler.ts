@@ -1,6 +1,6 @@
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
-import { capStatementAr } from "../../lib/jobCaps";
+import { capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -3096,6 +3096,8 @@ export class ChatHandler {
             };
           });
 
+        // What the customer asked for a single social item, before any ceiling (the capability's rows or the job's points cap).
+        let askedVolumeForCard = null as number | null;
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
           // A social request is served by its verified capability whatever the model proposed; the link, channel,
           // keyword and country are rebuilt from the customer's own words.
@@ -3131,6 +3133,7 @@ export class ChatHandler {
               ? perVideo * videoCount
               : item.targetVolumeMax || 1;
             const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows));
+            askedVolumeForCard = items.length === 1 ? statedVolume : null;
             return {
               ...item,
               capabilitySlug: verifiedSocialDef.slug,
@@ -3404,6 +3407,7 @@ export class ChatHandler {
             planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits, socialIntent.discover === "keyword" ? conversationRequestText : undefined);
           }
           currentStep = "quote_save";
+          const plannedSocialVolume = Number(planItems[0]?.targetVolumeMax) || 1;
           const tQuoteStart = Date.now();
           awaitsCount++;
           const managedQuote = await createAndSaveManagedQuote(this.tables, {
@@ -3424,6 +3428,12 @@ export class ChatHandler {
           tQuoteMs = Date.now() - tQuoteStart;
           quoteMs = tQuoteMs;
           quoteRpcMs += quoteMs;
+          // The goal line must not promise the volume that was asked once the job cap has cut it: it states what the plan holds.
+          if (verifiedSocialDef && managedQuote.items.length === 1 && managedQuote.targetVolumeMax < plannedSocialVolume) {
+            const fittedSummary = socialPlanSummaryAr(verifiedSocialDef, managedQuote.items[0].params || {}, managedQuote.targetVolumeMax, toArabicDigits, socialIntent.discover === "keyword" ? conversationRequestText : undefined);
+            managedQuote.summaryAr = fittedSummary;
+            planOutput.summaryAr = fittedSummary;
+          }
 
           planQuoteData = {
             quoteId: managedQuote.quoteId,
@@ -3437,6 +3447,7 @@ export class ChatHandler {
             isAffordable: managedQuote.isAffordable,
             pointsCapConstrained: managedQuote.pointsCapConstrained,
             requestedVolumeMax: managedQuote.requestedVolumeMax,
+            ...(askedVolumeForCard && askedVolumeForCard > managedQuote.targetVolumeMax ? { askedVolumeMax: askedVolumeForCard } : {}),
             pointsCap: managedQuote.pointsCap,
             userBalance,
             downscaledOffer: managedQuote.downscaledOffer,
@@ -3482,8 +3493,14 @@ export class ChatHandler {
             planSummaryText += `\n- الفترة الزمنية: ${missionWindow.labelAr}${missionWindow.reasonAr ? ` — ${missionWindow.reasonAr}` : ""}`;
             if (missionWindow.noteAr) planSummaryText += `\n- ملاحظة: ${missionWindow.noteAr}`;
           }
+          // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
+          const askedUnitsForText = Math.max(askedVolumeForCard ?? 0, managedQuote.requestedVolumeMax || 0, managedQuote.targetVolumeMax);
+          const volumeLimitLine = managedQuote.items.length === 1
+            ? volumeLimitStatementAr({ askedUnits: askedUnitsForText, fittedUnits: managedQuote.targetVolumeMax })
+            : null;
+          if (volumeLimitLine) planSummaryText += `\n- ${volumeLimitLine}`;
           if (managedQuote.pointsCapConstrained) {
-            const requestedUnits = managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax;
+            const requestedUnits = askedUnitsForText;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
             const capStatement = managedQuote.items.length === 1
               ? capStatementAr({
