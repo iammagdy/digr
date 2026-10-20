@@ -400,6 +400,8 @@ function discoveryRequest(mode: Exclude<SocialMode, "url">, params: Record<strin
     limit,
     cursor,
     ...(mode === "query" ? { query: String(params.query || "").trim() } : {}),
+    ...(mode === "query" && typeof params.dateFrom === "string" ? { dateFrom: params.dateFrom } : {}),
+    ...(mode === "query" && typeof params.dateTo === "string" ? { dateTo: params.dateTo } : {}),
     ...(mode === "channel" ? { channel: String(params.channel || "").trim() } : {}),
     ...(mode === "trending" ? { region: String(params.region || "").trim() } : {}),
   };

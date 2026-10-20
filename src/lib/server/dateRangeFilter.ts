@@ -66,3 +66,41 @@ export function filterRowsByDateRange<T>(
   });
   return { rows, excludedCount: input.length - rows.length };
 }
+
+export type RowDateSummary = {
+  /** Rows the filter drops because no publication date could be read. */
+  missing: number;
+  /** Rows with a readable date that falls outside the window. */
+  outside: number;
+  /** Oldest and newest readable date among ALL returned rows (YYYY-MM-DD, UTC), or null when none has one. */
+  oldest: string | null;
+  newest: string | null;
+  /** Publish dates (YYYY-MM-DD, null = unreadable) of at most the first three rows: enough to prove a cause, never row content. */
+  sampleDates: Array<string | null>;
+};
+
+const isoDay = (timestamp: number): string => new Date(timestamp).toISOString().slice(0, 10);
+
+/** Why the date window dropped rows on one page, read with the same date rules as filterRowsByDateRange. Dates only, no row content. */
+export function summarizeRowDates(input: unknown[], from?: string, to?: string): RowDateSummary {
+  const start = from ? boundary(from, false) : Number.NEGATIVE_INFINITY;
+  const end = to ? boundary(to, true) : Number.POSITIVE_INFINITY;
+  const summary: RowDateSummary = { missing: 0, outside: 0, oldest: null, newest: null, sampleDates: [] };
+  let oldest = Number.POSITIVE_INFINITY;
+  let newest = Number.NEGATIVE_INFINITY;
+  input.forEach((value, index) => {
+    const row = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+    const timestamp = row ? rowTimestamp(row) : null;
+    if (index < 3) summary.sampleDates.push(timestamp === null ? null : isoDay(timestamp));
+    if (timestamp === null) {
+      summary.missing++;
+      return;
+    }
+    if (timestamp < oldest) oldest = timestamp;
+    if (timestamp > newest) newest = timestamp;
+    if (!(timestamp >= start && timestamp <= end)) summary.outside++;
+  });
+  if (Number.isFinite(oldest)) summary.oldest = isoDay(oldest);
+  if (Number.isFinite(newest)) summary.newest = isoDay(newest);
+  return summary;
+}

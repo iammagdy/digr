@@ -272,4 +272,52 @@ describe("worker: social jobs", () => {
     expect(String(release!.args.p_error_message)).toContain("لم يُعثر على أي بيانات مطابقة");
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
   });
+  describe("X with a time window", () => {
+    const secs = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+    const later = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `later${i}`, text: `منشور ${i}`, createdUtc: secs("2026-10-12T07:00:00Z") + i * 3600 }));
+
+    it("every row later than the window: the date operators are sent, each page says why, the sentence is plain, paging stops by the empty-page rule and nothing is charged", async () => {
+      resetDb("social-x-posts", { query: "مباراة مصر والمغرب كأس العالم", dateFrom: "2026-06-11", dateTo: "2026-07-19" }, 50, 5);
+      const sent: Array<Record<string, any>> = [];
+      let n = 0;
+      useSource(async (_source, params) => {
+        sent.push(params);
+        n++;
+        return ok({ ok: true, rows: later(20), next_cursor: `cur_${n}` }, 600);
+      });
+
+      const { json } = await runAllChunks();
+
+      expect(sent.length).toBeGreaterThan(0);
+      for (const params of sent) expect(params.query).toBe("مباراة مصر والمغرب كأس العالم since:2026-06-11 until:2026-07-20");
+      expect(sent).toHaveLength(3);
+      const lines = db.events.map((event) => String(event.message));
+      const pageLines = lines.filter((line) => line.includes("تم استبعاد ٢٠ سجل من هذه الصفحة"));
+      expect(pageLines).toHaveLength(3);
+      expect(pageLines[0]).toContain("٢٠ خارج الفترة المطلوبة");
+      expect(pageLines[0]).toContain("أقدم تاريخ نشر ٢٠٢٦-١٠-١٢");
+      expect(pageLines[0]).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
+      const release = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+      expect(release).toBeDefined();
+      expect(String(release!.args.p_error_message)).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
+      expect(String(release!.args.p_error_message)).toContain("تم استرداد كامل الرصيد المحجوز دون أي خصم");
+      expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
+      expect(json.released).toBe(true);
+      // The step file of a page that ended the chunk keeps at most three dates, never row content.
+      const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
+      expect(stepFile.dateWindow).toEqual({ missing: 0, outside: 20, oldest: "2026-10-12", newest: "2026-10-13", sampleDates: ["2026-10-12", "2026-10-12", "2026-10-12"] });
+    });
+
+    it("rows inside the window are delivered and charged as usual", async () => {
+      resetDb("social-x-posts", { query: "كأس العالم", dateFrom: "2026-06-11", dateTo: "2026-07-19" }, 20, 5);
+      useSource(async () => ok({ ok: true, rows: Array.from({ length: 20 }, (_, i) => ({ tweet_id: `in${i}`, text: `كأس العالم ${i}`, createdUtc: secs("2026-06-20T10:00:00Z") + i })) }, 600));
+
+      await runAllChunks();
+
+      expect(db.rpcCalls.some((c) => c.name === "release_job_atomic")).toBe(false);
+      const settle = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
+      expect(settle).toBeDefined();
+      expect(db.events.some((event) => String(event.message).includes("وكلها داخل الفترة المطلوبة"))).toBe(true);
+    });
+  });
 });
