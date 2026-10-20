@@ -5,6 +5,9 @@ import { SOCIAL_TASK_QUESTION_IDS } from "../../lib/socialTasks";
 
 export const MAX_CLARIFICATION_QUESTIONS = 8;
 
+/** Questions built by code whose choices are their own (a comment cap, the kind of data): the generic option banks never replace them. */
+export const OWN_OPTION_QUESTION_IDS: ReadonlySet<string> = new Set(["volume_cap_required", "goal_required"]);
+
 export const ClarificationParameterTypeSchema = z.enum([
   "platform",
   "time_window",
@@ -281,7 +284,7 @@ export function normalizeClarificationQuestions(
     const parsedParameterType = ClarificationParameterTypeSchema.safeParse(questionItem.parameterType);
     const parameterType = parsedParameterType.success ? parsedParameterType.data : inferParameterType(text);
     const modelAskedFree = questionItem.type === "free";
-    const ownsItsOptions = typeof questionItem.id === "string" && SOCIAL_TASK_QUESTION_IDS.has(questionItem.id);
+    const ownsItsOptions = typeof questionItem.id === "string" && (SOCIAL_TASK_QUESTION_IDS.has(questionItem.id) || OWN_OPTION_QUESTION_IDS.has(questionItem.id));
     // A free-text question (an account name, a link) never carries chips, and a question built from the customer's own
     // request keeps its own options: the topic words in its text (video, platform) must not turn it into a volume or
     // platform question with someone else's choices.

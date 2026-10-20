@@ -81,7 +81,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
-import { consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, understandMission, understoodLineAr } from "../../lib/consultantCopy";
+import { consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, nextStep, questionForStep, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
@@ -176,6 +176,13 @@ export function getDeterministicDiscoveryQuestion(text: string, brief: ResearchB
   }
   if (!isAccount && !isPeople && !isCompanies) {
     const socialTaskIntent = detectSocialIntent(normalized);
+    // A mission over channels (their top videos, then the comments) is decided by its own understanding: the channels
+    // and the comment cap are asked ONE at a time, and nothing else is.
+    const mission = understandMission(normalized);
+    if (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") {
+      const step = nextStep(mission);
+      return step.type === "ask_one" ? questionForStep(step) : null;
+    }
     const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
     // Studies / articles / news: no direct source exists, so ask ONE specific question that echoes the topic and country.
     const topicGathering = !socialTaskIntent.task ? detectTopicGathering(normalized) : null;
@@ -3097,14 +3104,27 @@ export class ChatHandler {
             const dates = requestDateFilters(conversationRequestText);
             const perVideo = brief.commentsPerPost && brief.commentsPerPost > 0 ? brief.commentsPerPost : undefined;
             const videoCount = brief.postCount && brief.postCount > 0 ? brief.postCount : undefined;
+            // A mission over channels: the channels, the top videos kept per channel (ranked by views) and the topic come
+            // from the customer's words; the number they stated is the comment cap, never the top-N or the channel count.
+            const mission = verifiedSocialDef.kind === "comments" ? understandMission(conversationRequestText) : null;
+            const isMission = Boolean(mission && (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") && mission.channels.named.length > 0);
             const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
               dateFrom: dates.from,
               dateTo: dates.to,
-              perVideo,
-              videoCount,
+              // The «١٠ فيديوهات» of a mission is the top-N per channel, not a per-video or video-count setting.
+              perVideo: isMission ? undefined : perVideo,
+              videoCount: isMission ? undefined : videoCount,
+              ...(isMission && mission ? {
+                channels: mission.channels.named,
+                topPerChannel: mission.topPerChannel ?? undefined,
+                rankBy: mission.rankedBy ?? undefined,
+                topic: mission.kind === "social_channel_topic" ? mission.subject ?? undefined : undefined,
+              } : {}),
             });
             // The count the customer stated wins; a videos x comments-per-video request means exactly that many comments.
-            const statedVolume = explicitRequestedVolume && explicitRequestedVolume > 0
+            const statedVolume = isMission && mission?.volume
+              ? mission.volume
+              : explicitRequestedVolume && explicitRequestedVolume > 0 && !isMission
               ? explicitRequestedVolume
               : perVideo && videoCount && verifiedSocialDef.kind === "comments"
               ? perVideo * videoCount
