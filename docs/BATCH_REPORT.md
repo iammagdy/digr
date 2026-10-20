@@ -1,7 +1,7 @@
 # Feature batch report (promo codes, typed credit, wallet and admin tools, support, identity, file shaping)
 
-Raw evidence only. Anything not run is marked NOT RUN. Post-merge facts (merge commit, production deployment, smoke test) are
-appended in a follow-up docs-only pull request after the deployment is verified, and are in the final message.
+Raw evidence only. Anything not run is marked NOT RUN. The post-merge facts (merge commit, production deployment, smoke
+test) are in the section "After the merge" at the end.
 
 ## Baseline and tests
 
@@ -118,3 +118,43 @@ Merging this pull request does not apply them: the repository already holds migr
 4. Set the Anthropic monthly spend cap.
 5. Decide the volume-pricing tiers and whether to raise the per-job cap (the two go together).
 6. Ask Codex to run the browser test on https://diger.tech with the test account: wallet and promo box, admin pages, «شيت لكل …» file shaping, the exploration button, the contact page and the report button. Then read `llm_usage` for the real cost per turn.
+
+
+## After the merge
+
+| Item | Value |
+|---|---|
+| main before | `7aa1782419dbce163a30119a4bd614ec4be3d989` |
+| Merge commit of pull request 84 (merge commit, not squash) | `b2c480b41c592b465da1a7ac04bf09520d6b19fb` |
+| main after | `b2c480b41c592b465da1a7ac04bf09520d6b19fb`; its tree is identical to the tested branch head `350009be27c63fe40ae7d54a52531e0d56a613c4` (empty `git diff --stat`) |
+| Dry-run merge into a throwaway clone | zero conflicts (main was an ancestor of the branch); the only SQL files touched are the three new migration files; no money, pricing, cap, ledger or settlement file was modified |
+| Preview deployment of the branch head | `dpl_8arADK5rsE6zTeUpsLUJkTrk7acY`, READY |
+| Production deployment of the merge commit | `dpl_7BAaYcxmbtxN9nGRqZgqonTMixF2`, **ERROR** (not READY) |
+
+**The production build failed.** Vercel log, build step, about 20 seconds in:
+
+```
+Failed to compile.
+src/app/layout.tsx
+An error occurred in `next/font`.
+TypeError: Cannot read properties of null (reading '1')
+    at node_modules/next/dist/compiled/@next/font/dist/google/loader.js:122:78
+> Build failed because of webpack errors
+```
+
+Reading of the evidence: line 122 of the loader is `/\.(woff|woff2|eot|ttf|otf)$/.exec(googleFontFileUrl)[1]`, so the Google Fonts answer that the build machine received contained a font file address without a font extension. `src/app/layout.tsx`, `package.json` and the lockfile are unchanged by this batch (only `next.config.mjs` changed, for the report-only security header). The identical tree built READY as a preview 11 minutes earlier, and twice locally; from this machine Google returns normal `.woff2` addresses for both fonts (`Vazirmatn`, `Markazi Text`). So this looks like a failure to fetch the fonts in that one build, not a defect of the batch; that is an inference, not something that was proved. Per the instruction nothing was forced: no retry, no redeploy, no change to main.
+
+**Production is unharmed.** The previous deployment keeps serving: `dpl_DiXUEMw7WBQBxcpTSEC9eFDpDdkj` (commit 7aa1782), READY. Smoke test against https://diger.tech right now (no login, no jobs, no spend):
+
+| Page | Result |
+|---|---|
+| `/` | 200, 79,639 bytes; provider-name hits 0 |
+| `/services` | 200, 39,854 bytes; provider-name hits 1 (the old build, before the fix) |
+| `/calculator` | 200, 25,298 bytes; provider-name hits 1 (the old build) |
+| `/contact` | 404 (the new build is not live) |
+
+The same four pages on the built merged tree served locally (`next start`, identical tree): all 200, provider-name hits 0 on every page, `Content-Security-Policy-Report-Only` present, `/api/csp-report` answers 204. That is evidence about the code, not about production.
+
+What to do: redeploy the commit `b2c480b` from the Vercel dashboard (Deployments, the failed one, Redeploy). If the same font error comes back, the fix is to stop the build depending on a live Google Fonts fetch (host the two fonts with the site). Until a deployment of `b2c480b` is READY, none of the features in this batch is live on diger.tech, and the three migration files should wait (the live code still has the old behaviour).
+
+Finding while checking the database: three repository migration files are not in the database's migration history (`20261013170000_welcome_email_on_confirm`, `20261015185600_prevent_claim_after_collection_complete`, `20261016011500_seed_company_and_people_capabilities`). They may have been applied by hand; that was not checked.
