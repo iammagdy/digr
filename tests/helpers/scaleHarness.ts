@@ -210,6 +210,10 @@ export interface FakeProviderOptions {
 /** A deterministic TikTok-like source: a keyword search that lists videos, and a cursor-paged comment feed per video. */
 export class FakeProvider {
   callCount = 0;
+  /** Calls abandoned because the source took longer than the time the chunk allowed that call. */
+  timeouts = 0;
+  /** Calls made by each chunk, in order. */
+  readonly chunkCalls: number[] = [];
   readonly seenCallKeys: string[] = [];
   readonly callLog: Array<{ endpoint: string; call: number; cursor: unknown; returned: number }> = [];
   constructor(readonly options: FakeProviderOptions) {}
@@ -229,7 +233,14 @@ export class FakeProvider {
     this.callCount += 1;
     const callNumber = this.callCount;
     this.seenCallKeys.push(context.idempotencyKey);
-    advance(Math.round((this.options.latencySeconds ?? 2) * 1000));
+    const latencyMs = Math.round((this.options.latencySeconds ?? 2) * 1000);
+    if (latencyMs > context.timeoutMs) {
+      // the chunk gave this call less time than the source needs: the call is abandoned at its timeout, billed and with no rows
+      advance(context.timeoutMs);
+      this.timeouts += 1;
+      return { ok: false, httpStatus: 504, data: null, costMicro: 1000, tregCallId: `t${callNumber}`, errorCode: "timeout", errorMessageAr: "تعذر الاتصال بالمصدر." };
+    }
+    advance(latencyMs);
     const failure = this.failureFor(callNumber);
     if (failure) {
       const status = failure.kind === "timeout" ? 504 : Number(failure.kind);
@@ -267,8 +278,10 @@ export class FakeProvider {
   adapter(): ProviderAdapterFn {
     return async (input) => {
       const before = nowMs();
+      const callsBefore = this.callCount;
       const out = await runSocialChunk(input, { call: this.call, now: nowMs });
       db.chunkSeconds.push((nowMs() - before) / 1000);
+      this.chunkCalls.push(this.callCount - callsBefore);
       return out;
     };
   }

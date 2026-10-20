@@ -9,7 +9,7 @@
  * its own [min, max], so a typo can neither switch a ceiling off nor set it to a number the worker cannot honour.
  */
 
-export type ScaleKey = "absoluteMaxPages" | "largeJobPageAllowance" | "socialMaxRows" | "maxPerVideo" | "maxVideosPerJob" | "streamXlsxAboveRows" | "rowsPerSheet";
+export type ScaleKey = "absoluteMaxPages" | "largeJobPageAllowance" | "socialMaxRows" | "maxPerVideo" | "maxVideosPerJob" | "streamXlsxAboveRows" | "rowsPerSheet" | "socialRowsPerChunk";
 
 interface ScaleSpec {
   env: string;
@@ -34,6 +34,10 @@ export const SCALE_SPECS: Record<ScaleKey, ScaleSpec> = {
   // A comments/posts workbook with more rows than this is written as a stream (flat memory); the in-memory workbook needs about 18 MB per
   // 1,000 rows and passes 700 MB at 40,000 rows. Below it nothing changes: the same file as before.
   streamXlsxAboveRows: { env: "LONG_JOB_STREAM_XLSX_ROWS", def: 5000, min: 0, max: 1_000_000, whatAr: "عدد الصفوف الذي يبدأ بعده كتابة الملف على دفعات" },
+  // Rows one chunk of a comments/posts job collects. A chunk still ends by itself when its calls would not fit the time limit (see
+  // chunkSizing.ts), so raising this never makes a chunk longer than the limit; it only lets a fast source fill bigger chunks (fewer
+  // chunks, fewer pages against the page ceiling). 50 is what the platform runs on today.
+  socialRowsPerChunk: { env: "LONG_JOB_ROWS_PER_CHUNK", def: 50, min: 10, max: 500, whatAr: "عدد السجلات في الدفعة الواحدة" },
   // Rows per sheet of a streamed workbook (a spreadsheet allows 1,048,576).
   rowsPerSheet: { env: "LONG_JOB_ROWS_PER_SHEET", def: 100_000, min: 1, max: 1_000_000, whatAr: "أكبر عدد صفوف في ورقة واحدة" },
 };
