@@ -81,7 +81,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { isRetrySamePlanMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
-import { consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, understandMission } from "../../lib/consultantCopy";
+import { consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
@@ -3426,6 +3426,19 @@ export class ChatHandler {
               ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_BILLING_NOTE_AR}`.trim()
               : planOutput.methodologyNotes,
           };
+
+          // What the assistant understood and the window the plan applies: shown at the top of the plan in the panel.
+          const planMission = understandMission(conversationRequestText);
+          const planUnderstood = understoodLineAr(planMission);
+          if (planUnderstood) planQuoteData.understoodAr = planUnderstood;
+          if (planMission.window.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
+            planQuoteData.window = {
+              labelAr: planMission.window.labelAr,
+              source: planMission.window.source,
+              ...(planMission.window.reasonAr ? { reasonAr: planMission.window.reasonAr } : {}),
+              ...(planMission.window.noteAr ? { noteAr: planMission.window.noteAr } : {}),
+            };
+          }
 
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (managedQuote.items.length === 1) {

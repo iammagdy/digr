@@ -54,6 +54,10 @@ export interface PlanQuoteData {
   /** Loaded from plans_quotes when a saved conversation is restored. */
   status?: string;
   methodologyNotes?: string;
+  /** One sentence: what the assistant understood from the request (built by code). */
+  understoodAr?: string;
+  /** The period a feed plan applies, why (a known event) and any date that was corrected. */
+  window?: { labelAr: string; source: string; reasonAr?: string; noteAr?: string };
 }
 
 interface PlanQuoteCardProps {
@@ -260,6 +264,10 @@ export default function PlanQuoteCard({
         </p>
       </div>
 
+      {quote.understoodAr && (
+        <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
+      )}
+
       {quote.pointsCapConstrained && (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
@@ -279,6 +287,17 @@ export default function PlanQuoteCard({
           </div>
         ))}
       </div>
+
+      {quote.window && (
+        <div className="mt-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9]" data-testid="plan-window">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-mut">الفترة الزمنية</span>
+            <span className="rounded-md border border-ln bg-bg px-2 py-0.5 font-medium text-ink">{quote.window.labelAr}</span>
+          </div>
+          {quote.window.reasonAr && <p className="mb-0 mt-1 font-light text-ink2">{quote.window.reasonAr}</p>}
+          {quote.window.noteAr && <p className="mb-0 mt-1 font-light text-ink2">{quote.window.noteAr}</p>}
+        </div>
+      )}
 
       {/* Execution Steps */}
       <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]">
