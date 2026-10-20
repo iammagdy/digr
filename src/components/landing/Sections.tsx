@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { formatAr } from "@/lib/arabicDigits";
+import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
+import { SAMPLE_FILES, SAMPLE_LABEL_AR, samplePreview, type OutputKind } from "@/lib/outputStandard";
 import { computePublicCalculatorQuote } from "@/lib/calculatorPricing";
 import { FAQS, SHEETS, STATEMENTS } from "./data";
 import { Reveal } from "./Reveal";
@@ -46,6 +47,64 @@ export function Sheets() {
             </Reveal>
           ))}
         </div>
+      </div>
+    </section>
+  );
+}
+
+/** A real result file's shape, built by the same code from FAKE data and labelled as a sample; the files are static downloads. */
+export function SampleFile() {
+  const [kind, setKind] = useState<OutputKind>("comments");
+  const preview = samplePreview(kind);
+  const file = SAMPLE_FILES[kind];
+  return (
+    <section className={`${BORDER_TOP} px-5 py-[100px]`} aria-labelledby="sample-file-title">
+      <div className="mx-auto max-w-[900px] text-center">
+        <Reveal as="p" className="m-0 text-sm font-light text-mut">شكل الملف الذي تستلمه</Reveal>
+        <Reveal as="h2" delay={120} className="mb-0 mt-3 font-extralight text-ink" style={{ fontSize: "clamp(30px,4.6cqi,52px)" }}>
+          <span id="sample-file-title">جدول واحد منظم، جاهز للتحليل</span>
+        </Reveal>
+        <div className="mt-8 flex flex-wrap justify-center gap-2" role="tablist" aria-label="نوع الملف">
+          {(Object.keys(SAMPLE_FILES) as OutputKind[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="tab"
+              aria-selected={kind === k}
+              onClick={() => setKind(k)}
+              className={`min-h-11 cursor-pointer rounded-full border bg-transparent px-4 text-[13px] text-ink ${kind === k ? "border-gold" : "border-ln"}`}
+            >
+              {SAMPLE_FILES[k].labelAr}
+            </button>
+          ))}
+        </div>
+        <div className="mx-auto mt-6 overflow-hidden rounded-[18px] border border-ln bg-sf text-right" data-testid="sample-file-preview" style={{ boxShadow: "var(--shadow)" }}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ln bg-sf2 px-4 py-2.5">
+            <span className="text-[12px] font-medium text-ink" data-testid="sample-label">{SAMPLE_LABEL_AR}</span>
+            <span className="text-[11px] font-light text-mut">{file.descriptionAr}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] border-collapse text-[12px]">
+              <thead>
+                <tr>{preview.headers.map((h) => <th key={h} className="whitespace-nowrap border-b border-ln bg-sf px-3 py-2 text-right font-medium text-ink">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((row, i) => (
+                  <tr key={i}>{row.map((cell, j) => <td key={j} dir="auto" className="border-b border-ln px-3 py-2 font-light text-ink2">{/^(?:https?:\/\/|[^\s@]+@)/.test(cell) ? cell : toArabicDigits(cell)}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p className="mb-0 mt-4 text-[12px] font-light leading-[1.9] text-mut">كل الأسماء والروابط والأرقام في هذا النموذج وهمية، ولا تخص أي شخص أو جهة حقيقية.</p>
+        <a
+          href={`/samples/${file.fileName}`}
+          download
+          data-testid="sample-download"
+          className="mt-4 inline-flex min-h-11 items-center justify-center rounded-full border border-ln2 px-5 text-[13px] text-ink no-underline hover:border-gold"
+        >
+          تحميل النموذج التوضيحي (إكسل)
+        </a>
       </div>
     </section>
   );
