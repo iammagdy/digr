@@ -1,6 +1,7 @@
 import { TablesDB, Query } from "./dbCompat";
 import { onProviderLimitsFlush, resolveProviderLimits } from "../../lib/server/providerLimits";
 
+import { selectAllRows } from "../../lib/server/selectAll";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 export const DEFAULT_JOB_POINTS_CAP = 600;
 export const DEFAULT_PROVIDER_CREDIT_USD = 1.00;
@@ -68,11 +69,11 @@ export async function getDailyProviderSpendUsd(tables?: TablesDB | any | null): 
   if (typeof tables.from === "function") {
     try {
       const todayStart = new Date().toISOString().slice(0, 10) + "T00:00:00.000Z";
-      const { data } = await tables
+      const { data } = await selectAllRows(() => tables
         .from("provider_costs")
         .select("cost_usd")
         .eq("provider", "treg")
-        .gte("created_at", todayStart);
+        .gte("created_at", todayStart), { orderBy: "id" });
       let dbCostUsd = 0;
       for (const row of data || []) {
         const c = Number(row.cost_usd) || 0;
@@ -115,10 +116,10 @@ export async function getTotalProviderSpendUsd(tables?: TablesDB | any | null): 
 
   if (typeof tables.from === "function") {
     try {
-      const { data } = await tables
+      const { data } = await selectAllRows(() => tables
         .from("provider_costs")
         .select("cost_usd")
-        .eq("provider", "treg");
+        .eq("provider", "treg"), { orderBy: "id" });
       let dbCostUsd = 0;
       for (const row of data || []) {
         const c = Number(row.cost_usd) || 0;

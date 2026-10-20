@@ -5,6 +5,7 @@ import {
   isEncryptionConfigured, last4Of, maskedKey, validateKeyShape, type ProviderId,
 } from "./providerKeyCrypto";
 import { envKeyConfigured, getLastAuthRejection, invalidateProviderKeyCache, resolveProviderKey, type AuthRejection, type KeySource, type StoreState } from "./providerKeys";
+import { selectAllRows } from "./selectAll";
 import {
   DEFAULT_LOW_BALANCE_THRESHOLD_USD, checkProviderKey, getProviderStatus, invalidateProviderStatusCache, isLowBalance,
   type FetchLike, type ProviderStatusSnapshot,
@@ -275,12 +276,12 @@ async function readSpendAndActivity(client: any, provider: ProviderId): Promise<
   const activity: ActivityRow[] = [];
   try {
     if (provider === "treg") {
-      const { data: today } = await client.from("provider_costs").select("cost_usd").eq("provider", "treg").gte("created_at", since);
+      const { data: today } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").gte("created_at", since), { orderBy: "id" });
       for (const r of today || []) { const c = Number(r.cost_usd); if (Number.isFinite(c) && c > 0) todayUsd += c; }
       const { data } = await client.from("provider_costs").select("job_id, units, cost_usd, created_at, is_estimate").eq("provider", "treg").order("created_at", { ascending: false }).limit(20);
       for (const r of data || []) activity.push({ at: r.created_at, label: r.job_id ? `مهمة ${String(r.job_id).slice(-8)}` : "—", detail: `${Number(r.units) || 1} وحدة${r.is_estimate ? " · تقدير" : ""}`, amount: String(Number(r.cost_usd) || 0) });
     } else {
-      const { data: today } = await client.from("llm_usage").select("cost_usd").gte("created_at", since);
+      const { data: today } = await selectAllRows(() => client.from("llm_usage").select("cost_usd").gte("created_at", since), { orderBy: "id" });
       for (const r of today || []) { const c = Number(r.cost_usd); if (Number.isFinite(c) && c > 0) todayUsd += c; }
       const { data } = await client.from("llm_usage").select("reason, tokens_in, tokens_out, cost_usd, created_at").order("created_at", { ascending: false }).limit(20);
       for (const r of data || []) activity.push({ at: r.created_at, label: String(r.reason || "—"), detail: `${Number(r.tokens_in) || 0} / ${Number(r.tokens_out) || 0}`, amount: String(Number(r.cost_usd) || 0) });

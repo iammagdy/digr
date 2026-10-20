@@ -1,3 +1,4 @@
+import { selectAllRows } from "./selectAll";
 /**
  * Provider spend limits, editable from the admin dashboard with immediate effect and no redeploy.
  *
@@ -229,21 +230,26 @@ function utcDayStart(): string {
   return new Date(Date.UTC(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate())).toISOString();
 }
 
+/** Job ids sent to the database per request. */
+const JOB_ID_GROUP = 100;
+
 const sumCost = (rows: any[] | null | undefined) => (rows || []).reduce((a, r) => { const c = Number(r?.cost_usd); return Number.isFinite(c) && c > 0 ? a + c : a; }, 0);
 
 /** Real recorded provider spend (read-only): this job so far, and this user today across their jobs. */
 export async function readSpendForCeilings(client: any, ids: { jobId: string; userId: string }): Promise<{ jobUsd: number; userTodayUsd: number }> {
   try {
-    const { data: jobRows } = await client.from("provider_costs").select("cost_usd").eq("provider", "treg").eq("job_id", ids.jobId);
+    const { data: jobRows } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").eq("job_id", ids.jobId), { orderBy: "id" });
     const jobUsd = sumCost(jobRows);
-    const { data: todayRows } = await client.from("provider_costs").select("job_id, cost_usd").eq("provider", "treg").gte("created_at", utcDayStart());
+    const { data: todayRows } = await selectAllRows(() => client.from("provider_costs").select("job_id, cost_usd").eq("provider", "treg").gte("created_at", utcDayStart()), { orderBy: "id" });
     const jobIds = [...new Set((todayRows || []).map((r: any) => r.job_id).filter(Boolean))] as string[];
     let userTodayUsd = 0;
-    if (jobIds.length > 0) {
-      const { data: mine } = await client.from("jobs").select("id").eq("user_id", ids.userId).in("id", jobIds);
-      const mineSet = new Set((mine || []).map((r: any) => r.id));
-      userTodayUsd = sumCost((todayRows || []).filter((r: any) => mineSet.has(r.job_id)));
+    const mineSet = new Set<string>();
+    // the ids go to the database in groups: one request with thousands of ids is too long a URL
+    for (let i = 0; i < jobIds.length; i += JOB_ID_GROUP) {
+      const { data: mine } = await client.from("jobs").select("id").eq("user_id", ids.userId).in("id", jobIds.slice(i, i + JOB_ID_GROUP));
+      for (const row of mine || []) mineSet.add(row.id);
     }
+    if (mineSet.size > 0) userTodayUsd = sumCost((todayRows || []).filter((r: any) => mineSet.has(r.job_id)));
     return { jobUsd, userTodayUsd };
   } catch {
     // Unreadable spend must not stop customers' jobs; the daily limit in the reserve function still applies.
