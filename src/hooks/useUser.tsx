@@ -85,9 +85,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // The first read of a page comes from the session the browser already holds (no request); asking the sign-in service on every page
+  // would spend its small per-address allowance (shared by sign-up and sign-in) long before a room of phones finished loading.
+  // A real check still happens where it matters: every API call is verified on the server, and `refresh` below asks the service.
+  const readStoredSession = useCallback(async () => {
+    try {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ? mapSupabaseUser(session.user) : null);
+    } catch {
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const supabase = createClient();
-    getUser();
+    void readStoredSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
@@ -101,7 +116,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       subscription.unsubscribe();
     };
-  }, [getUser]);
+  }, [readStoredSession]);
 
   const login = async (email: string, password: string) => {
     const supabase = createClient();

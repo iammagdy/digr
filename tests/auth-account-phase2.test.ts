@@ -56,9 +56,13 @@ describe("Phase 2: Auth, Account & Middleware Guardrails", () => {
       expect(useBalanceFile).not.toContain("appwrite");
     });
 
-    it("useNotifications reads from notifications table with realtime support", () => {
+    it("useNotifications reads from the notifications table by polling, with no live (Realtime) connection", () => {
       expect(useNotificationsFile).toContain(".from(\"notifications\")");
-      expect(useNotificationsFile).toContain("postgres_changes");
+      expect(useNotificationsFile).not.toContain("postgres_changes");
+      expect(useNotificationsFile).not.toContain(".channel(");
+      expect(useNotificationsFile).not.toContain(".subscribe(");
+      expect(useNotificationsFile).toContain("startNotificationPolling");
+      expect(useNotificationsFile).toContain(".gt(\"created_at\"");
       expect(useNotificationsFile).not.toContain("appwrite");
     });
 
@@ -251,9 +255,14 @@ describe("Phase 2: Auth, Account & Middleware Guardrails", () => {
       const loginPage = readFileSync("src/app/login/page.tsx", "utf8");
       const registerPage = readFileSync("src/app/register/page.tsx", "utf8");
 
-      // Landing page reads Supabase session on server and passes initialSignedIn
-      expect(landingPage).toContain("createServerSideClient");
-      expect(landingPage).toContain("initialSignedIn");
+      // Landing page is static (no server read of the session, no sign-in call per visit); the header resolves the session in the
+      // browser and keeps its place empty meanwhile, so the login/register buttons never flash for a signed-in visitor.
+      expect(landingPage).not.toContain("createServerSideClient");
+      expect(landingPage).not.toContain("getUser");
+      expect(landingPage).toContain('export const dynamic = "force-static"');
+      expect(glassHeader).toContain("const resolving = loading && initialSignedIn === undefined");
+      expect(glassHeader).toContain("resolving ? null");
+      expect(sections).toContain("useUser()");
       expect(glassHeader).toContain('href="/dashboard/chat"');
       expect(glassHeader).toContain("لوحة التحكم");
 

@@ -1,10 +1,17 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isPublicPath } from "./lib/publicPaths";
+import { withLocalClaims } from "./lib/server/localClaims";
 
 export async function middleware(request: NextRequest) {
   // Public pages and status endpoints never need the session: no call to the sign-in service for them.
   if (isPublicPath(request.nextUrl.pathname)) return NextResponse.next({ request });
+
+  // An API call that carries its own bearer token never depends on the cookie refresh below, and its route checks the token itself:
+  // the middleware's own call to the sign-in service would be a second, identical check for every chat message and every poll.
+  if (request.nextUrl.pathname.startsWith("/api/") && request.headers.get("authorization")?.startsWith("Bearer ")) {
+    return NextResponse.next({ request });
+  }
 
   let supabaseResponse = NextResponse.next({
     request,
@@ -19,7 +26,7 @@ export async function middleware(request: NextRequest) {
     return supabaseResponse;
   }
 
-  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+  const supabase = withLocalClaims(createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
@@ -34,7 +41,7 @@ export async function middleware(request: NextRequest) {
         );
       },
     },
-  });
+  }));
 
   // Refresh session via getUser
   const {

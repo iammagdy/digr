@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useUser } from "@/hooks/useUser";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { SAMPLE_FILES, SAMPLE_LABEL_AR, samplePreview, type OutputKind } from "@/lib/outputStandard";
 import { computePublicCalculatorQuote } from "@/lib/calculatorPricing";
@@ -166,10 +167,12 @@ export function Faq() {
 }
 
 export function FinalCta({ initialSignedIn }: { initialSignedIn?: boolean } = {}) {
+  const { user, loading } = useUser();
+  const signedIn = loading ? Boolean(initialSignedIn) : Boolean(user);
   return (
     <section className={`${BORDER_TOP} px-5 pb-[150px] pt-[130px] text-center`}>
       <Reveal as="h2" className="m-0 font-extralight text-ink" style={{ fontSize: "clamp(40px,7cqi,80px)" }}>سؤال واحد يكفي للبدء.</Reveal>
-      <Link href={initialSignedIn ? "/dashboard/chat" : "/register"} className="mt-8 inline-flex min-h-14 items-center rounded-full bg-ac px-[34px] text-base text-onac">{initialSignedIn ? "لوحة التحكم" : "أنشئ حسابك"}</Link>
+      <Link href={signedIn ? "/dashboard/chat" : "/register"} className="mt-8 inline-flex min-h-14 items-center rounded-full bg-ac px-[34px] text-base text-onac">{signedIn ? "لوحة التحكم" : "أنشئ حسابك"}</Link>
       <div className="mt-[72px] flex flex-wrap items-center justify-center gap-x-[18px] gap-y-1.5 text-xs font-light text-fnt">
         <span>© ٢٠٢٦ ديجر — من مصادر متاحة · موافقة صريحة قبل أي جمع</span>
         <Link href="/pricing" className="flex min-h-11 items-center text-xs text-mut">الأسعار</Link>
