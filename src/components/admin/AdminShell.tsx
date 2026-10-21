@@ -183,7 +183,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     ["overview", "الرئيسية"], ["users", "المستخدمون"], ["topups", "الشحن"], ["providers", "المزودون"], ["more", "المزيد"],
   ].map(([id, label]) => ({
     id, label, icon: ADMIN_IC[id as keyof typeof ADMIN_IC],
-    on: page === id || (id === "more" && ["jobs", "operations", "finance", "audit", "settings"].includes(page)),
+    on: page === id || (id === "more" && ["jobs", "operations", "finance", "audit", "requests", "settings"].includes(page)),
     badge: id === "topups" ? pendingCount : 0,
     go: id === "more" ? () => setDrawer(true) : () => router.push(adminHref(id as AdminPageId)),
   }));

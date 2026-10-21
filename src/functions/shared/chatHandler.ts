@@ -1,3 +1,5 @@
+import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
+import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
 import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR, YOUTUBE_RECENT_SUPPLY_FROM_VOLUME, YOUTUBE_RECENT_SUPPLY_NOTE_AR } from "../../lib/youtubeRecency";
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
@@ -2503,6 +2505,39 @@ export class ChatHandler {
         };
       }
 
+      // A request none of whose parts the platform sells (news, prices, ads, maps, search results, jobs, forums, private data): said plainly by
+      // code with what IS available, never priced, never charged, and kept in the unserved-requests list the owner reads.
+      const coverage = !isTestSearchScenario && !isFileShapingTurn ? assessCoverage(conversationRequestText) : null;
+      if (coverage && coverage.status === "not_supported") {
+        const coverageReplyAr = notSupportedReplyAr(coverage);
+        const tCoverageWrite = Date.now();
+        awaitsCount += 3;
+        if (sb) {
+          await Promise.all([
+            sb.from("messages").update({ content_ar: coverageReplyAr }).eq("id", assistantMsgId),
+            sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+            sb.from("capability_requests").insert({ id: ID.unique(), user_id: userId, query: `${coverage.unsupported.join("+")}: ${String(message).slice(0, 500)}`, created_at: new Date().toISOString() }),
+          ].map((write) => Promise.resolve(write).catch(() => undefined)));
+        } else {
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: coverageReplyAr, status: "ready" } });
+          await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+          await this.tables.createRow({ databaseId: "digr", tableId: "capability_requests", rowId: ID.unique(), data: { userId, queryAr: String(message).slice(0, 500), platform: coverage.unsupported.join("+"), createdAt: new Date().toISOString() } }).catch(() => undefined);
+        }
+        const coverageDelta = Date.now() - tCoverageWrite;
+        writesMs += coverageDelta;
+        supabaseMs += coverageDelta;
+        return {
+          conversationId,
+          messageId: assistantMsgId,
+          role: "assistant",
+          contentAr: coverageReplyAr,
+          outputType: "answer_question",
+          intent: "chat",
+          tokensUsed: { input: 0, output: 0, costUsd: 0 },
+          turnStats: currentTurnStats(),
+        };
+      }
+
       const skippedQuestionIds = skippedQuestionIdsFromHistory(rawUserHistoryTexts);
       const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities, { skipped: skippedQuestionIds });
       // A question the customer skipped and that cannot be inferred: one plain sentence, no card, the composer stays open.
@@ -3769,6 +3804,14 @@ export class ChatHandler {
           }
           const unsupportedNote = unsupportedConstraintsNoteAr(extractRequestIntent(conversationRequestText));
           if (unsupportedNote) planSummaryText += `\n- ${unsupportedNote}`;
+          const planCoverage = assessCoverage(conversationRequestText);
+          if (planCoverage.status === "partly" && planCoverage.unsupported.length > 0) {
+            planSummaryText += `\n- ${partlyNoteAr(planCoverage)}`;
+            planQuoteData.partsAr = [
+              { labelAr: customerFacingCapabilityLabel(managedQuote.items[0]?.capabilitySlug), included: true },
+              ...planCoverage.unsupported.map((id) => ({ labelAr: familyById(id).titleAr, included: false, reasonAr: "لا نبيع هذا النوع من البيانات حاليًا" })),
+            ];
+          }
           // A feed plan states its window and why (a known event), and any date it corrected: the customer sees what will be applied.
           const missionWindow = windowOrProposedDefault(understandMission(conversationRequestText).window);
           if (missionWindow.status === "resolved" && managedQuote.items[0]?.params?.dateFrom) {
