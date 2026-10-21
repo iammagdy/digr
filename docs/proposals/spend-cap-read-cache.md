@@ -1,0 +1,51 @@
+# Proposal: reuse the day's model-spend sum for a few seconds (not applied)
+
+Status: PROPOSAL ONLY. Not applied, because it touches the platform's model-spend guard (`checkGlobalDailySpendCap`) and the
+automatic permission check refused the edit. The owner decides.
+
+## What the harness showed
+
+`src/app/api/chat/route.ts` calls `checkGlobalDailySpendCap(tables)` on every chat turn. That calls `sumTodayLlmCostSupabase`, which
+reads every `llm_usage` row of the current UTC day:
+
+* first a plain `select cost_usd where created_at >= today` (the API returns at most 1000 rows);
+* if that returns 1000 rows, the whole day is re-read page by page (1000 rows per request, up to 50 pages) in sequence.
+
+So the cost of one chat turn grows with the number of model calls made so far today: about 1 request while the day holds under
+1000 rows, 2 to 3 sequential requests at 2000 rows, and 51 requests at the 50-page ceiling (50 000 rows). At 50 000 rows the check
+fails closed and every chat turn answers 503 («المساعد متوقف مؤقتاً للحماية»). For a room of 500 people each sending several
+messages, the first 1000 rows are reached within the first hour.
+
+## Proposed change (about 20 lines, no money code, no limit value)
+
+Let one server instance reuse a sum it read less than 20 seconds ago, only while the day is below 80% of the cap:
+
+```ts
+let spendReadCache: { day: string; totalUsd: number; readAt: number } | null = null;
+
+export async function checkGlobalDailySpendCap(tables, config = DEFAULT_RATE_LIMITS, options: { cacheMs?: number } = {}) {
+  // ... cap resolved as today ...
+  const dayStart = utcStartOfDay();
+  const cached = spendReadCache;
+  if (options.cacheMs && cached && cached.day === dayStart && Date.now() - cached.readAt < options.cacheMs && cached.totalUsd < cap * 0.8) {
+    totalCostUsd = cached.totalUsd;
+  } else {
+    totalCostUsd = await sumTodayLlmCostSupabase(tables, dayStart);
+    if (options.cacheMs) spendReadCache = { day: dayStart, totalUsd: totalCostUsd, readAt: Date.now() };
+  }
+  // ... compare with cap as today ...
+}
+```
+
+and in the chat route: `checkGlobalDailySpendCap(tables, undefined, { cacheMs: 20_000 })`.
+
+* The cap value, the resolver and the fail-closed behaviour on read errors are unchanged.
+* Existing tests call the function without `options`, so they do not see the cache.
+* Worst case: an instance serves a sum up to 20 seconds old, below 80% of the cap; the overshoot is bounded by 20 seconds of
+  model spend, and from 80% of the cap on every turn reads fresh.
+* A durable alternative (needs SQL, so also only a proposal): a one-row `settings_private` counter or a `sum()` view/RPC so the
+  read is one small request. Not needed if the cache is accepted.
+
+## Measured effect
+
+See `docs/CONFERENCE_READINESS.md` (harness section) for the per-turn `llm_usage:select` count with and without the cache.
