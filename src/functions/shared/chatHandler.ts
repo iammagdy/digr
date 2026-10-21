@@ -19,6 +19,7 @@ import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput, type LlmCallResult } from "./llmClient";
 import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
 import { detectTopicGathering, hasTopicResearchService, studiesUnavailableReplyAr, topicSourceQuestion } from "./topicGathering";
+import { noteLocalLlmSpend } from "./rateLimits";
 import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
   getEnabledCapabilitiesWithCoreServices,
@@ -1402,6 +1403,7 @@ export class ChatHandler {
     const modelCalled = turn.usage.calls > 0;
     const model = modelCalled ? (turn.model || "unknown") : "deterministic";
     const costUsd = Number(turn.usage.costUsd.toFixed(6));
+    noteLocalLlmSpend(costUsd);
     try {
       if (sb) {
         await sb.from("llm_usage").insert({
@@ -4218,6 +4220,7 @@ export class ChatHandler {
       try {
         awaitsCount++;
         const tUsageStart = Date.now();
+        noteLocalLlmSpend(Number(turnUsage.costUsd.toFixed(6)));
         if (sb) {
           await sb.from("llm_usage").insert({
             user_id: userId,

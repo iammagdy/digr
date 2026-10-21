@@ -6,8 +6,8 @@ Written 2026-10-21. Code freeze: Friday 2026-10-23 evening. Everything here come
 
 | # | What | Why it is first | Numbers | What fixes it |
 |---|---|---|---|---|
-| 1 | **Sign-ups and sign-ins from the venue address** (Supabase Auth, per IP address) | The sign-up and sign-in call leaves the visitor's phone, so the limit counts the venue's one address: 30 requests per 5 minutes for sign-up, sign-in, resend, recover and the `/user` check together | 6 per minute for the whole room: 500 sign-ups would need 83 minutes | The owner raises the limits (section 7, `docs/SUPABASE_FREE_PLAN.md` section 4); half the room signs up on mobile data as the fallback |
-| 2 | **Confirmation e-mails** | Every sign-up sends one; the project's hourly e-mail limit applies | built-in sender: 2 per hour; the custom sender's value is set in the dashboard | Custom sender (Resend, already upgraded) plus a raised hourly limit; the invitation-code path; the owner confirms stuck accounts by hand |
+| 1 | **Sign-ups and sign-ins from the venue address** (Supabase Auth, per IP address) | The sign-up and sign-in call leaves the visitor's phone, so the limit counts the venue's one address: a token bucket of 30 requests that refills at 6 a minute (the default is 30 per 5 minutes). The plain `getUser` check is **not** in this bucket (corrected 2026-10-21: the official page ties the limit on `/user` to e-mail-change calls) | 500 sign-ups at the default: (500 - 30) / 6 = about 78 minutes; at 500 per 5 minutes about 5 minutes | The owner raises the limits (section 7, `docs/SUPABASE_FREE_PLAN.md` section 4b); fallback: turn e-mail confirmation off for the day with the abuse controls; half the room signs up on mobile data |
+| 2 | **Confirmation e-mails** | Every sign-up sends one; the project's hourly e-mail limit applies | built-in sender: 2 per hour; custom sender: the owner states a default of 30 new users per hour (not confirmed on the page I read): 500 e-mails take about 16.7 hours; at 1000 per hour 30 minutes | Custom sender (Resend, already upgraded) plus the hourly limit raised to 1000 (600 at the least); fallback: confirmation off for the day (`docs/SUPABASE_FREE_PLAN.md` section 4b); the invitation-code path; the owner confirms stuck accounts by hand |
 | 3 | **The hosting plan's 100 deployments per day** (Hobby) | It stopped all builds on 2026-10-21 at about 09:03 UTC (`api-deployments-free-per-day`) | 100 deployments in 24 hours; the first slots return from about 11:44 UTC, then about one every few minutes | Fewer, larger pushes: each push of a branch with an open PR builds a preview, each merge builds production. Keep **at least 5 deployments free for Friday evening** (section 9) |
 | 4 | The model-spend guard that reads the whole day on every chat turn | Cost per turn grows with the rows written today | 1 read up to 900 rows, 5 at 2 500, 12 at 10 000, and a 503 for everyone at 50 000 rows | Proposal ready, not applied: `docs/proposals/spend-cap-read-cache.md` (owner decision) |
 | 5 | Hosting CPU (Active CPU) | The remaining 3 h 25 m | after this work, 500 visitors: 0.58 h (chat only), 0.82 h (25% missions), 1.55 h (everyone starts a mission), stress figures; under 2 h: stay on the plan | Edge-cached status routes, adaptive polling, `DEGRADED_MODE` (section 6) |
@@ -59,8 +59,11 @@ Every template's default count above the cap is cut by the plan with the reason;
 | The model-spend guard late in a busy day | 1, 5 and 12 reads per turn at 900, 2 500 and 10 000 rows |
 | 20 approvals of the same quote at the same moment | exactly one reserve, one job, one start; the other 19 are told it was already started (409). The database function itself is a stand-in in this test: its real locks are SQL and unverified here |
 | Per-instance state | The public limiters (`publicRateLimit`), the busy-state cache (15 s) and the conference dashboard cache are in the memory of one server instance, per address. Each instance counts alone, so the effective limits are higher than written, never lower; the limits were sized for one venue address in #181. Documented in the code, not shared |
+| A real browser on the production build of the landing page (390 px wide, local server, no session) | 0 requests to `/api`, the database or the sign-in service; 0 WebSocket connections; no page error; the header shows «دخول» and «حساب جديد»; the QR path `/join/CONF26` lands on `/register?promo=CONF26` |
 | Hosting CPU model | `docs/CPU_MODEL.md` (calibrated to the owner's 0.108 s average invocation): after this work 0.35 to 0.75 h (base) and 0.58 to 1.55 h (stress) for 500 visitors against 3.42 h left; before this work 1.57 to 1.96 h (base) and 2.31 to 3.27 h (stress). The status poll was about 85 function runs per visitor per 90 minutes and is now answered by the edge |
 | Egress | 0.2 GB (chat only), 0.45 GB (25% missions), 1.2 GB (all missions) of 5 GB |
+
+**Diagnostics that outlive the one-hour runtime log.** No new table was added. The day's history is in the tables the dashboard already reads: `messages` (every turn with its status), `jobs` and `job_events` (every request and what happened to it, in plain Arabic), `llm_usage` (every model call with its latency and cost), `credit_ledger`, `capability_requests` (what was asked and not served), `profiles` (sign-up times). Export them with `/admin/export` (five of them) or read them in the dashboard of the database. The per-turn stage timings of the chat route (`chat_stage_timings`) are console output only and are lost after an hour; persisting the slow ones (for example in `admin_audit_log`) is possible and is left as an owner decision because it would add rows to a table people read.
 
 ## 5. Part C: long jobs (audit of `src/app/api/worker/chunk`, `cron/*`, `jobs/[id]/nudge`, `lib/server/job*`)
 
@@ -81,12 +84,12 @@ Every template's default count above the cap is cut by the plan with the reason;
 |---|---|
 | `DEGRADED_MODE=on` | every page asks about 3 times less often and shows a calm Arabic banner |
 | `DEGRADED_MODE=closed` | as `on`, and no NEW request starts («الخدمة مزدحمة جدًا الآن… لا يُخصم شيء»); chats, plans and running jobs continue |
-| `AUTH_LOCAL_CLAIMS=on` | the server verifies the signed token locally instead of asking the sign-in service on every call (only after the JWT signing keys page shows an asymmetric key); trade-off: a revoked token works until it expires (about an hour) |
+| `AUTH_LOCAL_CLAIMS=on` | **stays OFF; do not turn it on without the owner's approval.** It would verify the signed token locally instead of asking the sign-in service on every call (only after the JWT signing keys page shows an asymmetric key); trade-off: a revoked token (a deleted or banned account) works until it expires (about an hour). It is not needed for sign-up capacity: the plain `getUser` check is not in the sign-up bucket |
 | `MAX_CONCURRENT_JOBS_PER_USER` (default 3), `CHAT_MESSAGES_PER_MINUTE` (default 20) | per-account limits |
 
 ## 7. The owner's checklist (manual, before Saturday)
 
-1. **Supabase > Authentication > Rate Limits:** sign-ups and sign-ins to at least 1000 per 5 minutes; token refresh to at least 1500; token verifications to at least 1000; e-mails per hour to at least 600. Screen to read: the values must have changed, not just the page.
+1. **Supabase > Authentication > Rate Limits:** sign-ups and sign-ins **500** per 5 minutes (250 is the least that fits 500 in 10 minutes); token verifications **500**; token refreshes and password sign-ins **1000**; e-mails per hour **1000** (600 at the least). The exact steps and the arithmetic are in `docs/SUPABASE_FREE_PLAN.md` section 4b. Screen to read: the values must have changed, not just the page.
 2. **Authentication > SMTP Settings:** the custom sender (Resend) is on. Send one test sign-up from a phone on mobile data and read the e-mail's arrival time.
 3. **Authentication > JWT Signing Keys:** note whether the current key is asymmetric (ES256 or RS256). Only then consider `AUTH_LOCAL_CLAIMS=on`.
 4. **Provider account:** top up the balance and set the daily cap in the admin provider tab for the day. The busy mode closes the door by itself when the real balance or the daily allowance runs out; check `/admin/conference` shows the real balance.
@@ -96,13 +99,14 @@ Every template's default count above the cap is cut by the plan with the reason;
 8. **Vercel > Usage:** Active CPU (hourly); if the day's total passes 2 hours before 14:00 set `DEGRADED_MODE=on`; at 3 hours set `closed`. Deployments: see section 9.
 9. **Backups (the free database plan has none):** export the five tables from `/admin/export` Thursday evening, every three hours on Saturday, and after (`docs/SUPABASE_FREE_PLAN.md` section 6).
 10. **After the first deployment of Friday, open `/api/busy-status` in a browser** and look at the response headers: `cache-control: public, s-maxage=15` and (on a second request) `x-vercel-cache: HIT`.
-11. The pressure test on a preview (`docs/PRESSURE_TEST_RUNBOOK.md`) is optional and must not be run in the last 24 hours (deployment quota).
+11. **To save deployments in the freeze** (optional): Vercel > Settings > Git > Ignored Build Step: `if [ "$VERCEL_ENV" = "production" ]; then exit 1; else exit 0; fi` skips every preview build (pull-request previews stop appearing) and keeps the production build of each merge. Remove it when the freeze ends.
+12. The pressure test on a preview (`docs/PRESSURE_TEST_RUNBOOK.md`) is optional and must not be run in the last 24 hours (deployment quota).
 
 ## 8. Fallback plan for the day
 
 | If | Do |
 |---|---|
-| Sign-ups fail at the venue (rate limited) | ask half of the room to use mobile data; use the invitation-code link; confirm stuck accounts by hand in Authentication > Users |
+| Sign-ups fail at the venue (rate limited) | raise the same Rate Limits value again; or turn **Confirm email** off for the day (Authentication > Sign In / Providers > Email) with the controls of `docs/SUPABASE_FREE_PLAN.md` section 4b (promo maximum redemptions, small free points, daily caps, the in-code per-IP and per-device throttle), and turn it on again on Sunday; ask half of the room to use mobile data; use the invitation-code link; confirm stuck accounts by hand in Authentication > Users |
 | Confirmation e-mails are late | the page already says so after 90 seconds and offers a resend with its own limit; confirm by hand |
 | The provider balance or daily cap runs out | the busy mode shows the plain Arabic sentence by itself; chats and plans keep working; top up and the door opens within a minute |
 | Active CPU climbs | `DEGRADED_MODE=on`, then `closed`; redeploying is not needed (an environment change needs one deployment: **keep that deployment free**) |

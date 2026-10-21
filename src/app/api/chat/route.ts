@@ -7,6 +7,7 @@ import { setLastLlmFallbackReason } from "../../../functions/shared/llmClient";
 import {
   checkUserRateLimits,
   checkGlobalDailySpendCap,
+  SPEND_READ_CACHE_MS,
   checkMessageLength,
   type RateLimitCheckResult,
 } from "../../../functions/shared/rateLimits";
@@ -312,7 +313,7 @@ export async function POST(req: NextRequest) {
     currentStep = "global_spend_cap";
     let spendCheck: RateLimitCheckResult;
     try {
-      spendCheck = await checkGlobalDailySpendCap(tables);
+      spendCheck = await checkGlobalDailySpendCap(tables, undefined, { readCacheMs: SPEND_READ_CACHE_MS });
     } catch {
       setLastLlmFallbackReason("spend_cap");
       console.warn("[llm:SPEND_CAP_STORAGE_UNAVAILABLE]");

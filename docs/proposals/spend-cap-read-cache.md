@@ -1,7 +1,11 @@
-# Proposal: reuse the day's model-spend sum for a few seconds (not applied)
+# Reuse the day's model-spend sum for 45 seconds (APPLIED, owner-authorized 2026-10-21)
 
-Status: PROPOSAL ONLY. Not applied, because it touches the platform's model-spend guard (`checkGlobalDailySpendCap`) and the
-automatic permission check refused the edit. The owner decides.
+Status: APPLIED after the owner's explicit authorization ("cache the READ of the daily model-spend sum ... for 30 to 60 seconds per
+server instance, adding the current instance's own spend since the read ... failing safe"). Code: `src/functions/shared/rateLimits.ts`
+(`SPEND_READ_CACHE_MS = 45_000`, `noteLocalLlmSpend`), wired in `src/app/api/chat/route.ts` and `src/functions/shared/chatHandler.ts`.
+Tests: `tests/daily-spend-read-cache.test.ts`, `tests/conference-load-harness.test.ts`. No cap, limit, price or constant changed. The cached
+sum is used only when it is under 80% of the cap (near the cap every turn reads fresh), within the same UTC day, and never when the read
+failed. The text below is the original proposal.
 
 ## What the harness showed
 
