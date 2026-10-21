@@ -45,8 +45,8 @@ export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKin
   return Math.min(scaleValue("absoluteMaxPages"), needed * scaleValue("largeJobPageAllowance"));
 }
 
-/** `review_unavailable` is set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run. */
-export type CallCapReason = "page_cap" | "empty_pages" | "review_unavailable";
+/** `review_unavailable` and `review_low_yield` are set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run, or its budget is used up and almost nothing it saw was accepted. */
+export type CallCapReason = "page_cap" | "empty_pages" | "review_unavailable" | "review_low_yield";
 
 /**
  * Decides whether to stop fetching after the page that was just processed.
@@ -85,4 +85,5 @@ export const CALL_CAP_NOTE_AR: Record<CallCapReason, string> = {
   page_cap: "توقف الجمع عند الحد الأقصى لعدد الصفحات المسموح لهذا الطلب، مع تسليم السجلات المطابقة التي جُمعت فقط",
   empty_pages: "توقف الجمع لأن الصفحات الأخيرة لم تُنتج سجلات مطابقة جديدة، مع تسليم السجلات المطابقة التي جُمعت فقط",
   review_unavailable: "توقف الجمع لأن التحقق الآلي من ملاءمة السجلات تعذّر الآن، ولم يُحتسب عليك إلا ما سُلّم",
+  review_low_yield: "توقف الجمع لأن نسبة السجلات المطابقة لموضوعك بقيت منخفضة جداً وبلغ التحقق الآلي حدّه المسموح لهذا الطلب، ولم يُحتسب عليك إلا ما سُلّم",
 };

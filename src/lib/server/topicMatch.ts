@@ -6,6 +6,8 @@
  * Deterministic and offline: no model decides a match.
  */
 
+import { regionEvidenceWords } from "../regionNames";
+
 const STOP_WORDS = new Set([
   "عايز", "عايزه", "عاوز", "عاوزه", "هات", "اجمع", "جمع", "لي", "من", "في", "عن", "علي", "مع", "خلال",
   "اخر", "الفتره", "فتره", "زمنيه", "الزمنيه", "المطلوبه", "مطلوبه", "شهر", "الشهر", "يوم", "ايام",
@@ -113,4 +115,16 @@ export function hasTopicEvidence(topicStemList: string[], content: string): bool
   if (!content) return false;
   const present = contentStems(content);
   return topicEvidenceStems(topicStemList).some((stem) => hasStem(present, stem));
+}
+
+/**
+ * True when the text shows a word of the requested country: its name or its demonym, in Arabic or English, compared after the same
+ * normalisation (alef, ya, ta marbuta, diacritics) and light stemming as the topic. False when no country was requested or the
+ * country has no word list: callers that need «a country was asked and the text names none» check `regionEvidenceWords` first.
+ */
+export function hasRegionEvidence(region: unknown, content: string): boolean {
+  const words = regionEvidenceWords(region);
+  if (words.length === 0 || !content) return false;
+  const present = contentStems(content);
+  return words.flatMap((word) => normalizeText(word).split(/\s+/u).filter(Boolean).map(stemToken)).some((stem) => present.has(stem));
 }

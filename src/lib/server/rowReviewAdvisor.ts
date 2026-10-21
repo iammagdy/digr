@@ -277,6 +277,25 @@ export function socialReviewCapUsd(targetMax: number, unitPricePoints: number, s
   return Math.max(REVIEW_MIN_BUDGET_USD, share);
 }
 
+/** Once the job's review budget is used up, a job whose accepted share of the rows seen so far is below this stops (see `reviewStopForLowYield`). */
+export const LOW_YIELD_ACCEPTED_BELOW = 0.1;
+
+/**
+ * Stop rule for a job whose review spend has used its budget (the budget cannot pay for even one more row) AND whose acceptance is low:
+ * fewer than 10% of the rows seen so far were accepted. Then nothing more is reviewed and nothing more is delivered: the rows of the page
+ * wait in the review sheet (not delivered, not charged) and the job stops buying pages. A job with unknown history (a running record from
+ * before the counts were kept: `rowsSeen` undefined) or no rows seen yet is never stopped by it, and a job that still has budget, or one
+ * that accepts at least 10% of what it sees, is untouched. Pure: the numbers come from the running record, never from the model.
+ */
+export function reviewStopForLowYield(input: { spentUsd: number; budgetUsd: number; rowsSeen: number | undefined; accepted: number }): boolean {
+  const seen = input.rowsSeen;
+  if (typeof seen !== "number" || !(seen > 0)) return false;
+  const budgetUsedUp = input.budgetUsd - input.spentUsd < REVIEW_CALL_COST_ESTIMATE_USD / SOCIAL_REVIEW_ROWS_PER_CALL;
+  return budgetUsedUp && input.accepted / seen < LOW_YIELD_ACCEPTED_BELOW;
+}
+
+export const REVIEW_STOPPED_LOW_YIELD_REASON_AR = "توقّف التحقق الآلي لهذا الطلب لأن نسبة السجلات المطابقة بقيت منخفضة جداً بعد بلوغ حدّه المسموح؛ وُضع السجل في شيت المراجعة ولم يُحتسب";
+
 export type SocialReviewStop = "failed" | "cap" | "deadline";
 
 export interface SocialReviewAttempt {

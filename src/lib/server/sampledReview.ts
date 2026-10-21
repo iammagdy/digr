@@ -9,6 +9,14 @@ import { reviewSocialRows, type AdvisoryVerdict, type RowAdvisorFn, type SocialR
  */
 export const REVIEW_SAMPLE_ROWS = 15;
 export const OFF_TOPIC_STRICT_ABOVE = 0.4;
+/**
+ * Above this share of unrelated rows in the sample, the whole page is rejected: the rest of its presumed rows are excluded WITHOUT being
+ * reviewed one by one (a call per 25 rows that would almost always say «no match»). Between OFF_TOPIC_STRICT_ABOVE and this share the page
+ * still goes through the full review. The sample must have been read for at least PAGE_REJECT_MIN_REVIEWED rows, so a verdict on a handful
+ * of rows never throws a page away.
+ */
+export const PAGE_REJECT_ABOVE = 0.6;
+export const PAGE_REJECT_MIN_REVIEWED = 8;
 
 let randomForTests: (() => number) | null = null;
 /** Test-only: a fixed random source for the sample (null restores Math.random). */
@@ -44,6 +52,12 @@ export function highOffTopicEventAr(rate: number): string {
   return `نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة (نحو ${toArabicDigits(Math.round(rate * 100))}٪ من العيّنة)، لذلك راجعنا كل سجلاتها قبل التسليم.`;
 }
 
+export function pageRejectedEventAr(rate: number, rejected: number): string {
+  return `نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة جداً (نحو ${toArabicDigits(Math.round(rate * 100))}٪ من العيّنة)، لذلك استُبعدت بقية سجلاتها (${toArabicDigits(rejected)} سجل) دون مراجعة فردية ولم تُحتسب.`;
+}
+
+export const PAGE_REJECTED_REASON_AR = "الصفحة غير مرتبطة بموضوع الطلب في معظم عيّنتها المراجَعة؛ استُبعد السجل دون مراجعة فردية ولم يُحتسب";
+
 /** A failure worth one more try: the call timed out, the network failed, the reply was unreadable, or the service was busy or down. Not a missing key or a disabled reviewer. */
 export function isRetryableFailure(failure: string | null | undefined): boolean {
   return failure === "timeout" || failure === "network" || failure === "bad_reply" || failure === "http_429" || /^http_5\d\d$/.test(String(failure || ""));
@@ -60,7 +74,9 @@ export interface SampledReviewOutcome {
   mustConfirm: Set<number>;
   /** Presumed rows that were reviewed as the sample: a «no match» of theirs is respected, a missing verdict is not held against them. */
   sampleOnly: Set<number>;
-  sample: { size: number; reviewed: number; off: number; rate: number | null; strictPage: boolean } | null;
+  sample: { size: number; reviewed: number; off: number; rate: number | null; strictPage: boolean; pageRejected: boolean } | null;
+  /** The rows of a rejected page that were not reviewed: excluded («no match»), never delivered, never charged. Empty when the page was not rejected. */
+  rejected: number[];
 }
 
 export async function reviewSocialPage(input: {
@@ -75,6 +91,8 @@ export async function reviewSocialPage(input: {
   deadlineMs?: number;
   random?: () => number;
   sampleSize?: number;
+  /** The share of unrelated rows above which a page is rejected unreviewed (default PAGE_REJECT_ABOVE). `Infinity` switches the rejection off: the simulation of the old behaviour uses it. */
+  rejectPageAbove?: number;
 }): Promise<SampledReviewOutcome> {
   const byIndex = new Map(input.rows.map((entry) => [entry.index, entry]));
   const presumed = input.rows.map((entry) => entry.index).filter((index) => !input.suspicious.has(index));
@@ -83,7 +101,7 @@ export async function reviewSocialPage(input: {
 
   const outcome: SampledReviewOutcome = {
     verdicts: new Map(), attempts: [], costUsd: 0, unreviewed: [], stoppedBy: null,
-    mustConfirm: new Set(input.suspicious), sampleOnly: new Set(sample), sample: null,
+    mustConfirm: new Set(input.suspicious), sampleOnly: new Set(sample), sample: null, rejected: [],
   };
   if (firstRows.length === 0) return outcome;
 
@@ -112,12 +130,24 @@ export async function reviewSocialPage(input: {
   // the budget or the time was used up is a different case and is left as it was.)
   const reviewFailed = sample.length > 0 && estimate.reviewed === 0 && attempts.some((attempt) => attempt.failure);
   const strictPage = reviewFailed || (estimate.rate !== null && estimate.rate > OFF_TOPIC_STRICT_ABOVE);
-  if (sample.length > 0) outcome.sample = { ...estimate, strictPage };
+  // EARLY PAGE REJECTION: a sample that is mostly unrelated (and was read for enough rows) rejects the page; its other presumed rows are not reviewed.
+  const pageRejected = !reviewFailed && estimate.rate !== null && estimate.reviewed >= PAGE_REJECT_MIN_REVIEWED && estimate.rate > (input.rejectPageAbove ?? PAGE_REJECT_ABOVE);
+  if (sample.length > 0) outcome.sample = { ...estimate, strictPage, pageRejected };
 
   if (reviewFailed) {
     // The reviewer is unavailable: no second call for the rest of the page; every presumed row waits in the review sheet, not delivered, not charged.
     for (const index of presumed) outcome.mustConfirm.add(index);
     outcome.unreviewed.push(...presumed);
+    outcome.sampleOnly.clear();
+    return outcome;
+  }
+
+  if (pageRejected) {
+    const rest = presumed.filter((index) => !sample.includes(index));
+    for (const index of presumed) outcome.mustConfirm.add(index);
+    outcome.rejected.push(...rest);
+    // The sampled rows keep the verdicts they got; one the review never answered stays out, as on any strict page.
+    for (const index of sample) if (!outcome.verdicts.has(index)) outcome.unreviewed.push(index);
     outcome.sampleOnly.clear();
     return outcome;
   }

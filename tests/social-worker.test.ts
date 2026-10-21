@@ -547,14 +547,16 @@ describe("worker: social jobs", () => {
   describe("X posts of a topic search: the rows are presumed on topic, and the doubtful ones need the automatic review", () => {
     const TOPIC = "مباراة مصر والمغرب كأس العالم";
     const ordinary = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `p${i}`, text: `منشور ${i} عن ${TOPIC} في البطولة` }));
-    const reactions = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `r${i}`, text: i % 2 ? "اتفقت" : "اتفقت تماما", is_reply: true }));
+    // Doubtful rows that reach the review: no word of the topic, but they name the requested country (a row with neither is excluded by code first).
+    const reactions = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `r${i}`, text: i % 2 ? "اتفقت يا مصر" : "اتفقت تماما يا مصر", is_reply: true }));
+    const EGYPT_TOPIC = { query: TOPIC, region: "EG" };
     const usage = (costUsd: number) => ({ inputTokens: 2000, outputTokens: 500, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
     const strict = (advisor: RowAdvisorFn) => { setStrictSocialReviewForTesting(true); setRowAdvisorForTesting(advisor); };
     const lines = () => db.events.map((event) => String(event.message));
 
     it("ordinary rows are delivered (a sample of them is checked); a doubtful one is delivered only when the review confirms it", async () => {
-      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
-      const philosophical = { tweet_id: "f1", text: "الحياة رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع" };
+      resetDb("social-x-posts", EGYPT_TOPIC, 10, 5);
+      const philosophical = { tweet_id: "f1", text: "الحياة في مصر رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع" };
       useSource(async () => ok({ ok: true, rows: [...ordinary(8), philosophical, reactions(1)[0]] }, 600));
       const asked: Array<Array<{ index: number }>> = [];
       strict(async (input) => {
@@ -588,7 +590,7 @@ describe("worker: social jobs", () => {
     });
 
     it("a review that cannot be read (after the one retry) holds the whole page back: nothing is delivered on the gate alone, the reserve is released and nothing is charged", async () => {
-      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
+      resetDb("social-x-posts", EGYPT_TOPIC, 10, 5);
       useSource(async () => ok({ ok: true, rows: [...ordinary(6), ...reactions(4)] }, 600));
       let calls = 0;
       strict(async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.002), failure: "bad_reply", stopReason: "max_tokens" }; });
@@ -635,7 +637,7 @@ describe("worker: social jobs", () => {
     });
 
     it("when nothing on the page could be delivered without the review and the review fails, the reserve is released and paging stops", async () => {
-      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
+      resetDb("social-x-posts", EGYPT_TOPIC, 10, 5);
       let providerCalls = 0;
       useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: reactions(10), next_cursor: `c${providerCalls}` }, 600); });
       strict(async () => ({ verdicts: new Map(), usage: usage(0.002), failure: "bad_reply" }));
@@ -648,7 +650,7 @@ describe("worker: social jobs", () => {
     });
 
     it("the review's budget per job is capped: doubtful rows past it are not delivered, and it is said plainly", async () => {
-      resetDb("social-x-posts", { query: TOPIC }, 30, 5);
+      resetDb("social-x-posts", EGYPT_TOPIC, 30, 5);
       useSource(async () => ok({ ok: true, rows: reactions(30) }, 600));
       strict(async (input) => ({ verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "رد على المباراة" }])), usage: usage(0.06), failure: null }));
 
@@ -676,7 +678,7 @@ describe("worker: social jobs", () => {
     });
 
     it("what every review call did is kept in the step file: failure code, stop reason and tokens", async () => {
-      resetDb("social-x-posts", { query: TOPIC }, 30, 5);
+      resetDb("social-x-posts", EGYPT_TOPIC, 30, 5);
       let page = 0;
       useSource(async () => { page += 1; return ok({ ok: true, rows: page === 1 ? [...ordinary(2), ...reactions(2)] : [], next_cursor: page === 1 ? "next" : undefined }, 600); });
       // a reply cut in the middle: the verdicts it did carry (the ordinary rows) are kept, the rest has none; with no verdict at all the page would be held back and the job released
@@ -688,6 +690,119 @@ describe("worker: social jobs", () => {
       expect(stepFile.reviewFailures).toEqual(["bad_reply"]);
       expect(stepFile.reviewCalls).toEqual([{ rows: 4, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 }]);
       expect(stepFile.reviewUsd).toBe(0.003);
+    });
+
+    describe("the review cost cut: early page rejection, the low-yield stop and the review spend row", () => {
+      /** Page `page` of `n` ordinary posts (each names the topic, so the pre-filter keeps all of them). */
+      const pageRows = (page: number, n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `q${page}_${i}`, text: `منشور ${page}-${i} عن ${TOPIC} في البطولة` }));
+      /** Only the first post of each page is on topic; with the first rows as the sample that is 1 of 15 matches. */
+      const strictAdvisor = (calls: number[], costUsd: number): RowAdvisorFn => async (input) => {
+        calls.push(input.rows.length);
+        return { verdicts: new Map(input.rows.map(({ index, row }) => [index, String(row.tweet_id).endsWith("_0") ? { verdict: "match" as const, reasonAr: "يتناول المباراة" } : { verdict: "no_match" as const, reasonAr: "لا يتناول المباراة" }])), usage: usage(costUsd), failure: null };
+      };
+      const internal = () => db.events.filter((event) => event.event_type === "review_cost").map((event) => String(event.message));
+      const customer = () => db.events.filter((event) => event.event_type !== "review_cost").map((event) => String(event.message));
+
+      it("a page whose sample is mostly unrelated: ONE review call, the rest of the page is excluded unreviewed, the customer is told in Arabic, only the confirmed row is charged", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 20, 5);
+        setReviewSampleRandomForTesting(() => 0);
+        useSource(async () => ok({ ok: true, rows: pageRows(1, 20) }, 600));
+        const calls: number[] = [];
+        strict(strictAdvisor(calls, 0.004));
+
+        const { json } = await runAllChunks();
+
+        expect(calls).toEqual([15]);
+        expect(json.done).toBe(true);
+        expect(json.deliveredUnits).toBe(1);
+        expect(json.settle.charged_credits).toBe(1 * 5);
+        expect(customer().some((line) => line.includes("استُبعدت بقية سجلاتها (٥ سجل) دون مراجعة فردية ولم تُحتسب"))).toBe(true);
+        for (const line of customer()) expect(line).not.toMatch(/usd|USD|\$/);
+      });
+
+      it("the first chunk's own record shows the rejected page: the 5 rows outside the sample are excluded unreviewed, the 14 sampled rows that said «no match» keep that verdict (review sheet, as before)", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 20, 5);
+        setReviewSampleRandomForTesting(() => 0);
+        useSource(async () => ok({ ok: true, rows: pageRows(1, 20), next_cursor: "next" }, 600));
+        strict(strictAdvisor([], 0.004));
+
+        await callWorker();
+
+        const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
+        expect(stepFile.reviewSample).toMatchObject({ size: 15, reviewed: 15, off: 14, strictPage: true, pageRejected: true });
+        expect(stepFile.relevanceExcludedCount).toBe(5);
+        expect(stepFile.uncertainRowsCount).toBe(14);
+        expect(stepFile.batchUnits).toBe(1);
+        expect(stepFile.rowsSeen).toBe(20);
+        expect(stepFile.reviewCallCount).toBe(1);
+      });
+
+      it("the review spend of the job is logged for the owner: one internal row per chunk with calls and USD, hidden from the customer", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 20, 5);
+        setReviewSampleRandomForTesting(() => 0);
+        useSource(async () => ok({ ok: true, rows: pageRows(1, 20) }, 600));
+        strict(strictAdvisor([], 0.004));
+
+        await runAllChunks();
+
+        expect(internal()).toEqual(["review_spend step=0 calls=1 usd=0.004000 total_calls=1 total_usd=0.004000 rows_seen=20 low_yield_stop=0"]);
+        expect(db.events.filter((event) => event.event_type === "review_cost")).toHaveLength(1);
+        expect(customer().every((line) => !line.startsWith("review_spend"))).toBe(true);
+      });
+
+      it("the review budget is used up and fewer than 10% of the rows seen were accepted: the next page is held, paging stops, nothing more is charged, and it is said in Arabic", async () => {
+        // 40 posts wanted at 5 points: the budget is 20% of 20 EGP of revenue in USD (about 0.07 USD); the first call spends 0.08
+        resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
+        setReviewSampleRandomForTesting(() => 0);
+        let providerCalls = 0;
+        useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+        const calls: number[] = [];
+        strict(strictAdvisor(calls, 0.08));
+
+        const { json } = await runAllChunks();
+
+        // page 1: one call (rejected page, 1 of 20 accepted = 5%); page 2: no call at all, its 20 rows are held; no page 3 is bought
+        expect(calls).toEqual([15]);
+        expect(providerCalls).toBe(2);
+        expect(json.done).toBe(true);
+        expect(json.deliveredUnits).toBe(1);
+        expect(json.settle.charged_credits).toBe(1 * 5);
+        expect(customer().some((line) => line.includes("توقّف التحقق الآلي لأن نسبة السجلات المطابقة بقيت منخفضة جداً"))).toBe(true);
+        expect(internal()).toEqual([
+          "review_spend step=0 calls=1 usd=0.080000 total_calls=1 total_usd=0.080000 rows_seen=20 low_yield_stop=0",
+          "review_spend step=1 calls=0 usd=0.000000 total_calls=1 total_usd=0.080000 rows_seen=20 low_yield_stop=1",
+        ]);
+      });
+
+      it("the same budget used up but most rows accepted: nothing changes (the page after it is left as it was, not held)", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
+        setReviewSampleRandomForTesting(() => 0);
+        let providerCalls = 0;
+        useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+        const calls: number[] = [];
+        strict(async (input) => { calls.push(input.rows.length); return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.08), failure: null }; });
+
+        const { json } = await runAllChunks();
+
+        expect(calls).toEqual([15]);
+        expect(json.done).toBe(true);
+        expect(json.deliveredUnits).toBe(40);
+        expect(internal().some((line) => line.includes("low_yield_stop=1"))).toBe(false);
+      });
+
+      it("a job that accepts at least 10% of what it sees is never stopped by the rule, whatever it has spent", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
+        setReviewSampleRandomForTesting(() => 0);
+        let providerCalls = 0;
+        useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+        // 4 of the 15 sampled rows match (27%): the page is strict (73% off) and rejected, 4 of 20 accepted = 20%, above the 10% line
+        strict(async (input) => ({ verdicts: new Map(input.rows.map(({ index, row }) => [index, Number(String(row.tweet_id).split("_")[1]) < 4 ? { verdict: "match" as const, reasonAr: "يتناول المباراة" } : { verdict: "no_match" as const, reasonAr: "لا يتناول المباراة" }])), usage: usage(0.08), failure: null }));
+
+        await runAllChunks();
+
+        expect(providerCalls).toBeGreaterThanOrEqual(3);
+        expect(internal().some((line) => line.includes("low_yield_stop=1"))).toBe(false);
+      });
     });
   });
   describe("YouTube comments by topic with a window: the source shows dates as «منذ …»", () => {

@@ -1,7 +1,8 @@
 import { pointsAr } from "@/lib/pointsFormat";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
-import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
-import { highOffTopicEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
+import { highOffTopicEventAr, PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { REVIEW_COST_EVENT_TYPE, reviewSpendEventMessage } from "../../../../lib/server/reviewSpendLog";
 import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
@@ -562,6 +563,7 @@ export async function POST(req: NextRequest) {
     const selectsVideosFirst = Boolean(earlySocialCap) && earlySocialCap?.kind === "comments" && ["tiktok", "youtube"].includes(String(earlySocialCap?.platform))
       && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
     let videoSelectionUsd = 0;
+    let videoSelectionCalls = 0;
     let videoSelectionUnreviewed = false;
     // What the job's earlier chunks already spent on review (read from the running record, before the adapter runs: the video selection
     // happens inside it). An unreadable record counts as nothing here; the page-level review below reads it again and rebuilds it.
@@ -591,6 +593,7 @@ export async function POST(req: NextRequest) {
             deadlineMs: deadlineMs - 8_000,
           });
           videoSelectionUsd += outcome.costUsd;
+          videoSelectionCalls += outcome.attempts.length;
           videoSelectionUnreviewed = [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
           if (userId) {
             for (const attempt of outcome.attempts) {
@@ -812,6 +815,11 @@ export async function POST(req: NextRequest) {
 
     let uncertainRows: any[] = [];
     let reviewUsdThisChunk = videoSelectionUsd;
+    // Review calls of this chunk (the video selection inside the adapter counts), what the company review spent (logged, not part of the social budget), rows that reached the gate.
+    let reviewCallsThisChunk = videoSelectionCalls;
+    let companyReviewUsdThisChunk = 0;
+    let rowsSeenThisChunk = 0;
+    let reviewStoppedForLowYield = false;
     let reviewFailureCodes: string[] = [];
     let reviewDiagnostics: Array<Record<string, unknown>> = [];
     let reviewSampleSummary: Record<string, unknown> | null = null;
@@ -822,6 +830,7 @@ export async function POST(req: NextRequest) {
     let reviewUnavailable = false;
 
     if (Array.isArray(filteredRows) && filteredRows.length > 0) {
+      rowsSeenThisChunk = filteredRows.length;
       const fullText = [
         spec.params?.search,
         spec.params?.query,
@@ -899,6 +908,8 @@ export async function POST(req: NextRequest) {
             // leave time after the review for saving the page, building the files and settling
             deadlineMs: deadlineMs - 8_000,
             onAttempt: async (attempt) => {
+              reviewCallsThisChunk += 1;
+              companyReviewUsdThisChunk += Math.max(0, attempt.usage?.costUsd ?? 0);
               if (!userId) return;
               try {
                 await adminClient.from("llm_usage").insert({
@@ -958,6 +969,28 @@ export async function POST(req: NextRequest) {
             console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
           }
         }
+      } else if (strictSocialReview && reviewStopForLowYield({
+        spentUsd: (runningSet?.reviewUsd ?? 0) + videoSelectionUsd,
+        budgetUsd: reviewCapUsd,
+        // The accepted count is known only when every earlier chunk recorded it; an unknown one never stops a job.
+        rowsSeen: (runningSet?.batchUnits ?? []).some((units) => units === null) ? undefined : runningSet?.rowsSeen,
+        accepted: (runningSet?.batchUnits ?? []).reduce<number>((sum, units) => sum + (units ?? 0), 0),
+      })) {
+        // The job's review budget is used up and fewer than 10% of the rows seen so far were accepted: nothing more is reviewed or delivered.
+        // The rows of this page wait in the review sheet (not delivered, not charged) and the job stops buying pages.
+        reviewStoppedForLowYield = true;
+        reviews = reviews.map((rev) => (rev.decision === "match" ? { ...rev, decision: "uncertain" as const, reasonAr: REVIEW_STOPPED_LOW_YIELD_REASON_AR } : rev));
+        try {
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: "توقّف التحقق الآلي لأن نسبة السجلات المطابقة بقيت منخفضة جداً بعد بلوغ الحد المسموح لهذا الطلب؛ توقّف الجمع ولم يُحتسب عليك إلا ما سُلّم.",
+            units: effectiveDelivered,
+            event_type: "info",
+          });
+        } catch (evtErr: any) {
+          console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+        }
       } else if (videoLevelComments) {
         // Select the VIDEOS of the page: evidence in the video's own text first, then the review of the list of videos (fail closed,
         // inside the job's review budget). The comments of selected videos are delivered; the other videos' comments are not.
@@ -977,6 +1010,7 @@ export async function POST(req: NextRequest) {
             deadlineMs: deadlineMs - 8_000,
           });
           reviewUsdThisChunk += outcome.costUsd;
+          reviewCallsThisChunk += outcome.attempts.length;
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
           reviewDiagnostics = outcome.attempts.map((attempt) => ({
             rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
@@ -1057,13 +1091,14 @@ export async function POST(req: NextRequest) {
             deadlineMs: deadlineMs - 8_000,
           });
           reviewUsdThisChunk += outcome.costUsd;
+          reviewCallsThisChunk += outcome.attempts.length;
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
           // What each review call really did, kept in the step file so a failure proves its own cause (never row content).
           reviewDiagnostics = outcome.attempts.map((attempt) => ({
             rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
             tokensIn: attempt.usage?.inputTokens ?? 0, tokensOut: attempt.usage?.outputTokens ?? 0, latencyMs: attempt.usage?.latencyMs ?? 0,
           }));
-          if (outcome.sample) reviewSampleSummary = { size: outcome.sample.size, reviewed: outcome.sample.reviewed, off: outcome.sample.off, rate: outcome.sample.rate === null ? null : Number(outcome.sample.rate.toFixed(3)), strictPage: outcome.sample.strictPage };
+          if (outcome.sample) reviewSampleSummary = { size: outcome.sample.size, reviewed: outcome.sample.reviewed, off: outcome.sample.off, rate: outcome.sample.rate === null ? null : Number(outcome.sample.rate.toFixed(3)), strictPage: outcome.sample.strictPage, pageRejected: outcome.sample.pageRejected };
           if (userId) {
             for (const attempt of outcome.attempts) {
               try {
@@ -1085,6 +1120,9 @@ export async function POST(req: NextRequest) {
           }
           // Rows delivered without the review: presumed rows that did not have to be confirmed (a page that is mostly off topic confirms all).
           const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match" && !outcome.mustConfirm.has(rev.index)).length;
+          // A rejected page (most of its sample unrelated): its other presumed rows are excluded without a review of their own.
+          const rejectedPageRows = new Set(outcome.rejected);
+          reviews = reviews.map((rev) => (rejectedPageRows.has(rev.index) && rev.decision === "match" ? { ...rev, decision: "no_match" as const, reasonAr: PAGE_REJECTED_REASON_AR } : rev));
           const applied = applyStrictAdvisory(reviews, outcome.verdicts, { only: (rev) => outcome.mustConfirm.has(rev.index) });
           reviews = applied.reviews;
           // A reviewed sample row that is off topic is not delivered, whether or not the rest of the page had to be confirmed.
@@ -1092,7 +1130,7 @@ export async function POST(req: NextRequest) {
           reviews = applyAdvisoryToReviews(reviews, sampleVerdicts).reviews;
           if (outcome.sample?.strictPage && outcome.sample.rate !== null) {
             try {
-              await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: highOffTopicEventAr(outcome.sample.rate), units: effectiveDelivered, event_type: "info" });
+              await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: outcome.sample.pageRejected ? pageRejectedEventAr(outcome.sample.rate, outcome.rejected.length) : highOffTopicEventAr(outcome.sample.rate), units: effectiveDelivered, event_type: "info" });
             } catch (evtErr: any) {
               console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
             }
@@ -1212,6 +1250,30 @@ export async function POST(req: NextRequest) {
 
     }
 
+    // The job's review spend, for the owner to read later (USD and calls, per chunk and so far). An internal row (its own event type, hidden
+    // from the customer's activity list); the customer's own lines above are Arabic and never carry an amount.
+    if ((reviewCallsThisChunk > 0 || reviewStoppedForLowYield) && jobId) {
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: reviewSpendEventMessage({
+            step: currentStep,
+            callsThisChunk: reviewCallsThisChunk,
+            usdThisChunk: reviewUsdThisChunk + companyReviewUsdThisChunk,
+            callsBefore: runningSet?.reviewCallCount ?? 0,
+            usdBefore: runningSet?.reviewUsd ?? 0,
+            rowsSeenThisChunk,
+            stoppedLowYield: reviewStoppedForLowYield,
+          }),
+          units: effectiveDelivered,
+          event_type: REVIEW_COST_EVENT_TYPE,
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+      }
+    }
+
     const acceptedRows = adapterResult.ok
       ? filteredRows.slice(0, remainingUnits)
       : [];
@@ -1259,7 +1321,7 @@ export async function POST(req: NextRequest) {
         })
       : null;
     // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
-    const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : pageCapReason;
+    const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : reviewStoppedForLowYield ? "review_low_yield" : pageCapReason;
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
       !cursorWouldRepeat &&
@@ -1320,6 +1382,8 @@ export async function POST(req: NextRequest) {
       relevanceExcludedCount,
       uncertainRowsCount: uncertainRows.length,
       ...(reviewUsdThisChunk > 0 ? { reviewUsd: Number(reviewUsdThisChunk.toFixed(6)) } : {}),
+      ...(reviewCallsThisChunk > 0 ? { reviewCallCount: reviewCallsThisChunk } : {}),
+      rowsSeen: rowsSeenThisChunk,
       ...(reviewFailureCodes.length > 0 ? { reviewFailures: reviewFailureCodes } : {}),
       ...(reviewDiagnostics.length > 0 ? { reviewCalls: reviewDiagnostics } : {}),
       ...(reviewSampleSummary ? { reviewSample: reviewSampleSummary } : {}),

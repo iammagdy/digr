@@ -1,7 +1,7 @@
 import { toArabicDigits } from "../arabicDigits";
 import { regionEvidenceWords } from "../regionNames";
 import { reviewSocialRows, type AdvisoryUsage, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
-import { contentStems, hasTopicEvidence, normalizeText, stemToken, topicStems } from "./topicMatch";
+import { hasRegionEvidence, hasTopicEvidence, normalizeText, topicStems } from "./topicMatch";
 
 /**
  * Comments found by a topic search (TikTok, YouTube) are judged at the level of the VIDEO they were written under: a short comment
@@ -22,11 +22,8 @@ export function videoEvidence(videoText: string, request: { query?: string; regi
   if (!text) return "needs_review";
   const stems = topicStems(String(request.query || ""));
   if (stems.length === 0 || !hasTopicEvidence(stems, text)) return "needs_review";
-  const countryWords = regionEvidenceWords(request.region);
-  if (countryWords.length === 0) return "match";
-  const present = contentStems(text);
-  const countryStems = countryWords.flatMap((word) => normalizeText(word).split(/\s+/u).filter(Boolean).map(stemToken));
-  return countryStems.some((stem) => present.has(stem)) ? "match" : "needs_review";
+  if (regionEvidenceWords(request.region).length === 0) return "match";
+  return hasRegionEvidence(request.region, text) ? "match" : "needs_review";
 }
 
 /** The video a comment row was written under: its link, else its text. Null when the row says nothing about its video. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  estimateOffTopic, highOffTopicEventAr, OFF_TOPIC_STRICT_ABOVE, pickReviewSample, REVIEW_SAMPLE_ROWS, reviewSocialPage,
+  estimateOffTopic, highOffTopicEventAr, OFF_TOPIC_STRICT_ABOVE, PAGE_REJECT_ABOVE, PAGE_REJECT_MIN_REVIEWED, pageRejectedEventAr, pickReviewSample, REVIEW_SAMPLE_ROWS, reviewSocialPage,
 } from "../src/lib/server/sampledReview";
 import { ADVISORY_TIMEOUT_MS, SOCIAL_REVIEW_ROWS_PER_CALL, applyStrictAdvisory, reviewSocialRows, type AdvisoryVerdict, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 import { regionNameAr } from "../src/lib/regionNames";
@@ -75,12 +75,16 @@ describe("a page of a topic search through the sampled review", () => {
     expect([...outcome.sampleOnly]).toHaveLength(15);
   });
 
+  // 22 rows whose first fifteen (the sample, with the fixed random source) hold 8 unrelated rows: 8/15 = 53 percent, above the strict limit (40) and below the rejection limit (60).
+  const STRICT_PAGE = [...FIXTURE.realMadrid, ...FIXTURE.unrelated, "Hala Madrid 2", ...Array.from({ length: 7 }, (_, i) => `${FIXTURE.onTopic[i % 4]} ${i}`), ...FIXTURE.realMadrid, ...FIXTURE.unrelated];
+
   it("a mostly off-topic page: the whole page goes through the review, and only what the review confirms can be delivered", async () => {
-    const texts = [...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.onTopic, ...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.realMadrid.slice(0, 4)];
+    const texts = STRICT_PAGE;
     expect(texts).toHaveLength(22);
     const calls: Array<{ rows: number }> = [];
     const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(outcome.sample?.strictPage).toBe(true);
+    expect(outcome.sample).toMatchObject({ strictPage: true, pageRejected: false });
+    expect(outcome.rejected).toEqual([]);
     expect(calls.map((c) => c.rows)).toEqual([15, 7]);
     expect(outcome.mustConfirm.size).toBe(22);
     expect(outcome.sampleOnly.size).toBe(0);
@@ -176,8 +180,8 @@ describe("a page of a topic search through the sampled review", () => {
   });
 
   it("the budget of the job holds: a strict page whose second call would exceed it leaves the rest unreviewed, not delivered", async () => {
-    const texts = [...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.realMadrid, ...FIXTURE.onTopic];
-    const costly: RowAdvisorFn = async (input) => ({ verdicts: new Map(input.rows.map(({ index }) => [index, verdict("no_match")])), usage: usage(0.06), failure: null });
+    const texts = STRICT_PAGE;
+    const costly: RowAdvisorFn = async (input) => ({ verdicts: new Map(input.rows.map(({ index, row }) => [index, isEgyptFootball(String(row.text)) ? verdict("match") : verdict("no_match")])), usage: usage(0.06), failure: null });
     const outcome = await reviewSocialPage({ advisor: costly, customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
     expect(outcome.sample?.strictPage).toBe(true);
     expect(outcome.stoppedBy).toBe("cap");
