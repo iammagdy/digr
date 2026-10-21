@@ -106,7 +106,9 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
   URL_RE.lastIndex = 0;
   const context = commentRow ? textOf(row, COMMENT_CONTEXT_KEYS) : "";
   const words = own.split(/\s+/u).filter(Boolean);
-  const suspicious = isReactionOnly(own) || (words.length >= 6 && !evidence && !hasTopicEvidence(stems, context));
+  // Comments are judged by their VIDEO (see videoRelevance): a short or reacting comment is normal under an on-topic video, so no comment is
+  // flagged as doubtful here. A post is its own unit, so a doubtful post still needs the review.
+  const suspicious = !commentRow && (isReactionOnly(own) || (words.length >= 6 && !evidence && !hasTopicEvidence(stems, context)));
   return { decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب", ...(suspicious ? { suspicious: true } : {}) };
 }
 

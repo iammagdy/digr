@@ -92,8 +92,8 @@
    }
   },
   {
-   "expect": "uncertain",
-   "note": "a bare reaction with no content: delivered only if the automatic review confirms it",
+   "expect": "match",
+   "note": "a bare reaction under a topic-search video: a real comment, delivered with its video (topic relevance is judged at the video level)",
    "row": {
     "comment_id": "yc_8",
     "text": "ممتاز",

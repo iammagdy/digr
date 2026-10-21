@@ -20,9 +20,9 @@ Offline: no database, no provider call, no spend. Each fixture row carries the o
 | social-tiktok-comments | 10 | 1 | 4 | 1 | 4 | 10/10 (100%) | 0 | 0 | 0 | 0 | 8/10, wrong 1, lost 1 |
 | social-tiktok-videos | 8 | 0 | 5 | 0 | 3 | 8/8 (100%) | 0 | 0 | 0 | 0 | 8/8, wrong 0, lost 0 |
 | social-x-posts | 16 | 1 | 5 | 4 | 6 | 16/16 (100%) | 0 | 0 | 0 | 0 | 11/16, wrong 4, lost 1 |
-| social-youtube-comments | 8 | 0 | 6 | 1 | 1 | 8/8 (100%) | 0 | 0 | 0 | 0 | 4/8, wrong 2, lost 2 |
+| social-youtube-comments | 8 | 0 | 7 | 0 | 1 | 8/8 (100%) | 0 | 0 | 0 | 0 | 4/8, wrong 2, lost 2 |
 | social-youtube-videos | 6 | 0 | 3 | 1 | 2 | 6/6 (100%) | 0 | 0 | 0 | 0 | 3/6, wrong 1, lost 2 |
-| **Total** | 85 | 4 | 40 | 15 | 26 | 85/85 (100%) | 0 | 0 | | | 61/85, wrong 11, lost 12 |
+| **Total** | 85 | 4 | 41 | 14 | 26 | 85/85 (100%) | 0 | 0 | | | 61/85, wrong 11, lost 12 |
 
 "Before this change" is recorded from main e7cf565 (gate and de-duplication before this change), same fixtures: agreement, false deliveries (wrong) and lost matches (lost).
 

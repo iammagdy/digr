@@ -32,6 +32,7 @@ import {
 import { timeNeededForAnotherCallMs } from "./chunkSizing";
 import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { youtubeRecencyFor } from "../youtubeRecency";
+import { videoEvidence } from "./videoRelevance";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "./tregAdapter";
 
@@ -649,10 +650,19 @@ function videosAllOutsideWindow(refs: SocialRef[], params: Record<string, any>):
   return standings.includes("outside") && !standings.includes("inside");
 }
 
-/** Videos inside the window are read first, then the ones with no known date, then the ones outside (stable inside each group). */
+/**
+ * The order the videos of a topic search are read in: inside the window first, then undated, then outside; inside each group the
+ * videos whose own text shows the topic (and the requested country) come before those that need the review (stable otherwise).
+ */
 function videosInWindowFirst(refs: SocialRef[], params: Record<string, any>): SocialRef[] {
-  if (typeof params.dateFrom !== "string" && typeof params.dateTo !== "string") return refs;
-  const standings = videoStandings(refs, params);
+  const windowed = typeof params.dateFrom === "string" || typeof params.dateTo === "string";
+  const query = typeof params.query === "string" ? params.query : "";
+  const region = typeof params.region === "string" ? params.region : "";
+  if (!windowed && !query) return refs;
+  const standings = windowed ? videoStandings(refs, params) : refs.map((): VideoWindowStanding => "inside");
   const rank = { inside: 0, unknown: 1, outside: 2 } as const;
-  return refs.map((ref, index) => ({ ref, index, rank: rank[standings[index]] })).sort((a, b) => a.rank - b.rank || a.index - b.index).map((entry) => entry.ref);
+  return refs
+    .map((ref, index) => ({ ref, index, rank: rank[standings[index]], evidence: query && videoEvidence(ref.title || "", { query, region }) === "match" ? 0 : 1 }))
+    .sort((a, b) => a.rank - b.rank || a.evidence - b.evidence || a.index - b.index)
+    .map((entry) => entry.ref);
 }

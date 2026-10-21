@@ -130,9 +130,11 @@ describe("a page of a topic search through the sampled review", () => {
 
 describe("the fixtures through the deterministic gate: all of them are presumed, which is why the sample exists", () => {
   const context = { capabilitySlug: "social-tiktok-comments", endpointId: "tikhub.tiktok.video.comments", params: { query: "كرة القدم", region: "EG" } };
-  it("on-topic, Real Madrid and unrelated comments are presumed; the bare «اتفقت» is flagged; emoji is dropped", () => {
+  it("on-topic, Real Madrid and unrelated comments are presumed (the video decides); the bare «اتفقت» is a real comment, not flagged; emoji is dropped", () => {
     for (const text of [...FIXTURE.onTopic, ...FIXTURE.realMadrid, ...FIXTURE.unrelated]) expect(evaluateResearchRowRelevance({ text: text, video_title: "فيديو" }, context).decision, text).toBe("match");
-    expect(evaluateResearchRowRelevance({ text: "اتفقت" }, context)).toMatchObject({ decision: "match", suspicious: true });
+    const reply = evaluateResearchRowRelevance({ text: "اتفقت" }, context);
+    expect(reply.decision).toBe("match");
+    expect(reply.suspicious).toBeUndefined();
     expect(evaluateResearchRowRelevance({ text: "🔥🔥" }, context).decision).toBe("no_match");
   });
 });
