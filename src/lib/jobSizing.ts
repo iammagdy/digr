@@ -18,6 +18,8 @@ export interface JobSizingInput {
   safetyBuffer: number;
   /** True for decision makers (the writer cuts their charge to the cap first). */
   chargeCapped?: boolean;
+  /** The service's own record ceiling per job (its catalog `maxRows`), when it has one: a job never holds more, whatever the cap allows. */
+  maxRecords?: number;
 }
 
 /** The most records one job holds; 0 when even one record does not fit. */
@@ -25,8 +27,14 @@ export function recordsInOneJob(input: JobSizingInput): number {
   const cap = Math.floor(Number(input.capPoints));
   const unit = Number(input.unitPricePoints);
   if (!Number.isFinite(cap) || cap < 1 || !Number.isFinite(unit) || unit <= 0) return 0;
-  if (!input.chargeCapped) return volumeForPointsCap(cap, unit, input.safetyBuffer);
-  return Math.max(0, Math.floor(cap / unit));
+  const byPoints = input.chargeCapped ? Math.max(0, Math.floor(cap / unit)) : volumeForPointsCap(cap, unit, input.safetyBuffer);
+  const ceiling = Math.floor(Number(input.maxRecords));
+  return Number.isFinite(ceiling) && ceiling > 0 ? Math.min(byPoints, ceiling) : byPoints;
+}
+
+/** True when the service's own record ceiling, not the points cap, is what limits one job (so the public pages name the right reason). */
+export function limitedByServiceCeiling(input: JobSizingInput): boolean {
+  return input.maxRecords !== undefined && recordsInOneJob(input) < recordsInOneJob({ ...input, maxRecords: undefined });
 }
 
 /** The hold for `volume` records inside one job: the buffered reserve, clipped to the cap for decision makers. */

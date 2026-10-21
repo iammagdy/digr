@@ -18,7 +18,7 @@ describe("Task 4: Table-Driven Proof that Calculator Output Equals Quote Writer 
   const settings = DEFAULT_PRICING_SETTINGS;
   const capabilities = APPROVED_CAPABILITY_CATALOG;
 
-  it("lists company research from the real live-priced source (0.00038 USD / 3 points per record)", () => {
+  it("lists company research from the real live-priced source (0.00038 USD per call; 3.168 points per delivered record, cost 0.000576 USD x 5,500)", () => {
     const options = getPublicCalculatorOptions(capabilities);
     const companyOpt = options.find(
       (o) => o.slug === "icypeas-companies-search" || o.slug.includes("compan")
@@ -31,7 +31,7 @@ describe("Task 4: Table-Driven Proof that Calculator Output Equals Quote Writer 
     )!;
     expect(cap.unitCostUsd).toBe(0.00038);
     expect(cap.tregEndpointId).toBe("icypeas.companies.search");
-    expect(cap.pointsPerUnit).toBe(3);
+    expect(cap.pointsPerUnit).toBe(3.168);
   });
 
   const testCases = [
@@ -57,7 +57,7 @@ describe("Task 4: Table-Driven Proof that Calculator Output Equals Quote Writer 
       expect(cap).toBeDefined();
 
       // Quote Writer calculation
-      const quote = calculateCapabilityQuote(tc.volume, cap.unitCostUsd, 100000, settings);
+      const quote = calculateCapabilityQuote(tc.volume, cap.unitCostUsd, 100000, settings, cap.slug);
       const settlement = calculateFinalSettlement(tc.delivered, quote.unitPricePoints, quote.quotedPoints);
 
       // Public Calculator calculation

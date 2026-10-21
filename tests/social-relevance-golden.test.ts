@@ -146,11 +146,52 @@ describe("the review's own cost is capped per job", () => {
     } satisfies AdvisoryResult;
   };
 
-  it("the cap is at least 5 cents and grows with the request", () => {
-    expect(socialReviewCapUsd(30)).toBe(0.05);
-    expect(socialReviewCapUsd(50)).toBe(0.05);
-    expect(socialReviewCapUsd(500)).toBe(0.3);
-    expect(socialReviewCapUsd(100000)).toBe(1);
+  it("the cap is 20% of the job's revenue: its expected charge in points at 0.10 EGP a point and 55 EGP a dollar", () => {
+    // X: unit 0.11715 points. 300 posts = 36 points = 3.6 EGP = 0.065454 USD; 20% = 0.013090 USD
+    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.001454);
+    expect(socialReviewCapUsd(300, 0.11715)).toBe(0.01309);
+    expect(socialReviewCapUsd(500, 0.11715)).toBe(0.021454);
+    expect(socialReviewCapUsd(4000, 0.11715)).toBe(0.170545);
+    // comments: unit 0.275 points. 1,000 comments = 275 points = 27.5 EGP = 0.5 USD; 20% = 0.10 USD
+    expect(socialReviewCapUsd(300, 0.275)).toBe(0.030181);
+    expect(socialReviewCapUsd(1000, 0.275)).toBe(0.1);
+    expect(socialReviewCapUsd(20, 3.4485)).toBe(0.02509);
+    // never above the share, whatever the rounding
+    for (const [records, unit] of [[30, 0.11715], [777, 0.275], [123, 1.034], [5, 3.168], [4453, 0.11715]] as Array<[number, number]>) {
+      const revenueUsd = (Math.ceil(records * unit) * 0.1) / 55;
+      expect(socialReviewCapUsd(records, unit)).toBeLessThanOrEqual(revenueUsd * 0.2 + 1e-12);
+    }
+    // a job with no valid price has no review budget (fail closed)
+    expect(socialReviewCapUsd(10, 0)).toBe(0);
+    expect(socialReviewCapUsd(10, Number.NaN)).toBe(0);
+  });
+
+  it("with a call-cost estimate the budget is a ceiling: a call that would cross it is not started, and its rows stay unreviewed", async () => {
+    const seen: number[][] = [];
+    const rows = Array.from({ length: 75 }, (_, i) => row(i));
+    // budget 0.013 USD, a full call costs up to 0.0047: two full calls (0.0094) fit, a third (0.0141) would cross it
+    const outcome = await reviewSocialRows({ advisor: costly(0.0047, seen), customerRequest: "x", kind: "social-x-posts", rows, budgetUsd: 0.013, callCostEstimateUsd: 0.0047 });
+    expect(seen.map((batch) => batch.length)).toEqual([SOCIAL_REVIEW_ROWS_PER_CALL, SOCIAL_REVIEW_ROWS_PER_CALL]);
+    expect(outcome.costUsd).toBeCloseTo(0.0094, 6);
+    expect(outcome.costUsd).toBeLessThanOrEqual(0.013);
+    expect(outcome.unreviewed).toHaveLength(25);
+    expect(outcome.stoppedBy).toBe("cap");
+    // a budget below the cost of the call its rows need (2 rows: 0.0047 x 2 / 25 = 0.000376) reviews nothing at all
+    const none: number[][] = [];
+    const tiny = await reviewSocialRows({ advisor: costly(0.0047, none), customerRequest: "x", kind: "social-x-posts", rows: [row(0), row(1)], budgetUsd: 0.0003, callCostEstimateUsd: 0.0047 });
+    expect(none).toHaveLength(0);
+    expect(tiny.unreviewed).toEqual([0, 1]);
+    expect(tiny.stoppedBy).toBe("cap");
+  });
+
+  it("a call that turns out dearer than the estimate raises the estimate for the next one", async () => {
+    const seen: number[][] = [];
+    const rows = Array.from({ length: 100 }, (_, i) => row(i));
+    // first call 25 rows costs 0.006 (dearer than the 0.0047 estimate); budget 0.015 holds one more only if 0.0047 were used: 0.006 + 0.006 = 0.012 <= 0.015 allows the second, then 0.018 > 0.015 stops
+    const outcome = await reviewSocialRows({ advisor: costly(0.006, seen), customerRequest: "x", kind: "social-x-posts", rows, budgetUsd: 0.015, callCostEstimateUsd: 0.0047 });
+    expect(seen).toHaveLength(2);
+    expect(outcome.costUsd).toBeCloseTo(0.012, 6);
+    expect(outcome.costUsd).toBeLessThanOrEqual(0.015);
   });
 
   it("reviews in small batches and covers every row while the budget lasts", async () => {

@@ -126,7 +126,8 @@ describe("a skip never ends in a refusal", () => {
     const plan = planOf(responses);
     expect(plan).toBeTruthy();
     expect(plan.contentAr).toContain("العدد المطلوب: ٥٠٠ تعليق (قيمة افتراضية لأنك لم تحدد عددًا)، وتقدر تعدّله من الخطة.");
-    expect(plan.planQuote.askedVolumeMax).toBe(500);
+    expect(plan.planQuote.targetVolumeMax).toBe(500);
+    expect(plan.planQuote.askedVolumeMax).toBeUndefined();
     expect(plan.planQuote.items[0].params.channels).toEqual(["@aljazeera"]);
     for (const r of responses) expect(visible(r)).not.toMatch(BANNED);
   });

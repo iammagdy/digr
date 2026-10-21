@@ -331,7 +331,7 @@ describe("the plan panel and the calculator show it", () => {
 
   it("the calculator endpoint returns the same range logic for one request, and none when there is no price to show", async () => {
     const call = async (body: any) => (await estimatePost({ headers: new Headers(), json: async () => body } as any)).json();
-    const ok = await call({ kind: "comments", platform: "youtube", volume: 500 });
+    const ok = await call({ kind: "comments", platform: "youtube", volume: 5000 });
     expect(ok.result.status).toBe("ok");
     expect(ok.duration.labelAr).toBe("تقديري");
     expect(ok.duration.rangeAr).toMatch(/^من .+ إلى .+$/u);
@@ -340,7 +340,7 @@ describe("the plan panel and the calculator show it", () => {
     const open = await call({ kind: "comments", platform: "youtube", openEnded: true });
     expect(open.duration).toBeNull();
     // the calculator's range for a request equals the plan's range for the same records
-    // 500 comments do not fit one request: the endpoint states the duration of the records ONE request holds
+    // 5,000 comments do not fit one request (the cap of 600 points holds 1,897 at 0.275 points): the endpoint states the duration of the records ONE request holds
     const same = missionDurationForPlan([{ capabilitySlug: "social-youtube-comments", targetVolumeMax: ok.result.maxVolumeInOneJob, params: {} }], "tab");
     expect(ok.duration.rangeAr).toBe(same!.rangeAr);
   });
@@ -355,7 +355,7 @@ describe("the plan panel and the calculator show it", () => {
 describe("the chat path: the plan carries the duration and the price is unchanged", () => {
   const answer = (id: string, q: string, value?: string) => formatStructuredClarificationAnswers({ type: "clarification_answers", answers: [value ? { questionId: id, question: q, value } : { questionId: id, question: q, skipped: true }] } as any);
 
-  it("a 2,000-comment YouTube request: the plan has a labelled range, and still 57 comments at 9 points, 590 held, cap 600", async () => {
+  it("a 2,000-comment YouTube request: the plan has a labelled range, and holds 1,000 comments (the service's own ceiling) at 0.275 points, 317 held, cap 600", async () => {
     const db = createChatDb();
     const handler = new ChatHandler(db as any);
     (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
@@ -367,7 +367,7 @@ describe("the chat path: the plan carries the duration and the price is unchange
     expect(plan.planQuote.duration.labelAr).toBe("تقديري");
     expect(plan.planQuote.duration.rangeAr).toMatch(/^(?:أقل من دقيقة|من .+ إلى .+)$/u);
     expect(plan.planQuote.duration.promiseAr).toBe("سنبلغك عند الاكتمال.");
-    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600 });
+    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 1000, unitPricePoints: 0.275, quotedPoints: 317, pointsCap: 600 });
     expect(JSON.stringify(plan.planQuote.duration)).not.toMatch(/نقطة|590|٥٩٠/);
     // the chat sentence itself is unchanged (the range lives in the panel)
     expect(plan.contentAr).not.toContain("المدة المتوقعة");

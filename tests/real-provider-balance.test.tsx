@@ -123,7 +123,8 @@ describe("the plan of a TikTok request, end to end", () => {
     const handler = new ChatHandler(db as any);
     (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
     await db.createRow({ tableId: "conversations", rowId: "conv_rb", data: { userId: "user_rb", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
-    return handler.handleUserMessage({ userId: "user_rb", conversationId: "conv_rb", message: "٣٠ تعليق تيك توك عن كرة القدم في مصر خلال الشهر الماضي", userBalance: 5000 });
+    return handler.handleUserMessage({ userId: "user_rb", conversationId: "conv_rb", // 300 comments cost 0.015 USD at 0.00005 USD a delivered comment (30 comments cost 0.0015, which fits even the estimate balance)
+    message: "٣٠٠ تعليق تيك توك عن كرة القدم في مصر خلال الشهر الماضي", userBalance: 5000 });
   }
 
   it("with the real balance the plan keeps its full size, with no capacity sentence", async () => {
@@ -132,7 +133,7 @@ describe("the plan of a TikTok request, end to end", () => {
     const response = await plan();
     expect(response.outputType).toBe("propose_plan");
     expect(response.planQuote.capacityConstrained).toBeFalsy();
-    expect(response.planQuote.targetVolumeMax).toBe(30);
+    expect(response.planQuote.targetVolumeMax).toBe(300);
     expect(String(response.contentAr)).not.toContain(CAPACITY_LIMITED_REASON_AR);
   });
 
@@ -141,16 +142,16 @@ describe("the plan of a TikTok request, end to end", () => {
     setRealBalanceReaderForTesting(async () => null);
     const response = await plan();
     expect(response.planQuote.capacityConstrained).toBe(true);
-    expect(response.planQuote.targetVolumeMax).toBeLessThan(30);
+    expect(response.planQuote.targetVolumeMax).toBeLessThan(300);
     expect(String(response.contentAr)).toContain(CAPACITY_LIMITED_REASON_AR);
   });
 
   it("when the real balance is below the plan's cost the plan is reduced with the same sentence", async () => {
     await liveSituation();
-    setRealBalanceReaderForTesting(async () => ({ usd: 0.02, at: Date.now() }));
+    setRealBalanceReaderForTesting(async () => ({ usd: 0.01, at: Date.now() }));
     const response = await plan();
     expect(response.planQuote.capacityConstrained).toBe(true);
-    expect(response.planQuote.targetVolumeMax).toBeLessThan(30);
+    expect(response.planQuote.targetVolumeMax).toBeLessThan(300);
     expect(String(response.contentAr)).toContain(CAPACITY_LIMITED_REASON_AR);
   });
 });

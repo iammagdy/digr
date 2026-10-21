@@ -127,10 +127,11 @@ describe("a number the customer chose is still «طلبت»", () => {
     expect(html).not.toContain('data-testid="plan-default-volume"');
     expect(html).not.toContain("قيمة افتراضية");
 
-    const tapped = planOf(await conversation(["عايز كل تعليقات ٣ فيديوهات على يوتيوب عن منتخب مصر", answer("volume_cap_required", CAP_Q, "٥٠٠ تعليق")]));
+    // a count tapped on the cap card that is larger than one job holds (5,000 asked; the service holds 1,000): the card says «طلبت»
+    const tapped = planOf(await conversation(["عايز كل تعليقات ٣ فيديوهات على يوتيوب عن منتخب مصر", answer("volume_cap_required", CAP_Q, "٥٠٠٠ تعليق")]));
     expect(tapped.planQuote.defaultCap).toBeUndefined();
     const tappedHtml = card(tapped.planQuote);
-    expect(tappedHtml).toContain("طلبت ٥٠٠");
+    expect(tappedHtml).toContain("طلبت ٥٠٠٠");
     expect(tappedHtml).not.toContain("قيمة افتراضية");
     expect(tapped.contentAr).not.toContain("قيمة افتراضية");
   });

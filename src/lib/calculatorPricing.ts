@@ -11,7 +11,7 @@ import {
 } from "../functions/shared/capabilityRegistry";
 import { PLATFORM_GUIDE } from "../functions/shared/platformGuide";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
-import { recordsInOneJob, reserveInOneJob } from "./jobSizing";
+import { limitedByServiceCeiling, recordsInOneJob, reserveInOneJob } from "./jobSizing";
 import { reserveForUnits } from "./recordPricing";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
 import { JOB_MAX_POINTS_CAP } from "./jobPointsCap";
@@ -42,6 +42,10 @@ export interface PublicCalculatorBreakdown {
   refundEgp: number;
   safetyBufferPercent: number;
   isCapped?: boolean;
+  /** True when the service's own record ceiling (not the points cap) is what limits one job. */
+  limitedByService?: boolean;
+  /** The service's own record ceiling per job. */
+  maxRecordsPerJob?: number;
   maxCapPoints?: number;
   maxCappedVolume?: number;
   cappedReservedPoints?: number;
@@ -126,7 +130,8 @@ export function computePublicCalculatorQuote(
   const effectiveMaxCap = Math.min(jobPointsCap, dailyCapPoints);
 
   // One shared rule for the one-job size (the quote writer's own: see jobSizing).
-  const sizing = { unitPricePoints, capPoints: effectiveMaxCap, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople };
+  const serviceCeiling = Number.isFinite(Number(cap.maxRows)) && Number(cap.maxRows) > 0 ? Math.floor(Number(cap.maxRows)) : undefined;
+  const sizing = { unitPricePoints, capPoints: effectiveMaxCap, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople, maxRecords: serviceCeiling };
   const isCapped = safeTarget > recordsInOneJob(sizing);
 
   const maxCappedVolume = isCapped ? Math.max(1, recordsInOneJob(sizing)) : safeTarget;
@@ -163,6 +168,8 @@ export function computePublicCalculatorQuote(
     refundEgp: Number((cappedSettlement.refundPoints * creditValueEgp).toFixed(2)),
     safetyBufferPercent: Math.round(settings.safetyBuffer * 100),
     isCapped,
+    limitedByService: isCapped && limitedByServiceCeiling(sizing),
+    maxRecordsPerJob: serviceCeiling,
     maxCapPoints: effectiveMaxCap,
     maxCappedVolume,
     cappedReservedPoints,

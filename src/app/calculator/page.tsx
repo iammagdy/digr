@@ -215,7 +215,11 @@ export default function PublicCalculatorPage() {
 
         {breakdown.isCapped && (
           <div role="status" className="rounded-[20px] border border-amber-500/40 bg-amber-500/10 p-5 text-xs leading-relaxed text-ink">
-            <strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({formatAr(breakdown.maxCapPoints || JOB_MAX_POINTS_CAP)} نقطة). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.
+            {breakdown.limitedByService ? (
+              <><strong>ملاحظة حد الطلب الواحد:</strong> هذا الحجم يتجاوز ما تتسع له هذه الخدمة في الطلب الواحد. ضُبط العدد تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr}، ويمكنك تقديم أكثر من طلب.</>
+            ) : (
+              <><strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({formatAr(breakdown.maxCapPoints || JOB_MAX_POINTS_CAP)} نقطة). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.</>
+            )}
           </div>
         )}
 
