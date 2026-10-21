@@ -315,6 +315,20 @@ describe("worker: social jobs", () => {
       expect(stepFile.dateWindow).toEqual({ missing: 0, outside: 20, inside: 0, oldest: "2026-10-12", newest: "2026-10-13", sampleDates: ["2026-10-12", "2026-10-12", "2026-10-12"] });
     });
 
+    it("a request that names a country sends the country's words with the topic and the date operators, on every page", async () => {
+      resetDb("social-x-posts", { query: "كرة السلة", region: "EG", dateFrom: "2026-06-11", dateTo: "2026-07-19" }, 20, 5);
+      const sent: Array<Record<string, any>> = [];
+      useSource(async (_source, params) => {
+        sent.push(params);
+        return ok({ ok: true, rows: Array.from({ length: 20 }, (_, i) => ({ tweet_id: `eg${i}`, text: `كرة السلة ${i} مصر`, createdUtc: secs("2026-06-20T10:00:00Z") + i })) }, 600);
+      });
+
+      await runAllChunks();
+
+      expect(sent.length).toBeGreaterThan(0);
+      for (const params of sent) expect(params.query).toBe("كرة السلة (مصر OR مصري OR مصرية OR المصري OR المصرية OR egypt OR egyptian) since:2026-06-11 until:2026-07-20");
+    });
+
     it("rows inside the window are delivered and charged as usual", async () => {
       resetDb("social-x-posts", { query: "كأس العالم", dateFrom: "2026-06-11", dateTo: "2026-07-19" }, 20, 5);
       useSource(async () => ok({ ok: true, rows: Array.from({ length: 20 }, (_, i) => ({ tweet_id: `in${i}`, text: `كأس العالم ${i}`, createdUtc: secs("2026-06-20T10:00:00Z") + i })) }, 600));
