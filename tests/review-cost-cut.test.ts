@@ -48,15 +48,16 @@ describe("early page rejection: a long page whose first call is mostly unrelated
 
   it("a first call read for fewer than eight rows never rejects a page (the rest is reviewed as before)", async () => {
     const calls: number[] = [];
-    // the reviewer answers only the first five rows of each call, all «no match»: 5 of 5 unrelated, but only five read
+    // the reviewer answers only the first row of each call, «no match»: every row it read is unrelated, but only four were read in all (25 rows: 1, then the retry of 24 rows in calls of 10, 10 and 4: 1 each)
     const partial: RowAdvisorFn = async (input) => {
       calls.push(input.rows.length);
-      return { verdicts: new Map(input.rows.slice(0, 5).map(({ index }) => [index, verdict("no_match")])), usage: usage(0.004), failure: null };
+      return { verdicts: new Map(input.rows.slice(0, 1).map(({ index }) => [index, verdict("no_match")])), usage: usage(0.004), failure: null };
     };
     const outcome = await reviewSocialPage({ advisor: partial, customerRequest: "x", kind: "social-x-posts", rows: page(40, 40), budgetUsd: 0.05 });
-    expect(outcome.firstCall).toMatchObject({ reviewed: 5, off: 5, pageRejected: false });
+    expect(outcome.firstCall).toMatchObject({ size: 25, reviewed: 4, off: 4, pageRejected: false });
     expect(outcome.rejected).toEqual([]);
-    expect(calls).toEqual([25, 15]);
+    // the first 25 rows (1 answered) and their retry of 24 rows in calls of 10, 10 and 4; then the rest of the page (15 rows) and its retry in calls of 8 and 6
+    expect(calls).toEqual([25, 10, 10, 4, 15, 8, 6]);
   });
 
   it("a page of up to 25 rows is never rejected: every row has its own verdict, however unrelated the page is", async () => {
@@ -124,11 +125,8 @@ describe("verdict-only replies: the model returns {index, verdict}, the code wri
     for (const kind of ["companies", "people"]) expect(isVerdictOnlyKind(kind), kind).toBe(false);
   });
 
-  it("the reply budget for a verdict-only call is small (it is the output that costs): room for twice the verdicts, never above 2,000", () => {
-    expect(advisoryMaxTokens(1, true)).toBe(300);
-    expect(advisoryMaxTokens(20, true)).toBe(1000);
-    expect(advisoryMaxTokens(25, true)).toBe(1200);
-    expect(advisoryMaxTokens(1000, true)).toBe(2000);
+  it("the reply room of a verdict-only call is 4,000 tokens whatever the number of rows (a live call of 20 rows used 1,000 and was cut at the old limit of 1,000)", () => {
+    for (const rows of [1, 20, 25, 1000]) expect(advisoryMaxTokens(rows, true), String(rows)).toBe(4000);
     // the other kinds keep the old room
     expect(advisoryMaxTokens(25)).toBeGreaterThanOrEqual(4000);
   });

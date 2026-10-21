@@ -1,0 +1,15 @@
+# Review truncation fix (branch claude/review-truncation-fix)
+
+## What happened
+On 21 Oct 2026 (build ff9e227) an X job of 300 posts failed at its first page review. `llm_usage` showed two calls, both `relevance_review_failed:bad_reply`, each 3,325 tokens in and **1,000 out**: 1,000 is exactly the verdict-only output limit for 20 rows (`200 + 20 x 40`), so the reply was cut. The parser did `JSON.parse` on the whole reply, a cut reply threw, and every verdict of the page was lost; the retry sent the identical request and was cut the same way. The page failed closed (nothing delivered, 41 points released), which was correct, but the review had in fact answered most rows.
+
+## What changed
+1. **A cut reply keeps its complete verdicts.** `parseAdvisoryReply` reads a valid reply as before; a reply that is cut or damaged as a whole is salvaged item by item (`{"index":N,"verdict":"..."}`). The rows without an item have no verdict and are not delivered.
+2. **More room, compact answer.** The verdict-only limit is 4,000 tokens (it is a ceiling: only the tokens written are billed); the prompt asks for the compact JSON on one line, no spaces, no fence, nothing before or after. The 20 s timeout is unchanged.
+3. **A retry asks only for the rows still without a verdict**, once, in calls of at most 10 rows and at most half of the call that failed, with 6,000 tokens of room, so a retry is never the same request. A row with a verdict is never asked again. A missing key, a disabled reviewer and a refused request (400/401...) are not retried; a retry that gets nothing readable is not followed by another. Rows with no verdict after the retry are held (not delivered, not charged), as before. A retry that the budget cannot pay for is not made and its rows go to «غير مراجَع».
+4. **The owner can read why.** An internal `job_events` row of type `review_failure` for every review call that failed, was cut at the output limit or left rows without a verdict: `review_failure step=0 call=1 retry=0 rows=20 code=bad_reply stop=max_tokens in=3325 out=4000 max_tokens=4000 reply_chars=9120 missing=20`. No row content, no customer text; hidden from the customer's activity list like `review_cost`.
+5. **The call estimate matches reality.** `REVIEW_CALL_COST_ESTIMATE_USD` is 0.0083 USD per 25 rows (a live 20-row call cost 0.00666 USD); it was 0.0047, measured on calls of 15 rows with reasons. The one-call floor follows it: `REVIEW_MIN_BUDGET_USD` is **0.0083 USD** (was 0.0047). The 20% share is unchanged (`REVIEW_BUDGET_SHARE` = 0.2), so a budget above the floor is exactly what it was (300 X posts: 0.01309 USD; 1,000: 0.042909 USD).
+6. **Customer wording.** «شيت المراجعة» became «ورقة المراجعة» in the three worker lines. «شيت» is still recognised in a customer's file-shaping request («شيت لكل محافظة»).
+
+## What is not known
+The text of the cut reply is not stored, so why the model wrote 1,000 tokens for 20 verdicts (about three times what the verdicts need) is not proven. The `review_failure` row now records the reply length and the stop reason for next time.

@@ -233,7 +233,7 @@ describe("company job: strict review of the rows the gate matched", () => {
     // The customer's lines (every event except the owner's internal review-spend row) carry no amount and no provider name; the internal row is checked below.
     const messages = db.events.filter((e) => e.event_type !== "review_cost").map((e) => String(e.message));
     expect(messages.filter((m) => m === RETRY_NOTE)).toHaveLength(2);
-    expect(messages.some((m) => /تعذّر التحقق الآلي من ملاءمة ٣ سجل الآن/.test(m) && m.includes("وُضعت في شيت المراجعة ولم تُحتسب"))).toBe(true);
+    expect(messages.some((m) => /تعذّر التحقق الآلي من ملاءمة ٣ سجل الآن/.test(m) && m.includes("وُضعت في ورقة المراجعة ولم تُحتسب"))).toBe(true);
     for (const m of messages) expect(m).not.toMatch(/claude|anthropic|treg|icypeas|timeout|http|USD/i);
     // the owner's row: calls and USD of the job, in one internal line
     const spend = db.events.filter((e) => e.event_type === "review_cost").map((e) => String(e.message));
