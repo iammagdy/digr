@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HELPER_SQL } from "../scripts/proposals/buildJobCapProposal";
+import { chargeForUnits, reserveForUnits } from "../src/lib/recordPricing";
 import { DEFINITIONS_DIR, replicaAvailable, startReplica, type ReplicaDb } from "./helpers/replicaDb";
 import {
   acceptQuote, balanceOf, createQuote, deliver, exactCharge, exactReserve, hash64, ledgerOf, mulberry32, priceOf, seedUser, settle, startJob,
@@ -218,6 +219,28 @@ describe.skipIf(!replicaAvailable()).each(VARIANTS)("money properties on the rep
     const r = (await db.pool.query("select public.settle_people_job_atomic($1,40,30,20,$2::numeric,null) as r", [accepted.job_id, cap])).rows[0].r;
     expect(Number(r.charged_credits)).toBe(Math.min(40 * 5 + 30 * 10 + 20 * 20, reserve, cap));
     expect((await ledgerOf(db.pool, accepted.job_id)).net).toBe(-Number(r.charged_credits));
+  });
+
+  it("the TypeScript pricing functions equal the database's own arithmetic on 3,000 random prices and counts", async () => {
+    const rnd = mulberry32(cap + 99);
+    const deliveredList: number[] = [], volumeList: number[] = [], unitList: string[] = [];
+    for (let i = 0; i < 3000; i += 1) {
+      const decimals = 1 + Math.floor(rnd() * 6);
+      const unit = Math.max(1, Math.floor(rnd() * 10 ** (decimals + 1))) / 10 ** decimals; // up to 6 decimals, any magnitude
+      const volume = 1 + Math.floor(rnd() * 120_000);
+      volumeList.push(volume);
+      deliveredList.push(Math.floor(rnd() * (volume + 1)));
+      unitList.push(String(unit));
+    }
+    const { rows } = await db.pool.query(
+      `select ceil(d * u) as charge, ceil(v * u * 1.15) as reserve
+         from unnest($1::int[], $2::int[], $3::numeric[]) with ordinality as t(d, v, u, n) order by n`,
+      [deliveredList, volumeList, unitList],
+    );
+    for (let i = 0; i < rows.length; i += 1) {
+      expect(chargeForUnits(deliveredList[i], Number(unitList[i])), `charge ${deliveredList[i]} x ${unitList[i]}`).toBe(Number(rows[i].charge));
+      expect(reserveForUnits(volumeList[i], Number(unitList[i]), 0.15), `reserve ${volumeList[i]} x ${unitList[i]}`).toBe(Number(rows[i].reserve));
+    }
   });
 
   it("topups still convert exactly (approve_topup_atomic is unchanged by the cap)", async () => {
