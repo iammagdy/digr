@@ -9,7 +9,7 @@ const ledger = vi.hoisted(() => ({
   rows: [] as any[],
 }));
 vi.mock("../src/lib/server/userAuth", () => ({ authenticateUser: vi.fn(async () => ({ ok: true, user: { id: "u1" } })) }));
-vi.mock("../src/lib/server/typedLedger", () => ({ fetchTypedLedger: vi.fn(async () => ledger.rows) }));
+vi.mock("../src/lib/server/typedLedger", () => ({ fetchTypedLedger: vi.fn(async () => ledger.rows), fetchNewestLedgerRows: vi.fn(async () => [...ledger.rows].reverse()) }));
 vi.mock("../src/lib/supabase/server", () => ({ createAdminClient: vi.fn(() => ({})) }));
 
 import { GET as historyGet } from "../src/app/api/wallet/history/route";

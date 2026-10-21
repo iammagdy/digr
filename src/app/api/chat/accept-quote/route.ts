@@ -9,6 +9,7 @@ import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../.
 import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../../lib/server/workerDispatch";
 import { recordWorkerStartFailure, startFailureEventAr, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
+import { countActiveJobs, evaluateConcurrentJobs } from "../../../../lib/server/concurrentJobs";
 import { getBusyState } from "../../../../lib/server/busyState";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
@@ -94,6 +95,12 @@ export async function POST(req: NextRequest) {
     const busy = await getBusyState(adminClient);
     if (busy.busy) {
       return NextResponse.json({ success: false, busy: true, error: busy.messageAr, queueAhead: busy.queueAhead, position: busy.position }, { status: 503 });
+    }
+
+    // One account may not run more requests at once than the room can afford: the next one waits for one of its own. Read only; before the reserve.
+    const concurrency = evaluateConcurrentJobs(await countActiveJobs(adminClient, user.id));
+    if (!concurrency.allowed) {
+      return NextResponse.json({ success: false, concurrentLimit: true, error: concurrency.messageAr, activeJobs: concurrency.active, maxJobs: concurrency.max }, { status: 429 });
     }
 
     // Never reserve credits for a decision-maker quote unless its field-level

@@ -22,6 +22,7 @@ import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE } from "@/lib/retryMessage
 import { postApprovalMessageAr } from "@/lib/postApproval";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
+import { nextPollDelayMs } from "@/lib/pollSchedule";
 import BusyBanner from "@/components/BusyBanner";
 import { usePendingPromo } from "@/hooks/usePendingPromo";
 import { formatAr } from "@/lib/arabicDigits";
@@ -456,12 +457,13 @@ export default function ChatWorkspacePage() {
 
     const supabase = createClient();
     let stopped = false;
-    let pollTimer: ReturnType<typeof setInterval> | null = null;
+    let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    const followStartedAt = Date.now();
 
     const poll = async () => {
       if (stopped) return;
       if (isTerminalJobStatus(activeJobRef.current?.status)) {
-        if (pollTimer) clearInterval(pollTimer);
+        if (pollTimer) clearTimeout(pollTimer);
         markJobTerminal(jId);
         return;
       }
@@ -483,7 +485,7 @@ export default function ChatWorkspacePage() {
         const isTerminal = isTerminalJobStatus(jobDoc.status);
         if (isTerminal) {
           markJobTerminal(jId);
-          if (pollTimer) clearInterval(pollTimer);
+          if (pollTimer) clearTimeout(pollTimer);
         }
 
         setActiveJob((prev) => {
@@ -527,8 +529,13 @@ export default function ChatWorkspacePage() {
     // Immediate poll on mount / job change
     void poll();
 
-    // 3 s cadence (stop on terminal)
-    pollTimer = setInterval(poll, 3000);
+    // Quick while the customer watches the start, slower as the request ages, rare in a hidden tab, always with jitter (stops on terminal).
+    const scheduleNext = () => {
+      if (stopped) return;
+      const delay = nextPollDelayMs({ elapsedMs: Date.now() - followStartedAt, hidden: typeof document !== "undefined" && document.hidden, random: Math.random() });
+      pollTimer = setTimeout(async () => { await poll(); if (!stopped && !isTerminalJobStatus(activeJobRef.current?.status)) scheduleNext(); }, delay);
+    };
+    scheduleNext();
 
     // Immediate poll on visibilitychange and focus
     const onVisibleOrFocus = () => {
@@ -545,7 +552,7 @@ export default function ChatWorkspacePage() {
 
     return () => {
       stopped = true;
-      if (pollTimer) clearInterval(pollTimer);
+      if (pollTimer) clearTimeout(pollTimer);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibleOrFocus);
       }

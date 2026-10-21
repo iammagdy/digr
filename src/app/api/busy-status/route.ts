@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { getBusyState } from "@/lib/server/busyState";
-import { clientKey, createRateLimiter, RATE_LIMITED_MESSAGE_AR } from "@/lib/server/publicRateLimit";
+import { PUBLIC_LIMITS_PER_MINUTE, clientKey, createRateLimiter, RATE_LIMITED_MESSAGE_AR } from "@/lib/server/publicRateLimit";
 
 export const dynamic = "force-dynamic";
 
-const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
+const limiter = createRateLimiter({ windowMs: 60_000, max: PUBLIC_LIMITS_PER_MINUTE.status });
 
 /** Public and read only: whether new requests are paused, in one plain sentence. No number about the provider, no secret, no customer data. */
 export async function GET(req: NextRequest) {

@@ -102,22 +102,17 @@ describe("the provider spend sums count every row", () => {
       ...Array.from({ length: 349 }, (_, i) => ({ id: `job_other_${i}`, user_id: "u2" })),
     ];
     const log: any[] = [];
-    const client = {
-      from: (table: string) => {
-        if (table === "jobs") {
-          const inner = postgrest({ jobs }, log).from("jobs");
-          return { select: () => ({ eq: (col: string, v: unknown) => ({ in: (c: string, ids: string[]) => inner.select().eq(col, v).in(c, ids) }) }) };
-        }
-        return postgrest({ provider_costs: rows }, log).from(table);
-      },
-    };
+    // the user's own jobs of the day are read first (their few jobs), then only their cost rows by job: never every customer's cost rows
+    const client = { from: (table: string) => postgrest({ jobs: jobs.map((job) => ({ ...job, updated_at: today })), provider_costs: rows }, log).from(table) };
     const spend = await readSpendForCeilings(client, { jobId: "job_mine", userId: "u1" });
     expect(round(spend.jobUsd)).toBe(round(2500 * 0.001));
     expect(round(spend.userTodayUsd)).toBe(round(2500 * 0.001 + 400 * 0.002));
-    // the ids reach the database in groups of at most 100, never as one request with 450 ids
-    const groups = log.filter((entry) => entry.table === "jobs" && entry.kind === "in").map((entry) => entry.detail as number);
+    // the ids reach the database in groups of at most 100, never as one request with 101 ids
+    const groups = log.filter((entry) => entry.table === "provider_costs" && entry.kind === "in").map((entry) => entry.detail as number);
     expect(groups.length).toBeGreaterThan(1);
     expect(Math.max(...groups)).toBeLessThanOrEqual(100);
+    // only THIS user's 101 jobs are asked about (a group of 100 and a group of 1; a group read in several pages repeats its size): the 349 jobs of other customers never reach the cost read
+    expect([...new Set(groups)].sort((x, y) => x - y)).toEqual([1, 100]);
   });
 
   it("today's provider spend and the all-time provider spend count 2,500 rows, not the first 1,000", async () => {

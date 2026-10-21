@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { estimateMission, estimateSummaryAr, parseEstimateText, type EstimateInput, type EstimateKind } from "@/lib/missionEstimate";
-import { RATE_LIMITED_MESSAGE_AR, clientKey, createRateLimiter } from "@/lib/server/publicRateLimit";
+import { PUBLIC_LIMITS_PER_MINUTE, RATE_LIMITED_MESSAGE_AR, clientKey, createRateLimiter } from "@/lib/server/publicRateLimit";
 import type { SocialPlatformId } from "@/lib/socialTasks";
 import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
 import { longJobDriverMode } from "@/lib/driverMode";
@@ -11,7 +11,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 export const dynamic = "force-dynamic";
 
 /** Public. Pure code: no model, no provider, no database. Rate-limited per visitor. */
-const limiter = createRateLimiter({ windowMs: 60_000, max: 30 });
+const limiter = createRateLimiter({ windowMs: 60_000, max: PUBLIC_LIMITS_PER_MINUTE.estimate });
 
 const KINDS: readonly EstimateKind[] = ["comments", "posts", "videos", "companies", "people"];
 const PLATFORMS: readonly SocialPlatformId[] = ["facebook", "youtube", "tiktok", "instagram", "x", "reddit", "linkedin"];
