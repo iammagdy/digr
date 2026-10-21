@@ -48,4 +48,6 @@ and in the chat route: `checkGlobalDailySpendCap(tables, undefined, { cacheMs: 2
 
 ## Measured effect
 
-See `docs/CONFERENCE_READINESS.md` (harness section) for the per-turn `llm_usage:select` count with and without the cache.
+Measured today (no cache) by `tests/conference-load-harness.test.ts` ("one turn late in a busy day", API row ceiling 1000): a chat
+turn issues 1 spend-read request when the day holds up to 900 rows, 5 at 2500 rows and 12 at 10 000 rows. With the cache, a turn
+issues at most one such read per instance per 20 seconds while the day is below 80% of the cap.
