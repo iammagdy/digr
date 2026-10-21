@@ -6,6 +6,7 @@ import type { ArtifactEditOperation } from "@/functions/shared/artifactEditing";
 import { Alert, Badge, Button, EmptyState, Input, Tabs, TextArea, type StatusTone } from "@/components/ui";
 import { formatNumber } from "@/lib/honestDisplay";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { relativeDateDisplay } from "@/lib/relativeDateDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import { customerResultColumnLabel, previewColumns } from "@/lib/customerResultColumns";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
@@ -105,7 +106,8 @@ export function formatCell(value: unknown): string {
   if (typeof value === "boolean") return value ? "نعم" : "لا";
   if (value == null || value === "") return "—";
   const text = String(value).replace(/^'+(?=\+?\d)/, "");
-  return ISO_DATE_TEXT.test(text.trim()) ? toArabicDigits(text.trim()) : text;
+  if (ISO_DATE_TEXT.test(text.trim())) return toArabicDigits(text.trim());
+  return relativeDateDisplay(text) ?? text;
 }
 
 export default function ResultsCanvas({
