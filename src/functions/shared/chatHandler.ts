@@ -1,7 +1,7 @@
 import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR } from "../../lib/youtubeRecency";
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
-import { capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
+import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -3850,7 +3850,7 @@ export class ChatHandler {
             planSummaryText += `\n- إعادة استخدام: ${toArabicDigits(reusedRowsForRetry)} سجل جُمعت في المحاولة السابقة تُضاف إلى النتيجة، ويُجلب المتبقي فقط. السعر المعروض يغطي كامل العدد المطلوب، ولا يُخصم إلا ثمن السجلات المسلّمة فعلاً.`;
           }
           if (managedQuote.capacityConstrained) {
-            planSummaryText += `\n- تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+            planSummaryText += `\n- سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;
           }
           if (!managedQuote.isAffordable) {
             // Low balance: the offer (reduce to what fits, or top up and continue here) is written by code from the quote.
@@ -3965,7 +3965,7 @@ export class ChatHandler {
             finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
           }
               if (managedQuote.capacityConstrained) {
-                finalContentAr += `\n• تنبيه السعة: تم ضبط الحد الأقصى عند ${toArabicDigits(managedQuote.targetVolumeMax)} سجل لضمان دقة وسرعة التنفيذ المباشر.`;
+                finalContentAr += `\n• سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;
               }
               if (!managedQuote.isAffordable) {
                 const lowBalanceText = lowBalanceMessageAr({

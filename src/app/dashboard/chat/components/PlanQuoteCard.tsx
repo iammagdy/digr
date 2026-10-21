@@ -4,7 +4,7 @@ import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
-import { volumeLimitStatementAr } from "@/lib/jobCaps";
+import { CAPACITY_LIMITED_REASON_AR, volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
 import { getQuoteApprovalState, isQuotePlanComplete, planApprovalNoteAr } from "@/lib/quoteApprovalState";
@@ -209,6 +209,7 @@ export default function PlanQuoteCard({
   const defaultStatement = quote.defaultCap && (quote.items?.length ?? 1) <= 1
     ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || 600, wordAr: quote.defaultCap.wordAr })
     : null;
+  const capacityCut = Boolean(quote.capacityConstrained && !quote.pointsCapConstrained);
   const volumeLimit = defaultStatement ? null : (quote.items?.length ?? 1) <= 1
     ? volumeLimitStatementAr({
         askedUnits: Math.max(quote.askedVolumeMax ?? 0, quote.requestedVolumeMax ?? 0),
@@ -319,7 +320,7 @@ export default function PlanQuoteCard({
 
       {volumeLimit ? (
         <p data-testid="plan-volume-limit" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
-          {volumeLimit} يمكنك تقليل العدد أكثر إذا أردت.
+          {volumeLimit} {capacityCut ? CAPACITY_LIMITED_REASON_AR : "يمكنك تقليل العدد أكثر إذا أردت."}
         </p>
       ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
