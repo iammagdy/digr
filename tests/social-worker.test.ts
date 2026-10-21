@@ -635,6 +635,46 @@ describe("worker: social jobs", () => {
       expect(lines().some((entry) => entry.includes("المصدر لا يعرض تاريخ كتابة التعليقات"))).toBe(true);
     });
 
+    it("the first video's comments are all outside the window: the job goes on to the next video and delivers what is inside", async () => {
+      setRelativeDateClockForTesting(() => Date.parse("2026-10-20T12:00:00Z"));
+      resetDb("social-youtube-comments", { query: "كرة القدم", ...WINDOW }, 8, 9);
+      const OTHER = "9bZkp7q19f0";
+      const calls: string[] = [];
+      useSource(async (_source, params) => {
+        if (params.video) {
+          calls.push(String(params.video));
+          const old = String(params.video).includes(VIDEO);
+          return ok({ ok: true, rows: Array.from({ length: 8 }, (_, i) => ({ comment_id: `${old ? "o" : "n"}${i}`, text: `تعليق ${old ? "قديم" : "جديد"} ${i} عن الماتش`, published_at: old ? "2026-08-06T10:00:00Z" : "2026-10-10T10:00:00Z" })) });
+        }
+        return ok({ ok: true, rows: [{ video_id: VIDEO, title: "مباراة قديمة" }, { video_id: OTHER, title: "مباراة حديثة" }] });
+      });
+      const { json } = await runAllChunks();
+      expect(calls).toHaveLength(2);
+      expect(json.done).toBe(true);
+      expect(json.deliveredUnits).toBe(8);
+      expect(json.settle.charged_credits).toBe(8 * 9);
+      const csv = db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8");
+      expect(csv).toContain("جديد");
+      expect(csv).not.toContain("قديم");
+    });
+
+    it("every video is outside the window even though the search was asked for the newest: nothing charged, and the reason says what was tried and what to send instead", async () => {
+      setRelativeDateClockForTesting(() => Date.parse("2026-10-20T12:00:00Z"));
+      resetDb("social-youtube-comments", { query: "كرة القدم", ...WINDOW }, 8, 9);
+      useSource(async (source, params) => {
+        if (params.video) return ok({ ok: true, rows: Array.from({ length: 6 }, (_, i) => ({ comment_id: `o${i}`, text: `تعليق ${i} عن الماتش` })) });
+        return ok({ ok: true, rows: [{ video_id: VIDEO, title: "مباراة قديمة", published_at: "2026-08-06T10:00:00Z" }] });
+      });
+      const { json } = await runAllChunks();
+      expect(json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
+      const reason = String(release.args.p_error_message);
+      expect(reason).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
+      expect(reason).toContain("ننصح بإرسال روابط الفيديوهات أو اسم القناة");
+      expect(reason).toContain("تم استرداد كامل الرصيد المحجوز دون أي خصم");
+    });
+
     it("the search found no video: the reason says so (not «no matching data») and nothing is charged", async () => {
       const { json } = await runYoutube({ videos: [], comments: [] });
       expect(json.released).toBe(true);

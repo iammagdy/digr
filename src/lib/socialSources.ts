@@ -16,6 +16,7 @@ import { channelsCountAr, videosCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 import { withXDateOperators } from "./xSearchWindow";
+import type { YoutubeRecency } from "./youtubeRecency";
 import { rowDateMs } from "./server/dateRangeFilter";
 
 export type SocialKind = "comments" | "videos" | "posts";
@@ -46,6 +47,8 @@ export interface SocialSourceRequest {
   /** The customer's window (YYYY-MM-DD), for sources whose search text can carry it. */
   dateFrom?: string;
   dateTo?: string;
+  /** The recency control the window needs (upload-date bucket / newest first), for the sources that list one. */
+  recency?: YoutubeRecency;
 }
 
 export interface SocialSource {
@@ -64,6 +67,8 @@ export interface SocialSource {
   /** Most rows one call returns. */
   maxPerCall: number;
   paging: SocialPaging;
+  /** True when the source's search takes a recency control (an upload-date filter or a newest-first order) and `build` sends it. */
+  recency?: boolean;
   /** Request parameters for this source, or null when this source cannot serve the request. */
   build(request: SocialSourceRequest): Record<string, any> | null;
   /** Cursor for the next page when the source pages by something other than the answer's own cursor. */
@@ -334,7 +339,8 @@ const YOUTUBE_SEARCH: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 20,
     paging: "none",
-    build: (r) => (r.query ? { keyword: r.query } : null),
+    recency: true,
+    build: (r) => (r.query ? { keyword: r.query, ...(r.recency?.upload_date ? { upload_date: r.recency.upload_date } : {}), ...(r.recency ? { sort_by: r.recency.sort_by } : {}) } : null),
   },
 ];
 

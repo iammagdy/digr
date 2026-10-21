@@ -1,3 +1,4 @@
+import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR } from "../../lib/youtubeRecency";
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
@@ -3732,6 +3733,12 @@ export class ChatHandler {
             // YouTube shows when a comment or a video was published only as «منذ ٣ أسابيع»: the plan says the window is applied approximately.
             if (verifiedSocialDef?.platform === "youtube" && verifiedSocialDef.kind === "comments") {
               planQuoteData.window.noteAr = [planQuoteData.window.noteAr, "تواريخ يوتيوب تقريبية (مثل «منذ ٣ أسابيع»)، لذلك تُطبَّق الفترة عليها بشكل تقريبي."].filter(Boolean).join(" ");
+            }
+            // A topic search on YouTube can be told to prefer recent uploads, but only within the last year: an older window is said plainly.
+            const planItemParams = managedQuote.items[0]?.params || {};
+            if (verifiedSocialDef?.platform === "youtube" && typeof planItemParams.query === "string" && planItemParams.query.trim()
+              && !youtubeRecencyFor(planItemParams.dateFrom, planItemParams.dateTo, Date.now())) {
+              planQuoteData.window.noteAr = [planQuoteData.window.noteAr, YOUTUBE_OLD_WINDOW_NOTE_AR].filter(Boolean).join(" ");
             }
           }
 
