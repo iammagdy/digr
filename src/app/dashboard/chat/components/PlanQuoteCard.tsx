@@ -12,6 +12,8 @@ import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScope
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { missionStepsAr } from "@/lib/dependentSteps";
+import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
+import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -209,7 +211,7 @@ export default function PlanQuoteCard({
   const baseApprovalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
   // Never shrink silently: what was asked, what fits one job now, and why (one plain sentence from the plan's own numbers).
   const defaultStatement = quote.defaultCap && (quote.items?.length ?? 1) <= 1
-    ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || 600, wordAr: quote.defaultCap.wordAr })
+    ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || JOB_MAX_POINTS_CAP, wordAr: quote.defaultCap.wordAr })
     : null;
   const capacityCut = Boolean(quote.capacityConstrained && !quote.pointsCapConstrained);
   const volumeLimit = defaultStatement ? null : (quote.items?.length ?? 1) <= 1
@@ -225,7 +227,7 @@ export default function PlanQuoteCard({
   const balance = available ?? quote.userBalance;
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
   const shortPts = Math.max(0, quote.quotedPoints - balance);
-  const expectedPoints = quote.expectedPoints ?? Math.ceil(quote.unitPricePoints * quote.targetVolumeMax);
+  const expectedPoints = quote.expectedPoints ?? chargeForUnits(quote.targetVolumeMax, quote.unitPricePoints);
   const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
   const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] || "ملف بيانات");
 
@@ -304,6 +306,12 @@ export default function PlanQuoteCard({
         سقف هذا الطلب: حتى {formatAr(quote.quotedPoints)} نقطة، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
       </p>
 
+      {quote.unitPricePoints > 0 && (quote.items?.length ?? 1) <= 1 ? (
+        <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-unit-price">
+          سعر السجل الواحد حوالي {formatAr(Number(pointsDisplay(quote.unitPricePoints)))} نقطة، أي {formatAr(pricePer100Points(quote.unitPricePoints))} نقطة لكل ١٠٠ سجل (تقديري).
+        </p>
+      ) : null}
+
       {quote.understoodAr && (
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
@@ -339,8 +347,8 @@ export default function PlanQuoteCard({
       ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
-            ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`
-            : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${formatAr(quote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || 600)} نقطة.`} يمكنك تقليل العدد أكثر إذا أردت.
+            ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة.`
+            : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${formatAr(quote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة.`} يمكنك تقليل العدد أكثر إذا أردت.
         </p>
       ) : null}
 

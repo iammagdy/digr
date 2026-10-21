@@ -32,23 +32,23 @@ so a result can be checked by hand.
 
 ## 3. The seven small requests for the tester (one per source)
 
-The owner asked for each request to quote **at most 20 points** and the whole set to cost the provider **under 0.02 USD**. These two limits cannot both hold with the caps the owner listed, because the customer price per record is 5 to 11 points
-(`src/lib/measurementPlan.ts` asks the public quote function, it sets nothing): 30 YouTube comments quote 311 points, not 20. So each request is given in two forms: **A, as specified** (the caps the owner listed, with the real quote), and **B, the largest
+The owner asked for each request to quote **at most 20 points** and the whole set to cost the provider **under 0.02 USD**. These two limits now both hold for most requests: the customer price per record is cost per delivered record x 5,500, 0.12 to 3.45 points for social data (0.275 a comment, 0.11715 an X post, 3.4485 a Facebook page post) and 3.168 a company
+(`src/lib/measurementPlan.ts` asks the public quote function, it sets nothing): 30 YouTube comments quote 10 points. The channels mission (38), the Facebook page posts (80) and decision makers (222) still quote above 20. So each request is given in two forms: **A, as specified** (the caps the owner listed, with the real quote), and **B, the largest
 volume that stays within 20 points** (too small to measure records per call, useful only as a check of the price and the flow). Provider USD is an **estimate** from the catalog's price per call and records per call (not a measurement).
 The customer points are the tester's account's points, not provider spend.
 
 | # | Source | The request (fill the brackets) | A: volume | A: quote (points) | A: settles if all arrive | A: provider USD (calls) | B: volume within 20 points | B: quote | B: settles |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | تعليقات يوتيوب | استخرج تعليقات هذين الفيديوهين على يوتيوب بحد أقصى ٣٠ تعليقًا: [رابط الفيديو الأول] [رابط الفيديو الثاني] | 30 | 311 | 270 (9 a comment) | 0.0018 (2) | 1 | 11 | 9 |
-| 2 | تعليقات تيك توك | استخرج ٣٠ تعليقًا من هذا الفيديو على تيك توك: [رابط الفيديو] | 30 | 207 | 180 (6 a comment) | 0.0020 (2) | 2 | 14 | 12 |
-| 3 | أعلى فيديوهات قناتين على تيك توك | استخرج تعليقات أعلى ٣ فيديوهات من قناتين على تيك توك، حتى ٢٠ تعليقًا لكل فيديو: [القناة الأولى] و[القناة الثانية] | 120 (one job holds 86, so the plan is cut to 86) | 594 | 516 (6 a comment, at 86) | 0.0084 (8) | not meaningful (a mission needs at least two channels) | n/a | n/a |
-| 4 | منشورات إكس عن حدث | استخرج ١٠٠ منشور عن [حدث محدد] من منصة إكس | 100 | 575 | 500 (5 a post) | 0.0015 (2) | 3 | 18 | 15 |
-| 5 | منشورات صفحة فيسبوك | استخرج آخر ٢٠ منشورًا من صفحة [اسم الصفحة] على فيسبوك بين [تاريخ البداية] و[تاريخ النهاية] | 20 | 253 | 220 (11 a post) | 0.0040 (2) | 1 | 13 | 11 |
-| 6 | شركات | ابحث عن ٥ شركات [نشاط] في [مدينة] | 5 | 18 | 15 (3 a company) | 0.00288 (1) | 5 | 18 | 15 |
+| 1 | تعليقات يوتيوب | استخرج تعليقات هذين الفيديوهين على يوتيوب بحد أقصى ٣٠ تعليقًا: [رابط الفيديو الأول] [رابط الفيديو الثاني] | 30 | 10 | 9 (0.275 a comment) | 0.0018 (2) | 30 | 10 | 9 |
+| 2 | تعليقات تيك توك | استخرج ٣٠ تعليقًا من هذا الفيديو على تيك توك: [رابط الفيديو] | 30 | 10 | 9 (0.275 a comment) | 0.0020 (2) | 30 | 10 | 9 |
+| 3 | أعلى فيديوهات قناتين على تيك توك | استخرج تعليقات أعلى ٣ فيديوهات من قناتين على تيك توك، حتى ٢٠ تعليقًا لكل فيديو: [القناة الأولى] و[القناة الثانية] | 120 | 38 | 33 (0.275 a comment) | 0.0084 (8) | 63 (not meaningful: a mission needs at least two channels and three videos each) | 20 | 18 |
+| 4 | منشورات إكس عن حدث | استخرج ١٠٠ منشور عن [حدث محدد] من منصة إكس | 100 | 14 | 12 (0.11715 a post) | 0.0015 (2) | 100 | 14 | 12 |
+| 5 | منشورات صفحة فيسبوك | استخرج آخر ٢٠ منشورًا من صفحة [اسم الصفحة] على فيسبوك بين [تاريخ البداية] و[تاريخ النهاية] | 20 | 80 | 69 (3.4485 a post) | 0.0040 (2) | 5 | 20 | 18 |
+| 6 | شركات | ابحث عن ٥ شركات [نشاط] في [مدينة] | 5 | 19 | 16 (3.168 a company) | 0.00288 (1) | 5 | 19 | 16 |
 | 7 | صناع القرار | ابحث عن صانع قرار واحد في شركة [اسم الشركة] | 1 | 222 | 0, 138 or 193 (see below) | 0.00076 (1) | none: the smallest quote is 222 | n/a | n/a |
 
 **Total expected provider spend as specified: 0.02134 USD, which is above the 0.02 limit** (the mission is 0.0084 of it). **Recommended set: request 3 with two videos per channel** ("استخرج تعليقات أعلى فيديوهين من قناتين على تيك توك، حتى ٢٠ تعليقًا لكل فيديو: [القناة الأولى] و[القناة الثانية]";
-80 comments, quote 552 points, settles 480 if all arrive, 6 calls, 0.0064 USD), which brings the total to **0.01934 USD**, under the limit. The other six stay as specified.
+80 comments, quote 26 points, settles 22 if all arrive, 6 calls, 0.0064 USD), which brings the total to **0.01934 USD**, under the limit. The other six stay as specified.
 
 What each settles (the rule is the existing one: charge = ceil(delivered unique matching units x unit price), never above the quote, nothing before approval):
 - comments and posts, companies: `ceil(delivered x unit price)` with the unit prices above; fewer records than asked settle less, and the rest of the quote returns;

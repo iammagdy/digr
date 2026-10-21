@@ -21,6 +21,7 @@ import { DEFAULT_JOB_POINTS_CAP, getConfiguredJobPointsCap } from "../src/functi
 import { calculateCapabilityUnitPricePoints, DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
 import { makeTables } from "./helpers/memoryTables";
 import { sampleOffer, sampleTargetPoints } from "../src/lib/sampleFirst";
+import { reserveForUnits } from "../src/lib/recordPricing";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 
 const socialQuote = (overrides: Record<string, unknown> = {}) => ({
@@ -105,16 +106,20 @@ describe("8. paid exploration", () => {
     beforeEach(() => clearBriefCacheForTesting());
     afterEach(() => clearBriefCacheForTesting());
 
-    it("a large social request gets the offer inside the plan message and on the quote, priced like the plan", async () => {
+    it("a large request gets the offer inside the plan message and on the quote, priced like the plan", async () => {
+      // a social request can no longer reach the 1,500-point threshold (the most one job holds is 522 points at the per-record prices and the cap of 600);
+      // 500 companies are 1,584 points of charge, of which one job holds 164
       const res: any = await new ChatHandler(makeTables() as any).handleUserMessage({
-        userId: "u_explore", message: "عايز ٣٠٠٠ تعليق من تيك توك عن كرة القدم في ٢٠٢٥", userBalance: 5000, personaProfile: { name: "سلمى" },
+        userId: "u_explore", message: "عايز ٥٠٠ شركة كهرباء في مصر", userBalance: 5000, personaProfile: { name: "سلمى" },
       });
       expect(res.outputType).toBe("propose_plan");
       const offer = res.planQuote.explorationOffer;
       const unit = res.planQuote.unitPricePoints;
       const expected = sampleOffer({ items: res.planQuote.items, targetVolumeMax: res.planQuote.targetVolumeMax, requestedVolumeMax: res.planQuote.requestedVolumeMax, unitPricePoints: unit })!;
       expect(offer.sampleUnits).toBe(expected.sampleUnits);
-      expect(offer.samplePoints).toBe(Math.ceil(offer.sampleUnits * unit * 1.15));
+      // exact: ceil(records x unit price x 1.15)
+      expect(unit).toBe(3.168);
+      expect(offer.samplePoints).toBe(reserveForUnits(offer.sampleUnits, unit));
       expect(offer.samplePoints).toBeGreaterThanOrEqual(1);
       expect(offer.samplePoints).toBeLessThanOrEqual(300);
       expect(res.contentAr).toContain("عينة أولًا");

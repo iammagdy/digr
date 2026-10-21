@@ -1,4 +1,4 @@
-import { APPROVED_CAPABILITY_CATALOG, computeRegistryPointsPerUnit } from "../functions/shared/capabilityRegistry";
+import { APPROVED_CAPABILITY_CATALOG, registryPointsPerUnit } from "../functions/shared/capabilityRegistry";
 import { SOCIAL_CAPABILITIES } from "./socialSources";
 import { effectiveSocialMaxRows } from "./scaleConfig";
 import { getConfiguredJobPointsCap } from "../functions/shared/providerSpend";
@@ -46,7 +46,7 @@ export function buildCoverageDoc(): string {
     const endpoints = social
       ? [...new Set([...(social.comments ?? []), ...Object.values(social.discover).flatMap((sources) => sources ?? [])].map((source) => source.endpointId))].join("، ")
       : String((capability as any).tregEndpointId ?? "");
-    const unit = social ? computeRegistryPointsPerUnit(social.customerPriceUsdPerItem ?? social.rowCostUsd) : Number(capability.pointsPerUnit ?? 0);
+    const unit = social ? registryPointsPerUnit(social.slug, social.customerPriceUsdPerItem ?? social.rowCostUsd) : Number(capability.pointsPerUnit ?? 0);
     const byCap = volumeForPointsCap(getConfiguredJobPointsCap(), unit);
     const rows = social ? effectiveSocialMaxRows(social.maxRows, social.kind) : Number((capability as any).maxRows ?? 0);
     lines.push(`| ${capability.nameAr} (\`${slug}\`) | ${endpoints} | ${String((capability as any).pricingUnit ?? capability.unit) === "item" ? "سجل" : String((capability as any).pricingUnit ?? capability.unit)} | ${unit} | ${n(byCap)} | ${n(rows)} | ${shapes} |`);

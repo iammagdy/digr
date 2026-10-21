@@ -1,5 +1,6 @@
 import { TablesDB } from "./dbCompat";
 import { SOCIAL_CAPABILITIES, SocialCapabilityDef } from "../../lib/socialSources";
+import { recordUnitPricePoints } from "../../lib/recordPricing";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
 export type CapabilityUnit = "page" | "query" | "profile" | "1000 items";
@@ -57,6 +58,20 @@ export function computeRegistryPointsPerUnit(
   settings: RegistryPricingSettings = getRegistryPricingSettings()
 ): number {
   return Math.ceil((costUsd * settings.usdToEgp * settings.markup) / settings.pointValueEgp);
+}
+
+/**
+ * The display price per record of a capability: the shared per-record rule (cost per delivered record x 5,500, fractional) for the
+ * capabilities priced that way, the whole-point rule for every other. The quote writer calls the same shared rule
+ * (`unitPricePointsForCapability` in quotes.ts), so a number shown here is the number charged.
+ */
+export function registryPointsPerUnit(
+  slug: string | undefined | null,
+  costUsd: number,
+  settings: RegistryPricingSettings = getRegistryPricingSettings()
+): number {
+  const perRecord = recordUnitPricePoints(slug, { usdToEgp: settings.usdToEgp, markup: settings.markup, creditValueEgp: settings.pointValueEgp, safetyBuffer: 0.15 });
+  return perRecord ?? computeRegistryPointsPerUnit(costUsd, settings);
 }
 
 export const VERIFICATION_NOTE = "to verify against the real charge of the first call";
@@ -565,7 +580,8 @@ export function buildApprovedCatalog(
 ): Capability[] {
   return RAW_SEED_CAPABILITIES.map((entry) => ({
     ...entry,
-    pointsPerUnit: computeRegistryPointsPerUnit(
+    pointsPerUnit: registryPointsPerUnit(
+      entry.slug,
       entry.estimatedCostUsdPerUnit ?? entry.unitCostUsd,
       settings
     ),
@@ -650,7 +666,7 @@ export async function getCatalogCapabilities(
         status,
         unit: row.unit || existing?.unit || "profile",
         estimatedCostUsdPerUnit: isValidCost ? costUsd : 0,
-        pointsPerUnit: isValidCost ? computeRegistryPointsPerUnit(costUsd, settings) : 0,
+        pointsPerUnit: isValidCost ? registryPointsPerUnit(row.slug, costUsd, settings) : 0,
         maxItemsPerCall: row.maxItemsPerCall ?? existing?.maxItemsPerCall ?? row.maxRows ?? 1,
         estimatedSuccessRate: row.estimatedSuccessRate ?? existing?.estimatedSuccessRate ?? 0.9,
         verificationNote: row.verificationNote || existing?.verificationNote || VERIFICATION_NOTE,
@@ -708,7 +724,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
             tregMethod: (c.tregMethod || seed?.tregMethod || "GET") as "GET" | "POST",
             unitCostUsd: costUsd,
             estimatedCostUsdPerUnit: costUsd,
-            pointsPerUnit: Number(c.unit_price_credits ?? computeRegistryPointsPerUnit(costUsd, settings)),
+            pointsPerUnit: recordUnitPricePoints(c.slug) ?? Number(c.unit_price_credits ?? computeRegistryPointsPerUnit(costUsd, settings)),
             maxItemsPerCall: Number(c.max_rows ?? seed?.maxItemsPerCall ?? 1),
             maxRows: Number(c.max_rows ?? seed?.maxRows ?? 1),
             paginationType: (c.pagination_type || seed?.paginationType || "none") as "cursor" | "offset" | "none",
@@ -751,7 +767,7 @@ export async function getEnabledCapabilities(tables?: TablesDB | any): Promise<C
           status: c.status || "verified",
           unit: c.unit || seed?.unit || "profile",
           estimatedCostUsdPerUnit: costUsd,
-          pointsPerUnit: computeRegistryPointsPerUnit(costUsd, settings),
+          pointsPerUnit: registryPointsPerUnit(c.slug, costUsd, settings),
           maxItemsPerCall: c.maxItemsPerCall ?? seed?.maxItemsPerCall ?? c.maxRows ?? 1,
           estimatedSuccessRate: c.estimatedSuccessRate ?? seed?.estimatedSuccessRate ?? 0.95,
           verificationNote: c.verificationNote || VERIFICATION_NOTE,
@@ -881,7 +897,7 @@ export function sanitizeCapabilitiesForLlm(capabilities: Capability[]): Sanitize
       // internal execution validation remains server-side.
       status: isValidCost ? "verified" as const : "pending_verification" as const,
       unit: c.unit || "profile",
-      pointsPerUnit: isValidCost ? (c.pointsPerUnit ?? computeRegistryPointsPerUnit(costUsd, settings)) : 0,
+      pointsPerUnit: isValidCost ? (recordUnitPricePoints(c.slug) ?? c.pointsPerUnit ?? computeRegistryPointsPerUnit(costUsd, settings)) : 0,
       maxItemsPerCall: c.maxItemsPerCall ?? c.maxRows,
       estimatedSuccessRate: c.estimatedSuccessRate ?? 0.9,
       nameAr: c.nameAr,

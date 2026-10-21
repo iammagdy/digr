@@ -85,9 +85,9 @@ describe("A6: the owner's exact conversation, offline", () => {
     expect(first.planQuote).toBeDefined();
     expect(first.planQuote.outputFormats).toEqual(["xlsx"]);
     expect(first.planQuote.items[0].capabilitySlug).toBe("icypeas-companies-search");
-    // The live ledger for this exact request: reserve 11, charge 9.
+    // 3 company records at 3.168 points (measured cost 0.000576 USD x 5,500): charge 10, reserve 11 (the live ledger of the old whole-point price was 9 and 11).
     expect(first.planQuote.quotedPoints).toBe(11);
-    expect(first.contentAr).toContain("التكلفة المتوقعة: ٩ نقطة");
+    expect(first.contentAr).toContain("التكلفة المتوقعة: ١٠ نقطة");
     expect(first.contentAr).not.toMatch(STARTED);
     expect(JSON.stringify(first.planQuote)).not.toMatch(STARTED);
 

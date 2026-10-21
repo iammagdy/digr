@@ -1,5 +1,5 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
-import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
+import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
 import { highOffTopicEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
 import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
@@ -354,6 +354,9 @@ export async function POST(req: NextRequest) {
       unit_price: unitPrice = 1,
     } = claimData;
 
+    // The job's review budget: 20% of its revenue (expected charge), computed here from the job's own unit price, never by the model.
+    const reviewCapUsd = socialReviewCapUsd(Number(targetMax), Number(unitPrice));
+
     const useMockProvider = Boolean(
       isMockRequested &&
         (fakeMode || (process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true"))
@@ -559,6 +562,16 @@ export async function POST(req: NextRequest) {
       && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
     let videoSelectionUsd = 0;
     let videoSelectionUnreviewed = false;
+    // What the job's earlier chunks already spent on review (read from the running record, before the adapter runs: the video selection
+    // happens inside it). An unreadable record counts as nothing here; the page-level review below reads it again and rebuilds it.
+    let reviewUsdBeforeThisChunk = 0;
+    if (selectsVideosFirst && currentStep > 0) {
+      try {
+        reviewUsdBeforeThisChunk = (await loadRunningSet(adminClient.storage.from("partials"), jobId, currentStep - 1))?.reviewUsd ?? 0;
+      } catch {
+        reviewUsdBeforeThisChunk = 0;
+      }
+    }
     const videoSelector: VideoSelector | undefined = selectsVideosFirst
       ? async (refs) => {
           // A video with no text of its own cannot be judged from the list: its comments are read and the page-level review sees a few of them.
@@ -572,7 +585,8 @@ export async function POST(req: NextRequest) {
             kind: `${String(spec.capabilitySlug || "")}-video-list`,
             videos,
             request: { query: typeof spec.params?.query === "string" ? spec.params.query : "", region: typeof spec.params?.region === "string" ? spec.params.region : "" },
-            budgetUsd: socialReviewCapUsd(targetMax),
+            budgetUsd: Math.max(0, reviewCapUsd - reviewUsdBeforeThisChunk - videoSelectionUsd),
+            callCostEstimateUsd: REVIEW_CALL_COST_ESTIMATE_USD,
             deadlineMs: deadlineMs - 8_000,
           });
           videoSelectionUsd += outcome.costUsd;
@@ -957,7 +971,8 @@ export async function POST(req: NextRequest) {
             kind: `${String(spec.capabilitySlug || "")}-video-list`,
             videos,
             request: { query: typeof spec.params?.query === "string" ? spec.params.query : "", region: typeof spec.params?.region === "string" ? spec.params.region : "" },
-            budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
+            budgetUsd: Math.max(0, reviewCapUsd - priorReviewUsd - videoSelectionUsd),
+            callCostEstimateUsd: REVIEW_CALL_COST_ESTIMATE_USD,
             deadlineMs: deadlineMs - 8_000,
           });
           reviewUsdThisChunk += outcome.costUsd;
@@ -1036,10 +1051,11 @@ export async function POST(req: NextRequest) {
             kind: String(spec.capabilitySlug || ""),
             rows: matchedForAdvice,
             suspicious: suspiciousIndexes,
-            budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
+            budgetUsd: Math.max(0, reviewCapUsd - priorReviewUsd - videoSelectionUsd),
+            callCostEstimateUsd: REVIEW_CALL_COST_ESTIMATE_USD,
             deadlineMs: deadlineMs - 8_000,
           });
-          reviewUsdThisChunk = outcome.costUsd;
+          reviewUsdThisChunk += outcome.costUsd;
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
           // What each review call really did, kept in the step file so a failure proves its own cause (never row content).
           reviewDiagnostics = outcome.attempts.map((attempt) => ({

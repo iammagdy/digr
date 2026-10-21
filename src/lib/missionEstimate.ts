@@ -1,11 +1,12 @@
 import { toArabicDigits } from "./arabicDigits";
 import { DEFAULT_JOB_POINTS_CAP, computePublicCalculatorQuote, getPublicCalculatorOptions } from "./calculatorPricing";
+import { chargeForUnits, reserveForUnits } from "./recordPricing";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField } from "../functions/shared/decisionMakerPricing";
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { SOCIAL_PLATFORM_LABEL_AR, type SocialPlatformId } from "./socialTasks";
 import { understandMission, understoodLineAr } from "./consultantCopy";
 import { volumeForPointsCap } from "./pointsCap";
-import { decisionMakersPerRequestLineAr, recordsInOneJob, reserveInOneJob } from "./jobSizing";
+import { decisionMakersPerRequestLineAr, limitedByServiceCeiling, recordsInOneJob, reserveInOneJob } from "./jobSizing";
 
 /**
  * The public estimate: what a request would cost, from the SAME unit prices and reserve formula the quote writer uses
@@ -125,14 +126,14 @@ export function estimateMission(input: EstimateInput): EstimateResult {
       : { status: "needs_cap", notesAr: ["اكتب عدد السجلات أو ميزانيتك بالنقاط لنحسب لك التكلفة."] };
   }
 
-  const expectedPoints = Math.ceil(volume * perUnit);
+  const expectedPoints = chargeForUnits(volume, perUnit);
   // One shared rule for the one-job size (the quote writer's own: see jobSizing).
-  const sizing = { unitPricePoints: perUnit, capPoints: jobCapPoints, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople };
+  const sizing = { unitPricePoints: perUnit, capPoints: jobCapPoints, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople, maxRecords: probe.maxRecordsPerJob };
   const maxVolumeInOneJob = recordsInOneJob(sizing);
   const fitsInOneJob = maxVolumeInOneJob >= volume;
   const unclippedReserve = isPeople
     ? decisionMakerQuotePoints(volume, fields, DECISION_MAKER_UNIT_PRICES_POINTS, settings.safetyBuffer, Number.MAX_SAFE_INTEGER)
-    : Math.ceil(volume * perUnit * (1 + settings.safetyBuffer));
+    : reserveForUnits(volume, perUnit, settings.safetyBuffer);
   // Inside one job the writer clips a decision-maker hold to the cap; a request that needs several jobs shows the whole hold.
   const reservePoints = fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve;
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
@@ -140,7 +141,7 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${n(reservePoints)} نقطة) يشمل احتياطيًا يعود إليك ما لم يُستخدم.`];
   if (!fitsInOneJob) {
     notesAr.push(maxVolumeInOneJob > 0
-      ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل (سقف الحجز ${n(jobCapPoints)} نقطة)، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
+      ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${n(jobCapPoints)} نقطة)`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
       : "السجل الواحد أعلى من سقف الحجز الحالي للطلب الواحد.");
   }
   return {

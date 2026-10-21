@@ -1,4 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
+import { maxVolumeUnderCap, reserveForUnits as exactReserveForUnits } from "./recordPricing";
 
 /**
  * The customer's own budget cap, in points. It is a smaller limit the customer sets on the plan: it turns into the most
@@ -8,20 +9,14 @@ import { toArabicDigits } from "./arabicDigits";
  */
 export const RESERVE_BUFFER = 0.15;
 
-/** The most records whose reserve stays at or under `capPoints`; 0 when even one record does not fit. */
+/** The most records whose reserve stays at or under `capPoints`; 0 when even one record does not fit. Exact integer arithmetic. */
 export function volumeForPointsCap(capPoints: number, unitPricePoints: number, buffer = RESERVE_BUFFER): number {
-  const cap = Math.floor(Number(capPoints));
-  const unit = Number(unitPricePoints);
-  if (!Number.isFinite(cap) || cap < 1 || !Number.isFinite(unit) || unit <= 0) return 0;
-  let units = Math.floor(cap / (unit * (1 + buffer)));
-  // floating point can leave the reserve one point over: step down until it fits
-  while (units > 0 && Math.ceil(units * unit * (1 + buffer)) > cap) units -= 1;
-  return Math.max(0, units);
+  return maxVolumeUnderCap(capPoints, unitPricePoints, buffer);
 }
 
-/** The reserve the plan would hold for `units` records. */
+/** The reserve the plan would hold for `units` records. Exact integer arithmetic. */
 export function reserveForUnits(units: number, unitPricePoints: number, buffer = RESERVE_BUFFER): number {
-  return Math.ceil(Math.max(0, units) * unitPricePoints * (1 + buffer));
+  return exactReserveForUnits(units, unitPricePoints, buffer);
 }
 
 export type CapResolution =

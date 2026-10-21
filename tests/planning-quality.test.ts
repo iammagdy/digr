@@ -1,3 +1,4 @@
+import { sampleTargetPoints } from "../src/lib/sampleFirst";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 import { describe, expect, it } from "vitest";
 import { planExplanationLinesAr, recordNounAr, formatsAr } from "../src/lib/planExplanation";
@@ -63,14 +64,18 @@ describe("C. in the conversation", () => {
     expect(String(r.contentAr).match(/؟/g) ?? []).toHaveLength(0);
   });
 
-  it("a large social request is offered the priced exploration step", async () => {
-    const { responses } = await runConversation(["هات ٥٠٠ تغريدة عن كرة السلة في ٢٠٢٥"]);
+  it("a large request is offered the priced exploration step", async () => {
+    // 500 companies are 1,584 points of charge: over the 1,500 that earns a sample offer (a social request cannot reach it any more: 500 posts are 59 points)
+    const { responses } = await runConversation(["عايز ٥٠٠ شركة كهرباء في مصر"]);
     const r = responses[0];
     expect(r.outputType).toBe("propose_plan");
-    // «عينة أولًا»: about 5% of the estimate, held between 100 and 300 points
+    // «عينة أولًا»: the target is about 5% of the estimate, held between 100 and 300 points; the sample holds the most whole records whose reserve fits it
     const offer = r.planQuote.explorationOffer;
-    expect(offer.samplePoints).toBeGreaterThanOrEqual(100);
-    expect(offer.samplePoints).toBeLessThanOrEqual(300);
+    const target = sampleTargetPoints(offer.fullEstimatePoints);
+    expect(target).toBeGreaterThanOrEqual(100);
+    expect(target).toBeLessThanOrEqual(300);
+    expect(offer.samplePoints).toBeLessThanOrEqual(target);
+    expect(offer.samplePoints + r.planQuote.unitPricePoints * 1.15 + 1).toBeGreaterThan(target);
     expect(r.contentAr).toContain("عينة أولًا");
     expect(r.contentAr).toContain(`${toArabicDigits(offer.sampleUnits)} سجل فقط بحجز ${toArabicDigits(offer.samplePoints)} نقطة`);
   });

@@ -22,8 +22,9 @@ interface ScaleSpec {
 }
 
 export const SCALE_SPECS: Record<ScaleKey, ScaleSpec> = {
-  // Provider pages (chunks) one job may read; with a page of 50 rows this is the real limit of a feed job (30 x 50 = 1,500 rows).
-  absoluteMaxPages: { env: "LONG_JOB_MAX_PAGES", def: 30, min: 1, max: 2000, whatAr: "أكبر عدد من الدفعات لمهمة واحدة" },
+  // Provider pages (chunks) one job may read; with a page of 50 rows this is the real limit of a feed job (300 x 50 = 15,000 rows). A full
+  // 600-point X job (4,453 posts) is 90 pages, 270 with the slack of 3 for relevance misses; a YouTube or TikTok one (1,897 comments) is 114.
+  absoluteMaxPages: { env: "LONG_JOB_MAX_PAGES", def: 300, min: 1, max: 2000, whatAr: "أكبر عدد من الدفعات لمهمة واحدة" },
   // How many pages a large job may read per page it would need if every record matched (relevance misses use the slack).
   largeJobPageAllowance: { env: "LONG_JOB_PAGE_ALLOWANCE", def: 3, min: 1, max: 10, whatAr: "هامش الدفعات الإضافية" },
   // Most rows one social plan item may ask for. 0 = the per-service defaults (500 or 1,000). Only comment and big post services rise.

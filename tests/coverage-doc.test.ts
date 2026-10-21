@@ -19,8 +19,8 @@ describe("docs/CAPABILITY_COVERAGE.md is the platform's own table", () => {
     expect(committed).toContain("لم نفعّل أي مصدر جديد");
     expect(committed).toContain("غير مدعوم");
   });
-  it("the customer's YouTube comment price in the table is the one a plan quotes (9 points) and TikTok's is 6", () => {
-    expect(committed).toMatch(/social-youtube-comments`\) \|[^|]+\| سجل \| 9 \|/);
-    expect(committed).toMatch(/social-tiktok-comments`\) \|[^|]+\| سجل \| 6 \|/);
+  it("the customer's comment prices in the table are the ones a plan quotes: 0.275 points a YouTube comment and 0.275 a TikTok comment (0.00005 USD x 5,500)", () => {
+    expect(committed).toMatch(/social-youtube-comments`\) \|[^|]+\| سجل \| 0\.275 \|/);
+    expect(committed).toMatch(/social-tiktok-comments`\) \|[^|]+\| سجل \| 0\.275 \|/);
   });
 });

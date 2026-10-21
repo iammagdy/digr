@@ -8,7 +8,8 @@ import { createChatDb } from "./helpers/chatSession";
 
 /**
  * Never shrink silently. With 2,000 comments asked, the plan used to say «up to 1,000» (a service ceiling) while the job cap cut
- * the plan to 57. Now: what was asked, what fits one job now, and why in one plain sentence. No cap value is changed here.
+ * the plan to 57 (at the old whole-point price of 9 points a comment). Now: what was asked, what fits one job now, and why in one plain
+ * sentence. No cap value is changed here; at the per-record price of 0.275 points a comment the cap (600) holds 1,897 comments.
  */
 const M1_WITH_CAP = "عايز أكتر ١٠ فيديوهات مشاهدة من قناة @AlArabiya وقناة @SkyNewsArabia على يوتيوب مع كل التعليقات حتى ٢٠٠٠ تعليق";
 
@@ -35,22 +36,22 @@ describe("through the chat handler (model stubbed to throw)", () => {
     return handler.handleUserMessage({ userId: "u_cap_text", message, userBalance: 100000 }) as Promise<any>;
   };
 
-  it("2,000 comments asked: the text and the quote say 2,000 asked, 57 fit, and why; the goal line no longer says «up to 1,000»", async () => {
+  it("2,000 comments asked: the text and the quote say 2,000 asked, 1,897 fit, and why; the goal line no longer says «up to 1,000»", async () => {
     const reply = await run(M1_WITH_CAP);
     expect(reply.outputType).toBe("propose_plan");
     const quote = reply.planQuote;
     expect(quote.askedVolumeMax).toBe(2000);
-    expect(quote.targetVolumeMax).toBe(57);
-    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ٥٧ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
-    expect(reply.contentAr).toContain("حتى ٥٧ تعليقاً إجمالاً");
+    expect(quote.targetVolumeMax).toBe(1897);
+    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٨٩٧ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
+    expect(reply.contentAr).toContain("حتى ١٨٩٧ تعليقاً إجمالاً");
     expect(reply.contentAr).not.toContain("حتى ١٠٠٠ تعليقاً");
-    expect(quote.summaryAr).toContain("٥٧");
+    expect(quote.summaryAr).toContain("١٨٩٧");
     expect(quote.summaryAr).not.toContain("١٠٠٠");
   });
 
-  it("no cap value, unit price or reserve changed: the same 57 comments, 9 points each, 590 held, cap 600 as before this fix", async () => {
+  it("the plan numbers: 1,897 comments at 0.275 points each (522 charge), 600 held, the cap still 600", async () => {
     const quote = (await run(M1_WITH_CAP)).planQuote;
-    expect(quote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600, pointsCapConstrained: true });
+    expect(quote).toMatchObject({ targetVolumeMax: 1897, unitPricePoints: 0.275, expectedPoints: 522, quotedPoints: 600, pointsCap: 600, pointsCapConstrained: true });
   });
 
   it("a request that fits carries no limit sentence and no asked volume", async () => {
@@ -59,10 +60,11 @@ describe("through the chat handler (model stubbed to throw)", () => {
     expect(reply.planQuote.askedVolumeMax).toBeUndefined();
   });
 
-  it("37,500 X posts: asked 37,500, fits 104, with the reason", async () => {
+  it("37,500 X posts: asked 37,500, fits 4,453 (the most whose reserve is within 600: 522 charge, 600 held), with the reason", async () => {
     const reply = await run("عايز ٣٧٥٠٠ بوست على إكس عن ماتش مصر والمغرب آخر شهر");
     expect(reply.planQuote.askedVolumeMax).toBe(37500);
-    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٠٤ سجل.");
+    expect(reply.planQuote).toMatchObject({ targetVolumeMax: 4453, unitPricePoints: 0.11715, expectedPoints: 522, quotedPoints: 600, pointsCap: 600, pointsCapConstrained: true });
+    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ٤٤٥٣ سجل.");
     expect(reply.contentAr).toContain(VOLUME_LIMIT_REASON_AR);
   });
 });

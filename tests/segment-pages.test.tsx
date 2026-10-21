@@ -35,9 +35,11 @@ describe("segment pages", () => {
     }
   });
 
-  it("an example bigger than one job says it needs several requests (no hidden cap)", () => {
-    const big = segmentExample(SEGMENTS.find((s) => s.slug === "researchers")!);
+  it("an example bigger than one job says it needs several requests (no hidden cap); the real examples now fit one job whole", () => {
+    const researchers = SEGMENTS.find((s) => s.slug === "researchers")!;
+    const big = segmentExample({ ...researchers, estimate: { kind: "comments", platform: "youtube", volume: 100000 } });
     expect(big.notesAr.join(" ")).toContain("طلبات منفصلة");
+    for (const segment of SEGMENTS) expect(segmentExample(segment).notesAr, segment.slug).toEqual([]);
   });
 
   it("an unknown segment is a 404", async () => {

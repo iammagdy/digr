@@ -3,8 +3,10 @@ import { onProviderLimitsFlush, resolveProviderLimits } from "../../lib/server/p
 import { readRealProviderBalance } from "../../lib/server/realProviderBalance";
 
 import { selectAllRows } from "../../lib/server/selectAll";
+import { effectiveJobPointsCap, JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
-export const DEFAULT_JOB_POINTS_CAP = 600;
+/** The per-job cap: one shared constant (`src/lib/jobPointsCap.ts`). */
+export const DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
 export const DEFAULT_PROVIDER_CREDIT_USD = 1.00;
 export const PROVIDER_BALANCE_CACHE_TTL_MS = 60_000;
 
@@ -50,9 +52,9 @@ export function getConfiguredProviderSpendCapUsd(): number {
   return Number.isFinite(envVal) && envVal >= 0 ? envVal : DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD;
 }
 
+/** The cap in force: the shared constant, which the environment variable may only lower. */
 export function getConfiguredJobPointsCap(): number {
-  const envVal = Number(process.env.JOB_MAX_POINTS_CAP);
-  return Number.isFinite(envVal) && envVal > 0 ? Math.floor(envVal) : DEFAULT_JOB_POINTS_CAP;
+  return effectiveJobPointsCap();
 }
 
 export function getConfiguredProviderCreditUsd(): number {
