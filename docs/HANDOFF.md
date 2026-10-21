@@ -4,6 +4,39 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 00. Second session (new account, 2026-10-21 Wednesday): verification of #175 to #182 and the failed harness build
+
+### Failed preview build of `claude/wip-e1-harness` (read from the deployment API, now fixed)
+
+Deployment `dpl_7hzrxw7xEwrQq5Lz48J7Z6zj2hcg` (head `c50e2fd`) ended in ERROR at the type-check step of `next build`: `tests/helpers/loadHarness.ts:48:101 Type error: Expected 1 arguments, but got 2.` The wrapper `rpc: async (name, args) => base.client.rpc(name, args)` passed two arguments to the fake client's one-argument `rpc`. Fixed in PR `claude/e1-harness` (`rpc(name, ..._args)`). Next compiled successfully; only the test helper failed the type check, so production was never affected.
+
+### Evidence for PRs #175 to #182 (git and the deployment API; suite = `npx vitest run` on the merge commit, skipped counts are always 27 tests / 3 files)
+
+| PR | Merge SHA | Diff vs first parent | Suite after (files / tests) | Removed test lines | Production deployment (state, built SHA) |
+|---|---|---|---|---|---|
+| #175 | 8e5fb4d | 17 files, +664 -42 | 285 / 2839 passed (before, at 49ee886: 283 + 1 flaky file / 2816 passed, 1 failed) | 5, all pin replaced STEP 0 behavior with stricter assertions (link columns 120 to 60, comment columns, comments under 3 letters rejected) | `dpl_2BTsn8p34vL3JFzbt1PBGfBUJAkk` READY, 8e5fb4d |
+| #176 | a301d7b | 21 files, +1650 -3 | 292 / 2964 passed (an earlier run showed 1 failure: the memory-timing test `result-assembly-scale`, which also failed once at 49ee886 under CPU load and passes alone) | 0 | `dpl_6wBZx8hjgcPXuoGmtAybxD3FPQ88` READY, a301d7b |
+| #177 | c12de75 | 4 files, +164 -4 | 293 / 2973 | 2 (template list 4 to 7, stricter list) | `dpl_B9eDj4pee4pLsAawBUMfjuUkEvWa` READY, c12de75 |
+| #178 | 18f8c23 | 19 files, +740 -37 | 295 / 3002 | 0 | `dpl_2snYqmDgbmsvfQA49YzvB3YsQwLh` READY, 18f8c23 |
+| #180 | ae80409 | 7 files, +944 -3 | 296 / 3037 | 0 | `dpl_D11oukHn59KZRB9L2NUErnpYoTru` CANCELED (superseded by the next merge 3 seconds later) |
+| #179 | f0724f0 | 1 file, +31 | 296 / 3037 | 0 | `dpl_ngkEDTNm3XYn5BqmfUsg6nVwXNXS` READY, f0724f0 (contains #173 to #180) |
+| #181 | 9c49459 | 21 files, +356 -46 | 297 / 3048 | 14 (see flag) | `dpl_AdfR6ZJtxzK4WAXWb3WsvCwCMjhp` READY, 9c49459 |
+| #182 | eadea2d | 1 file, +76 -24 | 297 / 3048 | 0 | `dpl_58Vyaig41FHTmHJfEoV5sH5sroZQ` READY, eadea2d (production at the start of this session) |
+
+**FLAG for the owner (rule 3):** #181 edited `tests/usage-reads-beyond-1000.test.ts` (11 removed lines): the provider-spend sum test «the provider spend sums count every row», rewritten so the per-user daily cap reads only the user's own jobs and then only their cost rows (assertion: groups of 100 and 1 instead of 4 groups). It is a provider-spend read test, close to the «caps» money family. The new assertion is not weaker (it asserts the exact group sizes `[1, 100]`), but the owner should look at that one diff. The other removed lines: limiter sizes replaced by the named constant (`busy-mode`, `mission-estimate`), one mock extended (`wallet-arabic-and-demo-cta`).
+
+### Production deployments per PR (Hobby: 100 per day)
+
+Every push to a PR branch creates a preview deployment and every merge creates a production one. The API list shows 37 deployments created on 2026-10-21 (UTC) before this session started; push each branch as few times as possible.
+
+### Findings of this session
+
+1. **The model-spend guard reads the whole day on every chat turn** (`checkGlobalDailySpendCap`, 1 request up to 900 rows, 5 at 2500, 12 at 10 000 and a fail-closed 503 at 50 000). Measured in `tests/conference-load-harness.test.ts`. Fix is proposed, not applied: `docs/proposals/spend-cap-read-cache.md`.
+2. **`/auth/v1/user` shares the sign-up/sign-in bucket (30 requests per 5 minutes per IP)** with sign-up. See `docs/SUPABASE_FREE_PLAN.md` (PR 2).
+3. Concurrency: 20 simultaneous approvals of one quote reserve once (`tests/accept-quote-concurrency.test.ts`; the database function itself is a stand-in, real locks are SQL and unverified).
+
+---
+
 ## 0. Conference-readiness session (2026-10-21, Wednesday): FINAL HANDOFF to the next account
 
 Conference: Saturday 2026-10-24, 500+ attendees on one venue network. Code freeze Friday evening. The owner is on a phone: no stop-and-ask loops, small PRs, merge commits only.
@@ -28,7 +61,7 @@ Conference: Saturday 2026-10-24, 500+ attendees on one venue network. Code freez
 
 | Branch | Head | Contains | Missing |
 |---|---|---|---|
-| `claude/wip-e1-harness` | c50e2fd | `tests/helpers/loadHarness.ts` (latency-counting fake DB) and `tests/conference-load-harness.test.ts` (500 visitors through the real `/api/chat` route, 3 messages each, no model) | first run printed per-turn stage timings (about 12 awaits per turn, auth 11 ms, rate limit 15 ms, writes about 140 ms with 4 ms fake round trips); the results were not read to the end, assertions not tuned, numbers not recorded; silence console JSON from `chat_stage_timings`; no concurrency/idempotency section yet; not on main |
+| `claude/wip-e1-harness` (SUPERSEDED by PR `claude/e1-harness`, type error fixed) | c50e2fd | `tests/helpers/loadHarness.ts` (latency-counting fake DB) and `tests/conference-load-harness.test.ts` (500 visitors through the real `/api/chat` route, 3 messages each, no model) | first run printed per-turn stage timings (about 12 awaits per turn, auth 11 ms, rate limit 15 ms, writes about 140 ms with 4 ms fake round trips); the results were not read to the end, assertions not tuned, numbers not recorded; silence console JSON from `chat_stage_timings`; no concurrency/idempotency section yet; not on main |
 | `claude/wip-load-and-limits` | 72dd425 | superseded by merged #181 | delete or ignore |
 | `claude/money-bundles-and-pricing` | 3ed699d | parked by the owner | NEVER touch |
 
