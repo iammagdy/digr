@@ -151,7 +151,7 @@ describe("worker: social jobs", () => {
     }
   });
 
-  const useSource = (call: SocialCall) => setProviderAdapterForTesting(async (input: ProviderAdapterCallInput) => runSocialChunk(input, { call }));
+  const useSource = (call: SocialCall) => setProviderAdapterForTesting(async (input: ProviderAdapterCallInput) => runSocialChunk(input, { call, videoSelector: input.videoSelector }));
 
   const callWorker = async () => {
     const route = await import("../src/app/api/worker/chunk/route");

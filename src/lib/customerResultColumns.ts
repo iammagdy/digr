@@ -19,6 +19,8 @@ const RESULT_COLUMN_LABELS: Record<string, string> = {
   video_title: "عنوان الفيديو",
   channel_name: "اسم القناة أو الحساب",
   video_url: "رابط الفيديو",
+  video_published_at: "تاريخ نشر الفيديو",
+  comment_language: "لغة التعليق",
   url: "الرابط المباشر",
   published_at: "تاريخ النشر",
   createdUtc: "تاريخ النشر",
@@ -107,5 +109,7 @@ const PREVIEW_HIDDEN_SOCIAL_COLUMNS = new Set([
 
 export function previewColumns(columns: string[], isCompanyDataset: boolean): string[] {
   if (isCompanyDataset) return columns.filter((key) => key !== "id" && key !== "source_id");
-  return columns.filter((key) => !PREVIEW_HIDDEN_SOCIAL_COLUMNS.has(key));
+  // A comment is read with the video it sits under: the video's title and link stay in the preview of a comments table.
+  const isComments = columns.includes("comment_text");
+  return columns.filter((key) => !PREVIEW_HIDDEN_SOCIAL_COLUMNS.has(key) || (isComments && key === "video_url"));
 }

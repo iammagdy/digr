@@ -38,7 +38,10 @@ describe("every column of every dataset type has a plain Arabic title", () => {
 describe("the preview leaves out identifiers and links of social records", () => {
   it.each(["comments", "videos", "posts"] as const)("%s: no id, source id or link column", (kind) => {
     const shown = previewColumns(SOCIAL_COLUMN_ORDER[kind], false);
-    for (const hidden of ["id", "source_id", "url", "video_url"]) expect(shown).not.toContain(hidden);
+    // A comment is read with the video it sits under: its title, date and link are in the table; every other link and id stays out.
+    const hidden = kind === "comments" ? ["id", "source_id", "url"] : ["id", "source_id", "url", "video_url"];
+    for (const column of hidden) expect(shown).not.toContain(column);
+    if (kind === "comments") for (const column of ["video_title", "video_url", "video_published_at", "published_at", "comment_language"]) expect(shown).toContain(column);
     expect(shown.length).toBeGreaterThan(5);
   });
 
@@ -77,7 +80,12 @@ describe("the results table as the customer sees it", () => {
     for (const head of [comments, videos]) {
       expect(head).not.toMatch(/<th[^>]*>[^<]*[A-Za-z_][^<]*<\/th>/);
       expect(head).not.toContain("معرّف المصدر");
-      expect(head).not.toContain("رابط");
     }
+    // The comments table shows exactly one link column, the video's; the videos table shows none.
+    expect(comments.match(/رابط/g)).toHaveLength(1);
+    expect(comments).toContain("رابط الفيديو");
+    expect(comments).toContain("عنوان الفيديو");
+    expect(comments).toContain("تاريخ النشر");
+    expect(videos).not.toContain("رابط");
   });
 });

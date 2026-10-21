@@ -1,4 +1,4 @@
-import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR } from "../../lib/youtubeRecency";
+import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR, YOUTUBE_RECENT_SUPPLY_FROM_VOLUME, YOUTUBE_RECENT_SUPPLY_NOTE_AR } from "../../lib/youtubeRecency";
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
@@ -3739,6 +3739,9 @@ export class ChatHandler {
             if (verifiedSocialDef?.platform === "youtube" && typeof planItemParams.query === "string" && planItemParams.query.trim()
               && !youtubeRecencyFor(planItemParams.dateFrom, planItemParams.dateTo, Date.now())) {
               planQuoteData.window.noteAr = [planQuoteData.window.noteAr, YOUTUBE_OLD_WINDOW_NOTE_AR].filter(Boolean).join(" ");
+            } else if (verifiedSocialDef?.platform === "youtube" && typeof planItemParams.query === "string" && planItemParams.query.trim()
+              && Number(managedQuote.targetVolumeMax) >= YOUTUBE_RECENT_SUPPLY_FROM_VOLUME) {
+              planQuoteData.window.noteAr = [planQuoteData.window.noteAr, YOUTUBE_RECENT_SUPPLY_NOTE_AR].filter(Boolean).join(" ");
             }
           }
 

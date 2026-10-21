@@ -9,7 +9,7 @@ import { getLiveProviderGateStatus } from "./providerGate";
 import { resolveProviderKey } from "./providerKeys";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import { isSocialCapabilitySlug } from "../socialSources";
-import { runSocialChunk, type SocialCall } from "./socialAdapter";
+import { runSocialChunk, type SocialCall, type VideoSelector } from "./socialAdapter";
 import { markContactRowsForReview } from "../../functions/shared/decisionMakerPricing";
 import {
   createDecisionMakerSpendBudget,
@@ -611,6 +611,8 @@ export interface ProviderAdapterCallInput {
   decisionMakerSpendBudgetUsd?: number;
   /** Deadline timestamp in milliseconds for chunk execution. */
   deadlineMs?: number;
+  /** Social topic searches only: judges the discovered videos before their comments are read (set by the worker). */
+  videoSelector?: VideoSelector;
 }
 
 export interface ProviderAdapterCallOutput {
@@ -627,7 +629,7 @@ export interface ProviderAdapterCallOutput {
   errorCode?: string;
   errorMessageAr?: string;
   /** An answer that is empty for a known reason: the search for the videos found none (the comments were never asked for). */
-  emptyReason?: "no_videos";
+  emptyReason?: "no_videos" | "no_relevant_videos";
   /** YouTube comments by topic with a window: whether the search was told to prefer recent uploads (the worker words an empty result by it). */
   discoveryWindow?: "recency_applied" | "recency_unsupported";
 }
@@ -767,7 +769,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
 
   // Verified social services run through their own source chain (fallbacks, comments of discovered videos).
   if (isSocialCapabilitySlug(input.capabilitySlug)) {
-    return runSocialChunk(input, { call: socialCallThroughTreg(input) });
+    return runSocialChunk(input, { call: socialCallThroughTreg(input), videoSelector: input.videoSelector });
   }
 
   const page = input.step + 1;
