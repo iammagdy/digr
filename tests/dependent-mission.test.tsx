@@ -94,9 +94,9 @@ describe("a channel mission through the chat (model stubbed to throw)", () => {
     expect(item.params).toMatchObject({ channels: ["@AlArabiya", "@SkyNewsArabia"], topPerChannel: 10, rankBy: "views" });
     expect(item.params).not.toHaveProperty("channel");
     expect(item.params).not.toHaveProperty("videoCount");
-    // the number the customer wrote (2000) is the comment cap; the comments service's own limit (1000) applies first
-    expect(r.planQuote.requestedVolumeMax).toBe(1000);
-    expect(r.planQuote.targetVolumeMax).toBeLessThanOrEqual(1000);
+    // the number the customer wrote (2000) is the comment cap; it is within the comments service's own limit (20,000) and the job cap, so it is held whole
+    expect(r.planQuote.requestedVolumeMax).toBe(2000);
+    expect(r.planQuote.targetVolumeMax).toBe(2000);
     expect(r.planQuote.understoodAr).toContain("أعلى ١٠ فيديوهات مشاهدة");
   });
 

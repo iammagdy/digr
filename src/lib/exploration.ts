@@ -1,5 +1,6 @@
 import { toArabicDigits } from "./arabicDigits";
 import { fullEstimatePoints, sampleOffer, sampleOfferLineAr, type SampleQuoteLike } from "./sampleFirst";
+import { chargeForUnits, reserveForUnits } from "./recordPricing";
 
 /**
  * «استكشاف»: before paying for a large or vague job the customer can pay for a small sample of the same plan. The
@@ -35,7 +36,7 @@ export function explorationOffer(quote: ExplorationQuoteLike, safetyBuffer = 0.1
   const offer = sampleOffer(quote, safetyBuffer);
   if (!offer) {
     const units = Math.min(1, quote.targetVolumeMax);
-    return { sampleUnits: units, samplePoints: Math.ceil(units * quote.unitPricePoints * (1 + safetyBuffer)), sampleExpectedPoints: Math.ceil(units * quote.unitPricePoints), fullUnits: quote.targetVolumeMax, fullQuotedPoints: quote.quotedPoints, fullEstimatePoints: fullEstimatePoints(quote) };
+    return { sampleUnits: units, samplePoints: reserveForUnits(units, quote.unitPricePoints, safetyBuffer), sampleExpectedPoints: chargeForUnits(units, quote.unitPricePoints), fullUnits: quote.targetVolumeMax, fullQuotedPoints: quote.quotedPoints, fullEstimatePoints: fullEstimatePoints(quote) };
   }
   return { ...offer, fullQuotedPoints: quote.quotedPoints };
 }
@@ -113,8 +114,8 @@ export function estimateFromSample(sample: ExplorationSample, safetyBuffer = 0.1
     commentsPerVideo: commentsPerVideo === null ? null : Math.round(commentsPerVideo * 10) / 10,
     commentsInFullVideos,
     videosNeededForFullComments,
-    fullExpectedPoints: Math.ceil(sample.fullUnits * sample.unitPricePoints),
-    fullReservePoints: Math.ceil(sample.fullUnits * sample.unitPricePoints * (1 + safetyBuffer)),
+    fullExpectedPoints: chargeForUnits(sample.fullUnits, sample.unitPricePoints),
+    fullReservePoints: reserveForUnits(sample.fullUnits, sample.unitPricePoints, safetyBuffer),
   };
 }
 

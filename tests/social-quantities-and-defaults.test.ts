@@ -92,9 +92,11 @@ describe("D2: «كل تعليقات ٣ فيديوهات على يوتيوب»: v
     const plan = responses[1];
     expect(plan.outputType).toBe("propose_plan");
     expect(plan.planQuote.items[0].params.videoCount).toBe(3);
-    expect(plan.planQuote.askedVolumeMax).toBe(DEFAULT_COMMENTS_CAP);
+    // the default (500 comments, 138 points of charge) fits one job whole: the plan holds it all and says no cut
+    expect(plan.planQuote.targetVolumeMax).toBe(DEFAULT_COMMENTS_CAP);
+    expect(plan.planQuote.askedVolumeMax).toBeUndefined();
     expect(plan.contentAr).toContain("العدد المطلوب: ٥٠٠ تعليق (قيمة افتراضية لأنك لم تحدد عددًا)، وتقدر تعدّله من الخطة.");
-    expect(plan.contentAr).toContain("لكن الطلب الواحد يتسع الآن لـ");
+    expect(plan.contentAr).not.toContain("لكن الطلب الواحد يتسع الآن لـ");
     expect(plan.contentAr).not.toContain("طلبت ٥٠٠");
     expect(plan.contentAr).not.toMatch(BANNED);
   });
@@ -103,9 +105,10 @@ describe("D2: «كل تعليقات ٣ فيديوهات على يوتيوب»: v
     const { responses } = await conversation(["عايز ٥٠ تعليق لكل فيديو من ٤ فيديوهات على يوتيوب عن القهوة"]);
     expect(responses[0].outputType).toBe("propose_plan");
     expect(responses[0].planQuote.items[0].params).toMatchObject({ videoCount: 4, perVideo: 50 });
-    // 200 asked; the job's own points cap decides how many fit (unchanged), and the plan says so
-    expect(responses[0].planQuote.askedVolumeMax).toBe(200);
-    expect(responses[0].contentAr).toContain("طلبت ٢٠٠ سجل");
+    // 200 asked (4 videos x 50): the whole request fits one job, so the plan holds 200 and says no cut
+    expect(responses[0].planQuote.targetVolumeMax).toBe(200);
+    expect(responses[0].planQuote.askedVolumeMax).toBeUndefined();
+    expect(responses[0].contentAr).not.toContain("طلبت ٢٠٠ سجل");
     expect(responses[0].contentAr).not.toContain("قيمة افتراضية");
   });
 
@@ -151,7 +154,8 @@ describe("D3: X, a skipped window or cap is never silent", () => {
     expect(plan.contentAr).toContain(DEFAULT_WINDOW_REASON);
     expect(plan.planQuote.window).toMatchObject({ source: "default", reasonAr: DEFAULT_WINDOW_REASON });
     expect(plan.contentAr).toContain(`العدد المطلوب: ${"٥٠٠"} سجل (قيمة افتراضية`);
-    expect(plan.planQuote.askedVolumeMax).toBe(DEFAULT_RECORDS_CAP);
+    expect(plan.planQuote.targetVolumeMax).toBe(DEFAULT_RECORDS_CAP);
+    expect(plan.planQuote.askedVolumeMax).toBeUndefined();
   });
 
   it("a count the customer gave is used as given, with no default line", async () => {

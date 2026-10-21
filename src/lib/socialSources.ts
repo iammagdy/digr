@@ -513,7 +513,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     descriptionAr: "البحث عن منشورات إكس بموضوع أو كلمة، أو جمع أحدث منشورات حساب محدد.",
     modes: ["query", "channel"],
     rowCostUsd: 0.00075,
-    maxRows: 500,
+    maxRows: 40_000,
     successRate: 0.9999,
     discover: { query: X_TOPIC_POSTS, channel: X_ACCOUNT_POSTS },
   },
@@ -526,7 +526,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     descriptionAr: "سحب التعليقات العامة لفيديو بعينه برابطه، أو لفيديوهات يحددها النظام من بحث بكلمة أو قناة أو الفيديوهات الرائجة، مع بيانات كل تعليق ورابط الفيديو.",
     modes: ["url", "query", "channel", "trending"],
     rowCostUsd: 0.001,
-    maxRows: 1000,
+    maxRows: 20_000,
     successRate: 0.9997,
     discover: { query: RANKED.tiktok.search, channel: RANKED.tiktok.channel, trending: RANKED.tiktok.trending },
     comments: TIKTOK_COMMENTS,
@@ -541,7 +541,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     modes: ["url", "query", "channel", "trending"],
     rowCostUsd: 0.0009,
     customerPriceUsdPerItem: 0.0015,
-    maxRows: 1000,
+    maxRows: 20_000,
     successRate: 0.999,
     discover: { query: RANKED.youtube.search, channel: RANKED.youtube.channel, trending: RANKED.youtube.trending },
     comments: YOUTUBE_COMMENTS,
@@ -556,7 +556,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     modes: ["url", "channel"],
     rowCostUsd: 0.00188,
     customerPriceUsdPerItem: 0.0019,
-    maxRows: 500,
+    maxRows: 5_000,
     successRate: 0.99,
     discover: { channel: FACEBOOK_PAGE_POSTS },
     comments: FACEBOOK_COMMENTS,
@@ -739,7 +739,7 @@ export function refFromUrl(platform: SocialPlatformId, link: string): SocialRef 
 export const SOCIAL_MAX_CALLS_PER_CHUNK = 6;
 
 /** Rows one worker chunk collects: the default (what runs today); the value in force is `socialRowsPerChunk()`. */
-export const SOCIAL_ROWS_PER_CHUNK = 50;
+export const SOCIAL_ROWS_PER_CHUNK = 100;
 export const socialRowsPerChunk = (): number => scaleValue("socialRowsPerChunk");
 
 /** Comments taken from each discovered video unless the customer says otherwise. */

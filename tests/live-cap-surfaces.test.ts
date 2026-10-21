@@ -23,7 +23,8 @@ describe("every public surface reads the same live daily limit", () => {
     expect(withLive.result.jobCapPoints).toBe(200);
     live.value = undefined;
     const withDefault: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.2"))).json();
-    expect(withDefault.result.jobCapPoints).toBe(600);
+    // no live reading: the provider's default daily limit in points (0.80 USD = 4,400), below the 5,000-point job cap
+    expect(withDefault.result.jobCapPoints).toBe(4400);
     expect(withDefault.result.maxVolumeInOneJob).toBeGreaterThan(withLive.result.maxVolumeInOneJob);
   });
 

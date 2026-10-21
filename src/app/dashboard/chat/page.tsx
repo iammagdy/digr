@@ -1155,7 +1155,7 @@ export default function ChatWorkspacePage() {
     return "none";
   }
 
-  async function handleStartExecution(quote: PlanQuoteData) {
+  async function handleStartExecution(quote: PlanQuoteData, options?: { confirmedLargeReserve: boolean }) {
     if (startingQuoteId || !user) return;
     setStartingQuoteId(quote.quoteId);
 
@@ -1174,6 +1174,7 @@ export default function ChatWorkspacePage() {
             quoteId: quote.quoteId,
             expectedPlanHash: quote.planHash,
             explicitApproval: true,
+            confirmedLargeReserve: options?.confirmedLargeReserve === true,
             jwt: jwtToken,
           }),
         });

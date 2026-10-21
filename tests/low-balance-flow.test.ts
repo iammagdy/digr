@@ -134,7 +134,9 @@ describe("7. low balance inside the real chat handler (offline)", () => {
     });
     const expected = fingerprint(rich);
     for (const other of [poor, researcher, business, withPromoHistory]) expect(fingerprint(other)).toEqual(expected);
+    // 3 company records at 3.168 points: 9.504 -> charge 10; reserve ceil(9.504 x 1.15 = 10.93) = 11
+    expect(expected.unit).toBe(3.168);
     expect(expected.quoted).toBe(11);
-    expect(expected.expected).toBe(9);
+    expect(expected.expected).toBe(10);
   });
 });

@@ -297,7 +297,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     expect(second.json).toMatchObject({ done: true, deliveredUnits: 5 });
     expect(pageCursors).toEqual([null, "page_2_cursor"]);
     expect(db.rpcCalls.filter((call) => call.name === "settle_job_atomic")).toHaveLength(1);
-    expect(db.rpcCalls.find((call) => call.name === "settle_job_atomic")?.args).toMatchObject({ p_points_cap: 600 });
+    expect(db.rpcCalls.find((call) => call.name === "settle_job_atomic")?.args).toMatchObject({ p_points_cap: 5000 }); // the shared job cap (it was 600)
     const result = JSON.parse(db.partials.get(`user_1/${JOB}/data.json`)?.toString() || "{}");
     expect(result.rows).toHaveLength(5);
     expect(result.rows.map((row: any) => row.video_id)).not.toContain("reject_1");

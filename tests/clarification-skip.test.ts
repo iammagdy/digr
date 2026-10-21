@@ -50,7 +50,9 @@ describe("the live YouTube conversation, replayed offline", () => {
     // the three videos are a quantity of their own (three videos of the named channel), never the comment count
     expect(responses[2].planQuote.items[0].params.topPerChannel).toBe(3);
     expect(responses[2].planQuote.summaryAr).toContain("أعلى ٣ فيديوهات");
-    expect(responses[2].planQuote.askedVolumeMax).toBe(2000);
+    // 2,000 comments fit one job whole (reserve 633), so the count carries through as the plan's own: nothing is cut and no «asked» is needed
+    expect(responses[2].planQuote.targetVolumeMax).toBe(2000);
+    expect(responses[2].planQuote.askedVolumeMax).toBeUndefined();
   });
 
   it("the same card is not shown twice in a row when the same answer is sent again (a card clicked twice)", async () => {

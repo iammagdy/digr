@@ -19,14 +19,20 @@ describe("the public estimate uses the quote writer's pricing", () => {
     expect(r.expectedEgp).toBeCloseTo(r.expectedPoints * 0.1, 2);
   });
 
-  it("a request bigger than one job's limit says so, with the jobs needed", () => {
-    const r = estimateMission({ kind: "comments", platform: "youtube", volume: 5000 });
+  it("a request bigger than one job's limit says so, with the jobs needed (30,000 comments: one job holds 13,913 at the default limit of 4,400 points)", () => {
+    const r = estimateMission({ kind: "comments", platform: "youtube", volume: 30000 });
     expect(r.status).toBe("ok");
     if (r.status !== "ok") return;
     expect(r.fitsInOneJob).toBe(false);
-    expect(r.jobsNeeded).toBeGreaterThan(1);
+    expect(r.maxVolumeInOneJob).toBe(13913);
+    expect(r.jobsNeeded).toBe(3);
     expect(r.maxVolumeInOneJob * r.unitPricePoints * 1.15).toBeLessThanOrEqual(r.jobCapPoints + r.unitPricePoints);
     expect(r.notesAr.join(" ")).toContain("طلبات منفصلة");
+  });
+
+  it("5,000 comments fit one job whole (reserve 1,582 points)", () => {
+    const r = estimateMission({ kind: "comments", platform: "youtube", volume: 5000 });
+    expect(r.status === "ok" && r.fitsInOneJob && r.jobsNeeded === 1 && r.reservePoints === 1582).toBe(true);
   });
 
   it("a small request fits in one job", () => {

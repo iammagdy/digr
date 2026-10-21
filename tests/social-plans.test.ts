@@ -82,8 +82,10 @@ describe("a researcher's social request becomes the right plan or the one missin
     expect(item.capabilitySlug).toBe("social-youtube-comments");
     expect(item.params).toEqual({ url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ" });
     expect(item.targetVolumeMax).toBe(20);
-    expect(res.planQuote.expectedPoints).toBe(res.planQuote.unitPricePoints * 20);
-    expect(res.planQuote.quotedPoints).toBe(Math.ceil(res.planQuote.expectedPoints * 1.15));
+    // 0.275 points a comment (0.00005 USD x 5,500): 20 comments are 5.5 points -> charge 6; the reserve is ceil(5.5 x 1.15 = 6.325) = 7
+    expect(res.planQuote.unitPricePoints).toBe(0.275);
+    expect(res.planQuote.expectedPoints).toBe(6);
+    expect(res.planQuote.quotedPoints).toBe(7);
   });
 
   it("comments of a Facebook post link", async () => {
@@ -139,8 +141,10 @@ describe("a researcher's social request becomes the right plan or the one missin
     expect(res.outputType).toBe("propose_plan");
     expect(item.capabilitySlug).toBe("social-youtube-comments");
     expect(item.params).toEqual({ query: "القهوة", dateFrom: "2025-01-01", dateTo: "2025-12-31" });
-    expect(item.targetVolumeMax).toBe(57);
-    expect(res.contentAr).toContain("٥٧");
+    // 100 comments are 27.5 points (reserve 32): they fit one job whole, so nothing is cut
+    expect(item.targetVolumeMax).toBe(100);
+    expect(res.planQuote.quotedPoints).toBe(32);
+    expect(res.contentAr).toContain("١٠٠");
     expect(res.contentAr).toContain("«القهوة»");
   });
 

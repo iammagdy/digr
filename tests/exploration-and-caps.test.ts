@@ -20,6 +20,7 @@ import { JOB_MAX_POINTS_CAP_LARGE, capStatementAr, largeJobCapEnabled, resolveJo
 import { DEFAULT_JOB_POINTS_CAP, getConfiguredJobPointsCap } from "../src/functions/shared/providerSpend";
 import { calculateCapabilityUnitPricePoints, DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
 import { makeTables } from "./helpers/memoryTables";
+import { reserveForUnits } from "../src/lib/recordPricing";
 import { sampleOffer, sampleTargetPoints } from "../src/lib/sampleFirst";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 
@@ -107,14 +108,16 @@ describe("8. paid exploration", () => {
 
     it("a large social request gets the offer inside the plan message and on the quote, priced like the plan", async () => {
       const res: any = await new ChatHandler(makeTables() as any).handleUserMessage({
-        userId: "u_explore", message: "عايز ٣٠٠٠ تعليق من تيك توك عن كرة القدم في ٢٠٢٥", userBalance: 5000, personaProfile: { name: "سلمى" },
+        userId: "u_explore", message: "عايز ٨٠٠٠ تعليق من تيك توك عن كرة القدم في ٢٠٢٥", userBalance: 5000, personaProfile: { name: "سلمى" },
       });
       expect(res.outputType).toBe("propose_plan");
       const offer = res.planQuote.explorationOffer;
       const unit = res.planQuote.unitPricePoints;
       const expected = sampleOffer({ items: res.planQuote.items, targetVolumeMax: res.planQuote.targetVolumeMax, requestedVolumeMax: res.planQuote.requestedVolumeMax, unitPricePoints: unit })!;
       expect(offer.sampleUnits).toBe(expected.sampleUnits);
-      expect(offer.samplePoints).toBe(Math.ceil(offer.sampleUnits * unit * 1.15));
+      // exact: ceil(records x 0.275 x 1.15); the request is 8,000 comments = 2,200 points of charge, over the 1,500 that earns a sample offer
+      expect(unit).toBe(0.275);
+      expect(offer.samplePoints).toBe(reserveForUnits(offer.sampleUnits, unit));
       expect(offer.samplePoints).toBeGreaterThanOrEqual(1);
       expect(offer.samplePoints).toBeLessThanOrEqual(300);
       expect(res.contentAr).toContain("عينة أولًا");
@@ -165,12 +168,13 @@ describe("8. JOB_MAX_POINTS_CAP_LARGE: documented, off, behind an explicit confi
       return statSync(full).isDirectory() ? walk(full) : /\.(ts|tsx)$/.test(name) ? [full] : [];
     });
 
-  it("the live cap is still 600", () => {
-    expect(DEFAULT_JOB_POINTS_CAP).toBe(600);
+  it("the live cap is the shared 5,000; the older 2,000 proposal is below it and changes nothing", () => {
+    expect(DEFAULT_JOB_POINTS_CAP).toBe(5000);
     expect(JOB_MAX_POINTS_CAP_LARGE).toBe(2000);
     const saved = process.env.JOB_MAX_POINTS_CAP;
     delete process.env.JOB_MAX_POINTS_CAP;
-    expect(getConfiguredJobPointsCap()).toBe(600);
+    expect(getConfiguredJobPointsCap()).toBe(5000);
+    expect(resolveJobPointsCap(getConfiguredJobPointsCap(), { enabled: true, customerConfirmedLarge: true })).toBe(5000);
     if (saved !== undefined) process.env.JOB_MAX_POINTS_CAP = saved;
   });
 

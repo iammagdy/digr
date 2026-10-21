@@ -101,6 +101,7 @@ import { setProviderAdapterForTesting, type ProviderAdapterCallInput } from "../
 import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "../src/lib/server/socialAdapter";
 import { estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/socialSources";
 import { setRelativeDateClockForTesting } from "../src/lib/server/relativeDate";
+import { setScaleOverridesForTesting } from "../src/lib/scaleConfig";
 import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 import { setReviewSampleRandomForTesting } from "../src/lib/server/sampledReview";
 
@@ -145,6 +146,7 @@ describe("worker: social jobs", () => {
     setStrictSocialReviewForTesting(false);
     setReviewSampleRandomForTesting(null);
     setRelativeDateClockForTesting(null);
+    setScaleOverridesForTesting(null);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete (process.env as any)[key];
       else (process.env as any)[key] = value;
@@ -202,6 +204,8 @@ describe("worker: social jobs", () => {
   });
 
   it("a provider that repeats a page does not deliver or bill the same comment twice (across chunks)", async () => {
+    // written for two chunks of 50 rows (the platform default is now 100)
+    setScaleOverridesForTesting({ socialRowsPerChunk: 50 });
     const VIDEO = "https://www.tiktok.com/@u/video/7231337071831321903";
     resetDb("social-tiktok-comments", { url: VIDEO }, 60, 6);
     const rowsOf = (ids: string[]) => ids.map((id) => ({ cid: id, text: `نص ${id}`, digg_count: 1 }));

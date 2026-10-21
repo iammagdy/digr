@@ -10,7 +10,7 @@ import SegmentPage from "../src/app/for/[segment]/page";
 import { Calculator, DemoConversations, Faq, ProductLines, SampleFile, Sheets, Statements } from "../src/components/landing/Sections";
 import { SEGMENTS, segmentPeopleLineAr } from "../src/lib/segments";
 import { buildLandingDemos } from "../src/lib/landingDemos";
-import { DEFAULT_JOB_POINTS_CAP } from "../src/lib/calculatorPricing";
+import { DEFAULT_JOB_POINTS_CAP, DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD, dailyCapPointsFor } from "../src/lib/calculatorPricing";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../src/functions/shared/decisionMakerPricing";
 import { DEFAULT_PRICING_SETTINGS } from "../src/functions/shared/quotes";
 import { decisionMakersPerRequestLineAr, peopleCountAr, recordsInOneJob } from "../src/lib/jobSizing";
@@ -22,16 +22,19 @@ import { understandMission } from "../src/lib/consultantCopy";
  * function's (never typed by hand). D6: no visible Latin file extension on a public page, and no Latin sample channel handle.
  */
 const person = DECISION_MAKER_UNIT_PRICES_POINTS.basePerson + DECISION_MAKER_UNIT_PRICES_POINTS.workEmail + DECISION_MAKER_UNIT_PRICES_POINTS.phone;
-const SIZING_NUMBER = recordsInOneJob({ unitPricePoints: person, capPoints: DEFAULT_JOB_POINTS_CAP, safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer, chargeCapped: true });
+// with no live reading the pages use the provider's default daily limit in points (0.80 USD = 4,400), which is below the 5,000-point job cap
+const SIZING_NUMBER = recordsInOneJob({ unitPricePoints: person, capPoints: Math.min(DEFAULT_JOB_POINTS_CAP, dailyCapPointsFor(DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD)), safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer, chargeCapped: true });
 const SENTENCE = `الطلب الواحد يتسع حتى ${peopleCountAr(SIZING_NUMBER)}؛ ويمكنك تقديم أكثر من طلب.`;
 const textOf = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 describe("D5: the sentence and its number", () => {
-  it("is built from the shared sizing function: three decision makers today, in the owner's own wording", () => {
-    expect(SIZING_NUMBER).toBe(3);
+  it("is built from the shared sizing function: 22 decision makers today (floor(4,400 / 193)), in the owner's own wording", () => {
+    expect(SIZING_NUMBER).toBe(22);
     expect(decisionMakersPerRequest()).toBe(SIZING_NUMBER);
     expect(decisionMakersPerRequestLine()).toBe(SENTENCE);
-    expect(SENTENCE).toBe("الطلب الواحد يتسع حتى ٣ صناع قرار؛ ويمكنك تقديم أكثر من طلب.");
+    expect(SENTENCE).toBe("الطلب الواحد يتسع حتى ٢٢ صانع قرار؛ ويمكنك تقديم أكثر من طلب.");
+    // and with the live limit above the cap the job cap itself holds 25
+    expect(decisionMakersPerRequest({ dailyCapPoints: 100000 })).toBe(25);
   });
 
   it("follows the sizing function when the limit moves (the live daily limit lowers it), and never states a zero as a promise", () => {

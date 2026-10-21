@@ -126,7 +126,8 @@ describe("a skip never ends in a refusal", () => {
     const plan = planOf(responses);
     expect(plan).toBeTruthy();
     expect(plan.contentAr).toContain("العدد المطلوب: ٥٠٠ تعليق (قيمة افتراضية لأنك لم تحدد عددًا)، وتقدر تعدّله من الخطة.");
-    expect(plan.planQuote.askedVolumeMax).toBe(500);
+    expect(plan.planQuote.targetVolumeMax).toBe(500);
+    expect(plan.planQuote.askedVolumeMax).toBeUndefined();
     expect(plan.planQuote.items[0].params.channels).toEqual(["@aljazeera"]);
     for (const r of responses) expect(visible(r)).not.toMatch(BANNED);
   });
@@ -145,7 +146,8 @@ describe("a skip never ends in a refusal", () => {
     const plan = planOf(responses);
     expect(plan).toBeTruthy();
     expect(plan.planQuote.items[0].params.query).toBe("منتخب مصر");
-    expect(plan.planQuote.items[0].params.videoCount).toBe(20);
+    // 2,000 comments by topic: 30 videos (the videos ceiling is now 50, it was 20)
+    expect(plan.planQuote.items[0].params.videoCount).toBe(30);
     expect(plan.contentAr).toContain("القنوات: لم تحدد قنوات، فأبحث عن أعلى الفيديوهات مشاهدة عن «منتخب مصر».");
     for (const r of responses) expect(visible(r)).not.toMatch(BANNED);
   });

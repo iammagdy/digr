@@ -53,8 +53,8 @@ describe("extraction benchmark", () => {
     expect(people.delivered).toBe(6);
     expect(people.duplicates).toBe(1);
     expect(people.people).toMatchObject({ baseUnits: 4, emailUnits: 3, phoneUnits: 2, notChargedRows: 2 });
-    // 4 x 83 + 3 x 55 + 2 x 55 = 607, capped at the job maximum of 600
-    expect(people.people!.chargePoints).toBe(600);
+    // 4 x 83 + 3 x 55 + 2 x 55 = 607: below the job maximum of 5,000 points, so nothing is clipped
+    expect(people.people!.chargePoints).toBe(607);
   });
 
   it("the committed docs/EXTRACTION_BENCHMARK.md is the current output (re-run the script and commit when fixtures or rules change)", async () => {

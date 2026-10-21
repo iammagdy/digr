@@ -14,6 +14,12 @@ import { getBusyState } from "../../../../lib/server/busyState";
 import { fakeProviderActive } from "../../../../lib/server/fakeProviderMode";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
+import { JOB_CONFIRM_ABOVE_POINTS, effectiveJobPointsCap } from "../../../../lib/jobPointsCap";
+import { estimatedProviderUsd } from "../../../../lib/recordPricing";
+import { toArabicDigits } from "../../../../lib/arabicDigits";
+import { evaluateProviderStartGate } from "../../../../functions/shared/providerSpend";
+import { readUserSpendToday, resolveProviderLimits } from "../../../../lib/server/providerLimits";
+import { DEFAULT_PRICING_SETTINGS } from "../../../../functions/shared/quotes";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -109,7 +115,7 @@ export async function POST(req: NextRequest) {
     // reserving provider spend as protection for already accepted jobs.
     const { data: quoteForReadiness } = await adminClient
       .from("plans_quotes")
-      .select("items")
+      .select("items, total_reserved_credits")
       .eq("id", quoteId)
       .maybeSingle();
     let readinessItems = quoteForReadiness?.items;
@@ -124,6 +130,48 @@ export async function POST(req: NextRequest) {
         { success: false, error: PEOPLE_SETTLEMENT_UNAVAILABLE_AR },
         { status: 503 }
       );
+    }
+
+    // The reserve is checked against the job cap, and a reserve above the confirmation threshold needs the customer's explicit
+    // confirmation (the tick on the plan card). Both before anything is reserved; both read only.
+    const reservePoints = Number((quoteForReadiness as any)?.total_reserved_credits) || 0;
+    if (reservePoints > effectiveJobPointsCap()) {
+      return NextResponse.json(
+        { success: false, overJobCap: true, error: `الطلب الواحد لا يتسع لأكثر من ${toArabicDigits(effectiveJobPointsCap())} نقطة محجوزة. قسّمه على أكثر من طلب.` },
+        { status: 409 }
+      );
+    }
+    if (reservePoints > JOB_CONFIRM_ABOVE_POINTS && body.confirmedLargeReserve !== true) {
+      const egp = Math.round(reservePoints * DEFAULT_PRICING_SETTINGS.creditValueEgp * 100) / 100;
+      return NextResponse.json(
+        {
+          success: false,
+          needsConfirmation: true,
+          reservePoints,
+          error: `سيُحجز ${toArabicDigits(reservePoints)} نقطة (${toArabicDigits(egp)} جنيه) لهذا الطلب. أكّد الحجز من الخطة لنبدأ؛ لا يُخصم إلا ما يُسلَّم فعلًا من سجلات مطابقة.`,
+        },
+        { status: 409 }
+      );
+    }
+
+    // The provider side: the daily allowance and the real provider balance must hold what this plan will cost to collect. Read only;
+    // a failed read lets the request through (the worker's own per-chunk check still stops a job that cannot finish).
+    if (!fakeProviderActive()) {
+      try {
+        const planItems: any[] = Array.isArray(readinessItems) ? readinessItems : [];
+        const estimatedUsd = planItems.reduce((sum, item) => sum + estimatedProviderUsd(item?.capabilitySlug, Number(item?.targetVolumeMax) || 0, Number(item?.unitCostUsd) || 0.001), 0);
+        let userRemainingUsd: number | null = null;
+        try {
+          const limits = (await resolveProviderLimits(adminClient as any)).limits;
+          if (limits.perUserDailyUsd !== null) userRemainingUsd = Math.max(0, limits.perUserDailyUsd - (await readUserSpendToday(adminClient as any, user.id)));
+        } catch { userRemainingUsd = null; }
+        const providerGate = await evaluateProviderStartGate(estimatedUsd, adminClient as any, { userRemainingUsd });
+        if (!providerGate.allowed) {
+          return NextResponse.json({ success: false, providerLimit: providerGate.code, error: providerGate.messageAr }, { status: 409 });
+        }
+      } catch (providerGateError) {
+        console.warn("[accept-quote:provider_gate_unavailable]");
+      }
     }
 
     // Scope guard: incomplete plans with scope gaps are never accepted or reserved

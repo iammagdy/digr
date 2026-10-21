@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from "vitest";
 import { extractNumberFromText } from "../src/lib/arabicNumbers";
 import { understandRequest } from "../src/lib/requestUnderstanding";
 import { createLatencyDb } from "./helpers/loadHarness";
+import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 
 const h = vi.hoisted(() => ({ db: null as any }));
 vi.mock("../src/lib/supabase/server", () => ({
@@ -51,16 +52,32 @@ describe("through the chat: a count the customer wrote is the plan's count, a ve
     return res.json();
   };
 
-  it("٥ آلاف تعليق: asked 5000, planned within the job's ceiling, the reason said plainly, the topic without «آلاف»", async () => {
+  it("٥ آلاف تعليق: 5,000 comments are held whole (1,375 points of charge, 1,582 held), the topic without «آلاف»", async () => {
     const body = await ask("big_1", "٥ آلاف تعليق على تيك توك عن كرة القدم خلال الشهر الماضي");
     const quote = body.planQuote;
-    expect(quote.askedVolumeMax).toBe(5000);
-    expect(quote.targetVolumeMax).toBeLessThan(5000);
-    expect(quote.pointsCapConstrained).toBe(true);
-    expect(quote.quotedPoints).toBeLessThanOrEqual(600);
+    expect(quote.askedVolumeMax).toBeUndefined();
+    expect(quote.targetVolumeMax).toBe(5000);
+    expect(quote.pointsCapConstrained).toBe(false);
+    expect(quote.expectedPoints).toBe(1375);
+    expect(quote.quotedPoints).toBe(1582);
     expect(quote.items[0].params.query).toBe("كرة القدم");
-    expect(body.contentAr).toContain("طلبت ٥٠٠٠");
     expect(body.contentAr).not.toContain("لأنك لم تحدد عددًا");
+  });
+
+  it("٣٠ ألف تعليق: asked 30,000, cut to what the service and the job cap hold (15,810), the reason said plainly", async () => {
+    setProviderBalanceForTesting(10);
+    try {
+      const body = await ask("big_3", "٣٠ ألف تعليق على تيك توك عن كرة القدم خلال الشهر الماضي");
+      const quote = body.planQuote;
+      expect(quote.askedVolumeMax).toBe(30000);
+      expect(quote.targetVolumeMax).toBe(15810);
+      expect(quote.pointsCapConstrained).toBe(true);
+      expect(quote.quotedPoints).toBe(5000);
+      expect(quote.items[0].params.query).toBe("كرة القدم");
+      expect(body.contentAr).toContain("طلبت ٣٠٠٠٠");
+    } finally {
+      resetProviderBalanceCacheForTesting();
+    }
   });
 
   it("ثلاثين تعليق: the plan is for 30, not the default of 500", async () => {

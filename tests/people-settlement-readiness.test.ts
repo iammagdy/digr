@@ -116,7 +116,7 @@ describe("decision-maker settlement readiness", () => {
     }
   });
 
-  it("prices three people at 579 points and caps only the buffered reserve at 600", async () => {
+  it("prices three people at 579 points and holds 666 (the 5,000-point cap does not clip it)", async () => {
     const client = makeQuoteClient(async (name, args) => name === "settle_people_job_atomic"
       ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
       : { data: null, error: { code: "PGRST202", message: "Could not find the function" } });
@@ -142,9 +142,42 @@ describe("decision-maker settlement readiness", () => {
     expect(quote.items[0].unitPricePoints).toBe(193);
     expect(quote.expectedPoints).toBe(579);
     expect(quote.targetVolumeMax).toBe(3);
-    expect(quote.quotedPoints).toBe(600);
+    // 579 x 1.15 = 665.85 -> 666 held; the 5,000-point cap does not clip it (it clipped to 600 before)
+    expect(quote.quotedPoints).toBe(666);
+    expect(quote.pointsCapConstrained).toBe(false);
+    expect(client.insertedQuotes[0].total_reserved_credits).toBe(666);
+  });
+
+  it("26 people are 5,018 points of charge: the plan is cut to 25 people (4,825 points) and only the buffered reserve is capped at 5,000", async () => {
+    const client = makeQuoteClient(async (name, args) => name === "settle_people_job_atomic"
+      ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
+      : { data: null, error: { code: "PGRST202", message: "Could not find the function" } });
+    const quote = await createAndSaveManagedQuote(client as any, {
+      conversationId: "offline-twenty-six-people",
+      userId: "offline-test-user",
+      plan: {
+        summaryAr: "ثلاثة صناع قرار في مصر",
+        items: [{
+          capabilitySlug: "professional-people-search",
+          endpointId: "treg.people.search",
+          params: { requiredContactFields: ["work_email", "phone"], country: "EG" },
+          targetVolumeMin: 26,
+          targetVolumeMax: 26,
+        }],
+        outputFormats: ["xlsx"],
+      },
+      userBalance: 10000,
+      capabilities: [peopleCapability],
+      pricingSettings: DEFAULT_PRICING_SETTINGS,
+    });
+    expect((quote.items[0] as any).contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
+    expect(quote.items[0].unitPricePoints).toBe(193);
+    // the charge is cut to the cap first (floor(5000 / 193) = 25 people = 4,825), then only the buffered reserve is clipped to the cap
+    expect(quote.expectedPoints).toBe(4825);
+    expect(quote.targetVolumeMax).toBe(25);
+    expect(quote.quotedPoints).toBe(5000);
     expect(quote.pointsCapConstrained).toBe(true);
-    expect(client.insertedQuotes[0].total_reserved_credits).toBe(600);
+    expect(client.insertedQuotes[0].total_reserved_credits).toBe(5000);
   });
 
   it("refuses to create a decision-maker quote before field settlement is installed", async () => {

@@ -194,7 +194,7 @@ describe("approving a new quote after a failed, fully released job in the same c
       const rpc = async () => ({ data: { success: false, error: "insufficient_balance", balance: 50 }, error: null });
       const result = await acceptQuoteSupabase({ from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: null, error: new Error("x") }) }) }) }), rpc } as any, { userId: "user_1", quoteId: "q", expectedPlanHash: HASH });
       expect(result.statusCode).toBe(402);
-      expect(result.errorAr).toBe("رصيدك الحالي (٥٠ نقطة) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.");
+      expect(result.errorAr).toBe("رصيدك الحالي (٥٠ نقطة) لا يكفي لحجز كامل هذا الطلب. اشحن رصيدك من صفحة الشحن ثم عُد لتوافق على الخطة.");
     });
   });
 });

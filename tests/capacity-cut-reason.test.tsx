@@ -43,7 +43,8 @@ describe("the plan text of a request the live capacity cut", () => {
   afterEach(() => resetProviderBalanceCacheForTesting());
 
   it("states the cut count and the reason; the old «لضمان دقة وسرعة التنفيذ» line is gone; nothing in Latin letters", async () => {
-    setProviderBalanceForTesting(0.01);
+    // 0.001 USD budget (0.0009 safe) holds 18 comments at 0.00005 USD each, below the 30 asked
+    setProviderBalanceForTesting(0.001);
     const db = createChatDb();
     const handler = new ChatHandler(db as any);
     (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });

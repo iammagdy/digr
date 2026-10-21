@@ -161,6 +161,9 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     });
     const q = res.planQuote;
     expect(q.expectedPoints).toBe(q.unitPricePoints * q.targetVolumeMax);
-    expect(q.quotedPoints).toBe(Math.min(600, Math.ceil(q.expectedPoints * 1.15)));
+    // 5 people x 193 = 965 charge; the reserve is ceil(965 x 1.15) = 1,110 (the 5,000-point cap does not clip it)
+    expect(q.expectedPoints).toBe(965);
+    expect(q.quotedPoints).toBe(Math.min(5000, Math.ceil(q.expectedPoints * 1.15)));
+    expect(q.quotedPoints).toBe(1110);
   });
 });

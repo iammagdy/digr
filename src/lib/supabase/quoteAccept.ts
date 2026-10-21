@@ -158,7 +158,7 @@ export async function acceptQuoteSupabase(
         success: false,
         statusCode: 402,
         currentBalance: balanceNum,
-        errorAr: `رصيدك الحالي (${balanceArabic} نقطة) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.`,
+        errorAr: `رصيدك الحالي (${balanceArabic} نقطة) لا يكفي لحجز كامل هذا الطلب. اشحن رصيدك من صفحة الشحن ثم عُد لتوافق على الخطة.`,
       };
     }
 

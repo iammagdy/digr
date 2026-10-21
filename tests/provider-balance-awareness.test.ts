@@ -194,8 +194,11 @@ describe("Task 5: Provider Balance Awareness & Admin Endpoint", () => {
       });
 
       expect(quote.capacityConstrained).toBe(true);
-      expect(quote.targetVolumeMax).toBe(86);
-      expect(quote.items[0].targetVolumeMax).toBe(86);
+      // the capacity cut (90 records) is the only cut: 90 x 6 points x 1.15 = 621 reserve fits the 5,000-point cap
+      expect(quote.targetVolumeMax).toBe(90);
+      expect(quote.items[0].targetVolumeMax).toBe(90);
+      expect(quote.quotedPoints).toBe(621);
+      expect(quote.pointsCapConstrained).toBe(false);
     });
 
     it("does not downscale when requested volume is safely within budget", async () => {

@@ -842,7 +842,8 @@ describe("Brief & Question Schema Hardening (Live Bug Fixes)", () => {
     });
 
     expect(res.outputType).toBe("propose_plan");
-    expect(res.planQuote?.targetVolumeMax).toBe(86);
+    // the explicit count (100) is held whole: 100 company records at 3.168 points (reserve 365) fit the 5,000-point cap (the old 600-point cap cut it to 86)
+    expect(res.planQuote?.targetVolumeMax).toBe(100);
     expect(res.planQuote?.items?.[0]?.params?.query?.location?.include).toEqual(["Germany"]);
     expect(res.planQuote?.items?.[0]?.params?.query?.keyword?.include).toEqual(["fintech", "financial technology"]);
   });

@@ -113,7 +113,9 @@ describe("provider call caps: the rules", () => {
   it("larger jobs may use up to 3x the pages they would need, never above the hard ceiling", () => {
     expect(maxPagesForJob(100, 50)).toBe(6);
     expect(maxPagesForJob(500, 50)).toBe(30);
-    expect(maxPagesForJob(600, 10)).toBe(ABSOLUTE_MAX_PAGES);
+    expect(maxPagesForJob(600, 10)).toBe(180);
+    expect(maxPagesForJob(100000, 10)).toBe(ABSOLUTE_MAX_PAGES);
+    expect(ABSOLUTE_MAX_PAGES).toBe(800);
   });
 
   it("stops after 2 (small job) or 3 (large job) consecutive pages with no new matching record", () => {
@@ -221,6 +223,8 @@ describe("provider call caps: the production job shapes replayed through the wor
     const { readFileSync } = await import("node:fs");
     const pricing = readFileSync("src/lib/calculatorPricing.ts", "utf8");
     expect(pricing).toContain("DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80");
-    expect(readFileSync("src/functions/shared/providerSpend.ts", "utf8")).toContain("DEFAULT_JOB_POINTS_CAP = 600");
+    // the job cap is one shared constant (5,000, raised from 600 by the price-and-cap work); providerSpend reads it from there
+    expect(readFileSync("src/functions/shared/providerSpend.ts", "utf8")).toContain("DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP");
+    expect(readFileSync("src/lib/jobPointsCap.ts", "utf8")).toContain("JOB_MAX_POINTS_CAP = 5000");
   });
 });

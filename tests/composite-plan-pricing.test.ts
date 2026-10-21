@@ -218,9 +218,10 @@ describe("Composite Multi-Capability Research Plan Pricing & Execution Safety", 
     expect(quote.items[0].unitPricePoints).toBe(9);
     expect(quote.items[0].unitCostUsd).toBe(0.0009);
     expect(quote.items[0].pricingUnit).toBe("item");
-    expect(quote.items[0].targetVolumeMax).toBe(57);
-    expect(quote.items[0].rawPoints).toBe(513);
-    expect(quote.items[0].itemReservation).toBe(590);
+    // 139 comments at 9 points = 1,251 charge, 1,439 reserve: they fit the 5,000-point cap whole, so nothing is cut
+    expect(quote.items[0].targetVolumeMax).toBe(139);
+    expect(quote.items[0].rawPoints).toBe(1251);
+    expect(quote.items[0].itemReservation).toBe(1439);
   });
 
   // 2. Two capabilities with different unit costs (IMPORTANT NUMERIC TEST)
@@ -479,8 +480,9 @@ describe("Composite Multi-Capability Research Plan Pricing & Execution Safety", 
     });
 
     expect(quote.isAffordable).toBe(false);
-    expect(quote.quotedPoints).toBe(589);
-    expect(quote.pointsCapConstrained).toBe(true);
+    // the whole plan (1,265 + 575 = 1,840) fits the 5,000-point cap, so it is not cut; the balance (500) is what falls short
+    expect(quote.quotedPoints).toBe(1840);
+    expect(quote.pointsCapConstrained).toBe(false);
     expect(quote.downscaledOffer).toBeDefined();
     expect(quote.downscaledOffer!.affordableQuotedPoints).toBeLessThanOrEqual(500);
     expect(quote.downscaledOffer!.maxAffordableUnits).toBeLessThan(200);

@@ -12,6 +12,8 @@ import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScope
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { missionStepsAr } from "@/lib/dependentSteps";
+import { JOB_CONFIRM_ABOVE_POINTS, JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
+import { pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -81,7 +83,8 @@ export interface PlanQuoteData {
 interface PlanQuoteCardProps {
   quote: PlanQuoteData;
   conversationTitle?: string;
-  onStart: (quote: PlanQuoteData) => void;
+  /** `confirmedLargeReserve` is true only when the customer ticked the confirmation of a reserve above the threshold. */
+  onStart: (quote: PlanQuoteData, options?: { confirmedLargeReserve: boolean }) => void;
   onSaveEdit: (
     quote: PlanQuoteData,
     newLimit: number,
@@ -189,6 +192,9 @@ export default function PlanQuoteCard({
   const [refreshing, setRefreshing] = useState(false);
   const [editError, setEditError] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  // A reserve above the threshold needs the customer's own tick before the approve button works; a new quote starts unticked.
+  const [largeReserveConfirmed, setLargeReserveConfirmed] = useState(false);
+  useEffect(() => { setLargeReserveConfirmed(false); }, [storedQuote.quoteId, storedQuote.quotedPoints]);
 
   useEffect(() => {
     const pItem = quote.items?.[0];
@@ -209,7 +215,7 @@ export default function PlanQuoteCard({
   const baseApprovalState = getQuoteApprovalState(quote.status, quote.expiresAt, now);
   // Never shrink silently: what was asked, what fits one job now, and why (one plain sentence from the plan's own numbers).
   const defaultStatement = quote.defaultCap && (quote.items?.length ?? 1) <= 1
-    ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || 600, wordAr: quote.defaultCap.wordAr })
+    ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || JOB_MAX_POINTS_CAP, wordAr: quote.defaultCap.wordAr })
     : null;
   const capacityCut = Boolean(quote.capacityConstrained && !quote.pointsCapConstrained);
   const volumeLimit = defaultStatement ? null : (quote.items?.length ?? 1) <= 1
@@ -226,6 +232,8 @@ export default function PlanQuoteCard({
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
   const shortPts = Math.max(0, quote.quotedPoints - balance);
   const expectedPoints = quote.expectedPoints ?? Math.ceil(quote.unitPricePoints * quote.targetVolumeMax);
+  const needsLargeConfirm = quote.quotedPoints > JOB_CONFIRM_ABOVE_POINTS;
+  const reserveEgp = Number((quote.quotedPoints * creditValue).toFixed(2));
   const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
   const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] || "ملف بيانات");
 
@@ -303,6 +311,12 @@ export default function PlanQuoteCard({
       <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
         سقف هذا الطلب: حتى {formatAr(quote.quotedPoints)} نقطة، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
       </p>
+
+      {quote.unitPricePoints > 0 && (quote.items?.length ?? 1) <= 1 ? (
+        <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-unit-price">
+          سعر السجل الواحد حوالي {formatAr(Number(pointsDisplay(quote.unitPricePoints)))} نقطة، أي {formatAr(pricePer100Points(quote.unitPricePoints))} نقطة لكل ١٠٠ سجل (تقديري).
+        </p>
+      ) : null}
 
       {quote.understoodAr && (
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
@@ -603,13 +617,31 @@ export default function PlanQuoteCard({
         </div>
       )}
 
+      {!locked && !low && approvalState.canApprove && needsLargeConfirm && (
+        <label
+          data-testid="large-reserve-confirm"
+          className="mt-[18px] flex cursor-pointer items-start gap-3 rounded-[18px] border border-amber-300 bg-amber-50 px-4 py-3.5 text-[13px] leading-[1.9] text-amber-950"
+        >
+          <input
+            type="checkbox"
+            checked={largeReserveConfirmed}
+            onChange={(event) => setLargeReserveConfirmed(event.target.checked)}
+            className="mt-1.5 h-5 w-5 shrink-0 cursor-pointer"
+            aria-describedby="large-reserve-confirm-text"
+          />
+          <span id="large-reserve-confirm-text">
+            سيُحجز <strong>{formatAr(quote.quotedPoints)} نقطة</strong> (حوالي {formatAr(reserveEgp)} ج.م) من رصيدك لهذا الطلب. لا يُخصم إلا ما يُسلَّم فعلًا من سجلات مطابقة، ويعود الباقي إلى رصيدك بعد الانتهاء. أؤكد هذا الحجز.
+          </span>
+        </label>
+      )}
+
       {!locked && !low && approvalState.canApprove && (
         <>
           <div className="mt-[18px] flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => onStart(quote)}
-              disabled={isStarting || quote.isDependent}
+              onClick={() => onStart(quote, { confirmedLargeReserve: !needsLargeConfirm || largeReserveConfirmed })}
+              disabled={isStarting || quote.isDependent || (needsLargeConfirm && !largeReserveConfirmed)}
               className={`${PRIMARY_BTN} min-h-11 min-w-[200px] flex-1 text-[13px]`}
             >
               {isStarting ? (

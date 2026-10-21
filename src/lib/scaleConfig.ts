@@ -22,22 +22,23 @@ interface ScaleSpec {
 }
 
 export const SCALE_SPECS: Record<ScaleKey, ScaleSpec> = {
-  // Provider pages (chunks) one job may read; with a page of 50 rows this is the real limit of a feed job (30 x 50 = 1,500 rows).
-  absoluteMaxPages: { env: "LONG_JOB_MAX_PAGES", def: 30, min: 1, max: 2000, whatAr: "أكبر عدد من الدفعات لمهمة واحدة" },
+  // Provider pages (chunks) one job may read; with a page of 100 rows this is the real limit of a feed job (800 x 100 = 80,000 rows, about twice
+  // the 37,113 posts the 5,000-point cap holds at the X price).
+  absoluteMaxPages: { env: "LONG_JOB_MAX_PAGES", def: 800, min: 1, max: 2000, whatAr: "أكبر عدد من الدفعات لمهمة واحدة" },
   // How many pages a large job may read per page it would need if every record matched (relevance misses use the slack).
   largeJobPageAllowance: { env: "LONG_JOB_PAGE_ALLOWANCE", def: 3, min: 1, max: 10, whatAr: "هامش الدفعات الإضافية" },
   // Most rows one social plan item may ask for. 0 = the per-service defaults (500 or 1,000). Only comment and big post services rise.
   socialMaxRows: { env: "LONG_JOB_SOCIAL_MAX_ROWS", def: 0, min: 0, max: 100_000, whatAr: "أكبر عدد سجلات لبند اجتماعي واحد" },
   // Most comments taken from one video, and most videos one job reads.
   maxPerVideo: { env: "LONG_JOB_MAX_PER_VIDEO", def: 500, min: 1, max: 5000, whatAr: "أكبر عدد تعليقات من فيديو واحد" },
-  maxVideosPerJob: { env: "LONG_JOB_MAX_VIDEOS", def: 20, min: 1, max: 200, whatAr: "أكبر عدد فيديوهات لمهمة واحدة" },
+  maxVideosPerJob: { env: "LONG_JOB_MAX_VIDEOS", def: 50, min: 1, max: 200, whatAr: "أكبر عدد فيديوهات لمهمة واحدة" },
   // A comments/posts workbook with more rows than this is written as a stream (flat memory); the in-memory workbook needs about 18 MB per
   // 1,000 rows and passes 700 MB at 40,000 rows. Below it nothing changes: the same file as before.
   streamXlsxAboveRows: { env: "LONG_JOB_STREAM_XLSX_ROWS", def: 5000, min: 0, max: 1_000_000, whatAr: "عدد الصفوف الذي يبدأ بعده كتابة الملف على دفعات" },
   // Rows one chunk of a comments/posts job collects. A chunk still ends by itself when its calls would not fit the time limit (see
   // chunkSizing.ts), so raising this never makes a chunk longer than the limit; it only lets a fast source fill bigger chunks (fewer
-  // chunks, fewer pages against the page ceiling). 50 is what the platform runs on today.
-  socialRowsPerChunk: { env: "LONG_JOB_ROWS_PER_CHUNK", def: 50, min: 10, max: 500, whatAr: "عدد السجلات في الدفعة الواحدة" },
+  // chunks, fewer pages against the page ceiling). 100 sizes a max-size X job at about 371 chunks (50 was the earlier default).
+  socialRowsPerChunk: { env: "LONG_JOB_ROWS_PER_CHUNK", def: 100, min: 10, max: 500, whatAr: "عدد السجلات في الدفعة الواحدة" },
   // Rows per sheet of a streamed workbook (a spreadsheet allows 1,048,576).
   rowsPerSheet: { env: "LONG_JOB_ROWS_PER_SHEET", def: 100_000, min: 1, max: 1_000_000, whatAr: "أكبر عدد صفوف في ورقة واحدة" },
 };

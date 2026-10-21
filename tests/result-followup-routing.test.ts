@@ -35,7 +35,7 @@ describe("company result follow-up conversation", () => {
     expect(reply).toContain("٥٥ للبريد المهني");
     expect(reply).toContain("٥٥ للهاتف المكتبي");
     expect(reply).toContain("السعر المتوقع ٥٧٩ نقطة");
-    expect(reply).toContain("الحجز المتوقع ٦٠٠ نقطة");
+    expect(reply).toContain("الحجز المتوقع ٦٦٦ نقطة");
     expect(reply).toContain("هل تريد أن أجهز الخطة؟");
     expect(reply).not.toContain(firstPlan);
     expect(reply).not.toMatch(/[A-Za-z]|\p{Extended_Pictographic}/u);

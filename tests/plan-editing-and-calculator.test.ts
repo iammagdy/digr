@@ -13,6 +13,7 @@ import {
   getRegistryPricingSettings,
 } from "../src/functions/shared/capabilityRegistry";
 import { getCachedCatalogEndpoints } from "../src/functions/shared/catalogClient";
+import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import {
   EditPlanOperationSchema,
   applyPlanOperations,
@@ -238,8 +239,8 @@ describe("Company Research Capability & Quote Math", () => {
     expect(compCap?.maxRows).toBe(500);
   });
 
-  it("calculates 3 points per record and 18 points reserved for 5 company records based on verified live 0.00038 USD cost", () => {
-    // 0.00038 USD * 55 EGP * 10 markup / 0.10 EGP = 2.09 -> ceil = 3 points per unit
+  it("calculates 3.168 points per delivered company record (measured cost 0.000576 USD x 5,500): 5 records charge 16 and reserve 19", () => {
+    // the old whole-point rule on the call price is unchanged for other services: 0.00038 USD * 55 EGP * 10 markup / 0.10 EGP = 2.09 -> ceil = 3
     const unitPrice = calculateCapabilityUnitPricePoints(0.00038, DEFAULT_PRICING_SETTINGS);
     expect(unitPrice).toBe(3);
 
@@ -251,14 +252,14 @@ describe("Company Research Capability & Quote Math", () => {
       DEFAULT_PRICING_SETTINGS
     );
 
-    expect(quoteBreakdown.unitPricePoints).toBe(3);
+    expect(quoteBreakdown.unitPricePoints).toBe(3.168);
     expect(quoteBreakdown.targetVolumeMax).toBe(5);
-    // 5 * 3 = 15 raw points * 1.15 buffer = 17.25 -> ceil = 18 points reserved
-    expect(quoteBreakdown.reservedPoints).toBe(18);
-    expect(quoteBreakdown.chargedPoints).toBe(15);
+    // 5 * 3.168 = 15.84 raw points -> charge ceil = 16; * 1.15 buffer = 18.216 -> reserve ceil = 19 points
+    expect(quoteBreakdown.reservedPoints).toBe(19);
+    expect(quoteBreakdown.chargedPoints).toBe(16);
     expect(quoteBreakdown.refundPoints).toBe(3);
-    expect(quoteBreakdown.reservedEgp).toBe(1.80);
-    expect(quoteBreakdown.chargedEgp).toBe(1.50);
+    expect(quoteBreakdown.reservedEgp).toBe(1.90);
+    expect(quoteBreakdown.chargedEgp).toBe(1.60);
   });
 
   it("getCachedCatalogEndpoints strictly returns validated live catalog entries with short TTL and no hardcoded seed entries", () => {
@@ -286,37 +287,45 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
     expect(tiktokProfile!.maxVolume).toBe(50);
   });
 
-  it("strictly enforces 600-point cap and provides coherent capped numbers for 100 Facebook comments", () => {
-    // 100 comments @ 11 points = 1100 raw points -> 1265 reserved -> exceeds 600 cap
+  it("strictly enforces the 5,000-point cap and provides coherent capped numbers for 500 Facebook comments", () => {
+    // 500 comments @ 11 points = 5500 raw points -> 6325 reserved -> exceeds the 5,000 cap
     const breakdown = computePublicCalculatorQuote(
       "facebook-post-comments",
-      100,
-      100,
+      500,
+      500,
       APPROVED_CAPABILITY_CATALOG,
       DEFAULT_PRICING_SETTINGS,
-      DEFAULT_JOB_POINTS_CAP
+      DEFAULT_JOB_POINTS_CAP,
+      5 // the provider's daily limit in USD: high enough that the job cap, not the daily limit, is the ceiling
     );
 
     expect(breakdown.isCapped).toBe(true);
-    expect(breakdown.maxCapPoints).toBe(600);
-    // floor(600 / (11 * 1.15)) = floor(600 / 12.65) = 47 records
-    expect(breakdown.maxCappedVolume).toBe(47);
+    expect(breakdown.maxCapPoints).toBe(5000);
+    // floor(5000 / (11 * 1.15)) = floor(5000 / 12.65) = 395 records
+    expect(breakdown.maxCappedVolume).toBe(395);
 
-    // Capped values strictly match the 600-point cap and 47 delivered records
-    expect(breakdown.cappedReservedPoints).toBe(595);
-    expect(breakdown.cappedReservedEgp).toBe(59.5);
-    // 47 * 11 = 517 points
-    expect(breakdown.cappedChargedPoints).toBe(517);
-    expect(breakdown.cappedChargedEgp).toBe(51.7);
-    // 595 - 517 = 78 points
-    expect(breakdown.cappedRefundPoints).toBe(78);
-    expect(breakdown.cappedRefundEgp).toBe(7.8);
+    // Capped values strictly match the 5,000-point cap and 395 delivered records
+    expect(breakdown.cappedReservedPoints).toBe(4997);
+    expect(breakdown.cappedReservedEgp).toBe(499.7);
+    // 395 * 11 = 4345 points
+    expect(breakdown.cappedChargedPoints).toBe(4345);
+    expect(breakdown.cappedChargedEgp).toBe(434.5);
+    // 4997 - 4345 = 652 points
+    expect(breakdown.cappedRefundPoints).toBe(652);
+    expect(breakdown.cappedRefundEgp).toBe(65.2);
 
-    expect(breakdown.reservedPoints).toBe(595);
-    expect(breakdown.chargedPoints).toBe(517);
+    expect(breakdown.reservedPoints).toBe(4997);
+    expect(breakdown.chargedPoints).toBe(4345);
+  });
+
+  it("the default provider daily limit (0.80 USD = 4,400 points) is still the lower ceiling of the calculator until the owner raises it", () => {
+    const breakdown = computePublicCalculatorQuote("facebook-post-comments", 500, 500, APPROVED_CAPABILITY_CATALOG, DEFAULT_PRICING_SETTINGS, DEFAULT_JOB_POINTS_CAP);
+    expect(breakdown.maxCapPoints).toBe(4400);
+    expect(breakdown.cappedReservedPoints).toBeLessThanOrEqual(4400);
   });
 
   it("caps managed YouTube comment quotes and their reserves at the settlement cap", async () => {
+    setProviderBalanceForTesting(10);
     const mockTables: any = {
       from: () => {
         const chain: any = {
@@ -334,16 +343,18 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
       paramsSchema: "{}", tregEndpointId: "social-youtube-comments",
     };
     const quote = await createAndSaveManagedQuote(mockTables, {
-      conversationId: "cap-test", userId: "user-test", userBalance: 1000,
+      conversationId: "cap-test", userId: "user-test", userBalance: 10000,
       capabilities: [cap], pricingSettings: DEFAULT_PRICING_SETTINGS,
-      plan: { summaryAr: "تعليقات مقطع", items: [{ capabilitySlug: cap.slug, params: {}, targetVolumeMin: 1, targetVolumeMax: 100 }], outputFormats: ["xlsx"] },
+      plan: { summaryAr: "تعليقات مقطع", items: [{ capabilitySlug: cap.slug, params: {}, targetVolumeMin: 1, targetVolumeMax: 30000 }], outputFormats: ["xlsx"] },
     });
+    resetProviderBalanceCacheForTesting();
     expect(quote.pointsCapConstrained).toBe(true);
-    expect(quote.requestedVolumeMax).toBe(100);
-    expect(quote.targetVolumeMax).toBe(57);
-    expect(quote.expectedPoints).toBe(513);
-    expect(quote.quotedPoints).toBe(590);
-    expect(quote.quotedPoints).toBeLessThanOrEqual(600);
+    expect(quote.requestedVolumeMax).toBe(30000);
+    // 0.275 points a comment: the most records whose reserve fits 5,000 is 15,810 (4,347.75 charge, 4,999.76 reserve)
+    expect(quote.targetVolumeMax).toBe(15810);
+    expect(quote.expectedPoints).toBe(4348);
+    expect(quote.quotedPoints).toBe(5000);
+    expect(quote.quotedPoints).toBeLessThanOrEqual(5000);
   });
 
   it("produces identical quote results between managed quote and calculator across samples", async () => {
@@ -385,8 +396,8 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
 
     expect(calcResult.unitPricePoints).toBe(managedQuote.unitPricePoints);
     expect(calcResult.reservedPoints).toBe(managedQuote.quotedPoints);
-    expect(calcResult.reservedPoints).toBe(18);
-    expect(calcResult.chargedPoints).toBe(15);
+    expect(calcResult.reservedPoints).toBe(19);
+    expect(calcResult.chargedPoints).toBe(16);
   });
 
   it("regression: earlier greetings like 'ازيك' never override the research topic during plan editing", () => {

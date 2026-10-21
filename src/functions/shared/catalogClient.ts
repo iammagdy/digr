@@ -1,5 +1,5 @@
 import { resolveProviderKey } from "../../lib/server/providerKeys";
-import { computeRegistryPointsPerUnit, getRegistryPricingSettings } from "./capabilityRegistry";
+import { registryPointsPerUnit, getRegistryPricingSettings } from "./capabilityRegistry";
 import { SOCIAL_PLATFORM_LABEL_AR, SocialPlatformId, detectSocialIntent, socialCatalogQuery } from "../../lib/socialTasks";
 import { APPROVED_CAPABILITY_CATALOG, Capability } from "./capabilityRegistry";
 
@@ -306,10 +306,9 @@ export function normalizeCatalogEndpoint(raw: any): CatalogEndpointSummary {
   const pagination = detectPaginationStrategy(raw.input);
   const paramsSchema = buildNormalizedParamsSchema(raw.input);
   const settings = getRegistryPricingSettings();
-  const pointsPerUnit = catalogPriceUsd > 0 ? computeRegistryPointsPerUnit(catalogPriceUsd, settings) : 0;
-
   // Generate a clean slug
   const cleanSlug = id.replace(/[^a-zA-Z0-9_-]/g, "-").toLowerCase();
+  const pointsPerUnit = catalogPriceUsd > 0 ? registryPointsPerUnit(cleanSlug, catalogPriceUsd, settings) : 0;
 
   return {
     id,
@@ -422,7 +421,7 @@ export async function getEndpointDetails(
       paramsSchema: typeof fallbackMatch.paramsSchema === "string" ? JSON.parse(fallbackMatch.paramsSchema) : fallbackMatch.paramsSchema,
       billingUnit: fallbackMatch.pricingUnit,
       catalogPriceUsd: fallbackMatch.unitCostUsd,
-      pointsPerUnit: fallbackMatch.pointsPerUnit || computeRegistryPointsPerUnit(fallbackMatch.unitCostUsd),
+      pointsPerUnit: fallbackMatch.pointsPerUnit || registryPointsPerUnit(fallbackMatch.slug, fallbackMatch.unitCostUsd),
       pagination: {
         type: fallbackMatch.paginationType === "cursor" ? "cursor" : fallbackMatch.paginationType === "offset" ? "offset" : "none",
         maxLimit: fallbackMatch.maxItemsPerCall || 100,

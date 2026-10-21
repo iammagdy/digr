@@ -1,14 +1,16 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import PlanQuoteCard, { type PlanQuoteData } from "../src/app/dashboard/chat/components/PlanQuoteCard";
 import { VOLUME_LIMIT_REASON_AR, volumeLimitStatementAr } from "../src/lib/jobCaps";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { createChatDb } from "./helpers/chatSession";
 
 /**
- * Never shrink silently. With 2,000 comments asked, the plan used to say «up to 1,000» (a service ceiling) while the job cap cut
- * the plan to 57. Now: what was asked, what fits one job now, and why in one plain sentence. No cap value is changed here.
+ * Never shrink silently. When the plan holds fewer records than asked, it says what was asked, what fits one job now, and why in one
+ * plain sentence. (With 2,000 comments asked and the old 600-point cap the plan was cut to 57; at the 5,000-point cap and a per-record
+ * price of 0.275 points the same request fits whole, so the cut is shown with 37,500 X posts, which the cap holds only 37,113 of.)
  */
 const M1_WITH_CAP = "عايز أكتر ١٠ فيديوهات مشاهدة من قناة @AlArabiya وقناة @SkyNewsArabia على يوتيوب مع كل التعليقات حتى ٢٠٠٠ تعليق";
 
@@ -29,28 +31,32 @@ describe("the volume statement", () => {
 });
 
 describe("through the chat handler (model stubbed to throw)", () => {
+  // the provider side is out of the way, so the 5,000-point job cap is the limit under test
+  beforeEach(() => setProviderBalanceForTesting(10));
+  afterEach(() => resetProviderBalanceCacheForTesting());
+
   const run = async (message: string) => {
     const handler = new ChatHandler(createChatDb() as any);
     (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
     return handler.handleUserMessage({ userId: "u_cap_text", message, userBalance: 100000 }) as Promise<any>;
   };
 
-  it("2,000 comments asked: the text and the quote say 2,000 asked, 57 fit, and why; the goal line no longer says «up to 1,000»", async () => {
+  it("2,000 comments asked: they fit one job whole (reserve 633), so nothing is cut and no limit sentence is shown; the goal line says 2,000, not «up to 1,000»", async () => {
     const reply = await run(M1_WITH_CAP);
     expect(reply.outputType).toBe("propose_plan");
     const quote = reply.planQuote;
-    expect(quote.askedVolumeMax).toBe(2000);
-    expect(quote.targetVolumeMax).toBe(57);
-    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ٥٧ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
-    expect(reply.contentAr).toContain("حتى ٥٧ تعليقاً إجمالاً");
+    expect(quote.askedVolumeMax).toBeUndefined();
+    expect(quote.targetVolumeMax).toBe(2000);
+    expect(reply.contentAr).not.toContain(VOLUME_LIMIT_REASON_AR);
+    expect(reply.contentAr).toContain("حتى ٢٠٠٠ تعليقاً إجمالاً");
     expect(reply.contentAr).not.toContain("حتى ١٠٠٠ تعليقاً");
-    expect(quote.summaryAr).toContain("٥٧");
+    expect(quote.summaryAr).toContain("٢٠٠٠");
     expect(quote.summaryAr).not.toContain("١٠٠٠");
   });
 
-  it("no cap value, unit price or reserve changed: the same 57 comments, 9 points each, 590 held, cap 600 as before this fix", async () => {
+  it("the plan numbers: the same 2,000 comments at 0.275 points each (550 charge), 633 held, the shared cap 5,000", async () => {
     const quote = (await run(M1_WITH_CAP)).planQuote;
-    expect(quote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600, pointsCapConstrained: true });
+    expect(quote).toMatchObject({ targetVolumeMax: 2000, unitPricePoints: 0.275, expectedPoints: 550, quotedPoints: 633, pointsCap: 5000, pointsCapConstrained: false });
   });
 
   it("a request that fits carries no limit sentence and no asked volume", async () => {
@@ -59,10 +65,11 @@ describe("through the chat handler (model stubbed to throw)", () => {
     expect(reply.planQuote.askedVolumeMax).toBeUndefined();
   });
 
-  it("37,500 X posts: asked 37,500, fits 104, with the reason", async () => {
+  it("37,500 X posts: asked 37,500, fits 37,113 (the most whose reserve is within 5,000), with the reason", async () => {
     const reply = await run("عايز ٣٧٥٠٠ بوست على إكس عن ماتش مصر والمغرب آخر شهر");
     expect(reply.planQuote.askedVolumeMax).toBe(37500);
-    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٠٤ سجل.");
+    expect(reply.planQuote).toMatchObject({ targetVolumeMax: 37113, expectedPoints: 4348, quotedPoints: 5000, pointsCap: 5000, pointsCapConstrained: true });
+    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ٣٧١١٣ سجل.");
     expect(reply.contentAr).toContain(VOLUME_LIMIT_REASON_AR);
   });
 });

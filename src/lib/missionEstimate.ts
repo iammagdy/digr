@@ -1,5 +1,6 @@
 import { toArabicDigits } from "./arabicDigits";
-import { DEFAULT_JOB_POINTS_CAP, computePublicCalculatorQuote, getPublicCalculatorOptions } from "./calculatorPricing";
+import { DEFAULT_JOB_POINTS_CAP, DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD, computePublicCalculatorQuote, dailyCapPointsFor, getPublicCalculatorOptions } from "./calculatorPricing";
+import { chargeForUnits, reserveForUnits } from "./recordPricing";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField } from "../functions/shared/decisionMakerPricing";
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { SOCIAL_PLATFORM_LABEL_AR, type SocialPlatformId } from "./socialTasks";
@@ -84,7 +85,7 @@ function personUnitPoints(fields: ContactField[]): number {
  */
 export function decisionMakersPerRequest(options: { contactFields?: ContactField[]; dailyCapPoints?: number } = {}): number {
   const fields: ContactField[] = options.contactFields && options.contactFields.length ? options.contactFields : ["work_email", "phone"];
-  const jobCapPoints = Math.min(DEFAULT_JOB_POINTS_CAP, typeof options.dailyCapPoints === "number" && options.dailyCapPoints >= 0 ? Math.floor(options.dailyCapPoints) : DEFAULT_JOB_POINTS_CAP);
+  const jobCapPoints = Math.min(DEFAULT_JOB_POINTS_CAP, typeof options.dailyCapPoints === "number" && options.dailyCapPoints >= 0 ? Math.floor(options.dailyCapPoints) : dailyCapPointsFor(DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD));
   return recordsInOneJob({ unitPricePoints: personUnitPoints(fields), capPoints: jobCapPoints, safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer, chargeCapped: true });
 }
 
@@ -115,7 +116,8 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const isPeople = input.kind === "people";
   const fields: ContactField[] = input.contactFields && input.contactFields.length ? input.contactFields : ["work_email", "phone"];
   const perUnit = isPeople ? personUnitPoints(fields) : probe.unitPricePoints;
-  const jobCapPoints = Math.min(DEFAULT_JOB_POINTS_CAP, typeof input.dailyCapPoints === "number" && input.dailyCapPoints >= 0 ? Math.floor(input.dailyCapPoints) : DEFAULT_JOB_POINTS_CAP);
+  // The default is the same one the detailed calculator uses: the provider's default daily limit in points (0.80 USD = 4,400), below the cap.
+  const jobCapPoints = Math.min(DEFAULT_JOB_POINTS_CAP, typeof input.dailyCapPoints === "number" && input.dailyCapPoints >= 0 ? Math.floor(input.dailyCapPoints) : dailyCapPointsFor(DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD, settings));
 
   let volume = input.volume && input.volume > 0 ? Math.floor(input.volume) : 0;
   if (!volume && input.budgetPoints && input.budgetPoints > 0) volume = volumeForPointsCap(input.budgetPoints, perUnit, settings.safetyBuffer);
@@ -125,14 +127,14 @@ export function estimateMission(input: EstimateInput): EstimateResult {
       : { status: "needs_cap", notesAr: ["اكتب عدد السجلات أو ميزانيتك بالنقاط لنحسب لك التكلفة."] };
   }
 
-  const expectedPoints = Math.ceil(volume * perUnit);
+  const expectedPoints = chargeForUnits(volume, perUnit);
   // One shared rule for the one-job size (the quote writer's own: see jobSizing).
   const sizing = { unitPricePoints: perUnit, capPoints: jobCapPoints, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople };
   const maxVolumeInOneJob = recordsInOneJob(sizing);
   const fitsInOneJob = maxVolumeInOneJob >= volume;
   const unclippedReserve = isPeople
     ? decisionMakerQuotePoints(volume, fields, DECISION_MAKER_UNIT_PRICES_POINTS, settings.safetyBuffer, Number.MAX_SAFE_INTEGER)
-    : Math.ceil(volume * perUnit * (1 + settings.safetyBuffer));
+    : reserveForUnits(volume, perUnit, settings.safetyBuffer);
   // Inside one job the writer clips a decision-maker hold to the cap; a request that needs several jobs shows the whole hold.
   const reservePoints = fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve;
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;

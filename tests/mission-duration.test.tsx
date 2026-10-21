@@ -63,11 +63,14 @@ describe("the estimate for the missions the owner named", () => {
       expect(d.optimisticSeconds).toBeGreaterThan(0);
       expect(d.pessimisticSeconds).toBeGreaterThan(d.optimisticSeconds);
     }
-    // 37,500 posts at 50 a call is 750 calls and 750 chunks of 50: the pages of a day, said honestly
+    // 37,500 posts at 50 a call is 750 calls in 375 chunks of 100 rows: about 1 to 15 hours with the page open, said honestly
     const big = duration(posts(37500));
-    expect(big.chunks).toBe(750);
-    expect(big.exceedsDay).toBe(true);
-    expect(view(posts(37500)).longNoteAr).toContain("أكثر من يوم");
+    expect(big.chunks).toBe(375);
+    expect(big.exceedsDay).toBe(false);
+    expect(view(posts(37500)).rangeAr).toBe("من ساعة إلى ١٥ ساعة");
+    // a request of 100,000 posts is more than a day and says so
+    expect(duration(posts(100000)).exceedsDay).toBe(true);
+    expect(view(posts(100000)).longNoteAr).toContain("أكثر من يوم");
   });
 
   it("is monotonic in volume: more records never mean a shorter estimate", () => {
@@ -196,7 +199,7 @@ describe("the Arabic phrasing (golden)", () => {
     expect(DURATION_PROMISE_AR).toBe(phrased.promiseAr);
     expect(phrased.driversAr).toMatch(/^تتأثر المدة بعدد الطلبات إلى المصدر \(حوالي [٠-٩]+\) وسرعة استجابته/u);
     expect(phrased.longNoteAr).toBeUndefined();
-    expect(view(comments(50000)).longNoteAr).toContain("أكثر من يوم");
+    expect(view(comments(100000)).longNoteAr).toContain("أكثر من يوم");
   });
 
   it("customer text is Arabic only: Arabic digits, no Latin letters, no money word, no provider or internal name", () => {
@@ -325,13 +328,13 @@ describe("the plan panel and the calculator show it", () => {
     expect(html).toContain(v.driversAr);
     expect(html).toContain("سنبلغك عند الاكتمال.");
     expect(html).not.toContain('data-testid="plan-duration-long"');
-    expect(render(baseQuote({ duration: view(comments(50000)) }))).toContain('data-testid="plan-duration-long"');
+    expect(render(baseQuote({ duration: view(comments(100000)) }))).toContain('data-testid="plan-duration-long"');
     expect(render(baseQuote())).not.toContain('data-testid="plan-duration"');
   });
 
   it("the calculator endpoint returns the same range logic for one request, and none when there is no price to show", async () => {
     const call = async (body: any) => (await estimatePost({ headers: new Headers(), json: async () => body } as any)).json();
-    const ok = await call({ kind: "comments", platform: "youtube", volume: 500 });
+    const ok = await call({ kind: "comments", platform: "youtube", volume: 30000 });
     expect(ok.result.status).toBe("ok");
     expect(ok.duration.labelAr).toBe("تقديري");
     expect(ok.duration.rangeAr).toMatch(/^من .+ إلى .+$/u);
@@ -340,7 +343,7 @@ describe("the plan panel and the calculator show it", () => {
     const open = await call({ kind: "comments", platform: "youtube", openEnded: true });
     expect(open.duration).toBeNull();
     // the calculator's range for a request equals the plan's range for the same records
-    // 500 comments do not fit one request: the endpoint states the duration of the records ONE request holds
+    // 30,000 comments do not fit one request: the endpoint states the duration of the records ONE request holds
     const same = missionDurationForPlan([{ capabilitySlug: "social-youtube-comments", targetVolumeMax: ok.result.maxVolumeInOneJob, params: {} }], "tab");
     expect(ok.duration.rangeAr).toBe(same!.rangeAr);
   });
@@ -355,7 +358,7 @@ describe("the plan panel and the calculator show it", () => {
 describe("the chat path: the plan carries the duration and the price is unchanged", () => {
   const answer = (id: string, q: string, value?: string) => formatStructuredClarificationAnswers({ type: "clarification_answers", answers: [value ? { questionId: id, question: q, value } : { questionId: id, question: q, skipped: true }] } as any);
 
-  it("a 2,000-comment YouTube request: the plan has a labelled range, and still 57 comments at 9 points, 590 held, cap 600", async () => {
+  it("a 2,000-comment YouTube request: the plan has a labelled range, and holds 1,500 comments (3 videos x 500, the most they can give) at 0.275 points, 475 held, cap 5,000", async () => {
     const db = createChatDb();
     const handler = new ChatHandler(db as any);
     (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
@@ -367,7 +370,7 @@ describe("the chat path: the plan carries the duration and the price is unchange
     expect(plan.planQuote.duration.labelAr).toBe("تقديري");
     expect(plan.planQuote.duration.rangeAr).toMatch(/^(?:أقل من دقيقة|من .+ إلى .+)$/u);
     expect(plan.planQuote.duration.promiseAr).toBe("سنبلغك عند الاكتمال.");
-    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600 });
+    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 1500, unitPricePoints: 0.275, quotedPoints: 475, pointsCap: 5000 });
     expect(JSON.stringify(plan.planQuote.duration)).not.toMatch(/نقطة|590|٥٩٠/);
     // the chat sentence itself is unchanged (the range lives in the panel)
     expect(plan.contentAr).not.toContain("المدة المتوقعة");

@@ -3,8 +3,10 @@ import { onProviderLimitsFlush, resolveProviderLimits } from "../../lib/server/p
 import { readRealProviderBalance } from "../../lib/server/realProviderBalance";
 
 import { selectAllRows } from "../../lib/server/selectAll";
+import { effectiveJobPointsCap, JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
-export const DEFAULT_JOB_POINTS_CAP = 600;
+/** The per-job cap: one shared constant (`src/lib/jobPointsCap.ts`). */
+export const DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
 export const DEFAULT_PROVIDER_CREDIT_USD = 1.00;
 export const PROVIDER_BALANCE_CACHE_TTL_MS = 60_000;
 
@@ -50,9 +52,9 @@ export function getConfiguredProviderSpendCapUsd(): number {
   return Number.isFinite(envVal) && envVal >= 0 ? envVal : DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD;
 }
 
+/** The cap in force: the shared constant, which the environment variable may only lower. */
 export function getConfiguredJobPointsCap(): number {
-  const envVal = Number(process.env.JOB_MAX_POINTS_CAP);
-  return Number.isFinite(envVal) && envVal > 0 ? Math.floor(envVal) : DEFAULT_JOB_POINTS_CAP;
+  return effectiveJobPointsCap();
 }
 
 export function getConfiguredProviderCreditUsd(): number {
@@ -314,6 +316,38 @@ export async function checkPlanProviderCapacity(
       ? `تم تعديل الحد الأقصى إلى ${maxSafeVolume} سجل لضمان دقة وسرعة التنفيذ المباشر`
       : "سعة الاستخراج الفورية مكتملة حالياً، يرجى المحاولة لاحقاً",
   };
+}
+
+export const PROVIDER_DAILY_CAP_MESSAGE_AR = "وصلنا إلى الحد اليومي لجمع البيانات، فلا يتسع هذا الطلب الآن. لم يُخصم أي رصيد؛ جرّب غدًا أو قلّل العدد.";
+export const PROVIDER_BALANCE_LOW_MESSAGE_AR = "خدمة الجمع غير متاحة لهذا الحجم الآن. لم يُخصم أي رصيد؛ قلّل العدد أو حاول بعد قليل.";
+export const PROVIDER_USER_CAP_MESSAGE_AR = "وصلت إلى حدك اليومي لجمع البيانات في حسابك، فلا يتسع هذا الطلب الآن. لم يُخصم أي رصيد؛ جرّب غدًا أو قلّل العدد.";
+
+export type ProviderStartDecision =
+  | { allowed: true }
+  | { allowed: false; code: "provider_daily_cap" | "provider_balance_low" | "provider_user_cap"; messageAr: string };
+
+/**
+ * The approve-time check of the plan against the provider side: the daily allowance left, the real provider balance (the estimate when
+ * no recent real reading exists) and the account's own daily allowance, each with the same 10% margin the plan-time check keeps.
+ * `estimatedUsd` is volume x the cost of one DELIVERED record. Read only; nothing is reserved here.
+ */
+export async function evaluateProviderStartGate(
+  estimatedUsd: number,
+  tables?: TablesDB | null,
+  options: { userRemainingUsd?: number | null } = {},
+): Promise<ProviderStartDecision> {
+  const status = await getProviderBalanceStatus(tables);
+  const remainingDailyUsd = Math.max(0, status.todayCapUsd - status.todaySpendUsd);
+  const real = testBalanceOverrideUsd !== null ? null : await readRealProviderBalance(tables);
+  const balanceUsd = testBalanceOverrideUsd !== null ? testBalanceOverrideUsd : real ? real.usd : status.availableBalanceUsd;
+  const needed = Math.max(0, estimatedUsd);
+  const margin = 0.9;
+  if (options.userRemainingUsd != null && Number.isFinite(options.userRemainingUsd) && needed > Math.max(0, options.userRemainingUsd) * margin) {
+    return { allowed: false, code: "provider_user_cap", messageAr: PROVIDER_USER_CAP_MESSAGE_AR };
+  }
+  if (needed > remainingDailyUsd * margin) return { allowed: false, code: "provider_daily_cap", messageAr: PROVIDER_DAILY_CAP_MESSAGE_AR };
+  if (needed > Math.max(0, balanceUsd) * margin) return { allowed: false, code: "provider_balance_low", messageAr: PROVIDER_BALANCE_LOW_MESSAGE_AR };
+  return { allowed: true };
 }
 
 export function resetProviderBalanceCacheForTesting(): void {

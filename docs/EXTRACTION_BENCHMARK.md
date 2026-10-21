@@ -29,7 +29,7 @@ Offline: no database, no provider call, no spend. Each fixture row carries the o
 ## Decision makers: field by field
 
 Requested fields: work email and phone. Charged units from the delivered rows: base person 4, work email 3, phone 2
-(600 points); delivered rows with no requested field, charged nothing: 2.
+(607 points); delivered rows with no requested field, charged nothing: 2.
 
 Read these numbers for what they are: the rows are synthetic (made up, no personal data) and modelled on the provider shapes
 seen in production, and the rules were tuned against them, so a perfect score here proves the rules behave as written and

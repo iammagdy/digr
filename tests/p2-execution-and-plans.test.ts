@@ -653,9 +653,10 @@ describe("P2: Execution, Multi-Step Worker, and Editable Plans Test Suite", () =
 
     expect(quote1.targetVolumeMax).toBe(100);
 
-    // 2. Edit 1: change limit to 300
+    // 2. Edit 1: change limit to 3000 (3 points a record: the 5,000-point cap alone would hold 1,449; the provider's default daily limit,
+    //    0.80 USD with a 10% margin, holds 0.72 / 0.0005 = 1,440 records, which is the lower ceiling here)
     const editOps1: EditPlanOperation[] = [
-      { action: "set_limit", capabilitySlug: "x-keyword-search", targetVolumeMax: 300 },
+      { action: "set_limit", capabilitySlug: "x-keyword-search", targetVolumeMax: 3000 },
     ];
     const plan2 = applyPlanOperations(initialPlan, editOps1);
     const quote2 = await createAndSaveManagedQuote(tables as any, {
@@ -666,7 +667,8 @@ describe("P2: Execution, Multi-Step Worker, and Editable Plans Test Suite", () =
       capabilities: [multiPageCapability],
     });
 
-    expect(quote2.targetVolumeMax).toBe(173);
+    expect(quote2.targetVolumeMax).toBe(1440);
+    expect(quote2.quotedPoints).toBe(4968);
     expect(quote2.quoteId).not.toBe(quote1.quoteId);
 
     // Check that previous quote1 is now invalidated (expired/superseded)

@@ -11,6 +11,7 @@ import {
 import MissionEstimator from "@/components/calculator/MissionEstimator";
 import { decisionMakersPerRequestLineAr, recordsInOneJob } from "@/lib/jobSizing";
 import { capabilitySlugFromPublicId, publicCapabilityId } from "@/lib/publicCapabilityIds";
+import { formatPointsAr } from "@/lib/pointsFormat";
 
 export default function PublicCalculatorPage() {
   const options = useMemo(() => getPublicCalculatorOptions(), []);
@@ -263,7 +264,7 @@ export default function PublicCalculatorPage() {
                         {formatAr(effectiveTarget)}
                         {b.isCapped ? <span className="mr-1 text-[10px] text-mut">(سقف)</span> : null}
                       </td>
-                      <td className="px-3 py-2 font-mono">{formatAr(b.unitPricePoints)} نقطة</td>
+                      <td className="px-3 py-2 font-mono">{formatPointsAr(b.unitPricePoints)} نقطة</td>
                       <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(effectiveCharged)} نقطة</td>
                       <td className="px-3 py-2 font-mono">{formatAr(effectiveChargedEgp)} ج.م</td>
                       <td className="px-3 py-2">
@@ -286,7 +287,7 @@ export default function PublicCalculatorPage() {
           </h2>
           <ul className="mb-0 mt-3 flex flex-col gap-2 pr-5 text-sm font-light leading-[1.9] text-ink2">
             <li>
-              تكلفة الوحدة الواحدة لهذه الخدمة: {formatAr(breakdown.unitPricePoints)} نقطة ({formatAr(breakdown.unitPriceEgp)} ج.م لكل {currentOption?.unitLabelAr}).
+              تكلفة الوحدة الواحدة لهذه الخدمة: {formatPointsAr(breakdown.unitPricePoints)} نقطة ({formatAr(breakdown.unitPriceEgp)} ج.م لكل {currentOption?.unitLabelAr}).
             </li>
             {breakdown.capabilitySlug === "professional-people-search" ? (
               <li data-testid="people-per-request">

@@ -1,3 +1,4 @@
+import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
 import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
@@ -32,6 +33,7 @@ import {
   getClosestVerifiedCapability,
   getCustomerPriceUsdPerCatalogItem,
   computeRegistryPointsPerUnit,
+  registryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
   RAW_SEED_CAPABILITIES,
   APPROVED_CAPABILITY_CATALOG,
@@ -1131,7 +1133,7 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
     pointsPerUnit:
       customerPriceUsdPerItem !== undefined
-        ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
+        ? registryPointsPerUnit(ep.slug, customerPriceUsdPerItem)
         : ep.pointsPerUnit,
     maxItemsPerCall: ep.pagination.maxLimit || 100,
     estimatedSuccessRate: ep.observedSuccessRate,
@@ -1173,8 +1175,8 @@ function capabilityAsCatalogEndpoint(cap: Capability): CatalogEndpointSummary {
     catalogPriceUsd: cap.unitCostUsd,
     pointsPerUnit:
       typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0
-        ? computeRegistryPointsPerUnit(cap.customerPriceUsdPerItem)
-        : cap.pointsPerUnit ?? computeRegistryPointsPerUnit(cap.unitCostUsd),
+        ? registryPointsPerUnit(cap.slug, cap.customerPriceUsdPerItem)
+        : cap.pointsPerUnit ?? registryPointsPerUnit(cap.slug, cap.unitCostUsd),
     pagination: { type: "cursor", maxLimit: cap.maxRows },
     observedSuccessRate: cap.estimatedSuccessRate ?? 0.99,
     observedSamples: 1000,
@@ -3891,7 +3893,7 @@ export class ChatHandler {
                   requestedUnits,
                   fittedUnits: managedQuote.targetVolumeMax,
                   unitPricePoints: managedQuote.unitPricePoints,
-                  pointsCap: managedQuote.pointsCap || 600,
+                  pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP,
                   safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
                   quotedPoints: managedQuote.quotedPoints,
                 })

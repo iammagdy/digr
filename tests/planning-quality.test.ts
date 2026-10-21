@@ -64,9 +64,10 @@ describe("C. in the conversation", () => {
   });
 
   it("a large social request is offered the priced exploration step", async () => {
-    const { responses } = await runConversation(["هات ٥٠٠ تغريدة عن كرة السلة في ٢٠٢٥"]);
+    const { responses } = await runConversation(["هات ٢٠٠٠٠ تغريدة عن كرة السلة في ٢٠٢٥"]);
     const r = responses[0];
     expect(r.outputType).toBe("propose_plan");
+    // 20,000 posts at 0.11715 points are 2,343 points of charge: over the 1,500 that earns a sample offer (500 posts are 59 points: no offer)
     // «عينة أولًا»: about 5% of the estimate, held between 100 and 300 points
     const offer = r.planQuote.explorationOffer;
     expect(offer.samplePoints).toBeGreaterThanOrEqual(100);

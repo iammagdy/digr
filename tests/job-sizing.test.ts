@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import { createChatDb } from "./helpers/chatSession";
 import { recordsInOneJob, reserveInOneJob } from "../src/lib/jobSizing";
 import { estimateMission } from "../src/lib/missionEstimate";
@@ -89,16 +90,19 @@ const writerPeople = async (count: string) => {
   });
   return res.planQuote;
 };
-const writerXPosts = async () => {
+const writerXPosts = async (asked = "٥٠٠") => {
   const db = createChatDb();
   const handler = new ChatHandler(db as any);
   (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
-  const res: any = await handler.handleUserMessage({ userId: "u_x", message: "هات ٥٠٠ تغريدة عن الغلاء على إكس آخر شهر", userBalance: 5000 });
+  const res: any = await handler.handleUserMessage({ userId: "u_x", message: `هات ${asked} تغريدة عن الغلاء على إكس آخر شهر`, userBalance: 20000 });
   return res.planQuote;
 };
 
 describe("one job's size comes from ONE function, the quote writer's own rule", () => {
-  beforeEach(() => clearBriefCacheForTesting());
+  // The provider side is out of the way (a high balance, and a daily limit in points far above the cap), so the 5,000-point job cap is the ceiling
+  // that both the real quote and the public estimate show.
+  beforeEach(() => { clearBriefCacheForTesting(); setProviderBalanceForTesting(10); });
+  afterEach(() => resetProviderBalanceCacheForTesting());
 
   it("the rule: reserve-bound for every service, charge-bound (reserve clipped to the cap) for decision makers", () => {
     expect(recordsInOneJob({ unitPricePoints: 5, capPoints: 600, safetyBuffer: BUFFER })).toBe(104);
@@ -112,22 +116,28 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     expect(recordsInOneJob({ unitPricePoints: 5, capPoints: 0, safetyBuffer: BUFFER })).toBe(0);
   });
 
-  it("decision makers: the public estimate says what the real quote says (3 people, 600 points held), for any size asked", async () => {
+  it("decision makers: the public estimate says what the real quote says (25 people, 5,000 points held), for any size asked", async () => {
     for (const asked of ["١٠٤", "٢٠٠"]) {
       const plan = await writerPeople(asked);
-      expect(plan.targetVolumeMax).toBe(3);
-      const estimate: any = estimateMission({ kind: "people", volume: Number(asked.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))) });
+      // floor(5000 / 193) = 25 people (4,825 points of charge); the buffered hold is clipped to the cap
+      expect(plan.targetVolumeMax).toBe(25);
+      expect(plan.quotedPoints).toBe(5000);
+      const estimate: any = estimateMission({ kind: "people", volume: Number(asked.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))), dailyCapPoints: 100000 });
       expect(estimate.maxVolumeInOneJob).toBe(plan.targetVolumeMax);
-      expect(estimateMission({ kind: "people", volume: plan.targetVolumeMax })).toMatchObject({ reservePoints: plan.quotedPoints, fitsInOneJob: true, jobsNeeded: 1 });
+      expect(estimateMission({ kind: "people", volume: plan.targetVolumeMax, dailyCapPoints: 100000 })).toMatchObject({ reservePoints: plan.quotedPoints, fitsInOneJob: true, jobsNeeded: 1 });
     }
   });
 
-  it("posts on X: the public estimate says what the real quote says (104 posts, 598 held)", async () => {
-    const plan = await writerXPosts();
-    expect(plan.targetVolumeMax).toBe(104);
-    expect(plan.quotedPoints).toBe(598);
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 104, fitsInOneJob: false });
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 104 })).toMatchObject({ reservePoints: 598, fitsInOneJob: true });
+  it("posts on X: the public estimate says what the real quote says (500 posts fit whole: 68 held; 40,000 are cut to 37,113 posts, 5,000 held)", async () => {
+    const small = await writerXPosts();
+    expect(small.targetVolumeMax).toBe(500);
+    expect(small.quotedPoints).toBe(68);
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 500, dailyCapPoints: 100000 })).toMatchObject({ maxVolumeInOneJob: 37113, fitsInOneJob: true, reservePoints: 68 });
+    const large = await writerXPosts("٤٠٠٠٠");
+    expect(large.targetVolumeMax).toBe(37113);
+    expect(large.quotedPoints).toBe(5000);
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 40000, dailyCapPoints: 100000 })).toMatchObject({ maxVolumeInOneJob: 37113, fitsInOneJob: false });
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 37113, dailyCapPoints: 100000 })).toMatchObject({ reservePoints: 5000, fitsInOneJob: true });
   });
 
   const SERVICES: Array<{ label: string; input: any; slug: string }> = [
@@ -139,7 +149,7 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
 
   it("the estimate box and the detailed calculator give the same records per job, with the same cap input", () => {
     for (const service of SERVICES) {
-      for (const dailyCapPoints of [undefined, 600, 200]) {
+      for (const dailyCapPoints of [undefined, 100000, 600, 200]) {
         const estimate: any = estimateMission({ ...service.input, volume: 100000, dailyCapPoints });
         const detailed = computePublicCalculatorQuote(service.slug, 100000, 100000, undefined, undefined, undefined, undefined, dailyCapPoints);
         expect(estimate.unitPricePoints, `${service.label} unit`).toBe(detailed.unitPricePoints);
@@ -155,7 +165,8 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     const detailed = computePublicCalculatorQuote("professional-people-search", 3, 3);
     expect(detailed.unitPricePoints).toBe(83 + 55 + 55);
     expect(detailed.maxCappedVolume).toBe(3);
-    expect(detailed.cappedReservedPoints).toBe(600);
+    // 579 x 1.15 = 665.85 -> 666 held (the 5,000-point cap does not clip it)
+    expect(detailed.cappedReservedPoints).toBe(666);
   });
 
   it("the segment pages size one job exactly as the estimate box does, at the default and at a live limit", () => {
@@ -169,12 +180,16 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
   });
 
   it("a lower live limit lowers every surface alike; none of them changes a cap value", () => {
-    const fresh: any = estimateMission({ kind: "posts", platform: "x", volume: 500 });
-    const live: any = estimateMission({ kind: "posts", platform: "x", volume: 500, dailyCapPoints: 200 });
-    expect(fresh.jobCapPoints).toBe(600);
+    const fresh: any = estimateMission({ kind: "posts", platform: "x", volume: 50000, dailyCapPoints: 100000 });
+    const live: any = estimateMission({ kind: "posts", platform: "x", volume: 50000, dailyCapPoints: 200 });
+    expect(fresh.jobCapPoints).toBe(5000);
     expect(live.jobCapPoints).toBe(200);
     expect(live.maxVolumeInOneJob).toBeLessThan(fresh.maxVolumeInOneJob);
-    const detailed = computePublicCalculatorQuote("social-x-posts", 500, 500, undefined, undefined, undefined, undefined, 200);
+    const detailed = computePublicCalculatorQuote("social-x-posts", 50000, 50000, undefined, undefined, undefined, undefined, 200);
     expect(detailed.maxCappedVolume).toBe(live.maxVolumeInOneJob);
+    // with no live reading both use the provider's default daily limit in points (0.80 USD = 4,400), which is below the cap
+    const unread: any = estimateMission({ kind: "posts", platform: "x", volume: 50000 });
+    expect(unread.jobCapPoints).toBe(4400);
+    expect(computePublicCalculatorQuote("social-x-posts", 50000, 50000).maxCapPoints).toBe(4400);
   });
 });

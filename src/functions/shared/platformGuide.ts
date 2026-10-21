@@ -1,5 +1,6 @@
 import { APPROVED_CAPABILITY_CATALOG, type Capability } from "./capabilityRegistry";
 import { SOCIAL_CAPABILITIES } from "../../lib/socialSources";
+import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 
 export type GuideService = {
   slug: string;
@@ -18,8 +19,8 @@ export const PLATFORM_GUIDE = {
   product: {
     nameAr: "ديجر",
     descriptionAr: "منصة بحث وجمع بيانات من الإنترنت لأي موضوع أو دولة أو لغة أو فترة يحددها العميل، مع ملفات منظمة ومنهجية منفصلة عند الطلب.",
-    recordCap: 600,
-    pointCap: 600,
+    recordCap: JOB_MAX_POINTS_CAP,
+    pointCap: JOB_MAX_POINTS_CAP,
     openTopics: ["الرياضة", "الشركات", "صناع القرار", "المحتوى الاجتماعي", "أي موضوع يحدده العميل لمنشورات وتعليقات وفيديوهات المنصات"],
     unavailableAr: ["جمع الدراسات والأبحاث الأكاديمية", "جمع المقالات والأخبار من المواقع"],
   },

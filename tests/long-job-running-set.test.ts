@@ -76,7 +76,8 @@ describe("the running set: pure behaviour", () => {
 
 describe("the worker reads one running record per chunk, not every earlier chunk", () => {
   let restore: () => void;
-  beforeEach(() => { restore = setupEnv(); setScaleOverridesForTesting({ absoluteMaxPages: 200 }); });
+  // these scenarios are about the running records, written for 50-row chunks: the chunk size is set explicitly (the platform default is now 100)
+  beforeEach(() => { restore = setupEnv(); setScaleOverridesForTesting({ absoluteMaxPages: 200, socialRowsPerChunk: 50 }); });
   afterEach(() => { setScaleOverridesForTesting(null); restore(); });
 
   const settledOnce = (jobId: string) => {

@@ -122,20 +122,11 @@ async function resolveLimitsFromSettings(adminClient: any): Promise<{
   // The daily limit and the per-job / per-user ceilings come from the ONE shared resolver (admin-editable, 30 s cache,
   // falls back to the current constants). The points cap stays on its own existing source.
   const { limits } = await resolveProviderLimits(adminClient);
-  let jobPointsCap = getConfiguredJobPointsCap();
-
-  try {
-    const query = adminClient?.from?.("settings_private")?.select?.("key, value");
-    if (query && typeof query.eq === "function") {
-      const { data: row } = await query.eq("key", "pricing").maybeSingle();
-      const val = row?.value && typeof row.value === "object" ? row.value : row;
-      if (typeof val?.jobMaxPointsCap === "number" && val.jobMaxPointsCap > 0) {
-        jobPointsCap = val.jobMaxPointsCap;
-      }
-    }
-  } catch {
-    // Fallback to configured env/default caps
-  }
+  // The settlement cap is the ONE shared constant (the environment may only lower it). The old `settings_private.pricing.jobMaxPointsCap`
+  // row is no longer read: it still holds 600 in production, and a stale 600 passed to the settlement functions would silently
+  // under-charge every job above 600 points (the charge is clipped to the cap argument). A charge can never exceed the job's own
+  // reserve, which was checked against the cap when the quote was created.
+  const jobPointsCap = getConfiguredJobPointsCap();
 
   return { dailyCapUsd: limits.dailyUsd, jobPointsCap, limits };
 }

@@ -36,9 +36,9 @@ describe("how many calls fit in a chunk, from the time the calls actually take",
     expect(callsThatFit(100, SOCIAL_CHUNK_BUDGET_MS, SOCIAL_MAX_CALLS_PER_CHUNK)).toBe(SOCIAL_MAX_CALLS_PER_CHUNK);
   });
 
-  it("the rows of a chunk: 50 today, configurable between 10 and 500, the default unchanged", () => {
-    expect(SOCIAL_ROWS_PER_CHUNK).toBe(50);
-    expect(socialRowsPerChunk()).toBe(50);
+  it("the rows of a chunk: 100 by default (it was 50), configurable between 10 and 500", () => {
+    expect(SOCIAL_ROWS_PER_CHUNK).toBe(100);
+    expect(socialRowsPerChunk()).toBe(100);
     expect(scaleValue("socialRowsPerChunk", { LONG_JOB_ROWS_PER_CHUNK: "5" })).toBe(10);
     expect(scaleValue("socialRowsPerChunk", { LONG_JOB_ROWS_PER_CHUNK: "100000" })).toBe(500);
     expect(scaleValue("socialRowsPerChunk", { LONG_JOB_ROWS_PER_CHUNK: "120" })).toBe(120);
@@ -88,8 +88,8 @@ describe("through the real worker and the real social chain", () => {
     expect(job.delivered_units).toBe(200);
   }, 60_000);
 
-  it("a fast source with the default chunk (50 rows): 60 chunks for 3,000 rows, at most four calls each (three pages of comments and the video search), as before", async () => {
-    setScaleOverridesForTesting({ absoluteMaxPages: 200 });
+  it("a fast source with a 50-row chunk (the earlier default): 60 chunks for 3,000 rows, at most four calls each (three pages of comments and the video search), as before", async () => {
+    setScaleOverridesForTesting({ absoluteMaxPages: 200, socialRowsPerChunk: 50 });
     const provider = new FakeProvider({ commentsPerVideo: 150, videos: 20, pageSize: 20 });
     installProvider(provider);
     const jobId = seedSocialJob({ target: 3000, videoCount: 20, perVideo: 150 });

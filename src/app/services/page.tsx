@@ -4,6 +4,7 @@ import { cleanArText, computePublicCalculatorQuote, getPublicCalculatorOptions }
 import { formatAr } from "@/lib/arabicDigits";
 import { publicCapabilityId } from "@/lib/publicCapabilityIds";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "@/functions/shared/decisionMakerPricing";
+import { formatPointsAr } from "@/lib/pointsFormat";
 
 export const metadata = { title: "كتالوج الخدمات" };
 
@@ -35,7 +36,7 @@ export default function ServicesCatalogPage() {
               <p className="m-0 text-sm"><strong>السعر:</strong> {peoplePrice
                 ? `${formatAr(peoplePrice.basePerson)} نقطة للشخص، و${formatAr(peoplePrice.workEmail)} نقطة للبريد المهني عند توفره، و${formatAr(peoplePrice.phone)} نقطة للهاتف المكتبي عند توفره.`
                 : quote
-                  ? `${formatAr(quote.unitPricePoints)} نقطة لكل ${options.find((option) => option.slug === service.slug)?.unitLabelAr || "سجل"}.`
+                  ? `${formatPointsAr(quote.unitPricePoints)} نقطة لكل ${options.find((option) => option.slug === service.slug)?.unitLabelAr || "سجل"}.`
                   : "يحسب النظام السعر بالنقاط بعد تحديد الخدمة المطابقة لموضوعك."}</p>
               <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من النظام بعد تحديد العدد والنطاق، وبحد أقصى {formatAr(PLATFORM_GUIDE.product.pointCap)} نقطة للمهمة.</p>
             </article>;

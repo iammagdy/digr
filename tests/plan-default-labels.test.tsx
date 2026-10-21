@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { createChatDb } from "./helpers/chatSession";
+import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import { formatStructuredClarificationAnswers } from "../src/functions/shared/clarification";
 import PlanQuoteCard from "../src/app/dashboard/chat/components/PlanQuoteCard";
 import { defaultCapFittedLineAr, defaultCapLineAr, defaultVolumeStatementAr } from "../src/lib/planDefaults";
@@ -127,10 +128,13 @@ describe("a number the customer chose is still «طلبت»", () => {
     expect(html).not.toContain('data-testid="plan-default-volume"');
     expect(html).not.toContain("قيمة افتراضية");
 
-    const tapped = planOf(await conversation(["عايز كل تعليقات ٣ فيديوهات على يوتيوب عن منتخب مصر", answer("volume_cap_required", CAP_Q, "٥٠٠ تعليق")]));
+    // a count tapped on the cap card that is larger than one job holds: the card says «طلبت» (30,000 asked, 15,810 held)
+    setProviderBalanceForTesting(10);
+    const tapped = planOf(await conversation(["عايز كل تعليقات ٣ فيديوهات على يوتيوب عن منتخب مصر", answer("volume_cap_required", CAP_Q, "٣٠٠٠٠ تعليق")]));
+    resetProviderBalanceCacheForTesting();
     expect(tapped.planQuote.defaultCap).toBeUndefined();
     const tappedHtml = card(tapped.planQuote);
-    expect(tappedHtml).toContain("طلبت ٥٠٠");
+    expect(tappedHtml).toContain("طلبت ٣٠٠٠٠");
     expect(tappedHtml).not.toContain("قيمة افتراضية");
     expect(tapped.contentAr).not.toContain("قيمة افتراضية");
   });

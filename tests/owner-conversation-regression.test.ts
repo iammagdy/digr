@@ -85,9 +85,9 @@ describe("A6: the owner's exact conversation, offline", () => {
     expect(first.planQuote).toBeDefined();
     expect(first.planQuote.outputFormats).toEqual(["xlsx"]);
     expect(first.planQuote.items[0].capabilitySlug).toBe("icypeas-companies-search");
-    // The live ledger for this exact request: reserve 11, charge 9.
+    // 3 company records at 3.168 points (measured cost 0.000576 USD x 5,500): charge 10, reserve 11 (the live ledger of the old whole-point price was 9 and 11).
     expect(first.planQuote.quotedPoints).toBe(11);
-    expect(first.contentAr).toContain("التكلفة المتوقعة: ٩ نقطة");
+    expect(first.contentAr).toContain("التكلفة المتوقعة: ١٠ نقطة");
     expect(first.contentAr).not.toMatch(STARTED);
     expect(JSON.stringify(first.planQuote)).not.toMatch(STARTED);
 
@@ -127,7 +127,7 @@ describe("A6: the owner's exact conversation, offline", () => {
     expect(reply.contentAr).toContain("بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص");
     expect(reply.contentAr).toContain("صناع قرار");
     expect(reply.contentAr).toContain("السعر المتوقع ٥٧٩ نقطة");
-    expect(reply.contentAr).toContain("الحجز المتوقع ٦٠٠ نقطة");
+    expect(reply.contentAr).toContain("الحجز المتوقع ٦٦٦ نقطة");
     expect(reply.contentAr).toContain("لا يُحجز رصيد قبل موافقتك");
 
     // Exactly one yes/no question, and it is the last sentence.
@@ -172,7 +172,7 @@ describe("A6: the owner's exact conversation, offline", () => {
     expect(reply.outputType).toBe("answer_question");
     expect(reply.planQuote).toBeUndefined();
     expect(reply.contentAr).toContain("السعر المتوقع ٥٧٩ نقطة");
-    expect(reply.contentAr).toContain("الحجز المتوقع ٦٠٠ نقطة");
+    expect(reply.contentAr).toContain("الحجز المتوقع ٦٦٦ نقطة");
     expect((reply.contentAr.match(/؟/g) || []).length).toBe(1);
   });
 });
@@ -210,8 +210,9 @@ describe("A2: «جاري سحب البيانات» appears only after an explici
     expect(page.match(/handleStartExecution/g)!.length).toBe(2); // definition + onStart wiring
     expect(page).toContain("onStart={handleStartExecution}");
     const card = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-    expect(card.match(/onStart\(quote\)/g)!.length).toBe(1);
-    expect(card).toContain("onClick={() => onStart(quote)}");
+    expect(card.match(/onStart\(quote/g)!.length).toBe(1);
+    // the approve click also carries the customer's own confirmation of a reserve above 600 points (a tick), never an inferred one
+    expect(card).toContain("onClick={() => onStart(quote, { confirmedLargeReserve: !needsLargeConfirm || largeReserveConfirmed })}");
   });
 
   it("the accept-quote route refuses a request that is not an explicit approval", () => {
