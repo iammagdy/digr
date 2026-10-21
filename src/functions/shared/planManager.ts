@@ -7,6 +7,7 @@ import {
   getEnabledCapabilitiesWithCoreServices,
   getRegistryPricingSettings,
   computeRegistryPointsPerUnit,
+  registryPointsPerUnit,
   getCustomerPriceUsdPerCatalogItem,
 } from "./capabilityRegistry";
 import {
@@ -14,6 +15,7 @@ import {
   calculateUnitPricePoints,
   calculateCapabilityUnitPricePoints,
   calculateCapabilityQuote,
+  unitPricePointsForCapability,
   generateQuoteExpiry,
   isQuoteExpired,
   DEFAULT_PRICING_SETTINGS,
@@ -28,6 +30,7 @@ import { callAtomicOrFallback } from "./atomicRpc";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
+import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -319,7 +322,7 @@ function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capabili
     platform: endpoint.platform,
     unitCostUsd: endpoint.catalogPriceUsd,
     pointsPerUnit: customerPriceUsdPerItem !== undefined
-      ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
+      ? registryPointsPerUnit(endpoint.slug, customerPriceUsdPerItem)
       : endpoint.pointsPerUnit,
     maxRows: endpoint.pagination?.maxLimit ? endpoint.pagination.maxLimit * 50 : 5000,
     enabled: true,
@@ -665,17 +668,20 @@ export async function createAndSaveManagedQuote(
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
 
-    const customerPriceUsdPerUnit =
-      typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0
-        ? cap.customerPriceUsdPerItem
-        : itemUnitCostUsd;
-    const unitPrice = calculateCapabilityUnitPricePoints(customerPriceUsdPerUnit, effectivePricing);
+    // ONE shared rule: a capability priced per delivered record is cost per record x 5,500, fractional; every other capability keeps its
+    // whole-point rule (see unitPricePointsForCapability).
+    const unitPrice = unitPricePointsForCapability(
+      { slug: cap.slug, unitCostUsd: itemUnitCostUsd, customerPriceUsdPerItem: cap.customerPriceUsdPerItem },
+      effectivePricing,
+    );
     if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
       throw new Error("سعر الوحدة غير صالح للخدمة المطلوبة.");
     }
 
     let effectiveItemUnitPrice = unitPrice;
-    let itemProviderCostUsd = itemUnitCostUsd;
+    // The provider cost the plan-time capacity gate uses: the cost of one DELIVERED record (worst source path) where it is known,
+    // not the price of one call.
+    let itemProviderCostUsd = recordCostFor(cap.slug)?.costUsdPerRecord ?? itemUnitCostUsd;
     if (cap.slug === "professional-people-search") {
       if (!(await requirePeopleSettlementRpc(tables))) {
         throw new Error(PEOPLE_SETTLEMENT_UNAVAILABLE_AR);
@@ -708,7 +714,7 @@ export async function createAndSaveManagedQuote(
     }
     const itemVolume = Math.max(1, it.targetVolumeMax || 1);
     const itemRawPoints = itemVolume * effectiveItemUnitPrice;
-    const itemReservation = Math.max(1, Math.ceil(itemRawPoints * (1 + effectivePricing.safetyBuffer)));
+    const itemReservation = Math.max(1, reserveForUnits(itemVolume, effectiveItemUnitPrice, effectivePricing.safetyBuffer));
 
     // Retain all required fields on the item
     it.capabilitySlug = cap.slug || it.capabilitySlug;
@@ -763,7 +769,7 @@ export async function createAndSaveManagedQuote(
     totalVolumeMax = 0;
     for (const it of plan.items) {
       const itemRawPoints = it.targetVolumeMax * (it.unitPricePoints || 1);
-      const itemReservation = Math.max(1, Math.ceil(itemRawPoints * (1 + effectivePricing.safetyBuffer)));
+      const itemReservation = Math.max(1, reserveForUnits(it.targetVolumeMax, it.unitPricePoints || 1, effectivePricing.safetyBuffer));
       it.rawPoints = itemRawPoints;
       it.itemReservation = itemReservation;
       it.reservedPoints = itemReservation;
@@ -792,7 +798,7 @@ export async function createAndSaveManagedQuote(
     totalVolumeMax = 0;
     for (const item of plan.items) {
       item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
-      item.itemReservation = Math.max(1, Math.ceil(item.rawPoints * (1 + effectivePricing.safetyBuffer)));
+      item.itemReservation = Math.max(1, reserveForUnits(item.targetVolumeMax, item.unitPricePoints || 1, effectivePricing.safetyBuffer));
       item.reservedPoints = item.itemReservation;
       totalRawPoints += item.rawPoints;
       totalQuotedPoints += item.itemReservation;
@@ -814,13 +820,18 @@ export async function createAndSaveManagedQuote(
     }
   } else {
     const reservationTotal = () => plan.items.reduce((sum, item) => {
-      const raw = item.targetVolumeMax * (item.unitPricePoints || 1);
-      return sum + Math.max(1, Math.ceil(raw * (1 + effectivePricing.safetyBuffer)));
+      return sum + Math.max(1, reserveForUnits(item.targetVolumeMax, item.unitPricePoints || 1, effectivePricing.safetyBuffer));
     }, 0);
     if (reservationTotal() > pointsCap) {
       pointsCapConstrained = true;
       const ratio = pointsCap / reservationTotal();
       for (const item of plan.items) item.targetVolumeMax = Math.max(1, Math.floor(item.targetVolumeMax * ratio));
+      // One item: the exact largest volume whose reserve fits the cap (the ratio step can leave a record or two unused).
+      if (plan.items.length === 1) {
+        const only = plan.items[0];
+        const exact = maxVolumeUnderCap(pointsCap, only.unitPricePoints || 1, effectivePricing.safetyBuffer);
+        if (exact >= 1) only.targetVolumeMax = exact;
+      }
       while (reservationTotal() > pointsCap) {
         const reducible = plan.items.filter((item) => item.targetVolumeMax > 1)
           .sort((a, b) => (b.unitPricePoints || 1) - (a.unitPricePoints || 1))[0];
@@ -832,7 +843,7 @@ export async function createAndSaveManagedQuote(
       totalVolumeMax = 0;
       for (const item of plan.items) {
         item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
-        item.itemReservation = Math.max(1, Math.ceil(item.rawPoints * (1 + effectivePricing.safetyBuffer)));
+        item.itemReservation = Math.max(1, reserveForUnits(item.targetVolumeMax, item.unitPricePoints || 1, effectivePricing.safetyBuffer));
         item.reservedPoints = item.itemReservation;
         totalRawPoints += item.rawPoints;
         totalQuotedPoints += item.itemReservation;
@@ -850,11 +861,10 @@ export async function createAndSaveManagedQuote(
       // Single-item exact formula preserving existing behavior
       const singleItem = plan.items[0];
       const unitPricePoints = singleItem.unitPricePoints || 1;
-      const costPerUnitWithBuffer = unitPricePoints * (1 + effectivePricing.safetyBuffer);
-      const maxAffordableUnits = Math.max(1, Math.floor(userBalance / costPerUnitWithBuffer));
+      const maxAffordableUnits = Math.max(1, maxVolumeUnderCap(userBalance, unitPricePoints, effectivePricing.safetyBuffer));
       const affordableQuotedPoints = Math.max(
         effectivePricing.minPoints,
-        Math.ceil(maxAffordableUnits * costPerUnitWithBuffer)
+        reserveForUnits(maxAffordableUnits, unitPricePoints, effectivePricing.safetyBuffer)
       );
       if (maxAffordableUnits < singleItem.targetVolumeMax) {
         downscaledOffer = {
@@ -874,7 +884,7 @@ export async function createAndSaveManagedQuote(
         const affordableUnits = Math.max(1, Math.floor(it.targetVolumeMax * scale));
         const itemUnitPrice = it.unitPricePoints || 1;
         const itemRaw = affordableUnits * itemUnitPrice;
-        const itemRes = Math.max(1, Math.ceil(itemRaw * (1 + effectivePricing.safetyBuffer)));
+        const itemRes = Math.max(1, reserveForUnits(affordableUnits, itemUnitPrice, effectivePricing.safetyBuffer));
         scaledUnitsTotal += affordableUnits;
         scaledPointsTotal += itemRes;
         scaledRawTotal += itemRaw;
@@ -1013,7 +1023,7 @@ export async function createAndSaveManagedQuote(
     outputFormats: plan.outputFormats || ["xlsx", "pdf", "csv"],
     targetVolumeMax: totalVolumeMax,
     unitPricePoints: quoteUnitPricePoints,
-    expectedPoints: Math.max(effectivePricing.minPoints, Math.ceil(totalRawPoints)),
+    expectedPoints: Math.max(effectivePricing.minPoints, plan.items.reduce((sum, item) => sum + chargeForUnits(item.targetVolumeMax, item.unitPricePoints || 1), 0)),
     quotedPoints: totalQuotedPoints,
     isAffordable,
     downscaledOffer,

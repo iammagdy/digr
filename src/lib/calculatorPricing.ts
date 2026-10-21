@@ -1,6 +1,6 @@
 import {
   calculateCapabilityQuote,
-  calculateCapabilityUnitPricePoints,
+  unitPricePointsForCapability,
   calculateFinalSettlement,
   DEFAULT_PRICING_SETTINGS,
   type PricingSettings,
@@ -12,8 +12,10 @@ import {
 import { PLATFORM_GUIDE } from "../functions/shared/platformGuide";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
 import { recordsInOneJob, reserveInOneJob } from "./jobSizing";
+import { reserveForUnits } from "./recordPricing";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
-export const DEFAULT_JOB_POINTS_CAP = 600;
+import { JOB_MAX_POINTS_CAP } from "./jobPointsCap";
+export const DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
 
 export interface PublicCalculatorOption {
   slug: string;
@@ -115,9 +117,8 @@ export function computePublicCalculatorQuote(
   const isPeople = cap.slug === "professional-people-search";
   const unitPricePoints = isPeople
     ? DECISION_MAKER_UNIT_PRICES_POINTS.basePerson + DECISION_MAKER_UNIT_PRICES_POINTS.workEmail + DECISION_MAKER_UNIT_PRICES_POINTS.phone
-    : calculateCapabilityUnitPricePoints(cap.customerPriceUsdPerItem && cap.customerPriceUsdPerItem > 0 ? cap.customerPriceUsdPerItem : cap.unitCostUsd, settings);
-  const rawPoints = safeTarget * unitPricePoints;
-  const reservedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
+    : unitPricePointsForCapability(cap, settings);
+  const reservedPoints = reserveForUnits(safeTarget, unitPricePoints, settings.safetyBuffer);
 
   const dailyCapPoints = typeof dailyCapPointsOverride === "number" && Number.isFinite(dailyCapPointsOverride) && dailyCapPointsOverride >= 0
     ? Math.floor(dailyCapPointsOverride)

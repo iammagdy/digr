@@ -98,6 +98,8 @@ export async function judgeVideos(input: {
   videos: VideoEntry[];
   request: { query?: string; region?: string };
   budgetUsd: number;
+  /** See `reviewSocialRows`: when set, the budget is a ceiling no call may cross. */
+  callCostEstimateUsd?: number;
   deadlineMs?: number;
 }): Promise<VideoJudgementOutcome> {
   const judgements = new Map<string, VideoJudgement>();
@@ -120,6 +122,7 @@ export async function judgeVideos(input: {
     kind: input.kind,
     rows: toReview.map(({ index, row }) => ({ index, row })),
     budgetUsd: input.budgetUsd,
+    callCostEstimateUsd: input.callCostEstimateUsd,
     deadlineMs: input.deadlineMs,
   });
   for (const entry of toReview) {

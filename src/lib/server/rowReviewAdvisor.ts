@@ -2,6 +2,8 @@ import { z } from "zod";
 import { getLlmPricingSettings } from "../../functions/shared/llmClient";
 import { resolveProviderKey } from "./providerKeys";
 import type { RelevanceDecision } from "./relevanceValidationLayer";
+import { DEFAULT_PRICING_SETTINGS, type PricingSettings } from "../../functions/shared/quotes";
+import { chargeForUnits } from "../recordPricing";
 
 /**
  * Claude's advisory review of the rows a source returned, read against the customer's own request.
@@ -242,14 +244,27 @@ export function applyAdvisoryToReviews<T extends RowReviewReason>(reviews: T[], 
 /** Rows sent to the reviewer in one call: small enough that its reply always fits the reply limit. */
 export const SOCIAL_REVIEW_ROWS_PER_CALL = 25;
 
+/** The share of a job's revenue the automatic review of its rows may spend (owner decision, "Option 3"). */
+export const REVIEW_BUDGET_SHARE = 0.2;
+
 /**
- * What the automatic review of one job may spend, in USD (about 0.0003 per row at the usual size, so this is roughly twice the
- * normal need): at least 5 cents, and it grows with the size of the request. It is the reviewer's cost only; it never changes what
- * the customer pays, which stays the unit price times the matching rows delivered.
+ * What one review call of a full batch (SOCIAL_REVIEW_ROWS_PER_CALL rows) costs at most, in USD: the measured average of a relevance
+ * review call (0.0047 USD). A call that would take the job's review spend past its budget is not started (see `reviewSocialRows`).
  */
-export function socialReviewCapUsd(targetMax: number): number {
-  const wanted = Math.max(1, Math.floor(Number(targetMax) || 1));
-  return Number(Math.min(1, Math.max(0.05, wanted * 0.0006)).toFixed(4));
+export const REVIEW_CALL_COST_ESTIMATE_USD = 0.0047;
+
+/**
+ * What the automatic review of one job may spend, in USD: 20% of the job's revenue. The revenue is the job's expected charge, ceil(target
+ * records x unit price), in points, computed here by code (never by the model), at 0.10 EGP a point and 55 EGP a dollar. Rounded DOWN
+ * to a millionth of a dollar so the budget never exceeds the share. A row the review cannot cover inside the budget is not delivered
+ * and not charged (fail closed); it is the reviewer's cost only and never changes what the customer pays, which stays
+ * ceil(delivered x unit price).
+ */
+export function socialReviewCapUsd(targetMax: number, unitPricePoints: number, settings: Pick<PricingSettings, "usdToEgp" | "creditValueEgp"> = DEFAULT_PRICING_SETTINGS): number {
+  const revenuePoints = chargeForUnits(Math.max(1, Math.floor(Number(targetMax) || 1)), Number(unitPricePoints));
+  if (!(revenuePoints > 0) || !(settings.usdToEgp > 0)) return 0;
+  const revenueUsd = (revenuePoints * settings.creditValueEgp) / settings.usdToEgp;
+  return Math.floor(revenueUsd * REVIEW_BUDGET_SHARE * 1_000_000 + 1e-6) / 1_000_000;
 }
 
 export type SocialReviewStop = "failed" | "cap" | "deadline";
@@ -282,6 +297,12 @@ export async function reviewSocialRows(input: {
   kind: string;
   rows: Array<{ index: number; row: Record<string, any> }>;
   budgetUsd: number;
+  /**
+   * What a full batch call costs at most (USD). When set, a call that would take the spend past `budgetUsd` is not started (so the
+   * budget is a ceiling, not a level the last call may cross); the rows of that batch stay unreviewed. Unset: a call starts while the
+   * spend is under the budget.
+   */
+  callCostEstimateUsd?: number;
   /** Epoch ms after which no new call is started. */
   deadlineMs?: number;
   now?: () => number;
@@ -289,11 +310,14 @@ export async function reviewSocialRows(input: {
   const now = input.now ?? Date.now;
   const outcome: SocialReviewOutcome = { verdicts: new Map(), attempts: [], costUsd: 0, unreviewed: [], stoppedBy: null };
   let halted = false;
+  let dearestCallPerRowUsd = 0;
+  const estimatePerRowUsd = Math.max(0, Number(input.callCostEstimateUsd) || 0) / SOCIAL_REVIEW_ROWS_PER_CALL;
   for (let start = 0; start < input.rows.length; start += SOCIAL_REVIEW_ROWS_PER_CALL) {
     const batch = input.rows.slice(start, start + SOCIAL_REVIEW_ROWS_PER_CALL);
+    const nextCallUsd = estimatePerRowUsd > 0 ? Math.max(estimatePerRowUsd, dearestCallPerRowUsd) * batch.length : 0;
     const stop: SocialReviewStop | null =
       halted ? "failed"
-      : outcome.costUsd >= input.budgetUsd ? "cap"
+      : outcome.costUsd >= input.budgetUsd || outcome.costUsd + nextCallUsd > input.budgetUsd ? "cap"
       : input.deadlineMs !== undefined && now() >= input.deadlineMs ? "deadline"
       : null;
     if (stop) {
@@ -309,6 +333,7 @@ export async function reviewSocialRows(input: {
     }
     outcome.attempts.push({ rows: batch.length, usage: result.usage, failure: result.failure ?? null, stopReason: result.stopReason ?? null, detail: result.detail ?? null });
     outcome.costUsd += Math.max(0, result.usage?.costUsd ?? 0);
+    dearestCallPerRowUsd = Math.max(dearestCallPerRowUsd, Math.max(0, result.usage?.costUsd ?? 0) / Math.max(1, batch.length));
     let missing = 0;
     for (const entry of batch) {
       const verdict = result.verdicts.get(entry.index);

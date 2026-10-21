@@ -1,3 +1,5 @@
+import { chargeForUnits, maxVolumeUnderCap, recordUnitPricePoints, reserveForUnits } from "../../lib/recordPricing";
+
 export interface PricingSettings {
   usdToEgp: number;
   markup: number;
@@ -78,19 +80,21 @@ export function calculateCapabilityQuote(
   targetVolumeMax: number,
   unitCostUsd: number,
   userBalance: number,
-  settings: PricingSettings = DEFAULT_PRICING_SETTINGS
+  settings: PricingSettings = DEFAULT_PRICING_SETTINGS,
+  /** The capability's slug: one priced per delivered record gets the shared fractional unit price. */
+  slug?: string
 ): QuoteCalculationResult {
-  const unitPricePoints = calculateCapabilityUnitPricePoints(unitCostUsd, settings);
+  const unitPricePoints = unitPricePointsForCapability({ slug, unitCostUsd }, settings);
   const rawPoints = targetVolumeMax * unitPricePoints;
-  const expectedPoints = Math.ceil(rawPoints);
-  const quotedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
+  const expectedPoints = chargeForUnits(targetVolumeMax, unitPricePoints);
+  const quotedPoints = reserveForUnits(targetVolumeMax, unitPricePoints, settings.safetyBuffer);
 
   const isAffordable = userBalance >= quotedPoints;
 
   let downscaledOffer: QuoteCalculationResult["downscaledOffer"] = undefined;
   if (!isAffordable && userBalance >= settings.minPoints && unitPricePoints > 0) {
-    const maxAffordableUnits = Math.max(1, Math.floor(userBalance / (unitPricePoints * (1 + settings.safetyBuffer))));
-    const affordableQuotedPoints = Math.ceil(maxAffordableUnits * unitPricePoints * (1 + settings.safetyBuffer));
+    const maxAffordableUnits = Math.max(1, maxVolumeUnderCap(userBalance, unitPricePoints, settings.safetyBuffer));
+    const affordableQuotedPoints = reserveForUnits(maxAffordableUnits, unitPricePoints, settings.safetyBuffer);
     if (maxAffordableUnits < targetVolumeMax) {
       downscaledOffer = {
         maxAffordableUnits,
@@ -126,15 +130,15 @@ export function calculateQuote(
 ): QuoteCalculationResult {
   const unitPricePoints = calculateUnitPricePoints(unitCostUsd, settings);
   const rawPoints = targetVolumeMax * unitPricePoints;
-  const expectedPoints = Math.ceil(rawPoints);
-  const quotedPoints = Math.ceil(rawPoints * (1 + settings.safetyBuffer));
+  const expectedPoints = chargeForUnits(targetVolumeMax, unitPricePoints);
+  const quotedPoints = reserveForUnits(targetVolumeMax, unitPricePoints, settings.safetyBuffer);
 
   const isAffordable = userBalance >= quotedPoints;
 
   let downscaledOffer: QuoteCalculationResult["downscaledOffer"] = undefined;
   if (!isAffordable && userBalance >= settings.minPoints && unitPricePoints > 0) {
-    const maxAffordableUnits = Math.max(1, Math.floor(userBalance / (unitPricePoints * (1 + settings.safetyBuffer))));
-    const affordableQuotedPoints = Math.ceil(maxAffordableUnits * unitPricePoints * (1 + settings.safetyBuffer));
+    const maxAffordableUnits = Math.max(1, maxVolumeUnderCap(userBalance, unitPricePoints, settings.safetyBuffer));
+    const affordableQuotedPoints = reserveForUnits(maxAffordableUnits, unitPricePoints, settings.safetyBuffer);
     if (maxAffordableUnits < targetVolumeMax) {
       downscaledOffer = {
         maxAffordableUnits,
@@ -170,7 +174,8 @@ export function calculateFinalSettlement(
   chargePoints: number;
   refundPoints: number;
 } {
-  const rawCharge = Math.ceil(deliveredUnits * unitPricePoints);
+  // exact: ceil(delivered x unit) in integer arithmetic (a fractional unit price must not drift by a point)
+  const rawCharge = chargeForUnits(deliveredUnits, unitPricePoints);
   // Cap at reserved points (platform absorbs any unexpected cost overrun)
   const chargePoints = Math.min(reservedPoints, Math.max(0, rawCharge));
   const refundPoints = Math.max(0, reservedPoints - chargePoints);
@@ -195,4 +200,19 @@ export function isQuoteExpired(expiresAt: string | Date, now: Date = new Date())
 export function generateQuoteExpiry(minutes: number = 30, from: Date = new Date()): string {
   const expiry = new Date(from.getTime() + minutes * 60 * 1000);
   return expiry.toISOString();
+}
+
+/**
+ * The unit price of a capability, in points, by the ONE shared rule: a capability priced per delivered record (X posts, TikTok and
+ * YouTube comments, Facebook posts and comments, companies) is cost per delivered record x 5,500, fractional; every other capability
+ * keeps its existing whole-point rule. The quote writer, the calculator and every public page call this.
+ */
+export function unitPricePointsForCapability(
+  cap: { slug?: string; unitCostUsd: number; customerPriceUsdPerItem?: number },
+  settings: PricingSettings = DEFAULT_PRICING_SETTINGS,
+): number {
+  const perRecord = recordUnitPricePoints(cap.slug, settings);
+  if (perRecord !== null) return perRecord;
+  const basis = typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0 ? cap.customerPriceUsdPerItem : cap.unitCostUsd;
+  return calculateCapabilityUnitPricePoints(basis, settings);
 }

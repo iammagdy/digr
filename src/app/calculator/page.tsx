@@ -11,6 +11,8 @@ import {
 import MissionEstimator from "@/components/calculator/MissionEstimator";
 import { decisionMakersPerRequestLineAr, recordsInOneJob } from "@/lib/jobSizing";
 import { capabilitySlugFromPublicId, publicCapabilityId } from "@/lib/publicCapabilityIds";
+import { unitPriceEgpLabelAr, unitPriceLabelAr } from "@/lib/pointsFormat";
+import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
 
 export default function PublicCalculatorPage() {
   const options = useMemo(() => getPublicCalculatorOptions(), []);
@@ -213,7 +215,7 @@ export default function PublicCalculatorPage() {
 
         {breakdown.isCapped && (
           <div role="status" className="rounded-[20px] border border-amber-500/40 bg-amber-500/10 p-5 text-xs leading-relaxed text-ink">
-            <strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({formatAr(breakdown.maxCapPoints || 600)} نقطة). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.
+            <strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({formatAr(breakdown.maxCapPoints || JOB_MAX_POINTS_CAP)} نقطة). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.
           </div>
         )}
 
@@ -263,7 +265,7 @@ export default function PublicCalculatorPage() {
                         {formatAr(effectiveTarget)}
                         {b.isCapped ? <span className="mr-1 text-[10px] text-mut">(سقف)</span> : null}
                       </td>
-                      <td className="px-3 py-2 font-mono">{formatAr(b.unitPricePoints)} نقطة</td>
+                      <td className="px-3 py-2 font-mono">{unitPriceLabelAr(b.unitPricePoints)}</td>
                       <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(effectiveCharged)} نقطة</td>
                       <td className="px-3 py-2 font-mono">{formatAr(effectiveChargedEgp)} ج.م</td>
                       <td className="px-3 py-2">
@@ -286,7 +288,7 @@ export default function PublicCalculatorPage() {
           </h2>
           <ul className="mb-0 mt-3 flex flex-col gap-2 pr-5 text-sm font-light leading-[1.9] text-ink2">
             <li>
-              تكلفة الوحدة الواحدة لهذه الخدمة: {formatAr(breakdown.unitPricePoints)} نقطة ({formatAr(breakdown.unitPriceEgp)} ج.م لكل {currentOption?.unitLabelAr}).
+              سعر هذه الخدمة: {unitPriceLabelAr(breakdown.unitPricePoints, currentOption?.unitLabelAr || "سجل")} ({unitPriceEgpLabelAr(breakdown.unitPricePoints, currentOption?.unitLabelAr || "سجل")}).
             </li>
             {breakdown.capabilitySlug === "professional-people-search" ? (
               <li data-testid="people-per-request">

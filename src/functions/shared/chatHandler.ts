@@ -1,3 +1,4 @@
+import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
 import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
@@ -32,6 +33,7 @@ import {
   getClosestVerifiedCapability,
   getCustomerPriceUsdPerCatalogItem,
   computeRegistryPointsPerUnit,
+  registryPointsPerUnit,
   UNVERIFIED_PLATFORM_MESSAGE_AR,
   RAW_SEED_CAPABILITIES,
   APPROVED_CAPABILITY_CATALOG,
@@ -1131,7 +1133,7 @@ export function catalogEndpointToCapability(ep: CatalogEndpointSummary): Capabil
     estimatedCostUsdPerUnit: ep.catalogPriceUsd,
     pointsPerUnit:
       customerPriceUsdPerItem !== undefined
-        ? computeRegistryPointsPerUnit(customerPriceUsdPerItem)
+        ? registryPointsPerUnit(ep.slug, customerPriceUsdPerItem)
         : ep.pointsPerUnit,
     maxItemsPerCall: ep.pagination.maxLimit || 100,
     estimatedSuccessRate: ep.observedSuccessRate,
@@ -1173,8 +1175,8 @@ function capabilityAsCatalogEndpoint(cap: Capability): CatalogEndpointSummary {
     catalogPriceUsd: cap.unitCostUsd,
     pointsPerUnit:
       typeof cap.customerPriceUsdPerItem === "number" && cap.customerPriceUsdPerItem > 0
-        ? computeRegistryPointsPerUnit(cap.customerPriceUsdPerItem)
-        : cap.pointsPerUnit ?? computeRegistryPointsPerUnit(cap.unitCostUsd),
+        ? registryPointsPerUnit(cap.slug, cap.customerPriceUsdPerItem)
+        : cap.pointsPerUnit ?? registryPointsPerUnit(cap.slug, cap.unitCostUsd),
     pagination: { type: "cursor", maxLimit: cap.maxRows },
     observedSuccessRate: cap.estimatedSuccessRate ?? 0.99,
     observedSamples: 1000,
@@ -3869,7 +3871,7 @@ export class ChatHandler {
             planSummaryText += `\n- ${defaultCapLineAr(defaultCapNow.noun, defaultCapNow.units)}`;
             // A default is not something the customer asked for: when the job cuts it, the plan says what it holds, never «you asked for».
             if (managedQuote.targetVolumeMax < defaultCapNow.units) {
-              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || 600 })}`;
+              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP })}`;
             }
           }
           // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
@@ -3891,7 +3893,7 @@ export class ChatHandler {
                   requestedUnits,
                   fittedUnits: managedQuote.targetVolumeMax,
                   unitPricePoints: managedQuote.unitPricePoints,
-                  pointsCap: managedQuote.pointsCap || 600,
+                  pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP,
                   safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
                   quotedPoints: managedQuote.quotedPoints,
                 })
@@ -3899,8 +3901,8 @@ export class ChatHandler {
             planSummaryText += capStatement
               ? `\n- ${capStatement}`
               : managedQuote.targetVolumeMax < requestedUnits
-              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
-              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${toArabicDigits(managedQuote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة.`;
+              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
+              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${toArabicDigits(managedQuote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة.`;
           }
           // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
           const explorationCandidate = isExplorationCandidate({
@@ -4038,7 +4040,7 @@ export class ChatHandler {
 
               finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
           if (managedQuote.pointsCapConstrained) {
-            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || 600)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
+            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
           }
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;

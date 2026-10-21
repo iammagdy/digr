@@ -65,6 +65,8 @@ export async function reviewSocialPage(input: {
   rows: Array<{ index: number; row: Record<string, any> }>;
   suspicious: Set<number>;
   budgetUsd: number;
+  /** See `reviewSocialRows`: when set, the budget is a ceiling no call may cross. */
+  callCostEstimateUsd?: number;
   deadlineMs?: number;
   random?: () => number;
   sampleSize?: number;
@@ -80,7 +82,7 @@ export async function reviewSocialPage(input: {
   };
   if (firstRows.length === 0) return outcome;
 
-  const first = await reviewSocialRows({ advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind, rows: firstRows, budgetUsd: input.budgetUsd, deadlineMs: input.deadlineMs });
+  const first = await reviewSocialRows({ advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind, rows: firstRows, budgetUsd: input.budgetUsd, callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs });
   for (const [index, verdict] of first.verdicts) outcome.verdicts.set(index, verdict);
   outcome.attempts.push(...first.attempts);
   outcome.costUsd += first.costUsd;
@@ -98,7 +100,7 @@ export async function reviewSocialPage(input: {
     if (rest.length > 0) {
       const second = await reviewSocialRows({
         advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind,
-        rows: rest.map((index) => byIndex.get(index)!), budgetUsd: Math.max(0, input.budgetUsd - first.costUsd), deadlineMs: input.deadlineMs,
+        rows: rest.map((index) => byIndex.get(index)!), budgetUsd: Math.max(0, input.budgetUsd - first.costUsd), callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs,
       });
       for (const [index, verdict] of second.verdicts) outcome.verdicts.set(index, verdict);
       outcome.attempts.push(...second.attempts);

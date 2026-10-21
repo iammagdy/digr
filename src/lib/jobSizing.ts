@@ -1,5 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
-import { volumeForPointsCap } from "./pointsCap";
+import { reserveForUnits, volumeForPointsCap } from "./pointsCap";
 
 /**
  * How many records ONE job holds, by the quote writer's own rule (`buildQuote` in planManager), so that every public number
@@ -31,7 +31,7 @@ export function recordsInOneJob(input: JobSizingInput): number {
 
 /** The hold for `volume` records inside one job: the buffered reserve, clipped to the cap for decision makers. */
 export function reserveInOneJob(volume: number, input: JobSizingInput): number {
-  const reserve = Math.ceil(Math.max(0, volume) * input.unitPricePoints * (1 + input.safetyBuffer));
+  const reserve = reserveForUnits(volume, input.unitPricePoints, input.safetyBuffer);
   return input.chargeCapped ? Math.min(reserve, Math.max(0, Math.floor(input.capPoints))) : reserve;
 }
 

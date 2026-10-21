@@ -1,4 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
+import { chargeForUnits, maxVolumeUnderCap, reserveForUnits } from "./recordPricing";
 
 /**
  * «عينة أولًا»: for a large job the customer can pay for a small separate sample first, then ask for the rest.
@@ -40,7 +41,7 @@ const NAMED_LINK = /^https?:\/\//i;
 /** The expected points of the whole REQUEST (not of what a cap left of it). */
 export function fullEstimatePoints(quote: SampleQuoteLike): number {
   const units = Math.max(quote.targetVolumeMax, quote.requestedVolumeMax ?? 0);
-  return Math.ceil(units * quote.unitPricePoints);
+  return chargeForUnits(units, quote.unitPricePoints);
 }
 
 /** The sample's target in points: 5% of the estimate, between 100 and 300. */
@@ -59,14 +60,14 @@ export function sampleOffer(quote: SampleQuoteLike, safetyBuffer = 0.15): Sample
   if (!Number.isFinite(unit) || unit <= 0) return null;
   const fullUnits = Math.max(quote.targetVolumeMax, quote.requestedVolumeMax ?? 0);
   const target = sampleTargetPoints(estimate);
-  const sampleUnits = Math.max(1, Math.floor(target / (unit * (1 + safetyBuffer))));
+  const sampleUnits = Math.max(1, maxVolumeUnderCap(target, unit, safetyBuffer));
   if (sampleUnits >= quote.targetVolumeMax) return null;
   // One record already costs more than a sample may: no sample is offered.
   if (unit * (1 + safetyBuffer) > SAMPLE_MAX_POINTS) return null;
   return {
     sampleUnits,
-    samplePoints: Math.ceil(sampleUnits * unit * (1 + safetyBuffer)),
-    sampleExpectedPoints: Math.ceil(sampleUnits * unit),
+    samplePoints: reserveForUnits(sampleUnits, unit, safetyBuffer),
+    sampleExpectedPoints: chargeForUnits(sampleUnits, unit),
     fullUnits,
     fullEstimatePoints: estimate,
   };
@@ -79,7 +80,7 @@ export function remainingUnits(fullUnits: number, deliveredInSample: number): nu
 
 /** The approximate total of sample plus the rest: what the sample was charged, plus the rest's expected points. */
 export function approximateTotalPoints(input: { sampleChargedPoints: number; remainingUnits: number; unitPricePoints: number }): number {
-  return Math.ceil(Math.max(0, input.sampleChargedPoints)) + Math.ceil(Math.max(0, input.remainingUnits) * input.unitPricePoints);
+  return Math.ceil(Math.max(0, input.sampleChargedPoints)) + chargeForUnits(input.remainingUnits, input.unitPricePoints);
 }
 
 /**
