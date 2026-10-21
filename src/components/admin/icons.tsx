@@ -5,6 +5,7 @@ export const ADMIN_IC = {
   topups: "M3 6h18v12H3zM3 10h18M7 15h4",
   jobs: "M4 6h16M4 12h16M4 18h10",
   operations: "M3 12h4l3-8 4 16 3-8h4",
+  conference: "M3 20h18M6 20V9M12 20V4M18 20v-8",
   finance: "M4 20V4M4 20h16M8 15l3-4 3 2 5-6",
   providers: "M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5",
   settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4",
@@ -22,11 +23,11 @@ export const ADMIN_IC = {
   moon: "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z",
 } as const;
 
-export type AdminPageId = "overview" | "users" | "topups" | "jobs" | "operations" | "finance" | "promo-codes" | "support" | "providers" | "audit" | "settings" | "requests";
+export type AdminPageId = "overview" | "users" | "topups" | "jobs" | "operations" | "finance" | "promo-codes" | "support" | "providers" | "audit" | "settings" | "requests" | "conference";
 
 export const ADMIN_PAGES: Array<[AdminPageId, string]> = [
   ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["topups", "طلبات الشحن"], ["jobs", "عمليات البحث"], ["operations", "التشغيل"],
-  ["finance", "الإيرادات والأرباح"], ["promo-codes", "الأكواد الترويجية"], ["support", "رسائل الدعم"], ["providers", "مزودو الخدمة"], ["audit", "سجل العمليات"], ["requests", "طلبات غير مدعومة"], ["settings", "الإعدادات"],
+  ["finance", "الإيرادات والأرباح"], ["promo-codes", "الأكواد الترويجية"], ["support", "رسائل الدعم"], ["providers", "مزودو الخدمة"], ["audit", "سجل العمليات"], ["requests", "طلبات غير مدعومة"], ["conference", "لوحة المؤتمر"], ["settings", "الإعدادات"],
 ];
 
 export const adminHref = (id: AdminPageId) => (id === "overview" ? "/admin" : `/admin/${id}`);
