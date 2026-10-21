@@ -35,6 +35,9 @@ export interface CapStatementInput {
 
 const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 
+/** Said beside a count that the live extraction capacity cut: why, and what to do. No provider word, no money, no technical name. */
+export const CAPACITY_LIMITED_REASON_AR = "سعة المصدر المتاحة الآن محدودة، ونوصي بإعادة المحاولة لاحقًا.";
+
 /** The reason sentence shown whenever the plan holds fewer records than the customer asked for. */
 export const VOLUME_LIMIT_REASON_AR = "يتحدد الحد بسبب سقف المهمة الحالي.";
 
