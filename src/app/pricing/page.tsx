@@ -2,7 +2,7 @@ import Link from "next/link";
 import CapacityCalculator from "@/components/pricing/CapacityCalculator";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { CAPACITY_AMOUNTS_EGP, PEOPLE_PRICE_POINTS, PRICING_FAQ_AR, buildPriceRows, capacityForAmount, capacityLineAr, peoplePerRequestLineAr, pointsForAmountEgp } from "@/lib/pricingPage";
-import { formatPointsAr } from "@/lib/pointsFormat";
+import { unitPriceLabelAr } from "@/lib/pointsFormat";
 
 export const metadata = { title: "الأسعار", description: "كم يكلّف جمع البيانات في ديجر: سعر كل نوع بالنقاط، وما يغطيه كل مبلغ، وحدود الطلب الواحد." };
 
@@ -56,7 +56,7 @@ export default function PricingPage() {
               </thead>
               <tbody>
                 {rows.map((row) => (
-                  <tr key={row.id} className="border-b border-ln"><td className="px-4 py-3 font-medium text-ink">{row.labelAr}</td><td className="px-4 py-3 font-light text-ink2">{formatPointsAr(row.unitPricePoints)} نقطة لكل {row.unitLabelAr}</td></tr>
+                  <tr key={row.id} className="border-b border-ln"><td className="px-4 py-3 font-medium text-ink">{row.labelAr}</td><td className="px-4 py-3 font-light text-ink2">{unitPriceLabelAr(row.unitPricePoints, row.unitLabelAr)}</td></tr>
                 ))}
                 <tr><td className="px-4 py-3 font-medium text-ink">صنّاع قرار</td><td className="px-4 py-3 font-light text-ink2">{toArabicDigits(PEOPLE_PRICE_POINTS.basePerson)} نقطة للشخص، و{toArabicDigits(PEOPLE_PRICE_POINTS.workEmail)} للبريد المهني، و{toArabicDigits(PEOPLE_PRICE_POINTS.phone)} للهاتف، عند توفرها فقط</td></tr>
               </tbody>

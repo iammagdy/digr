@@ -74,7 +74,7 @@ describe("through the chat: a count the customer wrote is the plan's count, a ve
       expect(quote.pointsCapConstrained).toBe(true);
       expect(quote.quotedPoints).toBe(5000);
       expect(quote.items[0].params.query).toBe("كرة القدم");
-      expect(body.contentAr).toContain("طلبت ٣٠٠٠٠");
+      expect(body.contentAr).toContain("طلبت ٣٠٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٥٨١٠ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
     } finally {
       resetProviderBalanceCacheForTesting();
     }

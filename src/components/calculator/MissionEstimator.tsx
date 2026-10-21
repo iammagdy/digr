@@ -6,7 +6,7 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { FAILURE_STATE_AR } from "@/lib/publicCopy";
 import { decisionMakersPerRequestLineAr } from "@/lib/jobSizing";
 import type { EstimateKind, EstimateResult } from "@/lib/missionEstimate";
-import { formatPointsAr } from "@/lib/pointsFormat";
+import { unitPriceLabelAr } from "@/lib/pointsFormat";
 
 /**
  * The public estimate form: describe the request (structured fields, or a free-text sentence) and get an approximate price in
@@ -140,7 +140,7 @@ export default function MissionEstimator() {
           {result?.status === "ok" ? (
             <>
               <p className="m-0 font-display text-[26px] font-medium leading-[1.4] text-ink">{answer.summaryAr}</p>
-              <p className="m-0 text-xs text-mut">لعدد {toArabicDigits(result.volume)} سجل، بسعر {formatPointsAr(result.unitPricePoints)} نقطة للسجل.</p>
+              <p className="m-0 text-xs text-mut">لعدد {toArabicDigits(result.volume)} سجل، بسعر {unitPriceLabelAr(result.unitPricePoints)}.</p>
             </>
           ) : null}
           {result && result.status !== "ok" ? <p className="m-0 text-sm text-ink">{result.notesAr.join(" ")}</p> : null}
