@@ -1,0 +1,62 @@
+{
+  "chat_greeting": {
+    "queries": 15,
+    "storageCalls": 0,
+    "rows": 7,
+    "dbKb": 1.4,
+    "storageReadKb": 0,
+    "storageWriteKb": 0,
+    "responseKb": 0.8
+  },
+  "chat_plan": {
+    "queries": 23,
+    "storageCalls": 0,
+    "rows": 15,
+    "dbKb": 6.7,
+    "storageReadKb": 0,
+    "storageWriteKb": 0,
+    "responseKb": 3.4
+  },
+  "results_view_100": {
+    "queries": 2,
+    "storageCalls": 1,
+    "rows": 1,
+    "dbKb": 0.3,
+    "storageReadKb": 37.3,
+    "storageWriteKb": 0,
+    "responseKb": 33.5
+  },
+  "results_view_1000": {
+    "queries": 2,
+    "storageCalls": 1,
+    "rows": 1,
+    "dbKb": 0.3,
+    "storageReadKb": 373.7,
+    "storageWriteKb": 0,
+    "responseKb": 315.4
+  },
+  "download_csv_100": {
+    "queries": 5,
+    "storageCalls": 3,
+    "rows": 2,
+    "dbKb": 0.5,
+    "storageReadKb": 37.3,
+    "storageWriteKb": 23.9
+  },
+  "download_xlsx_100": {
+    "queries": 5,
+    "storageCalls": 3,
+    "rows": 2,
+    "dbKb": 0.5,
+    "storageReadKb": 37.3,
+    "storageWriteKb": 13.8
+  },
+  "download_pdf_100": {
+    "queries": 5,
+    "storageCalls": 3,
+    "rows": 2,
+    "dbKb": 0.5,
+    "storageReadKb": 37.3,
+    "storageWriteKb": 25.8
+  }
+}

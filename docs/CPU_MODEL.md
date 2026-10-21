@@ -17,14 +17,20 @@ Allowance: 4 hours a month; remaining at the start of this work: **3.42 hours (3
 | wallet_balance | 0.575 |
 | accept_quote (proxy) | 5.305 |
 | nudge (proxy) | 5.305 |
-| results_view (proxy) | 9.879 |
 | artifacts (proxy) | 0.575 |
-| download (proxy) | 0.575 |
+| results view 100 | 7.852 |
+| results view 1000 | 69.265 |
+| download csv 100 (every download builds the file again) | 10.097 |
+| download xlsx 100 (every download builds the file again) | 34.021 |
+| download xlsx 1000 (every download builds the file again) | 288.212 |
+| download pdf 100 (every download builds the file again) | 166.120 |
 | whole 100-row mission, csv: 2 worker calls, last call (files and settlement) | 63.3 total, 41.2 last |
 | whole 100-row mission, xlsx: 2 worker calls, last call (files and settlement) | 227.1 total, 212.8 last |
 | whole 100-row mission, xlsx + pdf: 2 worker calls, last call (files and settlement) | 678.3 total, 638.2 last |
 
-A handler needs 0.05 to 25 ms; the observed average of 0.108 s per invocation is therefore almost all per-invocation overhead (framework, sign-in check, database client, cold starts). The one heavy item is a delivered PDF (about 430 ms raw) and Excel (about 170 ms raw).
+Heavy work per showcase mission, raw ms (worker side + results view + downloads of Excel and PDF): tiktok_channels_comments 857, x_event_window 934, facebook_page_posts 736, companies_decision_makers 1113.
+
+A handler needs 0.05 to 25 ms; the observed average of 0.108 s per invocation is therefore almost all per-invocation overhead (framework, sign-in check, database client, cold starts). The heavy items are building a PDF (about 170 ms raw per download at 100 rows) and an Excel file (about 35 ms at 100 rows, 290 ms at 1000); every download rebuilds the file from the saved data.
 
 ## 2. Model
 
@@ -51,18 +57,18 @@ One visitor, 90-minute session, chat only:
 
 | Mission | Rows | Worker calls | CPU seconds (base) | (stress) |
 |---|---|---|---|---|
-| tiktok_channels_comments | 86 | 2 | 2.35 | 5.56 |
-| x_event_window | 104 | 3 | 2.54 | 5.95 |
-| facebook_page_posts | 47 | 1 | 2.17 | 5.17 |
-| companies_decision_makers | 173 | 4 | 2.73 | 6.34 |
+| tiktok_channels_comments | 86 | 2 | 2.69 | 6.56 |
+| x_event_window | 104 | 3 | 2.95 | 7.18 |
+| facebook_page_posts | 47 | 1 | 2.34 | 5.69 |
+| companies_decision_makers | 173 | 4 | 3.41 | 8.40 |
 
 ## 5. 500 visitors, CPU-hours for the day against the 3.42 hours left
 
 | Scenario | Before: base | Before: stress | After: base | After: stress | After (stress) share of the remaining budget | Decision (after, stress) |
 |---|---|---|---|---|---|---|
 | chat_only | 1.57 h | 2.31 h | 0.35 h | 0.58 h | 17% | stay |
-| quarter_missions | 1.65 h | 2.51 h | 0.44 h | 0.78 h | 23% | stay |
-| all_missions | 1.91 h | 3.11 h | 0.69 h | 1.38 h | 40% | stay |
+| quarter_missions | 1.67 h | 2.55 h | 0.45 h | 0.82 h | 24% | stay |
+| all_missions | 1.96 h | 3.27 h | 0.75 h | 1.55 h | 45% | stay |
 
 Decision rule (brief): under 2 CPU-hours expected on Saturday stay on the plan (`stay`); 2 to 3 stay with reduced invocations and hourly monitoring (`reduce`); above 3 recommend a higher plan before Saturday (`upgrade`). It is applied to the stress figure.
 

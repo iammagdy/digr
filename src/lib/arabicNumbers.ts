@@ -264,6 +264,40 @@ function extractNumberFromWords(text: string): number | undefined {
   return undefined;
 }
 
+/** True when the word is a number word of a count («خمسين», «عشرة», «ثلاثين», «مية»): used to keep a quantity out of a search topic. */
+export function isNumberWord(word: string): boolean {
+  const normalized = normalizeNumberWord(String(word || ""));
+  return normalized.length > 1 && NUMBER_PHRASES.some((phrase) => phrase.words.includes(normalized));
+}
+
+/** The largest count a request is read as (the same ceiling the digit reading has always had); the plan then fits what it can. */
+const MAX_READ_COUNT = 100_000;
+
+const MAGNITUDE_TOKEN = "مليار|بليون|مليونين|مليون|ملايين|ألف|الف|آلاف|الاف|k";
+const magnitudeOf = (word: string): number => (/^(?:مليار|بليون)$/.test(word) ? 1e9 : /^(?:مليونين|مليون|ملايين)$/.test(word) ? 1e6 : 1e3);
+
+/**
+ * A count written with a magnitude word: «٥ آلاف», «٢ مليون», «5k», «عشرة آلاف», «خمسين ألف», «مليون». These used to be read as
+ * their small part («٢ مليون» as 2, «خمسين ألف» as 1050), which turned a very large request into a tiny plan without a word. They
+ * now read as what was asked, up to the ceiling above; the plan then says how much of it fits. «ألف» alone is left to the
+ * number-word reading, which already knows it.
+ */
+function magnitudeCount(normalized: string): number | undefined {
+  const withDigits = normalized.match(new RegExp(`(\\d+(?:[.,]\\d+)?)\\s*(${MAGNITUDE_TOKEN})(?![\\p{L}\\p{N}])`, "iu"));
+  if (withDigits) {
+    const value = parseFloat(withDigits[1].replace(",", ".")) * magnitudeOf(withDigits[2]);
+    return Number.isFinite(value) && value > 0 ? Math.min(Math.round(value), MAX_READ_COUNT) : undefined;
+  }
+  const word = new RegExp(`(?<![\\p{L}\\p{N}])(${MAGNITUDE_TOKEN})(?![\\p{L}\\p{N}])`, "iu").exec(normalized);
+  if (!word) return undefined;
+  const unit = magnitudeOf(word[1]);
+  const lead = extractNumberFromWords(normalized.slice(0, word.index).split(/\s+/).filter(Boolean).slice(-3).join(" "));
+  if (lead !== undefined && lead > 0 && lead < 1000) return Math.min(lead * unit, MAX_READ_COUNT);
+  if (/^(?:مليونين)$/.test(word[1])) return Math.min(2e6, MAX_READ_COUNT);
+  if (/^(?:مليون|مليار|بليون)$/.test(word[1])) return Math.min(unit, MAX_READ_COUNT);
+  return undefined;
+}
+
 /**
  * Extracts an explicit number from an Arabic or English request text.
  * Digits are read first (with a year guard), then number words.
@@ -273,6 +307,10 @@ export function extractNumberFromText(text: string): number | undefined {
 
   // A company-size or founding-year constraint carries numbers that are not the record count.
   const normalized = normalizeEasternArabicDigits(stripConstraintPhrases(text)).toLowerCase().trim();
+
+  // 0. A count with a magnitude word («٥ آلاف», «٢ مليون», «خمسين ألف»).
+  const large = magnitudeCount(normalized);
+  if (large !== undefined) return large;
 
   // 1. Explicit digits with context: "5 شركات", "30 شركة", "حجم 50", "عايز 10".
   const digitMatchWithEntity = normalized.match(

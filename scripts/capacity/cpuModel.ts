@@ -38,13 +38,14 @@ export function rawMsByRoute(m: Measurements): Record<RouteName, number> {
     llm_enabled: s("llm_enabled"),
     driver_status: s("driver_status"),
     wallet_balance: s("wallet_balance"),
-    // proxies, said out loud: approval and the stall nudge do a few reads and one write like a greeting turn; the results view parses
-    // and normalises a stored file like a question turn; artifacts and download hand out a signed link
+    // proxies, said out loud: approval and the stall nudge do a few reads and one write like a greeting turn; the artifact list is a
+    // few reads like the balance. The results view and the download are NOT proxied: their CPU depends on the number of rows and the
+    // file format and is measured (resultsViewRawMs, downloadsRawMs), so here only their per-invocation overhead is charged.
     accept_quote: s("chat_greeting"),
     nudge: s("chat_greeting"),
-    results_view: s("chat_question"),
+    results_view: 0,
     artifacts: s("wallet_balance"),
-    download: s("wallet_balance"),
+    download: 0,
   };
 }
 
@@ -118,6 +119,31 @@ export function missionWorkerRawMs(m: Measurements, shape: MissionShape): number
   return measured.lastCallMs + chunkMs * (missionChunks(shape.rows) - 1);
 }
 
+/** A measured cost at 100 and at 1000 rows, read at `rows` by straight lines (below 100 rows scaled down, above 1000 rows continued). */
+function byRows(m: Measurements, at100: string, at1000: string | null, rows: number): number {
+  const a = m.samples[at100]?.medianMs ?? 0;
+  const b = at1000 ? m.samples[at1000]?.medianMs : undefined;
+  if (rows <= 100) return (a * rows) / 100;
+  if (b === undefined) return (a * rows) / 100;
+  return a + ((b - a) * (rows - 100)) / 900;
+}
+
+/** Raw CPU (ms) of opening the results table: the saved file is read, parsed and normalised (measured at 100 and 1000 rows). */
+export function resultsViewRawMs(m: Measurements, rows: number): number {
+  return byRows(m, "results_view_100", "results_view_1000", rows);
+}
+
+/**
+ * Raw CPU (ms) of the downloads of one mission. Every download builds the file again from the saved data (so a stored file is never
+ * stale): CSV, Excel (measured at 100 and 1000 rows) and PDF (measured at 100 rows, continued in a straight line: an assumption).
+ */
+export function downloadsRawMs(m: Measurements, shape: MissionShape): number {
+  const csv = byRows(m, "download_csv_100", null, shape.rows);
+  const xlsx = byRows(m, "download_xlsx_100", "download_xlsx_1000", shape.rows);
+  const pdf = byRows(m, "download_pdf_100", null, shape.rows);
+  return shape.formats === "csv" ? csv : shape.formats === "xlsx" ? xlsx : xlsx + pdf;
+}
+
 /** Other invocations of a mission: the approval, the stall nudge, the results view, the artifact list and one download per format. */
 export function missionOtherInvocations(shape: MissionShape): Counts {
   return { accept_quote: 1, nudge: 1, results_view: 1, artifacts: 2, download: shape.formats === "csv" ? 1 : 2 };
@@ -155,7 +181,8 @@ export function cpuSeconds(counts: Counts, extraRawMs: number, m: Measurements, 
 export function missionCpuSeconds(shape: MissionShape, m: Measurements, params: ModelParams, a: SessionAssumptions = DEFAULT_SESSION): number {
   const workerCalls = missionChunks(shape.rows);
   const overhead = overheadOf(params, m, a);
-  return workerCalls * overhead + cpuSeconds(missionOtherInvocations(shape), missionWorkerRawMs(m, shape), m, params, a);
+  const heavyRawMs = missionWorkerRawMs(m, shape) + resultsViewRawMs(m, shape.rows) + downloadsRawMs(m, shape);
+  return workerCalls * overhead + cpuSeconds(missionOtherInvocations(shape), heavyRawMs, m, params, a);
 }
 
 export interface ScenarioSpec { id: "chat_only" | "quarter_missions" | "all_missions"; titleAr: string; missionShare: number }

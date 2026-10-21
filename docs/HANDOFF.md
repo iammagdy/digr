@@ -35,7 +35,8 @@ Every push to a PR branch creates a preview deployment and every merge creates a
 |---|---|---|---|
 | #183 | ce03b7e | harness (type error fixed), concurrent-approval tests, this evidence | `dpl_FwLsqE9GVtRkVu8BvAdxRz1tKm5B` READY, built ce03b7e |
 | #184 | 7cdd847 | Supabase free plan: no Realtime, fewer sign-in calls, static landing page, admin backup export, `docs/SUPABASE_FREE_PLAN.md` | **no automatic production deployment appeared** (see the process note); created by hand: `dpl_GjHSHmJrbARfEk44RAPzrA77AfVp` |
-| (this PR) | | CPU model, degraded mode, edge-cached status routes | |
+| #185 | 615b002 | CPU model (`docs/CPU_MODEL.md`), degraded mode (`DEGRADED_MODE`), edge-cached status routes, balance focus throttle | preview `dpl_8bdgPttzy7wMDkWRgEbXSnasg3a2` READY (the push built no preview by itself; created through the API); production: see below |
+| (this PR) | | measured database/storage/CPU per action, model uses measured downloads | |
 
 **Process note:** a merge whose tree is identical to a branch head Vercel already built (the branch had merged `main` and `main` had not moved) got NO production deployment. After every merge read `list_deployments` (target production) and compare the built SHA with the merge SHA; if it is missing, create the deployment from `main` at that SHA.
 
@@ -43,7 +44,9 @@ Every push to a PR branch creates a preview deployment and every merge creates a
 
 1. **The model-spend guard reads the whole day on every chat turn** (`checkGlobalDailySpendCap`, 1 request up to 900 rows, 5 at 2500, 12 at 10 000 and a fail-closed 503 at 50 000). Measured in `tests/conference-load-harness.test.ts`. Fix is proposed, not applied: `docs/proposals/spend-cap-read-cache.md`.
 2. **`/auth/v1/user` shares the sign-up/sign-in bucket (30 requests per 5 minutes per IP)** with sign-up. See `docs/SUPABASE_FREE_PLAN.md` (PR 2).
-3. Concurrency: 20 simultaneous approvals of one quote reserve once (`tests/accept-quote-concurrency.test.ts`; the database function itself is a stand-in, real locks are SQL and unverified).
+3. **A count written in words or with a magnitude word was ignored or misread** (fixed in the PR after #185): «٥ آلاف» read as 5, «٢ مليون» as 2, «خمسين ألف» as 1050, and the plan's own reader accepted digits only, so «ثلاثين تعليق» fell to the default of 500 (a 594-point hold the customer never asked for) with the sentence «لأنك لم تحدد عددًا». The words also leaked into the search topic («آلاف كرة القدم», «خمسين كرة القدم»), so the provider was asked a wrong query. Now: counts read as asked up to 100 000, the plan says how much of a very large request fits, and quantity words stay out of the topic. `tests/large-counts.test.ts`.
+4. **Every download rebuilds the file from the saved data** (Excel and PDF are CPU work on each click; by design, so a stored file is never stale). Measured in `docs/CPU_MODEL.md`; the model now charges it.
+5. Concurrency: 20 simultaneous approvals of one quote reserve once (`tests/accept-quote-concurrency.test.ts`; the database function itself is a stand-in, real locks are SQL and unverified).
 
 ---
 

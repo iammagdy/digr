@@ -3,7 +3,7 @@
  * A test compares the file with this output, so the document can never differ from the numbers the model computes.
  */
 import { readFileSync, writeFileSync } from "node:fs";
-import { BASE_PARAMS, CPU_ALLOWANCE_H, CPU_REMAINING_H, DEFAULT_SESSION, OWNER_AVG_INVOCATION_S, SCENARIOS, SHOWCASE_MISSIONS, STRESS_PARAMS, VISITORS, eventCpuHours, fittedOverheadS, missionCpuSeconds, missionChunks, rawMsByRoute, recommendHosting, roomCachedInvocations, sessionSeconds, visitorInvocations, type Counts, type Measurements } from "./cpuModel";
+import { BASE_PARAMS, downloadsRawMs, resultsViewRawMs, CPU_ALLOWANCE_H, CPU_REMAINING_H, DEFAULT_SESSION, OWNER_AVG_INVOCATION_S, SCENARIOS, SHOWCASE_MISSIONS, STRESS_PARAMS, VISITORS, eventCpuHours, fittedOverheadS, missionCpuSeconds, missionWorkerRawMs, missionChunks, rawMsByRoute, recommendHosting, roomCachedInvocations, sessionSeconds, visitorInvocations, type Counts, type Measurements } from "./cpuModel";
 
 export function loadMeasurements(path = "docs/capacity/cpu-measurements.json"): Measurements {
   return JSON.parse(readFileSync(path, "utf8")) as Measurements;
@@ -20,12 +20,17 @@ export function buildReport(m: Measurements = loadMeasurements()): string {
   lines.push(`Allowance: ${CPU_ALLOWANCE_H} hours a month; remaining at the start of this work: **${f(CPU_REMAINING_H, 2)} hours (3 h 25 m)**. Anchor: the owner's usage page shows an average of **${OWNER_AVG_INVOCATION_S} s per invocation**.`, "");
   lines.push("## 1. Measured: raw handler CPU (milliseconds on the build machine, in-memory fakes, no model, no network)", "");
   lines.push("| Route / work | Raw CPU (ms) |", "|---|---|");
-  for (const [route, ms] of Object.entries(raw)) lines.push(`| ${route}${["accept_quote", "nudge", "results_view", "artifacts", "download"].includes(route) ? " (proxy)" : ""} | ${f(ms, 3)} |`);
+  for (const [route, ms] of Object.entries(raw)) {
+    if (route === "results_view" || route === "download") continue;
+    lines.push(`| ${route}${["accept_quote", "nudge", "artifacts"].includes(route) ? " (proxy)" : ""} | ${f(ms, 3)} |`);
+  }
+  for (const name of ["results_view_100", "results_view_1000", "download_csv_100", "download_xlsx_100", "download_xlsx_1000", "download_pdf_100"]) lines.push(`| ${name.replace(/_/g, " ")}${name.startsWith("download") ? " (every download builds the file again)" : ""} | ${f(m.samples[name]?.medianMs ?? 0, 3)} |`);
   for (const key of ["mission_csv", "mission_xlsx", "mission_xlsx_pdf"]) {
     const x = m.extra[key];
     lines.push(`| whole 100-row mission, ${key.replace("mission_", "").replace("_", " + ")}: ${x.calls} worker calls, last call (files and settlement) | ${f(x.totalMs, 1)} total, ${f(x.lastCallMs, 1)} last |`);
   }
-  lines.push("", "A handler needs 0.05 to 25 ms; the observed average of 0.108 s per invocation is therefore almost all per-invocation overhead (framework, sign-in check, database client, cold starts). The one heavy item is a delivered PDF (about 430 ms raw) and Excel (about 170 ms raw).", "");
+  lines.push("", `Heavy work per showcase mission, raw ms (worker side + results view + downloads of Excel and PDF): ${SHOWCASE_MISSIONS.map((x) => `${x.id} ${f(missionWorkerRawMs(m, x) + resultsViewRawMs(m, x.rows) + downloadsRawMs(m, x), 0)}`).join(", ")}.`);
+  lines.push("", "A handler needs 0.05 to 25 ms; the observed average of 0.108 s per invocation is therefore almost all per-invocation overhead (framework, sign-in check, database client, cold starts). The heavy items are building a PDF (about 170 ms raw per download at 100 rows) and an Excel file (about 35 ms at 100 rows, 290 ms at 1000); every download rebuilds the file from the saved data.", "");
   lines.push("## 2. Model", "");
   lines.push("`cost(invocation) = overhead + raw_ms x speed / 1000`. The overhead is fitted so that the pre-change mix of one visitor session averages exactly 0.108 s. Two parameter sets:", "");
   lines.push("| Set | speed (hosting CPU slower than the build machine) | overhead per invocation | cold starts x seconds |", "|---|---|---|---|");
