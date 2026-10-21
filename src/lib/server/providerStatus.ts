@@ -130,18 +130,52 @@ export function parseTregBalance(body: unknown): { balanceMicro: number; heldMic
   return { balanceMicro, heldMicro: findInteger(body, HELD_KEYS) };
 }
 
-export async function fetchTregBalance(key: string, orgId: string | null, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<BalanceResult> {
+async function fetchTregBalanceWithBody(key: string, orgId: string | null, fetchFn: FetchFn, timeoutMs: number): Promise<{ result: BalanceResult; body: unknown }> {
   const checkedAt = new Date().toISOString();
-  if (!key) return { available: false, unavailableReason: "no_key", checkedAt };
-  if (!orgId) return { available: false, unavailableReason: "org_unknown", orgId: null, checkedAt };
+  if (!key) return { result: { available: false, unavailableReason: "no_key", checkedAt }, body: null };
+  if (!orgId) return { result: { available: false, unavailableReason: "org_unknown", orgId: null, checkedAt }, body: null };
   const { health, body } = await timedGet(`${tregBaseUrl()}/orgs/${encodeURIComponent(orgId)}/balance?limit=1`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
-  if (!health.ok) return { available: false, unavailableReason: "check_failed", orgId, checkedAt };
+  if (!health.ok) return { result: { available: false, unavailableReason: "check_failed", orgId, checkedAt }, body: null };
   const parsed = parseTregBalance(body);
-  if (!parsed) return { available: false, unavailableReason: "unreadable", orgId, checkedAt };
-  return { available: true, balanceMicro: parsed.balanceMicro, balanceUsd: parsed.balanceMicro / 1_000_000, heldMicro: parsed.heldMicro, orgId, checkedAt };
+  if (!parsed) return { result: { available: false, unavailableReason: "unreadable", orgId, checkedAt }, body };
+  return { result: { available: true, balanceMicro: parsed.balanceMicro, balanceUsd: parsed.balanceMicro / 1_000_000, heldMicro: parsed.heldMicro, orgId, checkedAt }, body };
+}
+
+export async function fetchTregBalance(key: string, orgId: string | null, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<BalanceResult> {
+  return (await fetchTregBalanceWithBody(key, orgId, fetchFn, timeoutMs)).result;
 }
 
 const statusCache = new Map<ProviderId, { at: number; snapshot: ProviderStatusSnapshot }>();
+
+/**
+ * The e-mail of the connected provider account, exactly as the provider's own identity or balance answer gives it. It is kept in memory only,
+ * beside the cached read it came from, and is NOT part of any snapshot or balance object: it never reaches the database, a log line, a job
+ * event, a customer screen or a plain-text export. Only the admin routes read it, through getProviderAccountEmail.
+ */
+const accountEmails = new Map<ProviderId, string | null>();
+
+const EMAIL_RE = /^[^\s@<>"'`,;()\[\]\\]{1,64}@[^\s@<>"'`,;()\[\]\\]{1,190}\.[A-Za-z]{2,24}$/;
+
+/**
+ * The account's own e-mail from the answer body, from the few places an identity answer puts the signed-in account (never a list of
+ * members or teams, so another person's address cannot be picked up). Null when the answer has none: no guess from a name or an id.
+ */
+export function extractProviderAccountEmail(body: unknown): string | null {
+  const b = body as any;
+  if (!b || typeof b !== "object") return null;
+  const candidates = [b.email, b.user?.email, b.account?.email, b.me?.email, b.profile?.email, b.owner?.email, b.current_user?.email, b.data?.email, b.data?.user?.email, b.data?.account?.email];
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const value = candidate.trim();
+    if (value.length <= 254 && EMAIL_RE.test(value)) return value;
+  }
+  return null;
+}
+
+/** The connected account's e-mail from the latest read of this provider, or null when the provider's answer had none. Admin routes only. */
+export function getProviderAccountEmail(provider: ProviderId): string | null {
+  return accountEmails.get(provider) ?? null;
+}
 
 /** The last balance the provider really answered, kept past the 60 s cache (and past a later failed check) for the plan capacity gate. */
 let lastGoodTregBalance: { balanceMicro: number; at: number } | null = null;
@@ -155,7 +189,7 @@ export function resetLastGoodProviderBalanceForTests(): void {
 }
 
 export function invalidateProviderStatusCache(provider?: ProviderId): void {
-  if (provider) statusCache.delete(provider); else statusCache.clear();
+  if (provider) { statusCache.delete(provider); accountEmails.delete(provider); } else { statusCache.clear(); accountEmails.clear(); }
 }
 
 /** Health plus balance, cached 60 seconds per server instance; the refresh button bypasses the cache. */
@@ -177,8 +211,12 @@ export async function getProviderStatus(
   } else if (!health.ok) {
     balance = { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt };
   } else {
-    balance = await fetchTregBalance(key, options?.orgIdOverride || extractTregOrgId(body), fetchFn, timeoutMs);
+    const fetched = await fetchTregBalanceWithBody(key, options?.orgIdOverride || extractTregOrgId(body), fetchFn, timeoutMs);
+    balance = fetched.result;
+    // The account's e-mail comes only from what these two answers already carry: the identity answer first, then the balance answer.
+    if (provider === "treg") accountEmails.set(provider, extractProviderAccountEmail(body) ?? extractProviderAccountEmail(fetched.body));
   }
+  if (provider === "treg" && !health.ok) accountEmails.set(provider, null);
   const snapshot: ProviderStatusSnapshot = { provider, health, balance, cachedAt: new Date(now()).toISOString(), cacheTtlMs: STATUS_CACHE_TTL_MS };
   statusCache.set(provider, { at: now(), snapshot });
   if (provider === "treg" && balance.available && typeof balance.balanceMicro === "number") lastGoodTregBalance = { balanceMicro: balance.balanceMicro, at: now() };

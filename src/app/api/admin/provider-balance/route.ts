@@ -3,7 +3,7 @@ import { getProviderBalanceStatus } from "../../../../functions/shared/providerS
 import { authenticateAdmin } from "../../../../lib/server/adminAuth";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import { resolveProviderKey } from "../../../../lib/server/providerKeys";
-import { getProviderStatus } from "../../../../lib/server/providerStatus";
+import { getProviderAccountEmail, getProviderStatus } from "../../../../lib/server/providerStatus";
 import { readProviderKeySettings } from "../../../../lib/server/providerKeyAdmin";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +34,8 @@ export async function GET(req: NextRequest) {
       checked_at: real.balance.checkedAt,
     },
     health: real.health,
+    // The connected account's e-mail as the provider's own answer gave it (this route is admin-only); null when it had none.
+    account_email: getProviderAccountEmail("treg"),
     available_balance_is_estimate: true,
     available_balance_usd: status.availableBalanceUsd,
     today_spend_usd: status.todaySpendUsd,

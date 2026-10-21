@@ -7,7 +7,7 @@ import {
 import { envKeyConfigured, getLastAuthRejection, invalidateProviderKeyCache, resolveProviderKey, type AuthRejection, type KeySource, type StoreState } from "./providerKeys";
 import { selectAllRows } from "./selectAll";
 import {
-  DEFAULT_LOW_BALANCE_THRESHOLD_USD, checkProviderKey, getProviderStatus, invalidateProviderStatusCache, isLowBalance,
+  DEFAULT_LOW_BALANCE_THRESHOLD_USD, checkProviderKey, getProviderAccountEmail, getProviderStatus, invalidateProviderStatusCache, isLowBalance,
   type FetchLike, type ProviderStatusSnapshot,
 } from "./providerStatus";
 
@@ -252,6 +252,8 @@ export interface ProviderTabState {
   encryptionConfigured: boolean;
   envKeyConfigured: boolean;
   status: ProviderStatusSnapshot;
+  /** The e-mail of the connected provider account as the provider's own answer gave it (admin only), or null when it had none. Never the team id. */
+  accountEmail: string | null;
   authRejection: AuthRejection | null;
   settings: ProviderKeySettings;
   lowBalance: boolean;
@@ -321,6 +323,7 @@ export async function loadProviderTabState(
     encryptionConfigured,
     envKeyConfigured: envKeyConfigured(provider),
     status,
+    accountEmail: provider === "treg" ? getProviderAccountEmail("treg") : null,
     authRejection,
     settings,
     lowBalance: provider === "treg" && isLowBalance(status.balance, settings.lowBalanceThresholdUsd),
