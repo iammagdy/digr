@@ -44,6 +44,11 @@ export function highOffTopicEventAr(rate: number): string {
   return `نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة (نحو ${toArabicDigits(Math.round(rate * 100))}٪ من العيّنة)، لذلك راجعنا كل سجلاتها قبل التسليم.`;
 }
 
+/** A failure worth one more try: the call timed out, the network failed, the reply was unreadable, or the service was busy or down. Not a missing key or a disabled reviewer. */
+export function isRetryableFailure(failure: string | null | undefined): boolean {
+  return failure === "timeout" || failure === "network" || failure === "bad_reply" || failure === "http_429" || /^http_5\d\d$/.test(String(failure || ""));
+}
+
 export interface SampledReviewOutcome {
   verdicts: Map<number, AdvisoryVerdict>;
   attempts: SocialReviewAttempt[];
@@ -82,17 +87,40 @@ export async function reviewSocialPage(input: {
   };
   if (firstRows.length === 0) return outcome;
 
-  const first = await reviewSocialRows({ advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind, rows: firstRows, budgetUsd: input.budgetUsd, callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs });
+  const review = (rows: typeof firstRows, budgetUsd: number) => reviewSocialRows({ advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind, rows, budgetUsd, callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs });
+  let first = await review(firstRows, input.budgetUsd);
+  const attempts = [...first.attempts];
+  let firstCostUsd = first.costUsd;
+  // A review whose call failed (a timeout, an error, an unreadable reply) and produced no verdict at all is tried ONCE more, inside the same
+  // budget and deadline; two failures in a row are not tried a third time.
+  if (first.verdicts.size === 0 && first.stoppedBy === "failed" && first.attempts.some((attempt) => isRetryableFailure(attempt.failure))) {
+    const retry = await review(firstRows, Math.max(0, input.budgetUsd - first.costUsd));
+    attempts.push(...retry.attempts);
+    firstCostUsd += retry.costUsd;
+    first = { ...retry, attempts, costUsd: firstCostUsd };
+  }
   for (const [index, verdict] of first.verdicts) outcome.verdicts.set(index, verdict);
-  outcome.attempts.push(...first.attempts);
-  outcome.costUsd += first.costUsd;
+  outcome.attempts.push(...attempts);
+  outcome.costUsd += firstCostUsd;
   outcome.stoppedBy = first.stoppedBy;
   // Only the doubtful rows have to be confirmed at this point; an unreviewed row of the sample is simply not part of the estimate.
   outcome.unreviewed.push(...first.unreviewed.filter((index) => input.suspicious.has(index)));
 
   const estimate = estimateOffTopic(sample, first.verdicts);
-  const strictPage = estimate.rate !== null && estimate.rate > OFF_TOPIC_STRICT_ABOVE;
+  // FAIL CLOSED: when the review of the sample failed (no verdict for any sampled row, after the one retry), the page is treated as strict: no row
+  // of it is delivered on the deterministic gate alone. Not being able to check is never read as «on topic». (A review that did not run because
+  // the budget or the time was used up is a different case and is left as it was.)
+  const reviewFailed = sample.length > 0 && estimate.reviewed === 0 && attempts.some((attempt) => attempt.failure);
+  const strictPage = reviewFailed || (estimate.rate !== null && estimate.rate > OFF_TOPIC_STRICT_ABOVE);
   if (sample.length > 0) outcome.sample = { ...estimate, strictPage };
+
+  if (reviewFailed) {
+    // The reviewer is unavailable: no second call for the rest of the page; every presumed row waits in the review sheet, not delivered, not charged.
+    for (const index of presumed) outcome.mustConfirm.add(index);
+    outcome.unreviewed.push(...presumed);
+    outcome.sampleOnly.clear();
+    return outcome;
+  }
 
   if (strictPage) {
     const rest = presumed.filter((index) => !sample.includes(index));

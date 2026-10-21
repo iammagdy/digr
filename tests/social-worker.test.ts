@@ -573,17 +573,51 @@ describe("worker: social jobs", () => {
       expect(json.deliveredUnits).toBe(30);
     });
 
-    it("a review that cannot be read holds the doubtful rows back but never the ordinary ones, and the job goes on", async () => {
+    it("a review that cannot be read (after the one retry) holds the whole page back: nothing is delivered on the gate alone, the reserve is released and nothing is charged", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
       useSource(async () => ok({ ok: true, rows: [...ordinary(6), ...reactions(4)] }, 600));
-      strict(async () => ({ verdicts: new Map(), usage: usage(0.002), failure: "bad_reply", stopReason: "max_tokens" }));
+      let calls = 0;
+      strict(async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.002), failure: "bad_reply", stopReason: "max_tokens" }; });
 
       const { json } = await runAllChunks();
 
+      expect(calls).toBe(2);
+      expect(json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      expect(lines().some((line) => line.includes("تعذّر التحقق الآلي من ملاءمة ١٠ سجل"))).toBe(true);
+    });
+
+    it("a review that times out delivers nothing: the job never delivers a row it could not check", async () => {
+      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
+      useSource(async () => ok({ ok: true, rows: ordinary(10) }, 600));
+      let calls = 0;
+      strict(async () => { calls += 1; return { verdicts: new Map(), usage: null, failure: "timeout" }; });
+
+      const { json } = await runAllChunks();
+
+      expect(calls).toBe(2);
+      expect(json.released).toBe(true);
+      expect(json.deliveredUnits ?? 0).toBe(0);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      expect(db.rpcCalls.some((call) => call.name === "release_job_atomic")).toBe(true);
+    });
+
+    it("a timeout on the first try and a good answer on the retry: the page is delivered and charged per delivered row", async () => {
+      resetDb("social-x-posts", { query: TOPIC }, 10, 5);
+      useSource(async () => ok({ ok: true, rows: ordinary(10) }, 600));
+      let calls = 0;
+      strict(async (input) => {
+        calls += 1;
+        if (calls === 1) return { verdicts: new Map(), usage: null, failure: "timeout" };
+        return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.004), failure: null };
+      });
+
+      const { json } = await runAllChunks();
+
+      expect(calls).toBe(2);
       expect(json.done).toBe(true);
-      expect(json.deliveredUnits).toBe(6);
-      expect(json.settle.charged_credits).toBe(6 * 5);
-      expect(lines().some((line) => line.includes("تعذّر التحقق الآلي من ملاءمة ٤ سجل"))).toBe(true);
+      expect(json.deliveredUnits).toBe(10);
+      expect(json.settle.charged_credits).toBe(10 * 5);
     });
 
     it("when nothing on the page could be delivered without the review and the review fails, the reserve is released and paging stops", async () => {
@@ -631,7 +665,8 @@ describe("worker: social jobs", () => {
       resetDb("social-x-posts", { query: TOPIC }, 30, 5);
       let page = 0;
       useSource(async () => { page += 1; return ok({ ok: true, rows: page === 1 ? [...ordinary(2), ...reactions(2)] : [], next_cursor: page === 1 ? "next" : undefined }, 600); });
-      strict(async () => ({ verdicts: new Map(), usage: { inputTokens: 900, outputTokens: 1200, costUsd: 0.003, model: "claude-haiku-5-5", latencyMs: 40 }, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100" }));
+      // a reply cut in the middle: the verdicts it did carry (the ordinary rows) are kept, the rest has none; with no verdict at all the page would be held back and the job released
+      strict(async (input) => ({ verdicts: new Map(input.rows.filter(({ row }) => String(row.tweet_id).startsWith("p")).map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: { inputTokens: 900, outputTokens: 1200, costUsd: 0.003, model: "claude-haiku-5-5", latencyMs: 40 }, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100" }));
 
       await callWorker();
 
