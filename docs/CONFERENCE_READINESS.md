@@ -63,6 +63,8 @@ Every template's default count above the cap is cut by the plan with the reason;
 | Hosting CPU model | `docs/CPU_MODEL.md` (calibrated to the owner's 0.108 s average invocation): after this work 0.35 to 0.75 h (base) and 0.58 to 1.55 h (stress) for 500 visitors against 3.42 h left; before this work 1.57 to 1.96 h (base) and 2.31 to 3.27 h (stress). The status poll was about 85 function runs per visitor per 90 minutes and is now answered by the edge |
 | Egress | 0.2 GB (chat only), 0.45 GB (25% missions), 1.2 GB (all missions) of 5 GB |
 
+**Diagnostics that outlive the one-hour runtime log.** No new table was added. The day's history is in the tables the dashboard already reads: `messages` (every turn with its status), `jobs` and `job_events` (every request and what happened to it, in plain Arabic), `llm_usage` (every model call with its latency and cost), `credit_ledger`, `capability_requests` (what was asked and not served), `profiles` (sign-up times). Export them with `/admin/export` (five of them) or read them in the dashboard of the database. The per-turn stage timings of the chat route (`chat_stage_timings`) are console output only and are lost after an hour; persisting the slow ones (for example in `admin_audit_log`) is possible and is left as an owner decision because it would add rows to a table people read.
+
 ## 5. Part C: long jobs (audit of `src/app/api/worker/chunk`, `cron/*`, `jobs/[id]/nudge`, `lib/server/job*`)
 
 | Question | Answer (code and tests) |
