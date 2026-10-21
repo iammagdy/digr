@@ -1,4 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
+import { reserveForUnits } from "./recordPricing";
 
 /**
  * The live per-job points cap is JOB_MAX_POINTS_CAP (600, `src/lib/jobPointsCap.ts`), enforced by the quote builder and the settlement function.
@@ -72,6 +73,6 @@ export function volumeLimitStatementAr(input: {
 export function capStatementAr(input: CapStatementInput): string | null {
   if (input.fittedUnits >= input.requestedUnits) return null;
   const unit = input.unitLabelAr || "سجل";
-  const fullReserve = Math.ceil(input.requestedUnits * input.unitPricePoints * (1 + input.safetyBuffer));
+  const fullReserve = reserveForUnits(input.requestedUnits, input.unitPricePoints, input.safetyBuffer);
   return `طلبك الكامل (${n(input.requestedUnits)} ${unit}) يحتاج حجز حوالي ${n(fullReserve)} نقطة، وهو أكبر من سقف الطلب الواحد (${n(input.pointsCap)} نقطة). لذلك تشمل الخطة ${n(input.fittedUnits)} ${unit} بحجز ${n(input.quotedPoints)} نقطة، وهذا أكبر عدد يناسب السقف. تقدر تطلب الباقي في طلب منفصل بعد اكتمال هذا الطلب.`;
 }

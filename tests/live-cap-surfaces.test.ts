@@ -19,10 +19,11 @@ beforeEach(() => { live.value = 200; });
 
 describe("every public surface reads the same live daily limit", () => {
   it("the estimate route sizes one job with the live limit, and with the default when it cannot be read", async () => {
-    const withLive: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.1"))).json();
+    // companies: the points cap, not the service's record ceiling, limits one job (54 records at a 200-point limit, 164 at 600)
+    const withLive: any = await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.1"))).json();
     expect(withLive.result.jobCapPoints).toBe(200);
     live.value = undefined;
-    const withDefault: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.2"))).json();
+    const withDefault: any = await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.2"))).json();
     expect(withDefault.result.jobCapPoints).toBe(600);
     expect(withDefault.result.maxVolumeInOneJob).toBeGreaterThan(withLive.result.maxVolumeInOneJob);
   });

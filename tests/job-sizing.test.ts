@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { createChatDb } from "./helpers/chatSession";
-import { recordsInOneJob, reserveInOneJob } from "../src/lib/jobSizing";
+import { limitedByServiceCeiling, recordsInOneJob, reserveInOneJob } from "../src/lib/jobSizing";
 import { estimateMission } from "../src/lib/missionEstimate";
 import { computePublicCalculatorQuote } from "../src/lib/calculatorPricing";
 import { SEGMENTS, segmentExample } from "../src/lib/segments";
@@ -89,11 +89,11 @@ const writerPeople = async (count: string) => {
   });
   return res.planQuote;
 };
-const writerXPosts = async () => {
+const writerXPosts = async (asked = "٥٠٠") => {
   const db = createChatDb();
   const handler = new ChatHandler(db as any);
   (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
-  const res: any = await handler.handleUserMessage({ userId: "u_x", message: "هات ٥٠٠ تغريدة عن الغلاء على إكس آخر شهر", userBalance: 5000 });
+  const res: any = await handler.handleUserMessage({ userId: "u_x", message: `هات ${asked} تغريدة عن الغلاء على إكس آخر شهر`, userBalance: 5000 });
   return res.planQuote;
 };
 
@@ -112,6 +112,17 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     expect(recordsInOneJob({ unitPricePoints: 5, capPoints: 0, safetyBuffer: BUFFER })).toBe(0);
   });
 
+  it("a service's own record ceiling lowers one job's size and never raises it", () => {
+    const base = { unitPricePoints: 0.11715, capPoints: 600, safetyBuffer: BUFFER };
+    expect(recordsInOneJob(base)).toBe(4453);
+    expect(recordsInOneJob({ ...base, maxRecords: 500 })).toBe(500);
+    expect(recordsInOneJob({ ...base, maxRecords: 100000 })).toBe(4453);
+    expect(recordsInOneJob({ ...base, maxRecords: 0 })).toBe(4453);
+    expect(limitedByServiceCeiling({ ...base, maxRecords: 500 })).toBe(true);
+    expect(limitedByServiceCeiling({ ...base, maxRecords: 100000 })).toBe(false);
+    expect(limitedByServiceCeiling(base)).toBe(false);
+  });
+
   it("decision makers: the public estimate says what the real quote says (3 people, 600 points held), for any size asked", async () => {
     for (const asked of ["١٠٤", "٢٠٠"]) {
       const plan = await writerPeople(asked);
@@ -122,12 +133,25 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     }
   });
 
-  it("posts on X: the public estimate says what the real quote says (104 posts, 598 held)", async () => {
-    const plan = await writerXPosts();
-    expect(plan.targetVolumeMax).toBe(104);
-    expect(plan.quotedPoints).toBe(598);
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 104, fitsInOneJob: false });
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 104 })).toMatchObject({ reservePoints: 598, fitsInOneJob: true });
+  it("posts on X: the public estimate says what the real quote says (500 posts fit whole: 68 held; 40,000 asked are cut to the service's 500)", async () => {
+    const small = await writerXPosts();
+    expect(small.targetVolumeMax).toBe(500);
+    expect(small.quotedPoints).toBe(68);
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 500, fitsInOneJob: true, reservePoints: 68 });
+    const large = await writerXPosts("٤٠٠٠٠");
+    expect(large.targetVolumeMax).toBe(500);
+    expect(large.quotedPoints).toBe(68);
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 40000 })).toMatchObject({ maxVolumeInOneJob: 500, fitsInOneJob: false });
+  });
+
+  it("companies: the public estimate says what the real quote says (the points cap holds 164: 598 held)", async () => {
+    const handler = new ChatHandler(createChatDb() as any);
+    (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
+    const res: any = await handler.handleUserMessage({ userId: "u_c", message: "عايز ٥٠٠ شركة كهرباء في مصر", userBalance: 20000 });
+    expect(res.planQuote.targetVolumeMax).toBe(164);
+    expect(res.planQuote.quotedPoints).toBe(598);
+    expect(estimateMission({ kind: "companies", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 164, fitsInOneJob: false });
+    expect(estimateMission({ kind: "companies", volume: 164 })).toMatchObject({ reservePoints: 598, fitsInOneJob: true });
   });
 
   const SERVICES: Array<{ label: string; input: any; slug: string }> = [
@@ -169,12 +193,15 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
   });
 
   it("a lower live limit lowers every surface alike; none of them changes a cap value", () => {
-    const fresh: any = estimateMission({ kind: "posts", platform: "x", volume: 500 });
-    const live: any = estimateMission({ kind: "posts", platform: "x", volume: 500, dailyCapPoints: 200 });
+    // companies: the points cap, not the service's record ceiling, limits one job (164 records at the cap of 600, 54 at a live limit of 200)
+    const fresh: any = estimateMission({ kind: "companies", volume: 500 });
+    const live: any = estimateMission({ kind: "companies", volume: 500, dailyCapPoints: 200 });
     expect(fresh.jobCapPoints).toBe(600);
     expect(live.jobCapPoints).toBe(200);
     expect(live.maxVolumeInOneJob).toBeLessThan(fresh.maxVolumeInOneJob);
-    const detailed = computePublicCalculatorQuote("social-x-posts", 500, 500, undefined, undefined, undefined, undefined, 200);
+    const detailed = computePublicCalculatorQuote("icypeas-companies-search", 500, 500, undefined, undefined, undefined, undefined, 200);
     expect(detailed.maxCappedVolume).toBe(live.maxVolumeInOneJob);
+    expect(live.maxVolumeInOneJob).toBe(54);
+    expect(fresh.maxVolumeInOneJob).toBe(164);
   });
 });

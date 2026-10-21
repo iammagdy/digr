@@ -13,7 +13,7 @@ import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { missionStepsAr } from "@/lib/dependentSteps";
 import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
-import { pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
+import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -227,7 +227,7 @@ export default function PlanQuoteCard({
   const balance = available ?? quote.userBalance;
   const low = available !== null ? available < quote.quotedPoints : !quote.isAffordable;
   const shortPts = Math.max(0, quote.quotedPoints - balance);
-  const expectedPoints = quote.expectedPoints ?? Math.ceil(quote.unitPricePoints * quote.targetVolumeMax);
+  const expectedPoints = quote.expectedPoints ?? chargeForUnits(quote.targetVolumeMax, quote.unitPricePoints);
   const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
   const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] || "ملف بيانات");
 

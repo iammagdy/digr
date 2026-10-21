@@ -1,3 +1,4 @@
+import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
 import { describe, it, expect, vi } from "vitest";
 import { extractParamDisplayString } from "../src/lib/planParameters";
 import {
@@ -238,8 +239,8 @@ describe("Company Research Capability & Quote Math", () => {
     expect(compCap?.maxRows).toBe(500);
   });
 
-  it("calculates 3 points per record and 18 points reserved for 5 company records based on verified live 0.00038 USD cost", () => {
-    // 0.00038 USD * 55 EGP * 10 markup / 0.10 EGP = 2.09 -> ceil = 3 points per unit
+  it("calculates 3.168 points per delivered company record (measured cost 0.000576 USD x 5,500): 5 records charge 16 and reserve 19", () => {
+    // the whole-point rule on the call price is unchanged for other services: 0.00038 USD * 55 EGP * 10 markup / 0.10 EGP = 2.09 -> ceil = 3
     const unitPrice = calculateCapabilityUnitPricePoints(0.00038, DEFAULT_PRICING_SETTINGS);
     expect(unitPrice).toBe(3);
 
@@ -251,14 +252,14 @@ describe("Company Research Capability & Quote Math", () => {
       DEFAULT_PRICING_SETTINGS
     );
 
-    expect(quoteBreakdown.unitPricePoints).toBe(3);
+    expect(quoteBreakdown.unitPricePoints).toBe(3.168);
     expect(quoteBreakdown.targetVolumeMax).toBe(5);
-    // 5 * 3 = 15 raw points * 1.15 buffer = 17.25 -> ceil = 18 points reserved
-    expect(quoteBreakdown.reservedPoints).toBe(18);
-    expect(quoteBreakdown.chargedPoints).toBe(15);
+    // 5 * 3.168 = 15.84 raw points -> charge ceil = 16; * 1.15 buffer = 18.216 -> reserve ceil = 19 points
+    expect(quoteBreakdown.reservedPoints).toBe(19);
+    expect(quoteBreakdown.chargedPoints).toBe(16);
     expect(quoteBreakdown.refundPoints).toBe(3);
-    expect(quoteBreakdown.reservedEgp).toBe(1.80);
-    expect(quoteBreakdown.chargedEgp).toBe(1.50);
+    expect(quoteBreakdown.reservedEgp).toBe(1.90);
+    expect(quoteBreakdown.chargedEgp).toBe(1.60);
   });
 
   it("getCachedCatalogEndpoints strictly returns validated live catalog entries with short TTL and no hardcoded seed entries", () => {
@@ -333,16 +334,20 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
       unitCostUsd: 0.0009, customerPriceUsdPerItem: 0.0015, pricingUnit: "item", maxRows: 1000, enabled: true,
       paramsSchema: "{}", tregEndpointId: "social-youtube-comments",
     };
+    // the provider side is out of the way (a high balance), so the 600-point job cap is the ceiling under test
+    setProviderBalanceForTesting(10);
     const quote = await createAndSaveManagedQuote(mockTables, {
       conversationId: "cap-test", userId: "user-test", userBalance: 1000,
       capabilities: [cap], pricingSettings: DEFAULT_PRICING_SETTINGS,
-      plan: { summaryAr: "تعليقات مقطع", items: [{ capabilitySlug: cap.slug, params: {}, targetVolumeMin: 1, targetVolumeMax: 100 }], outputFormats: ["xlsx"] },
+      plan: { summaryAr: "تعليقات مقطع", items: [{ capabilitySlug: cap.slug, params: {}, targetVolumeMin: 1, targetVolumeMax: 3000 }], outputFormats: ["xlsx"] },
     });
+    resetProviderBalanceCacheForTesting();
     expect(quote.pointsCapConstrained).toBe(true);
-    expect(quote.requestedVolumeMax).toBe(100);
-    expect(quote.targetVolumeMax).toBe(57);
-    expect(quote.expectedPoints).toBe(513);
-    expect(quote.quotedPoints).toBe(590);
+    expect(quote.requestedVolumeMax).toBe(3000);
+    // 0.275 points a comment: the most records whose reserve fits 600 is 1,897 (charge ceil(521.675) = 522, reserve ceil(599.9) = 600)
+    expect(quote.targetVolumeMax).toBe(1897);
+    expect(quote.expectedPoints).toBe(522);
+    expect(quote.quotedPoints).toBe(600);
     expect(quote.quotedPoints).toBeLessThanOrEqual(600);
   });
 
@@ -385,8 +390,8 @@ describe("Public Calculator Fixes & Inconsistency Elimination", () => {
 
     expect(calcResult.unitPricePoints).toBe(managedQuote.unitPricePoints);
     expect(calcResult.reservedPoints).toBe(managedQuote.quotedPoints);
-    expect(calcResult.reservedPoints).toBe(18);
-    expect(calcResult.chargedPoints).toBe(15);
+    expect(calcResult.reservedPoints).toBe(19);
+    expect(calcResult.chargedPoints).toBe(16);
   });
 
   it("regression: earlier greetings like 'ازيك' never override the research topic during plan editing", () => {

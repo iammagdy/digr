@@ -31,6 +31,7 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type Conta
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
+import { SOCIAL_CAPABILITIES } from "../../lib/socialSources";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -512,7 +513,8 @@ export function validatePlanAgainstLiveCatalog(
       errors.push(`الخدمة "${nameAr}" تحتاج مدخلات إضافية: ${missing.join("، ")}`);
       issues.push({ itemIndex: index, nameAr, kind: "missing_params", missingParams: missing });
     }
-    const maxRows = 5000;
+    // a social service holds no more than its own record ceiling per job (the one the chat handler and the public calculator use); any other catalog service keeps the 5,000 default
+    const maxRows = SOCIAL_CAPABILITIES.find((def) => def.slug === it.capabilitySlug)?.maxRows ?? 5000;
     if (it.targetVolumeMax > maxRows) {
       errors.push(`الحد الأقصى المطلوب (${it.targetVolumeMax}) يتجاوز سقف الخدمة "${nameAr}" المسموح (${maxRows})`);
       issues.push({ itemIndex: index, nameAr, kind: "over_limit" });

@@ -55,8 +55,10 @@ describe("through the chat: a count the customer wrote is the plan's count, a ve
     const body = await ask("big_1", "٥ آلاف تعليق على تيك توك عن كرة القدم خلال الشهر الماضي");
     const quote = body.planQuote;
     expect(quote.askedVolumeMax).toBe(5000);
-    expect(quote.targetVolumeMax).toBeLessThan(5000);
-    expect(quote.pointsCapConstrained).toBe(true);
+    // the service's own ceiling (1,000 comments) limits this plan: at 0.275 points a comment its reserve is 317, well inside the cap of 600
+    expect(quote.targetVolumeMax).toBe(1000);
+    expect(quote.pointsCapConstrained).toBe(false);
+    expect(quote.quotedPoints).toBe(317);
     expect(quote.quotedPoints).toBeLessThanOrEqual(600);
     expect(quote.items[0].params.query).toBe("كرة القدم");
     expect(body.contentAr).toContain("طلبت ٥٠٠٠");

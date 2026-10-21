@@ -36,7 +36,9 @@ describe("the quote writer and the public calculator are the same function (ever
   for (const slug of SLUGS) {
     it(`${slug}: unit price, reserve, charge and the volume one job holds are equal`, async () => {
       for (const volume of [1, 7, 30, 100, 300, 1000, 4000, 10_000, 25_000, 37_500]) {
-        const quote = await writer(slug, volume);
+        // the chat handler first holds a plan to the service's own record ceiling; the writer then holds it to the points cap
+        const ceiling = APPROVED_CAPABILITY_CATALOG.find((c) => c.slug === slug)!.maxRows;
+        const quote = await writer(slug, Math.min(volume, ceiling));
         const calc = computePublicCalculatorQuote(slug, volume, volume, undefined, undefined, undefined, 1000);
         expect(quote.unitPricePoints, `${slug} ${volume}`).toBe(calc.unitPricePoints);
         const held = calc.isCapped ? calc.maxCappedVolume! : volume;
@@ -54,6 +56,7 @@ describe("the quote writer and the public calculator are the same function (ever
   }
 });
 
+// writer-level: the quote writer holds a plan to the points cap only; the service's own record ceiling is applied before it (see the test above)
 describe("the sizes at the 600-point cap", () => {
   it("37,500 X posts are cut to 4,453 (522 charge, 600 held); the whole request would have held 5,053", async () => {
     const quote = await writer("social-x-posts", 37_500);
