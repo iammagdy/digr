@@ -1,4 +1,5 @@
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
+import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
 import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR, YOUTUBE_RECENT_SUPPLY_FROM_VOLUME, YOUTUBE_RECENT_SUPPLY_NOTE_AR } from "../../lib/youtubeRecency";
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
@@ -2536,6 +2537,33 @@ export class ChatHandler {
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
           turnStats: currentTurnStats(),
         };
+      }
+
+      // New requests are paused while the provider's daily allowance or capacity is used up: said once, in plain words, with the queue,
+      // before the customer answers questions for a plan that cannot start. Chit-chat and result follow-ups are never held.
+      if (sb && !isFileShapingTurn && !isTestSearchScenario && extractRequestIntent(conversationRequestText).dataType !== "unknown") {
+        const busyNow = await getBusyState(sb);
+        if (busyNow.busy) {
+          const tBusyWrite = Date.now();
+          awaitsCount += 2;
+          await Promise.all([
+            sb.from("messages").update({ content_ar: busyNow.messageAr }).eq("id", assistantMsgId),
+            sb.from("messages").update({ request_status: "needs_input" }).eq("id", userMsgId),
+          ]);
+          const busyDelta = Date.now() - tBusyWrite;
+          writesMs += busyDelta;
+          supabaseMs += busyDelta;
+          return {
+            conversationId,
+            messageId: assistantMsgId,
+            role: "assistant",
+            contentAr: busyNow.messageAr,
+            outputType: "answer_question",
+            intent: "chat",
+            tokensUsed: { input: 0, output: 0, costUsd: 0 },
+            turnStats: currentTurnStats(),
+          };
+        }
       }
 
       const skippedQuestionIds = skippedQuestionIdsFromHistory(rawUserHistoryTexts);
