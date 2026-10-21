@@ -21,7 +21,7 @@ export const MAX_CONSECUTIVE_EMPTY_PAGES_LARGE = 3;
 /** Larger jobs may use up to this multiple of the pages they would need if every record matched. */
 export const LARGE_JOB_PAGE_ALLOWANCE = 3;
 /** Hard ceiling on pages for any capped job. */
-export const ABSOLUTE_MAX_PAGES = 30;
+export const ABSOLUTE_MAX_PAGES = 300;
 /** Small company jobs request a page of 3x the wanted records, between these bounds, instead of exactly the wanted count. */
 export const SMALL_JOB_MIN_PAGE_SIZE = 5;
 export const SMALL_JOB_MAX_PAGE_SIZE = 10;

@@ -355,7 +355,7 @@ describe("the plan panel and the calculator show it", () => {
 describe("the chat path: the plan carries the duration and the price is unchanged", () => {
   const answer = (id: string, q: string, value?: string) => formatStructuredClarificationAnswers({ type: "clarification_answers", answers: [value ? { questionId: id, question: q, value } : { questionId: id, question: q, skipped: true }] } as any);
 
-  it("a 2,000-comment YouTube request: the plan has a labelled range, and holds 1,000 comments (the service's own ceiling) at 0.275 points, 317 held, cap 600", async () => {
+  it("a 2,000-comment YouTube request: the plan has a labelled range, and holds 1,500 comments (3 videos x 500, the most they can give) at 0.275 points, 475 held, cap 600", async () => {
     const db = createChatDb();
     const handler = new ChatHandler(db as any);
     (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be called"); });
@@ -367,7 +367,7 @@ describe("the chat path: the plan carries the duration and the price is unchange
     expect(plan.planQuote.duration.labelAr).toBe("تقديري");
     expect(plan.planQuote.duration.rangeAr).toMatch(/^(?:أقل من دقيقة|من .+ إلى .+)$/u);
     expect(plan.planQuote.duration.promiseAr).toBe("سنبلغك عند الاكتمال.");
-    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 1000, unitPricePoints: 0.275, quotedPoints: 317, pointsCap: 600 });
+    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 1500, unitPricePoints: 0.275, quotedPoints: 475, pointsCap: 600 });
     expect(JSON.stringify(plan.planQuote.duration)).not.toMatch(/نقطة|590|٥٩٠/);
     // the chat sentence itself is unchanged (the range lives in the panel)
     expect(plan.contentAr).not.toContain("المدة المتوقعة");

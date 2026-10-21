@@ -133,15 +133,16 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     }
   });
 
-  it("posts on X: the public estimate says what the real quote says (500 posts fit whole: 68 held; 40,000 asked are cut to the service's 500)", async () => {
+  it("posts on X: the public estimate says what the real quote says (500 posts fit whole: 68 held; 40,000 asked are cut to 4,453: 600 held)", async () => {
     const small = await writerXPosts();
     expect(small.targetVolumeMax).toBe(500);
     expect(small.quotedPoints).toBe(68);
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 500, fitsInOneJob: true, reservePoints: 68 });
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 4453, fitsInOneJob: true, reservePoints: 68 });
     const large = await writerXPosts("٤٠٠٠٠");
-    expect(large.targetVolumeMax).toBe(500);
-    expect(large.quotedPoints).toBe(68);
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 40000 })).toMatchObject({ maxVolumeInOneJob: 500, fitsInOneJob: false });
+    expect(large.targetVolumeMax).toBe(4453);
+    expect(large.quotedPoints).toBe(600);
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 40000 })).toMatchObject({ maxVolumeInOneJob: 4453, fitsInOneJob: false });
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 4453 })).toMatchObject({ reservePoints: 600, fitsInOneJob: true });
   });
 
   it("companies: the public estimate says what the real quote says (the points cap holds 164: 598 held)", async () => {

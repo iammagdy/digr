@@ -513,7 +513,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     descriptionAr: "البحث عن منشورات إكس بموضوع أو كلمة، أو جمع أحدث منشورات حساب محدد.",
     modes: ["query", "channel"],
     rowCostUsd: 0.00075,
-    maxRows: 500,
+    maxRows: 4500, // the 600-point cap holds 4,453 posts at 0.11715 points
     successRate: 0.9999,
     discover: { query: X_TOPIC_POSTS, channel: X_ACCOUNT_POSTS },
   },
@@ -526,7 +526,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     descriptionAr: "سحب التعليقات العامة لفيديو بعينه برابطه، أو لفيديوهات يحددها النظام من بحث بكلمة أو قناة أو الفيديوهات الرائجة، مع بيانات كل تعليق ورابط الفيديو.",
     modes: ["url", "query", "channel", "trending"],
     rowCostUsd: 0.001,
-    maxRows: 1000,
+    maxRows: 2000, // the 600-point cap holds 1,897 comments at 0.275 points
     successRate: 0.9997,
     discover: { query: RANKED.tiktok.search, channel: RANKED.tiktok.channel, trending: RANKED.tiktok.trending },
     comments: TIKTOK_COMMENTS,
@@ -541,7 +541,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     modes: ["url", "query", "channel", "trending"],
     rowCostUsd: 0.0009,
     customerPriceUsdPerItem: 0.0015,
-    maxRows: 1000,
+    maxRows: 2000, // the 600-point cap holds 1,897 comments at 0.275 points
     successRate: 0.999,
     discover: { query: RANKED.youtube.search, channel: RANKED.youtube.channel, trending: RANKED.youtube.trending },
     comments: YOUTUBE_COMMENTS,

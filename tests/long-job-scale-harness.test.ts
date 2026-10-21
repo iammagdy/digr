@@ -32,16 +32,16 @@ const settledOnce = (jobId: string) => {
 describe("the configuration of the ceilings: the defaults are today's numbers", () => {
   it("every ceiling defaults to what the platform runs on, and every value is clamped", () => {
     const empty = {} as Record<string, string | undefined>;
-    expect(scaleValue("absoluteMaxPages", empty)).toBe(30);
+    expect(scaleValue("absoluteMaxPages", empty)).toBe(300);
     expect(scaleValue("largeJobPageAllowance", empty)).toBe(3);
     expect(scaleValue("maxPerVideo", empty)).toBe(500);
     expect(scaleValue("maxVideosPerJob", empty)).toBe(20);
     expect(scaleValue("socialMaxRows", empty)).toBe(0);
-    expect(ABSOLUTE_MAX_PAGES).toBe(30);
+    expect(ABSOLUTE_MAX_PAGES).toBe(300);
     expect(LARGE_JOB_PAGE_ALLOWANCE).toBe(3);
     expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "100000" })).toBe(SCALE_SPECS.absoluteMaxPages.max);
     expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "0" })).toBe(1);
-    expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "abc" })).toBe(30);
+    expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "abc" })).toBe(300);
     expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "120" })).toBe(120);
   });
 
@@ -54,20 +54,28 @@ describe("the configuration of the ceilings: the defaults are today's numbers", 
     expect(effectiveSocialMaxRows(1000, "comments", { LONG_JOB_SOCIAL_MAX_ROWS: "10" })).toBe(1000);
     expect(effectiveSocialMaxRows(1000, "comments", {})).toBe(1000);
     // with nothing set, the services keep their documented ceilings
-    expect(getSocialCapability("social-tiktok-comments")!.maxRows).toBe(1000);
-    expect(getSocialCapability("social-x-posts")!.maxRows).toBe(500);
+    // the ceilings are what the 600-point cap holds: 1,897 comments, 4,453 X posts
+    expect(getSocialCapability("social-tiktok-comments")!.maxRows).toBe(2000);
+    expect(getSocialCapability("social-youtube-comments")!.maxRows).toBe(2000);
+    expect(getSocialCapability("social-x-posts")!.maxRows).toBe(4500);
+    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(60);
     expect(getSocialCapability("social-youtube-videos")?.maxRows ?? 48).toBe(48);
   });
 
   it("the test override moves the page ceiling and is ignored in production", () => {
+    expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(300);
+    setScaleOverridesForTesting({ absoluteMaxPages: 30 });
     expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(30);
     setScaleOverridesForTesting({ absoluteMaxPages: 400 });
     expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(300); // ceil(5000/50) x allowance 3, under the new ceiling
-    expect(scaleValue("absoluteMaxPages", { NODE_ENV: "production" })).toBe(30);
+    expect(scaleValue("absoluteMaxPages", { NODE_ENV: "production" })).toBe(300);
   });
 
-  it("the page ceiling times the rows of a chunk is the real size limit of a feed job today (30 x 50 = 1,500)", () => {
-    expect(maxPagesForJob(50_000, SOCIAL_ROWS_PER_CHUNK, "feed") * SOCIAL_ROWS_PER_CHUNK).toBe(1500);
+  it("the page ceiling times the rows of a chunk is the real size limit of a feed job today (300 x 50 = 15,000; it was 30 x 50 = 1,500)", () => {
+    expect(maxPagesForJob(50_000, SOCIAL_ROWS_PER_CHUNK, "feed") * SOCIAL_ROWS_PER_CHUNK).toBe(15000);
+    // a full 600-point job fits: 4,453 X posts need 90 pages (270 with the slack of 3), 1,897 comments 38 pages (114)
+    expect(maxPagesForJob(4453, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(270);
+    expect(maxPagesForJob(1897, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(114);
   });
 });
 
@@ -130,7 +138,8 @@ describe("a job through the real worker, the real social chain and a fake provid
 describe("what the ceilings do to a big job today, and what raising them does", () => {
   const big = () => new FakeProvider({ commentsPerVideo: 150, videos: 20, pageSize: 20 });
 
-  it("DEFAULT ceilings: a 3,000-record job stops at the page ceiling with what it has (1,500), settled once for the delivered rows only", async () => {
+  it("a page ceiling of 30 (the previous default) stops a 3,000-record job at what it has (1,500), settled once for the delivered rows only", async () => {
+    setScaleOverridesForTesting({ absoluteMaxPages: 30 });
     installProvider(big());
     const jobId = seedSocialJob({ target: 3000, videoCount: 20, perVideo: 150 });
     const run = await driveToTheEnd(jobId, { maxTicks: 120 });
@@ -141,6 +150,15 @@ describe("what the ceilings do to a big job today, and what raising them does", 
     expect(finalRows(jobId)).toHaveLength(1500);
     expect(job.delivered_units).toBeLessThan(3000);
   });
+
+  it("DEFAULT ceilings: the same 3,000-record job reaches its full 3,000 through 60 chunks", async () => {
+    installProvider(big());
+    const jobId = seedSocialJob({ target: 3000, videoCount: 20, perVideo: 150 });
+    const run = await driveToTheEnd(jobId, { maxTicks: 200 });
+    expect(run.finalStatus).toBe("completed");
+    expect(run.chunks).toBe(60);
+    expect(settledOnce(jobId).delivered_units).toBe(3000);
+  }, 60_000);
 
   it("RAISED page ceiling (test config only): the same job reaches its full 3,000 through 60 chunks", async () => {
     setScaleOverridesForTesting({ absoluteMaxPages: 200 });
