@@ -1,6 +1,7 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
 import { highOffTopicEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR } from "../../../../lib/server/videoRelevance";
 import { regionNameAr } from "../../../../lib/regionNames";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
@@ -52,7 +53,7 @@ import {
   detectIndustryFromText,
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
-import { evaluateResearchRowRelevance } from "../../../../lib/server/researchRelevanceGate";
+import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../../../../lib/server/researchRelevanceGate";
 import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
@@ -791,6 +792,10 @@ export async function POST(req: NextRequest) {
       // reviewed, and those are delivered only when the review confirms them (fail closed). Feeds without a topic filter keep the strict gate., with the reviewer of rows and a cost cap per job.
       const strictSocialReview = ["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
 
+      // Comments of a topic search on TikTok or YouTube are judged by their video; X posts keep the per-post review.
+      const socialCapabilityDef = getSocialCapability(spec.capabilitySlug);
+      const videoLevelComments = strictSocialReview && socialCapabilityDef?.kind === "comments" && ["tiktok", "youtube"].includes(String(socialCapabilityDef.platform)) && isTopicSearchRequest(spec.params || {});
+
       if (strictCompanyReview) {
         const reviewKeywords = [...new Set([...companyActivityKeywords(spec.params), ...companyActivityKeywords({ industry: expectedIndustry }), ...(recognizedSector?.englishKeywords || [])])];
         const reviewModel = (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
@@ -859,6 +864,85 @@ export async function POST(req: NextRequest) {
             });
           } catch (evtErr: any) {
             console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+          }
+        }
+      } else if (videoLevelComments) {
+        // Select the VIDEOS of the page: evidence in the video's own text first, then the review of the list of videos (fail closed,
+        // inside the job's review budget). The comments of selected videos are delivered; the other videos' comments are not.
+        if (matchedForAdvice.length > 0) {
+          const { videos, withoutVideo } = groupRowsByVideo(matchedForAdvice);
+          const priorReviewUsd = runningSet?.reviewUsd ?? 0;
+          const outcome = await judgeVideos({
+            advisor: getRowAdvisor(),
+            customerRequest: reviewCustomerRequest,
+            kind: `${String(spec.capabilitySlug || "")}-video-list`,
+            videos,
+            request: { query: typeof spec.params?.query === "string" ? spec.params.query : "", region: typeof spec.params?.region === "string" ? spec.params.region : "" },
+            budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
+            deadlineMs: deadlineMs - 8_000,
+          });
+          reviewUsdThisChunk = outcome.costUsd;
+          reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
+          reviewDiagnostics = outcome.attempts.map((attempt) => ({
+            rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
+            tokensIn: attempt.usage?.inputTokens ?? 0, tokensOut: attempt.usage?.outputTokens ?? 0, latencyMs: attempt.usage?.latencyMs ?? 0,
+          }));
+          if (userId) {
+            for (const attempt of outcome.attempts) {
+              try {
+                await adminClient.from("llm_usage").insert({
+                  user_id: userId,
+                  tokens_in: attempt.usage?.inputTokens ?? 0,
+                  tokens_out: attempt.usage?.outputTokens ?? 0,
+                  model: attempt.usage?.model ?? (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
+                  latency_ms: attempt.usage?.latencyMs ?? 0,
+                  reason: attempt.failure ? `relevance_review_failed:${attempt.failure}` : "relevance_review",
+                  cost_usd: Number((attempt.usage?.costUsd ?? 0).toFixed(6)),
+                  created_at: new Date().toISOString(),
+                });
+              } catch (usageErr: any) {
+                console.warn("[worker:relevance_review_usage_log_failed]", usageErr?.message || "");
+              }
+              if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure} stop=${attempt.stopReason || ""}`);
+            }
+          }
+          const judgementOfRow = new Map<number, { decision: "match" | "no_match" | "uncertain"; reasonAr: string }>();
+          for (const video of videos) {
+            const judgement = outcome.judgements.get(video.key);
+            for (const index of video.rowIndexes) judgementOfRow.set(index, judgement ?? { decision: "uncertain", reasonAr: VIDEO_UNREVIEWED_REASON_AR });
+          }
+          for (const index of withoutVideo) judgementOfRow.set(index, { decision: "uncertain", reasonAr: VIDEO_UNREVIEWED_REASON_AR });
+          const judgedReviews = reviews.map((rev) => {
+            if (rev.decision !== "match") return rev;
+            const judgement = judgementOfRow.get(rev.index);
+            if (!judgement || judgement.decision === "match") return rev;
+            return { ...rev, decision: judgement.decision, reasonAr: judgement.reasonAr };
+          });
+          const heldRows = judgedReviews.filter((rev, i) => reviews[i].decision === "match" && rev.decision === "uncertain").length;
+          reviews = judgedReviews;
+          const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match").length;
+          try {
+            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values()), units: effectiveDelivered, event_type: "info" });
+          } catch (evtErr: any) {
+            console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+          }
+          if (heldRows > 0) {
+            // Paging stops only when no video of the page could be selected and the review could not run.
+            reviewUnavailable = deliverableWithoutReview === 0 && [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
+            const capped = outcome.stoppedBy === "cap";
+            try {
+              await adminClient.from("job_events").insert({
+                job_id: jobId,
+                user_id: userId,
+                message: capped
+                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldRows)} تعليق في شيت المراجعة ولم يُحتسب.`
+                  : `وُضع ${toArabicDigits(heldRows)} تعليق في شيت المراجعة ولم يُحتسب لعدم التأكد من موضوع فيديوهاتها.`,
+                units: effectiveDelivered,
+                event_type: "info",
+              });
+            } catch (evtErr: any) {
+              console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+            }
           }
         }
       } else if (strictSocialReview) {

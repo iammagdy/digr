@@ -51,13 +51,11 @@ describe("topic search rows: short real football comments are delivered without 
     expect(decide({ comment_text: "great goal by the striker" }).decision).toBe("match");
   });
 
-  it("a reply that only says «اتفقت» is presumed but flagged for the review; so is a long text with no word of the topic", () => {
-    for (const comment_text of ["اتفقت", "اتفقت تماماً", "ok", "صح"]) expect(decide({ comment_text }), comment_text).toEqual({ decision: "match", reasonAr: PRESUMED, suspicious: true });
+  it("comments are judged by their video: a reply «اتفقت» or a long text with no word of the topic is a real comment, presumed and not flagged", () => {
+    for (const comment_text of ["اتفقت", "اتفقت تماماً", "ok", "صح"]) expect(decide({ comment_text }), comment_text).toEqual({ decision: "match", reasonAr: PRESUMED });
     const long = "الحياة رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع";
-    expect(decide({ comment_text: long })).toEqual({ decision: "match", reasonAr: PRESUMED, suspicious: true });
-    // the same long text is not doubtful once it carries a word of the topic or of its family
-    expect(decide({ comment_text: `${long} وكرة القدم تعلمنا الصبر` }).suspicious).toBeUndefined();
-    expect(decide({ comment_text: long, video_title: "ملخص مباراة كرة القدم" }).suspicious).toBeUndefined();
+    expect(decide({ comment_text: long })).toEqual({ decision: "match", reasonAr: PRESUMED });
+    expect(decide({ comment_text: `${long} وكرة القدم تعلمنا الصبر` })).toEqual({ decision: "match", reasonAr: PRESUMED });
   });
 
   it("an explicit foreign country is still rejected", () => {

@@ -418,70 +418,116 @@ describe("worker: social jobs", () => {
       expect(json.settle.charged_credits).toBe(5 * 6);
     });
   });
-  describe("TikTok topic search in a country: the region goes to the source and the review decides what is about the topic", () => {
-    const VIDEO_ID = "7231337071831321900";
-    const ON_TOPIC = ["الأهلي أحسن فريق في مصر", "ماتش المنتخب المصري كان جامد", "الزمالك محتاج مدرب جديد", "هدف صلاح في الماتش ده تحفة"];
-    const REAL_MADRID = ["When Madrid was Madrid", "هلا مدريد", "ريال مدريد بطل أوروبا"];
-    const UNRELATED = ["افتح التنزيل عليك الله", "سوي العراق ضد اليابان"];
-    const isEgyptFootball = (text: string) => /الأهلي|المنتخب المصري|الزمالك|صلاح/.test(text);
-    const usage = (costUsd: number) => ({ inputTokens: 2000, outputTokens: 500, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
+  describe("TikTok comments by topic in a country: the videos are judged, then the comments of the selected videos are delivered", () => {
     const secs = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+    const VIDEOS = {
+      onTopic: { id: "7231337071831321901", desc: "مباراة الأهلي والزمالك في الدوري المصري #كرة_القدم" },
+      realMadrid: { id: "7231337071831321902", desc: "Real Madrid vs Barcelona highlights goal match #football" },
+      noDescription: { id: "7231337071831321903", desc: "" },
+    };
+    const ON_TOPIC_COMMENTS = ["افتح التنزيل عليك الله", "حلو قوي", "😂😂", "للتواصل واتساب 01012345678 خصم خاص", "حلو قوي", "اتفقت"];
+    const usage = (costUsd: number) => ({ inputTokens: 1500, outputTokens: 300, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
     const lines = () => db.events.map((event) => String(event.message));
-    const run = async (texts: string[], target: number) => {
-      resetDb("social-tiktok-comments", { query: "كرة القدم", region: "EG", perVideo: 30, dateFrom: "2026-09-20", dateTo: "2026-10-20" }, target, 6);
+    const csv = () => db.results.get(`user_1/${JOB}/result.csv`)?.toString("utf-8") ?? "";
+    type Asked = { kind: string; customerRequest: string; rows: Array<{ index: number; row: Record<string, any> }> };
+
+    const run = async (opts: { videos: Array<{ id: string; desc: string }>; comments: Record<string, string[]>; verdict?: (row: Record<string, any>) => "match" | "no_match" | "uncertain" | "missing"; target?: number }) => {
+      resetDb("social-tiktok-comments", { query: "كرة القدم", region: "EG", perVideo: 30, dateFrom: "2026-09-20", dateTo: "2026-10-20" }, opts.target ?? 30, 6);
       const searchParams: Array<Record<string, any>> = [];
-      useSource(async (source, params) => {
+      useSource(async (_source, params) => {
         if (params.aweme_id) {
-          return ok({ data: { comments: texts.map((text, i) => ({ cid: `c${i}`, text, user: { nickname: "منى" }, create_time: secs("2026-10-05T10:00:00Z") })), cursor: 0, has_more: 0 } });
+          const texts = opts.comments[String(params.aweme_id)] ?? [];
+          return ok({ data: { comments: texts.map((text, i) => ({ cid: `${params.aweme_id}_${i}`, text, user: { nickname: "منى" }, create_time: secs("2026-10-05T10:00:00Z") })), cursor: 0, has_more: 0 } });
         }
         searchParams.push(params);
-        return ok({ aweme_list: [{ aweme_id: VIDEO_ID, desc: "فيديو عن كرة القدم", share_url: `https://www.tiktok.com/@u/video/${VIDEO_ID}`, create_time: secs("2026-10-05T10:00:00Z") }] });
+        return ok({ aweme_list: opts.videos.map((video) => ({ aweme_id: video.id, desc: video.desc, share_url: `https://www.tiktok.com/@u/video/${video.id}`, create_time: secs("2026-10-05T10:00:00Z") })) });
       });
-      const briefs: string[] = [];
-      const calls: number[] = [];
+      const asked: Asked[] = [];
       setStrictSocialReviewForTesting(true);
-      setReviewSampleRandomForTesting(() => 0);
       setRowAdvisorForTesting(async (input) => {
-        calls.push(input.rows.length);
-        briefs.push(String(input.customerRequest));
+        asked.push({ kind: input.kind, customerRequest: input.customerRequest, rows: input.rows });
         return {
-          verdicts: new Map(input.rows.map(({ index, row }) => [index, isEgyptFootball(String(row.text)) ? { verdict: "match" as const, reasonAr: "عن كرة القدم في مصر" } : { verdict: "no_match" as const, reasonAr: "لا يتعلق بكرة القدم في مصر" }])),
-          usage: usage(0.004), failure: null,
+          verdicts: new Map(input.rows.flatMap(({ index, row }) => {
+            const v = (opts.verdict ?? ((r: Record<string, any>) => (/real madrid/i.test(String(r.title)) ? "no_match" : "match")))(row);
+            return v === "missing" ? [] : [[index, { verdict: v, reasonAr: v === "no_match" ? "الفيديو عن نادٍ من دولة أخرى" : "عن كرة القدم في مصر" }]];
+          })),
+          usage: usage(0.003), failure: null,
         };
       });
       const result = await runAllChunks();
-      return { ...result, searchParams, briefs, calls };
+      return { ...result, searchParams, asked };
     };
 
-    it("a page that is mostly about something else is reviewed in full: only the football-in-Egypt comments are delivered and charged", async () => {
-      const texts = [...REAL_MADRID, ...UNRELATED, ...ON_TOPIC, ...REAL_MADRID.map((text) => `${text} 2`), ...UNRELATED.map((text) => `${text} 2`), ...Array.from({ length: 8 }, (_, i) => `تعليق عن شيء آخر رقم ${i}`)];
-      expect(texts).toHaveLength(22);
-      const { json, searchParams, briefs, calls } = await run(texts, 30);
+    it("an on-topic video: its short, unrelated-looking comments are delivered; only the emoji, the ad and the duplicate are not, and no review call is needed", async () => {
+      const { json, asked, searchParams } = await run({ videos: [VIDEOS.onTopic], comments: { [VIDEOS.onTopic.id]: ON_TOPIC_COMMENTS } });
       expect(searchParams[0].region).toBe("EG");
-      expect(briefs[0]).toContain("الدولة المطلوبة: مصر");
-      expect(calls).toEqual([15, 7]);
-      expect(json.deliveredUnits).toBe(4);
-      expect(json.settle.charged_credits).toBe(4 * 6);
-      const delivered = db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8");
-      for (const text of [...REAL_MADRID, ...UNRELATED]) expect(delivered).not.toContain(text);
-      for (const text of ON_TOPIC) expect(delivered).toContain(text);
-      expect(lines().some((line) => line.includes("راجعنا كل سجلاتها قبل التسليم"))).toBe(true);
+      expect(asked).toHaveLength(0);
+      expect(json.deliveredUnits).toBe(3);
+      expect(json.settle.charged_credits).toBe(3 * 6);
+      const delivered = csv();
+      for (const text of ["افتح التنزيل عليك الله", "حلو قوي", "اتفقت"]) expect(delivered).toContain(text);
+      expect(delivered).not.toContain("😂");
+      expect(delivered).not.toContain("واتساب");
+      expect(delivered.split("حلو قوي").length - 1).toBe(1);
     });
 
-    it("a page that is mostly on topic is delivered after one call on a sample; a single off-topic comment in the sample is not a reason to hold the page", async () => {
-      const texts = [...ON_TOPIC.map((text, i) => `${text} ${i}`), ...Array.from({ length: 11 }, (_, i) => `${ON_TOPIC[i % 4]} ${i + 10}`), REAL_MADRID[0]];
-      const { json, calls } = await run(texts, 30);
-      expect(calls).toEqual([15]);
-      expect(json.deliveredUnits).toBe(16);
-      expect(json.settle.charged_credits).toBe(16 * 6);
-      expect(lines().some((line) => line.includes("راجعنا كل سجلاتها قبل التسليم"))).toBe(false);
+    it("an off-topic video (Real Madrid highlights when Egypt was requested) is excluded with a plain Arabic reason; the on-topic one is delivered", async () => {
+      const { json, asked } = await run({
+        videos: [VIDEOS.realMadrid, VIDEOS.onTopic],
+        comments: { [VIDEOS.realMadrid.id]: ["When Madrid was Madrid", "هلا مدريد", "سوي العراق ضد اليابان"], [VIDEOS.onTopic.id]: ["حلو قوي", "افتح التنزيل عليك الله"] },
+      });
+      expect(asked).toHaveLength(1);
+      expect(asked[0].kind).toBe("social-tiktok-comments-video-list");
+      expect(asked[0].customerRequest).toContain("الدولة المطلوبة: مصر");
+      expect(asked[0].rows).toHaveLength(1);
+      expect(String(asked[0].rows[0].row.title)).toContain("Real Madrid");
+      expect(json.deliveredUnits).toBe(2);
+      expect(json.settle.charged_credits).toBe(2 * 6);
+      const delivered = csv();
+      expect(delivered).not.toContain("هلا مدريد");
+      expect(delivered).not.toContain("العراق ضد اليابان");
+      const line = lines().find((entry) => entry.includes("راجعنا فيديوهات هذه الصفحة"))!;
+      expect(line).toContain("اعتمدنا ١ فيديو");
+      expect(line).toContain("واستبعدنا ١ لأنها لا تتناول موضوعك (الفيديو عن نادٍ من دولة أخرى)");
+      expect(line).not.toMatch(/[A-Za-z]/);
     });
 
-    it("the bare reply «اتفقت» is delivered only when the review confirms it, and here it does not", async () => {
-      const texts = [...ON_TOPIC, "اتفقت"];
-      const { json } = await run(texts, 10);
-      expect(json.deliveredUnits).toBe(4);
-      expect(db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8")).not.toContain("اتفقت");
+    it("every video is off topic: nothing is delivered or charged, and the full reserve is released", async () => {
+      const { json } = await run({ videos: [VIDEOS.realMadrid], comments: { [VIDEOS.realMadrid.id]: ["When Madrid was Madrid", "هلا مدريد"] } });
+      expect(json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+    });
+
+    it("a video with no description is decided by the review, which sees its channel and a few of its comments", async () => {
+      const { json, asked } = await run({
+        videos: [VIDEOS.noDescription],
+        comments: { [VIDEOS.noDescription.id]: ["ماتش الأهلي كان جامد", "حلو قوي", "برافو يا شباب"] },
+        verdict: () => "match",
+      });
+      expect(asked).toHaveLength(1);
+      expect(String(asked[0].rows[0].row.comments_sample)).toContain("ماتش الأهلي كان جامد");
+      expect(json.deliveredUnits).toBe(3);
+      expect(json.settle.charged_credits).toBe(3 * 6);
+    });
+
+    it("a video the review doubts, or that nobody could review, is not delivered (fail closed) and is not charged", async () => {
+      const doubtful = await run({ videos: [VIDEOS.noDescription], comments: { [VIDEOS.noDescription.id]: ["حلو قوي", "برافو"] }, verdict: () => "uncertain" });
+      expect(doubtful.json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      const silent = await run({ videos: [VIDEOS.noDescription], comments: { [VIDEOS.noDescription.id]: ["حلو قوي", "برافو"] }, verdict: () => "missing" });
+      expect(silent.json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+    });
+
+    it("videos whose own text shows the topic and the country are read first", async () => {
+      const calls: string[] = [];
+      resetDb("social-tiktok-comments", { query: "كرة القدم", region: "EG", perVideo: 30, dateFrom: "2026-09-20", dateTo: "2026-10-20" }, 30, 6);
+      useSource(async (_source, params) => {
+        if (params.aweme_id) { calls.push(String(params.aweme_id)); return ok({ data: { comments: [], cursor: 0, has_more: 0 } }); }
+        return ok({ aweme_list: [VIDEOS.realMadrid, VIDEOS.noDescription, VIDEOS.onTopic].map((video) => ({ aweme_id: video.id, desc: video.desc, share_url: `https://www.tiktok.com/@u/video/${video.id}`, create_time: secs("2026-10-05T10:00:00Z") })) });
+      });
+      await runAllChunks();
+      expect(calls[0]).toBe(VIDEOS.onTopic.id);
     });
   });
   describe("X posts of a topic search: the rows are presumed on topic, and the doubtful ones need the automatic review", () => {
@@ -673,6 +719,30 @@ describe("worker: social jobs", () => {
       expect(reason).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
       expect(reason).toContain("ننصح بإرسال روابط الفيديوهات أو اسم القناة");
       expect(reason).toContain("تم استرداد كامل الرصيد المحجوز دون أي خصم");
+    });
+
+    it("a YouTube video about something else is excluded by the video review, and the comments of an on-topic video are delivered whatever they say", async () => {
+      setRelativeDateClockForTesting(() => Date.parse("2026-10-20T12:00:00Z"));
+      resetDb("social-youtube-comments", { query: "كرة القدم", ...WINDOW }, 10, 9);
+      const OTHER = "9bZkp7q19f0";
+      const asked: Array<{ kind: string; titles: string[] }> = [];
+      setStrictSocialReviewForTesting(true);
+      setRowAdvisorForTesting(async (input) => {
+        asked.push({ kind: input.kind, titles: input.rows.map(({ row }) => String(row.title)) });
+        return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "no_match" as const, reasonAr: "الفيديو عن موضوع آخر" }])), usage: { inputTokens: 500, outputTokens: 100, costUsd: 0.002, model: "claude-haiku-5-5", latencyMs: 10 }, failure: null };
+      });
+      useSource(async (_source, params) => {
+        if (params.video) {
+          const onTopic = String(params.video).includes(VIDEO);
+          return ok({ ok: true, rows: (onTopic ? ["حلو قوي", "افتح التنزيل عليك الله", "شكرا"] : ["تعليق عن الطبخ", "وصفة حلوة"]).map((text, i) => ({ comment_id: `${onTopic ? "t" : "o"}${i}`, text, author: `قارئ ${i}`, published_at: "2026-10-10T10:00:00Z" })) });
+        }
+        return ok({ ok: true, rows: [{ video_id: OTHER, title: "طريقة عمل الكشري المصري" }, { video_id: VIDEO, title: "ملخص مباراة في كرة القدم" }] });
+      });
+      const { json } = await runAllChunks();
+      expect(asked).toEqual([{ kind: "social-youtube-comments-video-list", titles: ["طريقة عمل الكشري المصري"] }]);
+      expect(json.deliveredUnits).toBe(3);
+      expect(json.settle.charged_credits).toBe(3 * 9);
+      expect(db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8")).not.toContain("وصفة حلوة");
     });
 
     it("the search found no video: the reason says so (not «no matching data») and nothing is charged", async () => {

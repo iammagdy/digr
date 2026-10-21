@@ -86,7 +86,7 @@ const DEFAULT_REASON_AR: Record<RelevanceDecision, string> = {
 
 const FIELD_ORDER = [
   "company_name", "name", "contact_name", "job_title", "title", "industry", "location", "country", "address",
-  "description", "text", "comment_text", "video_caption", "video_title", "caption", "website",
+  "description", "text", "comment_text", "video_caption", "video_title", "caption", "website", "hashtags", "channel_name", "comments_sample",
 ];
 
 /** A short, secret-free summary of one row: the fields a reviewer needs, each cut short. */
@@ -133,7 +133,13 @@ function buildPrompt(input: RowAdvisoryInput): string {
     `Customer request (Arabic): "${stripControl(input.customerRequest).slice(0, 400)}"`,
     `Kind of rows: ${input.kind}`,
     "For each row decide: \"match\" (clearly what the customer asked for), \"no_match\" (clearly something else: another activity, another country, another topic), or \"uncertain\" (borderline or not enough information).",
-    ...(/^social-|post|comment|video/i.test(input.kind) ? [
+    ...(/video-list/i.test(input.kind) ? [
+      "Each row is a VIDEO found by a topic search (its title or description with hashtags, its channel, and a few of its comments). The customer wants the comments under videos ABOUT that topic.",
+      "\"match\" only if the video itself is about the topic. A video about another subject that merely shares a word with the topic is \"no_match\".",
+      "If the request names a country, a video about another country's clubs, league, team or events (for example a Spanish club for a request about Egypt) is \"no_match\"; a video about the requested country's football, clubs, league, team or players is a match.",
+      "A video with no description: judge from its channel and its sample comments; if they do not settle it, answer \"uncertain\".",
+      "Never judge a video by how its comments are worded: short comments such as thanks, laughter or a reaction are normal under an on-topic video.",
+    ] : /^social-|post|comment|video/i.test(input.kind) ? [
       "The customer asked for posts, comments or videos ABOUT a topic. \"match\" only if the text itself is about that topic.",
       "A text about another subject that merely shares a word with the topic is \"no_match\". An empty text is \"no_match\". A reply or comment that only agrees or reacts (for example \"agreed\", \"true\", an emoji) says nothing about the topic: \"uncertain\".",
       "For a comment, the video title is context only, never evidence by itself that the comment is about the topic.",
