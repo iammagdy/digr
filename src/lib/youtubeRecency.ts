@@ -40,5 +40,9 @@ export function youtubeRecencyFor(dateFrom: string | undefined | null, dateTo: s
   return { upload_date, sort_by: "upload_date" };
 }
 
+/** A topic search shows a limited number of videos at a time: said in the plan of a large windowed request, before approval. */
+export const YOUTUBE_RECENT_SUPPLY_FROM_VOLUME = 40;
+export const YOUTUBE_RECENT_SUPPLY_NOTE_AR = "يعرض يوتيوب نحو ٢٠ فيديو في كل بحث، فإن قلّت الفيديوهات الحديثة عن موضوعك قد يقل عدد التعليقات المسلَّمة عن المطلوب، ولا يُحتسب عليك إلا ما سُلِّم؛ ولعدد أوفر أرسل روابط الفيديوهات أو اسم القناة.";
+
 /** Said in the plan when the window starts too far back for the search to reach. */
 export const YOUTUBE_OLD_WINDOW_NOTE_AR = "يتيح يوتيوب ترتيب نتائج البحث بالأحدث ضمن آخر سنة فقط، وقد لا نصل إلى فيديوهات هذه الفترة؛ ننصح بإرسال روابط الفيديوهات أو اسم القناة.";

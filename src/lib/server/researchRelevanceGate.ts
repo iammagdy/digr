@@ -1,4 +1,5 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
+import { MIN_MEANINGFUL_CHARS, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
@@ -92,6 +93,8 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
   const own = normalizeText(rawOwn);
   const noText = { decision: "no_match" as RelevanceDecision, reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
   if (!/\p{L}/u.test(own)) return noText;
+  // A comment of fewer than three letters («Wr», «ok») says nothing, whatever video it sits under.
+  if (commentRow && meaningfulChars(rawOwn) < MIN_MEANINGFUL_CHARS) return { decision: "no_match", reasonAr: "التعليق أقصر من أن يحمل محتوى" };
   // A link, a mention or a number on its own is no content.
   if (!/\p{L}/u.test(rawOwn.replace(URL_RE, " ").replace(/[@#]?\w*\d\w*/g, " ").replace(/@\S+/g, " ")) ) return noText;
   const letters = [...own].filter((ch) => /\p{L}/u.test(ch));

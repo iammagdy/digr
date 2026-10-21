@@ -33,6 +33,9 @@ import { timeNeededForAnotherCallMs } from "./chunkSizing";
 import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { youtubeRecencyFor } from "../youtubeRecency";
 import { videoEvidence } from "./videoRelevance";
+import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
+import { maxPagesForJob } from "./providerCallCaps";
+import { VIDEO_ADOPTED_KEY } from "./videoAdoption";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "./tregAdapter";
 
@@ -59,10 +62,22 @@ export type SocialCall = (
   context: SocialCallContext,
 ) => Promise<SocialCallOutcome>;
 
+/** The videos of a topic search that are really about the topic, chosen from the discovery list before any comment is read. */
+export interface VideoSelection {
+  adopted: SocialRef[];
+  /** Videos with no text of their own to judge (no title, no description): read after the adopted ones and judged by the worker with a few of their comments. */
+  deferred?: SocialRef[];
+}
+export type VideoSelector = (refs: SocialRef[]) => Promise<VideoSelection | null>;
+
 export interface SocialAdapterDeps {
   call: SocialCall;
   now?: () => number;
+  /** Set by the worker for a topic search: the videos are judged first, so comments are read (and paid for) only under adopted videos. */
+  videoSelector?: VideoSelector;
 }
+
+type ResolvedDeps = { call: SocialCall; now: () => number; videoSelector?: VideoSelector };
 
 /** The worker is cut off at 60 s; a chunk stops starting new calls well before that. */
 export const SOCIAL_CHUNK_BUDGET_MS = 40_000;
@@ -89,6 +104,14 @@ interface SocialState {
   /** Mission over several channels: the channel being read (discovery stage) and how many could not be read. */
   ci?: number;
   fc?: number;
+  /** Rows of the answer at `cc` (or of the first answer) that earlier chunks already took: a chunk stops at its share and the next one starts after them. */
+  po?: number;
+  /** Comments read from each adopted video (topic search): sized from the videos adopted so the first ones can fill the job. */
+  pv?: number;
+  /** How many of the first `refs` were adopted before their comments were read; the comments of the rest are judged by the worker. */
+  ad?: number;
+  /** Non-Arabic comments kept aside for an Arabic request: delivered only if the volume cannot be filled otherwise. */
+  sp?: Record<string, any>[];
 }
 
 function encodeState(state: SocialState): string {
@@ -161,7 +184,7 @@ async function runChain(
   sources: SocialSource[],
   request: SocialSourceRequest,
   stickyIndex: number | null,
-  deps: Required<SocialAdapterDeps>,
+  deps: ResolvedDeps,
   clock: ChunkClock,
   keyPrefix: string,
   fallThroughOnEmpty = true,
@@ -289,6 +312,7 @@ function annotateComment(row: Record<string, any>, ref: SocialRef | undefined): 
     ...(ref.title ? { video_title: ref.title } : {}),
     ...(ref.channel ? { channel_name: ref.channel } : {}),
     ...(typeof ref.views === "number" ? { video_views: ref.views } : {}),
+    ...(isoDay(ref.publishedAtMs) ? { video_published_at: isoDay(ref.publishedAtMs) } : {}),
   };
 }
 
@@ -312,7 +336,7 @@ async function runMissionChunk(
   input: ProviderAdapterCallInput,
   params: Record<string, any>,
   wanted: number,
-  deps: Required<SocialAdapterDeps>,
+  deps: ResolvedDeps,
   clock: ChunkClock,
   keyPrefix: string,
   totals: { costMicro: number; callIds: string[] },
@@ -387,7 +411,7 @@ async function runMissionChunk(
     // page would otherwise be cut short and the rest of the video lost).
     if (rows.length > 0 && (state.n ?? 0) === 0 && !state.cc && room < wantFromVideo) break;
     const need = Math.max(1, Math.min(wantFromVideo, room));
-    const chain = await runChain(commentSources, { ref, limit: need, cursor: state.cc ?? null }, state.cc ? state.si ?? null : null, deps, clock, `${keyPrefix}_v${index}`, false);
+    const chain = await runChain(commentSources, { ref, limit: need, cursor: state.cc ?? null }, state.cc || state.po ? state.si ?? null : null, deps, clock, `${keyPrefix}_v${index}`, false);
     absorb(chain);
     if (!chain.ok) {
       lastError = chain;
@@ -440,7 +464,7 @@ export async function runSocialChunk(
   deps: SocialAdapterDeps,
 ): Promise<ProviderAdapterCallOutput> {
   const cap = getSocialCapability(input.capabilitySlug);
-  const resolved: Required<SocialAdapterDeps> = { call: deps.call, now: deps.now || Date.now };
+  const resolved: ResolvedDeps = { call: deps.call, now: deps.now || Date.now, videoSelector: deps.videoSelector };
   const clock = new ChunkClock(resolved.now);
   const params = input.params || {};
   const mode = resolveSocialMode(params);
@@ -490,13 +514,37 @@ function dedupe(rows: Record<string, any>[], seen: Set<string> = new Set()): Rec
   return out;
 }
 
+/** A topic search asks for a full first page of videos (the sources answer up to this many in one call), so a window or a topic filter has a pool to pick from. */
+const TOPIC_DISCOVERY_VIDEOS = 20;
+/** Comments kept aside (non-Arabic, for an Arabic request) and the smallest read per adopted video. */
+const MAX_SPILL_ROWS = 40;
+const MIN_READ_PER_VIDEO = 20;
+const SPILL_KEYS = [
+  "comment_id", "cid", "id", "text", "comment", "comment_text", "content", "author", "author_name", "username", "likes", "like_count", "replies", "reply_count",
+  "published_date", "published_at", "create_time", "date", "published_time", "publishedTime", "published_time_text", "time_ago", "timeAgo",
+  "video_url", "video_title", "video_published_at", "channel_name", "video_views", "comment_language", DATE_BASIS_KEY, VIDEO_PUBLISHED_AT_KEY, VIDEO_ADOPTED_KEY,
+];
+
+/** A row small enough to travel in the chunk cursor. */
+function compactRow(row: Record<string, any>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const key of SPILL_KEYS) {
+    const value = row[key];
+    if (value === undefined || value === null) continue;
+    out[key] = typeof value === "string" ? value.slice(0, 400) : value;
+  }
+  return out;
+}
+
+const isoDay = (ms: number | undefined): string | undefined => (typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : undefined);
+
 async function runCommentsChunk(
   cap: SocialCapabilityDef,
   mode: SocialMode,
   input: ProviderAdapterCallInput,
   params: Record<string, any>,
   wanted: number,
-  deps: Required<SocialAdapterDeps>,
+  deps: ResolvedDeps,
   clock: ChunkClock,
   keyPrefix: string,
   totals: { costMicro: number; callIds: string[] },
@@ -509,6 +557,11 @@ async function runCommentsChunk(
   const target = Math.max(1, input.targetVolumeMax || wanted);
   const askedPerVideo = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : SOCIAL_COMMENTS_PER_VIDEO;
   const perVideo = mode === "url" ? Math.min(MAX_COMMENTS_PER_VIDEO, target) : Math.min(MAX_COMMENTS_PER_VIDEO, askedPerVideo, target);
+  // A topic search (videos found by a keyword): the videos are judged first, the comments of adopted videos are read deeply, and the
+  // comments themselves are filtered for usefulness. A named video, a channel or the trending list keep the plain reading.
+  const topicSearch = mode === "query" && String(params.query || "").trim() !== "";
+  const arabicFirst = topicSearch && requestWantsArabicComments(params);
+  const perVideoStated = Number(params.perVideo) > 0;
 
   let state = decodeState(input.cursor);
   if (!state) {
@@ -523,20 +576,26 @@ async function runCommentsChunk(
 
   const rows: Record<string, any>[] = [];
   const seen = new Set<string>();
+  const seenRepeats = new Set<string>();
+  const spill: Record<string, any>[] = [...(state.sp || [])];
   let lastError: Pick<ChainResult, "httpStatus" | "errorCode" | "errorMessageAr"> | null = null;
   let commentsAnswered = false;
   let windowHint: "recency_applied" | "recency_unsupported" | undefined;
   const windowed = typeof params.dateFrom === "string" || typeof params.dateTo === "string";
   // With a window, only the comments inside it count toward what was asked: the worker drops the others, so counting them
   // would end the job after one old video that was entirely outside the window.
-  const countedRows = () => (windowed ? insideWindowCount(rows, params) : rows.length);
+  // A topic search also counts only comments that say something: the others still travel to the worker (which rejects them with its
+  // own reason) but never fill the volume.
+  const credited = (list: Record<string, any>[]) => countInsideOf(topicSearch ? list.filter(isUsableComment) : list, params);
+  const countedRows = () => credited(rows);
   const withHint = (out: ProviderAdapterCallOutput): ProviderAdapterCallOutput => (windowHint ? { ...out, discoveryWindow: windowHint } : out);
 
   while (countedRows() < wanted && clock.canCallAgain()) {
     if (state.ph === "d") {
       if (mode === "url") break;
       const askedVideos = Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0;
-      const videoCount = Math.min(MAX_VIDEOS, askedVideos || Math.ceil(target / perVideo) + 2);
+      const wantedVideos = Math.ceil(target / perVideo) + 2;
+      const videoCount = Math.min(MAX_VIDEOS, askedVideos || (topicSearch ? Math.max(TOPIC_DISCOVERY_VIDEOS, wantedVideos) : wantedVideos));
       const request = discoveryRequest(mode, params, videoCount, state.dc ?? null, deps.now());
       const sources = orderForRecency(cap.discover[mode] || [], request);
       let chain = await runChain(sources, request, null, deps, clock, `${keyPrefix}_d`);
@@ -564,17 +623,38 @@ async function runCommentsChunk(
         return failure(totals, "تعذر تحديد روابط الفيديوهات من نتائج البحث؛ لم يُحتسب أي خصم.");
       }
       if (refs.length === 0) return { ...success([], null, totals), emptyReason: "no_videos" };
-      state = { ph: "c", refs, i: 0, cc: null, n: 0, si: null };
+      // The videos about the topic are chosen BEFORE any comment is read: nothing is spent on a video that would be dropped, and the
+      // comments of the adopted ones can be read deeply. A selector that cannot decide adopts nothing (fail closed).
+      let pv: number | undefined = state.pv;
+      let adoptedCount = 0;
+      if (topicSearch && deps.videoSelector) {
+        const selection = await deps.videoSelector(refs).catch(() => null);
+        if (selection) {
+          adoptedCount = selection.adopted.length;
+          refs = [...selection.adopted, ...(selection.deferred || [])];
+          if (refs.length === 0) return withHint({ ...success([], null, totals), emptyReason: "no_relevant_videos" });
+        }
+      }
+      if (topicSearch) {
+        pv = perVideoStated
+          ? Math.min(MAX_COMMENTS_PER_VIDEO, askedPerVideo)
+          : Math.min(MAX_COMMENTS_PER_VIDEO, Math.max(MIN_READ_PER_VIDEO, Math.ceil((target * 2) / Math.max(1, refs.length))));
+      }
+      state = { ph: "c", refs, i: 0, cc: null, n: 0, si: null, ...(pv ? { pv } : {}), ...(adoptedCount ? { ad: adoptedCount } : {}), ...(spill.length ? { sp: spill } : {}) };
       continue;
     }
 
     const refs: SocialRef[] = state.refs || [];
     const index: number = state.i ?? 0;
     if (index >= refs.length) {
-      return withHint(success(rows, null, totals));
+      return withHint(success(flushSpill(), null, totals));
     }
     const ref: SocialRef = refs[index];
-    const need = Math.max(1, Math.min(perVideo - (state.n ?? 0), wanted - countedRows()));
+    const readPerVideo: number = topicSearch && state.pv ? state.pv : perVideo;
+    // A topic search reads the video's whole share in one call (the price is per call, not per comment) and skips what an earlier chunk
+    // already took; the other modes read what is still needed.
+    const startAt: number = topicSearch ? state.po ?? 0 : 0;
+    const need = topicSearch ? Math.max(1, readPerVideo) : Math.max(1, Math.min(perVideo - (state.n ?? 0), wanted - countedRows()));
     const chain = await runChain(commentSources, { ref, limit: need, cursor: state.cc ?? null }, state.cc ? state.si ?? null : null, deps, clock, `${keyPrefix}_v${index}`, mode === "url");
     absorb(chain);
 
@@ -584,24 +664,65 @@ async function runCommentsChunk(
         return rows.length > 0 ? withHint(success(rows, null, totals)) : failure({ ...totals, httpStatus: chain.httpStatus, errorCode: chain.errorCode, errorMessageAr: chain.errorMessageAr });
       }
       // One video that cannot be read is skipped; the others are still collected.
-      state = { ...state, i: index + 1, cc: null, n: 0, si: null };
+      state = { ...state, i: index + 1, cc: null, n: 0, po: 0, si: null };
       continue;
     }
 
     commentsAnswered = true;
-    const fresh = dedupe(chain.rows, seen).slice(0, Math.max(0, Math.min(need, wanted - countedRows())));
-    const pageRows: Record<string, any>[] = markVideoDateBasis(fresh, ref, params).map((row) => annotateComment(row, ref));
+    // A topic search walks the answer position by position (the offset is a position in the answer); the other modes drop repeats first.
+    const listed = topicSearch ? chain.rows.slice(startAt) : chain.rows;
+    const fresh = topicSearch ? listed : dedupe(listed, seen);
+    const taking = topicSearch ? fresh : fresh.slice(0, Math.max(0, Math.min(need, wanted - countedRows())));
+    const dated: Record<string, any>[] = markVideoDateBasis(taking, ref, params).map((row) => annotateComment(row, ref));
+    const pageRows: Record<string, any>[] = [];
+    let consumed = 0;
+    let uniqueConsumed = 0;
+    for (const row of dated) {
+      // A topic search stops at the chunk's share: the rest of the list stays for the next chunk (read again from where this one stopped).
+      if (topicSearch && countedRows() + credited(pageRows) >= wanted) break;
+      consumed += 1;
+      if (!topicSearch) { pageRows.push(row); continue; }
+      const identity = rowKey(row);
+      if (identity) {
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+      }
+      uniqueConsumed += 1;
+      if (!isUsableComment(row)) { pageRows.push(row); continue; }
+      const repeat = repeatKey(row);
+      if (seenRepeats.has(repeat)) continue;
+      seenRepeats.add(repeat);
+      const tagged = { ...row, comment_language: COMMENT_LANGUAGE_LABEL_AR[commentLanguageOf(commentTextOf(row))], ...(index < (state.ad ?? 0) ? { [VIDEO_ADOPTED_KEY]: true } : {}) };
+      if (arabicFirst && commentLanguageOf(commentTextOf(row)) !== "ar") {
+        if (spill.length < MAX_SPILL_ROWS) spill.push(compactRow(tagged));
+        continue;
+      }
+      pageRows.push(tagged);
+    }
     for (const row of pageRows) rows.push(row);
-    const taken: number = (state.n ?? 0) + fresh.length;
+    const stoppedEarly = topicSearch && consumed < dated.length;
+    const taken: number = (state.n ?? 0) + (topicSearch ? uniqueConsumed : fresh.length);
     // A video whose comments are all outside the window is not read further: its other pages would be outside too.
     const pageOutsideWindow: boolean = windowed && pageRows.length > 0 && insideWindowCount(pageRows, params) === 0;
-    const moreOnThisVideo: boolean = Boolean(chain.nextCursor) && taken < perVideo && fresh.length > 0 && !pageOutsideWindow;
-    state = moreOnThisVideo
-      ? { ...state, cc: chain.nextCursor, n: taken, si: chain.sourceIndex }
-      : { ...state, i: index + 1, cc: null, n: 0, si: null };
+    const moreOnThisVideo: boolean = Boolean(chain.nextCursor) && taken < readPerVideo && dated.length > 0 && !pageOutsideWindow;
+    state = stoppedEarly
+      ? { ...state, cc: state.cc ?? null, n: taken, po: startAt + consumed, si: chain.sourceIndex }
+      : moreOnThisVideo
+        ? { ...state, cc: chain.nextCursor, n: taken, po: 0, si: chain.sourceIndex }
+        : { ...state, i: index + 1, cc: null, n: 0, po: 0, si: null };
   }
 
   const finished = state.ph === "c" && (state.i ?? 0) >= (state.refs?.length ?? 0) && state.refs !== undefined;
+
+  /** Non-Arabic comments set aside for an Arabic request come last, and only to fill what the Arabic ones could not. */
+  function flushSpill(): Record<string, any>[] {
+    if (!arabicFirst || spill.length === 0) return rows;
+    const remaining = Math.max(1, input.remainingNeeded || wanted) - countedRows();
+    if (remaining <= 0) return rows;
+    const inside = windowed ? spill.filter((row) => insideWindowCount([row], params) === 1) : spill;
+    return [...rows, ...inside.slice(0, remaining)];
+  }
+
   // Nothing was readable anywhere and the job has delivered nothing before: that is a source failure (a refund with the
   // reason), not an empty result. Rows delivered by earlier chunks are never thrown away by a late failure.
   if (rows.length === 0 && finished && !commentsAnswered && lastError && (input.deliveredSoFar || 0) === 0) {
@@ -609,7 +730,16 @@ async function runCommentsChunk(
   }
   // The job stops by itself once it has what it asked for; a cursor would only be stored and never used.
   const reachedTarget = countedRows() >= Math.max(1, input.remainingNeeded || wanted);
-  return withHint(success(rows, finished || reachedTarget ? null : encodeState(state), totals));
+  // The last chance to fill the volume: no more videos, or the job's page allowance ends with this chunk.
+  const lastChunk = finished || (input.step + 1 >= maxPagesForJob(target, input.pageSize, "feed"));
+  const delivered = lastChunk && !reachedTarget ? flushSpill() : rows;
+  const keepState: SocialState = spill.length ? { ...state, sp: spill } : { ...state, sp: undefined };
+  return withHint(success(delivered, finished || reachedTarget ? null : encodeState(keepState), totals));
+}
+
+/** How many of these rows stand inside the window (all of them when the job has none). */
+function countInsideOf(rows: Record<string, any>[], params: Record<string, any>): number {
+  return typeof params.dateFrom === "string" || typeof params.dateTo === "string" ? insideWindowCount(rows, params) : rows.length;
 }
 
 /** Rows that stand inside the customer's window by the one rule the worker's filter uses (own date, or the video's). */

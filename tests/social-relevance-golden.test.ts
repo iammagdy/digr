@@ -52,7 +52,9 @@ describe("topic search rows: short real football comments are delivered without 
   });
 
   it("comments are judged by their video: a reply «اتفقت» or a long text with no word of the topic is a real comment, presumed and not flagged", () => {
-    for (const comment_text of ["اتفقت", "اتفقت تماماً", "ok", "صح"]) expect(decide({ comment_text }), comment_text).toEqual({ decision: "match", reasonAr: PRESUMED });
+    for (const comment_text of ["اتفقت", "اتفقت تماماً"]) expect(decide({ comment_text }), comment_text).toEqual({ decision: "match", reasonAr: PRESUMED });
+    // Fewer than three letters says nothing under any video («ok», «صح», «Wr»): rejected with a plain reason.
+    for (const comment_text of ["ok", "صح", "Wr"]) expect(decide({ comment_text }), comment_text).toEqual({ decision: "no_match", reasonAr: "التعليق أقصر من أن يحمل محتوى" });
     const long = "الحياة رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع";
     expect(decide({ comment_text: long })).toEqual({ decision: "match", reasonAr: PRESUMED });
     expect(decide({ comment_text: `${long} وكرة القدم تعلمنا الصبر` })).toEqual({ decision: "match", reasonAr: PRESUMED });

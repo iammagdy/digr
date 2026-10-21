@@ -6,6 +6,8 @@
  * source answered, with a readable date, and no raw provider column names.
  */
 
+import { relativeRowDate } from "./relativeDate";
+
 export type SocialRowKind = "comments" | "videos" | "posts";
 
 /** Resolve a stored task to its fixed social export schema when older JSON omitted socialKind. */
@@ -105,7 +107,24 @@ function clean<T extends Record<string, any>>(row: T): T {
 /** Account verification flags as providers name them; the column appears only when the source returned one. */
 const VERIFIED_KEYS = ["author_verified", "is_verified", "verified", "is_blue_verified", "user_verified"];
 
-export function normalizeSocialComment(raw: Record<string, any>): Record<string, any> {
+/** Shown in the date column of a comment the source gave no date for (the video's own date has its own column). */
+export const UNKNOWN_COMMENT_DATE_AR = "تاريخ غير معروف";
+
+/** The comment's own date: an ISO day from the source, else the day a «منذ …» text stands for (approximate), else the plain unknown label. */
+function commentDate(raw: Record<string, any>): string {
+  const own = toIsoDate(pick(raw, ["published_date", "published_at", "create_time", "createTime", "created_at", "date", "timestamp", "time"]));
+  if (own) return own;
+  const relative = relativeRowDate(raw);
+  return relative ? new Date(relative.ms).toISOString().slice(0, 10) : UNKNOWN_COMMENT_DATE_AR;
+}
+
+/** The comment's own fields: what describes the video it sits under (video_url, video_published_at…) must never be taken for the comment's link or date by a suffix match. */
+function ownFieldsOf(raw: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(raw || {}).filter(([key]) => !/^video[_A-Z]/.test(key) && !/^video$/i.test(key)));
+}
+
+export function normalizeSocialComment(rawRow: Record<string, any>): Record<string, any> {
+  const raw = ownFieldsOf(rawRow);
   return clean({
     source_id: text(pick(raw, ["comment_id", "cid", "commentId", "id"])),
     comment_text: text(pick(raw, ["text", "comment", "comment_text", "content", "message", "commentText"])),
@@ -114,12 +133,14 @@ export function normalizeSocialComment(raw: Record<string, any>): Record<string,
     author_verified: bool(pick(raw, VERIFIED_KEYS)),
     likes_count: parseCount(pick(raw, ["likes", "like_count", "digg_count", "likeCount", "reaction_count"])),
     replies_count: parseCount(pick(raw, ["replies", "reply_count", "reply_comment_total", "replyCount"])),
-    published_at: toIsoDate(pick(raw, ["published_date", "published_at", "create_time", "createTime", "created_at", "date", "timestamp", "time"])),
+    published_at: commentDate(raw),
     url: link(pick(raw, ["url", "comment_url", "permalink"])),
     pinned: bool(pick(raw, ["pinned", "is_pinned"])),
     hearted_by_creator: bool(pick(raw, ["hearted_by_creator", "creator_liked"])),
-    video_title: text(raw.video_title),
-    video_url: link(raw.video_url),
+    video_title: text(rawRow.video_title),
+    video_url: link(rawRow.video_url),
+    video_published_at: toIsoDate(rawRow.video_published_at),
+    comment_language: text(raw.comment_language),
   });
 }
 
@@ -172,7 +193,7 @@ export function normalizeSocialRow(kind: SocialRowKind, raw: Record<string, any>
 
 /** Column order shown to the customer (only the columns that carry a value are kept). */
 export const SOCIAL_COLUMN_ORDER: Record<SocialRowKind, string[]> = {
-  comments: ["id", "comment_text", "author_name", "username", "author_verified", "published_at", "likes_count", "replies_count", "url", "video_title", "video_url", "pinned", "hearted_by_creator", "source_id"],
+  comments: ["id", "comment_text", "author_name", "username", "author_verified", "published_at", "comment_language", "likes_count", "replies_count", "url", "video_title", "video_published_at", "video_url", "pinned", "hearted_by_creator", "source_id"],
   videos: ["id", "video_caption", "channel_name", "username", "author_verified", "published_at", "views_count", "likes_count", "comments_count", "shares_count", "saves_count", "video_duration", "hashtags", "url", "source_id"],
   posts: ["id", "text", "author_name", "username", "author_verified", "published_at", "likes_count", "retweets_count", "replies_count", "quotes_count", "views_count", "followers_count", "language", "is_reply", "url", "source_id"],
 };

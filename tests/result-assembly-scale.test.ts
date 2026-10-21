@@ -62,7 +62,8 @@ describe("a large comments workbook is written as a stream", () => {
     const data = streamed.getWorksheet("التعليقات")!;
     expect(data.rowCount).toBe(61);
     const links = cellValues(data).slice(1).flatMap((row) => row.filter((v) => v && typeof v === "object" && "hyperlink" in (v as any)));
-    expect(links.length).toBe(120); // two link columns per record, as in the in-memory workbook
+    // One link per record: the video's. (The comment's own link column no longer repeats the video link.)
+    expect(links.length).toBe(60);
   });
 
   it("a result larger than a sheet continues on the next sheet, each with its header, the record numbers running on", async () => {

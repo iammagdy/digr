@@ -189,6 +189,8 @@ export const COLUMN_METADATA_MAP: Record<string, { titleAr: string; descAr: stri
   profile_url: { titleAr: "رابط الملف الشخصي", descAr: "الرابط المباشر لصفحة الحساب الشخصي", type: "رابط (URI)" },
   bio_link: { titleAr: "الرابط الخارجي بالملف", descAr: "الرابط الخارجي المضاف في ملف الحساب إن وجد", type: "رابط (URI)" },
   video_url: { titleAr: "رابط الفيديو أو المنشور", descAr: "رابط الفيديو أو المنشور الذي كُتب عليه التعليق", type: "رابط (URI)" },
+  video_published_at: { titleAr: "تاريخ نشر الفيديو", descAr: "تاريخ نشر الفيديو الذي كُتب عليه التعليق، كما أوردها المصدر (قد يكون تقريبياً)", type: "تاريخ (Date)" },
+  comment_language: { titleAr: "لغة التعليق", descAr: "لغة التعليق بحسب حروفه: عربي أو إنجليزي أو لغة أخرى", type: "نص (String)" },
   video_title: { titleAr: "عنوان الفيديو أو المنشور", descAr: "عنوان أو وصف الفيديو أو المنشور الذي كُتب عليه التعليق", type: "نص (String)" },
   pinned: { titleAr: "تعليق مثبّت", descAr: "هل ثبّت صاحب المحتوى هذا التعليق", type: "منطقي (Boolean)" },
   hearted_by_creator: { titleAr: "أعجب به صاحب المحتوى", descAr: "هل أعجب صاحب المحتوى بهذا التعليق", type: "منطقي (Boolean)" },

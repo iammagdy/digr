@@ -1,7 +1,9 @@
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
 import { highOffTopicEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
-import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR } from "../../../../lib/server/videoRelevance";
+import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
+import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
+import type { VideoSelector } from "../../../../lib/server/socialAdapter";
 import { regionNameAr } from "../../../../lib/regionNames";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
@@ -78,6 +80,21 @@ export const maxDuration = 60; // Vercel Hobby maximum
 // Fallback in-memory partial step store used ONLY when unit-test mock storage omits .download()
 const inMemoryPartialStepFallback = getInMemoryPartialStepFallback();
 
+
+/** The sentence the automatic reviewers are given as «what the customer asked for»: the plan's own words, the requested country and the sector. */
+function reviewCustomerRequestFor(params: Record<string, any> | undefined): string {
+  const p = params || {};
+  const fullText = [
+    p.search, p.query, p.keyword, p.topic, p.location, p.country, p.city,
+    typeof p.query === "object" ? p.query?.keyword?.include?.[0] : "",
+    typeof p.query === "object" ? p.query?.location?.include?.[0] : "",
+  ]
+    .filter((v) => typeof v === "string" && v.trim().length > 0)
+    .join(" ");
+  const requestedRegionAr = regionNameAr(p.region);
+  return [p.query && typeof p.query === "string" ? p.query : "", requestedRegionAr ? `الدولة المطلوبة: ${requestedRegionAr}` : "", p.industry, p.country, p.title, p.q, fullText]
+    .filter((part) => typeof part === "string" && part.trim()).join(" ").slice(0, 400);
+}
 
 function getWorkerBaseUrl(req?: NextRequest): string {
   return resolveInternalBaseUrl(req);
@@ -527,6 +544,60 @@ export async function POST(req: NextRequest) {
           })
         : defaultTregAdapter;
 
+    // Comments of a topic search (TikTok, YouTube): the videos found are judged BEFORE any comment is read, so comments are read, paid for
+    // and delivered only under videos about the topic, and an adopted video can be read deeply. The review is the same as the page-level
+    // one below (evidence first, then one call on the list, fail closed, inside the job's review budget).
+    const earlySocialCap = getSocialCapability(spec.capabilitySlug);
+    const selectsVideosFirst = Boolean(earlySocialCap) && earlySocialCap?.kind === "comments" && ["tiktok", "youtube"].includes(String(earlySocialCap?.platform))
+      && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
+    let videoSelectionUsd = 0;
+    let videoSelectionUnreviewed = false;
+    const videoSelector: VideoSelector | undefined = selectsVideosFirst
+      ? async (refs) => {
+          // A video with no text of its own cannot be judged from the list: its comments are read and the page-level review sees a few of them.
+          const judgeable = refs.map((ref, i) => ({ ref, i })).filter(({ ref }) => Boolean((ref.title || "").trim()));
+          const deferred = refs.filter((ref) => !(ref.title || "").trim());
+          if (judgeable.length === 0) return { adopted: [], deferred };
+          const videos: VideoEntry[] = judgeable.map(({ ref, i }) => ({ key: `v${i}`, title: ref.title || "", channel: ref.channel || "", rowIndexes: [i], sampleComments: [] }));
+          const outcome = await judgeVideos({
+            advisor: getRowAdvisor(),
+            customerRequest: reviewCustomerRequestFor(spec.params),
+            kind: `${String(spec.capabilitySlug || "")}-video-list`,
+            videos,
+            request: { query: typeof spec.params?.query === "string" ? spec.params.query : "", region: typeof spec.params?.region === "string" ? spec.params.region : "" },
+            budgetUsd: socialReviewCapUsd(targetMax),
+            deadlineMs: deadlineMs - 8_000,
+          });
+          videoSelectionUsd += outcome.costUsd;
+          videoSelectionUnreviewed = [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
+          if (userId) {
+            for (const attempt of outcome.attempts) {
+              try {
+                await adminClient.from("llm_usage").insert({
+                  user_id: userId,
+                  tokens_in: attempt.usage?.inputTokens ?? 0,
+                  tokens_out: attempt.usage?.outputTokens ?? 0,
+                  model: attempt.usage?.model ?? (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
+                  latency_ms: attempt.usage?.latencyMs ?? 0,
+                  reason: attempt.failure ? `relevance_review_failed:${attempt.failure}` : "relevance_review",
+                  cost_usd: Number((attempt.usage?.costUsd ?? 0).toFixed(6)),
+                  created_at: new Date().toISOString(),
+                });
+              } catch (usageErr: any) {
+                console.warn("[worker:relevance_review_usage_log_failed]", usageErr?.message || "");
+              }
+              if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure} stop=${attempt.stopReason || ""}`);
+            }
+          }
+          try {
+            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values()), units: effectiveDelivered, event_type: "info" });
+          } catch (evtErr: any) {
+            console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+          }
+          return { adopted: judgeable.filter(({ i }) => outcome.judgements.get(`v${i}`)?.decision === "match").map(({ ref }) => ref), deferred };
+        }
+      : undefined;
+
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
@@ -548,6 +619,7 @@ export async function POST(req: NextRequest) {
       targetVolumeMax: targetMax,
       deliveredSoFar: effectiveDelivered,
       deadlineMs,
+      ...(videoSelector ? { videoSelector } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
     });
 
@@ -717,7 +789,7 @@ export async function POST(req: NextRequest) {
     }
 
     let uncertainRows: any[] = [];
-    let reviewUsdThisChunk = 0;
+    let reviewUsdThisChunk = videoSelectionUsd;
     let reviewFailureCodes: string[] = [];
     let reviewDiagnostics: Array<Record<string, unknown>> = [];
     let reviewSampleSummary: Record<string, unknown> | null = null;
@@ -777,9 +849,7 @@ export async function POST(req: NextRequest) {
         }),
       }));
 
-      const requestedRegionAr = regionNameAr(spec.params?.region);
-      const reviewCustomerRequest = [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", requestedRegionAr ? `الدولة المطلوبة: ${requestedRegionAr}` : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
-        .filter((part) => typeof part === "string" && part.trim()).join(" ").slice(0, 400);
+      const reviewCustomerRequest = reviewCustomerRequestFor(spec.params);
       const matchedForAdvice = reviews
         .filter((rev) => rev.decision === "match")
         .map((rev) => ({ index: rev.index, row: filteredRows[rev.index] as Record<string, any> }));
@@ -869,8 +939,10 @@ export async function POST(req: NextRequest) {
       } else if (videoLevelComments) {
         // Select the VIDEOS of the page: evidence in the video's own text first, then the review of the list of videos (fail closed,
         // inside the job's review budget). The comments of selected videos are delivered; the other videos' comments are not.
-        if (matchedForAdvice.length > 0) {
-          const { videos, withoutVideo } = groupRowsByVideo(matchedForAdvice);
+        // Comments whose video the adapter already selected before reading them are not judged again.
+        const notYetJudged = matchedForAdvice.filter(({ row }) => row[VIDEO_ADOPTED_KEY] !== true);
+        if (notYetJudged.length > 0) {
+          const { videos, withoutVideo } = groupRowsByVideo(notYetJudged);
           const priorReviewUsd = runningSet?.reviewUsd ?? 0;
           const outcome = await judgeVideos({
             advisor: getRowAdvisor(),
@@ -881,7 +953,7 @@ export async function POST(req: NextRequest) {
             budgetUsd: Math.max(0, socialReviewCapUsd(targetMax) - priorReviewUsd),
             deadlineMs: deadlineMs - 8_000,
           });
-          reviewUsdThisChunk = outcome.costUsd;
+          reviewUsdThisChunk += outcome.costUsd;
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
           reviewDiagnostics = outcome.attempts.map((attempt) => ({
             rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
@@ -1184,6 +1256,10 @@ export async function POST(req: NextRequest) {
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
           ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
           : `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+        : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
+        ? videoSelectionUnreviewed
+          ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
+          : `وجدنا فيديوهات عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : rawAdapterResult.emptyReason === "no_videos" && socialCapability
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
         ? `لم يجد البحث أي فيديو عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
