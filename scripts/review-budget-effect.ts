@@ -1,10 +1,10 @@
 /**
- * What the review budget (20% of a job's expected charge) does to delivery. Fake data only: no provider, no model, no database, no network.
+ * What the review budget (every row the job can collect, at most REVIEW_JOB_CEILING_USD per job) does to delivery. Fake data only: no provider, no model, no database, no network.
  * It runs the REAL functions (socialReviewCapUsd, reviewSocialPage) with a fake reviewer whose call costs the measured 0.0083 USD per 25 rows
  * (relevance_review: a verdict-only call of 20 rows cost 0.00666 USD on 21 Oct 2026) and replays the worker's own delivery rule page by page:
  *  - every row of a page is reviewed, in ONE call (a longer page in calls of 25 rows), and delivered only if the review confirms it (here the fake reviewer says match);
  *  - a row the budget did not reach is NOT delivered: it goes to the «غير مراجَع» sheet, and paging stops.
- * The budget is the real rule: 20% of the job's expected charge, never less than one full call (0.0083 USD).
+ * The budget is the real rule: enough to review every collectable row, at most 0.15 USD, never less than one full call (0.0083 USD).
  * Run: npx tsx scripts/review-budget-effect.ts
  */
 import { chargeForUnits } from "../src/lib/recordPricing";

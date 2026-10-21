@@ -23,6 +23,8 @@ export interface RunningSet {
   reviewUsd?: number;
   /** Review calls made so far (absent when none were made, or for a record from before they were counted). */
   reviewCallCount?: number;
+  /** The job took the previous review budget rule (the daily review ceiling was reached or unreadable when it began reviewing); it keeps it for the rest of the job. */
+  reviewFallback?: boolean;
   /** Rows that reached the relevance gate so far (absent for a record from before they were counted: the low-yield stop then does not apply). */
   rowsSeen?: number;
 }
@@ -44,6 +46,7 @@ export interface StepSummary {
   batchUnits?: unknown;
   reviewUsd?: unknown;
   reviewCallCount?: unknown;
+  reviewFallback?: unknown;
   rowsSeen?: unknown;
 }
 
@@ -68,10 +71,11 @@ export function extendRunningSet(previous: RunningSet, step: number, summary: St
   batchUnits[step] = typeof summary.batchUnits === "number" ? summary.batchUnits : Array.isArray(summary.rows) ? rows.length : null;
   const reviewUsd = Number(((previous.reviewUsd ?? 0) + (typeof summary.reviewUsd === "number" && summary.reviewUsd > 0 ? summary.reviewUsd : 0)).toFixed(6));
   const reviewCallCount = (previous.reviewCallCount ?? 0) + (typeof summary.reviewCallCount === "number" && summary.reviewCallCount > 0 ? Math.floor(summary.reviewCallCount) : 0);
+  const reviewFallback = previous.reviewFallback === true || summary.reviewFallback === true;
   // The count stays unknown (absent) once any chunk before it did not record it: a stop rule built on a partial count would be wrong.
   const seenBefore = previous.step < 0 ? 0 : previous.rowsSeen;
   const rowsSeen = typeof seenBefore === "number" && typeof summary.rowsSeen === "number" && summary.rowsSeen >= 0 ? seenBefore + Math.floor(summary.rowsSeen) : undefined;
-  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}), ...(reviewCallCount > 0 ? { reviewCallCount } : {}), ...(rowsSeen !== undefined ? { rowsSeen } : {}) };
+  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}), ...(reviewCallCount > 0 ? { reviewCallCount } : {}), ...(reviewFallback ? { reviewFallback } : {}), ...(rowsSeen !== undefined ? { rowsSeen } : {}) };
 }
 
 /**
@@ -103,6 +107,7 @@ function isRunningSet(value: any, step: number): value is RunningSet {
     && value.batchUnits.every((item: unknown) => item === null || typeof item === "number")
     && (value.reviewUsd === undefined || (typeof value.reviewUsd === "number" && Number.isFinite(value.reviewUsd)))
     && (value.reviewCallCount === undefined || (typeof value.reviewCallCount === "number" && Number.isFinite(value.reviewCallCount)))
+    && (value.reviewFallback === undefined || typeof value.reviewFallback === "boolean")
     && (value.rowsSeen === undefined || (typeof value.rowsSeen === "number" && Number.isFinite(value.rowsSeen)));
 }
 

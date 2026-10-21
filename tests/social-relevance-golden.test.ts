@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { emptyRunningSet, extendRunningSet, loadRunningSet, saveRunningSet } from "../src/lib/server/jobRunningSet";
 import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../src/lib/server/researchRelevanceGate";
 import {
-  applyStrictAdvisory, parseAdvisoryReply, reviewSocialRows, SOCIAL_REVIEW_ROWS_PER_CALL, socialReviewCapUsd, UNREVIEWED_REASON_AR,
+  applyStrictAdvisory, parseAdvisoryReply, reviewSocialRows, REVIEW_JOB_CEILING_USD, REVIEW_MIN_BUDGET_USD, SOCIAL_REVIEW_ROWS_PER_CALL, socialReviewCapUsd, UNREVIEWED_REASON_AR,
   type AdvisoryResult, type RowAdvisorFn,
 } from "../src/lib/server/rowReviewAdvisor";
 
@@ -172,26 +172,25 @@ describe("the review's own cost is capped per job", () => {
     } satisfies AdvisoryResult;
   };
 
-  it("the cap is 20% of the job's revenue (its expected charge in points at 0.10 EGP a point and 55 EGP a dollar), and never less than one full call (0.0083 USD)", () => {
-    // X: unit 0.11715 points. 300 posts = 36 points = 3.6 EGP = 0.065454 USD; 20% = 0.013090 USD
-    // 30 posts: 20% would be 0.001454 USD, below one full call: the floor of 0.0083 applies
-    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.0083);
-    expect(socialReviewCapUsd(300, 0.11715)).toBe(0.01309);
-    expect(socialReviewCapUsd(500, 0.11715)).toBe(0.021454);
-    expect(socialReviewCapUsd(4000, 0.11715)).toBe(0.170545);
-    // comments: unit 0.275 points. 1,000 comments = 275 points = 27.5 EGP = 0.5 USD; 20% = 0.10 USD
-    expect(socialReviewCapUsd(300, 0.275)).toBe(0.030181);
-    expect(socialReviewCapUsd(1000, 0.275)).toBe(0.1);
-    expect(socialReviewCapUsd(20, 3.4485)).toBe(0.02509);
-    // 30 comments: 20% would be 0.003272 USD, below one full call: the floor applies; 5 companies: 0.005818 USD, below it too (it was above the old floor of 0.0047)
-    expect(socialReviewCapUsd(30, 0.275)).toBe(0.0083);
-    expect(socialReviewCapUsd(5, 3.168)).toBe(0.0083);
-    expect(socialReviewCapUsd(20, 3.168)).toBeGreaterThan(0.0083);
-    // never above the share unless the share is below the floor, whatever the rounding
-    for (const [records, unit] of [[30, 0.11715], [777, 0.275], [123, 1.034], [5, 3.168], [4453, 0.11715]] as Array<[number, number]>) {
-      const revenueUsd = (Math.ceil(records * unit) * 0.1) / 55;
-      expect(socialReviewCapUsd(records, unit)).toBeLessThanOrEqual(Math.max(0.0083, revenueUsd * 0.2) + 1e-12);
-      expect(socialReviewCapUsd(records, unit)).toBeGreaterThanOrEqual(0.0083);
+  it("the budget is enough to review every row the job can collect (0.0083 USD per 25 rows), never more than the 0.15 USD ceiling and never less than one full call (0.0083 USD)", () => {
+    // the rows a job can collect are the pages its page cap allows, full (20 posts a page): 30 posts = 6 pages = 120 rows = 0.03984 USD
+    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.03984);
+    expect(socialReviewCapUsd(100, 0.11715)).toBe(0.0996);
+    // 300 posts can collect 900 rows (0.2988 USD to review them all): the ceiling of 0.15 USD applies, and to every larger job
+    expect(socialReviewCapUsd(300, 0.11715)).toBe(0.15);
+    expect(socialReviewCapUsd(500, 0.11715)).toBe(0.15);
+    expect(socialReviewCapUsd(4000, 0.11715)).toBe(0.15);
+    // the unit price no longer sets the budget (comments, companies): the same size gives the same budget
+    expect(socialReviewCapUsd(300, 0.275)).toBe(0.15);
+    expect(socialReviewCapUsd(1000, 0.275)).toBe(0.15);
+    expect(socialReviewCapUsd(20, 3.4485)).toBe(0.01992);
+    expect(socialReviewCapUsd(30, 0.275)).toBe(0.03984);
+    expect(socialReviewCapUsd(5, 3.168)).toBe(0.02656);
+    expect(socialReviewCapUsd(20, 3.168)).toBe(0.01992);
+    // never above the ceiling and never below one full call, whatever the size and the price
+    for (const [records, unit] of [[1, 0.11715], [30, 0.11715], [777, 0.275], [123, 1.034], [5, 3.168], [4453, 0.11715]] as Array<[number, number]>) {
+      expect(socialReviewCapUsd(records, unit)).toBeLessThanOrEqual(REVIEW_JOB_CEILING_USD);
+      expect(socialReviewCapUsd(records, unit)).toBeGreaterThanOrEqual(REVIEW_MIN_BUDGET_USD);
     }
     // a job with no valid price has no review budget at all, not even the floor (fail closed)
     expect(socialReviewCapUsd(10, 0)).toBe(0);
@@ -216,10 +215,10 @@ describe("the review's own cost is capped per job", () => {
     expect(tiny.stoppedBy).toBe("cap");
   });
 
-  it("the floor lets even a 30-record job confirm one full batch of doubtful rows, and not a second", async () => {
+  it("a budget of one full call (the floor) confirms one full batch of doubtful rows, and not a second", async () => {
     const seen: number[][] = [];
     const rows = Array.from({ length: 50 }, (_, i) => row(i));
-    const budget = socialReviewCapUsd(30, 0.11715); // 0.0083
+    const budget = REVIEW_MIN_BUDGET_USD; // 0.0083
     const outcome = await reviewSocialRows({ advisor: costly(0.0083, seen), customerRequest: "x", kind: "social-x-posts", rows, budgetUsd: budget, callCostEstimateUsd: 0.0083 });
     expect(seen.map((batch) => batch.length)).toEqual([SOCIAL_REVIEW_ROWS_PER_CALL]);
     expect(outcome.verdicts.size).toBe(25);
