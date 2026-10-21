@@ -1,5 +1,6 @@
 import { TablesDB, Query } from "./dbCompat";
 import { onProviderLimitsFlush, resolveProviderLimits } from "../../lib/server/providerLimits";
+import { readRealProviderBalance } from "../../lib/server/realProviderBalance";
 
 import { selectAllRows } from "../../lib/server/selectAll";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
@@ -254,6 +255,8 @@ export async function getProviderAvailableBalanceUsd(
 
 export interface PlanCapacityCheckResult {
   allowed: boolean;
+  /** Where the balance the budget came from: the provider's own reading, or the configured credit minus the recorded spend. */
+  balanceSource?: "real" | "estimate";
   safeBudgetUsd: number;
   availableBalanceUsd: number;
   originalVolume: number;
@@ -269,9 +272,14 @@ export async function checkPlanProviderCapacity(
 ): Promise<PlanCapacityCheckResult> {
   const status = await getProviderBalanceStatus(tables);
   const remainingDailyUsd = Math.max(0, status.todayCapUsd - status.todaySpendUsd);
+  // The balance is the provider's REAL one when a recent reading exists; otherwise the estimate (credit minus recorded spend), as before.
+  // A test that fixes the balance keeps its fixed figure.
+  const real = testBalanceOverrideUsd !== null ? null : await readRealProviderBalance(tables);
+  const balanceUsd = real ? real.usd : status.availableBalanceUsd;
+  const balanceSource: "real" | "estimate" = real ? "real" : "estimate";
   const effectiveAvailableUsd = testBalanceOverrideUsd !== null
     ? testBalanceOverrideUsd
-    : Math.min(status.availableBalanceUsd, remainingDailyUsd);
+    : Math.min(balanceUsd, remainingDailyUsd);
   // 10% safety margin on effective available balance
   const safeBudgetUsd = Math.max(0, effectiveAvailableUsd * 0.90);
 
@@ -281,8 +289,9 @@ export async function checkPlanProviderCapacity(
   if (estimatedCostUsd <= safeBudgetUsd) {
     return {
       allowed: true,
+      balanceSource,
       safeBudgetUsd,
-      availableBalanceUsd: status.availableBalanceUsd,
+      availableBalanceUsd: balanceUsd,
       originalVolume: targetVolume,
       maxSafeVolume: targetVolume,
       downscaled: false,
@@ -292,8 +301,9 @@ export async function checkPlanProviderCapacity(
   const maxSafeVolume = Math.max(0, Math.floor(safeBudgetUsd / unitCost));
   return {
     allowed: maxSafeVolume > 0,
+    balanceSource,
     safeBudgetUsd,
-    availableBalanceUsd: status.availableBalanceUsd,
+    availableBalanceUsd: balanceUsd,
     originalVolume: targetVolume,
     maxSafeVolume,
     downscaled: true,
