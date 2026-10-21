@@ -38,6 +38,8 @@ export interface PlanQuoteData {
   askedVolumeMax?: number;
   /** What a channels mission covers when that differs from what the template said (fewer channels, a lower top): plain sentences from code. */
   coverageLinesAr?: string[];
+  /** The parts of a request that mixes what we sell with what we do not: the priced part, and each part left out with its reason. */
+  partsAr?: Array<{ labelAr: string; included: boolean; reasonAr?: string }>;
   /** The count is a default the plan chose because the customer left it open (set by the server): the card says so, never «you asked for». */
   defaultCap?: { noun: DefaultNoun; units: number; wordAr?: string };
   pointsCap?: number;
@@ -305,6 +307,18 @@ export default function PlanQuoteCard({
       {quote.understoodAr && (
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
+
+      {quote.partsAr && quote.partsAr.some((part) => !part.included) ? (
+        <ul data-testid="plan-parts" className="mb-0 mt-3 list-none space-y-1 rounded-xl border border-sand-200 bg-sand-50/70 p-3 text-[12.5px] leading-[1.9] text-ink">
+          {quote.partsAr.map((part) => (
+            <li key={part.labelAr} data-testid={part.included ? "plan-part-included" : "plan-part-not-sold"}>
+              <span className="font-bold">{part.labelAr}</span>
+              {" — "}
+              {part.included ? "مشمول في هذا السعر" : `غير مُسعَّر${part.reasonAr ? `: ${part.reasonAr}` : ""}`}
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {quote.coverageLinesAr?.length ? (
         <ul data-testid="plan-coverage" className="mb-0 mt-3 list-none space-y-1 p-0 text-[12.5px] font-light leading-[1.9] text-ink">
