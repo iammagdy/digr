@@ -1,8 +1,9 @@
 import { pointsAr } from "@/lib/pointsFormat";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
-import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
+import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
-import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, reviewFailureEventMessage, reviewSpendEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
+import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSpendEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
+import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
 import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
@@ -356,8 +357,11 @@ export async function POST(req: NextRequest) {
       unit_price: unitPrice = 1,
     } = claimData;
 
-    // The job's review budget: 20% of its revenue (expected charge), computed here from the job's own unit price, never by the model.
-    const reviewCapUsd = socialReviewCapUsd(Number(targetMax), Number(unitPrice));
+    // The job's review budget, computed here from the job's own size, never by the model: the per-job rule (every collectable row, up to the per-job
+    // ceiling). A job that has not started reviewing takes the previous rule instead when today's review spend has reached REVIEW_DAILY_CEILING_USD or
+    // cannot be read (see resolveReviewBudget, below, once what the job has already reviewed is known).
+    let reviewCapUsd = socialReviewCapUsd(Number(targetMax), Number(unitPrice));
+    let reviewFallbackThisJob = false;
 
     const useMockProvider = Boolean(
       isMockRequested &&
@@ -581,11 +585,38 @@ export async function POST(req: NextRequest) {
     // What the job's earlier chunks already spent on review (read from the running record, before the adapter runs: the video selection
     // happens inside it). An unreadable record counts as nothing here; the page-level review below reads it again and rebuilds it.
     let reviewUsdBeforeThisChunk = 0;
-    if (selectsVideosFirst && currentStep > 0) {
+    let priorReviewSet: RunningSet | null = null;
+    if (currentStep > 0 && (selectsVideosFirst || earlySocialCap)) {
       try {
-        reviewUsdBeforeThisChunk = (await loadRunningSet(adminClient.storage.from("partials"), jobId, currentStep - 1))?.reviewUsd ?? 0;
+        priorReviewSet = await loadRunningSet(adminClient.storage.from("partials"), jobId, currentStep - 1);
       } catch {
-        reviewUsdBeforeThisChunk = 0;
+        priorReviewSet = null;
+      }
+    }
+    if (selectsVideosFirst) reviewUsdBeforeThisChunk = priorReviewSet?.reviewUsd ?? 0;
+    // The daily review guard: never throws, one cached read per instance; chat and the rest of the job do not wait on anything else.
+    if (earlySocialCap) {
+      const budget = await resolveReviewBudget({
+        admin: adminClient,
+        targetMax: Number(targetMax),
+        unitPricePoints: Number(unitPrice),
+        stickyFallback: priorReviewSet?.reviewFallback === true,
+        alreadyReviewing: (priorReviewSet?.reviewCallCount ?? 0) > 0 || (priorReviewSet?.reviewUsd ?? 0) > 0,
+      });
+      reviewCapUsd = budget.capUsd;
+      reviewFallbackThisJob = budget.rule !== "normal";
+      if (budget.fresh && jobId) {
+        try {
+          await adminClient.from("job_events").insert({
+            job_id: jobId,
+            user_id: userId,
+            message: reviewFallbackEventMessage({ step: currentStep, reason: budget.rule === "read_failed" ? "read_failed" : "daily_ceiling", todayUsd: budget.todayUsd, ceilingUsd: REVIEW_DAILY_CEILING_USD, capUsd: budget.capUsd }),
+            units: 0,
+            event_type: REVIEW_FALLBACK_EVENT_TYPE,
+          });
+        } catch (evtErr: any) {
+          console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+        }
       }
     }
     const videoSelector: VideoSelector | undefined = selectsVideosFirst
@@ -745,7 +776,8 @@ export async function POST(req: NextRequest) {
       // A provider may repeat its first page or return overlapping cursor pages.
       // De-duplicate against already accepted rows before validating or billing.
       const partials = adminClient.storage.from("partials");
-      runningSet = currentStep === 0 ? emptyRunningSet() : await loadRunningSet(partials, jobId, currentStep - 1);
+      // (the guard above already read it for a social job: not downloaded twice)
+      runningSet = currentStep === 0 ? emptyRunningSet() : priorReviewSet ?? await loadRunningSet(partials, jobId, currentStep - 1);
       if (!runningSet) {
         // No readable running record (a job that started before it existed, a lost or damaged file): rebuild it from the earlier chunks' files, as before.
         runningSet = await rebuildRunningSet(currentStep, dedupeIdentity, async (step) => {
@@ -1289,6 +1321,9 @@ export async function POST(req: NextRequest) {
 
     }
 
+    // This instance's review spend joins the daily guard's cached sum at once (the usage rows were written above).
+    noteReviewSpend(reviewUsdThisChunk + companyReviewUsdThisChunk);
+
     // The job's review spend, for the owner to read later (USD and calls, per chunk and so far). An internal row (its own event type, hidden
     // from the customer's activity list); the customer's own lines above are Arabic and never carry an amount.
     if ((reviewCallsThisChunk > 0 || reviewStoppedForLowYield) && jobId) {
@@ -1425,6 +1460,7 @@ export async function POST(req: NextRequest) {
       unreviewedRowsCount: unreviewedRows.length,
       ...(reviewUsdThisChunk > 0 ? { reviewUsd: Number(reviewUsdThisChunk.toFixed(6)) } : {}),
       ...(reviewCallsThisChunk > 0 ? { reviewCallCount: reviewCallsThisChunk } : {}),
+      ...(reviewFallbackThisJob ? { reviewFallback: true } : {}),
       rowsSeen: rowsSeenThisChunk,
       ...(reviewFailureCodes.length > 0 ? { reviewFailures: reviewFailureCodes } : {}),
       ...(reviewDiagnostics.length > 0 ? { reviewCalls: reviewDiagnostics } : {}),

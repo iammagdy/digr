@@ -68,3 +68,18 @@ TikTok/YouTube comments (0.275), target 1000: expected charge 275 points, review
 
 companies, target 5: the review of company rows is a separate path (not under this budget, no cap, not strict). The budget this rule would give a 5-company job is 0.02656 USD; the measured company review cost is 0.000068 USD per record (0.00034 USD for 5).
 ```
+
+## Daily review guard (owner condition on PR #195)
+
+`REVIEW_DAILY_CEILING_USD = 12` (one place, `src/lib/server/rowReviewAdvisor.ts`). Today's review spend is the sum of `cost_usd` of the `llm_usage` rows of the UTC day whose reason starts with `relevance_review` (failed calls included), read by `src/lib/server/reviewDailyGuard.ts`:
+
+- **Cheap:** one read per instance every 45 seconds (concurrent decisions share one read), plus this instance's own spend since the read (`noteReviewSpend`, called each chunk), so it never under-counts itself. A new UTC day reads at once. A failed read is kept for the same 45 seconds (no hammering). The read is paged (1,000 rows a page, at most 30); a read that does not reach the last row counts as failed, never as a partial sum.
+- **At or above 12 USD:** a job that has not started reviewing takes the previous rule (20% of the expected revenue, floor 0.0083), but never more than its per-job budget (the previous rule would give 4,000 X posts 0.170545 USD, above 0.15). One internal `review_fallback` job_events row is written (reason, today's spend, the ceiling, the job's cap), hidden from the customer.
+- **Read failed:** the previous rule too, never the 0.15 ceiling (row reason `read_failed`).
+- **A job keeps its rule:** a job already reviewing under the per-job budget keeps it (it is not cut mid-way); a job that took the previous rule keeps it for all its chunks (flag `reviewFallback` in its running record), so it writes one row and makes no further read.
+- **Nothing else changes:** prices, caps, the charge formula, delivery rules, SQL.
+
+### The chat cannot be blocked by the review path
+- The chat route, the chat handler and the chat's spend-cap code do not import or call the guard or the review code (a test reads their source).
+- With the guard at the ceiling, with its read failing, the chat answers exactly as without (tests on `/api/chat`).
+- One fact to know: the chat's own daily model-spend cap (`checkGlobalDailySpendCap`, 50 USD in settings today) sums ALL of today's `llm_usage` rows, review rows included. The guard keeps review spend near 12 USD a day (plus the small previous-rule jobs after it), which leaves about 38 USD of that cap for chat. If the chat cap were ever set below the review ceiling, review spend alone could use it up; the cap, its rule and its setting are untouched here.

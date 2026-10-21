@@ -3,7 +3,7 @@
  * later (calls and USD, for the chunk and for the job so far). It is an internal row with its own event type (`review_cost`) that the
  * customer's activity list does not show; the customer's own lines are Arabic and never carry an amount.
  */
-export { REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, isCustomerVisibleJobEvent } from "../reviewCostEvent";
+export { REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, isCustomerVisibleJobEvent } from "../reviewCostEvent";
 
 export function reviewSpendEventMessage(input: {
   step: number;
@@ -24,6 +24,18 @@ export function reviewSpendEventMessage(input: {
     `total_usd=${usd(input.usdBefore + input.usdThisChunk)}`,
     `rows_seen=${input.rowsSeenThisChunk}`,
     `low_yield_stop=${input.stoppedLowYield ? 1 : 0}`,
+  ].join(" ");
+}
+
+/** The internal `review_fallback` line: the job took the previous budget rule, and why (no amounts of the customer's, no row content). */
+export function reviewFallbackEventMessage(input: { step: number; reason: "daily_ceiling" | "read_failed"; todayUsd: number | null; ceilingUsd: number; capUsd: number }): string {
+  return [
+    "review_fallback",
+    `step=${input.step}`,
+    `reason=${input.reason}`,
+    `today_usd=${input.todayUsd === null ? "unknown" : Math.max(0, input.todayUsd).toFixed(6)}`,
+    `daily_ceiling_usd=${input.ceilingUsd}`,
+    `job_cap_usd=${Math.max(0, input.capUsd).toFixed(6)}`,
   ].join(" ");
 }
 

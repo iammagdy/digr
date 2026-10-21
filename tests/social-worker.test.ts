@@ -20,6 +20,8 @@ const db = vi.hoisted(() => ({
   unitPrice: 9,
   reserved: 207,
   slug: "social-youtube-comments",
+  /** What `llm_usage` answers to the daily review guard: costs of today's review rows (null = the table is not stubbed), a failing read, and how many reads were made. */
+  usage: { rows: null as number[] | null, fail: false, reads: 0 },
 }));
 
 function builder(rows: () => any[]) {
@@ -76,6 +78,14 @@ vi.mock("../src/lib/supabase/server", () => ({
     from: (table: string) => {
       if (table === "jobs") return builder(() => db.jobs);
       if (table === "plans_quotes") return builder(() => db.quotes);
+      if (table === "llm_usage" && db.usage.rows !== null) {
+        const chain: any = {
+          select: () => chain, like: () => chain, gte: () => chain, order: () => chain,
+          range: async () => { db.usage.reads += 1; return db.usage.fail ? { data: null, error: { message: "read failed" } } : { data: (db.usage.rows ?? []).map((cost_usd) => ({ cost_usd })), error: null }; },
+          insert: async (row: any) => ({ data: row, error: null }),
+        };
+        return chain;
+      }
       if (table === "job_events" || table === "notifications" || table === "artifact_versions") {
         const base = builder(() => (table === "job_events" ? db.events : []));
         return { ...base, insert: async (row: any) => { if (table === "job_events") db.events.push(row); return { data: row, error: null }; }, upsert: async (row: any) => ({ data: row, error: null }) };
@@ -103,6 +113,8 @@ import { estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/soci
 import { setRelativeDateClockForTesting } from "../src/lib/server/relativeDate";
 import ExcelJS from "exceljs";
 import { UNREVIEWED_SHEET_NOTICE_AR } from "../src/functions/shared/fileGenerators";
+import { isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
+import { setReviewDailyGuardForTesting } from "../src/lib/server/reviewDailyGuard";
 import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, UNREVIEWED_BY_BUDGET_REASON_AR, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 
 const JOB = jobIdForQuote("quote_social");
@@ -119,6 +131,7 @@ function resetDb(slug: string, params: Record<string, unknown>, target: number, 
   db.results.clear();
   db.rpcCalls = [];
   db.events = [];
+  db.usage = { rows: null, fail: false, reads: 0 };
   db.step = 0;
   db.cursor = null;
   db.deliveredUnits = 0;
@@ -144,6 +157,7 @@ describe("worker: social jobs", () => {
     setProviderAdapterForTesting(null);
     setRowAdvisorForTesting(null);
     setStrictSocialReviewForTesting(false);
+    setReviewDailyGuardForTesting(undefined);
     setRelativeDateClockForTesting(null);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete (process.env as any)[key];
@@ -846,6 +860,90 @@ describe("worker: social jobs", () => {
         expect(internal()).toEqual(["review_spend step=0 calls=1 usd=0.004000 total_calls=1 total_usd=0.004000 rows_seen=40 low_yield_stop=0"]);
         expect(db.events.filter((event) => event.event_type === "review_cost")).toHaveLength(1);
         expect(customer().every((line) => !line.startsWith("review_spend"))).toBe(true);
+      });
+
+      describe("the daily review guard: at the daily ceiling (or when it cannot be read) a job that has not started reviewing takes the previous budget rule", () => {
+        const fallbackRows = () => db.events.filter((event) => event.event_type === "review_fallback").map((event) => String(event.message));
+        /** 40 X posts at the real price (0.11715): the per-job budget is 0.03984 USD, the previous rule 0.0083 USD. Pages of 20 posts, one confirmed post each, 0.004 USD a call: three pages are bought and reviewed under the per-job budget. */
+        const run = async (usageRows: number[] | null, options: { fail?: boolean } = {}) => {
+          resetDb("social-x-posts", EGYPT_TOPIC, 40, 0.11715);
+          db.usage = { rows: usageRows, fail: Boolean(options.fail), reads: 0 };
+          setReviewDailyGuardForTesting("real");
+          let providerCalls = 0;
+          useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+          const calls: number[] = [];
+          strict(strictAdvisor(calls, 0.004));
+          const { json } = await runAllChunks();
+          return { calls, json, providerCalls };
+        };
+
+        it("below the daily ceiling (11.99 of 12 USD) the job has the per-job budget and no fallback row is written", async () => {
+          const { calls } = await run([11.99]);
+          expect(calls).toEqual([20, 20, 20]);
+          expect(fallbackRows()).toEqual([]);
+          expect(db.usage.reads).toBe(1);
+        });
+
+        it("at the daily ceiling (12 USD) the job takes the previous rule: one full call only, ONE internal row says so, hidden from the customer", async () => {
+          const { calls } = await run([12]);
+          expect(calls).toEqual([20]);
+          expect(fallbackRows()).toEqual(["review_fallback step=0 reason=daily_ceiling today_usd=12.000000 daily_ceiling_usd=12 job_cap_usd=0.008300"]);
+          expect(db.events.filter((event) => isCustomerVisibleJobEvent(event.event_type)).every((event) => !String(event.message).startsWith("review_fallback"))).toBe(true);
+          expect(db.usage.reads).toBe(1);
+        });
+
+        it("a spend several rows add up to the ceiling counts (6 + 6 USD), one cent under does not", async () => {
+          expect((await run([6, 6])).calls).toEqual([20]);
+          expect((await run([6, 5.99])).calls).toEqual([20, 20, 20]);
+        });
+
+        it("when today's spend cannot be read the previous rule applies, not the per-job budget, and the row says the read failed", async () => {
+          const { calls, json } = await run([0], { fail: true });
+          expect(calls).toEqual([20]);
+          expect(fallbackRows()).toEqual(["review_fallback step=0 reason=read_failed today_usd=unknown daily_ceiling_usd=12 job_cap_usd=0.008300"]);
+          expect(json.done).toBe(true);
+        });
+
+        it("the job keeps its rule for all its chunks: the first chunk's record carries it, and there is one row and one read however many chunks", async () => {
+          resetDb("social-x-posts", EGYPT_TOPIC, 40, 0.11715);
+          db.usage = { rows: [12], fail: false, reads: 0 };
+          setReviewDailyGuardForTesting("real");
+          let providerCalls = 0;
+          useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+          strict(strictAdvisor([], 0.004));
+          await callWorker();
+          const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
+          expect(stepFile.reviewFallback).toBe(true);
+          db.usage.rows = [0]; // the day looks empty from now on: the job still keeps the previous rule
+          const { json } = await runAllChunks();
+          expect(json.done).toBe(true);
+          expect(fallbackRows()).toHaveLength(1);
+          expect(db.usage.reads).toBe(1);
+        });
+
+        it("a job that began reviewing under the per-job budget keeps it even if the day reaches the ceiling meanwhile", async () => {
+          resetDb("social-x-posts", EGYPT_TOPIC, 40, 0.11715);
+          db.usage = { rows: [11.99], fail: false, reads: 0 };
+          setReviewDailyGuardForTesting("real");
+          let providerCalls = 0;
+          useSource(async () => { providerCalls += 1; if (providerCalls === 2) db.usage.rows = [50]; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+          const calls: number[] = [];
+          strict(strictAdvisor(calls, 0.004));
+          await runAllChunks();
+          expect(calls).toEqual([20, 20, 20]);
+          expect(fallbackRows()).toEqual([]);
+          expect(db.usage.reads).toBe(1);
+        });
+
+        it("the fallback changes only the review budget: the same posts are delivered and charged per delivered row", async () => {
+          const normal = await run([0]);
+          const normalCharge = normal.json.settle?.charged_credits;
+          const fallback = await run([12]);
+          expect(fallback.json.done).toBe(true);
+          expect(fallback.json.deliveredUnits).toBe(1);
+          expect(fallback.json.settle.charged_credits).toBe(Math.ceil(1 * 0.11715));
+          expect(normalCharge).toBe(Math.ceil(normal.json.deliveredUnits * 0.11715));
+        });
       });
 
       it("the review budget is used up and fewer than 10% of the rows seen were accepted: the next page goes to «غير مراجَع», paging stops, nothing more is charged, and it is said in Arabic", async () => {

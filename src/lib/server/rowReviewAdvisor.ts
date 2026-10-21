@@ -2,6 +2,8 @@ import { z } from "zod";
 import { getLlmPricingSettings } from "../../functions/shared/llmClient";
 import { resolveProviderKey } from "./providerKeys";
 import type { RelevanceDecision } from "./relevanceValidationLayer";
+import { DEFAULT_PRICING_SETTINGS, type PricingSettings } from "../../functions/shared/quotes";
+import { chargeForUnits } from "../recordPricing";
 import { maxPagesForJob } from "./providerCallCaps";
 import { normalizeText, stemToken, topicStems } from "./topicMatch";
 
@@ -387,6 +389,27 @@ export function socialReviewCapUsd(targetMax: number, unitPricePoints: number): 
   const everyRowUsd = (collectableRows(targetMax) * REVIEW_CALL_COST_ESTIMATE_USD) / SOCIAL_REVIEW_ROWS_PER_CALL;
   const budget = Math.min(REVIEW_JOB_CEILING_USD, Math.max(REVIEW_MIN_BUDGET_USD, everyRowUsd));
   return Math.floor(budget * 1_000_000 + 1e-6) / 1_000_000;
+}
+
+/**
+ * The most the automatic review of ALL jobs may spend in one UTC day, in USD (see reviewDailyGuard). When it is reached, jobs that have not started
+ * reviewing take the previous budget rule below, so chat and delivery keep working. It is changed HERE and nowhere else.
+ */
+export const REVIEW_DAILY_CEILING_USD = 12;
+
+/** The share of a job's revenue the previous budget rule allowed (the fallback when the daily ceiling is reached or cannot be read). */
+export const REVIEW_FALLBACK_SHARE = 0.2;
+
+/**
+ * The previous budget rule, kept as the fallback: 20% of the job's revenue (its expected charge, ceil(target records x unit price) points at 0.10 EGP
+ * a point and 55 EGP a dollar), never less than one full call (REVIEW_MIN_BUDGET_USD), rounded down to a millionth. 0 without a valid price.
+ */
+export function socialReviewCapPreviousRuleUsd(targetMax: number, unitPricePoints: number, settings: Pick<PricingSettings, "usdToEgp" | "creditValueEgp"> = DEFAULT_PRICING_SETTINGS): number {
+  const revenuePoints = chargeForUnits(Math.max(1, Math.floor(Number(targetMax) || 1)), Number(unitPricePoints));
+  if (!(revenuePoints > 0) || !(settings.usdToEgp > 0)) return 0;
+  const revenueUsd = (revenuePoints * settings.creditValueEgp) / settings.usdToEgp;
+  const share = Math.floor(revenueUsd * REVIEW_FALLBACK_SHARE * 1_000_000 + 1e-6) / 1_000_000;
+  return Math.max(REVIEW_MIN_BUDGET_USD, share);
 }
 
 /** Once the job's review budget is used up, a job whose accepted share of the rows seen so far is below this stops (see `reviewStopForLowYield`). */
