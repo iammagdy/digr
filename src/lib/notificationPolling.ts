@@ -22,6 +22,8 @@ export interface NotificationPollingOptions {
   backoff?: { factor: number; maxIntervalMs: number };
   /** A random number in [0, 1): a test passes a fixed one. */
   random?: () => number;
+  /** How much longer every wait is right now (1 normally, 3 while the service runs at reduced capacity). Read at every delay. */
+  slowFactor?: () => number;
   /** False while the tab is in the background: nothing is fetched for a page nobody is looking at. */
   isVisible?: () => boolean;
   /** Fires `visibilitychange` (the document) and `focus` (the window). */
@@ -42,7 +44,8 @@ export function startNotificationPolling(options: NotificationPollingOptions): (
 
   const nextDelay = () => {
     const unit = Number.isFinite(random()) ? Math.min(Math.max(random(), 0), 0.999999) : 0.5;
-    return Math.max(1_000, Math.round(currentMs * (1 + (unit * 2 - 1) * jitter)));
+    const slow = Math.min(Math.max(options.slowFactor?.() ?? 1, 1), 10);
+    return Math.max(1_000, Math.round(currentMs * (1 + (unit * 2 - 1) * jitter) * (Number.isFinite(slow) ? slow : 1)));
   };
   const schedule = () => {
     if (stopped) return;

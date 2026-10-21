@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { startNotificationPolling } from "@/lib/notificationPolling";
+import { getSlowFactor } from "@/lib/degradedClient";
 
 export type NotificationKind = "topup_approved" | "topup_rejected" | "job_done" | "refund" | "welcome";
 
@@ -92,6 +93,7 @@ export function useNotifications(userId: string | undefined) {
       tick: checkNewer,
       intervalMs: NOTIFICATION_TICK_MS,
       jitter: 0.2,
+      slowFactor: getSlowFactor,
       backoff: { factor: 1.5, maxIntervalMs: NOTIFICATION_TICK_MAX_MS },
       isVisible: () => document.visibilityState !== "hidden",
       visibilityTarget: document,

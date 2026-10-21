@@ -17,6 +17,8 @@ export interface PollDelayInput {
   hidden: boolean;
   /** A number in [0, 1): the caller's random source (a test passes a fixed one). */
   random: number;
+  /** How much longer to wait while the service runs at reduced capacity (1 normally, 3 in degraded mode). */
+  slow?: number;
 }
 
 /** Base delays by age of the request: 3 s for the first minute, 5 s up to 5 minutes, 10 s up to 20 minutes, then 15 s. A hidden tab: 30 s. */
@@ -32,12 +34,17 @@ export function basePollDelayMs(elapsedMs: number, hidden: boolean): number {
 export function nextPollDelayMs(input: PollDelayInput): number {
   const base = basePollDelayMs(Math.max(0, input.elapsedMs), input.hidden);
   const spread = (unit(input.random) * 2 - 1) * 0.2;
-  return Math.max(1_000, Math.round(base * (1 + spread)));
+  return Math.max(1_000, Math.round(base * (1 + spread) * slowOf(input.slow)));
 }
 
 /** A steady background count (for example «requests running» in the menu): every 30 s, with jitter, and not at all while the tab is hidden. */
 export const BACKGROUND_COUNT_POLL_MS = 30_000;
-export function nextBackgroundDelayMs(random: number): number {
+export function nextBackgroundDelayMs(random: number, slow?: number): number {
   const spread = (unit(random) * 2 - 1) * 0.2;
-  return Math.round(BACKGROUND_COUNT_POLL_MS * (1 + spread));
+  return Math.round(BACKGROUND_COUNT_POLL_MS * (1 + spread) * slowOf(slow));
+}
+
+/** A missing, odd or sub-1 factor means «not slowed». */
+function slowOf(slow: number | undefined): number {
+  return typeof slow === "number" && Number.isFinite(slow) && slow >= 1 ? Math.min(slow, 10) : 1;
 }
