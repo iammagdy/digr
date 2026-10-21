@@ -2,6 +2,70 @@
 
 This handoff document provides a clear, factual status of the Diger platform (`iammagdy/digr`) for engineering agents (Codex), developers, and the project owner.
 
+
+## FINAL CLOSE-OUT (2026-10-21): decisions, what to reuse, what to leave, how to start
+
+### Owner decisions (final)
+- Do NOT merge draft PR #189. Keep it as a draft, untouched, reference only.
+- Option 3 is approved: cap model-review spend per job at 20% of the job's revenue; rows beyond the budget are not delivered and not charged. (Approved but NOT implemented: the current cap is `socialReviewCapUsd` in `src/lib/server/rowReviewAdvisor.ts` = 0.0006 USD x target records, minimum 0.05 USD.)
+- Stage 2 (5,000 cap, all SQL, registry alignment) is DEFERRED. Do not propose or apply any SQL.
+- Stage 1 (per-record fractional pricing in TypeScript only, cap stays 600 from ONE constant) will be done by a fresh session on a new branch `claude/price-per-record` from `origin/main`.
+
+### Reusable for stage 1 (read from branch `claude/price-and-cap`, port by hand onto the new branch)
+- Pricing code: `src/lib/recordPricing.ts` (exact BigInt pricing, `RECORD_COSTS` with MEASURED/ASSUMED labels, `chargeForUnits`, `reserveForUnits`, `maxVolumeUnderCap`, `pricePer100Points`), `src/lib/pointsFormat.ts` (`formatPointsAr`, `unitPriceLabelAr`, `unitPriceEgpLabelAr`: fractional prices shown per 100 records), `src/lib/pointsCap.ts`, `src/lib/jobSizing.ts`.
+- Call sites that must use the one shared price function (`unitPricePointsForCapability` in `src/functions/shared/quotes.ts`): quote writer and plan (`src/functions/shared/planManager.ts`, `quotes.ts`), catalog (`src/functions/shared/capabilityRegistry.ts`), calculator (`src/lib/calculatorPricing.ts`, `src/app/calculator/page.tsx`, `src/components/calculator/MissionEstimator.tsx`, `src/lib/missionEstimate.ts`), services page (`src/app/services/page.tsx`), pricing page (`src/app/pricing/page.tsx`, `src/lib/pricingPage.ts`), plan card (`src/app/dashboard/chat/components/PlanQuoteCard.tsx`).
+- Tests: `tests/record-pricing.test.ts`, `tests/per-record-pricing-properties.test.ts`, `tests/price-display.test.ts`, the replica tests (`tests/helpers/replicaDb.ts`, `tests/helpers/replicaMoney.ts`, `tests/replica/*`, `tests/replica-smoke.test.ts`, `tests/replica-money-properties.test.ts`: use only the production-bodies, cap 600 variant), `tests/x-4000-replica-run.test.ts`.
+- Docs: `docs/proposals/job-cap-5000/money-tests-changed.md` (old/new lines of every changed test: for stage 1 only the price changes apply, the 600/5000 lines do not), `docs/proposals/job-cap-5000/test-assertion-audit.md`, `docs/proposals/job-cap-5000/all-in-cost-and-margins.md` (cost per record, margins, Option 1/2/3), `docs/proposals/prod-definitions/` (real production function bodies, read-only reference).
+- Rule for porting tests: change an existing test only if it pinned exactly the old behavior and the new assertion is equally strict; list every money test changed with old and new lines in the PR body and stop for the owner's review before merging.
+
+### Must NOT be carried over
+- The 5,000 value of `JOB_MAX_POINTS_CAP` (`src/lib/jobPointsCap.ts`): on the new branch the cap stays 600, from ONE constant.
+- All SQL proposals: `docs/proposals/job-cap-5000/{option-a,option-b,functions,functions-b,diffs}`, `scripts/proposals/buildJobCapProposal.ts`, and the registry alignment `docs/proposals/registry-alignment/`.
+- The confirmation tick above 600 points (`large-reserve-card`, `confirmedLargeReserve`): with the cap at 600 a reserve can never exceed 600, so it only matters above 600.
+- The 5,000-sized scale ceilings and provider start gate are separate features of that branch; carry them only if the owner asks.
+- Do not carry registry or `settings_private` changes. Do not touch money SQL.
+
+### Branch heads (all pushed; nothing unpushed)
+- `claude/price-and-cap`: `dea6e75` (last pushed before this close-out commit; the close-out commit on top is the final head, printed in the closing message). Last Vercel build on it: `a33b382` (preview `dpl_HLiBNLZgzPVugLHwUodm4CFeaxsF`, READY).
+- Other branches touched in earlier work of this session, all pushed and unchanged since: `claude/e1-harness` `08010b8`, `claude/supabase-free-plan` `205f44f`, `claude/cpu-model` `528217f`, `claude/db-load-and-golden` `6dcdc13`, `claude/pressure-and-readiness` `e547b57`, `claude/final-docs` `d619bb8` (merged as PR #188; `main` was `3c50c40` at the last fetch).
+- Parked branch `claude/money-bundles-and-pricing`: head `3ed699df0932f390f4b9df04a9439801c328b138`, untouched, unmerged.
+
+### Facts found in production (SELECT only)
+- Cap 600 is hard-coded in `create_quote_atomic` (rejects a reserve above it) and in `settle_people_job_atomic`; `settle_job_atomic` takes the cap as a parameter; `accept_quote_atomic` has a 5,000-record limit. `jobs.unit_price` is numeric, so a fractional price works; the only check on price is `> 0`; no trigger rejects a reserve above 600.
+- Per-job record ceilings at a 5,000 cap: X 37,113; YouTube and TikTok comments 15,810; Facebook comments 4,204; Facebook posts 60 (code ceiling); companies 500 (registry/seed ceiling). (Stage 1 keeps cap 600, so the practical maxima there are lower: derive them with `maxVolumeUnderCap(600, unit)`.)
+- Stale but harmless: `settings_private.pricing.jobMaxPointsCap` = 600; registry rows with old prices. Live provider daily limit: `provider_limits.dailyUsd` = 0.9 USD (wins over `pricing.providerDailySpendCapUsd` 0.8).
+- **Preview deployments use the production database and the live provider token** (same Supabase and provider env vars, no `PRESSURE_FAKE_PROVIDER`; the fake-provider gate refuses on the production database ref). **Never run a job on a preview.**
+- Margin facts (see `all-in-cost-and-margins.md`): provider-only margin is 5x-15x; with every row reviewed X is about 1x and comments about 2x; hence Option 3.
+
+### Tester batch for later live verification (from `docs/proposals/job-cap-5000/tester-batch.md`; run only after the owner says to)
+Balance 1,209 points + 1,000 promo = 2,209. One job at a time. Largest reserve 539 (fits cap 600). Total charge 1,149 points. Provider spend (provider cost only; model review spend is extra, read from `llm_usage`):
+
+| # | job | records | unit | charge | reserve | expected provider USD | stop if |
+|---|---|---|---|---|---|---|---|
+| 1 | X posts | 300 | 0.11715 | 36 | 41 | 0.012 | charge > 36 or provider > 0.03 |
+| 2 | YouTube comments | 300 | 0.275 | 83 | 95 | 0.018 | charge > 83 or provider > 0.04 |
+| 3 | TikTok comments | 300 | 0.275 | 83 | 95 | 0.017 | charge > 83 or provider > 0.04 |
+| 4 | companies | 5 | 3.168 | 16 | 19 | 0.0038 | charge > 16 or provider > 0.01 |
+| 5 | Facebook posts, named page | 20 | 3.4485 | 69 | 80 | 0.0125 (ASSUMED) | charge > 69 or provider > 0.03 |
+| 6 | X posts | 1,000 | 0.11715 | 118 | 135 | 0.039 | charge > 118 or provider > 0.06 |
+| 7 | TikTok comments | 1,000 | 0.275 | 275 | 317 | 0.045 | charge > 275 or provider > 0.09 |
+| 8 | X posts | about 4,000 | 0.11715 | 469 | 539 | 0.156 (0.086 at the owner's rate) | charge > 469 or provider > 0.2 |
+
+Total provider spend limit: 0.1 USD covers jobs 1-5 plus job 6 at the owner's rate; jobs 7-8 need about 0.35 USD in total (the owner decides). For a reserve at or under 500 ask for 3,700 posts in job 8. Record per job: price, duration range, real duration, charge, delivered count, provider cost, review calls and cost.
+
+### The next session must do first (read-only startup checks)
+1. `git fetch origin`; confirm `origin/main` head, that PR #189 is still a draft, and that nothing in `docs/proposals/` was applied (SELECT-only: the four money functions in production still contain 600; `pg_get_functiondef` for `create_quote_atomic`, `settle_people_job_atomic`, `settle_job_atomic`, `accept_quote_atomic`).
+2. Read this file, the owner's standing rules (`docs/HANDOFF.md`), and `docs/proposals/job-cap-5000/all-in-cost-and-margins.md`.
+3. Create `claude/price-per-record` from `origin/main`; run `npx tsc --noEmit` and `npx vitest run` to get the baseline before any change.
+
+### The next session must NEVER
+- merge or touch PR #189 or any old PR (#3-#11, #40, #41, #44, #69, #83, #85); merge `claude/money-bundles-and-pricing`;
+- apply, propose or run any SQL, migration or registry/settings write (database access is SELECT only);
+- run any job on a preview, call a live provider or model, or run anything against production;
+- raise the cap above 600 or add a second cap constant; print or commit any secret;
+- use squash, `--admin`, rebase or force-push (merge commits only); exceed about 10 deployments a day (use `[skip ci]` on work-in-progress pushes).
+
+
 ---
 
 ## 00. Second session (new account, 2026-10-21 Wednesday): verification of #175 to #182 and the failed harness build
