@@ -52,7 +52,7 @@ describe("the plan text of a request the live capacity cut", () => {
     expect(response.outputType).toBe("propose_plan");
     expect(response.planQuote.capacityConstrained).toBe(true);
     expect(response.planQuote.targetVolumeMax).toBeLessThan(30);
-    const text = String(response.content || response.contentAr || "");
+    const text = String(response.contentAr || "");
     expect(text).toContain("سبب الحد: سعة المصدر المتاحة الآن محدودة، ونوصي بإعادة المحاولة لاحقًا.");
     expect(text).not.toContain("لضمان دقة وسرعة التنفيذ");
     expect(text).not.toContain("تنبيه السعة");
