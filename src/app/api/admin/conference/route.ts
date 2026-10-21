@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getProviderBalanceStatus } from "@/functions/shared/providerSpend";
 import { readRealProviderBalance } from "@/lib/server/realProviderBalance";
 import { getCachedConference, setCachedConference } from "@/lib/server/conferenceCache";
+import { driverStatus } from "@/lib/server/driverTick";
 import { buildConferenceSnapshot, cairoStartOf, MINUTE_MS, MODEL_MAX_PAGES, MODEL_PAGE_SIZE, parseMonthlyBudgetUsd, TOP_SPENDERS_LIMIT, WINDOW_MINUTES, type ConferenceInput, type ConferenceSnapshot } from "@/lib/server/conferenceDashboard";
 
 export const dynamic = "force-dynamic";
@@ -99,7 +100,11 @@ export async function GET(req: NextRequest) {
     setCachedConference(now, current);
   }
   try {
-    return NextResponse.json(await current);
+    const snapshot = await current;
+    // the always-on driver's heartbeat: read fresh on every call (one row), never cached with the snapshot
+    let driver: Awaited<ReturnType<typeof driverStatus>> | null = null;
+    try { driver = await driverStatus(createAdminClient()); } catch { driver = null; }
+    return NextResponse.json({ ...snapshot, driver });
   } catch {
     return NextResponse.json({ error: "تعذّر تحميل لوحة المؤتمر الآن." }, { status: 500 });
   }

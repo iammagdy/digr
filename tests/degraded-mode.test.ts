@@ -67,11 +67,11 @@ describe("degraded mode: a configuration switch, off by default", () => {
 });
 
 describe("the public status routes are answered by the edge for a while (one function run per window for the whole room)", () => {
-  it("busy 15 s, model switch 30 s, driver 300 s; all public and with a stale window", async () => {
+  it("busy 15 s, model switch 30 s, driver 30 s (shorter than the 3-minute heartbeat window); all public and with a stale window", async () => {
     const busy = await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.9" } }));
     expect(busy.headers.get("cache-control")).toBe("public, s-maxage=15, stale-while-revalidate=30");
     expect((await llmEnabled()).headers.get("cache-control")).toBe("public, s-maxage=30, stale-while-revalidate=60");
-    expect((await driverStatus()).headers.get("cache-control")).toBe("public, s-maxage=300, stale-while-revalidate=300");
+    expect((await driverStatus()).headers.get("cache-control")).toBe("public, s-maxage=30, stale-while-revalidate=30");
   });
 });
 

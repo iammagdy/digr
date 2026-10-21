@@ -1,7 +1,7 @@
 -- PROPOSAL (not applied, not in supabase/migrations). Nothing runs until the owner pastes this in the Supabase SQL editor.
 -- Steps for the owner: docs/proposals/08_long_job_driver_setup.md
 --
--- What it does: once a minute the database calls the app route /api/cron/drive with the cron secret. That route only asks the
+-- What it does: once a minute (when there is something to drive, otherwise about every other minute as a heartbeat) the database calls the app route /api/cron/drive with the cron secret. That route only asks the
 -- EXISTING worker to run the next chunk of a job that is ALREADY approved and reserved (claim_job_chunk keeps two callers from
 -- running the same chunk). It reserves, charges and releases nothing, and this file does not touch any money function or table.
 --
@@ -22,15 +22,25 @@ AS $$
 DECLARE
   v_secret text;
   v_base text;
+  v_last timestamptz;
 BEGIN
-  -- nothing to drive: skip the HTTP call entirely (same window as the route: idle at least 15 s, at most 25 minutes)
+  -- the route writes the time of each call to settings_private ('driver_tick'): the app says «you can close the page» only while that is
+  -- under 3 minutes old. So with nothing to drive the call is still made when the last heartbeat is older than 100 seconds (about every
+  -- other minute), and skipped otherwise: a heartbeat that proves the whole path works, without a call every minute while idle.
+  BEGIN
+    SELECT (value ->> 'at')::timestamptz INTO v_last FROM public.settings_private WHERE key = 'driver_tick';
+  EXCEPTION WHEN OTHERS THEN
+    v_last := NULL;
+  END;
+
+  -- nothing to drive and the heartbeat is fresh: skip the HTTP call entirely (same window as the route: idle at least 15 s, at most 25 minutes)
   IF NOT EXISTS (
     SELECT 1 FROM public.jobs
     WHERE status IN ('queued', 'running')
       AND (lease_until IS NULL OR lease_until < now())
       AND updated_at > now() - interval '25 minutes'
       AND updated_at < now() - interval '15 seconds'
-  ) THEN
+  ) AND v_last IS NOT NULL AND v_last > now() - interval '100 seconds' THEN
     RETURN;
   END IF;
 

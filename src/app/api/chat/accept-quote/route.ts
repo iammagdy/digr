@@ -1,5 +1,5 @@
 import { isLongJob, sendJobNotice, startedNoticeFull } from "@/lib/server/jobNotices";
-import { longJobDriverMode } from "@/lib/driverMode";
+import { currentDriverMode } from "@/lib/server/driverTick";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
@@ -260,7 +260,7 @@ export async function POST(req: NextRequest) {
       const { data: startedQuote } = await adminClient.from("plans_quotes").select("items").eq("id", quoteId).maybeSingle();
       const items = Array.isArray(startedQuote?.items) ? startedQuote.items : [];
       const volume = items.reduce((sum: number, item: any) => sum + (Number(item?.targetVolumeMax) || 0), 0);
-      if (workerDispatch.started && isLongJob(volume)) await sendJobNotice(adminClient, user.id, acceptedJobId, startedNoticeFull({ targetVolumeMax: volume, driver: longJobDriverMode() }));
+      if (workerDispatch.started && isLongJob(volume)) await sendJobNotice(adminClient, user.id, acceptedJobId, startedNoticeFull({ targetVolumeMax: volume, driver: await currentDriverMode(adminClient) }));
     } catch {
       // a missing notice never changes the acceptance
     }
@@ -272,7 +272,7 @@ export async function POST(req: NextRequest) {
       reservedCredits: acceptRes.reservedCredits,
       workerDispatch,
       // which driver runs the long job: the page says «تقدر تقفل الصفحة» only for «cron»
-      driverMode: longJobDriverMode(),
+      driverMode: await currentDriverMode(adminClient),
       messageAr: workerDispatch.started
         ? "تم قبول الطلب وبدء التنفيذ."
         : WORKER_START_RETRY_REASON_AR,

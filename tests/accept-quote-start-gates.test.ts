@@ -42,7 +42,6 @@ const saved = { ...process.env };
 beforeEach(() => {
   state.acceptCalls = 0;
   state.quote = quoteRow(100);
-  process.env.NODE_ENV = "test";
   delete process.env.PRESSURE_FAKE_PROVIDER;
   resetProviderBalanceCacheForTesting();
   flushProviderLimitsCache();

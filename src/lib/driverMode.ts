@@ -12,7 +12,22 @@ export function longJobDriverMode(env: Record<string, string | undefined> = proc
   return String(env.LONG_JOB_DRIVER || "").trim().toLowerCase() === "cron" ? "cron" : "tab";
 }
 
-/** «تقدر تقفل الصفحة» may be said only when the always-on driver is on. */
+/** A driver tick older than this no longer proves the driver is running. */
+export const DRIVER_FRESH_MS = 3 * 60_000;
+
+/**
+ * The driver the customer may be told about: «cron» only when the flag is «cron» AND the scheduler really called the driver route in the
+ * last three minutes. A flag with no recent tick (the scheduler was never set up, was stopped, or the secret is wrong) is «tab»: the page
+ * must stay open. `lastTickAt` is the time of the last tick in milliseconds, or null when there is none.
+ */
+export function effectiveDriverMode(configured: DriverMode, lastTickAt: number | null | undefined, now: number = Date.now()): DriverMode {
+  if (configured !== "cron") return "tab";
+  if (typeof lastTickAt !== "number" || !Number.isFinite(lastTickAt)) return "tab";
+  const age = now - lastTickAt;
+  return age >= 0 && age <= DRIVER_FRESH_MS ? "cron" : "tab";
+}
+
+/** «تقدر تقفل الصفحة» may be said only when the always-on driver is on (and, through `effectiveDriverMode`, was seen working lately). */
 export const canClosePage = (mode: DriverMode): boolean => mode === "cron";
 
 /** The line about closing the page, honest for each driver: «تقدر تقفل الصفحة» only when the always-on driver is on. */

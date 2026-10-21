@@ -5,6 +5,7 @@ import { DRIVER_DISPATCH_TIMEOUT_MS, MAX_IDLE_MS, MAX_JOBS_PER_TICK, MIN_IDLE_MS
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
 import { notifyStalledJobs } from "../../../../lib/server/jobStallNotifier";
 import { longJobDriverMode } from "../../../../lib/driverMode";
+import { recordDriverTick } from "../../../../lib/server/driverTick";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -26,6 +27,8 @@ export async function GET(req: NextRequest) {
   }
   const admin = createAdminClient();
   const now = Date.now();
+  // the heartbeat: the page may be called closable only while this keeps arriving (best effort; a failed write never stops the driver)
+  await recordDriverTick(admin, now);
   const nowIso = new Date(now).toISOString();
   const idleSince = new Date(now - MAX_IDLE_MS).toISOString();
   const settledBefore = new Date(now - MIN_IDLE_MS).toISOString();

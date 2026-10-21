@@ -383,15 +383,16 @@ describe("«you can close the page» only with the always-on driver", () => {
     expect(render(cron)).toContain("تقدر تقفل الصفحة");
   });
 
-  it("the driver-status endpoint reports the flag and defaults to «tab»", async () => {
+  it("the driver-status endpoint defaults to «tab», and says «cron» only with the flag AND a fresh tick", async () => {
     const original = process.env.LONG_JOB_DRIVER;
     try {
       delete process.env.LONG_JOB_DRIVER;
-      expect(await (await driverStatus()).json()).toEqual({ mode: "tab" });
+      expect(await (await driverStatus()).json()).toEqual({ mode: "tab", configured: "tab" });
+      // the flag alone is not enough: no tick was ever recorded here, so the page must stay open
       process.env.LONG_JOB_DRIVER = "cron";
-      expect(await (await driverStatus()).json()).toEqual({ mode: "cron" });
+      expect(await (await driverStatus()).json()).toEqual({ mode: "tab", configured: "cron" });
       process.env.LONG_JOB_DRIVER = "banana";
-      expect(await (await driverStatus()).json()).toEqual({ mode: "tab" });
+      expect(await (await driverStatus()).json()).toEqual({ mode: "tab", configured: "tab" });
     } finally {
       if (original === undefined) delete process.env.LONG_JOB_DRIVER; else process.env.LONG_JOB_DRIVER = original;
     }
@@ -402,7 +403,10 @@ describe("«you can close the page» only with the always-on driver", () => {
     expect(page).toContain("closePageLineAr(driverMode)");
     expect(page).toContain("useDriverMode()");
     expect(page).not.toContain("تقدر تقفل الصفحة");
-    expect(readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8")).toContain("driverMode: longJobDriverMode()");
-    expect(readFileSync("src/hooks/useDriverMode.ts", "utf8")).toContain('useState<DriverMode>(cached ?? "tab")');
+    expect(readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8")).toContain("driverMode: await currentDriverMode(adminClient)");
+    const hook = readFileSync("src/hooks/useDriverMode.ts", "utf8");
+    expect(hook).toContain('useState<DriverMode>("tab")');
+    expect(hook).toContain('.catch(() => { if (alive) setMode("tab"); })');
+    expect(hook).toContain("setInterval(read, REFRESH_MS)");
   });
 });

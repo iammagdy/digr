@@ -111,6 +111,25 @@ export default function AdminConferencePage() {
         )}
       </Section>
 
+      <Section id="conf-driver" title="المُشغّل الدائم للمهام الطويلة">
+        {!data ? <Loading /> : !(data as any).driver ? <Unavailable /> : (() => {
+          const driver = (data as any).driver as { configured: string; mode: string; ageSeconds: number | null };
+          const age = driver.ageSeconds;
+          const ageText = age === null ? "لم تصل أي نبضة بعد" : age < 90 ? `آخر نبضة قبل ${formatAr(age)} ثانية` : `آخر نبضة قبل ${formatAr(Math.round(age / 60))} دقيقة`;
+          const line = driver.configured !== "cron"
+            ? "الوضع الحالي: يجب إبقاء الصفحة مفتوحة (المُشغّل الدائم غير مفعّل)."
+            : driver.mode === "cron"
+              ? "المُشغّل الدائم يعمل: يمكن للعميل إغلاق الصفحة."
+              : "المُشغّل مفعّل في الإعدادات لكنه لا يُرى يعمل الآن، فيُطلب من العميل إبقاء الصفحة مفتوحة.";
+          return (
+            <>
+              <p className={ROW} data-testid="conf-driver">{line}</p>
+              <p className={ROW} data-testid="conf-driver-tick">{ageText}.</p>
+            </>
+          );
+        })()}
+      </Section>
+
       <Section id="conf-provider" title="المزود والحد اليومي">
         {!data ? <Loading /> : !data.provider ? <Unavailable /> : (
           <>
