@@ -27,7 +27,7 @@ Deployment `dpl_7hzrxw7xEwrQq5Lz48J7Z6zj2hcg` (head `c50e2fd`) ended in ERROR at
 
 ### Production deployments per PR (Hobby: 100 per day)
 
-Each PR creates 2 deployments (the branch preview and the production build of the merge). About 36 deployments were made on 2026-10-21 up to this session's start.
+Every push to a PR branch creates a preview deployment and every merge creates a production one. The API list shows 37 deployments created on 2026-10-21 (UTC) before this session started; push each branch as few times as possible.
 
 ### Findings of this session
 
