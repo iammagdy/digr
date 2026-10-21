@@ -1,9 +1,9 @@
 # Stage 1: every changed existing test, with old and new lines
 
-Generated from `git diff origin/main` on branch `claude/price-per-record` (base `3c50c40`). Only existing test files are listed (24 files); the new test files are not (they have no old lines).
-A line starting with `-` is an old line, a line starting with `+` is its replacement. Each changed test pinned the old whole-point price (for example 9 points a YouTube comment, 5 an X post, 3 a company), the old job-size results that followed from it, or the old settlement-constant text; each new line asserts the new value at least as exactly (exact numbers, computed by the same formulas as the code and re-derived by hand in the comments).
+Generated from `git diff origin/main` on branch `claude/price-per-record` (base `3c50c40`). Only existing test files are listed; the new test files have no old lines.
+A line starting with `-` is an old line, a line starting with `+` is its replacement. Each changed test pinned the old whole-point price (for example 9 points a YouTube comment, 5 an X post, 3 a company), the old job-size results that followed from it (57 or 104 records at the 600 cap, the 500 and 1,000 record ceilings, the 30-page limit), or the old settlement-constant text.
 
-## 1. Removed test lines: `git diff origin/main -- tests | grep '^-' | grep -v '^---'` (114 lines)
+## 1. Removed test lines: `git diff origin/main -- tests | grep '^-' | grep -v '^---'`
 
 ```
 -    expect(res.planQuote?.targetVolumeMax).toBe(86);
@@ -12,9 +12,7 @@ A line starting with `-` is an old line, a line starting with `+` is its replace
 -    expect(quote.targetVolumeMax).toBe(57);
 -    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ٥٧ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
 -    expect(reply.contentAr).toContain("حتى ٥٧ تعليقاً إجمالاً");
--    expect(reply.contentAr).not.toContain("حتى ١٠٠٠ تعليقاً");
 -    expect(quote.summaryAr).toContain("٥٧");
--    expect(quote.summaryAr).not.toContain("١٠٠٠");
 -  it("no cap value, unit price or reserve changed: the same 57 comments, 9 points each, 590 held, cap 600 as before this fix", async () => {
 -    expect(quote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600, pointsCapConstrained: true });
 -  it("37,500 X posts: asked 37,500, fits 104, with the reason", async () => {
@@ -23,6 +21,9 @@ A line starting with `-` is an old line, a line starting with `+` is its replace
 -  it("the customer's YouTube comment price in the table is the one a plan quotes (9 points) and TikTok's is 6", () => {
 -    expect(committed).toMatch(/social-youtube-comments`\) \|[^|]+\| سجل \| 9 \|/);
 -    expect(committed).toMatch(/social-tiktok-comments`\) \|[^|]+\| سجل \| 6 \|/);
+-    // the number the customer wrote (2000) is the comment cap; the comments service's own limit (1000) applies first
+-    expect(r.planQuote.requestedVolumeMax).toBe(1000);
+-    expect(r.planQuote.targetVolumeMax).toBeLessThanOrEqual(1000);
 -    it("a large social request gets the offer inside the plan message and on the quote, priced like the plan", async () => {
 -        userId: "u_explore", message: "عايز ٣٠٠٠ تعليق من تيك توك عن كرة القدم في ٢٠٢٥", userBalance: 5000, personaProfile: { name: "سلمى" },
 -      expect(offer.samplePoints).toBe(Math.ceil(offer.sampleUnits * unit * 1.15));
@@ -39,9 +40,17 @@ A line starting with `-` is an old line, a line starting with `+` is its replace
 -    const live: any = estimateMission({ kind: "posts", platform: "x", volume: 500, dailyCapPoints: 200 });
 -    const detailed = computePublicCalculatorQuote("social-x-posts", 500, 500, undefined, undefined, undefined, undefined, 200);
 -    expect(quote.targetVolumeMax).toBeLessThan(5000);
--    expect(quote.pointsCapConstrained).toBe(true);
 -    const withLive: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.1"))).json();
 -    const withDefault: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.2"))).json();
+-    expect(scaleValue("absoluteMaxPages", empty)).toBe(30);
+-    expect(ABSOLUTE_MAX_PAGES).toBe(30);
+-    expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "abc" })).toBe(30);
+-    expect(getSocialCapability("social-tiktok-comments")!.maxRows).toBe(1000);
+-    expect(getSocialCapability("social-x-posts")!.maxRows).toBe(500);
+-    expect(scaleValue("absoluteMaxPages", { NODE_ENV: "production" })).toBe(30);
+-  it("the page ceiling times the rows of a chunk is the real size limit of a feed job today (30 x 50 = 1,500)", () => {
+-    expect(maxPagesForJob(50_000, SOCIAL_ROWS_PER_CHUNK, "feed") * SOCIAL_ROWS_PER_CHUNK).toBe(1500);
+-  it("DEFAULT ceilings: a 3,000-record job stops at the page ceiling with what it has (1,500), settled once for the delivered rows only", async () => {
 -    expect(expected.expected).toBe(9);
 -    expect(byId("youtube-comments").asSpecified).toMatchObject({ volume: 30, unitPricePoints: 9, quotedPoints: 311, settledIfAllDeliveredPoints: 270 });
 -    expect(byId("tiktok-comments").asSpecified).toMatchObject({ volume: 30, unitPricePoints: 6, quotedPoints: 207, settledIfAllDeliveredPoints: 180 });
@@ -86,6 +95,7 @@ A line starting with `-` is an old line, a line starting with `+` is its replace
 -    // «عينة أولًا»: about 5% of the estimate, held between 100 and 300 points
 -    expect(offer.samplePoints).toBeGreaterThanOrEqual(100);
 -    expect(offer.samplePoints).toBeLessThanOrEqual(300);
+-    expect(maxPagesForJob(600, 10)).toBe(ABSOLUTE_MAX_PAGES);
 -    expect(readFileSync("src/functions/shared/providerSpend.ts", "utf8")).toContain("DEFAULT_JOB_POINTS_CAP = 600");
 -    return handler.handleUserMessage({ userId: "user_rb", conversationId: "conv_rb", message: "٣٠ تعليق تيك توك عن كرة القدم في مصر خلال الشهر الماضي", userBalance: 5000 });
 -    expect(response.planQuote.targetVolumeMax).toBe(30);
@@ -132,29 +142,26 @@ tests/brief-and-question-schema.test.ts
 tests/cap-text.test.tsx
 - * the plan to 57. Now: what was asked, what fits one job now, and why in one plain sentence. No cap value is changed here.
 + * the plan to 57 (at the old whole-point price of 9 points a comment). Now: what was asked, what fits one job now, and why in one plain
-+ * sentence. No cap value is changed here; at the per-record price of 0.275 points a comment the cap (600) holds 1,897 comments, so the
-+ * service's own ceiling (1,000) is what limits this plan.
++ * sentence. No cap value is changed here; at the per-record price of 0.275 points a comment the cap (600) holds 1,897 comments.
 -  it("2,000 comments asked: the text and the quote say 2,000 asked, 57 fit, and why; the goal line no longer says «up to 1,000»", async () => {
-+  it("2,000 comments asked: the text and the quote say 2,000 asked, 1,000 fit (the service's own ceiling), and why; the goal line no longer says «up to 1,000»", async () => {
++  it("2,000 comments asked: the text and the quote say 2,000 asked, 1,897 fit, and why; the goal line no longer says «up to 1,000»", async () => {
 -    expect(quote.targetVolumeMax).toBe(57);
 -    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ٥٧ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
 -    expect(reply.contentAr).toContain("حتى ٥٧ تعليقاً إجمالاً");
--    expect(reply.contentAr).not.toContain("حتى ١٠٠٠ تعليقاً");
++    expect(quote.targetVolumeMax).toBe(1897);
++    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٨٩٧ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
++    expect(reply.contentAr).toContain("حتى ١٨٩٧ تعليقاً إجمالاً");
 -    expect(quote.summaryAr).toContain("٥٧");
--    expect(quote.summaryAr).not.toContain("١٠٠٠");
-+    expect(quote.targetVolumeMax).toBe(1000);
-+    expect(reply.contentAr).toContain("طلبت ٢٠٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٠٠٠ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
-+    expect(reply.contentAr).toContain("حتى ١٠٠٠ تعليقاً إجمالاً");
-+    expect(quote.summaryAr).toContain("١٠٠٠");
++    expect(quote.summaryAr).toContain("١٨٩٧");
 -  it("no cap value, unit price or reserve changed: the same 57 comments, 9 points each, 590 held, cap 600 as before this fix", async () => {
-+  it("the plan numbers: 1,000 comments at 0.275 points each (275 charge), 317 held, the cap still 600", async () => {
++  it("the plan numbers: 1,897 comments at 0.275 points each (522 charge), 600 held, the cap still 600", async () => {
 -    expect(quote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600, pointsCapConstrained: true });
-+    expect(quote).toMatchObject({ targetVolumeMax: 1000, unitPricePoints: 0.275, expectedPoints: 275, quotedPoints: 317, pointsCap: 600, pointsCapConstrained: false });
++    expect(quote).toMatchObject({ targetVolumeMax: 1897, unitPricePoints: 0.275, expectedPoints: 522, quotedPoints: 600, pointsCap: 600, pointsCapConstrained: true });
 -  it("37,500 X posts: asked 37,500, fits 104, with the reason", async () => {
-+  it("37,500 X posts: asked 37,500, fits 500 (the service's own ceiling: 59 charge, 68 held), with the reason", async () => {
++  it("37,500 X posts: asked 37,500, fits 4,453 (the most whose reserve is within 600: 522 charge, 600 held), with the reason", async () => {
 -    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ١٠٤ سجل.");
-+    expect(reply.planQuote).toMatchObject({ targetVolumeMax: 500, unitPricePoints: 0.11715, expectedPoints: 59, quotedPoints: 68, pointsCap: 600 });
-+    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ٥٠٠ سجل.");
++    expect(reply.planQuote).toMatchObject({ targetVolumeMax: 4453, unitPricePoints: 0.11715, expectedPoints: 522, quotedPoints: 600, pointsCap: 600, pointsCapConstrained: true });
++    expect(reply.contentAr).toContain("طلبت ٣٧٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ٤٤٥٣ سجل.");
 tests/capacity-cut-reason.test.tsx
 -    setProviderBalanceForTesting(0.01);
 +    // 0.001 USD budget (0.0009 safe) holds 18 comments at 0.00005 USD each (the cost of one delivered comment), below the 30 asked
@@ -166,6 +173,13 @@ tests/coverage-doc.test.ts
 +  it("the customer's comment prices in the table are the ones a plan quotes: 0.275 points a YouTube comment and 0.275 a TikTok comment (0.00005 USD x 5,500)", () => {
 +    expect(committed).toMatch(/social-youtube-comments`\) \|[^|]+\| سجل \| 0\.275 \|/);
 +    expect(committed).toMatch(/social-tiktok-comments`\) \|[^|]+\| سجل \| 0\.275 \|/);
+tests/dependent-mission.test.tsx
+-    // the number the customer wrote (2000) is the comment cap; the comments service's own limit (1000) applies first
+-    expect(r.planQuote.requestedVolumeMax).toBe(1000);
+-    expect(r.planQuote.targetVolumeMax).toBeLessThanOrEqual(1000);
++    // the number the customer wrote (2000) is the comment cap; the comments service's own limit is now 2,000, so it is held whole up to what the 600-point cap holds
++    expect(r.planQuote.requestedVolumeMax).toBe(2000);
++    expect(r.planQuote.targetVolumeMax).toBe(1897);
 tests/exploration-and-caps.test.ts
 +import { reserveForUnits } from "../src/lib/recordPricing";
 -    it("a large social request gets the offer inside the plan message and on the quote, priced like the plan", async () => {
@@ -202,15 +216,16 @@ tests/job-sizing.test.ts
 -    expect(plan.quotedPoints).toBe(598);
 -    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 104, fitsInOneJob: false });
 -    expect(estimateMission({ kind: "posts", platform: "x", volume: 104 })).toMatchObject({ reservePoints: 598, fitsInOneJob: true });
-+  it("posts on X: the public estimate says what the real quote says (500 posts fit whole: 68 held; 40,000 asked are cut to the service's 500)", async () => {
++  it("posts on X: the public estimate says what the real quote says (500 posts fit whole: 68 held; 40,000 asked are cut to 4,453: 600 held)", async () => {
 +    const small = await writerXPosts();
 +    expect(small.targetVolumeMax).toBe(500);
 +    expect(small.quotedPoints).toBe(68);
-+    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 500, fitsInOneJob: true, reservePoints: 68 });
++    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 4453, fitsInOneJob: true, reservePoints: 68 });
 +    const large = await writerXPosts("٤٠٠٠٠");
-+    expect(large.targetVolumeMax).toBe(500);
-+    expect(large.quotedPoints).toBe(68);
-+    expect(estimateMission({ kind: "posts", platform: "x", volume: 40000 })).toMatchObject({ maxVolumeInOneJob: 500, fitsInOneJob: false });
++    expect(large.targetVolumeMax).toBe(4453);
++    expect(large.quotedPoints).toBe(600);
++    expect(estimateMission({ kind: "posts", platform: "x", volume: 40000 })).toMatchObject({ maxVolumeInOneJob: 4453, fitsInOneJob: false });
++    expect(estimateMission({ kind: "posts", platform: "x", volume: 4453 })).toMatchObject({ reservePoints: 600, fitsInOneJob: true });
 +  });
 +
 +  it("companies: the public estimate says what the real quote says (the points cap holds 164: 598 held)", async () => {
@@ -232,17 +247,52 @@ tests/job-sizing.test.ts
 +    expect(fresh.maxVolumeInOneJob).toBe(164);
 tests/large-counts.test.ts
 -    expect(quote.targetVolumeMax).toBeLessThan(5000);
--    expect(quote.pointsCapConstrained).toBe(true);
-+    // the service's own ceiling (1,000 comments) limits this plan: at 0.275 points a comment its reserve is 317, well inside the cap of 600
-+    expect(quote.targetVolumeMax).toBe(1000);
-+    expect(quote.pointsCapConstrained).toBe(false);
-+    expect(quote.quotedPoints).toBe(317);
++    // at 0.275 points a comment the cap of 600 holds 1,897 comments (the service's ceiling is 2,000): reserve 600
++    expect(quote.targetVolumeMax).toBe(1897);
++    expect(quote.quotedPoints).toBe(600);
 tests/live-cap-surfaces.test.ts
 -    const withLive: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.1"))).json();
 +    // companies: the points cap, not the service's record ceiling, limits one job (54 records at a 200-point limit, 164 at 600)
 +    const withLive: any = await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.1"))).json();
 -    const withDefault: any = await (await estimatePost(estimateRequest({ kind: "posts", platform: "x", volume: 500 }, "10.0.0.2"))).json();
 +    const withDefault: any = await (await estimatePost(estimateRequest({ kind: "companies", volume: 500 }, "10.0.0.2"))).json();
+tests/long-job-scale-harness.test.ts
+-    expect(scaleValue("absoluteMaxPages", empty)).toBe(30);
++    expect(scaleValue("absoluteMaxPages", empty)).toBe(300);
+-    expect(ABSOLUTE_MAX_PAGES).toBe(30);
++    expect(ABSOLUTE_MAX_PAGES).toBe(300);
+-    expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "abc" })).toBe(30);
++    expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "abc" })).toBe(300);
+-    expect(getSocialCapability("social-tiktok-comments")!.maxRows).toBe(1000);
+-    expect(getSocialCapability("social-x-posts")!.maxRows).toBe(500);
++    // the ceilings are what the 600-point cap holds: 1,897 comments, 4,453 X posts
++    expect(getSocialCapability("social-tiktok-comments")!.maxRows).toBe(2000);
++    expect(getSocialCapability("social-youtube-comments")!.maxRows).toBe(2000);
++    expect(getSocialCapability("social-x-posts")!.maxRows).toBe(4500);
++    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(60);
++    expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(300);
++    setScaleOverridesForTesting({ absoluteMaxPages: 30 });
+-    expect(scaleValue("absoluteMaxPages", { NODE_ENV: "production" })).toBe(30);
++    expect(scaleValue("absoluteMaxPages", { NODE_ENV: "production" })).toBe(300);
+-  it("the page ceiling times the rows of a chunk is the real size limit of a feed job today (30 x 50 = 1,500)", () => {
+-    expect(maxPagesForJob(50_000, SOCIAL_ROWS_PER_CHUNK, "feed") * SOCIAL_ROWS_PER_CHUNK).toBe(1500);
++  it("the page ceiling times the rows of a chunk is the real size limit of a feed job today (300 x 50 = 15,000; it was 30 x 50 = 1,500)", () => {
++    expect(maxPagesForJob(50_000, SOCIAL_ROWS_PER_CHUNK, "feed") * SOCIAL_ROWS_PER_CHUNK).toBe(15000);
++    // a full 600-point job fits: 4,453 X posts need 90 pages (270 with the slack of 3), 1,897 comments 38 pages (114)
++    expect(maxPagesForJob(4453, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(270);
++    expect(maxPagesForJob(1897, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(114);
+-  it("DEFAULT ceilings: a 3,000-record job stops at the page ceiling with what it has (1,500), settled once for the delivered rows only", async () => {
++  it("a page ceiling of 30 (the previous default) stops a 3,000-record job at what it has (1,500), settled once for the delivered rows only", async () => {
++    setScaleOverridesForTesting({ absoluteMaxPages: 30 });
++  it("DEFAULT ceilings: the same 3,000-record job reaches its full 3,000 through 60 chunks", async () => {
++    installProvider(big());
++    const jobId = seedSocialJob({ target: 3000, videoCount: 20, perVideo: 150 });
++    const run = await driveToTheEnd(jobId, { maxTicks: 200 });
++    expect(run.finalStatus).toBe("completed");
++    expect(run.chunks).toBe(60);
++    expect(settledOnce(jobId).delivered_units).toBe(3000);
++  }, 60_000);
++
 tests/low-balance-flow.test.ts
 -    expect(expected.expected).toBe(9);
 +    // 3 company records at 3.168 points: 9.504 -> charge 10; reserve ceil(9.504 x 1.15 = 10.93) = 11
@@ -287,9 +337,9 @@ tests/mission-duration.test.tsx
 -    // 500 comments do not fit one request: the endpoint states the duration of the records ONE request holds
 +    // 5,000 comments do not fit one request (the cap of 600 points holds 1,897 at 0.275 points): the endpoint states the duration of the records ONE request holds
 -  it("a 2,000-comment YouTube request: the plan has a labelled range, and still 57 comments at 9 points, 590 held, cap 600", async () => {
-+  it("a 2,000-comment YouTube request: the plan has a labelled range, and holds 1,000 comments (the service's own ceiling) at 0.275 points, 317 held, cap 600", async () => {
++  it("a 2,000-comment YouTube request: the plan has a labelled range, and holds 1,500 comments (3 videos x 500, the most they can give) at 0.275 points, 475 held, cap 600", async () => {
 -    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 57, unitPricePoints: 9, quotedPoints: 590, pointsCap: 600 });
-+    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 1000, unitPricePoints: 0.275, quotedPoints: 317, pointsCap: 600 });
++    expect(plan.planQuote).toMatchObject({ targetVolumeMax: 1500, unitPricePoints: 0.275, quotedPoints: 475, pointsCap: 600 });
 tests/owner-conversation-regression.test.ts
 -    // The live ledger for this exact request: reserve 11, charge 9.
 +    // 3 company records at 3.168 points (measured cost 0.000576 USD x 5,500): charge 10, reserve 11 (the live ledger of the old whole-point price was 9 and 11).
@@ -354,6 +404,10 @@ tests/planning-quality.test.ts
 +    expect(offer.samplePoints).toBeLessThanOrEqual(target);
 +    expect(offer.samplePoints + r.planQuote.unitPricePoints * 1.15 + 1).toBeGreaterThan(target);
 tests/provider-call-caps.test.ts
+-    expect(maxPagesForJob(600, 10)).toBe(ABSOLUTE_MAX_PAGES);
++    expect(maxPagesForJob(600, 10)).toBe(180);
++    expect(maxPagesForJob(100000, 10)).toBe(ABSOLUTE_MAX_PAGES);
++    expect(ABSOLUTE_MAX_PAGES).toBe(300);
 -    expect(readFileSync("src/functions/shared/providerSpend.ts", "utf8")).toContain("DEFAULT_JOB_POINTS_CAP = 600");
 +    // the job cap is one shared constant (600); providerSpend reads it from there
 +    expect(readFileSync("src/functions/shared/providerSpend.ts", "utf8")).toContain("DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP");
