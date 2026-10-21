@@ -81,6 +81,23 @@ compression or download limit is needed. The one read that grows without bound i
 `docs/HANDOFF.md`, proposal `docs/proposals/spend-cap-read-cache.md`): at 10 000 usage rows a day each chat turn would read about
 240 KB, which is still under the budget but wasteful.
 
+
+## 5b. Measured per action (harness: `tests/db-load-per-action.test.ts`, `docs/capacity/db-load.json`)
+
+Real routes, in-memory database that counts every query, row and byte; the history of a fresh account is empty, so a long conversation reads a little more. Bytes are JSON size.
+
+| Action | Queries | Rows read | Database KB | Stored-file reads KB | Stored-file writes KB | Response KB |
+|---|---|---|---|---|---|---|
+| A chat turn: greeting | 15 | 7 | 1.4 | 0 | 0 | 0.8 |
+| A chat turn that builds a plan | 23 | 15 | 6.7 | 0 | 0 | 3.4 |
+| Results view, 100 rows | 2 | 1 | 0.3 | 37.3 | 0 | 33.5 |
+| Results view, 1000 rows | 2 | 1 | 0.3 | 373.7 | 0 | 315.4 |
+| Download CSV (built again from the saved data), 100 rows | 5 | 2 | 0.5 | 37.3 | 23.9 | file via signed link |
+| Download Excel, 100 rows | 5 | 2 | 0.5 | 37.3 | 13.8 | file via signed link |
+| Download PDF, 100 rows | 5 | 2 | 0.5 | 37.3 | 25.8 | file via signed link |
+
+Reading it: a chat turn is 15 to 23 small queries (1 to 7 KB), run partly in parallel; the heavy bytes are the stored data file (37 KB per 100 rows) read by the results view and again by every download, which also writes the rebuilt file. Nothing here is an N+1 pattern (the results view is one job read and one file read at any size). A 1000-row results view sends about 315 KB to the browser (compressed by the platform on the wire). The egress model above assumes 50 KB per chat turn, about ten times what is measured, on purpose.
+
 ## 6. Backups: there are none on the free plan
 
 The new admin page «نسخة احتياطية» (`/admin/export`, route `/api/admin/export`) copies five tables to files on the admin's device:

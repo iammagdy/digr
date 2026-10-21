@@ -69,6 +69,48 @@
       "medianMs": 0.575,
       "p90Ms": 0.912,
       "meanMs": 0.681
+    },
+    "results_view_100": {
+      "name": "results_view_100",
+      "runs": 15,
+      "medianMs": 7.852,
+      "p90Ms": 13.651,
+      "meanMs": 8.724
+    },
+    "results_view_1000": {
+      "name": "results_view_1000",
+      "runs": 8,
+      "medianMs": 69.265,
+      "p90Ms": 150.985,
+      "meanMs": 79.202
+    },
+    "download_csv_100": {
+      "name": "download_csv_100",
+      "runs": 10,
+      "medianMs": 10.097,
+      "p90Ms": 10.957,
+      "meanMs": 10.355
+    },
+    "download_xlsx_100": {
+      "name": "download_xlsx_100",
+      "runs": 10,
+      "medianMs": 34.021,
+      "p90Ms": 44.993,
+      "meanMs": 38.596
+    },
+    "download_pdf_100": {
+      "name": "download_pdf_100",
+      "runs": 6,
+      "medianMs": 166.12,
+      "p90Ms": 198.8,
+      "meanMs": 173.952
+    },
+    "download_xlsx_1000": {
+      "name": "download_xlsx_1000",
+      "runs": 4,
+      "medianMs": 288.212,
+      "p90Ms": 421.913,
+      "meanMs": 327.844
     }
   },
   "extra": {

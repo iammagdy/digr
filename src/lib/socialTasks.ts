@@ -7,6 +7,7 @@
  * every turn and can be tested.
  */
 import { periodWordFlags } from "./timeWindow";
+import { isNumberWord } from "./arabicNumbers";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
 
 
@@ -260,6 +261,8 @@ const TOPIC_NOISE = new Set([
   "ستراندنج", "الستراندنج", "استراندنج", "الاستراندنج", "ترندنج", "الترندنج", "رائج", "الرائج", "الاكثر", "الأكثر", "مشاهدة", "تفاعل", "انتشار", "فيرال",
   "تيك", "توك", "تيكتوك", "يوتيوب", "يوتوب", "فيسبوك", "فيس", "انستغرام", "إنستغرام", "انستا", "تويتر", "إكس", "اكس", "ريديت", "لينكد", "منصة", "منصه",
   "قناة", "حساب", "صفحة", "رابط", "ريلز", "شورتس", "الفيس", "اليوم", "النهاردة", "حاليا", "حالياً", "دلوقتي", "الان", "الآن", "اخر", "آخر", "جديد",
+  // magnitude words of a count («٥ آلاف تعليق», «مليون منشور») are quantity, never subject
+  "ألف", "الف", "آلاف", "الاف", "ألفين", "الفين", "مليون", "مليونين", "ملايين", "مليار", "بليون",
   "عدد", "كام", "كم", "رقم", "حوالي", "تقريبا", "تقريباً", "لكل", "ولكل", "بتاع", "بتاعت", "بتاعه", "خاص", "خاصة", "الخاصة", "الخاص", "مع",
   // Discovery answers are merged with the original request. Time-window labels must not leak into
   // the provider topic (for example: "كرة السلة الفترة المطلوبة شهر").
@@ -307,12 +310,17 @@ function analyzeTokens(text: string): AnalyzedToken[] {
   return out;
 }
 
+/** What a count is a count OF: a number word right before one of these (or before a magnitude word) is a quantity, not part of the subject. */
+const COUNTED_NOUN = /^(?:تعليق|تعليقات|كومنت|كومنتات|منشور|منشورات|بوست|بوستات|تغريدة|تغريدات|تويت|تويتات|فيديو|فيديوهات|مقطع|مقاطع|سجل|سجلات|ألف|الف|آلاف|الاف|مليون|ملايين)$/u;
+
 function topicTokens(text: string): string[] {
   const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(COUNT_PHRASE_RE, " ").replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
-  return analyzeTokens(text)
+  const analyzed = analyzeTokens(text);
+  return analyzed
     .filter(({ token, location }, index) => {
       if (!token) return false;
       if (periodFlags[index]) return false;
+      if (isNumberWord(token) && COUNTED_NOUN.test(analyzed[index + 1]?.token || "")) return false;
       const bare = token.replace(/^ال/u, "");
       if (bare.length < 2) return false;
       if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare)) return false;

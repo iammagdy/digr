@@ -202,6 +202,16 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     const capAnswer = CAP_ANSWER_RE.exec(text);
     const capNumber = capAnswer ? extractNumberFromText(capAnswer[1]) : undefined;
     volume = capNumber && capNumber > 0 ? capNumber : counted ? Number(counted[1]) : null;
+    // A count written in words or with a magnitude word («ثلاثين تعليق», «٥ آلاف منشور», «5k posts») is the customer's count too: without
+    // this it fell through to the default of 500 and the plan said «لأنك لم تحدد عددًا» about a number they had written.
+    if (volume === null) {
+      const noun = /(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة)/iu.exec(stripped);
+      if (noun) {
+        const lead = stripped.slice(0, noun.index).split(/\s+/).filter(Boolean).slice(-4).join(" ");
+        const written = /[\p{L}]/u.test(lead) ? extractNumberFromText(lead) : undefined;
+        if (written && written > 0) volume = written;
+      }
+    }
   } else {
     volume = intent.count;
   }
