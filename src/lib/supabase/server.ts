@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient, SupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { withLocalClaims } from "../server/localClaims";
 
 /**
  * Creates a server-side Supabase client authenticated with the user's session cookies.
@@ -14,7 +15,7 @@ export async function createServerSideClient() {
     process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-  return createServerClient(supabaseUrl, supabaseAnonKey, {
+  return withLocalClaims(createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
       getAll() {
         return cookieStore.getAll();
@@ -30,7 +31,7 @@ export async function createServerSideClient() {
         }
       },
     },
-  });
+  }));
 }
 
 /**

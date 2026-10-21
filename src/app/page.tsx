@@ -1,23 +1,18 @@
 import { GlassHeader } from "@/components/landing/GlassHeader";
 import { HeroLens } from "@/components/landing/HeroLens";
 import { Calculator, DemoConversations, Faq, FinalCta, ProductLines, SampleFile, Sheets, Statements } from "@/components/landing/Sections";
-import { createServerSideClient } from "@/lib/supabase/server";
 
-export default async function LandingPage() {
-  let initialSignedIn = false;
-  try {
-    const supabase = await createServerSideClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    initialSignedIn = Boolean(user);
-  } catch {
-    initialSignedIn = false;
-  }
+/**
+ * Static: the same HTML for everyone, served from the edge cache, no function run and no call to the sign-in service per visit (the
+ * landing page and the QR path take most of the traffic at the conference). Who is signed in is decided in the browser from the session
+ * it already holds; until then the header keeps its place and shows no button (no wrong-button flash).
+ */
+export const dynamic = "force-static";
 
+export default function LandingPage() {
   return (
     <div className="min-h-screen bg-bg text-ink2" style={{ containerType: "inline-size" }}>
-      <GlassHeader initialSignedIn={initialSignedIn} />
+      <GlassHeader />
       <HeroLens />
       <ProductLines />
       <Statements />
@@ -26,8 +21,7 @@ export default async function LandingPage() {
       <SampleFile />
       <Calculator />
       <Faq />
-      <FinalCta initialSignedIn={initialSignedIn} />
+      <FinalCta />
     </div>
   );
 }
-

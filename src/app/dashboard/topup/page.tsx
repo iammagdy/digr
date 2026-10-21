@@ -11,6 +11,7 @@ import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/hones
 import { formatAr } from "@/lib/arabicDigits";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
+import { startNotificationPolling } from "@/lib/notificationPolling";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import PromoCodeBox from "./PromoCodeBox";
@@ -194,43 +195,38 @@ export default function WalletPage() {
     } catch {}
   }, [user, ledger.length]);
 
-  /* live status of topup requests (approve / reject by the admin) */
+  /* status of topup requests (approve / reject by the admin): polled while one is waiting, never a live connection */
+  const hasPendingTopup = topups.some((t) => t.status === "pending");
+  const statusesRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
-    if (!user) return;
-    try {
+    statusesRef.current = new Map(topups.map((t) => [t.$id, t.status]));
+    setSubmitted((cur) => (cur ? topups.find((t) => t.$id === cur.$id) ?? cur : cur));
+  }, [topups]);
+  useEffect(() => {
+    if (!user || !hasPendingTopup || typeof document === "undefined") return;
+    // One small question (the status of the requests still waiting); only a change reads the full list again.
+    const check = async (): Promise<boolean> => {
+      const pendingIds = [...statusesRef.current].filter(([, status]) => status === "pending").map(([id]) => id);
+      if (pendingIds.length === 0) return false;
       const supabase = createClient();
-      const channel = supabase
-        .channel(`topups-${user.id}`)
-        .on(
-          "postgres_changes",
-          { event: "*", schema: "public", table: TOPUPS_COLLECTION, filter: `user_id=eq.${user.id}` },
-          (payload) => {
-            const r = payload.new as any;
-            if (!r || !r.id) return;
-            const doc: TopupRecord = {
-              $id: r.id,
-              id: r.id,
-              userId: r.user_id,
-              amountEgp: Number(r.amount_egp),
-              reference: r.reference,
-              senderName: r.sender_name || "",
-              senderPhone: r.sender_phone || "",
-              receiptFileId: r.receipt_file_id || null,
-              status: r.status,
-              rejectReason: r.reject_reason || null,
-              credits: r.credits ? Number(r.credits) : null,
-              createdAt: r.created_at,
-              reviewedAt: r.reviewed_at || null,
-            };
-            setTopups((prev) => (prev.some((t) => t.$id === doc.$id) ? prev.map((t) => (t.$id === doc.$id ? doc : t)) : [doc, ...prev]));
-            setSubmitted((cur) => (cur && cur.$id === doc.$id ? doc : cur));
-            if (doc.status === "approved") { void refreshBalance(); void loadLedger(); }
-          }
-        )
-        .subscribe();
-      return () => { void supabase.removeChannel(channel); };
-    } catch { return; }
-  }, [user, refreshBalance, loadLedger]);
+      const { data } = await supabase.from(TOPUPS_COLLECTION).select("id, status").eq("user_id", user.id).in("id", pendingIds);
+      const changed = (data || []).filter((r: any) => r.status !== "pending");
+      if (changed.length === 0) return false;
+      await loadTopups();
+      if (changed.some((r: any) => r.status === "approved")) { void refreshBalance(); void loadLedger(); }
+      return true;
+    };
+    return startNotificationPolling({
+      load: async () => { await check(); },
+      tick: check,
+      intervalMs: 20_000,
+      jitter: 0.2,
+      backoff: { factor: 1.5, maxIntervalMs: 90_000 },
+      isVisible: () => document.visibilityState !== "hidden",
+      visibilityTarget: document,
+      focusTarget: window,
+    });
+  }, [user, hasPendingTopup, loadTopups, refreshBalance, loadLedger]);
 
   /* month figures + held points from the ledger */
   const stats = useMemo(() => {

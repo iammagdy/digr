@@ -316,7 +316,12 @@ export default function ChatWorkspacePage() {
         .eq("user_id", user.id)
         .order("updated_at", orderDesc)
         .limit(20);
-      const conversationIds = (rows || []).map((row) => row.id).filter(Boolean);
+      // The first message is read only for a conversation that has no saved title of its own (most have one): the history list must not
+      // download every message of twenty conversations on each visit.
+      const conversationIds = (rows || [])
+        .filter((row) => customerFacingConversationTitle(row.title || "") === "محادثة جديدة")
+        .map((row) => row.id)
+        .filter(Boolean);
       const firstUserMessages = new Map<string, string>();
       if (conversationIds.length) {
         const { data: messages } = await supabase
@@ -325,7 +330,8 @@ export default function ChatWorkspacePage() {
           .eq("user_id", user.id)
           .eq("role", "user")
           .in("conversation_id", conversationIds)
-          .order("created_at", { ascending: true });
+          .order("created_at", { ascending: true })
+          .limit(200);
         for (const message of messages || []) {
           if (!firstUserMessages.has(message.conversation_id) && typeof message.content === "string") {
             firstUserMessages.set(message.conversation_id, message.content);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { startNotificationPolling } from "@/lib/notificationPolling";
 
@@ -19,9 +19,17 @@ export interface AppNotification {
   createdAt: string;
 }
 
-/** In-app notifications from public.notifications table, live via Supabase Realtime. */
+/**
+ * In-app notifications from public.notifications. No live (Realtime) connection: every open page would hold one against a free-plan
+ * ceiling of 200 for the whole room. The list is read once, then a cheap «anything newer?» check runs every 30 s (growing to 2 minutes
+ * while nothing arrives, jittered, never in a hidden tab) and the full list is read again when the tab comes back to the front.
+ */
+export const NOTIFICATION_TICK_MS = 30_000;
+export const NOTIFICATION_TICK_MAX_MS = 120_000;
+
 export function useNotifications(userId: string | undefined) {
   const [items, setItems] = useState<AppNotification[]>([]);
+  const newestRef = useRef<string | null>(null);
 
   const mapRow = useCallback((r: any): AppNotification => {
     return {
@@ -53,6 +61,7 @@ export function useNotifications(userId: string | undefined) {
         setItems([]);
         return;
       }
+      newestRef.current = data && data.length ? String(data[0].created_at) : null;
       setItems((data || []).map(mapRow));
     } catch {
       // Offline or error: show empty panel rather than failing the shell
@@ -62,52 +71,33 @@ export function useNotifications(userId: string | undefined) {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Live delivery is not relied on: the list is refreshed while the tab is visible and when it comes back to the front.
+  // The cheap check: only rows newer than the newest one already shown (an empty answer is a few hundred bytes).
+  const checkNewer = useCallback(async (): Promise<boolean> => {
+    if (!userId) return false;
+    const supabase = createClient();
+    let query = supabase.from("notifications").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30);
+    if (newestRef.current) query = query.gt("created_at", newestRef.current);
+    const { data, error } = await query;
+    if (error || !data || data.length === 0) return false;
+    newestRef.current = String(data[0].created_at);
+    const fresh = data.map(mapRow);
+    setItems((prev) => [...fresh, ...prev.filter((n) => !fresh.some((f) => f.id === n.id))].slice(0, 30));
+    return true;
+  }, [userId, mapRow]);
+
   useEffect(() => {
     if (!userId || typeof document === "undefined") return;
     return startNotificationPolling({
       load,
+      tick: checkNewer,
+      intervalMs: NOTIFICATION_TICK_MS,
+      jitter: 0.2,
+      backoff: { factor: 1.5, maxIntervalMs: NOTIFICATION_TICK_MAX_MS },
       isVisible: () => document.visibilityState !== "hidden",
       visibilityTarget: document,
       focusTarget: window,
     });
-  }, [userId, load]);
-
-  useEffect(() => {
-    if (!userId) return;
-    try {
-      const supabase = createClient();
-      const channel = supabase
-        .channel(`user-notifications-${userId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "notifications",
-            filter: `user_id=eq.${userId}`,
-          },
-          (payload) => {
-            if (payload.eventType === "INSERT") {
-              const mapped = mapRow(payload.new);
-              setItems((prev) => [mapped, ...prev.filter((n) => n.id !== mapped.id)].slice(0, 30));
-            } else if (payload.eventType === "UPDATE") {
-              const mapped = mapRow(payload.new);
-              setItems((prev) => prev.map((n) => (n.id === mapped.id ? mapped : n)));
-            } else if (payload.eventType === "DELETE") {
-              setItems((prev) => prev.filter((n) => n.id !== (payload.old as any).id));
-            }
-          }
-        )
-        .subscribe();
-
-      return () => {
-        void supabase.removeChannel(channel);
-      };
-    } catch {
-      return;
-    }
-  }, [userId, mapRow]);
+  }, [userId, load, checkNewer]);
 
   const unread = items.filter((n) => !n.read).length;
 
