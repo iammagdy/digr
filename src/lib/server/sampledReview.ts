@@ -1,82 +1,56 @@
 import { toArabicDigits } from "../arabicDigits";
-import { reviewSocialRows, type AdvisoryVerdict, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
+import { reviewSocialRows, SOCIAL_REVIEW_ROWS_PER_CALL, type AdvisoryVerdict, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
 
 /**
- * Posts and comments that came from a topic search are presumed on topic, but a source can answer a topic with plenty of unrelated
- * content (a club of another country, a generic reaction). So a SAMPLE of each page is reviewed to estimate how much is off topic; when
- * more than 40 % of the sample is, the whole page goes through the review before anything of it is delivered (fail closed). The
- * doubtful rows (flagged by the gate) are always reviewed. All of it inside the job's review budget.
- */
-export const REVIEW_SAMPLE_ROWS = 15;
-export const OFF_TOPIC_STRICT_ABOVE = 0.4;
-/**
- * Above this share of unrelated rows in the sample, the whole page is rejected: the rest of its presumed rows are excluded WITHOUT being
- * reviewed one by one (a call per 25 rows that would almost always say «no match»). Between OFF_TOPIC_STRICT_ABOVE and this share the page
- * still goes through the full review. The sample must have been read for at least PAGE_REJECT_MIN_REVIEWED rows, so a verdict on a handful
- * of rows never throws a page away.
+ * The review of one page of posts or comments: ONE call covers every row of the page (a page of up to SOCIAL_REVIEW_ROWS_PER_CALL
+ * rows; a longer page is split into calls of that size), so no row is delivered without the model's verdict and no call is spent on a
+ * small tail. The model answers with a verdict per row only (see `isVerdictOnlyKind`).
+ *
+ * A page longer than one call is judged by its first call: when more than PAGE_REJECT_ABOVE of the rows of that call are unrelated, the
+ * rest of the page is excluded WITHOUT being reviewed (a call per 25 rows that would almost always say «no match»); the rows already
+ * reviewed keep their verdicts. All of it inside the job's review budget; a row the budget did not reach is not delivered.
  */
 export const PAGE_REJECT_ABOVE = 0.6;
+/** The first call must have read at least this many rows for its share to reject a page: a verdict on a handful of rows never throws a page away. */
 export const PAGE_REJECT_MIN_REVIEWED = 8;
 
-let randomForTests: (() => number) | null = null;
-/** Test-only: a fixed random source for the sample (null restores Math.random). */
-export function setReviewSampleRandomForTesting(random: (() => number) | null): void {
-  randomForTests = random;
-}
-
-/** A random sample without repeats (partial Fisher–Yates), in no particular order. */
-export function pickReviewSample(indexes: number[], size: number = REVIEW_SAMPLE_ROWS, random: () => number = randomForTests ?? Math.random): number[] {
-  const pool = [...indexes];
-  const out: number[] = [];
-  while (out.length < size && pool.length > 0) {
-    const at = Math.min(pool.length - 1, Math.floor(random() * pool.length));
-    out.push(pool.splice(at, 1)[0]);
-  }
-  return out;
-}
-
-/** The share of the reviewed sample that is not clearly on topic («no match» or doubt). Null when nothing of the sample was reviewed. */
-export function estimateOffTopic(sample: number[], verdicts: Map<number, AdvisoryVerdict>): { size: number; reviewed: number; off: number; rate: number | null } {
+/** The share of the reviewed rows that is not clearly on topic («no match» or doubt). Null when nothing was reviewed. */
+export function estimateOffTopic(indexes: number[], verdicts: Map<number, AdvisoryVerdict>): { size: number; reviewed: number; off: number; rate: number | null } {
   let reviewed = 0;
   let off = 0;
-  for (const index of sample) {
+  for (const index of indexes) {
     const verdict = verdicts.get(index);
     if (!verdict) continue;
     reviewed += 1;
     if (verdict.verdict !== "match") off += 1;
   }
-  return { size: sample.length, reviewed, off, rate: reviewed > 0 ? off / reviewed : null };
-}
-
-export function highOffTopicEventAr(rate: number): string {
-  return `نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة (نحو ${toArabicDigits(Math.round(rate * 100))}٪ من العيّنة)، لذلك راجعنا كل سجلاتها قبل التسليم.`;
+  return { size: indexes.length, reviewed, off, rate: reviewed > 0 ? off / reviewed : null };
 }
 
 export function pageRejectedEventAr(rate: number, rejected: number): string {
-  return `نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة جداً (نحو ${toArabicDigits(Math.round(rate * 100))}٪ من العيّنة)، لذلك استُبعدت بقية سجلاتها (${toArabicDigits(rejected)} سجل) دون مراجعة فردية ولم تُحتسب.`;
+  return `نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة جداً (نحو ${toArabicDigits(Math.round(rate * 100))}٪ من السجلات المراجَعة)، لذلك استُبعدت بقية سجلاتها (${toArabicDigits(rejected)} سجل) دون مراجعة فردية ولم تُحتسب.`;
 }
 
-export const PAGE_REJECTED_REASON_AR = "الصفحة غير مرتبطة بموضوع الطلب في معظم عيّنتها المراجَعة؛ استُبعد السجل دون مراجعة فردية ولم يُحتسب";
+export const PAGE_REJECTED_REASON_AR = "الصفحة غير مرتبطة بموضوع الطلب في معظم سجلاتها المراجَعة؛ استُبعد السجل دون مراجعة فردية ولم يُحتسب";
 
 /** A failure worth one more try: the call timed out, the network failed, the reply was unreadable, or the service was busy or down. Not a missing key or a disabled reviewer. */
 export function isRetryableFailure(failure: string | null | undefined): boolean {
   return failure === "timeout" || failure === "network" || failure === "bad_reply" || failure === "http_429" || /^http_5\d\d$/.test(String(failure || ""));
 }
 
-export interface SampledReviewOutcome {
+export interface PageReviewOutcome {
   verdicts: Map<number, AdvisoryVerdict>;
   attempts: SocialReviewAttempt[];
   costUsd: number;
-  /** Rows that had to be confirmed and were not (a failed call, the budget, the deadline). */
+  /** Rows nobody reviewed (a failed call, the budget, the deadline): they are not delivered. */
   unreviewed: number[];
+  /** The part of `unreviewed` left out only because the review budget was used up (not a failure): they go to the «غير مراجَع» sheet. */
+  unreviewedByBudget: number[];
   stoppedBy: SocialReviewStop | null;
-  /** Rows delivered only when the review confirms them: the doubtful ones, and the whole page when the sample is mostly off topic. */
-  mustConfirm: Set<number>;
-  /** Presumed rows that were reviewed as the sample: a «no match» of theirs is respected, a missing verdict is not held against them. */
-  sampleOnly: Set<number>;
-  sample: { size: number; reviewed: number; off: number; rate: number | null; strictPage: boolean; pageRejected: boolean } | null;
   /** The rows of a rejected page that were not reviewed: excluded («no match»), never delivered, never charged. Empty when the page was not rejected. */
   rejected: number[];
+  /** What the first call of the page found; null when nothing was asked. */
+  firstCall: { size: number; reviewed: number; off: number; rate: number | null; pageRejected: boolean } | null;
 }
 
 export async function reviewSocialPage(input: {
@@ -84,28 +58,20 @@ export async function reviewSocialPage(input: {
   customerRequest: string;
   kind: string;
   rows: Array<{ index: number; row: Record<string, any> }>;
-  suspicious: Set<number>;
   budgetUsd: number;
   /** See `reviewSocialRows`: when set, the budget is a ceiling no call may cross. */
   callCostEstimateUsd?: number;
   deadlineMs?: number;
-  random?: () => number;
-  sampleSize?: number;
-  /** The share of unrelated rows above which a page is rejected unreviewed (default PAGE_REJECT_ABOVE). `Infinity` switches the rejection off: the simulation of the old behaviour uses it. */
+  /** The share of unrelated rows above which the rest of a long page is rejected unreviewed (default PAGE_REJECT_ABOVE). `Infinity` switches the rejection off: the simulation of the old behaviour uses it. */
   rejectPageAbove?: number;
-}): Promise<SampledReviewOutcome> {
-  const byIndex = new Map(input.rows.map((entry) => [entry.index, entry]));
-  const presumed = input.rows.map((entry) => entry.index).filter((index) => !input.suspicious.has(index));
-  const sample = pickReviewSample(presumed, input.sampleSize ?? REVIEW_SAMPLE_ROWS, input.random);
-  const firstRows = [...input.rows.filter((entry) => input.suspicious.has(entry.index)), ...sample.map((index) => byIndex.get(index)!)];
+}): Promise<PageReviewOutcome> {
+  const outcome: PageReviewOutcome = { verdicts: new Map(), attempts: [], costUsd: 0, unreviewed: [], unreviewedByBudget: [], stoppedBy: null, rejected: [], firstCall: null };
+  if (input.rows.length === 0) return outcome;
 
-  const outcome: SampledReviewOutcome = {
-    verdicts: new Map(), attempts: [], costUsd: 0, unreviewed: [], stoppedBy: null,
-    mustConfirm: new Set(input.suspicious), sampleOnly: new Set(sample), sample: null, rejected: [],
-  };
-  if (firstRows.length === 0) return outcome;
+  const review = (rows: typeof input.rows, budgetUsd: number) => reviewSocialRows({ advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind, rows, budgetUsd, callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs });
+  const firstRows = input.rows.slice(0, SOCIAL_REVIEW_ROWS_PER_CALL);
+  const restRows = input.rows.slice(SOCIAL_REVIEW_ROWS_PER_CALL);
 
-  const review = (rows: typeof firstRows, budgetUsd: number) => reviewSocialRows({ advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind, rows, budgetUsd, callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs });
   let first = await review(firstRows, input.budgetUsd);
   const attempts = [...first.attempts];
   let firstCostUsd = first.costUsd;
@@ -121,54 +87,32 @@ export async function reviewSocialPage(input: {
   outcome.attempts.push(...attempts);
   outcome.costUsd += firstCostUsd;
   outcome.stoppedBy = first.stoppedBy;
-  // Only the doubtful rows have to be confirmed at this point; an unreviewed row of the sample is simply not part of the estimate.
-  outcome.unreviewed.push(...first.unreviewed.filter((index) => input.suspicious.has(index)));
+  outcome.unreviewed.push(...first.unreviewed);
+  outcome.unreviewedByBudget.push(...first.unreviewedByCap);
 
-  const estimate = estimateOffTopic(sample, first.verdicts);
-  // FAIL CLOSED: when the review of the sample failed (no verdict for any sampled row, after the one retry), the page is treated as strict: no row
-  // of it is delivered on the deterministic gate alone. Not being able to check is never read as «on topic». (A review that did not run because
-  // the budget or the time was used up is a different case and is left as it was.)
-  const reviewFailed = sample.length > 0 && estimate.reviewed === 0 && attempts.some((attempt) => attempt.failure);
-  const strictPage = reviewFailed || (estimate.rate !== null && estimate.rate > OFF_TOPIC_STRICT_ABOVE);
-  // EARLY PAGE REJECTION: a sample that is mostly unrelated (and was read for enough rows) rejects the page; its other presumed rows are not reviewed.
-  const pageRejected = !reviewFailed && estimate.rate !== null && estimate.reviewed >= PAGE_REJECT_MIN_REVIEWED && estimate.rate > (input.rejectPageAbove ?? PAGE_REJECT_ABOVE);
-  if (sample.length > 0) outcome.sample = { ...estimate, strictPage, pageRejected };
+  const estimate = estimateOffTopic(firstRows.map((entry) => entry.index), first.verdicts);
+  // FAIL CLOSED: when the review of the first call failed (no verdict for any row, after the one retry), no row of the page is delivered and no
+  // second call is made. Not being able to check is never read as «on topic». (A review that did not run because the budget or the time was
+  // used up is a different case: its rows are not delivered either, but they are not a failure.)
+  const reviewFailed = estimate.reviewed === 0 && attempts.some((attempt) => attempt.failure);
+  const pageRejected = !reviewFailed && restRows.length > 0 && estimate.rate !== null && estimate.reviewed >= PAGE_REJECT_MIN_REVIEWED && estimate.rate > (input.rejectPageAbove ?? PAGE_REJECT_ABOVE);
+  outcome.firstCall = { size: estimate.size, reviewed: estimate.reviewed, off: estimate.off, rate: estimate.rate, pageRejected };
+  if (restRows.length === 0) return outcome;
 
   if (reviewFailed) {
-    // The reviewer is unavailable: no second call for the rest of the page; every presumed row waits in the review sheet, not delivered, not charged.
-    for (const index of presumed) outcome.mustConfirm.add(index);
-    outcome.unreviewed.push(...presumed);
-    outcome.sampleOnly.clear();
+    outcome.unreviewed.push(...restRows.map((entry) => entry.index));
     return outcome;
   }
-
   if (pageRejected) {
-    const rest = presumed.filter((index) => !sample.includes(index));
-    for (const index of presumed) outcome.mustConfirm.add(index);
-    outcome.rejected.push(...rest);
-    // The sampled rows keep the verdicts they got; one the review never answered stays out, as on any strict page.
-    for (const index of sample) if (!outcome.verdicts.has(index)) outcome.unreviewed.push(index);
-    outcome.sampleOnly.clear();
+    outcome.rejected.push(...restRows.map((entry) => entry.index));
     return outcome;
   }
-
-  if (strictPage) {
-    const rest = presumed.filter((index) => !sample.includes(index));
-    for (const index of presumed) outcome.mustConfirm.add(index);
-    if (rest.length > 0) {
-      const second = await reviewSocialRows({
-        advisor: input.advisor, customerRequest: input.customerRequest, kind: input.kind,
-        rows: rest.map((index) => byIndex.get(index)!), budgetUsd: Math.max(0, input.budgetUsd - first.costUsd), callCostEstimateUsd: input.callCostEstimateUsd, deadlineMs: input.deadlineMs,
-      });
-      for (const [index, verdict] of second.verdicts) outcome.verdicts.set(index, verdict);
-      outcome.attempts.push(...second.attempts);
-      outcome.costUsd += second.costUsd;
-      outcome.stoppedBy ||= second.stoppedBy;
-      outcome.unreviewed.push(...second.unreviewed);
-    }
-    // The sample rows of a strict page must be confirmed like the others (a missing verdict keeps them out).
-    for (const index of sample) if (!outcome.verdicts.has(index)) outcome.unreviewed.push(index);
-    outcome.sampleOnly.clear();
-  }
+  const rest = await review(restRows, Math.max(0, input.budgetUsd - firstCostUsd));
+  for (const [index, verdict] of rest.verdicts) outcome.verdicts.set(index, verdict);
+  outcome.attempts.push(...rest.attempts);
+  outcome.costUsd += rest.costUsd;
+  outcome.stoppedBy ||= rest.stoppedBy;
+  outcome.unreviewed.push(...rest.unreviewed);
+  outcome.unreviewedByBudget.push(...rest.unreviewedByCap);
   return outcome;
 }

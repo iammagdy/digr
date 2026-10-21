@@ -2,100 +2,135 @@ import { describe, expect, it } from "vitest";
 import { emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, saveRunningSet } from "../src/lib/server/jobRunningSet";
 import { isCustomerVisibleJobEvent, REVIEW_COST_EVENT_TYPE, reviewSpendEventMessage } from "../src/lib/server/reviewSpendLog";
 import {
-  LOW_YIELD_ACCEPTED_BELOW, REVIEW_CALL_COST_ESTIMATE_USD, reviewStopForLowYield, SOCIAL_REVIEW_ROWS_PER_CALL,
+  advisoryMaxTokens, isVerdictOnlyKind, LOW_YIELD_ACCEPTED_BELOW, parseAdvisoryReply, REVIEW_CALL_COST_ESTIMATE_USD, reviewStopForLowYield, SOCIAL_REVIEW_ROWS_PER_CALL, UNREVIEWED_BY_BUDGET_REASON_AR,
   type AdvisoryVerdict, type RowAdvisorFn,
 } from "../src/lib/server/rowReviewAdvisor";
-import { OFF_TOPIC_STRICT_ABOVE, PAGE_REJECT_ABOVE, PAGE_REJECT_MIN_REVIEWED, pageRejectedEventAr, reviewSocialPage } from "../src/lib/server/sampledReview";
+import { PAGE_REJECT_ABOVE, PAGE_REJECT_MIN_REVIEWED, pageRejectedEventAr, reviewSocialPage } from "../src/lib/server/sampledReview";
 
 const verdict = (v: AdvisoryVerdict["verdict"]): AdvisoryVerdict => ({ verdict: v, reasonAr: "سبب" });
-const firstOf = () => 0;
 const usage = (costUsd: number) => ({ inputTokens: 1500, outputTokens: 400, costUsd, model: "claude-haiku-5-5", latencyMs: 10 });
 const GOOD = (i: number) => `منشور مطابق ${i}`;
 const BAD = (i: number) => `منشور غير مرتبط ${i}`;
-/** A page of `n` presumed rows whose first `bad` are unrelated; the fixed random source makes the sample the first rows. */
+/** A page of `n` rows whose first `bad` are unrelated (the first call of a long page reads the first 25). */
 const page = (n: number, bad: number) => Array.from({ length: n }, (_, i) => ({ index: i, row: { text: i < bad ? BAD(i) : GOOD(i) } }));
 const advisor = (calls: number[] = [], cost = 0.004): RowAdvisorFn => async (input) => {
   calls.push(input.rows.length);
   return { verdicts: new Map(input.rows.map(({ index, row }) => [index, verdict(String(row.text).startsWith("منشور مطابق") ? "match" : "no_match")])), usage: usage(cost), failure: null };
 };
 
-describe("early page rejection: a sample that is mostly unrelated rejects the page without reviewing its other rows", () => {
-  it("the limits: rejection above 60%, the strict full review above 40%; at least eight sampled rows must have been read", () => {
+describe("early page rejection: a long page whose first call is mostly unrelated is rejected without reviewing the rest", () => {
+  it("the limits: rejection above 60% of the first call's rows, at least eight of them read", () => {
     expect(PAGE_REJECT_ABOVE).toBe(0.6);
-    expect(OFF_TOPIC_STRICT_ABOVE).toBe(0.4);
     expect(PAGE_REJECT_MIN_REVIEWED).toBe(8);
   });
 
-  it("11 of 15 sampled rows unrelated (73%): ONE call, the rest of the page is rejected unreviewed, the sampled rows keep their verdicts", async () => {
+  it("16 of the first 25 rows unrelated (64%): ONE call, the other 15 rows of the page are rejected unreviewed, the reviewed rows keep their verdicts", async () => {
     const calls: number[] = [];
-    const rows = page(22, 11);
-    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows, suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(calls).toEqual([15]);
-    expect(outcome.sample).toMatchObject({ size: 15, reviewed: 15, off: 11, strictPage: true, pageRejected: true });
-    expect(outcome.rejected).toEqual([15, 16, 17, 18, 19, 20, 21]);
-    // the sampled rows were answered: four matches among them are still confirmed, the others are not
-    expect(outcome.verdicts.size).toBe(15);
-    expect([...outcome.verdicts].filter(([, v]) => v.verdict === "match").map(([i]) => i)).toEqual([11, 12, 13, 14]);
+    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(40, 16), budgetUsd: 0.05 });
+    expect(calls).toEqual([25]);
+    expect(outcome.firstCall).toMatchObject({ size: 25, reviewed: 25, off: 16, pageRejected: true });
+    expect(outcome.rejected).toEqual(Array.from({ length: 15 }, (_, i) => 25 + i));
+    // the 25 rows reviewed were answered: nine matches among them are still confirmed, the others are not
+    expect(outcome.verdicts.size).toBe(25);
+    expect([...outcome.verdicts].filter(([, v]) => v.verdict === "match").map(([i]) => i)).toEqual(Array.from({ length: 9 }, (_, i) => 16 + i));
     expect(outcome.unreviewed).toEqual([]);
     expect(outcome.costUsd).toBeCloseTo(0.004, 6);
-    // none of the rejected rows can be delivered on the gate alone
-    expect(outcome.mustConfirm.size).toBe(22);
-    expect(outcome.sampleOnly.size).toBe(0);
   });
 
-  it("exactly 60% (9 of 15) is NOT rejected: it stays a strict page and the rest is reviewed (a second call)", async () => {
+  it("exactly 60% (15 of 25) is NOT rejected: the rest of the page is reviewed (a second call)", async () => {
     const calls: number[] = [];
-    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(22, 9), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(calls).toEqual([15, 7]);
-    expect(outcome.sample).toMatchObject({ off: 9, strictPage: true, pageRejected: false });
+    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(40, 15), budgetUsd: 0.05 });
+    expect(calls).toEqual([25, 15]);
+    expect(outcome.firstCall).toMatchObject({ off: 15, pageRejected: false });
     expect(outcome.rejected).toEqual([]);
-    expect(outcome.verdicts.size).toBe(22);
+    expect(outcome.verdicts.size).toBe(40);
   });
 
-  it("a sample read for fewer than eight rows never rejects a page (the full review runs as before)", async () => {
+  it("a first call read for fewer than eight rows never rejects a page (the rest is reviewed as before)", async () => {
     const calls: number[] = [];
     // the reviewer answers only the first five rows of each call, all «no match»: 5 of 5 unrelated, but only five read
     const partial: RowAdvisorFn = async (input) => {
       calls.push(input.rows.length);
       return { verdicts: new Map(input.rows.slice(0, 5).map(({ index }) => [index, verdict("no_match")])), usage: usage(0.004), failure: null };
     };
-    const outcome = await reviewSocialPage({ advisor: partial, customerRequest: "x", kind: "social-x-posts", rows: page(22, 22), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(outcome.sample).toMatchObject({ reviewed: 5, off: 5, strictPage: true, pageRejected: false });
+    const outcome = await reviewSocialPage({ advisor: partial, customerRequest: "x", kind: "social-x-posts", rows: page(40, 40), budgetUsd: 0.05 });
+    expect(outcome.firstCall).toMatchObject({ reviewed: 5, off: 5, pageRejected: false });
     expect(outcome.rejected).toEqual([]);
-    expect(calls).toEqual([15, 7]);
+    expect(calls).toEqual([25, 15]);
   });
 
-  it("the doubtful rows are always reviewed with the sample, even on a rejected page; only the other presumed rows are rejected unreviewed", async () => {
+  it("a page of up to 25 rows is never rejected: every row has its own verdict, however unrelated the page is", async () => {
     const calls: number[] = [];
-    const rows = page(23, 11);
-    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows, suspicious: new Set([22]), budgetUsd: 0.05, random: firstOf });
-    expect(calls).toEqual([16]);
-    expect(outcome.verdicts.has(22)).toBe(true);
-    expect(outcome.rejected).toEqual([15, 16, 17, 18, 19, 20, 21]);
+    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(20, 20), budgetUsd: 0.05 });
+    expect(calls).toEqual([20]);
+    expect(outcome.firstCall).toMatchObject({ size: 20, reviewed: 20, off: 20, pageRejected: false });
+    expect(outcome.rejected).toEqual([]);
+    expect(outcome.verdicts.size).toBe(20);
   });
 
   it("a failed review is still held, never rejected: the fail-closed rule is untouched", async () => {
     let calls = 0;
     const failing: RowAdvisorFn = async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.001), failure: "bad_reply" }; };
-    const outcome = await reviewSocialPage({ advisor: failing, customerRequest: "x", kind: "social-x-posts", rows: page(20, 0), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
+    const outcome = await reviewSocialPage({ advisor: failing, customerRequest: "x", kind: "social-x-posts", rows: page(40, 0), budgetUsd: 0.05 });
     expect(calls).toBe(2);
-    expect(outcome.sample).toMatchObject({ reviewed: 0, rate: null, strictPage: true, pageRejected: false });
+    expect(outcome.firstCall).toMatchObject({ reviewed: 0, rate: null, pageRejected: false });
     expect(outcome.rejected).toEqual([]);
-    expect(outcome.unreviewed).toHaveLength(20);
-    expect(outcome.mustConfirm.size).toBe(20);
+    expect(outcome.unreviewed).toHaveLength(40);
+    expect(outcome.unreviewedByBudget).toEqual([]);
   });
 
-  it("a mostly on-topic page is untouched: one call on the sample, nothing rejected", async () => {
+  it("a mostly on-topic long page is untouched: two calls (25 and 15 rows), nothing rejected", async () => {
     const calls: number[] = [];
-    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(20, 3), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(calls).toEqual([15]);
-    expect(outcome.sample).toMatchObject({ strictPage: false, pageRejected: false });
+    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(40, 3), budgetUsd: 0.05 });
+    expect(calls).toEqual([25, 15]);
+    expect(outcome.firstCall).toMatchObject({ pageRejected: false });
     expect(outcome.rejected).toEqual([]);
   });
 
   it("the customer's sentence is Arabic only, with Arabic-Indic digits and no amount", () => {
-    expect(pageRejectedEventAr(0.7333, 7)).toBe("نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة جداً (نحو ٧٣٪ من العيّنة)، لذلك استُبعدت بقية سجلاتها (٧ سجل) دون مراجعة فردية ولم تُحتسب.");
+    expect(pageRejectedEventAr(0.7333, 7)).toBe("نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة جداً (نحو ٧٣٪ من السجلات المراجَعة)، لذلك استُبعدت بقية سجلاتها (٧ سجل) دون مراجعة فردية ولم تُحتسب.");
     expect(pageRejectedEventAr(0.7333, 7)).not.toMatch(/[A-Za-z$]/);
+  });
+});
+
+describe("a row the review budget did not reach is never delivered", () => {
+  it("with no budget left every row of the page is unreviewed by budget, and no call is made", async () => {
+    const calls: number[] = [];
+    const outcome = await reviewSocialPage({ advisor: advisor(calls), customerRequest: "x", kind: "social-x-posts", rows: page(20, 0), budgetUsd: 0 });
+    expect(calls).toEqual([]);
+    expect(outcome.unreviewedByBudget).toHaveLength(20);
+    expect(outcome.unreviewed).toHaveLength(20);
+    expect(outcome.verdicts.size).toBe(0);
+  });
+
+  it("the standard Arabic reason for such a row says why, with no amount", () => {
+    expect(UNREVIEWED_BY_BUDGET_REASON_AR).toBe("لم تتم مراجعة هذا السجل آلياً لأن التحقق بلغ الحد المسموح لهذا الطلب؛ لم يُحتسب ولم يدخل ضمن الملف المُسلَّم");
+  });
+});
+
+describe("verdict-only replies: the model returns {index, verdict}, the code writes the Arabic reason", () => {
+  it("a reply with a reason in it is read on the verdict alone; the reason is the standard one", () => {
+    const reply = '{"reviews":[{"index":0,"verdict":"no_match","reasonAr":"سبب طويل من النموذج"},{"index":1,"verdict":"match"},{"index":2,"verdict":"uncertain"}]}';
+    const verdicts = parseAdvisoryReply(reply, { verdictOnly: true });
+    expect(verdicts.get(0)).toEqual({ verdict: "no_match", reasonAr: "غير مطابق لموضوع الطلب" });
+    expect(verdicts.get(1)).toEqual({ verdict: "match", reasonAr: "مطابق لموضوع الطلب" });
+    expect(verdicts.get(2)).toEqual({ verdict: "uncertain", reasonAr: "غير مؤكد من نص السجل وحده" });
+    // other kinds keep the reason the model wrote
+    expect(parseAdvisoryReply(reply).get(0)).toEqual({ verdict: "no_match", reasonAr: "سبب طويل من النموذج" });
+  });
+
+  it("posts, comments and videos are reviewed on the verdict alone; companies and people keep their reasons", () => {
+    for (const kind of ["social-x-posts", "social-tiktok-comments", "social-youtube-comments-video-list", "posts", "comments"]) expect(isVerdictOnlyKind(kind), kind).toBe(true);
+    for (const kind of ["companies", "people"]) expect(isVerdictOnlyKind(kind), kind).toBe(false);
+  });
+
+  it("the reply budget for a verdict-only call is small (it is the output that costs): room for twice the verdicts, never above 2,000", () => {
+    expect(advisoryMaxTokens(1, true)).toBe(300);
+    expect(advisoryMaxTokens(20, true)).toBe(1000);
+    expect(advisoryMaxTokens(25, true)).toBe(1200);
+    expect(advisoryMaxTokens(1000, true)).toBe(2000);
+    // the other kinds keep the old room
+    expect(advisoryMaxTokens(25)).toBeGreaterThanOrEqual(4000);
   });
 });
 

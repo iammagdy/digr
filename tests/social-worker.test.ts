@@ -101,8 +101,9 @@ import { setProviderAdapterForTesting, type ProviderAdapterCallInput } from "../
 import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "../src/lib/server/socialAdapter";
 import { estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/socialSources";
 import { setRelativeDateClockForTesting } from "../src/lib/server/relativeDate";
-import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
-import { setReviewSampleRandomForTesting } from "../src/lib/server/sampledReview";
+import ExcelJS from "exceljs";
+import { UNREVIEWED_SHEET_NOTICE_AR } from "../src/functions/shared/fileGenerators";
+import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, UNREVIEWED_BY_BUDGET_REASON_AR, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 
 const JOB = jobIdForQuote("quote_social");
 const YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
@@ -143,7 +144,6 @@ describe("worker: social jobs", () => {
     setProviderAdapterForTesting(null);
     setRowAdvisorForTesting(null);
     setStrictSocialReviewForTesting(false);
-    setReviewSampleRandomForTesting(null);
     setRelativeDateClockForTesting(null);
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete (process.env as any)[key];
@@ -554,7 +554,7 @@ describe("worker: social jobs", () => {
     const strict = (advisor: RowAdvisorFn) => { setStrictSocialReviewForTesting(true); setRowAdvisorForTesting(advisor); };
     const lines = () => db.events.map((event) => String(event.message));
 
-    it("ordinary rows are delivered (a sample of them is checked); a doubtful one is delivered only when the review confirms it", async () => {
+    it("ordinary rows are delivered (every row is checked); a doubtful one is delivered only when the review confirms it", async () => {
       resetDb("social-x-posts", EGYPT_TOPIC, 10, 5);
       const philosophical = { tweet_id: "f1", text: "الحياة في مصر رحلة طويلة والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون الواسع" };
       useSource(async () => ok({ ok: true, rows: [...ordinary(8), philosophical, reactions(1)[0]] }, 600));
@@ -570,7 +570,7 @@ describe("worker: social jobs", () => {
       const { json } = await runAllChunks();
 
       expect(json.done).toBe(true);
-      // one call: the two doubtful rows and a sample (here all eight) of the ordinary ones
+      // one call covers every row of the page: the two doubtful rows and the eight ordinary ones
       expect(asked).toHaveLength(1);
       expect(asked[0]).toHaveLength(10);
       expect(json.deliveredUnits).toBe(9);
@@ -579,13 +579,13 @@ describe("worker: social jobs", () => {
       expect(lines().some((line) => line.includes("قيد المراجعة ١"))).toBe(true);
     });
 
-    it("a page of ordinary rows is checked once, on a sample of at most fifteen rows, and delivered", async () => {
+    it("a page of 30 ordinary rows is checked in full, in two calls (25 rows and 5), and delivered", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 30, 5);
       useSource(async () => ok({ ok: true, rows: ordinary(30) }, 600));
       const asked: number[] = [];
       strict(async (input) => { asked.push(input.rows.length); return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.004), failure: null }; });
       const { json } = await runAllChunks();
-      expect(asked).toEqual([15]);
+      expect(asked).toEqual([25, 5]);
       expect(json.deliveredUnits).toBe(30);
     });
 
@@ -649,7 +649,7 @@ describe("worker: social jobs", () => {
       expect(providerCalls).toBe(1);
     });
 
-    it("the review's budget per job is capped: doubtful rows past it are not delivered, and it is said plainly", async () => {
+    it("the review's budget per job is capped: rows past it are not delivered, go to the «غير مراجَع» sheet, and it is said plainly", async () => {
       resetDb("social-x-posts", EGYPT_TOPIC, 30, 5);
       useSource(async () => ok({ ok: true, rows: reactions(30) }, 600));
       strict(async (input) => ({ verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "رد على المباراة" }])), usage: usage(0.06), failure: null }));
@@ -659,7 +659,7 @@ describe("worker: social jobs", () => {
       expect(json.done).toBe(true);
       expect(json.deliveredUnits).toBe(25);
       expect(json.settle.charged_credits).toBe(25 * 5);
-      expect(lines().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ٥ سجل في شيت المراجعة ولم يُحتسب"))).toBe(true);
+      expect(lines().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ٥ سجل في ورقة «غير مراجَع» ولم يُحتسب"))).toBe(true);
     });
 
     it("an empty post, an emoji and an ad are dropped before anything else", async () => {
@@ -692,10 +692,10 @@ describe("worker: social jobs", () => {
       expect(stepFile.reviewUsd).toBe(0.003);
     });
 
-    describe("the review cost cut: early page rejection, the low-yield stop and the review spend row", () => {
+    describe("the review cost cut: one call per page, early rejection of a long page, the low-yield stop, the «غير مراجَع» sheet and the review spend row", () => {
       /** Page `page` of `n` ordinary posts (each names the topic, so the pre-filter keeps all of them). */
       const pageRows = (page: number, n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `q${page}_${i}`, text: `منشور ${page}-${i} عن ${TOPIC} في البطولة` }));
-      /** Only the first post of each page is on topic; with the first rows as the sample that is 1 of 15 matches. */
+      /** Only the first post of each page is on topic. */
       const strictAdvisor = (calls: number[], costUsd: number): RowAdvisorFn => async (input) => {
         calls.push(input.rows.length);
         return { verdicts: new Map(input.rows.map(({ index, row }) => [index, String(row.tweet_id).endsWith("_0") ? { verdict: "match" as const, reasonAr: "يتناول المباراة" } : { verdict: "no_match" as const, reasonAr: "لا يتناول المباراة" }])), usage: usage(costUsd), failure: null };
@@ -703,57 +703,68 @@ describe("worker: social jobs", () => {
       const internal = () => db.events.filter((event) => event.event_type === "review_cost").map((event) => String(event.message));
       const customer = () => db.events.filter((event) => event.event_type !== "review_cost").map((event) => String(event.message));
 
-      it("a page whose sample is mostly unrelated: ONE review call, the rest of the page is excluded unreviewed, the customer is told in Arabic, only the confirmed row is charged", async () => {
+      it("a page of 20 posts is ONE review call covering all of them; only the confirmed row is delivered and charged", async () => {
         resetDb("social-x-posts", EGYPT_TOPIC, 20, 5);
-        setReviewSampleRandomForTesting(() => 0);
         useSource(async () => ok({ ok: true, rows: pageRows(1, 20) }, 600));
         const calls: number[] = [];
         strict(strictAdvisor(calls, 0.004));
 
         const { json } = await runAllChunks();
 
-        expect(calls).toEqual([15]);
+        expect(calls).toEqual([20]);
         expect(json.done).toBe(true);
         expect(json.deliveredUnits).toBe(1);
         expect(json.settle.charged_credits).toBe(1 * 5);
-        expect(customer().some((line) => line.includes("استُبعدت بقية سجلاتها (٥ سجل) دون مراجعة فردية ولم تُحتسب"))).toBe(true);
+      });
+
+      it("a long page (40 posts) whose first call is mostly unrelated: ONE call of 25, the other 15 are excluded unreviewed, the customer is told in Arabic, only the confirmed row is charged", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
+        useSource(async () => ok({ ok: true, rows: pageRows(1, 40) }, 600));
+        const calls: number[] = [];
+        strict(strictAdvisor(calls, 0.004));
+
+        const { json } = await runAllChunks();
+
+        expect(calls).toEqual([25]);
+        expect(json.done).toBe(true);
+        expect(json.deliveredUnits).toBe(1);
+        expect(json.settle.charged_credits).toBe(1 * 5);
+        expect(customer().some((line) => line.includes("استُبعدت بقية سجلاتها (١٥ سجل) دون مراجعة فردية ولم تُحتسب"))).toBe(true);
         for (const line of customer()) expect(line).not.toMatch(/usd|USD|\$/);
       });
 
-      it("the first chunk's own record shows the rejected page: the 5 rows outside the sample are excluded unreviewed, the 14 sampled rows that said «no match» keep that verdict (review sheet, as before)", async () => {
-        resetDb("social-x-posts", EGYPT_TOPIC, 20, 5);
-        setReviewSampleRandomForTesting(() => 0);
-        useSource(async () => ok({ ok: true, rows: pageRows(1, 20), next_cursor: "next" }, 600));
+      it("the first chunk's own record shows the rejected page: the 15 rows after the first call are excluded unreviewed, the 24 reviewed rows that said «no match» keep that verdict (review sheet)", async () => {
+        resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
+        useSource(async () => ok({ ok: true, rows: pageRows(1, 40), next_cursor: "next" }, 600));
         strict(strictAdvisor([], 0.004));
 
         await callWorker();
 
         const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
-        expect(stepFile.reviewSample).toMatchObject({ size: 15, reviewed: 15, off: 14, strictPage: true, pageRejected: true });
-        expect(stepFile.relevanceExcludedCount).toBe(5);
-        expect(stepFile.uncertainRowsCount).toBe(14);
+        expect(stepFile.reviewSample).toMatchObject({ size: 25, reviewed: 25, off: 24, pageRejected: true });
+        expect(stepFile.relevanceExcludedCount).toBe(15);
+        expect(stepFile.uncertainRowsCount).toBe(24);
+        expect(stepFile.unreviewedRowsCount).toBe(0);
         expect(stepFile.batchUnits).toBe(1);
-        expect(stepFile.rowsSeen).toBe(20);
+        expect(stepFile.rowsSeen).toBe(40);
         expect(stepFile.reviewCallCount).toBe(1);
       });
 
       it("the review spend of the job is logged for the owner: one internal row per chunk with calls and USD, hidden from the customer", async () => {
-        resetDb("social-x-posts", EGYPT_TOPIC, 20, 5);
-        setReviewSampleRandomForTesting(() => 0);
-        useSource(async () => ok({ ok: true, rows: pageRows(1, 20) }, 600));
+        resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
+        useSource(async () => ok({ ok: true, rows: pageRows(1, 40) }, 600));
         strict(strictAdvisor([], 0.004));
 
         await runAllChunks();
 
-        expect(internal()).toEqual(["review_spend step=0 calls=1 usd=0.004000 total_calls=1 total_usd=0.004000 rows_seen=20 low_yield_stop=0"]);
+        expect(internal()).toEqual(["review_spend step=0 calls=1 usd=0.004000 total_calls=1 total_usd=0.004000 rows_seen=40 low_yield_stop=0"]);
         expect(db.events.filter((event) => event.event_type === "review_cost")).toHaveLength(1);
         expect(customer().every((line) => !line.startsWith("review_spend"))).toBe(true);
       });
 
-      it("the review budget is used up and fewer than 10% of the rows seen were accepted: the next page is held, paging stops, nothing more is charged, and it is said in Arabic", async () => {
+      it("the review budget is used up and fewer than 10% of the rows seen were accepted: the next page goes to «غير مراجَع», paging stops, nothing more is charged, and it is said in Arabic", async () => {
         // 40 posts wanted at 5 points: the budget is 20% of 20 EGP of revenue in USD (about 0.07 USD); the first call spends 0.08
         resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
-        setReviewSampleRandomForTesting(() => 0);
         let providerCalls = 0;
         useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
         const calls: number[] = [];
@@ -761,22 +772,22 @@ describe("worker: social jobs", () => {
 
         const { json } = await runAllChunks();
 
-        // page 1: one call (rejected page, 1 of 20 accepted = 5%); page 2: no call at all, its 20 rows are held; no page 3 is bought
-        expect(calls).toEqual([15]);
+        // page 1: one call on its 20 rows (1 accepted = 5%); page 2: no call at all, its 20 rows are not delivered; no page 3 is bought
+        expect(calls).toEqual([20]);
         expect(providerCalls).toBe(2);
         expect(json.done).toBe(true);
         expect(json.deliveredUnits).toBe(1);
         expect(json.settle.charged_credits).toBe(1 * 5);
         expect(customer().some((line) => line.includes("توقّف التحقق الآلي لأن نسبة السجلات المطابقة بقيت منخفضة جداً"))).toBe(true);
+        expect(customer().some((line) => line.includes("ورقة «غير مراجَع»"))).toBe(true);
         expect(internal()).toEqual([
           "review_spend step=0 calls=1 usd=0.080000 total_calls=1 total_usd=0.080000 rows_seen=20 low_yield_stop=0",
           "review_spend step=1 calls=0 usd=0.000000 total_calls=1 total_usd=0.080000 rows_seen=20 low_yield_stop=1",
         ]);
       });
 
-      it("the same budget used up but most rows accepted: nothing changes (the page after it is left as it was, not held)", async () => {
+      it("the budget is used up but most rows were accepted: the page after it is NOT delivered (it was before), it goes to «غير مراجَع», paging stops, and the sheet says why", async () => {
         resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
-        setReviewSampleRandomForTesting(() => 0);
         let providerCalls = 0;
         useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
         const calls: number[] = [];
@@ -784,24 +795,41 @@ describe("worker: social jobs", () => {
 
         const { json } = await runAllChunks();
 
-        expect(calls).toEqual([15]);
+        expect(calls).toEqual([20]);
+        expect(providerCalls).toBe(2);
         expect(json.done).toBe(true);
-        expect(json.deliveredUnits).toBe(40);
+        // only the 20 rows of the reviewed page are delivered and charged; the 20 of the next page were never reviewed
+        expect(json.deliveredUnits).toBe(20);
+        expect(json.settle.charged_credits).toBe(20 * 5);
+        expect(customer().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ٢٠ سجل في ورقة «غير مراجَع» ولم يُحتسب"))).toBe(true);
         expect(internal().some((line) => line.includes("low_yield_stop=1"))).toBe(false);
+        // the files: 20 delivered rows in the main sheet and the CSV; the 20 unreviewed rows in their own sheet, with the Arabic notice
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+        expect(workbook.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات", "غير مراجَع"]);
+        expect(workbook.getWorksheet("المنشورات")!.rowCount).toBe(1 + 20);
+        const apart = workbook.getWorksheet("غير مراجَع")!;
+        expect(String(apart.getCell(1, 1).value)).toBe(UNREVIEWED_SHEET_NOTICE_AR);
+        expect(apart.rowCount).toBe(2 + 20);
+        expect(String(apart.getCell(3, 4).value)).toBe(UNREVIEWED_BY_BUDGET_REASON_AR);
+        const csv = db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8");
+        expect(csv.split("\n").filter((line) => line.includes("منشور 1-"))).toHaveLength(20);
+        expect(csv).not.toContain("منشور 2-");
       });
 
-      it("a job that accepts at least 10% of what it sees is never stopped by the rule, whatever it has spent", async () => {
+      it("a job that accepts at least 10% of what it sees is not stopped by the low-yield rule: it stops because the budget is used up", async () => {
         resetDb("social-x-posts", EGYPT_TOPIC, 40, 5);
-        setReviewSampleRandomForTesting(() => 0);
         let providerCalls = 0;
         useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
-        // 4 of the 15 sampled rows match (27%): the page is strict (73% off) and rejected, 4 of 20 accepted = 20%, above the 10% line
+        // 4 of the 20 rows match (20%, above the 10% line)
         strict(async (input) => ({ verdicts: new Map(input.rows.map(({ index, row }) => [index, Number(String(row.tweet_id).split("_")[1]) < 4 ? { verdict: "match" as const, reasonAr: "يتناول المباراة" } : { verdict: "no_match" as const, reasonAr: "لا يتناول المباراة" }])), usage: usage(0.08), failure: null }));
 
-        await runAllChunks();
+        const { json } = await runAllChunks();
 
-        expect(providerCalls).toBeGreaterThanOrEqual(3);
+        expect(providerCalls).toBe(2);
+        expect(json.deliveredUnits).toBe(4);
         expect(internal().some((line) => line.includes("low_yield_stop=1"))).toBe(false);
+        expect(customer().some((line) => line.includes("ورقة «غير مراجَع»"))).toBe(true);
       });
     });
   });

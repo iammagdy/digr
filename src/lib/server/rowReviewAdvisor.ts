@@ -68,9 +68,17 @@ const ADVISORY_MAX_ROWS = 40;
  * Room for the reply: an Arabic verdict with its reason is about 100 tokens, so a fixed 1,200 cut the reply of a page of 20 rows
  * in the middle (an unreadable reply, recorded as a failure with no tokens). Room for every row, plus a margin.
  */
-export function advisoryMaxTokens(rows: number): number {
+export function advisoryMaxTokens(rows: number, verdictOnly = false): number {
+  // A verdict alone is about 20 tokens a row ({"index":12,"verdict":"no_match"}): room for twice that, plus a margin.
+  if (verdictOnly) return Math.min(2000, Math.max(300, 200 + Math.max(1, rows) * 40));
   return Math.min(6000, Math.max(1200, 300 + Math.max(1, rows) * 160));
 }
+
+/**
+ * Posts, comments and videos are reviewed on the verdict alone: the model returns {index, verdict} and no reason (the reason is the
+ * output of a row, and output tokens are most of a review's cost); the code writes the standard Arabic reason for the review sheet.
+ */
+export const isVerdictOnlyKind = (kind: string): boolean => /^social-|post|comment|video/i.test(kind);
 /**
  * How long one review call may take. The calls of 25 rows measured 5 to 8 s on production, and 2 of 8 were cut at the old 8 s limit;
  * a cut call is a review that never happened, so the limit leaves room (the caller still shortens it near its own deadline).
@@ -115,7 +123,7 @@ function stripControl(text: string): string {
  * The model's text reply to verdicts. Anything that is not valid JSON with a list of reviews yields no verdicts; inside a valid
  * list every readable review counts on its own, so one long reason or one malformed item cannot throw away the other rows' verdicts.
  */
-export function parseAdvisoryReply(text: string): Map<number, AdvisoryVerdict> {
+export function parseAdvisoryReply(text: string, options: { verdictOnly?: boolean } = {}): Map<number, AdvisoryVerdict> {
   const verdicts = new Map<number, AdvisoryVerdict>();
   const json = /\{[\s\S]*\}/.exec(text || "")?.[0];
   if (!json) return verdicts;
@@ -125,7 +133,8 @@ export function parseAdvisoryReply(text: string): Map<number, AdvisoryVerdict> {
     for (const raw of reviews.slice(0, ADVISORY_MAX_ROWS * 2)) {
       const item = ReviewItemSchema.safeParse(raw);
       if (!item.success) continue;
-      const reason = stripControl(item.data.reasonAr || "").slice(0, MAX_REASON_CHARS) || DEFAULT_REASON_AR[item.data.verdict];
+      // Verdict-only: whatever reason the model added is ignored; the standard Arabic reason of the verdict is used.
+      const reason = (options.verdictOnly ? "" : stripControl(item.data.reasonAr || "").slice(0, MAX_REASON_CHARS)) || DEFAULT_REASON_AR[item.data.verdict];
       verdicts.set(item.data.index, { verdict: item.data.verdict, reasonAr: reason });
     }
   } catch {
@@ -153,8 +162,13 @@ function buildPrompt(input: RowAdvisoryInput): string {
       "For a comment, the video title is context only, never evidence by itself that the comment is about the topic.",
       "If the request names a country, a text about another country's clubs, league, team or events (for example a Spanish club for a request about Egypt) is not a match for that request.",
     ] : []),
-    "Judge only from the row's own fields. Never guess a match. Give a short Arabic reason (at most twelve words, no emoji).",
-    "Reply with ONLY JSON: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\",\"reasonAr\":\"...\"}]}",
+    ...(isVerdictOnlyKind(input.kind) ? [
+      "Judge only from the row's own fields. Never guess a match. Do not explain: no reasons, no other text.",
+      "Reply with ONLY JSON: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\"}]}",
+    ] : [
+      "Judge only from the row's own fields. Never guess a match. Give a short Arabic reason (at most twelve words, no emoji).",
+      "Reply with ONLY JSON: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\",\"reasonAr\":\"...\"}]}",
+    ]),
     "Rows:",
     JSON.stringify(rows),
   ].join("\n");
@@ -180,7 +194,7 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       signal: controller.signal,
-      body: JSON.stringify({ model, max_tokens: advisoryMaxTokens(input.rows.length), messages: [{ role: "user", content: buildPrompt(input) }] }),
+      body: JSON.stringify({ model, max_tokens: advisoryMaxTokens(input.rows.length, isVerdictOnlyKind(input.kind)), messages: [{ role: "user", content: buildPrompt(input) }] }),
     });
     if (!response.ok) {
       let detail: string | null = null;
@@ -198,7 +212,7 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
     const outputTokens = Number(data?.usage?.output_tokens) || 0;
     const pricing = getLlmPricingSettings("anthropic", model);
     const costUsd = (inputTokens * pricing.inputCostPerMillion + outputTokens * pricing.outputCostPerMillion) / 1_000_000;
-    const verdicts = parseAdvisoryReply(text);
+    const verdicts = parseAdvisoryReply(text, { verdictOnly: isVerdictOnlyKind(input.kind) });
     const failure: AdvisoryFailureCode | null = verdicts.size === 0 && input.rows.length > 0 ? "bad_reply" : null;
     const stopReason = typeof data?.stop_reason === "string" ? data.stop_reason : null;
     return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure, stopReason, detail: failure === "bad_reply" ? `reply_chars=${text.length}` : null };
@@ -294,7 +308,7 @@ export function reviewStopForLowYield(input: { spentUsd: number; budgetUsd: numb
   return budgetUsedUp && input.accepted / seen < LOW_YIELD_ACCEPTED_BELOW;
 }
 
-export const REVIEW_STOPPED_LOW_YIELD_REASON_AR = "توقّف التحقق الآلي لهذا الطلب لأن نسبة السجلات المطابقة بقيت منخفضة جداً بعد بلوغ حدّه المسموح؛ وُضع السجل في شيت المراجعة ولم يُحتسب";
+export const REVIEW_STOPPED_LOW_YIELD_REASON_AR = "توقّف التحقق الآلي لهذا الطلب لأن نسبة السجلات المطابقة بقيت منخفضة جداً بعد بلوغ حدّه المسموح؛ وُضع السجل في ورقة «غير مراجَع» ولم يُحتسب";
 
 export type SocialReviewStop = "failed" | "cap" | "deadline";
 
@@ -313,6 +327,8 @@ export interface SocialReviewOutcome {
   costUsd: number;
   /** Matched rows nobody reviewed (a failed call, the cap, the deadline): they cannot be delivered. */
   unreviewed: number[];
+  /** The part of `unreviewed` that was left out only because the review budget was used up (not a failure): they go to the «غير مراجَع» sheet. */
+  unreviewedByCap: number[];
   stoppedBy: SocialReviewStop | null;
 }
 
@@ -337,7 +353,7 @@ export async function reviewSocialRows(input: {
   now?: () => number;
 }): Promise<SocialReviewOutcome> {
   const now = input.now ?? Date.now;
-  const outcome: SocialReviewOutcome = { verdicts: new Map(), attempts: [], costUsd: 0, unreviewed: [], stoppedBy: null };
+  const outcome: SocialReviewOutcome = { verdicts: new Map(), attempts: [], costUsd: 0, unreviewed: [], unreviewedByCap: [], stoppedBy: null };
   let halted = false;
   let dearestCallPerRowUsd = 0;
   const estimatePerRowUsd = Math.max(0, Number(input.callCostEstimateUsd) || 0) / SOCIAL_REVIEW_ROWS_PER_CALL;
@@ -352,6 +368,7 @@ export async function reviewSocialRows(input: {
     if (stop) {
       outcome.stoppedBy ||= stop;
       outcome.unreviewed.push(...batch.map((entry) => entry.index));
+      if (stop === "cap") outcome.unreviewedByCap.push(...batch.map((entry) => entry.index));
       continue;
     }
     let result: AdvisoryResult;
@@ -379,6 +396,9 @@ export async function reviewSocialRows(input: {
 }
 
 export const UNREVIEWED_REASON_AR = "تعذّر التحقق الآلي من ملاءمة هذا السجل لموضوع الطلب؛ أُحيل للمراجعة ولم يُحتسب";
+
+/** Why a row is in the «غير مراجَع» sheet: the review budget of the job was used up before this row was reached. */
+export const UNREVIEWED_BY_BUDGET_REASON_AR = "لم تتم مراجعة هذا السجل آلياً لأن التحقق بلغ الحد المسموح لهذا الطلب؛ لم يُحتسب ولم يدخل ضمن الملف المُسلَّم";
 
 /**
  * Strict application for posts and comments: a deterministic match is delivered only when the review says «match». A doubt, a

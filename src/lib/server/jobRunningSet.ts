@@ -40,6 +40,7 @@ export interface StepSummary {
   cursor?: unknown;
   rows?: unknown;
   uncertainRows?: unknown;
+  unreviewedRows?: unknown;
   batchUnits?: unknown;
   reviewUsd?: unknown;
   reviewCallCount?: unknown;
@@ -51,7 +52,10 @@ export const emptyRunningSet = (): RunningSet => ({ step: -1, identities: [], cu
 /** The state after one more chunk, from the state before it. Same rules as the rebuild: rows and review rows count for identity. */
 export function extendRunningSet(previous: RunningSet, step: number, summary: StepSummary, identityOf: (row: any) => string | null): RunningSet {
   const rows = Array.isArray(summary.rows) ? summary.rows : [];
-  const review = Array.isArray(summary.uncertainRows) ? summary.uncertainRows : [];
+  const review = [
+    ...(Array.isArray(summary.uncertainRows) ? summary.uncertainRows : []),
+    ...(Array.isArray(summary.unreviewedRows) ? summary.unreviewedRows : []),
+  ];
   const identities = new Set(previous.identities);
   for (const row of [...rows, ...review]) {
     const identity = identityOf(row);

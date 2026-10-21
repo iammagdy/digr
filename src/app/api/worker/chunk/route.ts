@@ -1,7 +1,7 @@
 import { pointsAr } from "@/lib/pointsFormat";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
-import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
-import { highOffTopicEventAr, PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
+import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
 import { REVIEW_COST_EVENT_TYPE, reviewSpendEventMessage } from "../../../../lib/server/reviewSpendLog";
 import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
@@ -814,6 +814,10 @@ export async function POST(req: NextRequest) {
     }
 
     let uncertainRows: any[] = [];
+    // Rows nobody reviewed because the job's review budget was used up: not delivered, not charged, listed apart in the «غير مراجَع» sheet.
+    let unreviewedRows: any[] = [];
+    const budgetUnreviewed = new Set<number>();
+    let reviewBudgetUsedUp = false;
     let reviewUsdThisChunk = videoSelectionUsd;
     // Review calls of this chunk (the video selection inside the adapter counts), what the company review spent (logged, not part of the social budget), rows that reached the gate.
     let reviewCallsThisChunk = videoSelectionCalls;
@@ -979,12 +983,16 @@ export async function POST(req: NextRequest) {
         // The job's review budget is used up and fewer than 10% of the rows seen so far were accepted: nothing more is reviewed or delivered.
         // The rows of this page wait in the review sheet (not delivered, not charged) and the job stops buying pages.
         reviewStoppedForLowYield = true;
-        reviews = reviews.map((rev) => (rev.decision === "match" ? { ...rev, decision: "uncertain" as const, reasonAr: REVIEW_STOPPED_LOW_YIELD_REASON_AR } : rev));
+        reviews = reviews.map((rev) => {
+          if (rev.decision !== "match") return rev;
+          budgetUnreviewed.add(rev.index);
+          return { ...rev, decision: "uncertain" as const, reasonAr: REVIEW_STOPPED_LOW_YIELD_REASON_AR };
+        });
         try {
           await adminClient.from("job_events").insert({
             job_id: jobId,
             user_id: userId,
-            message: "توقّف التحقق الآلي لأن نسبة السجلات المطابقة بقيت منخفضة جداً بعد بلوغ الحد المسموح لهذا الطلب؛ توقّف الجمع ولم يُحتسب عليك إلا ما سُلّم.",
+            message: "توقّف التحقق الآلي لأن نسبة السجلات المطابقة بقيت منخفضة جداً بعد بلوغ الحد المسموح لهذا الطلب؛ وُضعت سجلات هذه الصفحة في ورقة «غير مراجَع» وتوقّف الجمع ولم يُحتسب عليك إلا ما سُلّم.",
             units: effectiveDelivered,
             event_type: "info",
           });
@@ -1035,7 +1043,7 @@ export async function POST(req: NextRequest) {
               if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure} stop=${attempt.stopReason || ""}`);
             }
           }
-          const judgementOfRow = new Map<number, { decision: "match" | "no_match" | "uncertain"; reasonAr: string }>();
+          const judgementOfRow = new Map<number, { decision: "match" | "no_match" | "uncertain"; reasonAr: string; budget?: boolean }>();
           for (const video of videos) {
             const judgement = outcome.judgements.get(video.key);
             for (const index of video.rowIndexes) judgementOfRow.set(index, judgement ?? { decision: "uncertain", reasonAr: VIDEO_UNREVIEWED_REASON_AR });
@@ -1045,9 +1053,13 @@ export async function POST(req: NextRequest) {
             if (rev.decision !== "match") return rev;
             const judgement = judgementOfRow.get(rev.index);
             if (!judgement || judgement.decision === "match") return rev;
+            // A video the budget did not reach: its comments are not delivered, and wait in the «غير مراجَع» sheet.
+            if (judgement.budget) budgetUnreviewed.add(rev.index);
             return { ...rev, decision: judgement.decision, reasonAr: judgement.reasonAr };
           });
           const heldRows = judgedReviews.filter((rev, i) => reviews[i].decision === "match" && rev.decision === "uncertain").length;
+          const heldByBudget = judgedReviews.filter((rev, i) => reviews[i].decision === "match" && rev.decision === "uncertain" && budgetUnreviewed.has(rev.index)).length;
+          if (heldByBudget > 0) reviewBudgetUsedUp = true;
           reviews = judgedReviews;
           const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match").length;
           try {
@@ -1058,13 +1070,12 @@ export async function POST(req: NextRequest) {
           if (heldRows > 0) {
             // Paging stops only when no video of the page could be selected and the review could not run.
             reviewUnavailable = deliverableWithoutReview === 0 && [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
-            const capped = outcome.stoppedBy === "cap";
             try {
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: userId,
-                message: capped
-                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldRows)} تعليق في شيت المراجعة ولم يُحتسب.`
+                message: heldByBudget > 0
+                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} تعليق في ورقة «غير مراجَع» ولم يُحتسب.`
                   : `وُضع ${toArabicDigits(heldRows)} تعليق في شيت المراجعة ولم يُحتسب لعدم التأكد من موضوع فيديوهاتها.`,
                 units: effectiveDelivered,
                 event_type: "info",
@@ -1075,9 +1086,9 @@ export async function POST(req: NextRequest) {
           }
         }
       } else if (strictSocialReview) {
-        // Posts and comments: a deterministic match is delivered only when the review confirms it. A failed or unreadable review, or the
-        // job's review budget being used up, leaves the rows in the review sheet (not delivered, not charged) and stops paging.
-        const suspiciousIndexes = new Set(reviews.filter((rev) => rev.decision === "match" && (rev as any).suspicious === true).map((rev) => rev.index));
+        // Posts and comments: every row of the page is reviewed (ONE call for the page) and a deterministic match is delivered only when the
+        // review confirms it. A failed or unreadable review leaves the rows in the review sheet (not delivered, not charged) and stops paging.
+        // A row the job's review budget did not reach is not delivered either: it goes to its own sheet, «غير مراجَع», not charged, and paging stops.
         if (matchedForAdvice.length > 0) {
           const priorReviewUsd = runningSet?.reviewUsd ?? 0;
           const outcome = await reviewSocialPage({
@@ -1085,7 +1096,6 @@ export async function POST(req: NextRequest) {
             customerRequest: reviewCustomerRequest,
             kind: String(spec.capabilitySlug || ""),
             rows: matchedForAdvice,
-            suspicious: suspiciousIndexes,
             budgetUsd: Math.max(0, reviewCapUsd - priorReviewUsd - videoSelectionUsd),
             callCostEstimateUsd: REVIEW_CALL_COST_ESTIMATE_USD,
             deadlineMs: deadlineMs - 8_000,
@@ -1098,7 +1108,7 @@ export async function POST(req: NextRequest) {
             rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
             tokensIn: attempt.usage?.inputTokens ?? 0, tokensOut: attempt.usage?.outputTokens ?? 0, latencyMs: attempt.usage?.latencyMs ?? 0,
           }));
-          if (outcome.sample) reviewSampleSummary = { size: outcome.sample.size, reviewed: outcome.sample.reviewed, off: outcome.sample.off, rate: outcome.sample.rate === null ? null : Number(outcome.sample.rate.toFixed(3)), strictPage: outcome.sample.strictPage, pageRejected: outcome.sample.pageRejected };
+          if (outcome.firstCall) reviewSampleSummary = { size: outcome.firstCall.size, reviewed: outcome.firstCall.reviewed, off: outcome.firstCall.off, rate: outcome.firstCall.rate === null ? null : Number(outcome.firstCall.rate.toFixed(3)), pageRejected: outcome.firstCall.pageRejected };
           if (userId) {
             for (const attempt of outcome.attempts) {
               try {
@@ -1118,35 +1128,46 @@ export async function POST(req: NextRequest) {
               if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure} stop=${attempt.stopReason || ""}`);
             }
           }
-          // Rows delivered without the review: presumed rows that did not have to be confirmed (a page that is mostly off topic confirms all).
-          const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match" && !outcome.mustConfirm.has(rev.index)).length;
-          // A rejected page (most of its sample unrelated): its other presumed rows are excluded without a review of their own.
+          // A rejected page (most of its first call unrelated): the rows after it are excluded without a review of their own.
           const rejectedPageRows = new Set(outcome.rejected);
           reviews = reviews.map((rev) => (rejectedPageRows.has(rev.index) && rev.decision === "match" ? { ...rev, decision: "no_match" as const, reasonAr: PAGE_REJECTED_REASON_AR } : rev));
-          const applied = applyStrictAdvisory(reviews, outcome.verdicts, { only: (rev) => outcome.mustConfirm.has(rev.index) });
+          const applied = applyStrictAdvisory(reviews, outcome.verdicts);
           reviews = applied.reviews;
-          // A reviewed sample row that is off topic is not delivered, whether or not the rest of the page had to be confirmed.
-          const sampleVerdicts = new Map([...outcome.verdicts].filter(([index]) => outcome.sampleOnly.has(index)));
-          reviews = applyAdvisoryToReviews(reviews, sampleVerdicts).reviews;
-          if (outcome.sample?.strictPage && outcome.sample.rate !== null) {
+          for (const index of outcome.unreviewedByBudget) budgetUnreviewed.add(index);
+          reviews = reviews.map((rev) => (budgetUnreviewed.has(rev.index) && rev.decision === "uncertain" ? { ...rev, reasonAr: UNREVIEWED_BY_BUDGET_REASON_AR } : rev));
+          if (outcome.firstCall?.pageRejected && outcome.firstCall.rate !== null) {
             try {
-              await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: outcome.sample.pageRejected ? pageRejectedEventAr(outcome.sample.rate, outcome.rejected.length) : highOffTopicEventAr(outcome.sample.rate), units: effectiveDelivered, event_type: "info" });
+              await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: pageRejectedEventAr(outcome.firstCall.rate, outcome.rejected.length), units: effectiveDelivered, event_type: "info" });
             } catch (evtErr: any) {
               console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
             }
           }
-          if (applied.unreviewed > 0) {
-            // Paging stops only when nothing on the page could be delivered without the review; otherwise the doubtful rows wait
-            // in the review sheet and the rest of the job goes on.
-            reviewUnavailable = deliverableWithoutReview === 0;
-            const capped = outcome.stoppedBy === "cap";
+          const heldByBudget = outcome.unreviewedByBudget.length;
+          const heldByFailure = applied.unreviewed - heldByBudget;
+          if (heldByBudget > 0) {
+            // The budget is used up: nothing more on this job can be reviewed, so paging stops (no more rows are bought for rows nobody can check).
+            reviewBudgetUsedUp = true;
             try {
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: userId,
-                message: capped
-                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(applied.unreviewed)} سجل في شيت المراجعة ولم يُحتسب.`
-                  : `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(applied.unreviewed)} سجل الآن؛ وُضعت في شيت المراجعة ولم تُحتسب.`,
+                message: `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} سجل في ورقة «غير مراجَع» ولم يُحتسب.`,
+                units: effectiveDelivered,
+                event_type: "info",
+              });
+            } catch (evtErr: any) {
+              console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+            }
+          }
+          if (heldByFailure > 0) {
+            // Paging stops when the review confirmed nothing on the page; otherwise the rows it could not check wait in the review sheet
+            // and the rest of the job goes on.
+            reviewUnavailable = reviews.every((rev) => rev.decision !== "match");
+            try {
+              await adminClient.from("job_events").insert({
+                job_id: jobId,
+                user_id: userId,
+                message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(heldByFailure)} سجل الآن؛ وُضعت في شيت المراجعة ولم تُحتسب.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });
@@ -1203,6 +1224,8 @@ export async function POST(req: NextRequest) {
         const originalRow = filteredRows[idx];
         if (rev.decision === "match") {
           matchedRows.push({ ...originalRow, _relevance_status: "مطابق", _relevance_reason: rev.reasonAr });
+        } else if (rev.decision === "uncertain" && budgetUnreviewed.has(idx)) {
+          unreviewedRows.push({ ...originalRow, _relevance_status: "غير مراجَع", _relevance_reason: rev.reasonAr });
         } else if (rev.decision === "uncertain") {
           uncertainRows.push({ ...originalRow, _relevance_status: "قيد المراجعة والتدقيق", _relevance_reason: rev.reasonAr });
         } else {
@@ -1214,9 +1237,9 @@ export async function POST(req: NextRequest) {
 
       filteredRows = matchedRows;
 
-      if (excludedRows.length > 0 || uncertainRows.length > 0) {
+      if (excludedRows.length > 0 || uncertainRows.length > 0 || unreviewedRows.length > 0) {
         console.log(
-          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry || "any"})`
+          `[worker:relevance_layer] Matched: ${matchedRows.length}, Uncertain: ${uncertainRows.length}, Unreviewed: ${unreviewedRows.length}, Excluded: ${excludedRows.length} (country: ${expectedCountry || "any"}, industry: ${expectedIndustry || "any"})`
         );
       }
 
@@ -1321,7 +1344,7 @@ export async function POST(req: NextRequest) {
         })
       : null;
     // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
-    const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : reviewStoppedForLowYield ? "review_low_yield" : pageCapReason;
+    const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : reviewStoppedForLowYield ? "review_low_yield" : reviewBudgetUsedUp ? "review_budget" : pageCapReason;
     const hasMorePages =
       Boolean(adapterResult.nextCursor) &&
       !cursorWouldRepeat &&
@@ -1337,6 +1360,8 @@ export async function POST(req: NextRequest) {
       const receivedFromSource = providerRows.length;
       const emptyErrorAr = reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
+        : reviewBudgetUsedUp && unreviewedRows.length > 0
+        ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، وتم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : receivedFromSource > 0
         ? socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
@@ -1381,6 +1406,7 @@ export async function POST(req: NextRequest) {
       baselineExcludedCount: duplicateExcludedCount,
       relevanceExcludedCount,
       uncertainRowsCount: uncertainRows.length,
+      unreviewedRowsCount: unreviewedRows.length,
       ...(reviewUsdThisChunk > 0 ? { reviewUsd: Number(reviewUsdThisChunk.toFixed(6)) } : {}),
       ...(reviewCallsThisChunk > 0 ? { reviewCallCount: reviewCallsThisChunk } : {}),
       rowsSeen: rowsSeenThisChunk,
@@ -1390,6 +1416,7 @@ export async function POST(req: NextRequest) {
       totalDelivered: newDeliveredUnits,
       rows: acceptedRows,
       uncertainRows,
+      unreviewedRows,
       rawProfile: adapterResult.rawProfile || null,
       timestamp: new Date().toISOString(),
     };
@@ -1492,6 +1519,7 @@ export async function POST(req: NextRequest) {
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
           uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
+          unreviewedRows.length ? `غير مراجَع ${toArabicDigits(unreviewedRows.length)}` : null,
           cursorWouldRepeat ? "توقف الجمع لأن المصدر كرر صفحة سبق استلامها" : null,
           callCapReason && newDeliveredUnits < targetMax ? CALL_CAP_NOTE_AR[callCapReason] : null,
           providerBudgetStopped ? "توقف الجمع عند الحد اليومي الآمن، مع تسليم السجلات المطابقة التي جُمعت" : null,
@@ -1551,6 +1579,7 @@ export async function POST(req: NextRequest) {
     if (isDone) {
       const collectedRows: Record<string, any>[] = [];
       const collectedUncertainRows: Record<string, any>[] = [];
+      const collectedUnreviewedRows: Record<string, any>[] = [];
       let firstRawProfile: Record<string, any> | null = null;
       let rawRowsCollected = 0;
       let baselineExcludedCount = 0;
@@ -1561,6 +1590,7 @@ export async function POST(req: NextRequest) {
       if (retrySeed) {
         collectedRows.push(...retrySeed.rows);
         collectedUncertainRows.push(...retrySeed.uncertainRows);
+        collectedUnreviewedRows.push(...(retrySeed.unreviewedRows ?? []));
         rawRowsCollected += retrySeed.rawRowsCount;
         baselineExcludedCount += retrySeed.baselineExcludedCount;
         relevanceExcludedCount += retrySeed.relevanceExcludedCount;
@@ -1619,6 +1649,7 @@ export async function POST(req: NextRequest) {
 
         collectedRows.push(...stepObj.rows);
         if (Array.isArray(stepObj.uncertainRows)) collectedUncertainRows.push(...stepObj.uncertainRows);
+        if (Array.isArray(stepObj.unreviewedRows)) collectedUnreviewedRows.push(...stepObj.unreviewedRows);
         rawRowsCollected += Number(stepObj.rawRowsCount ?? stepObj.rows.length) || 0;
         baselineExcludedCount += Number(stepObj.baselineExcludedCount) || 0;
         relevanceExcludedCount += Number(stepObj.relevanceExcludedCount) || 0;
@@ -1722,6 +1753,7 @@ export async function POST(req: NextRequest) {
           baselineExclusions: baselineExcludedCount,
           relevanceExclusions: relevanceExcludedCount,
           uncertainRows: collectedUncertainRows.length,
+          unreviewedRows: collectedUnreviewedRows.length,
         },
       };
 
@@ -1751,6 +1783,7 @@ export async function POST(req: NextRequest) {
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,
           uncertainRows: collectedUncertainRows,
+        unreviewedRows: collectedUnreviewedRows,
       };
 
       const csvPath = `${userId}/${jobId}/result.csv`;

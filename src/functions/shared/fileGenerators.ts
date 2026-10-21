@@ -203,6 +203,17 @@ function customerFacingCountry(country: unknown): string {
   return labels[value.toLowerCase()] || "غير محدد";
 }
 
+/** First line of the review sheet: said plainly, in Arabic, before any table. */
+export const REVIEW_SHEET_NOTICE_AR = "هذه السجلات لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم لأننا لم نتأكد من مطابقتها لطلبك. راجعها بنفسك إن أردت.";
+/** First line of the «غير مراجَع» sheet: rows the job's review budget did not reach. Said plainly, in Arabic, before any table. */
+export const UNREVIEWED_SHEET_NOTICE_AR = "هذه السجلات لم تُراجَع آلياً لأن التحقق بلغ الحد المسموح لهذا الطلب، فلم نتأكد من مطابقتها لموضوعك. لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم. راجعها بنفسك إن أردت.";
+export const UNREVIEWED_SHEET_NAME_AR = "غير مراجَع";
+
+/** Which of the two apart-sheets of social rows is written: rows under review, or rows the review budget did not reach. */
+interface ReviewSheetKind { name: string; notice: string; reasonLabel: string }
+const REVIEW_SHEET: ReviewSheetKind = { name: "سجلات تحتاج مراجعة", notice: REVIEW_SHEET_NOTICE_AR, reasonLabel: "سبب المراجعة" };
+const UNREVIEWED_SHEET: ReviewSheetKind = { name: UNREVIEWED_SHEET_NAME_AR, notice: UNREVIEWED_SHEET_NOTICE_AR, reasonLabel: "سبب عدم المراجعة" };
+
 /**
  * Generate a data-only Excel workbook. Methodology is delivered separately as PDF.
  */
@@ -210,13 +221,13 @@ function customerFacingCountry(country: unknown): string {
  * A review sheet for rows the gate could not decide (social posts, comments, videos, people). Said plainly first: they
  * were not charged and are not in the delivered data. Columns: identifier, what the row says, link, why it is here.
  */
-function addGenericReviewSheet(wb: ExcelJS.Workbook, uncertain: any[], pick: { text: (row: any) => string; link: (row: any) => string; idLabel?: string }) {
+function addGenericReviewSheet(wb: ExcelJS.Workbook, uncertain: any[], pick: { text: (row: any) => string; link: (row: any) => string; idLabel?: string }, sheet: ReviewSheetKind = REVIEW_SHEET) {
   if (!Array.isArray(uncertain) || uncertain.length === 0) return;
-  const review = wb.addWorksheet("سجلات تحتاج مراجعة", { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
-  const headers = ["معرّف السجل", "ما ورد في السجل", "الرابط", "سبب المراجعة"];
+  const review = wb.addWorksheet(sheet.name, { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
+  const headers = ["معرّف السجل", "ما ورد في السجل", "الرابط", sheet.reasonLabel];
   review.mergeCells(1, 1, 1, headers.length);
   const notice = review.getCell(1, 1);
-  notice.value = REVIEW_SHEET_NOTICE_AR;
+  notice.value = sheet.notice;
   notice.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF7A2E0E" } };
   notice.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFF4E5" } };
   notice.alignment = { horizontal: "right", vertical: "middle", wrapText: true, readingOrder: "rtl" as any };
@@ -254,7 +265,7 @@ export async function generateExcelReport(
     return generateCompanyDataWorkbook(norm, (payload as any)?.uncertainRows);
   }
   if (norm.metadata.socialKind) {
-    return generateSocialDataWorkbook(norm, (payload as any)?.uncertainRows);
+    return generateSocialDataWorkbook(norm, (payload as any)?.uncertainRows, (payload as any)?.unreviewedRows);
   }
   return generateStructuredDataWorkbook(payload, norm);
 }
@@ -285,7 +296,7 @@ const socialColumnWidths = (norm: NormalizedDataset) =>
  * `rowsPerSheet` rows, the first row of each sheet being the header. The columns, cell values, styles and the review sheet are the same
  * as in the in-memory workbook; only a result above `scaleValue("streamXlsxAboveRows")` rows takes this path.
  */
-async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
+async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, uncertainRows: any[] = [], unreviewedRows: any[] = []): Promise<Buffer> {
   const out = new PassThrough();
   const pieces: Buffer[] = [];
   out.on("data", (piece: Buffer) => pieces.push(piece));
@@ -326,11 +337,12 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
     sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
     sheet.commit();
   }
-  const review = (Array.isArray(uncertainRows) ? uncertainRows : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason }));
-  if (review.length > 0) {
-    const sheet = wb.addWorksheet("سجلات تحتاج مراجعة", { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
+  const addApartSheet = (rowsOf: any[], kind: ReviewSheetKind) => {
+    const review = (Array.isArray(rowsOf) ? rowsOf : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason }));
+    if (review.length === 0) return;
+    const sheet = wb.addWorksheet(kind.name, { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
     sheet.columns = [22, 60, 36, 56].map((width) => ({ width }));
-    const notice = sheet.addRow([REVIEW_SHEET_NOTICE_AR]);
+    const notice = sheet.addRow([kind.notice]);
     sheet.mergeCells(1, 1, 1, 4);
     const noticeCell = notice.getCell(1);
     noticeCell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF7A2E0E" } };
@@ -338,7 +350,7 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
     noticeCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true, readingOrder: "rtl" as any };
     notice.height = 48;
     notice.commit();
-    const head = sheet.addRow(["معرّف السجل", "ما ورد في السجل", "الرابط", "سبب المراجعة"]);
+    const head = sheet.addRow(["معرّف السجل", "ما ورد في السجل", "الرابط", kind.reasonLabel]);
     head.eachCell((cell) => {
       cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
@@ -359,15 +371,17 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
     });
     sheet.autoFilter = { from: { row: 2, column: 1 }, to: { row: review.length + 2, column: 4 } };
     sheet.commit();
-  }
+  };
+  addApartSheet(uncertainRows, REVIEW_SHEET);
+  addApartSheet(unreviewedRows, UNREVIEWED_SHEET);
   await wb.commit();
   await finished;
   return Buffer.concat(pieces);
 }
 
 /** One data sheet of comments or videos with the fixed Arabic columns, readable dates and live links. */
-async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
-  if (norm.rows.length > scaleValue("streamXlsxAboveRows")) return generateSocialDataWorkbookStreaming(norm, uncertainRows);
+async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows: any[] = [], unreviewedRows: any[] = []): Promise<Buffer> {
+  if (norm.rows.length > scaleValue("streamXlsxAboveRows")) return generateSocialDataWorkbookStreaming(norm, uncertainRows, unreviewedRows);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = customerFacingTitle(norm.metadata.title);
@@ -406,6 +420,11 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
     text: (row) => row.comment_text || row.text || row.video_caption || row.video_title || "",
     link: (row) => row.url || row.video_url || "",
   });
+  // Rows the review budget did not reach: a sheet of their own, never charged, never in the delivered data.
+  addGenericReviewSheet(wb, (Array.isArray(unreviewedRows) ? unreviewedRows : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason })), {
+    text: (row) => row.comment_text || row.text || row.video_caption || row.video_title || "",
+    link: (row) => row.url || row.video_url || "",
+  }, UNREVIEWED_SHEET);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -597,8 +616,6 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset, uncertainRows
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-/** First line of the review sheet: said plainly, in Arabic, before any table. */
-export const REVIEW_SHEET_NOTICE_AR = "هذه السجلات لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم لأننا لم نتأكد من مطابقتها لطلبك. راجعها بنفسك إن أردت.";
 
 /** Customer workbook for company research: only the delivered rows, with an
  * optional separate review table for uncertain rows. Methodology belongs in
@@ -1108,6 +1125,7 @@ export function generatePdfReport(payload: any): Promise<Buffer> {
       ...(Number(counts.baselineExclusions) > 0 ? [`قائمة الاستبعاد: ${toArabicDigits(counts.baselineExclusions)}`] : []),
       ...(Number(counts.relevanceExclusions) > 0 ? [`غير ملائم: ${toArabicDigits(counts.relevanceExclusions)}`] : []),
       ...(Number(counts.uncertainRows) > 0 ? [`قيد المراجعة: ${toArabicDigits(counts.uncertainRows)}`] : []),
+      ...(Number(counts.unreviewedRows) > 0 ? [`غير مراجَع: ${toArabicDigits(counts.unreviewedRows)}`] : []),
     ].join(" • ");
     const reportFacts: Array<{ label: string; value: string }> = [
       { label: "١. النطاق والأهداف", value: scopeParts.join(" • ") || "النطاق غير مسجل" },
@@ -1271,6 +1289,7 @@ export function generateMethodologyText(
     Number(contextCounts.baselineExclusions) > 0 ? `قائمة الاستبعاد: ${toArabicDigits(contextCounts.baselineExclusions)}` : "",
     Number(contextCounts.relevanceExclusions) > 0 ? `عدم الملاءمة: ${toArabicDigits(contextCounts.relevanceExclusions)}` : "",
     Number(contextCounts.uncertainRows) > 0 ? `قيد المراجعة: ${toArabicDigits(contextCounts.uncertainRows)}` : "",
+    Number(contextCounts.unreviewedRows) > 0 ? `غير مراجَع: ${toArabicDigits(contextCounts.unreviewedRows)}` : "",
     dedupCount > 0 ? `تكرارات: ${toArabicDigits(dedupCount)}` : "",
   ].filter(Boolean).join("؛ ") || "لا توجد استبعادات مسجلة في بيانات التشغيل";
 

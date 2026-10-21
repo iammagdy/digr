@@ -30,6 +30,8 @@ export interface RetrySeed {
   createdAt: string;
   rows: Record<string, any>[];
   uncertainRows: Record<string, any>[];
+  /** Rows the review budget did not reach («غير مراجَع» sheet); absent when there were none. */
+  unreviewedRows?: Record<string, any>[];
   rawRowsCount: number;
   baselineExcludedCount: number;
   relevanceExcludedCount: number;
@@ -114,9 +116,10 @@ export async function readReusableRows(
   stepCount: number,
   targetMax: number,
   fallback?: Map<string, any>,
-): Promise<Pick<RetrySeed, "rows" | "uncertainRows" | "rawRowsCount" | "baselineExcludedCount" | "relevanceExcludedCount"> & { stepsRead: number }> {
+): Promise<Pick<RetrySeed, "rows" | "uncertainRows" | "rawRowsCount" | "baselineExcludedCount" | "relevanceExcludedCount"> & { unreviewedRows: Record<string, any>[]; stepsRead: number }> {
   const rows: Record<string, any>[] = [];
   const uncertainRows: Record<string, any>[] = [];
+  const unreviewedRows: Record<string, any>[] = [];
   const seen = new Set<string>();
   let rawRowsCount = 0;
   let baselineExcludedCount = 0;
@@ -139,8 +142,9 @@ export async function readReusableRows(
       if (rows.length < targetMax) rows.push(row);
     }
     if (Array.isArray(stepObj.uncertainRows)) uncertainRows.push(...stepObj.uncertainRows);
+    if (Array.isArray(stepObj.unreviewedRows)) unreviewedRows.push(...stepObj.unreviewedRows);
   }
-  return { rows, uncertainRows, rawRowsCount, baselineExcludedCount, relevanceExcludedCount, stepsRead };
+  return { rows, uncertainRows, unreviewedRows, rawRowsCount, baselineExcludedCount, relevanceExcludedCount, stepsRead };
 }
 
 export type RetrySeedResult =
@@ -206,6 +210,7 @@ export async function ensureRetrySeed(
     createdAt: new Date(args.now ?? Date.now()).toISOString(),
     rows: collected.rows,
     uncertainRows: collected.uncertainRows,
+    ...(collected.unreviewedRows.length > 0 ? { unreviewedRows: collected.unreviewedRows } : {}),
     rawRowsCount: collected.rawRowsCount,
     baselineExcludedCount: collected.baselineExcludedCount,
     relevanceExcludedCount: collected.relevanceExcludedCount,
