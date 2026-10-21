@@ -343,6 +343,17 @@ function catalogEndpointAsCapability(endpoint: CatalogEndpointSummary): Capabili
   };
 }
 
+/**
+ * The record ceiling the plan-edit check uses. A social service's own code ceiling (`SOCIAL_CAPABILITIES`) wins over a LOWER figure left in
+ * its stored registry row (production still holds max_rows 1,000 for the YouTube and TikTok comments services; the code ceiling is 2,000).
+ * Read only: the stored row is never written or changed.
+ */
+export function serviceRecordCeiling(slug: string | undefined, stored: number | null | undefined): number {
+  const fromRow = Number(stored ?? 0) || 0;
+  const social = SOCIAL_CAPABILITIES.find((def) => def.slug === slug);
+  return social ? Math.max(fromRow, social.maxRows) : fromRow;
+}
+
 export function validatePlanAgainstSchemas(
   planItems: PlanItem[],
   capabilities: Capability[],
@@ -386,8 +397,9 @@ export function validatePlanAgainstSchemas(
       errors.push(...(valRes.errors || [`مدخلات غير صالحة للخدمة ${matchedCap.nameAr || "المحددة"}`]));
     }
 
-    if (it.targetVolumeMax > matchedCap.maxRows) {
-      errors.push(`الحد الأقصى المطلوب (${it.targetVolumeMax}) يتجاوز سقف الخدمة المسموح (${matchedCap.maxRows})`);
+    const recordCeiling = serviceRecordCeiling(matchedCap.slug, matchedCap.maxRows);
+    if (it.targetVolumeMax > recordCeiling) {
+      errors.push(`الحد الأقصى المطلوب (${it.targetVolumeMax}) يتجاوز سقف الخدمة المسموح (${recordCeiling})`);
     }
   }
 
