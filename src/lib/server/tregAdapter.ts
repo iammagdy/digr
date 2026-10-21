@@ -628,6 +628,8 @@ export interface ProviderAdapterCallOutput {
   errorMessageAr?: string;
   /** An answer that is empty for a known reason: the search for the videos found none (the comments were never asked for). */
   emptyReason?: "no_videos";
+  /** YouTube comments by topic with a window: whether the search was told to prefer recent uploads (the worker words an empty result by it). */
+  discoveryWindow?: "recency_applied" | "recency_unsupported";
 }
 
 export type ProviderAdapterFn = (

@@ -58,7 +58,7 @@ import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "..
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { countApproximateDates, DATE_BASIS_KEY, filterRowsByDateRange, sampleUndatedFields, summarizeRowDates, VIDEO_PUBLISHED_AT_KEY, type RowDateSummary } from "../../../../lib/server/dateRangeFilter";
-import { allRowsOutsideWindow, dateWindowPageEventAr, OUTSIDE_WINDOW_SENTENCE_AR } from "../../../../lib/server/dateWindowNotes";
+import { allRowsOutsideWindow, dateWindowPageEventAr, OUTSIDE_WINDOW_SENTENCE_AR, youtubeRecencySentenceAr } from "../../../../lib/server/dateWindowNotes";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 import { cursorKey, emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, removeRunningSets, runningSetKey, saveRunningSet, type RunningSet } from "../../../../lib/server/jobRunningSet";
@@ -1099,7 +1099,7 @@ export async function POST(req: NextRequest) {
         ? socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
           ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
-          : `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+          : `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : rawAdapterResult.emptyReason === "no_videos" && socialCapability
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
         ? `لم يجد البحث أي فيديو عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`

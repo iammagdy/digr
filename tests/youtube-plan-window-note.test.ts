@@ -24,4 +24,16 @@ describe("a YouTube comments plan says its window is approximate", () => {
     expect(response.outputType).toBe("propose_plan");
     expect(String(response.planQuote.window?.noteAr || "")).not.toContain("تواريخ يوتيوب");
   });
+
+  it("a window YouTube's search cannot reach (older than a year) is said plainly, with what to send instead", async () => {
+    const response = await plan("٣٠ تعليق يوتيوب عن كرة القدم من ١ يونيو ٢٠٢٤ إلى ٣٠ يونيو ٢٠٢٤");
+    expect(response.outputType).toBe("propose_plan");
+    expect(response.planQuote.window.noteAr).toContain("ننصح بإرسال روابط الفيديوهات أو اسم القناة");
+    expect(response.planQuote.window.noteAr).not.toMatch(/[A-Za-z]/);
+  });
+
+  it("the default window (last month) is within the search's reach, so no such warning is shown", async () => {
+    const response = await plan("٣٠ تعليق يوتيوب عن كرة القدم");
+    expect(String(response.planQuote.window.noteAr)).not.toContain("ننصح بإرسال روابط الفيديوهات");
+  });
 });

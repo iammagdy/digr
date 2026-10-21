@@ -10,6 +10,16 @@ export const VIDEO_DATE_BASIS_SENTENCE_AR = "المصدر لا يعرض تاري
 /** Said when some dates were read from a «منذ …» text: they are real but coarse, so the window is applied to them approximately. */
 export const APPROXIMATE_DATES_SENTENCE_AR = "بعض التواريخ تقريبية لأن المصدر يعرضها بصيغة «منذ …»، لذلك تُطبَّق الفترة عليها بشكل تقريبي";
 
+/** Said after the outside-the-window sentence when YouTube's search was told to prefer recent uploads and still found no video inside the window. */
+export const YOUTUBE_RECENCY_TRIED_SENTENCE_AR = "طلبنا من يوتيوب الفيديوهات الأحدث أولاً ولم نجد فيديوهات داخل الفترة؛ ننصح بإرسال روابط الفيديوهات أو اسم القناة";
+
+/** Said in the same place when the search could not be asked for the newest videos, so it returned the most relevant ones of any date. */
+export const YOUTUBE_RECENCY_UNSUPPORTED_SENTENCE_AR = "تعذّر ترتيب نتائج بحث يوتيوب بالأحدث لهذه الفترة فجاءت فيديوهات أقدم منها؛ ننصح بإرسال روابط الفيديوهات أو اسم القناة";
+
+export function youtubeRecencySentenceAr(hint: "recency_applied" | "recency_unsupported" | undefined): string {
+  return hint === "recency_applied" ? YOUTUBE_RECENCY_TRIED_SENTENCE_AR : hint === "recency_unsupported" ? YOUTUBE_RECENCY_UNSUPPORTED_SENTENCE_AR : "";
+}
+
 /** True when the page returned rows, each with a readable date, and none of them is inside the window. */
 export function allRowsOutsideWindow(summary: RowDateSummary, returned: number): boolean {
   return returned > 0 && summary.missing === 0 && summary.outside === returned && summary.inside === 0;

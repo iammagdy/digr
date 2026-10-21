@@ -30,7 +30,8 @@ import {
   type SocialSourceRequest,
 } from "../socialSources";
 import { timeNeededForAnotherCallMs } from "./chunkSizing";
-import { DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
+import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
+import { youtubeRecencyFor } from "../youtubeRecency";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "./tregAdapter";
 
@@ -408,10 +409,12 @@ async function runMissionChunk(
   return success(rows, finished || reachedTarget ? null : encodeState(state), totals);
 }
 
-function discoveryRequest(mode: Exclude<SocialMode, "url">, params: Record<string, any>, limit: number, cursor: string | null): SocialSourceRequest {
+function discoveryRequest(mode: Exclude<SocialMode, "url">, params: Record<string, any>, limit: number, cursor: string | null, nowMs: number = Date.now()): SocialSourceRequest {
+  const recency = mode === "query" ? youtubeRecencyFor(params.dateFrom, params.dateTo, nowMs) : null;
   return {
     limit,
     cursor,
+    ...(recency ? { recency } : {}),
     ...(mode === "query" ? { query: String(params.query || "").trim() } : {}),
     ...(mode === "query" && typeof params.dateFrom === "string" ? { dateFrom: params.dateFrom } : {}),
     ...(mode === "query" && typeof params.dateTo === "string" ? { dateTo: params.dateTo } : {}),
@@ -419,6 +422,16 @@ function discoveryRequest(mode: Exclude<SocialMode, "url">, params: Record<strin
     ...(mode === "channel" ? { channel: String(params.channel || "").trim() } : {}),
     ...(mode === "trending" ? { region: String(params.region || "").trim() } : {}),
   };
+}
+
+/**
+ * When the window needs a recency control, the sources that take one are asked first (the others cannot find videos of a past
+ * period at all); the rest follow as fallbacks. Without a window the catalog order is kept. The order depends only on the
+ * request, so a cursor stored by one chunk means the same source in the next.
+ */
+function orderForRecency(sources: SocialSource[], request: SocialSourceRequest): SocialSource[] {
+  if (!request.recency) return sources;
+  return [...sources.filter((source) => source.recency), ...sources.filter((source) => !source.recency)];
 }
 
 export async function runSocialChunk(
@@ -449,8 +462,9 @@ export async function runSocialChunk(
       return failure(totals, "هذا النوع من الطلبات يحتاج كلمة بحث أو حساباً محدداً.");
     }
     const state = decodeState(input.cursor);
-    const sources = cap.discover[mode] || [];
-    const chain = await runChain(sources, discoveryRequest(mode, params, wanted, state?.dc ?? null), state ? state.si ?? null : null, resolved, clock, keyPrefix);
+    const request = discoveryRequest(mode, params, wanted, state?.dc ?? null, resolved.now());
+    const sources = orderForRecency(cap.discover[mode] || [], request);
+    const chain = await runChain(sources, request, state ? state.si ?? null : null, resolved, clock, keyPrefix);
     absorb(chain);
     if (!chain.ok) return failure({ ...totals, httpStatus: chain.httpStatus, errorCode: chain.errorCode, errorMessageAr: chain.errorMessageAr });
     const rows = dedupe(chain.rows).slice(0, wanted);
@@ -510,26 +524,41 @@ async function runCommentsChunk(
   const seen = new Set<string>();
   let lastError: Pick<ChainResult, "httpStatus" | "errorCode" | "errorMessageAr"> | null = null;
   let commentsAnswered = false;
+  let windowHint: "recency_applied" | "recency_unsupported" | undefined;
+  const windowed = typeof params.dateFrom === "string" || typeof params.dateTo === "string";
+  // With a window, only the comments inside it count toward what was asked: the worker drops the others, so counting them
+  // would end the job after one old video that was entirely outside the window.
+  const countedRows = () => (windowed ? insideWindowCount(rows, params) : rows.length);
+  const withHint = (out: ProviderAdapterCallOutput): ProviderAdapterCallOutput => (windowHint ? { ...out, discoveryWindow: windowHint } : out);
 
-  while (rows.length < wanted && clock.canCallAgain()) {
+  while (countedRows() < wanted && clock.canCallAgain()) {
     if (state.ph === "d") {
       if (mode === "url") break;
       const askedVideos = Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0;
       const videoCount = Math.min(MAX_VIDEOS, askedVideos || Math.ceil(target / perVideo) + 2);
-      const sources = cap.discover[mode] || [];
-      const chain = await runChain(sources, discoveryRequest(mode, params, videoCount, state.dc ?? null), null, deps, clock, `${keyPrefix}_d`);
+      const request = discoveryRequest(mode, params, videoCount, state.dc ?? null, deps.now());
+      const sources = orderForRecency(cap.discover[mode] || [], request);
+      let chain = await runChain(sources, request, null, deps, clock, `${keyPrefix}_d`);
       absorb(chain);
       if (!chain.ok) return failure({ ...totals, httpStatus: chain.httpStatus, errorCode: chain.errorCode, errorMessageAr: chain.errorMessageAr });
-      const refs: SocialRef[] = [];
-      const seenRefs = new Set<string>();
-      for (const row of chain.rows) {
-        const ref = extractSocialRef(cap.platform, row);
-        const key = ref?.id || ref?.url;
-        if (!ref || !key || seenRefs.has(key)) continue;
-        seenRefs.add(key);
-        refs.push(ref);
-        if (refs.length >= videoCount) break;
+      let refs = refsOfPage(cap.platform, chain.rows, videoCount);
+      let recencyApplied = Boolean(request.recency) && Boolean(sources[chain.sourceIndex]?.recency);
+      // The page came from a source that does not take the recency control (the one that does failed or had nothing) and every
+      // video whose date is known is outside the window: ONE more attempt with the recency control before reading any comment.
+      if (request.recency && !recencyApplied && sources[0]?.recency && refs.length > 0 && videosAllOutsideWindow(refs, params) && clock.canCallAgain()) {
+        const again = await runChain([sources[0]], request, null, deps, clock, `${keyPrefix}_d2`);
+        absorb(again);
+        const againRefs = again.ok ? refsOfPage(cap.platform, again.rows, videoCount) : [];
+        if (againRefs.length > 0) {
+          chain = again;
+          refs = againRefs;
+          recencyApplied = true;
+        }
       }
+      if (cap.platform === "youtube" && (typeof params.dateFrom === "string" || typeof params.dateTo === "string")) {
+        windowHint = recencyApplied ? "recency_applied" : "recency_unsupported";
+      }
+      refs = videosInWindowFirst(refs, params);
       if (chain.rows.length > 0 && refs.length === 0) {
         return failure(totals, "تعذر تحديد روابط الفيديوهات من نتائج البحث؛ لم يُحتسب أي خصم.");
       }
@@ -538,20 +567,20 @@ async function runCommentsChunk(
       continue;
     }
 
-    const refs = state.refs || [];
+    const refs: SocialRef[] = state.refs || [];
     const index: number = state.i ?? 0;
     if (index >= refs.length) {
-      return success(rows, null, totals);
+      return withHint(success(rows, null, totals));
     }
-    const ref = refs[index];
-    const need = Math.max(1, Math.min(perVideo - (state.n ?? 0), wanted - rows.length));
+    const ref: SocialRef = refs[index];
+    const need = Math.max(1, Math.min(perVideo - (state.n ?? 0), wanted - countedRows()));
     const chain = await runChain(commentSources, { ref, limit: need, cursor: state.cc ?? null }, state.cc ? state.si ?? null : null, deps, clock, `${keyPrefix}_v${index}`, mode === "url");
     absorb(chain);
 
     if (!chain.ok) {
       lastError = chain;
       if (mode === "url") {
-        return rows.length > 0 ? success(rows, null, totals) : failure({ ...totals, httpStatus: chain.httpStatus, errorCode: chain.errorCode, errorMessageAr: chain.errorMessageAr });
+        return rows.length > 0 ? withHint(success(rows, null, totals)) : failure({ ...totals, httpStatus: chain.httpStatus, errorCode: chain.errorCode, errorMessageAr: chain.errorMessageAr });
       }
       // One video that cannot be read is skipped; the others are still collected.
       state = { ...state, i: index + 1, cc: null, n: 0, si: null };
@@ -559,10 +588,13 @@ async function runCommentsChunk(
     }
 
     commentsAnswered = true;
-    const fresh = dedupe(chain.rows, seen).slice(0, Math.max(0, Math.min(need, wanted - rows.length)));
-    for (const row of markVideoDateBasis(fresh, ref, params)) rows.push(annotateComment(row, ref));
+    const fresh = dedupe(chain.rows, seen).slice(0, Math.max(0, Math.min(need, wanted - countedRows())));
+    const pageRows: Record<string, any>[] = markVideoDateBasis(fresh, ref, params).map((row) => annotateComment(row, ref));
+    for (const row of pageRows) rows.push(row);
     const taken: number = (state.n ?? 0) + fresh.length;
-    const moreOnThisVideo: boolean = Boolean(chain.nextCursor) && taken < perVideo && fresh.length > 0;
+    // A video whose comments are all outside the window is not read further: its other pages would be outside too.
+    const pageOutsideWindow: boolean = windowed && pageRows.length > 0 && insideWindowCount(pageRows, params) === 0;
+    const moreOnThisVideo: boolean = Boolean(chain.nextCursor) && taken < perVideo && fresh.length > 0 && !pageOutsideWindow;
     state = moreOnThisVideo
       ? { ...state, cc: chain.nextCursor, n: taken, si: chain.sourceIndex }
       : { ...state, i: index + 1, cc: null, n: 0, si: null };
@@ -575,6 +607,52 @@ async function runCommentsChunk(
     return failure({ ...totals, httpStatus: lastError.httpStatus, errorCode: lastError.errorCode, errorMessageAr: lastError.errorMessageAr });
   }
   // The job stops by itself once it has what it asked for; a cursor would only be stored and never used.
-  const reachedTarget = rows.length >= Math.max(1, input.remainingNeeded || wanted);
-  return success(rows, finished || reachedTarget ? null : encodeState(state), totals);
+  const reachedTarget = countedRows() >= Math.max(1, input.remainingNeeded || wanted);
+  return withHint(success(rows, finished || reachedTarget ? null : encodeState(state), totals));
+}
+
+/** Rows that stand inside the customer's window by the one rule the worker's filter uses (own date, or the video's). */
+function insideWindowCount(rows: Record<string, any>[], params: Record<string, any>): number {
+  if (rows.length === 0) return 0;
+  const from = typeof params.dateFrom === "string" ? params.dateFrom : undefined;
+  const to = typeof params.dateTo === "string" ? params.dateTo : undefined;
+  return classifyRowsByDate(rows, from, to).verdicts.filter((verdict) => verdict === "inside").length;
+}
+
+/** The videos of one discovery page, unique and capped, as references. */
+function refsOfPage(platform: SocialCapabilityDef["platform"], pageRows: Record<string, any>[], limit: number): SocialRef[] {
+  const refs: SocialRef[] = [];
+  const seenRefs = new Set<string>();
+  for (const row of pageRows) {
+    const ref = extractSocialRef(platform, row);
+    const key = ref?.id || ref?.url;
+    if (!ref || !key || seenRefs.has(key)) continue;
+    seenRefs.add(key);
+    refs.push(ref);
+    if (refs.length >= limit) break;
+  }
+  return refs;
+}
+
+type VideoWindowStanding = "inside" | "outside" | "unknown";
+
+function videoStandings(refs: SocialRef[], params: Record<string, any>): VideoWindowStanding[] {
+  const from = typeof params.dateFrom === "string" ? params.dateFrom : undefined;
+  const to = typeof params.dateTo === "string" ? params.dateTo : undefined;
+  const { verdicts } = classifyRowsByDate(refs, from, to, (ref) => (ref.publishedAtMs === undefined ? null : ref.publishedAtMs));
+  return verdicts.map((verdict) => (verdict === "missing" ? "unknown" : verdict));
+}
+
+/** True when at least one video's date is known and every video whose date is known is outside the window. */
+function videosAllOutsideWindow(refs: SocialRef[], params: Record<string, any>): boolean {
+  const standings = videoStandings(refs, params);
+  return standings.includes("outside") && !standings.includes("inside");
+}
+
+/** Videos inside the window are read first, then the ones with no known date, then the ones outside (stable inside each group). */
+function videosInWindowFirst(refs: SocialRef[], params: Record<string, any>): SocialRef[] {
+  if (typeof params.dateFrom !== "string" && typeof params.dateTo !== "string") return refs;
+  const standings = videoStandings(refs, params);
+  const rank = { inside: 0, unknown: 1, outside: 2 } as const;
+  return refs.map((ref, index) => ({ ref, index, rank: rank[standings[index]] })).sort((a, b) => a.rank - b.rank || a.index - b.index).map((entry) => entry.ref);
 }
