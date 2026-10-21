@@ -4,7 +4,7 @@
  * Used by the empty chat and the landing page.
  */
 export interface MissionTemplate {
-  id: "channels_top_videos_comments" | "event_monitoring_x" | "facebook_topic_dates" | "companies_decision_makers";
+  id: "channels_top_videos_comments" | "event_monitoring_x" | "facebook_topic_dates" | "companies_decision_makers" | "tiktok_channels_top_videos_comments" | "youtube_named_videos_comments" | "facebook_page_posts";
   titleAr: string;
   /** The flow in plain words, shown under the title. */
   flowAr: string;
@@ -47,5 +47,29 @@ export const MISSION_TEMPLATES: readonly MissionTemplate[] = [
     outputAr: "ملف إكسل بالشركات وصناع القرار وبيانات التواصل المتاحة.",
     promptAr: "أريد [٥٠] شركة [نوع النشاط] في [الدولة] مع صناع القرار والبريد المهني والهاتف.",
     iconPath: "M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 3h6v4H9z",
+  },
+  {
+    id: "tiktok_channels_top_videos_comments",
+    titleAr: "قنوات تيك توك ← أعلى الفيديوهات ← التعليقات",
+    flowAr: "نختار حسابات تيك توك، ثم أعلى فيديوهات كل حساب بالمشاهدات، ثم نجمع تعليقاتها.",
+    outputAr: "ملف إكسل بتعليقات كل فيديو مع تاريخها وعنوان الفيديو ورابطه.",
+    promptAr: "أريد أعلى [١٠] فيديوهات مشاهدة من كل قناة من [٣] قنوات [@الحساب_الأول و@الحساب_الثاني و@الحساب_الثالث] على تيك توك، مع التعليقات حتى [٨٠] تعليق ورابط كل فيديو.",
+    iconPath: "M9 18V6l10-2v12M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM19 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
+  },
+  {
+    id: "youtube_named_videos_comments",
+    titleAr: "تعليقات فيديو يوتيوب بعينه",
+    flowAr: "ترسل رابط الفيديو ونجمع تعليقاته كما هي.",
+    outputAr: "ملف إكسل بالتعليقات مع كاتبها وتاريخها ورابط الفيديو.",
+    promptAr: "أريد تعليقات هذا الفيديو على يوتيوب: [رابط الفيديو]، حتى [٥٠] تعليق.",
+    iconPath: "M4 5h16v11H9l-5 4zM9 9l5 2.5L9 14z",
+  },
+  {
+    id: "facebook_page_posts",
+    titleAr: "منشورات صفحة فيسبوك عامة",
+    flowAr: "ترسل رابط الصفحة ونجمع أحدث منشوراتها العامة.",
+    outputAr: "ملف إكسل بالمنشورات مع تاريخها ورابطها وتفاعلها.",
+    promptAr: "أريد أحدث [٣٠] منشور من صفحة [رابط الصفحة العامة] على فيسبوك.",
+    iconPath: "M14 3h-3a4 4 0 0 0-4 4v3H4v4h3v7h4v-7h3l1-4h-4V7a1 1 0 0 1 1-1h3z",
   },
 ];
