@@ -1,5 +1,6 @@
 "use client";
 
+import { nextBackgroundDelayMs } from "@/lib/pollSchedule";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -132,8 +133,15 @@ export function AppShell({ children }: { children: ReactNode }) {
       } catch { if (alive) setRunning(0); }
     };
     void load();
-    const t = setInterval(load, 20000);
-    return () => { alive = false; clearInterval(t); };
+    // One count every ~30 s with jitter, none while the tab is hidden: a menu badge is not worth a query a second across a room.
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      if (!alive) return;
+      if (!document.hidden) void load();
+      timer = setTimeout(tick, nextBackgroundDelayMs(Math.random()));
+    };
+    timer = setTimeout(tick, nextBackgroundDelayMs(Math.random()));
+    return () => { alive = false; clearTimeout(timer); };
   }, [user, pathname]);
 
   const newQuestion = useCallback(() => {

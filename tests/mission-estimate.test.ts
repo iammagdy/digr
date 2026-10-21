@@ -158,13 +158,15 @@ describe("the public rate limiter", () => {
   });
 });
 
+import { PUBLIC_LIMITS_PER_MINUTE } from "../src/lib/server/publicRateLimit";
+
 describe("the public endpoints", () => {
   it("the estimate endpoint refuses past the limit with 429 and an Arabic message", async () => {
     vi.resetModules();
     const { POST } = await import("../src/app/api/calculator/estimate/route");
     const make = () => new Request("http://x/api/calculator/estimate", { method: "POST", headers: { "x-forwarded-for": "9.9.9.9", "content-type": "application/json" }, body: JSON.stringify({ kind: "comments", platform: "youtube", volume: 10 }) }) as any;
     let last: Response | null = null;
-    for (let i = 0; i < 31; i++) last = await POST(make());
+    for (let i = 0; i < PUBLIC_LIMITS_PER_MINUTE.estimate + 1; i++) last = await POST(make());
     expect(last!.status).toBe(429);
     expect(last!.headers.get("Retry-After")).toBeTruthy();
     expect((await last!.json()).error).toMatch(/انتظر/);

@@ -1,7 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isPublicPath } from "./lib/publicPaths";
 
 export async function middleware(request: NextRequest) {
+  // Public pages and status endpoints never need the session: no call to the sign-in service for them.
+  if (isPublicPath(request.nextUrl.pathname)) return NextResponse.next({ request });
+
   let supabaseResponse = NextResponse.next({
     request,
   });

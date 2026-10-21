@@ -51,4 +51,12 @@ export function clientKey(headers: { get(name: string): string | null }): string
   return first || headers.get("x-real-ip") || "unknown";
 }
 
+/**
+ * Requests per minute per visitor address for the public endpoints. A conference room, a university or an office reaches the site through
+ * ONE address, so the numbers are sized for a whole room behind it, not for one person. Every counter lives in the memory of one server
+ * instance (instances do not share memory): the limit is a guard against hammering, never a count of how many people are served; money
+ * and chat limits are enforced in the database, not here.
+ */
+export const PUBLIC_LIMITS_PER_MINUTE = { estimate: 300, cap: 600, status: 1200 } as const;
+
 export const RATE_LIMITED_MESSAGE_AR = "طلبات كثيرة في وقت قصير؛ انتظر قليلًا ثم حاول مرة أخرى.";
