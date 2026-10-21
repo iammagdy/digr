@@ -253,8 +253,11 @@ export const REVIEW_BUDGET_SHARE = 0.2;
  */
 export const REVIEW_CALL_COST_ESTIMATE_USD = 0.0047;
 
+/** The least a job's review budget can be (owner decision): one full review call, so even a very small job can confirm up to 25 doubtful rows. */
+export const REVIEW_MIN_BUDGET_USD = REVIEW_CALL_COST_ESTIMATE_USD;
+
 /**
- * What the automatic review of one job may spend, in USD: 20% of the job's revenue. The revenue is the job's expected charge, ceil(target
+ * What the automatic review of one job may spend, in USD: 20% of the job's revenue, and never less than one full review call (REVIEW_MIN_BUDGET_USD). The revenue is the job's expected charge, ceil(target
  * records x unit price), in points, computed here by code (never by the model), at 0.10 EGP a point and 55 EGP a dollar. Rounded DOWN
  * to a millionth of a dollar so the budget never exceeds the share. A row the review cannot cover inside the budget is not delivered
  * and not charged (fail closed); it is the reviewer's cost only and never changes what the customer pays, which stays
@@ -264,7 +267,8 @@ export function socialReviewCapUsd(targetMax: number, unitPricePoints: number, s
   const revenuePoints = chargeForUnits(Math.max(1, Math.floor(Number(targetMax) || 1)), Number(unitPricePoints));
   if (!(revenuePoints > 0) || !(settings.usdToEgp > 0)) return 0;
   const revenueUsd = (revenuePoints * settings.creditValueEgp) / settings.usdToEgp;
-  return Math.floor(revenueUsd * REVIEW_BUDGET_SHARE * 1_000_000 + 1e-6) / 1_000_000;
+  const share = Math.floor(revenueUsd * REVIEW_BUDGET_SHARE * 1_000_000 + 1e-6) / 1_000_000;
+  return Math.max(REVIEW_MIN_BUDGET_USD, share);
 }
 
 export type SocialReviewStop = "failed" | "cap" | "deadline";

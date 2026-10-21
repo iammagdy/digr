@@ -5,6 +5,7 @@
  *  - a doubtful (flagged) row is delivered only if the review confirms it; an unreviewed one goes to the review sheet (not delivered, not charged);
  *  - a presumed row is delivered without review unless the sample of its page is mostly off topic (never here: the fake reviewer says match);
  *  - paging stops when a page had unreviewed rows and nothing on it could be delivered without the review.
+ * The budget is the real rule: 20% of the job's expected charge, never less than one full call (0.0047 USD).
  * Run: npx tsx scripts/review-budget-effect.ts
  */
 import { chargeForUnits } from "../src/lib/recordPricing";
@@ -21,11 +22,8 @@ const fakeAdvisor = (): RowAdvisorFn => async (input) => ({
 });
 
 /** One job: `target` rows wanted, every returned row passes the gate, `flaggedShare` of them are doubtful (the first ones of each page). */
-interface Variant { floorUsd: number; sampleShare: number }
-const CURRENT: Variant = { floorUsd: 0, sampleShare: 1 };
-async function simulate(target: number, unit: number, flaggedShare: number, variant: Variant = CURRENT) {
-  const budget = Math.max(variant.floorUsd, socialReviewCapUsd(target, unit));
-  let sampleSpent = 0;
+async function simulate(target: number, unit: number, flaggedShare: number) {
+  const budget = socialReviewCapUsd(target, unit);
   let spent = 0;
   let delivered = 0;
   let unreviewedTotal = 0;
@@ -41,10 +39,7 @@ async function simulate(target: number, unit: number, flaggedShare: number, vari
     const outcome = await reviewSocialPage({
       advisor: fakeAdvisor(), customerRequest: "x", kind: "social-x-posts", rows, suspicious,
       budgetUsd: Math.max(0, budget - spent), callCostEstimateUsd: REVIEW_CALL_COST_ESTIMATE_USD, random: seeded,
-      // the proposed variant only: the sample of a page may use up to `sampleShare` of the budget, the rest is kept for doubtful rows
-      sampleSize: sampleSpent + COST_PER_ROW * REVIEW_SAMPLE_ROWS <= variant.sampleShare * budget ? REVIEW_SAMPLE_ROWS : 0,
     });
-    if (outcome.attempts.length > 0) sampleSpent += Math.min(outcome.costUsd, COST_PER_ROW * REVIEW_SAMPLE_ROWS);
     spent += outcome.costUsd;
     calls += outcome.attempts.length;
     const unreviewed = new Set(outcome.unreviewed.filter((i) => outcome.mustConfirm.has(i)));
@@ -69,20 +64,12 @@ async function main() {
       const budget = socialReviewCapUsd(target, c.unit);
       const fullCalls = Math.floor(budget / REVIEW_CALL_COST_ESTIMATE_USD);
       const rowsReviewable = Math.floor(budget / COST_PER_ROW);
-      console.log(`\n${c.label}, target ${target}: expected charge ${chargeForUnits(target, c.unit)} points, review budget ${budget} USD = ${fullCalls} full 25-row calls = about ${rowsReviewable} rows reviewable`);
+      const share = Math.floor(((chargeForUnits(target, c.unit) * 0.1) / 55) * 0.2 * 1_000_000) / 1_000_000;
+      console.log(`\n${c.label}, target ${target}: expected charge ${chargeForUnits(target, c.unit)} points, 20% of it is ${share} USD, review budget ${budget} USD${budget > share ? " (the floor of one full call)" : ""} = ${fullCalls} full 25-row calls = about ${rowsReviewable} rows reviewable`);
       for (const [name, share] of [["worst: every row needs review", 1], ["realistic A: 25% of rows doubtful", 0.25], ["realistic B: 10% doubtful", 0.1], ["no row doubtful (sample only)", 0]] as const) {
         const r = await simulate(target, c.unit, share);
         console.log(`  ${name}: delivered ${r.delivered} of ${target}, charge ${r.charge} of ${r.fullCharge} points, review spent ${r.spent.toFixed(5)} of ${budget} USD, ${r.calls} calls, ${r.unreviewedTotal} rows to the review sheet${r.stoppedEarly ? ", paging stopped by the budget" : ""}`);
       }
-    }
-  }
-  const PROPOSED: Variant = { floorUsd: REVIEW_CALL_COST_ESTIMATE_USD, sampleShare: 0.25 };
-  console.log("\nPROPOSAL (not applied): a floor of one full review call (0.0047 USD) on the budget, and the sample of a page may use at most 25% of the budget:");
-  for (const [label, unit, target] of [["X 30", 0.11715, 30], ["X 300", 0.11715, 300], ["X 1000", 0.11715, 1000], ["comments 30", 0.275, 30], ["comments 300", 0.275, 300], ["comments 1000", 0.275, 1000]] as Array<[string, number, number]>) {
-    for (const [name, share] of [["worst", 1], ["25% doubtful", 0.25]] as const) {
-      const now = await simulate(target, unit, share);
-      const fixed = await simulate(target, unit, share, PROPOSED);
-      console.log(`  ${label}, ${name}: now delivered ${now.delivered} of ${target} (review budget ${now.budget} USD); with the proposal ${fixed.delivered} of ${target} (budget ${fixed.budget} USD, spent ${fixed.spent.toFixed(5)}), charge ${fixed.charge} of ${fixed.fullCharge} points; review spend / revenue = ${(100 * fixed.spent * 55 / (fixed.fullCharge * 0.1)).toFixed(1)}% of the full expected charge`);
     }
   }
   console.log("\ncompanies, target 5: the review of company rows is a separate path (not under this budget, no cap, not strict). The budget this rule would give a 5-company job is " + socialReviewCapUsd(5, 3.168) + " USD; the measured company review cost is 0.000068 USD per record (0.00034 USD for 5).");
