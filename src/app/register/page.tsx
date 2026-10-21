@@ -1,18 +1,21 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { Spinner } from "@/components/ui";
+import { normalizePromoCode, savePendingPromo } from "@/lib/signupPromo";
 import { AuthLayout, AuthToast, PasswordInput, authErrorMessage, authInput, authPrimaryBtn } from "@/components/AuthLayout";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const { user, loading: authLoading, register } = useUser();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [promo, setPromo] = useState(() => normalizePromoCode(searchParams?.get("promo")) ?? "");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -28,6 +31,8 @@ export default function RegisterPage() {
     setBusy(true);
     try {
       await register(email.trim(), password, name.trim());
+      // The invitation code waits in this browser until the e-mail is confirmed (often in another app), then is redeemed once.
+      if (promo.trim()) savePendingPromo(typeof window === "undefined" ? null : window.localStorage, promo);
       router.replace("/verify");
     } catch (err) {
       setError(authErrorMessage(err, "حدث خطأ غير متوقع أثناء إنشاء الحساب"));
@@ -56,6 +61,10 @@ export default function RegisterPage() {
           value={email} onChange={(e) => setEmail(e.target.value)} className={`${authInput} text-left`}
         />
         <PasswordInput value={password} onChange={setPassword} autoComplete="new-password" />
+        <input
+          type="text" dir="ltr" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={40} placeholder="كود الدعوة (اختياري)"
+          aria-label="كود الدعوة" data-testid="signup-promo" value={promo} onChange={(e) => setPromo(e.target.value.toUpperCase())} className={`${authInput} text-left`}
+        />
         <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جاري إنشاء الحساب..." : "إنشاء الحساب"}</button>
       </form>
       {error && <AuthToast tone="bad">{error}</AuthToast>}
@@ -71,3 +80,10 @@ export default function RegisterPage() {
   );
 }
 
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterForm />
+    </Suspense>
+  );
+}

@@ -22,6 +22,8 @@ import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE } from "@/lib/retryMessage
 import { postApprovalMessageAr } from "@/lib/postApproval";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
+import BusyBanner from "@/components/BusyBanner";
+import { usePendingPromo } from "@/hooks/usePendingPromo";
 import { formatAr } from "@/lib/arabicDigits";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
@@ -296,6 +298,7 @@ export default function ChatWorkspacePage() {
 
   // 2. Shared balance (sidebar, header and wallet read the same ledger sum)
   const { balance: userBalance, refresh: loadBalance } = useBalance();
+  const { notice: promoNotice, dismiss: dismissPromoNotice } = usePendingPromo(Boolean(user?.emailVerification), () => { void loadBalance(); });
   const creditValue = useCreditValue();
   const llmEnabled = useLlmEnabled();
   const router = useRouter();
@@ -1961,6 +1964,13 @@ export default function ChatWorkspacePage() {
               </a>
             </div>
           )}
+          <BusyBanner />
+          {promoNotice && (
+            <div role="status" data-testid="promo-notice" className="mx-auto mb-3 flex w-full max-w-[680px] items-start justify-between gap-3 rounded-[18px] bg-sf2 px-4 py-3 text-[13px] leading-[1.9]" style={{ color: promoNotice.ok ? "var(--ok)" : "var(--bad)" }}>
+              <span>{promoNotice.text}</span>
+              <button type="button" onClick={dismissPromoNotice} className="min-h-11 shrink-0 cursor-pointer border-0 bg-transparent px-2 text-xs text-mut">إخفاء</button>
+            </div>
+          )}
           {conversationLoading && (
             <div role="status" aria-label="جاري تحميل المحادثة" className="mx-auto w-full max-w-[680px] space-y-3 py-4">
               <span className="sr-only">جاري تحميل المحادثة</span>
@@ -1982,6 +1992,7 @@ export default function ChatWorkspacePage() {
             <EmptyChat
               firstName={firstName}
               zeroBalance={balanceValue !== null && balanceValue <= 0}
+              balance={balanceValue}
               onStart={(prompt) => {
                 setInputText(prompt);
                 setTimeout(() => {
