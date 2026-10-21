@@ -11,8 +11,8 @@ const TODAY = new Date(Date.UTC(2026, 9, 20));
 const byId = (id: string) => MISSION_TEMPLATES.find((t) => t.id === id)!;
 
 describe("big-mission templates", () => {
-  it("there are four: channels to top videos to comments, event monitoring on X, Facebook topic and dates, companies to decision makers", () => {
-    expect(MISSION_TEMPLATES.map((t) => t.id)).toEqual(["channels_top_videos_comments", "event_monitoring_x", "facebook_topic_dates", "companies_decision_makers"]);
+  it("there are seven: the four original ones, then TikTok channels to top videos to comments, comments of named YouTube videos, posts of a named Facebook page", () => {
+    expect(MISSION_TEMPLATES.map((t) => t.id)).toEqual(["channels_top_videos_comments", "event_monitoring_x", "facebook_topic_dates", "companies_decision_makers", "tiktok_channels_top_videos_comments", "youtube_named_videos_comments", "facebook_page_posts"]);
   });
 
   it("every text is Arabic only, with Arabic digits, no emoji, no price, no provider or technical word", () => {

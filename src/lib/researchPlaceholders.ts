@@ -1,5 +1,5 @@
 /** Detect unresolved slots from starter examples before they become a research request. */
-const PLACEHOLDER_WORDS = /(?:اسم\s*الحساب|اسم_الحساب|اسم المستخدم|اسم_المستخدم|الوسم|الهاشتاج|الهاشتاغ|الموضوع|موضوع البحث|المجال|القطاع|الدولة|المدينة|الفترة|عدد|اكتب|أدخل|حدد|(?:[٠-٩0-9]+)\s*(?:شهر|شهور|أشهر|سنة|سنوات|أسبوع|أسابيع|يوم|أيام)|your[_ ]?(?:username|handle|topic|country|industry|count|date)|account[_ ]?name|username|handle|hashtag|keyword|topic|industry|country|city|time[_ ]?range|count)/iu;
+const PLACEHOLDER_WORDS = /(?:اسم\s*الحساب|اسم_الحساب|اسم المستخدم|اسم_المستخدم|الوسم|الهاشتاج|الهاشتاغ|الموضوع|موضوع البحث|المجال|القطاع|رابط\s*(?:ال)?(?:فيديو|صفحة|منشور|قناة|حساب)|الدولة|المدينة|الفترة|عدد|اكتب|أدخل|حدد|(?:[٠-٩0-9]+)\s*(?:شهر|شهور|أشهر|سنة|سنوات|أسبوع|أسابيع|يوم|أيام)|your[_ ]?(?:username|handle|topic|country|industry|count|date)|account[_ ]?name|username|handle|hashtag|keyword|topic|industry|country|city|time[_ ]?range|count)/iu;
 
 export function findUnresolvedResearchPlaceholder(text: string): string | null {
   if (typeof text !== "string") return null;
