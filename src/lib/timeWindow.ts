@@ -105,6 +105,10 @@ const PERIOD_UNIT_WORDS = new Set(["شهر", "شهرين", "شهور", "اشهر
  * The words of a request that only state its period («آخر ٣ شهور», «من يناير لحد سبتمبر»), so a subject reader can leave them out:
  * a month name anywhere, a period lead word («آخر», «خلال», «لحد»), and a unit word only right after such a lead word.
  */
+const PERIOD_UNIT_WITH_AL = new Set(["الشهر", "الاسبوع", "السنه", "السنة", "العام"]);
+const PERIOD_PAST_WORDS = new Set(["الماضي", "الماضيه", "الماضية", "السابق", "السابقه", "السابقة", "المنصرم", "الحالي", "الحاليه", "الحالية"]);
+const PERIOD_THIS_WORDS = new Set(["هذا", "هذه", "هاذا", "هاذه"]);
+
 export function periodWordFlags(tokens: string[]): boolean[] {
   const flags: boolean[] = [];
   let afterLead = false;
@@ -114,6 +118,22 @@ export function periodWordFlags(tokens: string[]): boolean[] {
     const flagged = isMonthWord(token) || isLead || (afterLead && PERIOD_UNIT_WORDS.has(norm));
     flags.push(flagged);
     afterLead = isLead;
+  }
+  // «الشهر الماضي», «هذا الشهر», «الشهر اللي فات»: the unit with «ال» and the word that makes it a period are the period too, only when they come together.
+  const norms = tokens.map((token) => normalizeWindowText(token).trim());
+  for (let i = 0; i < norms.length; i++) {
+    if (!PERIOD_UNIT_WITH_AL.has(norms[i])) continue;
+    const next = norms[i + 1] ?? "";
+    const next2 = norms[i + 2] ?? "";
+    const prev = norms[i - 1] ?? "";
+    const pastNext = PERIOD_PAST_WORDS.has(next);
+    const pastFat = (next === "اللي" || next === "الي" || next === "الذي" || next === "التي") && (next2 === "فات" || next2 === "فاتت");
+    const thisPrev = PERIOD_THIS_WORDS.has(prev);
+    if (!pastNext && !pastFat && !thisPrev) continue;
+    flags[i] = true;
+    if (pastNext) flags[i + 1] = true;
+    if (pastFat) { flags[i + 1] = true; flags[i + 2] = true; }
+    if (thisPrev) flags[i - 1] = true;
   }
   return flags;
 }
@@ -240,10 +260,41 @@ function addMonthsClamped(date: Date, months: number): Date {
   return target;
 }
 
+/** «الشهر الماضي», «الأسبوع اللي فات», «السنة السابقة»: the period just gone, read like «آخر شهر». */
+const PAST_PERIOD_RE = /(?:^|\s)ال(شهر|اسبوع|سنه|سنة|عام)\s*(?:ال(?:ماضي|ماضيه|ماضية|سابق|سابقه|سابقة|منصرم|منصرمه|منصرمة)|(?:اللي|الي|الذي|التي)\s*فات(?:ت)?|فات)(?![\p{L}\d])/u;
+/** «هذا الشهر», «هذه السنة», «الشهر الحالي»: the current calendar period, from its first day to today. */
+const THIS_PERIOD_RE = /(?:(?:هذا|هذه|هاذا|هاذه)\s*(?:ال)?(شهر|اسبوع|سنه|سنة|عام)|(?:^|\s)ال(شهر|اسبوع|سنه|سنة|عام)\s*ال(?:حالي|حاليه|حالية))(?![\p{L}\d])/u;
+const PERIOD_UNIT_KIND: Record<string, "month" | "week" | "year"> = { شهر: "month", اسبوع: "week", سنه: "year", سنة: "year", عام: "year" };
+const PAST_AS_RELATIVE: Record<"month" | "week" | "year", string> = { month: "آخر شهر", week: "آخر أسبوع", year: "آخر سنة" };
+/** The Arab week starts on Saturday. */
+const WEEK_START_DAY = 6;
+
+function currentPeriodWindow(kind: "month" | "week" | "year", today: Date): { from: string; to: string; labelAr: string } {
+  const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+  let start: Date;
+  let phrase: string;
+  if (kind === "month") { start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1)); phrase = "هذا الشهر"; }
+  else if (kind === "year") { start = new Date(Date.UTC(end.getUTCFullYear(), 0, 1)); phrase = "هذه السنة"; }
+  else {
+    const back = (end.getUTCDay() - WEEK_START_DAY + 7) % 7;
+    start = new Date(end.getTime() - back * 86400000);
+    phrase = "هذا الأسبوع";
+  }
+  const from = start.toISOString().slice(0, 10);
+  const to = end.toISOString().slice(0, 10);
+  return { from, to, labelAr: `${phrase} (${windowLabelAr(from, to)})` };
+}
+
 export function parseRelativeWindow(text: string, today: Date = new Date()): { from: string; to: string; labelAr: string } | null {
   const norm = normalizeWindowText(text);
   const m = RELATIVE_RE.exec(norm);
-  if (!m) return null;
+  if (!m) {
+    const past = PAST_PERIOD_RE.exec(norm);
+    if (past) return parseRelativeWindow(PAST_AS_RELATIVE[PERIOD_UNIT_KIND[past[1]]], today);
+    const current = THIS_PERIOD_RE.exec(norm);
+    if (current) return currentPeriodWindow(PERIOD_UNIT_KIND[current[1] || current[2]], today);
+    return null;
+  }
   const unit = m[2];
   const dual = /^(?:شهرين|اسبوعين|يومين|سنتين|عامين)$/.test(unit);
   const count = dual ? 2 : Number(m[1]) || 1;
