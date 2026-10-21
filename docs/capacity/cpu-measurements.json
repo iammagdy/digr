@@ -1,0 +1,94 @@
+{
+  "samples": {
+    "chat_greeting": {
+      "name": "chat_greeting",
+      "runs": 25,
+      "medianMs": 5.305,
+      "p90Ms": 7.449,
+      "meanMs": 5.648
+    },
+    "chat_plan": {
+      "name": "chat_plan",
+      "runs": 25,
+      "medianMs": 23.146,
+      "p90Ms": 30.522,
+      "meanMs": 25.127
+    },
+    "chat_question": {
+      "name": "chat_question",
+      "runs": 25,
+      "medianMs": 9.879,
+      "p90Ms": 12.231,
+      "meanMs": 10.119
+    },
+    "busy_status": {
+      "name": "busy_status",
+      "runs": 100,
+      "medianMs": 0.118,
+      "p90Ms": 0.204,
+      "meanMs": 0.158
+    },
+    "llm_enabled": {
+      "name": "llm_enabled",
+      "runs": 100,
+      "medianMs": 0.048,
+      "p90Ms": 0.095,
+      "meanMs": 0.107
+    },
+    "driver_status": {
+      "name": "driver_status",
+      "runs": 100,
+      "medianMs": 0.046,
+      "p90Ms": 0.082,
+      "meanMs": 0.058
+    },
+    "mission_csv": {
+      "name": "mission_csv",
+      "runs": 2,
+      "medianMs": 41.171,
+      "p90Ms": 41.171,
+      "meanMs": 31.623
+    },
+    "mission_xlsx": {
+      "name": "mission_xlsx",
+      "runs": 2,
+      "medianMs": 212.843,
+      "p90Ms": 212.843,
+      "meanMs": 113.524
+    },
+    "mission_xlsx_pdf": {
+      "name": "mission_xlsx_pdf",
+      "runs": 2,
+      "medianMs": 638.156,
+      "p90Ms": 638.156,
+      "meanMs": 339.136
+    },
+    "wallet_balance": {
+      "name": "wallet_balance",
+      "runs": 100,
+      "medianMs": 0.575,
+      "p90Ms": 0.912,
+      "meanMs": 0.681
+    }
+  },
+  "extra": {
+    "mission_csv": {
+      "calls": 2,
+      "totalMs": 63.25,
+      "lastCallMs": 41.17,
+      "firstCallMs": 22.08
+    },
+    "mission_xlsx": {
+      "calls": 2,
+      "totalMs": 227.05,
+      "lastCallMs": 212.84,
+      "firstCallMs": 14.2
+    },
+    "mission_xlsx_pdf": {
+      "calls": 2,
+      "totalMs": 678.27,
+      "lastCallMs": 638.16,
+      "firstCallMs": 40.12
+    }
+  }
+}

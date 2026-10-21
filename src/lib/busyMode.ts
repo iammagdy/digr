@@ -12,7 +12,7 @@ export const BUSY_BELOW_SAFE_BUDGET_USD = 0.01;
 /** The same 10% margin the plan gate keeps. */
 export const BUSY_SAFETY_MARGIN = 0.9;
 
-export type BusyReason = "daily_cap" | "balance";
+export type BusyReason = "daily_cap" | "balance" | "service_load";
 
 export interface BusyInput {
   /** Daily provider limit minus today's recorded spend, in USD (never negative). */

@@ -1,6 +1,7 @@
 "use client";
 
 import { nextBackgroundDelayMs } from "@/lib/pollSchedule";
+import { getSlowFactor } from "@/lib/degradedClient";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -138,9 +139,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     const tick = () => {
       if (!alive) return;
       if (!document.hidden) void load();
-      timer = setTimeout(tick, nextBackgroundDelayMs(Math.random()));
+      timer = setTimeout(tick, nextBackgroundDelayMs(Math.random(), getSlowFactor()));
     };
-    timer = setTimeout(tick, nextBackgroundDelayMs(Math.random()));
+    timer = setTimeout(tick, nextBackgroundDelayMs(Math.random(), getSlowFactor()));
     return () => { alive = false; clearTimeout(timer); };
   }, [user, pathname]);
 

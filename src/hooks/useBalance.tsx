@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { balanceFailed, balanceLoading, balanceReady, type BalanceView } from "@/lib/honestDisplay";
@@ -11,14 +11,19 @@ interface BalanceContextValue {
   refresh: () => Promise<void>;
 }
 
+/** A return to the tab refreshes the balance only when the last read is older than this. */
+export const BALANCE_FOCUS_MIN_GAP_MS = 20_000;
+
 const BalanceContext = createContext<BalanceContextValue>({ balance: balanceLoading(), refresh: async () => {} });
 
 export function BalanceProvider({ children }: { children: ReactNode }) {
   const { user } = useUser();
   const [balance, setBalance] = useState<BalanceView>(balanceLoading());
+  const lastReadAt = useRef(0);
 
   const refresh = useCallback(async () => {
     if (!user) return;
+    lastReadAt.current = Date.now();
     try {
       const supabase = createClient();
       const { data: sessionData } = await supabase.auth.getSession();
@@ -61,9 +66,11 @@ export function BalanceProvider({ children }: { children: ReactNode }) {
   // Pages dispatch this after anything that moves points (approve quote, top-up, refund).
   useEffect(() => {
     const on = () => void refresh();
+    // Switching back to the tab on a phone fires «focus» again and again: a read less than 20 s old is still true, so no new call.
+    const onFocus = () => { if (Date.now() - lastReadAt.current >= BALANCE_FOCUS_MIN_GAP_MS) void refresh(); };
     window.addEventListener("diger:balance-changed", on);
-    window.addEventListener("focus", on);
-    return () => { window.removeEventListener("diger:balance-changed", on); window.removeEventListener("focus", on); };
+    window.addEventListener("focus", onFocus);
+    return () => { window.removeEventListener("diger:balance-changed", on); window.removeEventListener("focus", onFocus); };
   }, [refresh]);
 
   const value = useMemo(() => ({ balance, refresh }), [balance, refresh]);

@@ -1,5 +1,6 @@
 import { getProviderBalanceStatus } from "../../functions/shared/providerSpend";
 import { evaluateBusy, NOT_BUSY, type BusyState } from "../busyMode";
+import { DEGRADED_CLOSED_AR, degradedLevel } from "../degradedMode";
 import { readRealProviderBalance } from "./realProviderBalance";
 
 /**
@@ -19,6 +20,8 @@ export function setBusyStateForTesting(state: BusyState | null | undefined): voi
 }
 
 export async function getBusyState(admin: any, now: number = Date.now()): Promise<BusyState> {
+  // The owner closed the door by hand (DEGRADED_MODE=closed): no new request starts, whatever the provider says.
+  if (degradedLevel() === "closed") return { busy: true, reason: "service_load", queueAhead: 0, position: 1, messageAr: DEGRADED_CLOSED_AR };
   if (override !== undefined && override !== null) return override;
   if (process.env.NODE_ENV === "test" && override === undefined) return NOT_BUSY;
   if (cache && now - cache.at < BUSY_CACHE_MS) return cache.state;

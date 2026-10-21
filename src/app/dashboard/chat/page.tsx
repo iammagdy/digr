@@ -23,6 +23,7 @@ import { postApprovalMessageAr } from "@/lib/postApproval";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { nextPollDelayMs } from "@/lib/pollSchedule";
+import { getSlowFactor } from "@/lib/degradedClient";
 import BusyBanner from "@/components/BusyBanner";
 import { usePendingPromo } from "@/hooks/usePendingPromo";
 import { formatAr } from "@/lib/arabicDigits";
@@ -538,7 +539,7 @@ export default function ChatWorkspacePage() {
     // Quick while the customer watches the start, slower as the request ages, rare in a hidden tab, always with jitter (stops on terminal).
     const scheduleNext = () => {
       if (stopped) return;
-      const delay = nextPollDelayMs({ elapsedMs: Date.now() - followStartedAt, hidden: typeof document !== "undefined" && document.hidden, random: Math.random() });
+      const delay = nextPollDelayMs({ elapsedMs: Date.now() - followStartedAt, hidden: typeof document !== "undefined" && document.hidden, random: Math.random(), slow: getSlowFactor() });
       pollTimer = setTimeout(async () => { await poll(); if (!stopped && !isTerminalJobStatus(activeJobRef.current?.status)) scheduleNext(); }, delay);
     };
     scheduleNext();

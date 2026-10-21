@@ -12,6 +12,7 @@ import { formatAr } from "@/lib/arabicDigits";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
 import { startNotificationPolling } from "@/lib/notificationPolling";
+import { getSlowFactor } from "@/lib/degradedClient";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import PromoCodeBox from "./PromoCodeBox";
@@ -221,6 +222,7 @@ export default function WalletPage() {
       tick: check,
       intervalMs: 20_000,
       jitter: 0.2,
+      slowFactor: getSlowFactor,
       backoff: { factor: 1.5, maxIntervalMs: 90_000 },
       isVisible: () => document.visibilityState !== "hidden",
       visibilityTarget: document,

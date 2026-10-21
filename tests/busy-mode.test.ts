@@ -129,7 +129,7 @@ describe("the chat and the approval stop while busy", () => {
     setBusyStateForTesting(busy);
     const res = await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.9" } }));
     const body = await res.json();
-    expect(body).toEqual({ busy: true, messageAr: busy.messageAr, queueAhead: 2, position: 3 });
+    expect(body).toEqual({ busy: true, messageAr: busy.messageAr, queueAhead: 2, position: 3, degraded: false, degradedMessageAr: "" });
     for (let i = 0; i < PUBLIC_LIMITS_PER_MINUTE.status; i++) await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.8" } }));
     const limited = await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.8" } }));
     expect(limited.status).toBe(429);
