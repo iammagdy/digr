@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 type PersistEditedQuoteInput = {
   conversationId: string;
   userId: string;
@@ -73,7 +74,7 @@ export async function persistEditedQuoteMessage(database: any, input: PersistEdi
     .from("messages")
     .update({
       quote: input.quote,
-      content_ar: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${input.quote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${input.quote.quotedPoints} نقطة`,
+      content_ar: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${input.quote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${pointsAr(Number(input.quote.quotedPoints), String)}`,
     })
     .eq("id", matchingMessage.id)
     .eq("conversation_id", input.conversationId)

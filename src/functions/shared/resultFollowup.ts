@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { formatAr } from "../../lib/arabicDigits";
 import { getConfiguredJobPointsCap } from "./providerSpend";
 import { decisionMakerQuotePoints, DECISION_MAKER_UNIT_PRICES_POINTS } from "./decisionMakerPricing";
@@ -88,7 +89,7 @@ export function buildResultFollowupReply(
       cap,
     );
 
-    return `بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص. أقدر أجهز لك بحث صناع قرار للعدد نفسه. السعر لكل شخص: السجل الأساسي ${formatAr(DECISION_MAKER_UNIT_PRICES_POINTS.basePerson)} نقطة، ويُضاف ${formatAr(DECISION_MAKER_UNIT_PRICES_POINTS.workEmail)} للبريد المهني و${formatAr(DECISION_MAKER_UNIT_PRICES_POINTS.phone)} للهاتف المكتبي عند إرجاع كل حقل. للعدد نفسه، السعر المتوقع ${formatAr(deliveryPoints)} نقطة، والحجز المتوقع ${formatAr(reservePoints)} نقطة بعد احتياطي التنفيذ. لا يُحتسب الحقل إذا لم يُرجع، ولا يُحجز رصيد قبل موافقتك. هل تريد أن أجهز الخطة؟`;
+    return `بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص. أقدر أجهز لك بحث صناع قرار للعدد نفسه. السعر لكل شخص: السجل الأساسي ${pointsAr(DECISION_MAKER_UNIT_PRICES_POINTS.basePerson)}، ويُضاف ${formatAr(DECISION_MAKER_UNIT_PRICES_POINTS.workEmail)} للبريد المهني و${formatAr(DECISION_MAKER_UNIT_PRICES_POINTS.phone)} للهاتف المكتبي عند إرجاع كل حقل. للعدد نفسه، السعر المتوقع ${pointsAr(deliveryPoints)}، والحجز المتوقع ${pointsAr(reservePoints)} بعد احتياطي التنفيذ. لا يُحتسب الحقل إذا لم يُرجع، ولا يُحجز رصيد قبل موافقتك. هل تريد أن أجهز الخطة؟`;
   }
 
   return "وصلت ملاحظتك على النتيجة. ما الحقل أو السجل الذي تريد مراجعته؟";

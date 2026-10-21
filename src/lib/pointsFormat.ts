@@ -21,3 +21,19 @@ export function unitPriceEgpLabelAr(unitPoints: number, unitLabelAr: string = "�
   if (Number.isInteger(Number(unitPoints))) return `${formatAr(Number((Number(unitPoints) / 10).toFixed(4)))} ج.م لكل ${unitLabelAr}`;
   return `${formatAr(Number((pricePer100Points(unitPoints) / 10).toFixed(4)))} ج.م لكل ١٠٠ ${unitLabelAr}`;
 }
+
+/**
+ * A count of points with its right Arabic word: 1 «نقطة واحدة», 2 «نقطتان», 3 to 10 «٥ نقاط», 11 and more «١٢ نقطة». The digits are
+ * Arabic-Indic: written by `format` (each place keeps the way it already wrote its numbers, with or without the thousands mark;
+ * the default is the grouped one). A figure with decimals keeps «نقطة» after it.
+ */
+export function pointsAr(points: number, format?: (value: number) => string): string {
+  const value = Number(points);
+  const digits = format ?? ((n: number) => formatAr(n));
+  if (!Number.isFinite(value)) return `${digits(0)} نقطة`;
+  if (!Number.isInteger(value)) return `${format ? format(value) : formatPointsAr(value)} نقطة`;
+  const count = Math.abs(value);
+  if (value > 0 && count === 1) return "نقطة واحدة";
+  if (value > 0 && count === 2) return "نقطتان";
+  return `${digits(value)} ${count >= 3 && count <= 10 ? "نقاط" : "نقطة"}`;
+}

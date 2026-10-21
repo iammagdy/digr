@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { chargeForUnits, maxVolumeUnderCap, reserveForUnits } from "./recordPricing";
 
@@ -117,7 +118,7 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 
 /** The offer as the plan states it: sample size and reserve, the whole request, and the promise to charge only what is delivered. */
 export function sampleOfferLineAr(offer: SampleOffer, unitLabelAr = "سجل"): string {
-  return `عينة أولًا: ${n(offer.sampleUnits)} ${unitLabelAr} فقط بحجز ${n(offer.samplePoints)} نقطة، ثم تقرر الباقي. الطلب الكامل (${n(offer.fullUnits)} ${unitLabelAr}) تكلفته المتوقعة حوالي ${n(offer.fullEstimatePoints)} نقطة. لا يُخصم إلا ثمن ما يُسلَّم.`;
+  return `عينة أولًا: ${n(offer.sampleUnits)} ${unitLabelAr} فقط بحجز ${pointsAr(offer.samplePoints, n)}، ثم تقرر الباقي. الطلب الكامل (${n(offer.fullUnits)} ${unitLabelAr}) تكلفته المتوقعة حوالي ${pointsAr(offer.fullEstimatePoints, n)}. لا يُخصم إلا ثمن ما يُسلَّم.`;
 }
 
 export interface SampleRestOffer {
@@ -132,5 +133,5 @@ export function sampleRestMessageAr(input: SampleRestOffer, unitLabelAr = "سج�
   if (input.remainingUnits <= 0) {
     return `اكتملت العينة وسُلّم ${n(input.deliveredInSample)} ${unitLabelAr}، وهي كل ما طلبته؛ لا يوجد باقٍ.`;
   }
-  return `اكتملت العينة: سُلّم ${n(input.deliveredInSample)} ${unitLabelAr} وخُصم ${n(input.sampleChargedPoints)} نقطة. الباقي من طلبك ${n(input.remainingUnits)} ${unitLabelAr} دون السجلات التي وصلتك، والإجمالي التقريبي مع العينة حوالي ${n(input.approximateTotalPoints)} نقطة. هل تطلب الباقي؟`;
+  return `اكتملت العينة: سُلّم ${n(input.deliveredInSample)} ${unitLabelAr} وخُصم ${pointsAr(input.sampleChargedPoints, n)}. الباقي من طلبك ${n(input.remainingUnits)} ${unitLabelAr} دون السجلات التي وصلتك، والإجمالي التقريبي مع العينة حوالي ${pointsAr(input.approximateTotalPoints, n)}. هل تطلب الباقي؟`;
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
@@ -233,7 +234,7 @@ export default function TopupForm({
         disabled={sending}
         className="min-h-[58px] cursor-pointer rounded-full border-0 bg-ac text-[15px] text-onac disabled:opacity-60"
       >
-        {sending ? "جارٍ الإرسال…" : `إرسال طلب شحن ${formatAr(points)} نقطة`}
+        {sending ? "جارٍ الإرسال…" : `إرسال طلب شحن ${pointsAr(points)}`}
       </button>
       <p className="m-0 text-center text-xs font-light text-fnt">
         بعد التحويل، يراجع فريق الإدارة صورة الإيصال ويعتمد الرصيد في محفظتك فور التحقق.

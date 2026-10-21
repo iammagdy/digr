@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { formatAr } from "@/lib/arabicDigits";
 import { sanitizeActivityError } from "@/functions/shared/liveActivityFeed";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
@@ -31,7 +32,7 @@ export function FilesSection({
     <div style={{ animation: "up .6s both" }}>
       <p className="mb-0 mt-3 text-sm font-light leading-[1.9] text-ink">
         سُلّم {formatAr(rows)} سجلًا{requested ? ` من ${formatAr(requested)}` : ""}
-        {typeof charged === "number" && <> — تم خصم {formatAr(charged)} نقطة.</>}
+        {typeof charged === "number" && <> — تم خصم {pointsAr(charged)}.</>}
       </p>
       <div className="mt-4 grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,180px),1fr))" }}>
         {ready.map((ext) => (

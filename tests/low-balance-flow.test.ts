@@ -29,11 +29,11 @@ describe("7. low balance: the states", () => {
     const input = { ...base, balance: 5, downscaledOffer: { maxAffordableUnits: 1, affordableQuotedPoints: 4 } };
     expect(lowBalanceState(input)).toBe("can_reduce");
     const text = lowBalanceMessageAr(input)!;
-    expect(text).toContain("رصيدك الحالي ٥ نقطة");
+    expect(text).toContain("رصيدك الحالي ٥ نقاط");
     expect(text).toContain("تحجز ١١ نقطة");
-    expect(text).toContain("التكلفة المتوقعة ٩ نقطة");
-    expect(text).toContain("ينقصك ٦ نقطة");
-    expect(text).toContain("أقلل العدد إلى ١ سجل مقابل ٤ نقطة");
+    expect(text).toContain("التكلفة المتوقعة ٩ نقاط");
+    expect(text).toContain("ينقصك ٦ نقاط");
+    expect(text).toContain("أقلل العدد إلى ١ سجل مقابل ٤ نقاط");
     expect(text).toContain("اشحن ٥٠ جنيهًا");
     expect(text).toContain("نفس");
     expect(text).toContain("الخطة نفسها");
@@ -103,7 +103,7 @@ describe("7. low balance inside the real chat handler (offline)", () => {
     const res = await ask(5);
     expect(res.planQuote.isAffordable).toBe(false);
     expect(res.contentAr).toContain("تنبيه الرصيد");
-    expect(res.contentAr).toContain("رصيدك الحالي ٥ نقطة");
+    expect(res.contentAr).toContain("رصيدك الحالي ٥ نقاط");
     expect(res.contentAr).toContain(`تحجز ${String(res.planQuote.quotedPoints).replace(/\d/g, (d: string) => "٠١٢٣٤٥٦٧٨٩"[Number(d)])} نقطة`);
     expect(res.contentAr).toContain("أقلل العدد إلى");
     expect(res.contentAr).toContain("الخطة نفسها");

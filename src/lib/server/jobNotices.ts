@@ -1,3 +1,4 @@
+import { pointsAr } from "../pointsFormat";
 import { toArabicDigits } from "../arabicDigits";
 import type { DriverMode } from "../driverMode";
 import { STALLED_LINE_AR } from "../jobStall";
@@ -100,8 +101,8 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
     return { kind: "completed", title: "اكتمل طلب استخراج البيانات بنجاح", body, link: "/dashboard/jobs", email: null };
   }
   const lead = `اكتمل طلبك جزئيًا: وصلك ${arCount(facts.delivered)} من ${arCount(facts.requested)} مطلوب، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.`;
-  const detail1 = `خُصم ${arCount(facts.chargedPoints)} نقطة مقابل ما سُلّم فقط.`;
-  const detail2 = facts.refundedPoints > 0 ? `وعادت ${arCount(facts.refundedPoints)} نقطة إلى رصيدك.` : "";
+  const detail1 = `خُصم ${pointsAr(facts.chargedPoints, arCount)} مقابل ما سُلّم فقط.`;
+  const detail2 = facts.refundedPoints > 0 ? `وعادت ${pointsAr(facts.refundedPoints, arCount)} إلى رصيدك.` : "";
   return {
     kind: "partial",
     title: "اكتمل طلبك جزئيًا",
@@ -113,7 +114,7 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
 
 /** The request could not finish and its whole reserve came back with no charge. */
 export function releasedNoticeFull(refundedPoints: number): JobNoticeFull {
-  const detail = refundedPoints > 0 ? `أعدنا ${arCount(refundedPoints)} نقطة محجوزة كاملة إلى رصيدك دون أي خصم.` : "أعدنا نقاطك المحجوزة كاملة إلى رصيدك دون أي خصم.";
+  const detail = refundedPoints > 0 ? `أعدنا ${pointsAr(refundedPoints, arCount)} محجوزة كاملة إلى رصيدك دون أي خصم.` : "أعدنا نقاطك المحجوزة كاملة إلى رصيدك دون أي خصم.";
   const lead = "تعذّر استكمال طلبك.";
   return { kind: "released", title: "تعذّر تنفيذ طلبك وأعدنا نقاطك", body: `${lead} ${detail}`, link: "/dashboard/requests", email: null };
 }

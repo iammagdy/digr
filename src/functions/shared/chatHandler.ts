@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
 import { getBusyState } from "../../lib/server/busyState";
@@ -1894,7 +1895,7 @@ export class ChatHandler {
         } catch {}
       }
       const balanceLine = typeof userBalance === "number" && Number.isFinite(userBalance)
-        ? `رصيدك المتاح ${toArabicDigits(Math.max(0, Math.floor(userBalance)))} نقطة. `
+        ? `رصيدك المتاح ${pointsAr(Math.max(0, Math.floor(userBalance)), toArabicDigits)}. `
         : "";
       const greeting = input.capturedName
         ? `تشرفنا يا ${displayName}. ${balanceLine}كيف أساعدك اليوم؟`
@@ -3816,7 +3817,7 @@ export class ChatHandler {
           managedQuote.summaryAr = scrubPlaceholderPhrases(String(managedQuote.summaryAr || ""));
           // A social plan counts what it collects in its own words (comments, posts), not in «records».
           const planUnitWord = verifiedSocialDef?.kind === "comments" ? "تعليق" : verifiedSocialDef?.kind === "posts" ? "منشور" : "سجل";
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}\n- التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           if (managedQuote.items.length === 1) {
             const explanation = planExplanationLinesAr({
               capabilitySlug: managedQuote.items[0]?.capabilitySlug,
@@ -3901,8 +3902,8 @@ export class ChatHandler {
             planSummaryText += capStatement
               ? `\n- ${capStatement}`
               : managedQuote.targetVolumeMax < requestedUnits
-              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`
-              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${toArabicDigits(managedQuote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${toArabicDigits(managedQuote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة.`;
+              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
+              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}.`;
           }
           // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
           const explorationCandidate = isExplorationCandidate({
@@ -4038,9 +4039,9 @@ export class ChatHandler {
                 expiresAt: managedQuote.expiresAt,
               };
 
-              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${toArabicDigits(managedQuote.expectedPoints)} نقطة`;
+              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           if (managedQuote.pointsCapConstrained) {
-            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${toArabicDigits(managedQuote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة. يمكنك تقليل العدد أكثر إذا أردت.`;
+            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`;
           }
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;

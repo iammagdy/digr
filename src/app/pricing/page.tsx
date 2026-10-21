@@ -1,3 +1,4 @@
+import { pointsAr } from "@/lib/pointsFormat";
 import Link from "next/link";
 import CapacityCalculator from "@/components/pricing/CapacityCalculator";
 import { toArabicDigits } from "@/lib/arabicDigits";
@@ -58,7 +59,7 @@ export default function PricingPage() {
                 {rows.map((row) => (
                   <tr key={row.id} className="border-b border-ln"><td className="px-4 py-3 font-medium text-ink">{row.labelAr}</td><td className="px-4 py-3 font-light text-ink2">{unitPriceLabelAr(row.unitPricePoints, row.unitLabelAr)}</td></tr>
                 ))}
-                <tr><td className="px-4 py-3 font-medium text-ink">صنّاع قرار</td><td className="px-4 py-3 font-light text-ink2">{toArabicDigits(PEOPLE_PRICE_POINTS.basePerson)} نقطة للشخص، و{toArabicDigits(PEOPLE_PRICE_POINTS.workEmail)} للبريد المهني، و{toArabicDigits(PEOPLE_PRICE_POINTS.phone)} للهاتف، عند توفرها فقط</td></tr>
+                <tr><td className="px-4 py-3 font-medium text-ink">صنّاع قرار</td><td className="px-4 py-3 font-light text-ink2">{pointsAr(PEOPLE_PRICE_POINTS.basePerson, toArabicDigits)} للشخص، و{toArabicDigits(PEOPLE_PRICE_POINTS.workEmail)} للبريد المهني، و{toArabicDigits(PEOPLE_PRICE_POINTS.phone)} للهاتف، عند توفرها فقط</td></tr>
               </tbody>
             </table>
           </div>

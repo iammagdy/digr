@@ -1,3 +1,4 @@
+import { pointsAr } from "../pointsFormat";
 import { isMissingAtomicRpc } from "../../functions/shared/atomicRpc";
 import { toArabicDigits } from "../arabicDigits";
 
@@ -66,7 +67,7 @@ export async function redeemPromoCode(adminClient: any, userId: string, rawCode:
       reason: "redeemed",
       points,
       balance,
-      messageAr: `تم تطبيق الكود. أُضيف ${toArabicDigits(points)} نقطة إلى رصيدك، ورصيدك الآن ${toArabicDigits(balance)} نقطة.`,
+      messageAr: `تم تطبيق الكود. أُضيف ${pointsAr(points, toArabicDigits)} إلى رصيدك، ورصيدك الآن ${pointsAr(balance, toArabicDigits)}.`,
     };
   }
   const reason = String(data?.error || "failed");
