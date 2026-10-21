@@ -1,0 +1,78 @@
+{
+  "quote": {
+    "unit": 0.11715,
+    "volume": 4000,
+    "charge": 469,
+    "reserve": 539,
+    "cap": 5000,
+    "capConstrained": false,
+    "summaryAr": "سحب المنشورات على منصة إكس عن «الغلاء»"
+  },
+  "duration": {
+    "rangeAr": "من ٥ إلى ٦٠ دقيقة",
+    "labelAr": "تقديري",
+    "driversAr": "تتأثر المدة بعدد الطلبات إلى المصدر (حوالي ٨٠) وسرعة استجابته، ولا توجد قياسات كافية بعد لهذا النوع، لذلك المدى واسع.",
+    "promiseAr": "سنبلغك عند الاكتمال.",
+    "optimisticSeconds": 326,
+    "pessimisticSeconds": 3155,
+    "basis": "default",
+    "driver": "tab",
+    "closePageAr": "أبقِ الصفحة مفتوحة حتى لا يتوقف التنفيذ؛ وإن أغلقتها فستكمل المهمة عند عودتك."
+  },
+  "balance": {
+    "before": 5000,
+    "afterReserve": 4461,
+    "afterSettle": 4531
+  },
+  "job": {
+    "status": "completed",
+    "delivered_units": 4000,
+    "reserved": 539,
+    "charged": 469,
+    "unit_price": 0.11715,
+    "step": 40
+  },
+  "settled": {
+    "job_id": "job_quote_ebd266a463e7e7e1f0cf8d6337c3582c",
+    "success": true,
+    "user_id": "737944d6-8ab6-4bbb-a102-71c7b6bbd19e",
+    "already_settled": false,
+    "charged_credits": 469,
+    "delivered_units": 4000,
+    "reserved_credits": 539
+  },
+  "ledger": [
+    {
+      "type": "reserve",
+      "delta": -539
+    },
+    {
+      "type": "charge",
+      "delta": -469
+    },
+    {
+      "type": "release",
+      "delta": 539
+    }
+  ],
+  "counts": {
+    "reserve": 1,
+    "release": 1,
+    "charge": 1
+  },
+  "partial3000": {
+    "settled": {
+      "job_id": "job_quote_ba21cc7d87de76a1289b47542a5b4775",
+      "success": true,
+      "user_id": "737944d6-8ab6-4bbb-a102-71c7b6bbd19e",
+      "already_settled": false,
+      "charged_credits": 352,
+      "delivered_units": 3000,
+      "reserved_credits": 539
+    },
+    "charge": -352,
+    "release": 539,
+    "net": -352,
+    "expectedCharge": 352
+  }
+}
