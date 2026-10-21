@@ -235,22 +235,32 @@ const JOB_ID_GROUP = 100;
 
 const sumCost = (rows: any[] | null | undefined) => (rows || []).reduce((a, r) => { const c = Number(r?.cost_usd); return Number.isFinite(c) && c > 0 ? a + c : a; }, 0);
 
+const DAY_JOB_GROUP = JOB_ID_GROUP;
+
+/** This user's recorded provider spend today (USD): the cost rows of THIS user's own jobs of the day, nothing of other customers. Read only. */
+export async function readUserSpendToday(client: any, userId: string): Promise<number> {
+  // This user's spend today: the cost rows of THIS user's jobs only (their own few jobs, then their cost rows by job), never every
+  // customer's cost rows of the day. At a full room the old read grew with all customers' spend on every chunk of every job.
+  const dayStart = utcDayStart();
+  const { data: myJobs } = await selectAllRows(() => client.from("jobs").select("id").eq("user_id", userId).gte("updated_at", dayStart), { orderBy: "id" });
+  const myIds = [...new Set((myJobs || []).map((row: any) => row.id).filter(Boolean))] as string[];
+  let total = 0;
+  // the ids go to the database in groups: one request with thousands of ids is too long a URL
+  for (let i = 0; i < myIds.length; i += DAY_JOB_GROUP) {
+    const group = myIds.slice(i, i + DAY_JOB_GROUP);
+    // a request returns at most 1,000 rows: the group's cost rows are read page by page
+    const { data: mine } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").gte("created_at", dayStart).in("job_id", group), { orderBy: "id" });
+    total += sumCost(mine);
+  }
+  return total;
+}
+
 /** Real recorded provider spend (read-only): this job so far, and this user today across their jobs. */
 export async function readSpendForCeilings(client: any, ids: { jobId: string; userId: string }): Promise<{ jobUsd: number; userTodayUsd: number }> {
   try {
     const { data: jobRows } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").eq("job_id", ids.jobId), { orderBy: "id" });
     const jobUsd = sumCost(jobRows);
-    const { data: todayRows } = await selectAllRows(() => client.from("provider_costs").select("job_id, cost_usd").eq("provider", "treg").gte("created_at", utcDayStart()), { orderBy: "id" });
-    const jobIds = [...new Set((todayRows || []).map((r: any) => r.job_id).filter(Boolean))] as string[];
-    let userTodayUsd = 0;
-    const mineSet = new Set<string>();
-    // the ids go to the database in groups: one request with thousands of ids is too long a URL
-    for (let i = 0; i < jobIds.length; i += JOB_ID_GROUP) {
-      const { data: mine } = await client.from("jobs").select("id").eq("user_id", ids.userId).in("id", jobIds.slice(i, i + JOB_ID_GROUP));
-      for (const row of mine || []) mineSet.add(row.id);
-    }
-    if (mineSet.size > 0) userTodayUsd = sumCost((todayRows || []).filter((r: any) => mineSet.has(r.job_id)));
-    return { jobUsd, userTodayUsd };
+    return { jobUsd, userTodayUsd: await readUserSpendToday(client, ids.userId) };
   } catch {
     // Unreadable spend must not stop customers' jobs; the daily limit in the reserve function still applies.
     return { jobUsd: 0, userTodayUsd: 0 };

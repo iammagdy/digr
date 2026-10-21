@@ -268,7 +268,9 @@ export interface PlanCapacityCheckResult {
 export async function checkPlanProviderCapacity(
   targetVolume: number,
   primaryUnitCostUsd: number,
-  tables?: TablesDB | null
+  tables?: TablesDB | null,
+  /** What this customer may still spend today under the admin's per-user daily limit (USD), when that limit is set. */
+  options: { userRemainingUsd?: number | null } = {},
 ): Promise<PlanCapacityCheckResult> {
   const status = await getProviderBalanceStatus(tables);
   const remainingDailyUsd = Math.max(0, status.todayCapUsd - status.todaySpendUsd);
@@ -279,7 +281,7 @@ export async function checkPlanProviderCapacity(
   const balanceSource: "real" | "estimate" = real ? "real" : "estimate";
   const effectiveAvailableUsd = testBalanceOverrideUsd !== null
     ? testBalanceOverrideUsd
-    : Math.min(balanceUsd, remainingDailyUsd);
+    : Math.min(balanceUsd, remainingDailyUsd, options.userRemainingUsd != null && Number.isFinite(options.userRemainingUsd) ? Math.max(0, options.userRemainingUsd) : Number.POSITIVE_INFINITY);
   // 10% safety margin on effective available balance
   const safeBudgetUsd = Math.max(0, effectiveAvailableUsd * 0.90);
 

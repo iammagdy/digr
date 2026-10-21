@@ -72,6 +72,25 @@ export async function fetchTypedLedger(client: any, filter: LedgerFilter = {}, c
   return direct.rows.map(toRow);
 }
 
+/**
+ * The newest rows of one customer's ledger, newest first, in ONE bounded read (never more than `limit`, at most 1000): what the
+ * wallet history shows. The history used to read up to five thousand rows to show five hundred.
+ */
+export async function fetchNewestLedgerRows(client: any, filter: LedgerFilter, limit = 500): Promise<TypedLedgerRow[]> {
+  const size = Math.max(1, Math.min(PAGE, Math.floor(limit)));
+  const read = async (table: string) => {
+    let query = client.from(table).select("*");
+    if (filter.userId) query = query.eq("user_id", filter.userId);
+    return query.order("created_at", { ascending: false }).order("id", { ascending: false }).range(0, size - 1);
+  };
+  const viaView = await read("credit_ledger_typed");
+  if (!viaView.error) return (viaView.data || []).map(toRow);
+  if (!isMissingRelation(viaView.error)) throw new Error("ledger_read_failed");
+  const direct = await read("credit_ledger");
+  if (direct.error) throw new Error("ledger_read_failed");
+  return (direct.data || []).map(toRow);
+}
+
 export interface RowWithBalance extends TypedLedgerRow {
   runningBalance: number;
 }

@@ -22,6 +22,7 @@ import {
 import type { CatalogEndpointSummary } from "./catalogClient";
 import { getCachedCatalogEndpoints } from "./catalogClient";
 import { getEndpointDetails } from "./catalogClient";
+import { readUserSpendToday, resolveProviderLimits } from "../../lib/server/providerLimits";
 import { checkPlanProviderCapacity, getConfiguredJobPointsCap, DEFAULT_JOB_POINTS_CAP } from "./providerSpend";
 import { callAtomicOrFallback } from "./atomicRpc";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField, type ContactUnitPricesPoints } from "./decisionMakerPricing";
@@ -739,7 +740,15 @@ export async function createAndSaveManagedQuote(
     (sum, it) => sum + it.targetVolumeMax * (it.unitCostUsd || 0.001),
     0
   );
-  const capacityCheck = await checkPlanProviderCapacity(1, totalEstimatedUsd, tables);
+  // The admin's per-user daily limit (when one is set) also shapes the plan, so a customer is not sold what the worker would refuse.
+  let userRemainingUsd: number | null = null;
+  try {
+    const limits = (await resolveProviderLimits(tables as any)).limits;
+    if (limits.perUserDailyUsd !== null && userId && typeof (tables as any)?.from === "function") {
+      userRemainingUsd = Math.max(0, limits.perUserDailyUsd - (await readUserSpendToday(tables as any, userId)));
+    }
+  } catch { userRemainingUsd = null; }
+  const capacityCheck = await checkPlanProviderCapacity(1, totalEstimatedUsd, tables, { userRemainingUsd });
 
   if (capacityCheck.downscaled && capacityCheck.safeBudgetUsd < totalEstimatedUsd) {
     capacityConstrained = true;
