@@ -4,34 +4,86 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
-## 0. Conference-readiness session (2026-10-21): where things stand
+## 0. Conference-readiness session (2026-10-21, Wednesday): FINAL HANDOFF to the next account
 
-**Merged to main (merge commits; each PR body carries its evidence block):**
+Conference: Saturday 2026-10-24, 500+ attendees on one venue network. Code freeze Friday evening. The owner is on a phone: no stop-and-ask loops, small PRs, merge commits only.
+
+### (a) Merged to main in this session (merge commits)
 
 | PR | Merge SHA | What |
 |---|---|---|
-| #173 | d35a3ad | capacity gate uses the provider's real balance (fresh reading, 5 min max age, fallback to the estimate) |
-| #174 | 49ee886 | admin provider tab shows the connected account e-mail (admin-only, memory-only) |
-| #175 | 8e5fb4d | YouTube/TikTok topic comments: 20-video discovery, videos judged before comments are read, deep reads that resume inside a video, unusable comments never fill the volume, Arabic first, date/video/language columns |
-| #176 | a301d7b | Part A: coverage matrix (15 families), structured understanding, curated newspapers + pick question + news/price output standards (switched off), unserved-requests log + `/admin/requests`, `docs/CAPABILITY_COVERAGE.md` |
-| #177 | c12de75 | Part B: three new showcase templates, honest plan tests, fake-provider worker tests |
-| #178 | 18f8c23 | Part D: busy mode (daily allowance or REAL balance used up), sign-up path (QR `/join`, invitation code, welcome balance, rate-limit and late-e-mail messages, resend limits) |
+| #173 | d35a3ad | capacity gate uses the provider's real balance (fresh reading, fallback to the estimate) |
+| #174 | 49ee886 | admin provider tab shows the connected account e-mail (admin-only) |
+| #175 | 8e5fb4d | STEP 0: YouTube/TikTok topic comments: 20-video discovery, videos judged before comments are read, deep resumable reads, Arabic first, date/video/language columns |
+| #176 | a301d7b | Part A: coverage matrix (15 families), structured understanding, newspapers pick question, news/price output standards, unserved-requests log + `/admin/requests`, `docs/CAPABILITY_COVERAGE.md` |
+| #177 | c12de75 | Part B: three new showcase templates + fake-provider worker tests |
+| #178 | 18f8c23 | Part D: busy mode, sign-up path (`/join`, invitation code, welcome balance, rate-limit and late-e-mail screens, resend limits) |
+| #180 | ae80409 | Part D: read-only conference dashboard `/admin/conference` |
+| #179 | f0724f0 | earlier handoff text |
+| #181 | 9c49459 | P1/P2: adaptive jittered polling, public paths skip the sign-in call, wallet history newest-500 in one query, per-user spend read, per-user daily cap shapes the plan, public limiters sized for one venue IP, per-account concurrent-job limit (3) before the reserve; suite 297 files, 3048 passed / 27 skipped, tsc clean, build OK, preview READY |
 
-**Production:** the latest READY deployment read from the API at the time of writing was `dpl_B9eDj4pee4pLsAawBUMfjuUkEvWa` (built SHA `c12de75`); #178's own deployment is read again in the final report.
+**Production (last one read from the API):** `dpl_ngkEDTNm3XYn5BqmfUsg6nVwXNXS`, state READY (2026-10-21 about 07:28 UTC), built SHA `f0724f0a41e25835620cc612470da62a9b79473d` (contains #173 to #180). The production builds of #181 (`9c49459`) and of this handoff PR were started after that reading: READ THEM FIRST (`list_deployments`, target production, then `get_deployment` for state and built SHA) and confirm READY.
 
-**Work in progress (do not merge as is):**
-- `claude/wip-load-and-limits`: adaptive job polling with jitter, public pages skip the sign-in call in the middleware, wallet history reads the newest 500 rows in one query, the per-user daily spend read no longer scans every customer's cost rows, the admin's per-user daily limit also shapes the plan. Missing: tests for these, the per-user concurrent-job limit, raising the shared-IP public limiters.
-- `claude/conference-dashboard`: finished by a helper agent (35 tests, build green) but not yet re-verified against current main and not yet a PR.
+### (b) Branches not on main
 
-**Exact next step:** verify and merge the conference dashboard; add the concurrent-job guard in `accept-quote` (before the reserve) and the limiter changes; finish and test the load branch (P2: fewer database calls and invocations); then the offline 500-visitor harness, the pressure-test scripts and runbook, `docs/CONFERENCE_READINESS.md`, the final batch test.
+| Branch | Head | Contains | Missing |
+|---|---|---|---|
+| `claude/wip-e1-harness` | c50e2fd | `tests/helpers/loadHarness.ts` (latency-counting fake DB) and `tests/conference-load-harness.test.ts` (500 visitors through the real `/api/chat` route, 3 messages each, no model) | first run printed per-turn stage timings (about 12 awaits per turn, auth 11 ms, rate limit 15 ms, writes about 140 ms with 4 ms fake round trips); the results were not read to the end, assertions not tuned, numbers not recorded; silence console JSON from `chat_stage_timings`; no concurrency/idempotency section yet; not on main |
+| `claude/wip-load-and-limits` | 72dd425 | superseded by merged #181 | delete or ignore |
+| `claude/money-bundles-and-pricing` | 3ed699d | parked by the owner | NEVER touch |
 
-**Risks to know:**
-- The sign-in service's own limits (e-mails per hour on the built-in sender, sign-ups per IP behind one venue network) are outside the code: see the owner list in `docs/CONFERENCE_READINESS.md` when it lands.
-- Public limiters are per server instance and per IP; at a venue every visitor shares one IP (the busy-status limiter and the calculator ones must be raised: in the load branch).
-- A job is capped at 600 points: 57 YouTube comments, 86 TikTok comments, 104 X posts, 3 decision makers with e-mail and phone per request. Templates that promise more are cut by the plan with a plain sentence.
-- Nothing reads news, prices, ads, maps, search results, jobs or forums: those requests are answered as «not available» and logged.
+### (c) Status of every item
 
-**NOT VERIFIED (never exercised live):** the real balance read on the deployed plan path; whether the provider's identity answer contains an e-mail; the YouTube search recency parameters and the video-level review on real data; the new deep read on a live source; the busy banner and the invitation-code redeem with a real account and a real e-mail confirmation; the conference dashboard on production data; all of Part E's pressure test (to be run by the owner on a preview, never on production).
+| Item | Status |
+|---|---|
+| STEP 0 (YouTube deep reads, quality filter, columns, honest plan) | DONE-MERGED (#175) |
+| Part A (A1 to A6) | DONE-MERGED (#176) |
+| Part B (showcase missions) | DONE-MERGED (#177) |
+| Part C (long-mission audit) | NOT STARTED as a written audit (the long-job machinery was built and tested in earlier missions; no new defect found or fixed in this session) |
+| Part D (dashboard, busy mode, sign-up path, rate-limit screens) | DONE-MERGED (#178, #180) |
+| P1 sign-up path, rate-limit/slow-e-mail screens, busy mode | DONE-MERGED (#178) |
+| P1 per-user chat limit | already existed (20 per minute, database counted); unchanged |
+| P1 per-user concurrent-job limit | DONE-MERGED (#181) |
+| P1 conference dashboard | DONE-MERGED (#180) |
+| P2 CPU/invocation reduction (polling, middleware, history, spend reads) | DONE-MERGED (#181) |
+| Part E1 offline harness | WRITTEN-NOT-MERGED (WIP branch, unfinished) |
+| Part E2 pressure-test scripts + runbook | NOT STARTED |
+| Part F `docs/CONFERENCE_READINESS.md` + report | NOT STARTED |
+| Final "READY FOR LIVE VERIFICATION" post + ONE batch test | NOT STARTED |
+
+### (d) Exact next step, in priority order
+
+1. Read the production deployments of `9c49459` (#181) and of the handoff merge: state READY and built SHA from the API.
+2. Finish E1 on `claude/wip-e1-harness`: mock or silence the `chat_stage_timings` console output (it floods), read the results (`HARNESS_OUT=<file> npx vitest run tests/conference-load-harness.test.ts`), tune bounds, add a concurrency section: the same quote approved 20 times at once through `accept-quote` must reserve once (use the stand-in functions in `tests/helpers/scaleHarness.ts`), and document per-instance state (`publicRateLimit.ts`, `busyState.ts` 15 s cache, `conferenceCache.ts`). Open a PR, merge.
+3. E2: `scripts/pressure/` (50/100/250/500 virtual visitors against a PREVIEW URL with a fake-provider flag and a separate test database; never production, never run by the agent) and `docs/PRESSURE_TEST_RUNBOOK.md` with exactly what the owner must create (a second Supabase project, preview env values by name, a test provider flag). SQL index ideas only as files under `docs/proposals/`, never applied.
+4. `docs/CONFERENCE_READINESS.md` (Part F): coverage results (`docs/CAPABILITY_COVERAGE.md`), working showcase list (Part B), harness numbers and the first bottleneck, the owner's manual list (g), the fallback plan for the day, the Friday checklist. Include the Part C audit (chunks, resume, notifications, duration range, partial settlement): read `src/app/api/worker/chunk/route.ts` and `src/lib/server/longJob*.ts`.
+5. Final post: "READY FOR LIVE VERIFICATION" with SHA, deployment id, READY time, evidence of every PR, NOT VERIFIED, and ONE batch test (each showcase mission once within a small budget; YouTube 30 comments football last month quote at most 300; TikTok 30 comments football in Egypt last month at most 220; X 30 posts about Egypt vs Morocco window 2026-06-11 to 2026-07-19 at most 200; the dollar-news request; six other scenario-matrix requests asked and not approved; the sign-up path from a clean browser).
+
+### Standing rules (do not break)
+
+Feature branches from clean `origin/main`; merge commits only (no squash, no `--admin`, no rebase, no force-push); evidence block after each PR (PR number, merge SHA, `git diff --stat`, suite before/after with skipped counts, `git diff origin/main -- tests | grep '^-' | grep -v '^---'`, tsc, build, Vercel deployment READY with the built SHA from the API). SELECT-only database access; no migrations; no live provider or model calls by the agent; Customer text in Arabic only, Arabic-Indic digits, no emoji, no provider names or USD. `rm -rf .next/types` before `tsc` after switching branches.
+
+### (e) Risks and NOT VERIFIED
+
+- Public limiters and the busy-state cache are per server instance (memory), per IP; the venue shares one IP (limits raised in #181, documented in code).
+- The sign-in service's own limits (confirmation e-mails per hour, sign-ups per IP) are outside the code: owner list (g).
+- A job is capped at 600 points: about 57 YouTube comments, 86 TikTok comments, 104 X posts per request; templates promising more are cut by the plan with a plain sentence.
+- News, prices, ads, maps, search, jobs and forums are answered as «not available» and logged (no approved service).
+- NOT VERIFIED live: the real balance read on the deployed plan path; the YouTube recency parameters and video-level review on real data; the deep read on a live source; TikTok video-level relevance; the X completion notification; the busy banner and invitation-code redeem with a real account and real e-mail; the conference dashboard on production data; the adaptive polling in a real browser; the concurrent-job 429 in production; all of Part E's pressure test.
+
+### (f) Decisions already taken by the owner
+
+Keep the current Vercel and Supabase plans; Resend already upgraded; NO changes to money, price, cap or provider-limit code (prices, unit costs, `JOB_MAX_POINTS_CAP`, `settle_job_atomic`, `release_job_atomic`, `approve_topup_atomic`, reserve/ledger code, bonuses, referrals, any SQL, the model string); the parked branch `claude/money-bundles-and-pricing` stays untouched; old PRs #3 to #11, #40, #41, #44, #69, #83, #85 stay untouched. If a test is about money: stop and report, never edit it.
+
+### (g) What the owner must do manually before Saturday
+
+1. Supabase Auth: raise the per-hour e-mail and sign-up rate limits for the venue (all attendees share one IP); confirm the e-mail sender is the upgraded Resend one.
+2. Provider account: top up the balance and set the daily cap (admin tab) for the day; the busy mode closes the door by itself when the real balance or the daily allowance runs out.
+3. Free points per new user: decide the welcome amount (admin setting) and the invitation code to print on the QR (`/join/<code>`).
+4. Anthropic: set a monthly spend alert/limit.
+5. Optional env: `MAX_CONCURRENT_JOBS_PER_USER` (default 3), `CHAT_MESSAGES_PER_MINUTE` (default 20).
+6. For the pressure test (run by the owner, on a PREVIEW only): create a separate Supabase test project and give its values to Vercel preview env (names in the runbook when written); never use production.
+7. Friday evening: freeze code; read `/admin/conference` once; run the sign-up path once from a clean phone browser.
 
 ---
 
