@@ -20,17 +20,16 @@ Conference: Saturday 2026-10-24, 500+ attendees on one venue network. Code freez
 | #178 | 18f8c23 | Part D: busy mode, sign-up path (`/join`, invitation code, welcome balance, rate-limit and late-e-mail screens, resend limits) |
 | #180 | ae80409 | Part D: read-only conference dashboard `/admin/conference` |
 | #179 | f0724f0 | earlier handoff text |
+| #181 | 9c49459 | P1/P2: adaptive jittered polling, public paths skip the sign-in call, wallet history newest-500 in one query, per-user spend read, per-user daily cap shapes the plan, public limiters sized for one venue IP, per-account concurrent-job limit (3) before the reserve; suite 297 files, 3048 passed / 27 skipped, tsc clean, build OK, preview READY |
 
-**Production now:** `dpl_ngkEDTNm3XYn5BqmfUsg6nVwXNXS`, state READY (ready 2026-10-21 about 07:28 UTC), built SHA `f0724f0a41e25835620cc612470da62a9b79473d` (contains #173 to #180).
-**Open PR:** #181 (`claude/load-and-limits`, head `d967ada`): see (b). Full suite on its head: 297 files, 3048 passed / 27 skipped; tsc clean; build OK.
+**Production (last one read from the API):** `dpl_ngkEDTNm3XYn5BqmfUsg6nVwXNXS`, state READY (2026-10-21 about 07:28 UTC), built SHA `f0724f0a41e25835620cc612470da62a9b79473d` (contains #173 to #180). The production builds of #181 (`9c49459`) and of this handoff PR were started after that reading: READ THEM FIRST (`list_deployments`, target production, then `get_deployment` for state and built SHA) and confirm READY.
 
 ### (b) Branches not on main
 
 | Branch | Head | Contains | Missing |
 |---|---|---|---|
-| `claude/load-and-limits` (PR #181) | d967ada | adaptive jittered polling (`pollSchedule.ts`), public paths skip the sign-in call in the middleware, wallet history newest-500 in one query, per-user spend read for one user, the per-user daily cap shapes the plan, public limiters sized for a shared venue IP, per-account concurrent-job limit (3, env `MAX_CONCURRENT_JOBS_PER_USER`) in accept-quote before the reserve; 11 new tests; four older tests updated with equally strict assertions (listed in the PR body) | only its Vercel preview READY (it was pending); then merge with `merge_method: merge` and `expectedHeadSha` |
 | `claude/wip-e1-harness` | c50e2fd | `tests/helpers/loadHarness.ts` (latency-counting fake DB) and `tests/conference-load-harness.test.ts` (500 visitors through the real `/api/chat` route, 3 messages each, no model) | first run printed per-turn stage timings (about 12 awaits per turn, auth 11 ms, rate limit 15 ms, writes about 140 ms with 4 ms fake round trips); the results were not read to the end, assertions not tuned, numbers not recorded; silence console JSON from `chat_stage_timings`; no concurrency/idempotency section yet; not on main |
-| `claude/wip-load-and-limits` | 72dd425 | superseded by #181 | delete or ignore |
+| `claude/wip-load-and-limits` | 72dd425 | superseded by merged #181 | delete or ignore |
 | `claude/money-bundles-and-pricing` | 3ed699d | parked by the owner | NEVER touch |
 
 ### (c) Status of every item
@@ -44,9 +43,9 @@ Conference: Saturday 2026-10-24, 500+ attendees on one venue network. Code freez
 | Part D (dashboard, busy mode, sign-up path, rate-limit screens) | DONE-MERGED (#178, #180) |
 | P1 sign-up path, rate-limit/slow-e-mail screens, busy mode | DONE-MERGED (#178) |
 | P1 per-user chat limit | already existed (20 per minute, database counted); unchanged |
-| P1 per-user concurrent-job limit | WRITTEN-NOT-MERGED (#181) |
+| P1 per-user concurrent-job limit | DONE-MERGED (#181) |
 | P1 conference dashboard | DONE-MERGED (#180) |
-| P2 CPU/invocation reduction (polling, middleware, history, spend reads) | WRITTEN-NOT-MERGED (#181) |
+| P2 CPU/invocation reduction (polling, middleware, history, spend reads) | DONE-MERGED (#181) |
 | Part E1 offline harness | WRITTEN-NOT-MERGED (WIP branch, unfinished) |
 | Part E2 pressure-test scripts + runbook | NOT STARTED |
 | Part F `docs/CONFERENCE_READINESS.md` + report | NOT STARTED |
@@ -54,7 +53,7 @@ Conference: Saturday 2026-10-24, 500+ attendees on one venue network. Code freez
 
 ### (d) Exact next step, in priority order
 
-1. Read PR #181's preview; when READY merge it (merge commit, `expectedHeadSha` d967ada); read the production deployment of the merge (READY, built SHA).
+1. Read the production deployments of `9c49459` (#181) and of the handoff merge: state READY and built SHA from the API.
 2. Finish E1 on `claude/wip-e1-harness`: mock or silence the `chat_stage_timings` console output (it floods), read the results (`HARNESS_OUT=<file> npx vitest run tests/conference-load-harness.test.ts`), tune bounds, add a concurrency section: the same quote approved 20 times at once through `accept-quote` must reserve once (use the stand-in functions in `tests/helpers/scaleHarness.ts`), and document per-instance state (`publicRateLimit.ts`, `busyState.ts` 15 s cache, `conferenceCache.ts`). Open a PR, merge.
 3. E2: `scripts/pressure/` (50/100/250/500 virtual visitors against a PREVIEW URL with a fake-provider flag and a separate test database; never production, never run by the agent) and `docs/PRESSURE_TEST_RUNBOOK.md` with exactly what the owner must create (a second Supabase project, preview env values by name, a test provider flag). SQL index ideas only as files under `docs/proposals/`, never applied.
 4. `docs/CONFERENCE_READINESS.md` (Part F): coverage results (`docs/CAPABILITY_COVERAGE.md`), working showcase list (Part B), harness numbers and the first bottleneck, the owner's manual list (g), the fallback plan for the day, the Friday checklist. Include the Part C audit (chunks, resume, notifications, duration range, partial settlement): read `src/app/api/worker/chunk/route.ts` and `src/lib/server/longJob*.ts`.
