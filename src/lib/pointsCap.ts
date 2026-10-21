@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { maxVolumeUnderCap, reserveForUnits as exactReserveForUnits } from "./recordPricing";
 
@@ -30,7 +31,7 @@ export type CapResolution =
 export function applyCustomerCap(input: { capPoints: number; unitPricePoints: number; currentVolume: number }): CapResolution {
   const fit = volumeForPointsCap(input.capPoints, input.unitPricePoints);
   if (fit < 1) {
-    return { ok: false, reasonAr: `الحد الأقصى الذي كتبته لا يكفي لسجل واحد؛ أقل حد ممكن ${toArabicDigits(reserveForUnits(1, input.unitPricePoints))} نقطة.` };
+    return { ok: false, reasonAr: `الحد الأقصى الذي كتبته لا يكفي لسجل واحد؛ أقل حد ممكن ${pointsAr(reserveForUnits(1, input.unitPricePoints), toArabicDigits)}.` };
   }
   const volume = Math.max(1, Math.min(fit, Math.floor(input.currentVolume)));
   return { ok: true, volume, reservePoints: reserveForUnits(volume, input.unitPricePoints) };

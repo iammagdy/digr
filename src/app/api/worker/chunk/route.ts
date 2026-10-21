@@ -1,3 +1,4 @@
+import { pointsAr } from "@/lib/pointsFormat";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, socialReviewCapUsd, strictSocialReviewForcedByTests } from "../../../../lib/server/rowReviewAdvisor";
 import { highOffTopicEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
@@ -174,7 +175,7 @@ async function executeReleaseConfirmation(
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: jobRow.user_id,
-                message: `تعذر استكمال الاستخراج: ${reason} (تم استرداد ${toArabicDigits(Math.round(releasedCredits))} نقطة لرصيدك).`,
+                message: `تعذر استكمال الاستخراج: ${reason} (تم استرداد ${pointsAr(Math.round(releasedCredits), toArabicDigits)} لرصيدك).`,
                 units: 0,
                 event_type: "error",
               });
@@ -1975,7 +1976,7 @@ export async function POST(req: NextRequest) {
           await adminClient.from("job_events").insert({
             job_id: jobId,
             user_id: userId,
-            message: `تم خصم ${toArabicDigits(chargedPts)} نقطة وتحرير ${toArabicDigits(refundedPts)} نقطة متبقية تلقائياً لرصيدك.`,
+            message: `تم خصم ${pointsAr(chargedPts, toArabicDigits)} وتحرير ${pointsAr(refundedPts, toArabicDigits)} متبقية تلقائياً لرصيدك.`,
             units: finalRows.length,
             event_type: "info",
             created_at: completedAtIso,

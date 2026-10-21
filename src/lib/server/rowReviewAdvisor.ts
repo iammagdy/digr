@@ -57,6 +57,8 @@ export interface RowAdvisoryInput {
   kind: string;
   /** Rows the deterministic gate matched, in order; the index is the position in the worker's list. */
   rows: Array<{ index: number; row: Record<string, any> }>;
+  /** The most this call may wait for the reply, in ms (never above ADVISORY_TIMEOUT_MS): the caller shortens it near its own deadline. */
+  timeoutMs?: number;
 }
 
 export type RowAdvisorFn = (input: RowAdvisoryInput) => Promise<AdvisoryResult>;
@@ -69,7 +71,11 @@ const ADVISORY_MAX_ROWS = 40;
 export function advisoryMaxTokens(rows: number): number {
   return Math.min(6000, Math.max(1200, 300 + Math.max(1, rows) * 160));
 }
-const ADVISORY_TIMEOUT_MS = 8000;
+/**
+ * How long one review call may take. The calls of 25 rows measured 5 to 8 s on production, and 2 of 8 were cut at the old 8 s limit;
+ * a cut call is a review that never happened, so the limit leaves room (the caller still shortens it near its own deadline).
+ */
+export const ADVISORY_TIMEOUT_MS = 20_000;
 const SNIPPET_CHARS = 220;
 
 const ReviewItemSchema = z.object({
@@ -164,7 +170,7 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
   if (input.rows.length === 0) return empty(null);
   if ((process.env.LLM_PROVIDER || "").trim().toLowerCase() === "fake" || (process.env.LLM_ENABLED || "").trim().toLowerCase() === "false" || (process.env.LLM_LIVE || "").trim().toLowerCase() === "false") return empty("disabled");
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ADVISORY_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, Math.min(ADVISORY_TIMEOUT_MS, Number(input.timeoutMs) || ADVISORY_TIMEOUT_MS)));
   const started = Date.now();
   try {
     const key = (await resolveProviderKey("anthropic")).key;
@@ -331,7 +337,9 @@ export async function reviewSocialRows(input: {
     }
     let result: AdvisoryResult;
     try {
-      result = await input.advisor({ customerRequest: input.customerRequest, kind: input.kind, rows: batch });
+      // Near the caller's deadline the call is given only the time that is left (plus the reserve the caller keeps after it), never more than the limit.
+      const timeoutMs = input.deadlineMs !== undefined ? Math.max(3000, Math.min(ADVISORY_TIMEOUT_MS, input.deadlineMs - now() + 6000)) : undefined;
+      result = await input.advisor({ customerRequest: input.customerRequest, kind: input.kind, rows: batch, ...(timeoutMs !== undefined ? { timeoutMs } : {}) });
     } catch {
       result = { verdicts: new Map(), usage: null, failure: "network" };
     }

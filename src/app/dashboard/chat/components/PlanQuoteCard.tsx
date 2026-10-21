@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
@@ -293,7 +294,7 @@ export default function PlanQuoteCard({
             <span className="text-base text-mut" style={{ marginInlineStart: 8 }}>نقطة</span>
           </p>
           <p className="mb-0 mt-2 text-[13px] font-light text-mut">
-            ≈ {formatAr(Number((expectedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${formatAr(balance)} نقطة`}
+            ≈ {formatAr(Number((expectedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${pointsAr(balance)}`}
           </p>
         </div>
         <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
@@ -303,12 +304,12 @@ export default function PlanQuoteCard({
       </div>
 
       <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
-        سقف هذا الطلب: حتى {formatAr(quote.quotedPoints)} نقطة، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
+        سقف هذا الطلب: حتى {pointsAr(quote.quotedPoints)}، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
       </p>
 
       {quote.unitPricePoints > 0 && (quote.items?.length ?? 1) <= 1 ? (
         <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-unit-price">
-          سعر السجل الواحد حوالي {formatAr(Number(pointsDisplay(quote.unitPricePoints)))} نقطة، أي {formatAr(pricePer100Points(quote.unitPricePoints))} نقطة لكل ١٠٠ سجل (تقديري).
+          سعر السجل الواحد حوالي {pointsAr(Number(pointsDisplay(quote.unitPricePoints)))}، أي {pointsAr(pricePer100Points(quote.unitPricePoints))} لكل ١٠٠ سجل (تقديري).
         </p>
       ) : null}
 
@@ -347,8 +348,8 @@ export default function PlanQuoteCard({
       ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
-            ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة.`
-            : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${formatAr(quote.quotedPoints)} نقطة، ويشمل احتياطي التنفيذ ضمن سقف ${formatAr(quote.pointsCap || JOB_MAX_POINTS_CAP)} نقطة.`} يمكنك تقليل العدد أكثر إذا أردت.
+            ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(quote.pointsCap || JOB_MAX_POINTS_CAP)}.`
+            : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(quote.quotedPoints)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(quote.pointsCap || JOB_MAX_POINTS_CAP)}.`} يمكنك تقليل العدد أكثر إذا أردت.
         </p>
       ) : null}
 
@@ -366,7 +367,7 @@ export default function PlanQuoteCard({
 
       {quote.afterSample && (
         <p className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2" data-testid="plan-after-sample">
-          هذا هو الباقي من طلبك بعد العينة: {formatAr(quote.afterSample.remainingUnits)} سجل دون ما وصلك فيها ({formatAr(quote.afterSample.deliveredInSample)} سجل، خُصم عنها {formatAr(quote.afterSample.sampleChargedPoints)} نقطة). الإجمالي التقريبي مع العينة حوالي {formatAr(quote.afterSample.approximateTotalPoints)} نقطة.
+          هذا هو الباقي من طلبك بعد العينة: {formatAr(quote.afterSample.remainingUnits)} سجل دون ما وصلك فيها ({formatAr(quote.afterSample.deliveredInSample)} سجل، خُصم عنها {pointsAr(quote.afterSample.sampleChargedPoints)}). الإجمالي التقريبي مع العينة حوالي {pointsAr(quote.afterSample.approximateTotalPoints)}.
         </p>
       )}
 
@@ -542,11 +543,11 @@ export default function PlanQuoteCard({
       {!locked && low && !expired && (
         <div className="mt-[18px] flex flex-col gap-3 rounded-[18px] px-4 py-3.5" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)", animation: "up .4s both" }}>
           <p className="m-0 text-sm leading-[1.8] text-ink">
-            رصيدك <strong>{formatNumber(balance)}</strong> نقطة — تحتاج <strong className="text-goldT">{formatNumber(shortPts)} نقطة</strong> إضافية لتنفيذ الحجم الكامل ({formatAr(quote.targetVolumeMax)} سجل).
+            رصيدك <strong>{pointsAr(balance, formatNumber)}</strong> — تحتاج <strong className="text-goldT">{pointsAr(shortPts, formatNumber)}</strong> إضافية لتنفيذ الحجم الكامل ({formatAr(quote.targetVolumeMax)} سجل).
           </p>
           {quote.downscaledOffer && (
             <p className="m-0 text-xs font-light leading-[1.8] text-ink">
-              خيار فوري: يمكنك بدء البحث بعدد مخفض حتى <strong>{formatAr(quote.downscaledOffer.maxAffordableUnits)}</strong> سجل مقابل {formatAr(quote.downscaledOffer.affordableQuotedPoints)} نقطة متوفرة في رصيدك.
+              خيار فوري: يمكنك بدء البحث بعدد مخفض حتى <strong>{formatAr(quote.downscaledOffer.maxAffordableUnits)}</strong> سجل مقابل {pointsAr(quote.downscaledOffer.affordableQuotedPoints)} متوفرة في رصيدك.
             </p>
           )}
           <div className="flex flex-wrap gap-2">
@@ -648,7 +649,7 @@ export default function PlanQuoteCard({
                 disabled={isStarting || quote.isDependent}
                 className={`${SECONDARY_BTN} min-h-11`}
               >
-                عينة أولًا: {formatAr(quote.explorationOffer.sampleUnits)} سجل بحجز {formatAr(quote.explorationOffer.samplePoints)} نقطة
+                عينة أولًا: {formatAr(quote.explorationOffer.sampleUnits)} سجل بحجز {pointsAr(quote.explorationOffer.samplePoints)}
               </button>
             )}
           </div>

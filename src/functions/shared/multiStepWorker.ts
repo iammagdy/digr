@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, Role, Permission, TablesDB, Storage } from "./dbCompat";
 import { completeJobWithRelFirst, releaseCredits, releaseReservation } from "./ledger";
@@ -1077,7 +1078,7 @@ export async function executeMultiStepJob(
   } catch {}
 
   await emitProgress(
-    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${chargedCredits} نقطة، وتم استرداد ${refundCredits} نقطة لمحافظتك.`,
+    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، وتم استرداد ${pointsAr(Number(refundCredits), String)} لمحافظتك.`,
     deliveredUnits,
     "info"
   );

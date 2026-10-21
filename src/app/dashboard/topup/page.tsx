@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -308,7 +309,7 @@ export default function WalletPage() {
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] text-mut">
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--ac)" }} />متاح</span>
-              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--gold)" }} />محجوز في بحث جارٍ · {formatAr(stats.held)} نقطة</span>
+              <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--gold)" }} />محجوز في بحث جارٍ · {pointsAr(stats.held)}</span>
             </div>
           </div>
           <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
@@ -363,7 +364,7 @@ export default function WalletPage() {
               return (
                 <div key={t.$id} className="flex items-center gap-3.5 border-b border-ln py-3.5">
                   <div className="min-w-0 flex-1">
-                    <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م · {formatAr(pts)} نقطة</p>
+                    <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م · {pointsAr(pts)}</p>
                     <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt"><span dir="ltr" className="inline-block max-w-[140px] truncate align-bottom font-mono text-[11px]" title={t.reference}>{t.reference.length > 20 ? t.reference.slice(0, 16) + "…" : t.reference}</span> · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
                     {t.status === "rejected" && t.rejectReason && <p className="mb-0 mt-1.5 text-xs leading-[1.7] text-bad">سبب الرفض: {t.rejectReason}</p>}
                   </div>

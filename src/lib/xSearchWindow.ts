@@ -1,3 +1,5 @@
+import { regionEvidenceWords } from "./regionNames";
+
 /**
  * The X search returns the LATEST posts first, so a window in the past ("the match in June") is only reachable
  * when the dates travel inside the search text. The stored window is never changed; only the text sent to the
@@ -37,4 +39,18 @@ export function withXDateOperators(query: string, dateFrom?: string | null, date
   if (since && !/(^|\s)since:/i.test(query)) parts.push(`since:${since}`);
   if (until && !/(^|\s)until:/i.test(query)) parts.push(`until:${until}`);
   return parts.join(" ");
+}
+
+/**
+ * X has no reliable country filter (`place_country:` matches only the few geotagged posts), so a request that names a country is narrowed
+ * with the country's own words: `<query> (مصر OR مصري OR مصرية OR المصري OR المصرية OR egypt OR egyptian)`. The posts returned then
+ * mention the country by name or by its adjective. A query that already carries one of those words, or an unknown region, is left as it is.
+ */
+export function withXCountryTerms(query: string, region?: string | null): string {
+  const terms = [...new Set(regionEvidenceWords(region))].filter((word) => word.trim().length > 0 && !/\s/.test(word));
+  const text = query.trim();
+  if (terms.length === 0 || !text) return text;
+  const lower = text.toLowerCase();
+  if (terms.some((word) => lower.includes(word.toLowerCase()))) return text;
+  return `${text} (${terms.join(" OR ")})`;
 }

@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
 import { z } from "zod";
 import { buildSystemPrompt, buildSystemPromptParts, PROMPT_VERSION } from "./systemPrompt";
@@ -1427,12 +1428,11 @@ export class LlmClient {
     if (isUserGreeting) {
       const uName = options.userProfile?.displayName || "مجدي";
       const uBal = options.userBalancePoints != null ? options.userBalancePoints : 500;
-      const uBalAr = toArabicDigits(uBal);
-      return {
+            return {
         output: {
           type: "answer_question",
           intent: "chat",
-          answerAr: `أهلاً يا ${uName}، رصيدك ${uBalAr} نقطة. كيف يمكنني مساعدتك اليوم في البحث من المصادر المتاحة؟`,
+          answerAr: `أهلاً يا ${uName}، رصيدك ${pointsAr(Number(uBal), toArabicDigits)}. كيف يمكنني مساعدتك اليوم في البحث من المصادر المتاحة؟`,
           topic: "greeting",
         },
         inputTokens: 300,

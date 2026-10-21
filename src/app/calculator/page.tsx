@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
@@ -218,7 +219,7 @@ export default function PublicCalculatorPage() {
             {breakdown.limitedByService ? (
               <><strong>ملاحظة حد الطلب الواحد:</strong> هذا الحجم يتجاوز ما تتسع له هذه الخدمة في الطلب الواحد. ضُبط العدد تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr}، ويمكنك تقديم أكثر من طلب.</>
             ) : (
-              <><strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({formatAr(breakdown.maxCapPoints || JOB_MAX_POINTS_CAP)} نقطة). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.</>
+              <><strong>ملاحظة السقف الأقصى للتكلفة:</strong> يتجاوز هذا الحجم سقف النقاط المسموح به للمهمة الواحدة ({pointsAr(breakdown.maxCapPoints || JOB_MAX_POINTS_CAP)}). تم حجز السقف الأقصى وضبط الحد الأقصى للمسح تلقائياً عند {formatAr(breakdown.maxCappedVolume || 0)} {currentOption?.unitLabelAr} لضمان أمان العمليات وحماية الرصيد.</>
             )}
           </div>
         )}
@@ -270,7 +271,7 @@ export default function PublicCalculatorPage() {
                         {b.isCapped ? <span className="mr-1 text-[10px] text-mut">(سقف)</span> : null}
                       </td>
                       <td className="px-3 py-2 font-mono">{unitPriceLabelAr(b.unitPricePoints)}</td>
-                      <td className="px-3 py-2 font-mono text-emerald-600">{formatAr(effectiveCharged)} نقطة</td>
+                      <td className="px-3 py-2 font-mono text-emerald-600">{pointsAr(effectiveCharged)}</td>
                       <td className="px-3 py-2 font-mono">{formatAr(effectiveChargedEgp)} ج.م</td>
                       <td className="px-3 py-2">
                         <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-semibold text-emerald-600">

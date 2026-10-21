@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 /**
  * Honest display rules for the Diger redesign.
  *
@@ -236,7 +237,7 @@ function trustworthyAmount(value: unknown): number | null {
 export function methodologyAlertText(chargedPoints: unknown): string {
   const charged = trustworthyAmount(chargedPoints);
   if (charged === null) return "تمت صياغة المنهجية الأكاديمية بنجاح.";
-  return `تمت صياغة المنهجية الأكاديمية بنجاح واقتطاع ${formatNumber(charged)} نقطة من الرصيد.`;
+  return `تمت صياغة المنهجية الأكاديمية بنجاح واقتطاع ${pointsAr(charged, formatNumber)} من الرصيد.`;
 }
 
 export function methodologyMessageText(
@@ -251,7 +252,7 @@ export function methodologyMessageText(
   if (charged === null || balance === null) {
     return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}${download}`;
   }
-  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${formatNumber(charged)} نقاط (رصيدك الحالي: ${formatNumber(balance)} نقطة):\n\n${methodologyText}${download}`;
+  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${formatNumber(charged)} نقاط (رصيدك الحالي: ${pointsAr(balance, formatNumber)}):\n\n${methodologyText}${download}`;
 }
 
 /* ------------------------------------------------------------------ */

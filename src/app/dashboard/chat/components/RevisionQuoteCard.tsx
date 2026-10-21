@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
 import { useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
@@ -90,7 +91,7 @@ export default function RevisionQuoteCard({
 
       {!affordable && (
         <p role="alert" className="mb-0 mt-3 text-xs text-bad">
-          رصيدك الحالي ({formatNumber(userBalance ?? 0)} نقطة) غير كافٍ لإتمام التعديل.
+          رصيدك الحالي ({pointsAr(userBalance ?? 0, formatNumber)}) غير كافٍ لإتمام التعديل.
         </p>
       )}
 
@@ -101,7 +102,7 @@ export default function RevisionQuoteCard({
           disabled={disabled || isApplying || !affordable}
           className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full border-0 bg-ac px-5 text-[13px] font-medium text-onac transition-opacity focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {isApplying ? "جاري تجهيز النسخة الجديدة..." : `اعتماد وتطبيق التعديل (${formatAr(quote.points)} نقطة)`}
+          {isApplying ? "جاري تجهيز النسخة الجديدة..." : `اعتماد وتطبيق التعديل (${pointsAr(quote.points)})`}
         </button>
       </div>
     </div>

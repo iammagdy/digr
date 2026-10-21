@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { ID, Messaging, Permission, Role, TablesDB, Users } from "./dbCompat";
 import { calculateBalance } from "./ledger";
 import { renderEmailTemplate, resolveSiteUrl, type PlatformEmailTemplateId } from "./emailTemplates";
@@ -138,7 +139,7 @@ export async function notifyJobOutcome(
     }, log);
     if (refund > 0) {
       await notifyUser(client, {
-        userId, kind: "refund", title: `رجعت ${arDigits(refund)} نقطة لرصيدك`,
+        userId, kind: "refund", title: `رجعت ${pointsAr(refund, arDigits)} لرصيدك`,
         body: "فرق الحجز من بحثك الأخير عاد إلى محفظتك.", link: "/dashboard/topup",
         emailVars: {
           Points: arDigits(refund),
@@ -150,7 +151,7 @@ export async function notifyJobOutcome(
   } else if (result.status === "failed") {
     const back = refund || Math.max(0, Number(result.reservedCredits ?? 0));
     await notifyUser(client, {
-      userId, kind: "refund", title: back > 0 ? `رجعت ${arDigits(back)} نقطة لرصيدك` : "تعذّر إكمال البحث",
+      userId, kind: "refund", title: back > 0 ? `رجعت ${pointsAr(back, arDigits)} لرصيدك` : "تعذّر إكمال البحث",
       body: "تعذّر إكمال البحث ولم يُخصم شيء — رجعت النقاط المحجوزة كاملة.", link: "/dashboard/requests",
       emailVars: {
         Points: arDigits(back),

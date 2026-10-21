@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { TablesDB, ID, Query, Permission, Role } from "./dbCompat";
 import { computePlanHash, parseStoredPlan, PlanItem } from "./planManager";
 import { isQuoteExpired } from "./quotes";
@@ -149,7 +150,7 @@ export async function acceptQuote(
     return {
       success: false,
       statusCode: 402,
-      errorAr: `رصيدك الحالي (${currentBalance} نقطة) غير كافٍ لتغطية تكلفة العرض (${requiredPoints} نقطة). يرجى شحن الرصيد أولاً.`,
+      errorAr: `رصيدك الحالي (${pointsAr(currentBalance, String)}) غير كافٍ لتغطية تكلفة العرض (${pointsAr(requiredPoints, String)}). يرجى شحن الرصيد أولاً.`,
     };
   }
 

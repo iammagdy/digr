@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 
 /**
@@ -24,7 +25,7 @@ export function defaultCapLineAr(noun: DefaultNoun, units: number, wordAr?: stri
 /** When the default count does not fit one job: what the plan holds instead, in plain words (the numbers come from the quote). */
 export function defaultCapFittedLineAr(input: { noun: DefaultNoun; fittedUnits: number; quotedPoints: number; pointsCap: number; wordAr?: string }): string {
   const word = input.wordAr || NOUN_WORD_AR[input.noun];
-  return `لكن الطلب الواحد يتسع الآن لـ${toArabicDigits(input.fittedUnits)} ${word} بحجز ${toArabicDigits(input.quotedPoints)} نقطة ضمن سقف ${toArabicDigits(input.pointsCap)} نقطة، ويمكنك طلب الباقي في طلب منفصل.`;
+  return `لكن الطلب الواحد يتسع الآن لـ${toArabicDigits(input.fittedUnits)} ${word} بحجز ${pointsAr(input.quotedPoints, toArabicDigits)} ضمن سقف ${pointsAr(input.pointsCap, toArabicDigits)}، ويمكنك طلب الباقي في طلب منفصل.`;
 }
 
 /**

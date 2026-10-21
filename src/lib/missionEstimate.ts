@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { DEFAULT_JOB_POINTS_CAP, computePublicCalculatorQuote, getPublicCalculatorOptions } from "./calculatorPricing";
 import { chargeForUnits, reserveForUnits } from "./recordPricing";
@@ -138,10 +139,10 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const reservePoints = fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve;
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
 
-  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${n(reservePoints)} نقطة) يشمل احتياطيًا يعود إليك ما لم يُستخدم.`];
+  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا يعود إليك ما لم يُستخدم.`];
   if (!fitsInOneJob) {
     notesAr.push(maxVolumeInOneJob > 0
-      ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${n(jobCapPoints)} نقطة)`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
+      ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${pointsAr(jobCapPoints, n)})`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
       : "السجل الواحد أعلى من سقف الحجز الحالي للطلب الواحد.");
   }
   return {
@@ -166,8 +167,8 @@ export function estimateMission(input: EstimateInput): EstimateResult {
 export function estimateSummaryAr(result: Extract<EstimateResult, { status: "ok" }>): string {
   const same = result.expectedPoints === result.reservePoints;
   return same
-    ? `حتى حوالي ${n(result.expectedPoints)} نقطة (حوالي ${toArabicDigits(Math.round(result.expectedEgp))} ج.م)`
-    : `من حوالي ${n(result.expectedPoints)} إلى ${n(result.reservePoints)} نقطة (حوالي ${toArabicDigits(Math.round(result.expectedEgp))} إلى ${toArabicDigits(Math.round(result.reserveEgp))} ج.م)`;
+    ? `حتى حوالي ${pointsAr(result.expectedPoints, n)} (حوالي ${toArabicDigits(Math.round(result.expectedEgp))} ج.م)`
+    : `من حوالي ${n(result.expectedPoints)} إلى ${pointsAr(result.reservePoints, n)} (حوالي ${toArabicDigits(Math.round(result.expectedEgp))} إلى ${toArabicDigits(Math.round(result.reserveEgp))} ج.م)`;
 }
 
 /* ---------------------------------------------------------------- the free-text box (deterministic, no model) */

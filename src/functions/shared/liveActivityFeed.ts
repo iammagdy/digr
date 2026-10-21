@@ -1,3 +1,4 @@
+import { pointsAr } from "../../lib/pointsFormat";
 import { formatNumber } from "../../lib/honestDisplay";
 
 export type ActivityStepKind = "search_posts" | "collect_comments" | "verify_profile";
@@ -184,7 +185,7 @@ export function formatPointsSpentVsReserved(
   const safeSpent = Math.min(safeReserved, Math.max(0, Math.floor(spentPoints)));
   const spentStr = options?.arabicNumerals ? formatNumber(safeSpent) : String(safeSpent);
   const reservedStr = options?.arabicNumerals ? formatNumber(safeReserved) : String(safeReserved);
-  return `المستهلك ${spentStr} نقطة من ${reservedStr}`;
+  return `المستهلك ${pointsAr(safeSpent, options?.arabicNumerals ? formatNumber : String)} من ${reservedStr}`;
 }
 
 /**
@@ -200,7 +201,7 @@ export function formatCapReachedMessage(
   if (kind === "post_cap") {
     return `توقف الجمع بشكل منظم عند الوصول للحد الأقصى لعدد المنشورات (${limitStr} منشور) وحفظ جميع السجلات المجمعة.`;
   }
-  return `توقف الجمع بشكل منظم عند الوصول لسقف النقاط المحجوزة (${limitStr} نقطة) وحفظ جميع السجلات المجمعة دون أي خصم إضافي.`;
+  return `توقف الجمع بشكل منظم عند الوصول لسقف النقاط المحجوزة (${pointsAr(safeLimit, options?.arabicNumerals ? formatNumber : String)}) وحفظ جميع السجلات المجمعة دون أي خصم إضافي.`;
 }
 
 /**

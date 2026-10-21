@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 
 /**
@@ -46,11 +47,11 @@ export function lowBalanceMessageAr(input: LowBalanceInput): string | null {
   if (state === "affordable") return null;
   const short = shortfallPoints(input);
   const egp = shortfallEgp(short, input.creditValueEgp);
-  const head = `رصيدك الحالي ${n(input.balance)} نقطة، والخطة تحجز ${n(input.quotedPoints)} نقطة (التكلفة المتوقعة ${n(input.expectedPoints)} نقطة)، فينقصك ${n(short)} نقطة.`;
+  const head = `رصيدك الحالي ${pointsAr(input.balance, n)}، والخطة تحجز ${pointsAr(input.quotedPoints, n)} (التكلفة المتوقعة ${pointsAr(input.expectedPoints, n)})، فينقصك ${pointsAr(short, n)}.`;
   const topUp = `اشحن ${n(egp)} جنيهًا تقريبًا ثم ارجع إلى هذه المحادثة، وستجد الخطة نفسها بانتظار موافقتك دون أن تبدأ من جديد.`;
   if (state === "can_reduce") {
     const offer = input.downscaledOffer!;
-    return `${head} عندك خياران: أقلل العدد إلى ${n(offer.maxAffordableUnits)} سجل مقابل ${n(offer.affordableQuotedPoints)} نقطة تناسب رصيدك الآن، أو ${topUp}`;
+    return `${head} عندك خياران: أقلل العدد إلى ${n(offer.maxAffordableUnits)} سجل مقابل ${pointsAr(offer.affordableQuotedPoints, n)} تناسب رصيدك الآن، أو ${topUp}`;
   }
   return `${head} لا يوجد عدد أقل يناسب رصيدك الحالي، فالخيار هو أن ${topUp}`;
 }
@@ -58,5 +59,5 @@ export function lowBalanceMessageAr(input: LowBalanceInput): string | null {
 /** Shown in the same conversation after an approved top-up makes the same plan affordable. */
 export function topupContinuationMessageAr(input: { balance: number; quotedPoints: number }): string | null {
   if (input.balance < input.quotedPoints) return null;
-  return `تم اعتماد الشحن، ورصيدك الآن ${n(input.balance)} نقطة ويكفي لتنفيذ الخطة نفسها (الحجز ${n(input.quotedPoints)} نقطة). اضغط موافقة على الخطة لبدء البحث.`;
+  return `تم اعتماد الشحن، ورصيدك الآن ${pointsAr(input.balance, n)} ويكفي لتنفيذ الخطة نفسها (الحجز ${pointsAr(input.quotedPoints, n)}). اضغط موافقة على الخطة لبدء البحث.`;
 }

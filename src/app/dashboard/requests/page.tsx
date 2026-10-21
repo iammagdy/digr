@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { openJobHref } from "@/lib/requestLinks";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -64,7 +65,7 @@ function targetOf(params?: string): string {
 }
 
 function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
-  const refund = `${formatAr(reservedCredits)} نقطة كاملة`;
+  const refund = `${pointsAr(reservedCredits)} كاملة`;
   if (!rawError) {
     return `لم تتوفر سجلات كافية — أُعيد ${refund} إلى رصيدك.`;
   }
@@ -95,7 +96,7 @@ function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
     return cleaned;
   }
 
-  return `${cleaned} — رجعت ${formatAr(reservedCredits)} نقطة كاملة لرصيدك.`;
+  return `${cleaned} — رجعت ${pointsAr(reservedCredits)} كاملة لرصيدك.`;
 }
 
 const DL_ICON = "M12 4v11M7 10l5 5 5-5M5 20h14";

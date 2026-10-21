@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { fullEstimatePoints, sampleOffer, sampleOfferLineAr, type SampleQuoteLike } from "./sampleFirst";
 import { chargeForUnits, reserveForUnits } from "./recordPricing";
@@ -129,7 +130,7 @@ export function explorationResultMessageAr(estimate: ExplorationEstimate, fullUn
     } else if (estimate.commentsPerVideo !== null && estimate.commentsInFullVideos !== null) {
       parts.push(`متوسط التعليقات في الفيديو الواحد ${n(estimate.commentsPerVideo)} تعليقًا، فمن ${n(fullUnits)} فيديو تتوقع حوالي ${n(estimate.commentsInFullVideos)} تعليق.`);
     }
-    parts.push(`الحجم الكامل (${n(fullUnits)} ${unitLabelAr}) تكلفته المتوقعة ${n(estimate.fullExpectedPoints)} نقطة وحجزه ${n(estimate.fullReservePoints)} نقطة، وهذه تقديرات من العينة وليست وعدًا بالعدد.`);
+    parts.push(`الحجم الكامل (${n(fullUnits)} ${unitLabelAr}) تكلفته المتوقعة ${pointsAr(estimate.fullExpectedPoints, n)} وحجزه ${pointsAr(estimate.fullReservePoints, n)}، وهذه تقديرات من العينة وليست وعدًا بالعدد.`);
   }
   return parts.join(" ");
 }

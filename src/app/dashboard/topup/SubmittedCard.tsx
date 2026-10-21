@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { formatDate, formatTime } from "@/lib/honestDisplay";
 import { statusBadge, USER_STATUS, type TopupRecord } from "./types";
@@ -16,13 +17,13 @@ export default function SubmittedCard({
   const icon = st === "rejected" ? "M27 27 L49 49 M49 27 L27 49" : "M24 39 l10 10 l19 -21";
   const stepDef = st === "approved" ? [2, 2, 2] : st === "rejected" ? [2, 3, 0] : [2, 1, 0];
   const labels = ["تم الإرسال", st === "rejected" ? "مرفوض" : "مراجعة الإدارة", "إضافة النقاط"];
-  const title = st === "approved" ? `تم اعتماد الطلب وإضافة ${formatAr(pts)} نقطة` : st === "rejected" ? "تم رفض طلب الشحن" : "تم استلام طلب الشحن بنجاح";
+  const title = st === "approved" ? `تم اعتماد الطلب وإضافة ${pointsAr(pts)}` : st === "rejected" ? "تم رفض طلب الشحن" : "تم استلام طلب الشحن بنجاح";
   const sub = st === "approved" ? "أُضيفت النقاط إلى رصيدك ويمكنك استخدامها في أبحاثك الآن." : st === "rejected" ? "راجع سبب الرفض وأرسل طلباً جديداً بإيصال تحويل صحيح ومكتمل." : "سيتم مراجعته واعتماد النقاط لمحفظتك فور التحقق.";
   const badge = statusBadge(st);
   const when = `${formatDate(topup.createdAt)}، ${formatTime(topup.createdAt)}`;
   const rows: Array<[string, string, "rtl" | "ltr"]> = [
     ["المبلغ المحوّل", `${formatAr(st === "approved" && topup.confirmedAmountEgp ? topup.confirmedAmountEgp : topup.amountEgp)} ج.م`, "rtl"],
-    [st === "approved" ? "النقاط المضافة" : "النقاط المتوقعة", `${formatAr(pts)} نقطة`, "rtl"],
+    [st === "approved" ? "النقاط المضافة" : "النقاط المتوقعة", `${pointsAr(pts)}`, "rtl"],
     ["اسم المحوِّل", topup.senderName || "—", "rtl"],
     ["رقم الموبايل", topup.senderPhone || "—", "ltr"],
     ["الرقم المرجعي", topup.reference, "ltr"],

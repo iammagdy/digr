@@ -1,3 +1,4 @@
+import { pointsAr } from "@/lib/pointsFormat";
 import Link from "next/link";
 import { buildPlatformGuideServices, PLATFORM_GUIDE } from "@/functions/shared/platformGuide";
 import { cleanArText, computePublicCalculatorQuote, getPublicCalculatorOptions } from "@/lib/calculatorPricing";
@@ -34,11 +35,11 @@ export default function ServicesCatalogPage() {
               <p className="mb-4 mt-2 text-sm leading-7 text-mut">{cleanArText(service.descriptionAr)}</p>
               <p className="mb-2 text-sm"><strong>مثال:</strong> {cleanArText(service.exampleAr)}</p>
               <p className="m-0 text-sm"><strong>السعر:</strong> {peoplePrice
-                ? `${formatAr(peoplePrice.basePerson)} نقطة للشخص، و${formatAr(peoplePrice.workEmail)} نقطة للبريد المهني عند توفره، و${formatAr(peoplePrice.phone)} نقطة للهاتف المكتبي عند توفره.`
+                ? `${pointsAr(peoplePrice.basePerson)} للشخص، و${pointsAr(peoplePrice.workEmail)} للبريد المهني عند توفره، و${pointsAr(peoplePrice.phone)} للهاتف المكتبي عند توفره.`
                 : quote
                   ? `${unitPriceLabelAr(quote.unitPricePoints, options.find((option) => option.slug === service.slug)?.unitLabelAr || "سجل")}.`
                   : "يحسب النظام السعر بالنقاط بعد تحديد الخدمة المطابقة لموضوعك."}</p>
-              <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من النظام بعد تحديد العدد والنطاق، وبحد أقصى {formatAr(PLATFORM_GUIDE.product.pointCap)} نقطة للمهمة.</p>
+              <p className="m-0 mt-1 text-xs leading-6 text-mut">يصدر السعر النهائي من النظام بعد تحديد العدد والنطاق، وبحد أقصى {pointsAr(PLATFORM_GUIDE.product.pointCap)} للمهمة.</p>
             </article>;
           })}
         </section>

@@ -1,3 +1,4 @@
+import { pointsAr } from "../pointsFormat";
 import { SupabaseClient } from "@supabase/supabase-js";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 
@@ -153,12 +154,11 @@ export async function acceptQuoteSupabase(
     // 402 Insufficient Balance with current balance rendered in Arabic-Indic numerals
     if (errCode === "insufficient_balance") {
       const balanceNum = Number(rpcRes?.balance ?? 0);
-      const balanceArabic = toArabicDigits(balanceNum);
-      return {
+            return {
         success: false,
         statusCode: 402,
         currentBalance: balanceNum,
-        errorAr: `رصيدك الحالي (${balanceArabic} نقطة) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.`,
+        errorAr: `رصيدك الحالي (${pointsAr(balanceNum, toArabicDigits)}) غير كافٍ لتغطية تكلفة هذا العرض. يرجى شحن الرصيد أولاً.`,
       };
     }
 

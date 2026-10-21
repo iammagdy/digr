@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import Link from "next/link";
 import { MISSION_TEMPLATES } from "@/lib/missionTemplates";
 import { formatAr } from "@/lib/arabicDigits";
@@ -59,7 +60,7 @@ export default function EmptyChat({
         </p>
         {balance !== null && balance > 0 ? (
           <p data-testid="welcome-balance" className="mb-0 mt-2 text-[13px] font-light leading-[1.9] text-ink2">
-            رصيدك الآن {formatAr(balance)} نقطة، ولا يُخصم منها إلا ما يُسلَّم لك فعلًا.
+            رصيدك الآن {pointsAr(balance)}، ولا يُخصم منها إلا ما يُسلَّم لك فعلًا.
           </p>
         ) : null}
       </div>

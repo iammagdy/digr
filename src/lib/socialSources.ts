@@ -15,7 +15,8 @@ import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
-import { withXDateOperators } from "./xSearchWindow";
+import { withXCountryTerms, withXDateOperators } from "./xSearchWindow";
+import { regionNameAr } from "./regionNames";
 import type { YoutubeRecency } from "./youtubeRecency";
 import { rowDateMs } from "./server/dateRangeFilter";
 
@@ -450,7 +451,7 @@ const X_TOPIC_POSTS: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 50,
     paging: "cursor",
-    build: (r) => r.query ? { query: withXDateOperators(r.query, r.dateFrom, r.dateTo), limit: Math.min(50, Math.max(1, r.limit)), queryType: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
+    build: (r) => r.query ? { query: withXDateOperators(withXCountryTerms(r.query, r.region), r.dateFrom, r.dateTo), limit: Math.min(50, Math.max(1, r.limit)), queryType: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
   },
   {
     endpointId: "tikhub.x.twitter-web-fetch-search-timeline",
@@ -461,7 +462,7 @@ const X_TOPIC_POSTS: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
-    build: (r) => r.query ? { keyword: withXDateOperators(r.query, r.dateFrom, r.dateTo), search_type: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
+    build: (r) => r.query ? { keyword: withXDateOperators(withXCountryTerms(r.query, r.region), r.dateFrom, r.dateTo), search_type: "Latest", ...(r.cursor ? { cursor: r.cursor } : {}) } : null,
   },
 ];
 
@@ -852,6 +853,13 @@ function videoCountPhrase(params: Record<string, any>, platform: string): string
 }
 
 /** The one-line Arabic goal shown on the plan card, written by the server so it always matches what will run. */
+/** X has no country filter: when a country was asked for, the plan says the search is narrowed to the posts that name it (the query carries the country's words). Empty otherwise. */
+export function xCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, any>): string {
+  if (cap.platform !== "x" || cap.kind !== "posts") return "";
+  const name = regionNameAr(params?.region);
+  return name ? `، ولأن إكس لا يتيح تحديد الدولة يقتصر البحث على المنشورات التي تذكر ${name} أو ما يُنسب إليها` : "";
+}
+
 export function socialPlanSummaryAr(
   cap: SocialCapabilityDef,
   params: Record<string, any>,
@@ -886,7 +894,7 @@ export function socialPlanSummaryAr(
       return cap.kind === "comments"
         ? `سحب ${what} من ${videoCountPhrase(params, platform)} عن «${query}»${commentLimit}`
         // On X the replies come with the search when the source returns them; the plan says so instead of promising them.
-        : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}`;
+        : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}${xCountryNoteAr(cap, params)}`;
     case "channel":
       return cap.kind === "comments"
         ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${commentLimit}`

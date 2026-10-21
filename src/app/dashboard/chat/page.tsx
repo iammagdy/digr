@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { persistedFileShape } from "@/lib/fileShapeMessage";
 import { pickRestoredJobId } from "@/lib/jobs/restoredJob";
 import ReportProblemButton from "@/components/ReportProblemButton";
@@ -1114,7 +1115,7 @@ export default function ChatWorkspacePage() {
         if (msg.planQuote?.quoteId === currentQuote.quoteId) {
           return {
             ...msg,
-            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${formatAr(updatedQuote.targetVolumeMax)} سجل\n• التكلفة الإجمالية: ${formatAr(updatedQuote.quotedPoints)} نقطة`,
+            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${formatAr(updatedQuote.targetVolumeMax)} سجل\n• التكلفة الإجمالية: ${pointsAr(updatedQuote.quotedPoints)}`,
             planQuote: updatedQuote,
           };
         }

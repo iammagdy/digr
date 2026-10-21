@@ -1,5 +1,6 @@
 "use client";
 
+import { pointsAr } from "@/lib/pointsFormat";
 import { useState } from "react";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { capacityForAmount, capacityLineAr, pointsForAmountEgp } from "@/lib/pricingPage";
@@ -16,7 +17,7 @@ export default function CapacityCalculator() {
       <input id="pricing-amount" inputMode="numeric" value={text} onChange={(event) => setText(event.target.value)} placeholder="مثال: ٣٠٠" className="min-h-12 rounded-[14px] border border-ln2 bg-bg px-3.5 text-sm text-ink outline-none" />
       {lines.length ? (
         <div role="status" className="flex flex-col gap-2">
-          <p className="m-0 text-sm text-ink">{toArabicDigits(bounded)} ج.م = {toArabicDigits(pointsForAmountEgp(bounded))} نقطة</p>
+          <p className="m-0 text-sm text-ink">{toArabicDigits(bounded)} ج.م = {pointsAr(pointsForAmountEgp(bounded), toArabicDigits)}</p>
           <ul className="m-0 flex list-none flex-col gap-1.5 p-0 text-sm font-light text-ink2">
             {lines.map((line) => <li key={line.id}>{line.labelAr}: {capacityLineAr(line)}</li>)}
           </ul>

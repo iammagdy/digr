@@ -1,3 +1,4 @@
+import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { reserveForUnits } from "./recordPricing";
 
@@ -60,7 +61,7 @@ export function volumeLimitStatementAr(input: {
   if (!Number.isFinite(asked) || !Number.isFinite(fitted) || fitted < 1 || fitted >= asked) return null;
   const unit = input.unitLabelAr || "سجل";
   if (input.reason === "capacity") {
-    const reserved = input.reservedPoints && input.reservedPoints > 0 ? `، وسيُحجز للخطة حتى ${n(input.reservedPoints)} نقطة ولا يُخصم منها إلا ما يُسلَّم` : "";
+    const reserved = input.reservedPoints && input.reservedPoints > 0 ? `، وسيُحجز للخطة حتى ${pointsAr(input.reservedPoints, n)} ولا يُخصم منها إلا ما يُسلَّم` : "";
     return `طلبت ${n(asked)} ${unit}، والذي تتسع له سعة الاستخراج المتاحة الآن ${n(fitted)} ${unit}${reserved}.`;
   }
   return `طلبت ${n(asked)} ${unit}، والذي يناسب الطلب الواحد الآن ${n(fitted)} ${unit}. ${VOLUME_LIMIT_REASON_AR}`;
@@ -74,5 +75,5 @@ export function capStatementAr(input: CapStatementInput): string | null {
   if (input.fittedUnits >= input.requestedUnits) return null;
   const unit = input.unitLabelAr || "سجل";
   const fullReserve = reserveForUnits(input.requestedUnits, input.unitPricePoints, input.safetyBuffer);
-  return `طلبك الكامل (${n(input.requestedUnits)} ${unit}) يحتاج حجز حوالي ${n(fullReserve)} نقطة، وهو أكبر من سقف الطلب الواحد (${n(input.pointsCap)} نقطة). لذلك تشمل الخطة ${n(input.fittedUnits)} ${unit} بحجز ${n(input.quotedPoints)} نقطة، وهذا أكبر عدد يناسب السقف. تقدر تطلب الباقي في طلب منفصل بعد اكتمال هذا الطلب.`;
+  return `طلبك الكامل (${n(input.requestedUnits)} ${unit}) يحتاج حجز حوالي ${pointsAr(fullReserve, n)}، وهو أكبر من سقف الطلب الواحد (${pointsAr(input.pointsCap, n)}). لذلك تشمل الخطة ${n(input.fittedUnits)} ${unit} بحجز ${pointsAr(input.quotedPoints, n)}، وهذا أكبر عدد يناسب السقف. تقدر تطلب الباقي في طلب منفصل بعد اكتمال هذا الطلب.`;
 }
