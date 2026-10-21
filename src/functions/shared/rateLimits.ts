@@ -195,9 +195,44 @@ export async function sumTodayLlmCostSupabase(tables: any, sinceIso: string): Pr
  * Check platform-wide global daily LLM spend cap.
  * Supports both Supabase client and Appwrite TablesDB.
  */
+/**
+ * The chat route checks the daily model-spend cap on EVERY turn, and the check used to read the whole day's usage rows each time (1
+ * request up to 900 rows, 5 at 2 500, 12 at 10 000, a refusal for everyone at 50 000). With `readCacheMs` the SUM that was read is kept
+ * by this server instance for a short time. Only the READ is cached: the cap, its resolver and the rule (total >= cap refuses) are
+ * untouched, and the cached sum can never under-count this instance's own traffic:
+ *  - the spend this instance records after the read is added to the cached sum (`noteLocalLlmSpend`, called before each usage row is
+ *    written, so a failed write only over-counts);
+ *  - once the sum (with that addition) reaches CACHE_FRESH_ABOVE_SHARE of the cap, every check reads fresh again;
+ *  - a read that fails throws as before (the route answers 503): a stale sum is never served after its time is up or after a failure.
+ * Other instances' spend reaches this one at the next read, at most `readCacheMs` later.
+ */
+export const SPEND_READ_CACHE_MS = 45_000;
+const CACHE_FRESH_ABOVE_SHARE = 0.8;
+
+let ownLlmSpendTotalUsd = 0;
+let spendReadCache: { day: string; totalUsd: number; readAt: number; ownAtReadStart: number } | null = null;
+
+/** Records spend of THIS instance (USD), before its usage row is written, so a cached sum can add it. */
+export function noteLocalLlmSpend(costUsd: number): void {
+  if (Number.isFinite(costUsd) && costUsd > 0) ownLlmSpendTotalUsd += costUsd;
+}
+
+export function resetSpendReadCacheForTesting(): void {
+  spendReadCache = null;
+  ownLlmSpendTotalUsd = 0;
+}
+
+export interface SpendCapOptions {
+  /** When set, the day's sum read by this instance less than this many milliseconds ago is reused (see above). */
+  readCacheMs?: number;
+  /** Test clock. */
+  now?: number;
+}
+
 export async function checkGlobalDailySpendCap(
   tables: any,
   config: RateLimitConfig = DEFAULT_RATE_LIMITS,
+  options: SpendCapOptions = {},
 ): Promise<RateLimitCheckResult> {
   let configuredLimit = config.globalDailySpendCapUsd;
 
@@ -213,7 +248,18 @@ export async function checkGlobalDailySpendCap(
 
   if (tables && typeof tables.from === "function") {
     // Supabase client: uses idx_llm_usage_created_at index
-    totalCostUsd = await sumTodayLlmCostSupabase(tables, utcStartOfDay());
+    const dayStart = utcStartOfDay();
+    const nowMs = options.now ?? Date.now();
+    const cached = spendReadCache;
+    const cachedTotal = cached ? cached.totalUsd + (ownLlmSpendTotalUsd - cached.ownAtReadStart) : 0;
+    if (options.readCacheMs && cached && cached.day === dayStart && nowMs - cached.readAt < options.readCacheMs && cachedTotal < cap * CACHE_FRESH_ABOVE_SHARE) {
+      totalCostUsd = cachedTotal;
+    } else {
+      const ownAtReadStart = ownLlmSpendTotalUsd;
+      totalCostUsd = await sumTodayLlmCostSupabase(tables, dayStart);
+      // a failed read threw above: nothing is kept; the next check reads again
+      if (options.readCacheMs) spendReadCache = { day: dayStart, totalUsd: totalCostUsd, readAt: nowMs, ownAtReadStart };
+    }
   } else if (tables && typeof tables.listRows === "function") {
     // Appwrite TablesDB
     totalCostUsd = await sumDailyUsageCost(tables);

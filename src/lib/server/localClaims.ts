@@ -1,7 +1,8 @@
 /**
- * Fewer calls to the sign-in service. Every `auth.getUser()` is a request to the service's `/user` endpoint, and that endpoint shares
- * one bucket with sign-up and sign-in (30 requests per 5 minutes per IP address by default). A server that asks on every page and every
- * API call (the middleware and then the route) spends that bucket long before a room of 500 phones does anything else.
+ * Fewer calls to the sign-in service. Every `auth.getUser()` is a request to the service's `/user` endpoint. That is a cost in speed and in
+ * the server's own load, not a sign-up limit: the service's rate limit on `/user` applies to e-mail-address changes, so plain checks are
+ * not in the sign-up and sign-in bucket (corrected 2026-10-21, see docs/SUPABASE_FREE_PLAN.md section 1). A server that asks on every
+ * page and every API call (the middleware and then the route) still pays a round trip each time.
  *
  * With `AUTH_LOCAL_CLAIMS=on` the server reads the signed token locally (`getClaims`: the project's public signing keys, cached, no
  * request per call) and only asks the service when the token cannot be read locally (an expired token, a project that still signs

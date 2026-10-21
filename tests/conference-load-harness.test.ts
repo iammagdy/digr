@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { NextRequest } from "next/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createLatencyDb, percentile } from "./helpers/loadHarness";
+import { resetSpendReadCacheForTesting } from "../src/functions/shared/rateLimits";
 
 const h = vi.hoisted(() => ({ db: null as any }));
 vi.mock("../src/lib/supabase/server", () => ({
@@ -81,29 +82,36 @@ describe("500 visitors through the real chat route and handler, with a fake data
     }
   });
 
-  it("one turn late in a busy day: the cost of the daily model-spend read grows with the rows already written today", async () => {
-    const perDay: Record<string, { llmUsageQueries: number; totalQueries: number; elapsedMs: number }> = {};
+  it("one turn late in a busy day: a refresh of the daily model-spend read still grows with the rows written today, and the turns after it make no read at all", async () => {
+    const perDay: Record<string, { refreshQueries: number; nextTurnQueries: number; totalQueries: number; elapsedMs: number }> = {};
     for (const rowsToday of [0, 900, 2500, 10_000]) {
       h.db.rows("llm_usage").length = 0;
       const now = new Date().toISOString();
       for (let i = 0; i < rowsToday; i += 1) h.db.rows("llm_usage").push({ id: `u_${i}`, created_at: now, cost_usd: 0.0004, user_id: "someone" });
+      resetSpendReadCacheForTesting();
+      const llmReads = () => h.db.stats.ops.filter((op: any) => op.table === "llm_usage" && op.kind === "select").length;
       h.db.reset();
       const startedAt = performance.now();
-      const res = await send(`late_${rowsToday}`, "مرحبا");
+      const first = await send(`late_${rowsToday}`, "مرحبا");
       const elapsedMs = performance.now() - startedAt;
-      await res.text();
-      expect(res.status).toBe(200);
-      perDay[`rowsToday_${rowsToday}`] = {
-        llmUsageQueries: h.db.stats.ops.filter((op: any) => op.table === "llm_usage" && op.kind === "select").length,
-        totalQueries: h.db.stats.ops.length,
-        elapsedMs: Math.round(elapsedMs),
-      };
+      await first.text();
+      expect(first.status).toBe(200);
+      const refreshQueries = llmReads();
+      const totalQueries = h.db.stats.ops.length;
+      h.db.reset();
+      const second = await send(`late_again_${rowsToday}`, "مرحبا");
+      await second.text();
+      expect(second.status).toBe(200);
+      perDay[`rowsToday_${rowsToday}`] = { refreshQueries, nextTurnQueries: llmReads(), totalQueries, elapsedMs: Math.round(elapsedMs) };
     }
     results.lateDay = perDay;
     h.db.rows("llm_usage").length = 0;
-    // one request while the day holds fewer rows than the API returns per request, then one request per page of the whole day
-    expect(perDay.rowsToday_0.llmUsageQueries).toBeLessThanOrEqual(2);
-    expect(perDay.rowsToday_10000.llmUsageQueries).toBeGreaterThan(perDay.rowsToday_900.llmUsageQueries);
+    resetSpendReadCacheForTesting();
+    // a refresh is one request while the day holds fewer rows than the API returns per request, then one request per page of the whole day
+    expect(perDay.rowsToday_0.refreshQueries).toBeLessThanOrEqual(2);
+    expect(perDay.rowsToday_10000.refreshQueries).toBeGreaterThan(perDay.rowsToday_900.refreshQueries);
+    // inside the window the next turn reads nothing, however large the day is
+    for (const entry of Object.values(perDay)) expect(entry.nextTurnQueries).toBe(0);
   });
 
   it("500 visitors at the same moment, three messages each in a row: all answered, bounded memory, payload sizes, latency percentiles", async () => {
