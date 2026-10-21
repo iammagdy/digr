@@ -1,0 +1,26 @@
+--- production/settle_people_job_atomic.sql
++++ proposed/settle_people_job_atomic.sql
+@@ line 1 @@
+-CREATE OR REPLACE FUNCTION public.settle_people_job_atomic(p_job_id text, p_base_units integer, p_email_units integer, p_phone_units integer, p_points_cap numeric DEFAULT 600, p_result_file_id text DEFAULT NULL::text)
++CREATE OR REPLACE FUNCTION public.settle_people_job_atomic(p_job_id text, p_base_units integer, p_email_units integer, p_phone_units integer, p_points_cap numeric DEFAULT 5000, p_result_file_id text DEFAULT NULL::text)
+@@ line 67 @@
+-  v_charge := LEAST(v_raw_charge, v_job.reserved_credits, COALESCE(p_points_cap,600), 600);
++  v_charge := LEAST(v_raw_charge, v_job.reserved_credits, COALESCE(p_points_cap,5000), 5000);
+
+--- production/settle_job_atomic.sql
++++ proposed/settle_job_atomic.sql
+@@ line 1 @@
+-CREATE OR REPLACE FUNCTION public.settle_job_atomic(p_job_id text, p_points_cap numeric DEFAULT 600, p_result_file_id text DEFAULT NULL::text)
++CREATE OR REPLACE FUNCTION public.settle_job_atomic(p_job_id text, p_points_cap numeric DEFAULT 5000, p_result_file_id text DEFAULT NULL::text)
+
+--- production/accept_quote_atomic.sql
++++ proposed/accept_quote_atomic.sql
+@@ line 114 @@
+-  IF v_target_min < 1 OR v_target_max < v_target_min OR v_target_max > 5000 THEN
++  IF v_target_min < 1 OR v_target_max < v_target_min OR v_target_max > 100000 THEN
+
+--- production/create_quote_atomic.sql
++++ proposed/create_quote_atomic.sql
+@@ line 8 @@
+-  v_cap numeric := 600;
++  v_cap numeric := 5000;
