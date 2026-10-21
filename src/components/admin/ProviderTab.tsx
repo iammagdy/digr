@@ -32,10 +32,24 @@ const BALANCE_UNAVAILABLE_AR: Record<string, string> = {
   unreadable: "ردّ المزود لا يحتوي رصيدًا يمكن قراءته، فلا يُعرض رقم.",
   check_failed: "فشل فحص الاتصال، لذلك لا يمكن قراءة الرصيد الآن.",
 };
+/** Shown when the provider's own answer carries no e-mail for the connected account. */
+export const ACCOUNT_EMAIL_UNAVAILABLE_AR = "الإيميل غير متاح من المزود";
 const SOURCE_AR: Record<string, string> = { store: "مخزن المفاتيح المشفّر", env: "متغيرات البيئة (Vercel)", none: "غير مضبوط" };
 
 /** Dollars with up to 4 decimals in Arabic-Indic digits. */
 const usd = (n: number) => `${toArabicDigits(n.toFixed(n < 1 ? 4 : 2).replace(/\.?0+$/, "") || "0")} دولار`;
+
+/** The connected provider account's e-mail (admin tab only), or the plain sentence when the provider's answer had none. Not the team id. */
+export function AccountEmailLine({ email }: { email: string | null }) {
+  return (
+    <p data-testid="provider-account-email" className="m-0 text-xs text-mut">
+      حساب المزود المتصل:{" "}
+      {email
+        ? <bdi dir="ltr" className="font-medium text-ink" style={MONO}>{email}</bdi>
+        : <span className="font-medium text-ink">{ACCOUNT_EMAIL_UNAVAILABLE_AR}</span>}
+    </p>
+  );
+}
 
 function Spinner() {
   return <span className="inline-block h-3.5 w-3.5 rounded-full border-2 border-ln2 border-t-ink" style={{ animation: "spin .8s linear infinite" }} />;
@@ -133,6 +147,7 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
         ) : (
           <p className="m-0 text-[13px] leading-[1.8] text-mut">{BALANCE_UNAVAILABLE_AR[b.unavailableReason ?? "check_failed"]}</p>
         )}
+        {provider === "treg" && <AccountEmailLine email={state.accountEmail} />}
         {provider === "treg" && (
           <div className="flex flex-col gap-2 border-t border-ln pt-3">
             <label className="flex flex-col gap-1.5">
