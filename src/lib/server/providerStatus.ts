@@ -66,11 +66,11 @@ function reasonOf(status: number): HealthReason {
   return "unexpected";
 }
 
-async function timedGet(url: string, headers: Record<string, string>, fetchFn: FetchFn): Promise<{ health: HealthResult; body: unknown }> {
+async function timedGet(url: string, headers: Record<string, string>, fetchFn: FetchFn, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<{ health: HealthResult; body: unknown }> {
   const started = Date.now();
   const checkedAt = new Date().toISOString();
   try {
-    const res = await fetchFn(url, { method: "GET", headers, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) });
+    const res = await fetchFn(url, { method: "GET", headers, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
     const latencyMs = Date.now() - started;
     let body: unknown = null;
     try { body = await res.json(); } catch { body = null; }
@@ -85,10 +85,10 @@ async function timedGet(url: string, headers: Record<string, string>, fetchFn: F
 export const noKeyHealth = (): HealthResult => ({ ok: false, reason: "no_key", httpStatus: null, statusClass: "network", latencyMs: null, checkedAt: new Date().toISOString() });
 
 /** Real authenticated call. Also used, unchanged, to validate a candidate key before saving it. */
-export async function checkProviderKey(provider: ProviderId, key: string, fetchFn: FetchFn = fetch): Promise<{ health: HealthResult; body: unknown }> {
+export async function checkProviderKey(provider: ProviderId, key: string, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<{ health: HealthResult; body: unknown }> {
   if (!key) return { health: noKeyHealth(), body: null };
-  if (provider === "treg") return timedGet(`${tregBaseUrl()}/auth/me`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn);
-  return timedGet("https://api.anthropic.com/v1/models?limit=1", { "x-api-key": key, "anthropic-version": "2023-06-01", Accept: "application/json" }, fetchFn);
+  if (provider === "treg") return timedGet(`${tregBaseUrl()}/auth/me`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
+  return timedGet("https://api.anthropic.com/v1/models?limit=1", { "x-api-key": key, "anthropic-version": "2023-06-01", Accept: "application/json" }, fetchFn, timeoutMs);
 }
 
 const ORG_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -130,11 +130,11 @@ export function parseTregBalance(body: unknown): { balanceMicro: number; heldMic
   return { balanceMicro, heldMicro: findInteger(body, HELD_KEYS) };
 }
 
-export async function fetchTregBalance(key: string, orgId: string | null, fetchFn: FetchFn = fetch): Promise<BalanceResult> {
+export async function fetchTregBalance(key: string, orgId: string | null, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<BalanceResult> {
   const checkedAt = new Date().toISOString();
   if (!key) return { available: false, unavailableReason: "no_key", checkedAt };
   if (!orgId) return { available: false, unavailableReason: "org_unknown", orgId: null, checkedAt };
-  const { health, body } = await timedGet(`${tregBaseUrl()}/orgs/${encodeURIComponent(orgId)}/balance?limit=1`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn);
+  const { health, body } = await timedGet(`${tregBaseUrl()}/orgs/${encodeURIComponent(orgId)}/balance?limit=1`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
   if (!health.ok) return { available: false, unavailableReason: "check_failed", orgId, checkedAt };
   const parsed = parseTregBalance(body);
   if (!parsed) return { available: false, unavailableReason: "unreadable", orgId, checkedAt };
@@ -142,6 +142,17 @@ export async function fetchTregBalance(key: string, orgId: string | null, fetchF
 }
 
 const statusCache = new Map<ProviderId, { at: number; snapshot: ProviderStatusSnapshot }>();
+
+/** The last balance the provider really answered, kept past the 60 s cache (and past a later failed check) for the plan capacity gate. */
+let lastGoodTregBalance: { balanceMicro: number; at: number } | null = null;
+
+export function lastGoodProviderBalance(): { balanceMicro: number; at: number } | null {
+  return lastGoodTregBalance;
+}
+
+export function resetLastGoodProviderBalanceForTests(): void {
+  lastGoodTregBalance = null;
+}
 
 export function invalidateProviderStatusCache(provider?: ProviderId): void {
   if (provider) statusCache.delete(provider); else statusCache.clear();
@@ -151,24 +162,26 @@ export function invalidateProviderStatusCache(provider?: ProviderId): void {
 export async function getProviderStatus(
   provider: ProviderId,
   key: string,
-  options?: { forceRefresh?: boolean; orgIdOverride?: string | null; fetchFn?: FetchFn; now?: () => number },
+  options?: { forceRefresh?: boolean; orgIdOverride?: string | null; fetchFn?: FetchFn; now?: () => number; timeoutMs?: number },
 ): Promise<ProviderStatusSnapshot> {
   const now = options?.now ?? (() => Date.now());
   const hit = statusCache.get(provider);
   if (!options?.forceRefresh && hit && now() - hit.at < STATUS_CACHE_TTL_MS) return hit.snapshot;
 
   const fetchFn = options?.fetchFn ?? fetch;
-  const { health, body } = await checkProviderKey(provider, key, fetchFn);
+  const timeoutMs = options?.timeoutMs ?? CHECK_TIMEOUT_MS;
+  const { health, body } = await checkProviderKey(provider, key, fetchFn, timeoutMs);
   let balance: BalanceResult;
   if (provider === "anthropic") {
     balance = { available: false, unavailableReason: "no_balance_api", checkedAt: health.checkedAt };
   } else if (!health.ok) {
     balance = { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt };
   } else {
-    balance = await fetchTregBalance(key, options?.orgIdOverride || extractTregOrgId(body), fetchFn);
+    balance = await fetchTregBalance(key, options?.orgIdOverride || extractTregOrgId(body), fetchFn, timeoutMs);
   }
   const snapshot: ProviderStatusSnapshot = { provider, health, balance, cachedAt: new Date(now()).toISOString(), cacheTtlMs: STATUS_CACHE_TTL_MS };
   statusCache.set(provider, { at: now(), snapshot });
+  if (provider === "treg" && balance.available && typeof balance.balanceMicro === "number") lastGoodTregBalance = { balanceMicro: balance.balanceMicro, at: now() };
   return snapshot;
 }
 
