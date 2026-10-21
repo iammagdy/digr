@@ -1,5 +1,7 @@
 import { toArabicDigits } from "../arabicDigits";
-import { reviewSocialRows, SOCIAL_REVIEW_ROWS_PER_CALL, type AdvisoryVerdict, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
+import { isRetryableFailure, reviewSocialRows, SOCIAL_REVIEW_ROWS_PER_CALL, type AdvisoryVerdict, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
+
+export { isRetryableFailure };
 
 /**
  * The review of one page of posts or comments: ONE call covers every row of the page (a page of up to SOCIAL_REVIEW_ROWS_PER_CALL
@@ -32,11 +34,6 @@ export function pageRejectedEventAr(rate: number, rejected: number): string {
 }
 
 export const PAGE_REJECTED_REASON_AR = "الصفحة غير مرتبطة بموضوع الطلب في معظم سجلاتها المراجَعة؛ استُبعد السجل دون مراجعة فردية ولم يُحتسب";
-
-/** A failure worth one more try: the call timed out, the network failed, the reply was unreadable, or the service was busy or down. Not a missing key or a disabled reviewer. */
-export function isRetryableFailure(failure: string | null | undefined): boolean {
-  return failure === "timeout" || failure === "network" || failure === "bad_reply" || failure === "http_429" || /^http_5\d\d$/.test(String(failure || ""));
-}
 
 export interface PageReviewOutcome {
   verdicts: Map<number, AdvisoryVerdict>;
@@ -72,17 +69,10 @@ export async function reviewSocialPage(input: {
   const firstRows = input.rows.slice(0, SOCIAL_REVIEW_ROWS_PER_CALL);
   const restRows = input.rows.slice(SOCIAL_REVIEW_ROWS_PER_CALL);
 
-  let first = await review(firstRows, input.budgetUsd);
+  // The first call, with its own retry of the rows it left without a verdict (see `reviewSocialRows`): two failures in a row are not tried a third time.
+  const first = await review(firstRows, input.budgetUsd);
   const attempts = [...first.attempts];
-  let firstCostUsd = first.costUsd;
-  // A review whose call failed (a timeout, an error, an unreadable reply) and produced no verdict at all is tried ONCE more, inside the same
-  // budget and deadline; two failures in a row are not tried a third time.
-  if (first.verdicts.size === 0 && first.stoppedBy === "failed" && first.attempts.some((attempt) => isRetryableFailure(attempt.failure))) {
-    const retry = await review(firstRows, Math.max(0, input.budgetUsd - first.costUsd));
-    attempts.push(...retry.attempts);
-    firstCostUsd += retry.costUsd;
-    first = { ...retry, attempts, costUsd: firstCostUsd };
-  }
+  const firstCostUsd = first.costUsd;
   for (const [index, verdict] of first.verdicts) outcome.verdicts.set(index, verdict);
   outcome.attempts.push(...attempts);
   outcome.costUsd += firstCostUsd;

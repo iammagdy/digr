@@ -122,7 +122,7 @@ describe("a page of a topic search through the page review: ONE call covers ever
       expect(outcome.firstCall?.reviewed).toBe(0);
     });
 
-    it("the call is tried twice and never a third time, and a timeout that cost nothing adds nothing", async () => {
+    it("the call is tried twice and never a third time (the retry stops after its first failed call), and a timeout that cost nothing adds nothing", async () => {
       let calls = 0;
       const counting: RowAdvisorFn = async (input) => { calls += 1; return timedOut(input); };
       const outcome = await reviewSocialPage({ advisor: counting, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), budgetUsd: 0.05 });
@@ -132,15 +132,17 @@ describe("a page of a topic search through the page review: ONE call covers ever
       expect(outcome.attempts.every((attempt) => attempt.failure === "timeout")).toBe(true);
     });
 
-    it("a timeout on the first try and a good answer on the second: the page is judged normally and an on-topic page is delivered", async () => {
-      let calls = 0;
-      const flaky: RowAdvisorFn = async (input) => { calls += 1; return calls === 1 ? timedOut(input) : advisorByText()(input); };
+    it("a timeout on the first try and good answers on the retry: the page is judged normally and an on-topic page is delivered; the retry asks for the rows again in smaller calls with more room", async () => {
+      const seen: Array<{ rows: number; maxTokens: number | undefined }> = [];
+      const flaky: RowAdvisorFn = async (input) => { seen.push({ rows: input.rows.length, maxTokens: input.maxTokens }); return seen.length === 1 ? timedOut(input) : advisorByText()(input); };
       const texts = pageOf(20);
       const outcome = await reviewSocialPage({ advisor: flaky, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(texts), budgetUsd: 0.05 });
-      expect(calls).toBe(2);
+      // the first call (20 rows, the default room) timed out; the retry covers the same 20 rows in two calls of 10 with 6,000 tokens of room
+      expect(seen).toEqual([{ rows: 20, maxTokens: undefined }, { rows: 10, maxTokens: 6000 }, { rows: 10, maxTokens: 6000 }]);
       expect(outcome.firstCall).toMatchObject({ reviewed: 20, off: 0, pageRejected: false });
       expect(outcome.unreviewed).toEqual([]);
-      expect(outcome.attempts.map((attempt) => attempt.failure)).toEqual(["timeout", null]);
+      expect(outcome.attempts.map((attempt) => attempt.failure)).toEqual(["timeout", null, null]);
+      expect(outcome.attempts.map((attempt) => attempt.retry)).toEqual([false, true, true]);
     });
 
     it("a missing key or a disabled reviewer is not tried again, and still fails closed", async () => {

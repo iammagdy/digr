@@ -3,6 +3,8 @@
  * customer's activity list can leave it out; this module has no server dependency, so the page can use it.
  */
 export const REVIEW_COST_EVENT_TYPE = "review_cost";
+/** The owner's internal row about a review call that failed or left rows without a verdict (code, stop reason, tokens, reply length, rows missing). */
+export const REVIEW_FAILURE_EVENT_TYPE = "review_failure";
 
 /** False for the owner's internal rows: the customer's activity list never shows them. */
-export const isCustomerVisibleJobEvent = (eventType: unknown): boolean => eventType !== REVIEW_COST_EVENT_TYPE;
+export const isCustomerVisibleJobEvent = (eventType: unknown): boolean => eventType !== REVIEW_COST_EVENT_TYPE && eventType !== REVIEW_FAILURE_EVENT_TYPE;

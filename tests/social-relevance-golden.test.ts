@@ -172,10 +172,10 @@ describe("the review's own cost is capped per job", () => {
     } satisfies AdvisoryResult;
   };
 
-  it("the cap is 20% of the job's revenue (its expected charge in points at 0.10 EGP a point and 55 EGP a dollar), and never less than one full call (0.0047 USD)", () => {
+  it("the cap is 20% of the job's revenue (its expected charge in points at 0.10 EGP a point and 55 EGP a dollar), and never less than one full call (0.0083 USD)", () => {
     // X: unit 0.11715 points. 300 posts = 36 points = 3.6 EGP = 0.065454 USD; 20% = 0.013090 USD
-    // 30 posts: 20% would be 0.001454 USD, below one full call: the floor of 0.0047 applies
-    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.0047);
+    // 30 posts: 20% would be 0.001454 USD, below one full call: the floor of 0.0083 applies
+    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.0083);
     expect(socialReviewCapUsd(300, 0.11715)).toBe(0.01309);
     expect(socialReviewCapUsd(500, 0.11715)).toBe(0.021454);
     expect(socialReviewCapUsd(4000, 0.11715)).toBe(0.170545);
@@ -183,14 +183,15 @@ describe("the review's own cost is capped per job", () => {
     expect(socialReviewCapUsd(300, 0.275)).toBe(0.030181);
     expect(socialReviewCapUsd(1000, 0.275)).toBe(0.1);
     expect(socialReviewCapUsd(20, 3.4485)).toBe(0.02509);
-    // 30 comments: 20% would be 0.003272 USD, below one full call: the floor applies; 5 companies: 0.005818 USD, above it
-    expect(socialReviewCapUsd(30, 0.275)).toBe(0.0047);
-    expect(socialReviewCapUsd(5, 3.168)).toBe(0.005818);
+    // 30 comments: 20% would be 0.003272 USD, below one full call: the floor applies; 5 companies: 0.005818 USD, below it too (it was above the old floor of 0.0047)
+    expect(socialReviewCapUsd(30, 0.275)).toBe(0.0083);
+    expect(socialReviewCapUsd(5, 3.168)).toBe(0.0083);
+    expect(socialReviewCapUsd(20, 3.168)).toBeGreaterThan(0.0083);
     // never above the share unless the share is below the floor, whatever the rounding
     for (const [records, unit] of [[30, 0.11715], [777, 0.275], [123, 1.034], [5, 3.168], [4453, 0.11715]] as Array<[number, number]>) {
       const revenueUsd = (Math.ceil(records * unit) * 0.1) / 55;
-      expect(socialReviewCapUsd(records, unit)).toBeLessThanOrEqual(Math.max(0.0047, revenueUsd * 0.2) + 1e-12);
-      expect(socialReviewCapUsd(records, unit)).toBeGreaterThanOrEqual(0.0047);
+      expect(socialReviewCapUsd(records, unit)).toBeLessThanOrEqual(Math.max(0.0083, revenueUsd * 0.2) + 1e-12);
+      expect(socialReviewCapUsd(records, unit)).toBeGreaterThanOrEqual(0.0083);
     }
     // a job with no valid price has no review budget at all, not even the floor (fail closed)
     expect(socialReviewCapUsd(10, 0)).toBe(0);
@@ -218,8 +219,8 @@ describe("the review's own cost is capped per job", () => {
   it("the floor lets even a 30-record job confirm one full batch of doubtful rows, and not a second", async () => {
     const seen: number[][] = [];
     const rows = Array.from({ length: 50 }, (_, i) => row(i));
-    const budget = socialReviewCapUsd(30, 0.11715); // 0.0047
-    const outcome = await reviewSocialRows({ advisor: costly(0.0047, seen), customerRequest: "x", kind: "social-x-posts", rows, budgetUsd: budget, callCostEstimateUsd: 0.0047 });
+    const budget = socialReviewCapUsd(30, 0.11715); // 0.0083
+    const outcome = await reviewSocialRows({ advisor: costly(0.0083, seen), customerRequest: "x", kind: "social-x-posts", rows, budgetUsd: budget, callCostEstimateUsd: 0.0083 });
     expect(seen.map((batch) => batch.length)).toEqual([SOCIAL_REVIEW_ROWS_PER_CALL]);
     expect(outcome.verdicts.size).toBe(25);
     expect(outcome.unreviewed).toHaveLength(25);
@@ -264,11 +265,11 @@ describe("the review's own cost is capped per job", () => {
     expect(outcome.unreviewed).toEqual([0, 1]);
   });
 
-  it("a reviewer that answers nothing readable is asked once per page, never delivers by default and never throws", async () => {
-    let calls = 0;
-    const failing: RowAdvisorFn = async () => { calls += 1; return { verdicts: new Map(), usage: { inputTokens: 100, outputTokens: 0, costUsd: 0.001, model: "m", latencyMs: 5 }, failure: "bad_reply" }; };
+  it("a reviewer that answers nothing readable is asked once, then once more for the rows left (a smaller call with more room), never a third time, never delivers by default and never throws", async () => {
+    const seen: Array<{ rows: number; maxTokens: number | undefined }> = [];
+    const failing: RowAdvisorFn = async (input) => { seen.push({ rows: input.rows.length, maxTokens: input.maxTokens }); return { verdicts: new Map(), usage: { inputTokens: 100, outputTokens: 0, costUsd: 0.001, model: "m", latencyMs: 5 }, failure: "bad_reply" }; };
     const outcome = await reviewSocialRows({ advisor: failing, customerRequest: "x", kind: "social-x-posts", rows: Array.from({ length: 60 }, (_, i) => row(i)), budgetUsd: 0.05 });
-    expect(calls).toBe(1);
+    expect(seen).toEqual([{ rows: 25, maxTokens: undefined }, { rows: 10, maxTokens: 6000 }]);
     expect(outcome.unreviewed).toHaveLength(60);
     expect(outcome.stoppedBy).toBe("failed");
     const throwing: RowAdvisorFn = async () => { throw new Error("down"); };

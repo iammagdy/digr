@@ -2,7 +2,7 @@ import { pointsAr } from "@/lib/pointsFormat";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
-import { REVIEW_COST_EVENT_TYPE, reviewSpendEventMessage } from "../../../../lib/server/reviewSpendLog";
+import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, reviewFailureEventMessage, reviewSpendEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
@@ -562,6 +562,19 @@ export async function POST(req: NextRequest) {
     const earlySocialCap = getSocialCapability(spec.capabilitySlug);
     const selectsVideosFirst = Boolean(earlySocialCap) && earlySocialCap?.kind === "comments" && ["tiktok", "youtube"].includes(String(earlySocialCap?.platform))
       && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
+    // The owner's internal rows about review calls that failed, were cut at the output limit or left rows without a verdict (never customer text).
+    const logReviewFailures = async (attempts: ReviewCallFacts[]) => {
+      let call = 0;
+      for (const attempt of attempts) {
+        call += 1;
+        if (!isReviewCallFailure(attempt)) continue;
+        try {
+          await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: reviewFailureEventMessage(currentStep, call, attempt), units: effectiveDelivered, event_type: REVIEW_FAILURE_EVENT_TYPE });
+        } catch (evtErr: any) {
+          console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+        }
+      }
+    };
     let videoSelectionUsd = 0;
     let videoSelectionCalls = 0;
     let videoSelectionUnreviewed = false;
@@ -594,6 +607,7 @@ export async function POST(req: NextRequest) {
           });
           videoSelectionUsd += outcome.costUsd;
           videoSelectionCalls += outcome.attempts.length;
+          await logReviewFailures(outcome.attempts);
           videoSelectionUnreviewed = [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
           if (userId) {
             for (const attempt of outcome.attempts) {
@@ -965,7 +979,7 @@ export async function POST(req: NextRequest) {
             await adminClient.from("job_events").insert({
               job_id: jobId,
               user_id: userId,
-              message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(unreviewed)} سجل الآن؛ وُضعت في شيت المراجعة ولم تُحتسب.`,
+              message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(unreviewed)} سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.`,
               units: effectiveDelivered,
               event_type: "info",
             });
@@ -1019,6 +1033,7 @@ export async function POST(req: NextRequest) {
           });
           reviewUsdThisChunk += outcome.costUsd;
           reviewCallsThisChunk += outcome.attempts.length;
+          await logReviewFailures(outcome.attempts);
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
           reviewDiagnostics = outcome.attempts.map((attempt) => ({
             rows: attempt.rows, failure: attempt.failure, stopReason: attempt.stopReason, detail: attempt.detail,
@@ -1076,7 +1091,7 @@ export async function POST(req: NextRequest) {
                 user_id: userId,
                 message: heldByBudget > 0
                   ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} تعليق في ورقة «غير مراجَع» ولم يُحتسب.`
-                  : `وُضع ${toArabicDigits(heldRows)} تعليق في شيت المراجعة ولم يُحتسب لعدم التأكد من موضوع فيديوهاتها.`,
+                  : `وُضع ${toArabicDigits(heldRows)} تعليق في ورقة المراجعة ولم يُحتسب لعدم التأكد من موضوع فيديوهاتها.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });
@@ -1102,6 +1117,7 @@ export async function POST(req: NextRequest) {
           });
           reviewUsdThisChunk += outcome.costUsd;
           reviewCallsThisChunk += outcome.attempts.length;
+          await logReviewFailures(outcome.attempts);
           reviewFailureCodes = outcome.attempts.map((attempt) => attempt.failure).filter((code): code is NonNullable<typeof code> => Boolean(code));
           // What each review call really did, kept in the step file so a failure proves its own cause (never row content).
           reviewDiagnostics = outcome.attempts.map((attempt) => ({
@@ -1167,7 +1183,7 @@ export async function POST(req: NextRequest) {
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: userId,
-                message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(heldByFailure)} سجل الآن؛ وُضعت في شيت المراجعة ولم تُحتسب.`,
+                message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(heldByFailure)} سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });

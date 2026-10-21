@@ -618,19 +618,20 @@ describe("worker: social jobs", () => {
       expect(db.rpcCalls.some((call) => call.name === "release_job_atomic")).toBe(true);
     });
 
-    it("a timeout on the first try and a good answer on the retry: the page is delivered and charged per delivered row", async () => {
+    it("a timeout on the first try and good answers on the retry: the page is delivered and charged per delivered row, and the retry is not the same request", async () => {
       resetDb("social-x-posts", { query: TOPIC }, 10, 5);
       useSource(async () => ok({ ok: true, rows: ordinary(10) }, 600));
-      let calls = 0;
+      const seen: Array<{ rows: number; maxTokens: number | undefined }> = [];
       strict(async (input) => {
-        calls += 1;
-        if (calls === 1) return { verdicts: new Map(), usage: null, failure: "timeout" };
+        seen.push({ rows: input.rows.length, maxTokens: input.maxTokens });
+        if (seen.length === 1) return { verdicts: new Map(), usage: null, failure: "timeout" };
         return { verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: usage(0.004), failure: null };
       });
 
       const { json } = await runAllChunks();
 
-      expect(calls).toBe(2);
+      // the first call (10 rows) timed out; the retry covers the same rows in two calls of 5 with more room
+      expect(seen).toEqual([{ rows: 10, maxTokens: undefined }, { rows: 5, maxTokens: 6000 }, { rows: 5, maxTokens: 6000 }]);
       expect(json.done).toBe(true);
       expect(json.deliveredUnits).toBe(10);
       expect(json.settle.charged_credits).toBe(10 * 5);
@@ -682,14 +683,99 @@ describe("worker: social jobs", () => {
       let page = 0;
       useSource(async () => { page += 1; return ok({ ok: true, rows: page === 1 ? [...ordinary(2), ...reactions(2)] : [], next_cursor: page === 1 ? "next" : undefined }, 600); });
       // a reply cut in the middle: the verdicts it did carry (the ordinary rows) are kept, the rest has none; with no verdict at all the page would be held back and the job released
-      strict(async (input) => ({ verdicts: new Map(input.rows.filter(({ row }) => String(row.tweet_id).startsWith("p")).map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: { inputTokens: 900, outputTokens: 1200, costUsd: 0.003, model: "claude-haiku-5-5", latencyMs: 40 }, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100" }));
+      const seen: Array<{ rows: number; maxTokens: number | undefined }> = [];
+      strict(async (input) => {
+        seen.push({ rows: input.rows.length, maxTokens: input.maxTokens });
+        return { verdicts: new Map(input.rows.filter(({ row }) => String(row.tweet_id).startsWith("p")).map(({ index }) => [index, { verdict: "match" as const, reasonAr: "يتناول المباراة" }])), usage: { inputTokens: 900, outputTokens: 1200, costUsd: 0.003, model: "claude-haiku-5-5", latencyMs: 40 }, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100" };
+      });
 
       await callWorker();
 
       const stepFile = JSON.parse(db.partials.get(`${JOB}/step_0.json`)!.toString("utf-8"));
-      expect(stepFile.reviewFailures).toEqual(["bad_reply"]);
-      expect(stepFile.reviewCalls).toEqual([{ rows: 4, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 }]);
-      expect(stepFile.reviewUsd).toBe(0.003);
+      // the cut reply kept the two verdicts it carried; only the two rows without one are asked again (a smaller call, more room), and that retry fails the same way
+      expect(seen).toEqual([{ rows: 4, maxTokens: undefined }, { rows: 2, maxTokens: 6000 }]);
+      expect(stepFile.reviewFailures).toEqual(["bad_reply", "bad_reply"]);
+      expect(stepFile.reviewCalls).toEqual([
+        { rows: 4, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 },
+        { rows: 2, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=3100", tokensIn: 900, tokensOut: 1200, latencyMs: 40 },
+      ]);
+      expect(stepFile.reviewUsd).toBe(0.006);
+    });
+
+    describe("a review reply that is cut off (the 21 Oct 2026 failure): the complete verdicts are kept, only the missing rows are asked again, and the failure is recorded for the owner", () => {
+      const internalFailures = () => db.events.filter((event) => event.event_type === "review_failure").map((event) => String(event.message));
+      const customerLines = () => db.events.filter((event) => event.event_type !== "review_failure" && event.event_type !== "review_cost").map((event) => String(event.message));
+      const cutUsage = { inputTokens: 3325, outputTokens: 4000, costUsd: 0.0107, model: "claude-haiku-5-5", latencyMs: 9000 };
+      type Seen = { indexes: number[]; maxTokens: number | undefined };
+      /** The first call answers its first `answered` rows (a reply cut at the limit); a retry answers its first `answeredOnRetry` rows. */
+      const cutReviewer = (answered: number, answeredOnRetry: number, seen: Seen[]): RowAdvisorFn => async (input) => {
+        seen.push({ indexes: input.rows.map(({ index }) => index), maxTokens: input.maxTokens });
+        const first = seen.length === 1;
+        const rows = input.rows.slice(0, first ? answered : answeredOnRetry);
+        return {
+          verdicts: new Map(rows.map(({ index }) => [index, { verdict: "match" as const, reasonAr: "مطابق لموضوع الطلب" }])),
+          usage: cutUsage, failure: null, stopReason: first || rows.length < input.rows.length ? "max_tokens" : "end_turn", replyChars: first ? 2840 : 500,
+        };
+      };
+
+      it("12 of 20 verdicts in the first reply: the 8 missing rows are asked again (one call, more room), all 20 are delivered and charged, and the owner's row says what was cut", async () => {
+        resetDb("social-x-posts", { query: TOPIC }, 20, 5);
+        useSource(async () => ok({ ok: true, rows: ordinary(20) }, 600));
+        const seen: Seen[] = [];
+        strict(cutReviewer(12, 99, seen));
+
+        const { json } = await runAllChunks();
+
+        expect(seen).toEqual([{ indexes: Array.from({ length: 20 }, (_, i) => i), maxTokens: undefined }, { indexes: [12, 13, 14, 15, 16, 17, 18, 19], maxTokens: 6000 }]);
+        expect(json.done).toBe(true);
+        expect(json.deliveredUnits).toBe(20);
+        expect(json.settle.charged_credits).toBe(20 * 5);
+        expect(internalFailures()).toEqual(["review_failure step=0 call=1 retry=0 rows=20 code=none stop=max_tokens in=3325 out=4000 max_tokens=4000 reply_chars=2840 missing=8"]);
+        expect(db.events.filter((event) => event.event_type === "review_cost").map((event) => String(event.message))[0]).toContain("calls=2");
+        expect(customerLines().some((line) => line.includes("review_failure") || line.includes("max_tokens"))).toBe(false);
+      });
+
+      it("the retry leaves 3 rows without a verdict: 17 are delivered and charged, the 3 are held (not delivered, not charged) in the «ورقة المراجعة», in Arabic, and no delivered row lacks a verdict", async () => {
+        resetDb("social-x-posts", { query: TOPIC }, 20, 5);
+        useSource(async () => ok({ ok: true, rows: ordinary(20) }, 600));
+        const seen: Seen[] = [];
+        strict(cutReviewer(12, 5, seen));
+
+        const { json } = await runAllChunks();
+
+        expect(seen.map((call) => call.indexes.length)).toEqual([20, 8]);
+        expect(json.done).toBe(true);
+        // 12 + 5 verdicts = 17 delivered; the 3 rows with none are not part of the delivered count or the charge
+        expect(json.deliveredUnits).toBe(17);
+        expect(json.settle.charged_credits).toBe(17 * 5);
+        expect(customerLines()).toContain("تعذّر التحقق الآلي من ملاءمة ٣ سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.");
+        for (const line of customerLines()) expect(line).not.toContain("شيت");
+        expect(internalFailures()).toEqual([
+          "review_failure step=0 call=1 retry=0 rows=20 code=none stop=max_tokens in=3325 out=4000 max_tokens=4000 reply_chars=2840 missing=8",
+          "review_failure step=0 call=2 retry=1 rows=8 code=none stop=max_tokens in=3325 out=4000 max_tokens=6000 reply_chars=500 missing=3",
+        ]);
+      });
+
+      it("the reviewer answers nothing readable twice (the failure of 21 Oct): the job is released, nothing is delivered or charged, both calls are recorded, and the customer line says «ورقة المراجعة»", async () => {
+        resetDb("social-x-posts", { query: TOPIC }, 20, 5);
+        useSource(async () => ok({ ok: true, rows: ordinary(20) }, 600));
+        const seen: Seen[] = [];
+        strict(async (input) => {
+          seen.push({ indexes: input.rows.map(({ index }) => index), maxTokens: input.maxTokens });
+          return { verdicts: new Map(), usage: cutUsage, failure: "bad_reply", stopReason: "max_tokens", detail: "reply_chars=9120", replyChars: 9120 };
+        });
+
+        const { json } = await runAllChunks();
+
+        expect(seen.map((call) => [call.indexes.length, call.maxTokens])).toEqual([[20, undefined], [10, 6000]]);
+        expect(json.released).toBe(true);
+        expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+        expect(customerLines()).toContain("تعذّر التحقق الآلي من ملاءمة ٢٠ سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.");
+        expect(internalFailures()).toEqual([
+          "review_failure step=0 call=1 retry=0 rows=20 code=bad_reply stop=max_tokens in=3325 out=4000 max_tokens=4000 reply_chars=9120 missing=20",
+          "review_failure step=0 call=2 retry=1 rows=10 code=bad_reply stop=max_tokens in=3325 out=4000 max_tokens=6000 reply_chars=9120 missing=10",
+        ]);
+      });
     });
 
     describe("the review cost cut: one call per page, early rejection of a long page, the low-yield stop, the «غير مراجَع» sheet and the review spend row", () => {

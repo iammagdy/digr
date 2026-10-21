@@ -1,10 +1,10 @@
 /**
  * What the review budget (20% of a job's expected charge) does to delivery. Fake data only: no provider, no model, no database, no network.
- * It runs the REAL functions (socialReviewCapUsd, reviewSocialPage) with a fake reviewer whose call costs the measured 0.0047 USD per 25 rows
- * (relevance_review, 9 calls in llm_usage) and replays the worker's own delivery rule page by page:
+ * It runs the REAL functions (socialReviewCapUsd, reviewSocialPage) with a fake reviewer whose call costs the measured 0.0083 USD per 25 rows
+ * (relevance_review: a verdict-only call of 20 rows cost 0.00666 USD on 21 Oct 2026) and replays the worker's own delivery rule page by page:
  *  - every row of a page is reviewed, in ONE call (a longer page in calls of 25 rows), and delivered only if the review confirms it (here the fake reviewer says match);
  *  - a row the budget did not reach is NOT delivered: it goes to the «غير مراجَع» sheet, and paging stops.
- * The budget is the real rule: 20% of the job's expected charge, never less than one full call (0.0047 USD).
+ * The budget is the real rule: 20% of the job's expected charge, never less than one full call (0.0083 USD).
  * Run: npx tsx scripts/review-budget-effect.ts
  */
 import { chargeForUnits } from "../src/lib/recordPricing";
@@ -12,7 +12,7 @@ import { REVIEW_CALL_COST_ESTIMATE_USD, SOCIAL_REVIEW_ROWS_PER_CALL, socialRevie
 import { reviewSocialPage } from "../src/lib/server/sampledReview";
 
 const PAGE_ROWS = 50; // socialRowsPerChunk
-const COST_PER_ROW = 0.0047 / SOCIAL_REVIEW_ROWS_PER_CALL;
+const COST_PER_ROW = REVIEW_CALL_COST_ESTIMATE_USD / SOCIAL_REVIEW_ROWS_PER_CALL;
 
 const fakeAdvisor = (): RowAdvisorFn => async (input) => ({
   verdicts: new Map(input.rows.map((row) => [row.index, { verdict: "match" as const, reasonAr: "x" }])),
