@@ -5,7 +5,7 @@ import {
   isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, isCustomerVisibleJobEvent, reviewFailureEventMessage,
 } from "../src/lib/server/reviewSpendLog";
 import {
-  applyStrictAdvisory, callClaudeRowAdvisor, parseAdvisoryReply, REVIEW_BUDGET_SHARE, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_MIN_BUDGET_USD, RETRY_BATCH_ROWS,
+  applyStrictAdvisory, callClaudeRowAdvisor, parseAdvisoryReply, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_JOB_CEILING_USD, REVIEW_MIN_BUDGET_USD, RETRY_BATCH_ROWS,
   RETRY_MAX_TOKENS, reviewSocialRows, socialReviewCapUsd, SOCIAL_REVIEW_ROWS_PER_CALL, UNREVIEWED_REASON_AR, VERDICT_ONLY_MAX_TOKENS,
   type AdvisoryResult, type AdvisoryVerdict, type RowAdvisorFn,
 } from "../src/lib/server/rowReviewAdvisor";
@@ -235,15 +235,15 @@ describe("a retry asks only for the rows still without a verdict, in smaller cal
 });
 
 describe("the review budget guard matches the measured cost of a call", () => {
-  it("a 25-row call is estimated at 0.0083 USD (a live 20-row call cost 0.00666 USD), and the one-call floor follows; the 20% share is untouched", () => {
+  it("a 25-row call is estimated at 0.0083 USD (a live 20-row call cost 0.00666 USD), and the one-call floor follows", () => {
     expect(REVIEW_CALL_COST_ESTIMATE_USD).toBe(0.0083);
     expect(REVIEW_MIN_BUDGET_USD).toBe(0.0083);
-    expect(REVIEW_BUDGET_SHARE).toBe(0.2);
+    expect(REVIEW_JOB_CEILING_USD).toBe(0.15);
     expect(Math.abs((REVIEW_CALL_COST_ESTIMATE_USD * 20) / SOCIAL_REVIEW_ROWS_PER_CALL - 0.00666)).toBeLessThan(0.00005);
-    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.0083);
-    // above the floor the budget is exactly what it was: 20% of the revenue
-    expect(socialReviewCapUsd(300, 0.11715)).toBe(0.01309);
-    expect(socialReviewCapUsd(1000, 0.11715)).toBe(0.042909);
+    // the budget reviews every row the job can collect, up to the ceiling (the 20% share of the revenue is gone)
+    expect(socialReviewCapUsd(30, 0.11715)).toBe(0.03984);
+    expect(socialReviewCapUsd(300, 0.11715)).toBe(0.15);
+    expect(socialReviewCapUsd(1000, 0.11715)).toBe(0.15);
   });
 });
 

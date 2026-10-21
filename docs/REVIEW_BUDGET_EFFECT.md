@@ -1,6 +1,6 @@
 # Review budget effect on delivery (fake data, no live calls)
 
-Rule in force (owner-approved): review spend per job is capped at 20% of the job's expected charge, and never less than one full 25-row call (0.0083 USD, the measured cost: it was 0.0047 until the truncation fix); charge stays ceil(delivered x unit price).
+**SUPERSEDED by docs/REVIEW_BUDGET_UP.md (22 Oct 2026): the budget is now every collectable row up to a 0.15 USD ceiling; the output below is that of the old 20% rule.** Rule that was in force: review spend per job is capped at 20% of the job's expected charge, and never less than one full 25-row call (0.0083 USD, the measured cost: it was 0.0047 until the truncation fix); charge stays ceil(delivered x unit price).
 Produced by `npx tsx scripts/review-budget-effect.ts` (real `socialReviewCapUsd` and `reviewSocialPage`, a fake reviewer at the measured 0.0083 USD per 25 rows).
 
 **Updated for the review cost cut (branch claude/review-cost-cut):** every row of a page is now reviewed (one call per page), so no row is delivered without a verdict. A row the budget did not reach is NOT delivered and NOT charged: it goes to the «غير مراجَع» sheet and paging stops. The earlier version of this document (a sample per page, presumed rows delivered unreviewed once the budget was used up) is superseded; see docs/REVIEW_COST_CUT.md.

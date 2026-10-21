@@ -2,8 +2,8 @@ import { z } from "zod";
 import { getLlmPricingSettings } from "../../functions/shared/llmClient";
 import { resolveProviderKey } from "./providerKeys";
 import type { RelevanceDecision } from "./relevanceValidationLayer";
-import { DEFAULT_PRICING_SETTINGS, type PricingSettings } from "../../functions/shared/quotes";
-import { chargeForUnits } from "../recordPricing";
+import { maxPagesForJob } from "./providerCallCaps";
+import { normalizeText, stemToken, topicStems } from "./topicMatch";
 
 /**
  * Claude's advisory review of the rows a source returned, read against the customer's own request.
@@ -102,6 +102,11 @@ export const isVerdictOnlyKind = (kind: string): boolean => /^social-|post|comme
  */
 export const ADVISORY_TIMEOUT_MS = 20_000;
 const SNIPPET_CHARS = 220;
+/** The text of a post, comment or video sent to the model is cut to this many characters (companies and people keep SNIPPET_CHARS). */
+export const REVIEW_SNIPPET_CHARS = 160;
+/** What is kept of a long text whose words of the request all lie beyond the cut: the start, then a window around the first of those words. */
+const FOCUS_HEAD_CHARS = 90;
+const FOCUS_WINDOW_CHARS = 66;
 
 const ReviewItemSchema = z.object({
   index: z.number().int().min(0),
@@ -122,12 +127,51 @@ const FIELD_ORDER = [
   "description", "text", "comment_text", "video_caption", "video_title", "caption", "website", "hashtags", "channel_name", "comments_sample",
 ];
 
+/**
+ * The words of the customer's request that a text must be judged on: the topic's stems and the country named in «الدولة المطلوبة: X», as stems.
+ * A text cut short must never lose them all, because the verdict rests on them.
+ */
+export function focusStemsOf(customerRequest: string): Set<string> {
+  const stems = new Set(topicStems(String(customerRequest || "")));
+  const country = /الدولة المطلوبة\s*:\s*([^\s]+)/.exec(String(customerRequest || ""))?.[1];
+  if (country) for (const token of normalizeText(country).split(" ").filter(Boolean)) stems.add(stemToken(token));
+  return stems;
+}
+
+/** The words of a text with their positions, so a window can be taken around one of them. */
+function wordsWithOffsets(text: string): Array<{ stem: string; at: number; end: number }> {
+  const words: Array<{ stem: string; at: number; end: number }> = [];
+  for (const match of text.matchAll(/\S+/gu)) {
+    const at = match.index ?? 0;
+    for (const token of normalizeText(match[0]).split(" ").filter(Boolean)) words.push({ stem: stemToken(token), at, end: at + match[0].length });
+  }
+  return words;
+}
+
+/**
+ * A text cut to `limit` characters for the model. When the first `limit` characters hold no word of the request and a later part does, the cut
+ * keeps the start and a window around the first such word instead, so the model is never asked about a text without the words it is asked about.
+ */
+export function trimTextForReview(value: string, focus: Set<string> | null = null, limit = SNIPPET_CHARS): string {
+  const text = value.trim().replace(/\s+/g, " ");
+  if (text.length <= limit) return text;
+  const head = text.slice(0, limit);
+  if (!focus || focus.size === 0) return head;
+  const words = wordsWithOffsets(text);
+  // a word the cut would split in two does not count as kept
+  if (words.some((word) => word.end <= limit && focus.has(word.stem))) return head;
+  const later = words.find((word) => word.end > limit && focus.has(word.stem));
+  if (!later) return head;
+  const start = Math.max(FOCUS_HEAD_CHARS, later.at - 20);
+  return `${text.slice(0, FOCUS_HEAD_CHARS)} … ${text.slice(start, start + FOCUS_WINDOW_CHARS)}`;
+}
+
 /** A short, secret-free summary of one row: the fields a reviewer needs, each cut short. */
-export function summarizeRowForReview(row: Record<string, any>): Record<string, string> {
+export function summarizeRowForReview(row: Record<string, any>, options: { limit?: number; focus?: Set<string> | null } = {}): Record<string, string> {
   const out: Record<string, string> = {};
   for (const key of FIELD_ORDER) {
     const value = row?.[key];
-    if (typeof value === "string" && value.trim()) out[key] = value.trim().replace(/\s+/g, " ").slice(0, SNIPPET_CHARS);
+    if (typeof value === "string" && value.trim()) out[key] = trimTextForReview(value, options.focus ?? null, options.limit ?? SNIPPET_CHARS);
   }
   return out;
 }
@@ -180,7 +224,9 @@ export function parseAdvisoryReply(text: string, options: { verdictOnly?: boolea
 }
 
 function buildPrompt(input: RowAdvisoryInput): string {
-  const rows = input.rows.slice(0, ADVISORY_MAX_ROWS).map(({ index, row }) => ({ index, ...summarizeRowForReview(row) }));
+  // Posts, comments and videos are cut to REVIEW_SNIPPET_CHARS (keeping a window on the request's own words when they come late); companies and people are not.
+  const cut = isVerdictOnlyKind(input.kind) ? { limit: REVIEW_SNIPPET_CHARS, focus: focusStemsOf(input.customerRequest) } : {};
+  const rows = input.rows.slice(0, ADVISORY_MAX_ROWS).map(({ index, row }) => ({ index, ...summarizeRowForReview(row, cut) }));
   return [
     "You review rows returned by a data source against what the customer actually asked for.",
     `Customer request (Arabic): "${stripControl(input.customerRequest).slice(0, 400)}"`,
@@ -304,9 +350,6 @@ export function applyAdvisoryToReviews<T extends RowReviewReason>(reviews: T[], 
 /** Rows sent to the reviewer in one call: small enough that its reply always fits the reply limit. */
 export const SOCIAL_REVIEW_ROWS_PER_CALL = 25;
 
-/** The share of a job's revenue the automatic review of its rows may spend (owner decision, "Option 3"). */
-export const REVIEW_BUDGET_SHARE = 0.2;
-
 /**
  * What one review call of a full batch (SOCIAL_REVIEW_ROWS_PER_CALL rows) costs at most, in USD. Measured on production on 21 Oct 2026:
  * a verdict-only call of 20 rows took 3,325 tokens in and 1,000 out and cost 0.00666 USD, which is 0.0083 USD for 25 rows (the earlier
@@ -319,18 +362,31 @@ export const REVIEW_CALL_COST_ESTIMATE_USD = 0.0083;
 export const REVIEW_MIN_BUDGET_USD = REVIEW_CALL_COST_ESTIMATE_USD;
 
 /**
- * What the automatic review of one job may spend, in USD: 20% of the job's revenue, and never less than one full review call (REVIEW_MIN_BUDGET_USD). The revenue is the job's expected charge, ceil(target
- * records x unit price), in points, computed here by code (never by the model), at 0.10 EGP a point and 55 EGP a dollar. Rounded DOWN
- * to a millionth of a dollar so the budget never exceeds the share. A row the review cannot cover inside the budget is not delivered
- * and not charged (fail closed); it is the reviewer's cost only and never changes what the customer pays, which stays
- * ceil(delivered x unit price).
+ * The most the automatic review of ONE job may spend, in USD: the hard ceiling. Owner decision of 22 Oct 2026: review cost above a job's revenue
+ * is accepted until the platform is established, so the budget no longer follows the revenue. It is changed HERE and nowhere else.
  */
-export function socialReviewCapUsd(targetMax: number, unitPricePoints: number, settings: Pick<PricingSettings, "usdToEgp" | "creditValueEgp"> = DEFAULT_PRICING_SETTINGS): number {
-  const revenuePoints = chargeForUnits(Math.max(1, Math.floor(Number(targetMax) || 1)), Number(unitPricePoints));
-  if (!(revenuePoints > 0) || !(settings.usdToEgp > 0)) return 0;
-  const revenueUsd = (revenuePoints * settings.creditValueEgp) / settings.usdToEgp;
-  const share = Math.floor(revenueUsd * REVIEW_BUDGET_SHARE * 1_000_000 + 1e-6) / 1_000_000;
-  return Math.max(REVIEW_MIN_BUDGET_USD, share);
+export const REVIEW_JOB_CEILING_USD = 0.15;
+
+/** Rows a page of posts or comments holds (X: 20); with the page cap it gives the number of rows a job can collect. */
+export const REVIEW_PAGE_ROWS = 20;
+
+/** The most rows a job of this size can collect: the pages its page cap allows, full. Every one of them can be reviewed within the budget below, up to the ceiling. */
+export function collectableRows(targetMax: number): number {
+  return maxPagesForJob(Math.max(1, Math.floor(Number(targetMax) || 1)), REVIEW_PAGE_ROWS, "feed") * REVIEW_PAGE_ROWS;
+}
+
+/**
+ * What the automatic review of one job may spend, in USD: enough to review every row the job can collect (REVIEW_CALL_COST_ESTIMATE_USD for
+ * each SOCIAL_REVIEW_ROWS_PER_CALL rows), never more than REVIEW_JOB_CEILING_USD and never less than one full review call (REVIEW_MIN_BUDGET_USD).
+ * Computed by code (never by the model), rounded DOWN to a millionth of a dollar. A job with no valid price has no review budget at all (fail
+ * closed). A row the review cannot cover inside the budget is not delivered and not charged (fail closed); it is the reviewer's cost only and
+ * never changes what the customer pays, which stays ceil(delivered x unit price).
+ */
+export function socialReviewCapUsd(targetMax: number, unitPricePoints: number): number {
+  if (!(Number(unitPricePoints) > 0)) return 0;
+  const everyRowUsd = (collectableRows(targetMax) * REVIEW_CALL_COST_ESTIMATE_USD) / SOCIAL_REVIEW_ROWS_PER_CALL;
+  const budget = Math.min(REVIEW_JOB_CEILING_USD, Math.max(REVIEW_MIN_BUDGET_USD, everyRowUsd));
+  return Math.floor(budget * 1_000_000 + 1e-6) / 1_000_000;
 }
 
 /** Once the job's review budget is used up, a job whose accepted share of the rows seen so far is below this stops (see `reviewStopForLowYield`). */
