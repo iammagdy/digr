@@ -4,6 +4,37 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 0. Conference-readiness session (2026-10-21): where things stand
+
+**Merged to main (merge commits; each PR body carries its evidence block):**
+
+| PR | Merge SHA | What |
+|---|---|---|
+| #173 | d35a3ad | capacity gate uses the provider's real balance (fresh reading, 5 min max age, fallback to the estimate) |
+| #174 | 49ee886 | admin provider tab shows the connected account e-mail (admin-only, memory-only) |
+| #175 | 8e5fb4d | YouTube/TikTok topic comments: 20-video discovery, videos judged before comments are read, deep reads that resume inside a video, unusable comments never fill the volume, Arabic first, date/video/language columns |
+| #176 | a301d7b | Part A: coverage matrix (15 families), structured understanding, curated newspapers + pick question + news/price output standards (switched off), unserved-requests log + `/admin/requests`, `docs/CAPABILITY_COVERAGE.md` |
+| #177 | c12de75 | Part B: three new showcase templates, honest plan tests, fake-provider worker tests |
+| #178 | 18f8c23 | Part D: busy mode (daily allowance or REAL balance used up), sign-up path (QR `/join`, invitation code, welcome balance, rate-limit and late-e-mail messages, resend limits) |
+
+**Production:** the latest READY deployment read from the API at the time of writing was `dpl_B9eDj4pee4pLsAawBUMfjuUkEvWa` (built SHA `c12de75`); #178's own deployment is read again in the final report.
+
+**Work in progress (do not merge as is):**
+- `claude/wip-load-and-limits`: adaptive job polling with jitter, public pages skip the sign-in call in the middleware, wallet history reads the newest 500 rows in one query, the per-user daily spend read no longer scans every customer's cost rows, the admin's per-user daily limit also shapes the plan. Missing: tests for these, the per-user concurrent-job limit, raising the shared-IP public limiters.
+- `claude/conference-dashboard`: finished by a helper agent (35 tests, build green) but not yet re-verified against current main and not yet a PR.
+
+**Exact next step:** verify and merge the conference dashboard; add the concurrent-job guard in `accept-quote` (before the reserve) and the limiter changes; finish and test the load branch (P2: fewer database calls and invocations); then the offline 500-visitor harness, the pressure-test scripts and runbook, `docs/CONFERENCE_READINESS.md`, the final batch test.
+
+**Risks to know:**
+- The sign-in service's own limits (e-mails per hour on the built-in sender, sign-ups per IP behind one venue network) are outside the code: see the owner list in `docs/CONFERENCE_READINESS.md` when it lands.
+- Public limiters are per server instance and per IP; at a venue every visitor shares one IP (the busy-status limiter and the calculator ones must be raised: in the load branch).
+- A job is capped at 600 points: 57 YouTube comments, 86 TikTok comments, 104 X posts, 3 decision makers with e-mail and phone per request. Templates that promise more are cut by the plan with a plain sentence.
+- Nothing reads news, prices, ads, maps, search results, jobs or forums: those requests are answered as «not available» and logged.
+
+**NOT VERIFIED (never exercised live):** the real balance read on the deployed plan path; whether the provider's identity answer contains an e-mail; the YouTube search recency parameters and the video-level review on real data; the new deep read on a live source; the busy banner and the invitation-code redeem with a real account and a real e-mail confirmation; the conference dashboard on production data; all of Part E's pressure test (to be run by the owner on a preview, never on production).
+
+---
+
 ## 1. System Architecture & Core Stack
 
 - **Framework**: Next.js 15.5 (App Router, React 19, Tailwind CSS v4) hosted on Vercel.
