@@ -11,6 +11,7 @@ import { recordWorkerStartFailure, startFailureEventAr, WORKER_START_RETRY_REASO
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { countActiveJobs, evaluateConcurrentJobs } from "../../../../lib/server/concurrentJobs";
 import { getBusyState } from "../../../../lib/server/busyState";
+import { fakeProviderActive } from "../../../../lib/server/fakeProviderMode";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
 
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest) {
     const adminClient = createAdminClient();
     const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);
     const isTestMockAllowed =
-      process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true";
+      (process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true") || fakeProviderActive();
 
     if (!gateStatus.isReady && !isTestMockAllowed) {
       console.warn("[accept-quote:gate_blocked]", { reasonCode: gateStatus.reasonCode });

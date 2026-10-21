@@ -19,8 +19,11 @@ import {
 import {
   defaultTregAdapter,
   getInjectedProviderAdapter,
+  setProviderAdapterForTesting,
   createBuiltInMockAdapter,
 } from "../../../../lib/server/tregAdapter";
+import { fakeProviderActive } from "../../../../lib/server/fakeProviderMode";
+import { createFakeProviderAdapter } from "../../../../lib/server/fakeSocialSource";
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
 import { resultFileManifest } from "../../../../lib/server/resultFileManifest";
@@ -257,6 +260,10 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}));
+  // The pressure test on a PREVIEW deployment (never the live site, never the live database: see fakeProviderMode.ts) serves jobs from
+  // a built-in fake source. Everything after the provider call, the ledger included, is the production code.
+  const fakeMode = fakeProviderActive();
+  if (fakeMode && !getInjectedProviderAdapter()) setProviderAdapterForTesting(createFakeProviderAdapter());
   const injectedAdapter = getInjectedProviderAdapter();
 
   // 2. Mock Provider Injection Guard: strictly blocked when NODE_ENV === 'production' OR ENABLE_MOCK_PROVIDER !== 'true'
@@ -269,6 +276,7 @@ export async function POST(req: NextRequest) {
 
   if (
     isMockRequested &&
+    !fakeMode &&
     (process.env.NODE_ENV === "production" || process.env.ENABLE_MOCK_PROVIDER !== "true")
   ) {
     return NextResponse.json(
@@ -348,8 +356,7 @@ export async function POST(req: NextRequest) {
 
     const useMockProvider = Boolean(
       isMockRequested &&
-        process.env.NODE_ENV !== "production" &&
-        process.env.ENABLE_MOCK_PROVIDER === "true"
+        (fakeMode || (process.env.NODE_ENV !== "production" && process.env.ENABLE_MOCK_PROVIDER === "true"))
     );
 
     const gateStatus = await getLiveProviderGateStatusFromSettings(adminClient);

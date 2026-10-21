@@ -34,11 +34,31 @@ Every push to a PR branch creates a preview deployment and every merge creates a
 | PR | Merge SHA | What | Production deployment |
 |---|---|---|---|
 | #183 | ce03b7e | harness (type error fixed), concurrent-approval tests, this evidence | `dpl_FwLsqE9GVtRkVu8BvAdxRz1tKm5B` READY, built ce03b7e |
-| #184 | 7cdd847 | Supabase free plan: no Realtime, fewer sign-in calls, static landing page, admin backup export, `docs/SUPABASE_FREE_PLAN.md` | **no automatic production deployment appeared** (see the process note); created by hand: `dpl_GjHSHmJrbARfEk44RAPzrA77AfVp` |
-| #185 | 615b002 | CPU model (`docs/CPU_MODEL.md`), degraded mode (`DEGRADED_MODE`), edge-cached status routes, balance focus throttle | preview `dpl_8bdgPttzy7wMDkWRgEbXSnasg3a2` READY (the push built no preview by itself; created through the API); production: see below |
-| (this PR) | | measured database/storage/CPU per action, model uses measured downloads | |
+| #184 | 7cdd847 | Supabase free plan: no Realtime, fewer sign-in calls, static landing page, admin backup export, `docs/SUPABASE_FREE_PLAN.md` | none appeared by itself; created by hand: `dpl_GjHSHmJrbARfEk44RAPzrA77AfVp` READY, built 7cdd847, aliased to diger.tech (this is what is LIVE) |
+| #185 | 615b002 | CPU model (`docs/CPU_MODEL.md`), degraded mode (`DEGRADED_MODE`), edge-cached status routes, balance focus throttle | **none**: the hosting plan's 100 deployments per day ran out (see below) |
+| #186 | 3c36c84 | measured database/storage/CPU per action; counts written in words or with a magnitude word; quantity words out of the topic | **none** (same) |
+| #187 | (this PR) | fake provider for a preview, staged pressure scripts and runbook, `docs/CONFERENCE_READINESS.md` | **none** (same) |
+
+**The hosting plan stopped all deployments on 2026-10-21 at about 09:25 UTC:** `api-deployments-free-per-day` (Hobby: 100 per rolling 24 hours). Previews of #185 (once, by hand, before the limit), #186 and #187 were not built, and no production deployment exists for 615b002, 3c36c84 or the merge of #187. **Production (diger.tech) runs `7cdd847`** (it has #184 but not the edge cache, the degraded switch, the count fixes or the CPU model). The first slots return from about 11:44 UTC on 2026-10-21 and then about one every few minutes. Next step for the next account: when `create_deployment` succeeds, create ONE production deployment from `main` and read it to READY with the built SHA; do not push anything else before that.
 
 **Process note:** a merge whose tree is identical to a branch head Vercel already built (the branch had merged `main` and `main` had not moved) got NO production deployment. After every merge read `list_deployments` (target production) and compare the built SHA with the merge SHA; if it is missing, create the deployment from `main` at that SHA.
+
+### Status of every item (checked by reading the code and running the tests; nothing here is verified on the live site)
+
+| Item | Status |
+|---|---|
+| P1 conference survival (sign-up path, rate-limit and late-e-mail screens, busy mode, per-user chat and job limits, conference dashboard) | DONE-MERGED (#178, #180, #181) |
+| P2 CPU and invocation reduction | DONE-MERGED (#181, #184, #185, #186); the three status routes and the deployed code of #185 and later are NOT yet live (deployment quota) |
+| P3 honest understanding for any request | DONE-MERGED (#176); fixed and tested further in #186 (counts in words, topic words). The capped discovery search for unnamed source sets is not built: no service in the live catalog can read news pages, so the pick question uses the curated list only |
+| P4 showcase missions | DONE-MERGED (#177): four templates plus three more, each with fake-provider worker tests |
+| P5 news and price sources | audited: the live catalog has no news, price or web-reading service, so the answer stays an honest «غير متاح» (in code and tested); nothing sold |
+| P6 STEP 0 YouTube topic comments | DONE-MERGED (#175), unverified on live data |
+| P7 offline 500-visitor harness | DONE-MERGED (#183, #186) |
+| Part E2 pressure scripts and runbook | this PR (#187): `scripts/pressure/`, `docs/PRESSURE_TEST_RUNBOOK.md`, a guarded fake provider for a preview; never run |
+| Part C long-job audit | DONE, in `docs/CONFERENCE_READINESS.md` section 5 (no money defect found) |
+| Part D dashboard, busy mode, sign-up path | DONE-MERGED (#178, #180) |
+| Part F `docs/CONFERENCE_READINESS.md` | this PR (#187) |
+| Free-plan work (Realtime, auth calls, egress, backups, limits) | DONE-MERGED (#184), measured per action in #186 |
 
 ### Findings of this session
 
