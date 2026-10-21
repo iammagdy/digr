@@ -1,3 +1,4 @@
+import { PUBLIC_LIMITS_PER_MINUTE } from "../src/lib/server/publicRateLimit";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -129,7 +130,7 @@ describe("the chat and the approval stop while busy", () => {
     const res = await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.9" } }));
     const body = await res.json();
     expect(body).toEqual({ busy: true, messageAr: busy.messageAr, queueAhead: 2, position: 3 });
-    for (let i = 0; i < 40; i++) await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.8" } }));
+    for (let i = 0; i < PUBLIC_LIMITS_PER_MINUTE.status; i++) await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.8" } }));
     const limited = await busyStatus(new NextRequest("http://x/api/busy-status", { headers: { "x-forwarded-for": "9.9.9.8" } }));
     expect(limited.status).toBe(429);
   });

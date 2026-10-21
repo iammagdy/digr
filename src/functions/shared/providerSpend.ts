@@ -279,9 +279,10 @@ export async function checkPlanProviderCapacity(
   const real = testBalanceOverrideUsd !== null ? null : await readRealProviderBalance(tables);
   const balanceUsd = real ? real.usd : status.availableBalanceUsd;
   const balanceSource: "real" | "estimate" = real ? "real" : "estimate";
+  const userCapUsd = options.userRemainingUsd != null && Number.isFinite(options.userRemainingUsd) ? Math.max(0, options.userRemainingUsd) : Number.POSITIVE_INFINITY;
   const effectiveAvailableUsd = testBalanceOverrideUsd !== null
-    ? testBalanceOverrideUsd
-    : Math.min(balanceUsd, remainingDailyUsd, options.userRemainingUsd != null && Number.isFinite(options.userRemainingUsd) ? Math.max(0, options.userRemainingUsd) : Number.POSITIVE_INFINITY);
+    ? Math.min(testBalanceOverrideUsd, userCapUsd)
+    : Math.min(balanceUsd, remainingDailyUsd, userCapUsd);
   // 10% safety margin on effective available balance
   const safeBudgetUsd = Math.max(0, effectiveAvailableUsd * 0.90);
 

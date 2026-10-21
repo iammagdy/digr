@@ -5,6 +5,11 @@
  * Pure: the caller supplies the clock and the random number.
  */
 
+/** A random source that returns something odd (negative, above one, not a number) is treated as the middle of the range. */
+function unit(random: number): number {
+  return Number.isFinite(random) ? Math.min(Math.max(random, 0), 0.999999) : 0.5;
+}
+
 export interface PollDelayInput {
   /** Milliseconds since this page started following the request. */
   elapsedMs: number;
@@ -26,13 +31,13 @@ export function basePollDelayMs(elapsedMs: number, hidden: boolean): number {
 /** The delay to the next question: the base delay plus or minus 20%. Never below one second. */
 export function nextPollDelayMs(input: PollDelayInput): number {
   const base = basePollDelayMs(Math.max(0, input.elapsedMs), input.hidden);
-  const spread = (Math.min(Math.max(input.random, 0), 0.999999) * 2 - 1) * 0.2;
+  const spread = (unit(input.random) * 2 - 1) * 0.2;
   return Math.max(1_000, Math.round(base * (1 + spread)));
 }
 
 /** A steady background count (for example «requests running» in the menu): every 30 s, with jitter, and not at all while the tab is hidden. */
 export const BACKGROUND_COUNT_POLL_MS = 30_000;
 export function nextBackgroundDelayMs(random: number): number {
-  const spread = (Math.min(Math.max(random, 0), 0.999999) * 2 - 1) * 0.2;
+  const spread = (unit(random) * 2 - 1) * 0.2;
   return Math.round(BACKGROUND_COUNT_POLL_MS * (1 + spread));
 }
