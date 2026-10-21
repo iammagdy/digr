@@ -249,7 +249,8 @@ describe("B1. the gate understands Arabic and the request", () => {
     const params = { query: "الطاقة الشمسية" };
     expect(evaluateResearchRowRelevance({ text: "طاقة شمسية للمنازل بتوفر كتير" }, ctx(params))).toMatchObject({ decision: "match" });
     expect(evaluateResearchRowRelevance({ text: "الطاقة الكهربائية غالية في مصر" }, ctx(params))).toEqual({ decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب" });
-    expect(evaluateResearchRowRelevance({ text: "صباح الخير" }, ctx(params))).toEqual({ decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب" });
+    // no word of the topic and no country asked: excluded by code before any review (it was presumed on topic before)
+    expect(evaluateResearchRowRelevance({ text: "صباح الخير" }, ctx(params))).toEqual({ decision: "no_match", reasonAr: "لا يذكر السجل كلمات من موضوع البحث" });
   });
 
   it("language: only when the request names one and the row states its own; a topic miss still wins", () => {

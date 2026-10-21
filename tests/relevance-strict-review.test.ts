@@ -230,10 +230,14 @@ describe("company job: strict review of the rows the gate matched", () => {
     // every attempt leaves a usage row, none of them a success
     expect(db.llmUsage).toHaveLength(3);
     expect(db.llmUsage.every((row) => row.reason === "relevance_review_failed" && row.cost_usd === 0)).toBe(true);
-    const messages = db.events.map((e) => String(e.message));
+    // The customer's lines (every event except the owner's internal review-spend row) carry no amount and no provider name; the internal row is checked below.
+    const messages = db.events.filter((e) => e.event_type !== "review_cost").map((e) => String(e.message));
     expect(messages.filter((m) => m === RETRY_NOTE)).toHaveLength(2);
     expect(messages.some((m) => /تعذّر التحقق الآلي من ملاءمة ٣ سجل الآن/.test(m) && m.includes("وُضعت في شيت المراجعة ولم تُحتسب"))).toBe(true);
     for (const m of messages) expect(m).not.toMatch(/claude|anthropic|treg|icypeas|timeout|http|USD/i);
+    // the owner's row: calls and USD of the job, in one internal line
+    const spend = db.events.filter((e) => e.event_type === "review_cost").map((e) => String(e.message));
+    expect(spend).toEqual(["review_spend step=0 calls=3 usd=0.000000 total_calls=3 total_usd=0.000000 rows_seen=3 low_yield_stop=0"]);
   });
 
   it("a failure that cannot change (the assistant is switched off) is not retried and still fails closed", async () => {

@@ -1,7 +1,7 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { MIN_MEANINGFUL_CHARS, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
-import { hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
+import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 
 export interface ResearchRelevanceContext {
@@ -87,7 +87,7 @@ function rawTextOf(row: Record<string, any>, keys: string[]): string {
  * with no Arabic or Latin letters at all. A short real comment («ماتش حلو») does not have to repeat the topic's words. Only rows
  * that look doubtful are flagged for the automatic review.
  */
-function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commentRow: boolean): ResearchRelevanceResult {
+function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commentRow: boolean, region: string): ResearchRelevanceResult {
   const ownKeys = commentRow ? COMMENT_OWN_KEYS : ["text", "full_text", "fullText", "content", "comment", "comment_text", "commentText", "message", "title", "description", "caption", "video_caption", "video_title", "post_text", "body", "summary"];
   const rawOwn = rawTextOf(row, ownKeys);
   const own = normalizeText(rawOwn);
@@ -107,11 +107,16 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
     return { decision: "no_match", reasonAr: "المحتوى إعلان أو ترويج لا يتناول موضوع البحث" };
   }
   URL_RE.lastIndex = 0;
-  const context = commentRow ? textOf(row, COMMENT_CONTEXT_KEYS) : "";
-  const words = own.split(/\s+/u).filter(Boolean);
+  // Pre-filter before any model call, for POSTS: a post with no word of the topic AND (when a country was requested) no word of that country
+  // is excluded here and never reaches the review. Comments are not judged by their own words: the video they sit under decides (the videos
+  // are selected first, on evidence and then by the review), so a short comment that never repeats the topic is still a real comment.
+  if (!commentRow && !evidence && !hasRegionEvidence(region, own)) {
+    return { decision: "no_match", reasonAr: region ? "لا يذكر السجل موضوع البحث ولا الدولة المطلوبة" : "لا يذكر السجل كلمات من موضوع البحث" };
+  }
   // Comments are judged by their VIDEO (see videoRelevance): a short or reacting comment is normal under an on-topic video, so no comment is
-  // flagged as doubtful here. A post is its own unit, so a doubtful post still needs the review.
-  const suspicious = !commentRow && (isReactionOnly(own) || (words.length >= 6 && !evidence && !hasTopicEvidence(stems, context)));
+  // flagged as doubtful here. A post is its own unit, so a doubtful post still needs the review: a reaction, and a post that passed only
+  // because it names the country (it has no word of the topic).
+  const suspicious = !commentRow && (isReactionOnly(own) || !evidence);
   return { decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب", ...(suspicious ? { suspicious: true } : {}) };
 }
 
@@ -199,7 +204,7 @@ export function evaluateResearchRowRelevance(
   // The source filtered by the topic itself: presume the rows on topic (see presumeTopicSearchRow). The strict evidence rule below
   // stays for feeds with no topic filter (an account, a channel, a link), for videos (the title IS the deliverable) and for the
   // basketball/football separation.
-  if (/^social-(?:x-posts|tiktok-comments|youtube-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow);
+  if (/^social-(?:x-posts|tiktok-comments|youtube-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow, requestedRegion);
   const ownContent = commentRow ? textOf(row, COMMENT_OWN_KEYS) : "";
   // A comment is judged by its own words first. The video it sits under is context: it can support a comment that has content of
   // its own, never a bare «اتفقت». Posts, videos and everything else are judged by their own text as before.

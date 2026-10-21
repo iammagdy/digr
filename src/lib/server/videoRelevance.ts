@@ -1,7 +1,7 @@
 import { toArabicDigits } from "../arabicDigits";
 import { regionEvidenceWords } from "../regionNames";
-import { reviewSocialRows, type AdvisoryUsage, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
-import { contentStems, hasTopicEvidence, normalizeText, stemToken, topicStems } from "./topicMatch";
+import { reviewSocialRows, UNREVIEWED_BY_BUDGET_REASON_AR, type AdvisoryUsage, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
+import { hasRegionEvidence, hasTopicEvidence, normalizeText, topicStems } from "./topicMatch";
 
 /**
  * Comments found by a topic search (TikTok, YouTube) are judged at the level of the VIDEO they were written under: a short comment
@@ -22,11 +22,8 @@ export function videoEvidence(videoText: string, request: { query?: string; regi
   if (!text) return "needs_review";
   const stems = topicStems(String(request.query || ""));
   if (stems.length === 0 || !hasTopicEvidence(stems, text)) return "needs_review";
-  const countryWords = regionEvidenceWords(request.region);
-  if (countryWords.length === 0) return "match";
-  const present = contentStems(text);
-  const countryStems = countryWords.flatMap((word) => normalizeText(word).split(/\s+/u).filter(Boolean).map(stemToken));
-  return countryStems.some((stem) => present.has(stem)) ? "match" : "needs_review";
+  if (regionEvidenceWords(request.region).length === 0) return "match";
+  return hasRegionEvidence(request.region, text) ? "match" : "needs_review";
 }
 
 /** The video a comment row was written under: its link, else its text. Null when the row says nothing about its video. */
@@ -74,6 +71,8 @@ export interface VideoJudgement {
   decision: VideoDecision;
   reasonAr: string;
   by: "evidence" | "review" | "unreviewed";
+  /** Set when the video was left unreviewed only because the review budget was used up (its comments go to the «غير مراجَع» sheet). */
+  budget?: boolean;
 }
 
 export const VIDEO_ON_TOPIC_REASON_AR = "الفيديو يتناول موضوع طلبك";
@@ -125,9 +124,13 @@ export async function judgeVideos(input: {
     callCostEstimateUsd: input.callCostEstimateUsd,
     deadlineMs: input.deadlineMs,
   });
+  const unreviewedByCap = new Set(outcome.unreviewedByCap);
   for (const entry of toReview) {
     const verdict = outcome.verdicts.get(entry.index);
-    if (!verdict) judgements.set(entry.key, { decision: "uncertain", reasonAr: VIDEO_UNREVIEWED_REASON_AR, by: "unreviewed" });
+    if (!verdict) {
+      const byBudget = unreviewedByCap.has(entry.index);
+      judgements.set(entry.key, { decision: "uncertain", reasonAr: byBudget ? UNREVIEWED_BY_BUDGET_REASON_AR : VIDEO_UNREVIEWED_REASON_AR, by: "unreviewed", ...(byBudget ? { budget: true } : {}) });
+    }
     else if (verdict.verdict === "match") judgements.set(entry.key, { decision: "match", reasonAr: verdict.reasonAr || VIDEO_ON_TOPIC_REASON_AR, by: "review" });
     else if (verdict.verdict === "no_match") judgements.set(entry.key, { decision: "no_match", reasonAr: verdict.reasonAr || VIDEO_OFF_TOPIC_REASON_AR, by: "review" });
     else judgements.set(entry.key, { decision: "uncertain", reasonAr: verdict.reasonAr || VIDEO_UNREVIEWED_REASON_AR, by: "review" });

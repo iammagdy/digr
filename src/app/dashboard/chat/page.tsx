@@ -53,6 +53,7 @@ import { getJobIdForQuote } from "@/lib/md5";
 import { shouldShowPlanPanel } from "@/lib/quoteApprovalState";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
+import { isCustomerVisibleJobEvent } from "@/lib/reviewCostEvent";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
 import { waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
@@ -76,6 +77,8 @@ function mapJobEvents(rows: any[] | null | undefined): JobEvent[] {
   const seen = new Set<string>();
   const events: JobEvent[] = [];
   for (const e of rows || []) {
+    // The owner's review-spend rows are internal: never part of the customer's activity list.
+    if (!isCustomerVisibleJobEvent(e.event_type)) continue;
     const rawId = e.id || e.$id;
     const dedupeKey = rawId ? String(rawId) : `${e.created_at || ""}_${e.message || e.text_ar || ""}_${e.units ?? ""}`;
     if (seen.has(dedupeKey)) continue;

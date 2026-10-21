@@ -72,8 +72,25 @@ describe("the automatic review records why it failed", () => {
       sent = JSON.parse(init.body);
       return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: '{"reviews":[]}' }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 5 } }) } as any;
     });
-    await callClaudeRowAdvisor({ ...input, rows: Array.from({ length: 25 }, (_, index) => ({ index, row: { text: `منشور ${index}` } })) });
+    await callClaudeRowAdvisor({ ...input, kind: "companies", rows: Array.from({ length: 25 }, (_, index) => ({ index, row: { text: `منشور ${index}` } })) });
     expect(sent.max_tokens).toBe(advisoryMaxTokens(25));
     expect(String(sent.messages[0].content)).toContain("at most twelve words");
+  });
+
+  it("posts, comments and videos are reviewed on the verdict alone: a small reply room, no reason asked for, and the standard Arabic reason in the verdicts", async () => {
+    let sent: any = null;
+    globalThis.fetch = vi.fn(async (_url: any, init: any) => {
+      sent = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: '{"reviews":[{"index":0,"verdict":"no_match","reasonAr":"سبب من النموذج"},{"index":1,"verdict":"match"}]}' }], stop_reason: "end_turn", usage: { input_tokens: 700, output_tokens: 40 } }) } as any;
+    });
+    const result = await callClaudeRowAdvisor(input);
+    expect(sent.max_tokens).toBe(advisoryMaxTokens(2, true));
+    const prompt = String(sent.messages[0].content);
+    expect(prompt).not.toContain("at most twelve words");
+    expect(prompt).not.toContain("reasonAr");
+    expect(prompt).toContain("Do not explain");
+    expect(prompt).toContain('{"reviews":[{"index":0,"verdict":"match"|"no_match"|"uncertain"}]}');
+    expect(result.verdicts.get(0)).toEqual({ verdict: "no_match", reasonAr: "غير مطابق لموضوع الطلب" });
+    expect(result.verdicts.get(1)).toEqual({ verdict: "match", reasonAr: "مطابق لموضوع الطلب" });
   });
 });

@@ -21,6 +21,10 @@ export interface RunningSet {
   batchUnits: Array<number | null>;
   /** What the automatic review of posts and comments has cost so far, USD (absent for jobs that are not reviewed this way). */
   reviewUsd?: number;
+  /** Review calls made so far (absent when none were made, or for a record from before they were counted). */
+  reviewCallCount?: number;
+  /** Rows that reached the relevance gate so far (absent for a record from before they were counted: the low-yield stop then does not apply). */
+  rowsSeen?: number;
 }
 
 export const runningSetKey = (jobId: string, step: number) => `${jobId}/seen_${step}.json`;
@@ -36,8 +40,11 @@ export interface StepSummary {
   cursor?: unknown;
   rows?: unknown;
   uncertainRows?: unknown;
+  unreviewedRows?: unknown;
   batchUnits?: unknown;
   reviewUsd?: unknown;
+  reviewCallCount?: unknown;
+  rowsSeen?: unknown;
 }
 
 export const emptyRunningSet = (): RunningSet => ({ step: -1, identities: [], cursors: [], batchUnits: [] });
@@ -45,7 +52,10 @@ export const emptyRunningSet = (): RunningSet => ({ step: -1, identities: [], cu
 /** The state after one more chunk, from the state before it. Same rules as the rebuild: rows and review rows count for identity. */
 export function extendRunningSet(previous: RunningSet, step: number, summary: StepSummary, identityOf: (row: any) => string | null): RunningSet {
   const rows = Array.isArray(summary.rows) ? summary.rows : [];
-  const review = Array.isArray(summary.uncertainRows) ? summary.uncertainRows : [];
+  const review = [
+    ...(Array.isArray(summary.uncertainRows) ? summary.uncertainRows : []),
+    ...(Array.isArray(summary.unreviewedRows) ? summary.unreviewedRows : []),
+  ];
   const identities = new Set(previous.identities);
   for (const row of [...rows, ...review]) {
     const identity = identityOf(row);
@@ -57,7 +67,11 @@ export function extendRunningSet(previous: RunningSet, step: number, summary: St
   while (batchUnits.length < step) batchUnits.push(null);
   batchUnits[step] = typeof summary.batchUnits === "number" ? summary.batchUnits : Array.isArray(summary.rows) ? rows.length : null;
   const reviewUsd = Number(((previous.reviewUsd ?? 0) + (typeof summary.reviewUsd === "number" && summary.reviewUsd > 0 ? summary.reviewUsd : 0)).toFixed(6));
-  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}) };
+  const reviewCallCount = (previous.reviewCallCount ?? 0) + (typeof summary.reviewCallCount === "number" && summary.reviewCallCount > 0 ? Math.floor(summary.reviewCallCount) : 0);
+  // The count stays unknown (absent) once any chunk before it did not record it: a stop rule built on a partial count would be wrong.
+  const seenBefore = previous.step < 0 ? 0 : previous.rowsSeen;
+  const rowsSeen = typeof seenBefore === "number" && typeof summary.rowsSeen === "number" && summary.rowsSeen >= 0 ? seenBefore + Math.floor(summary.rowsSeen) : undefined;
+  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}), ...(reviewCallCount > 0 ? { reviewCallCount } : {}), ...(rowsSeen !== undefined ? { rowsSeen } : {}) };
 }
 
 /**
@@ -71,7 +85,9 @@ export async function rebuildRunningSet(chunks: number, identityOf: (row: any) =
     if (!prior) {
       const batchUnits = state.batchUnits.slice();
       batchUnits[step] = null;
-      state = { ...state, step, batchUnits };
+      // An unreadable chunk leaves the count of rows seen unknown from here on (see extendRunningSet).
+      const { rowsSeen: _unknownFromHere, ...rest } = state;
+      state = { ...rest, step, batchUnits };
       continue;
     }
     state = extendRunningSet(state, step, prior, identityOf);
@@ -85,7 +101,9 @@ function isRunningSet(value: any, step: number): value is RunningSet {
     && Array.isArray(value.cursors) && value.cursors.every((item: unknown) => typeof item === "string")
     && Array.isArray(value.batchUnits) && value.batchUnits.length === step + 1
     && value.batchUnits.every((item: unknown) => item === null || typeof item === "number")
-    && (value.reviewUsd === undefined || (typeof value.reviewUsd === "number" && Number.isFinite(value.reviewUsd)));
+    && (value.reviewUsd === undefined || (typeof value.reviewUsd === "number" && Number.isFinite(value.reviewUsd)))
+    && (value.reviewCallCount === undefined || (typeof value.reviewCallCount === "number" && Number.isFinite(value.reviewCallCount)))
+    && (value.rowsSeen === undefined || (typeof value.rowsSeen === "number" && Number.isFinite(value.rowsSeen)));
 }
 
 interface Bucket {

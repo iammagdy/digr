@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  estimateOffTopic, highOffTopicEventAr, OFF_TOPIC_STRICT_ABOVE, pickReviewSample, REVIEW_SAMPLE_ROWS, reviewSocialPage,
+  estimateOffTopic, PAGE_REJECT_ABOVE, PAGE_REJECT_MIN_REVIEWED, pageRejectedEventAr, reviewSocialPage,
 } from "../src/lib/server/sampledReview";
 import { ADVISORY_TIMEOUT_MS, SOCIAL_REVIEW_ROWS_PER_CALL, applyStrictAdvisory, reviewSocialRows, type AdvisoryVerdict, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 import { regionNameAr } from "../src/lib/regionNames";
@@ -9,7 +9,6 @@ import { getSocialCapability } from "../src/lib/socialSources";
 import { runSocialChunk, type SocialCall } from "../src/lib/server/socialAdapter";
 
 const verdict = (v: AdvisoryVerdict["verdict"], reasonAr = "سبب"): AdvisoryVerdict => ({ verdict: v, reasonAr });
-const firstOf = () => 0; // always the first of what is left
 const usage = (costUsd: number) => ({ inputTokens: 1500, outputTokens: 400, costUsd, model: "claude-haiku-5-5", latencyMs: 10 });
 
 /** Football in Egypt, as a real page looks: a few on-topic comments, a club of another country, comments about nothing. */
@@ -31,110 +30,102 @@ const advisorByText = (calls: Array<{ rows: number }> = []): RowAdvisorFn => asy
 };
 const REQUEST = "كرة القدم الدولة المطلوبة: مصر";
 
-describe("the sample", () => {
-  it("is at most fifteen distinct rows, from the presumed ones only, and deterministic for a given random source", () => {
-    const indexes = Array.from({ length: 40 }, (_, i) => i);
-    const sample = pickReviewSample(indexes, REVIEW_SAMPLE_ROWS, firstOf);
-    expect(sample).toEqual(Array.from({ length: 15 }, (_, i) => i));
-    let seed = 3;
-    const next = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
-    const random = pickReviewSample(indexes, 15, next);
-    expect(new Set(random).size).toBe(15);
-    expect(random.every((i) => i >= 0 && i < 40)).toBe(true);
-    expect(pickReviewSample([1, 2, 3], 15, firstOf)).toEqual([1, 2, 3]);
-    expect(pickReviewSample([], 15, firstOf)).toEqual([]);
-  });
-
+describe("the page review", () => {
   it("the estimate counts a «no match» and a doubt as off topic, and ignores rows nobody reviewed", () => {
     const verdicts = new Map<number, AdvisoryVerdict>([[0, verdict("match")], [1, verdict("no_match")], [2, verdict("uncertain")], [3, verdict("match")]]);
     expect(estimateOffTopic([0, 1, 2, 3, 4], verdicts)).toEqual({ size: 5, reviewed: 4, off: 2, rate: 0.5 });
     expect(estimateOffTopic([9], verdicts)).toEqual({ size: 1, reviewed: 0, off: 0, rate: null });
   });
 
-  it("the limit is 40 percent: 6 of 15 is not above it, 7 of 15 is", () => {
-    expect(OFF_TOPIC_STRICT_ABOVE).toBe(0.4);
-    expect(6 / 15 > OFF_TOPIC_STRICT_ABOVE).toBe(false);
-    expect(7 / 15 > OFF_TOPIC_STRICT_ABOVE).toBe(true);
+  it("the limit is 60 percent: 15 of 25 is not above it, 16 of 25 is; at least eight rows must have been read", () => {
+    expect(PAGE_REJECT_ABOVE).toBe(0.6);
+    expect(15 / 25 > PAGE_REJECT_ABOVE).toBe(false);
+    expect(16 / 25 > PAGE_REJECT_ABOVE).toBe(true);
+    expect(PAGE_REJECT_MIN_REVIEWED).toBe(8);
   });
 
-  it("the sentence for a strict page is Arabic-only with Arabic-Indic digits", () => {
-    expect(highOffTopicEventAr(0.6)).toBe("نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة (نحو ٦٠٪ من العيّنة)، لذلك راجعنا كل سجلاتها قبل التسليم.");
+  it("the sentence for a rejected page is Arabic-only with Arabic-Indic digits", () => {
+    expect(pageRejectedEventAr(0.64, 15)).toBe("نسبة المحتوى غير المرتبط بموضوعك في هذه الصفحة مرتفعة جداً (نحو ٦٤٪ من السجلات المراجَعة)، لذلك استُبعدت بقية سجلاتها (١٥ سجل) دون مراجعة فردية ولم تُحتسب.");
   });
 });
 
-describe("a page of a topic search through the sampled review", () => {
-  it("a mostly on-topic page: one call on a sample; the page is delivered, a sampled off-topic row is not", async () => {
-    // 16 on-topic rows and 4 unrelated rows placed first, so the first-fifteen sample catches 4 of them: 4/15 = 27 percent, below the limit
+describe("a page of a topic search through the page review: ONE call covers every row", () => {
+  it("a mostly on-topic page of 20 rows: one call, every row has a verdict, a sampled-style off-topic row is not delivered", async () => {
     const texts = [...FIXTURE.unrelated, "كلام عن السياسة", ...Array.from({ length: 16 }, (_, i) => `${FIXTURE.onTopic[i % 4]} ${i}`)].slice(0, 20);
     const calls: Array<{ rows: number }> = [];
-    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(calls).toEqual([{ rows: 15 }]);
-    expect(outcome.sample).toMatchObject({ size: 15, reviewed: 15, off: 4, strictPage: false });
-    expect(outcome.sample!.rate).toBeCloseTo(4 / 15, 5);
-    expect(outcome.mustConfirm.size).toBe(0);
-    expect([...outcome.sampleOnly]).toHaveLength(15);
+    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), budgetUsd: 0.05 });
+    expect(calls).toEqual([{ rows: 20 }]);
+    expect(outcome.firstCall).toMatchObject({ size: 20, reviewed: 20, off: 4, pageRejected: false });
+    expect(outcome.firstCall!.rate).toBeCloseTo(4 / 20, 5);
+    expect(outcome.verdicts.size).toBe(20);
+    expect(outcome.unreviewed).toEqual([]);
+    expect(outcome.rejected).toEqual([]);
   });
 
-  it("a mostly off-topic page: the whole page goes through the review, and only what the review confirms can be delivered", async () => {
+  it("a page longer than one call is split in calls of 25 rows, and every row still gets a verdict when the first call is clean", async () => {
+    const texts = Array.from({ length: 40 }, (_, i) => `${FIXTURE.onTopic[i % 4]} ${i}`);
+    const calls: Array<{ rows: number }> = [];
+    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(texts), budgetUsd: 0.05 });
+    expect(calls).toEqual([{ rows: SOCIAL_REVIEW_ROWS_PER_CALL }, { rows: 15 }]);
+    expect(outcome.verdicts.size).toBe(40);
+    expect(outcome.rejected).toEqual([]);
+    expect(outcome.unreviewed).toEqual([]);
+  });
+
+  it("a mostly off-topic page of 22 rows: still one call; every row has its own verdict and only what the review confirms can be delivered", async () => {
     const texts = [...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.onTopic, ...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.realMadrid.slice(0, 4)];
     expect(texts).toHaveLength(22);
     const calls: Array<{ rows: number }> = [];
-    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(outcome.sample?.strictPage).toBe(true);
-    expect(calls.map((c) => c.rows)).toEqual([15, 7]);
-    expect(outcome.mustConfirm.size).toBe(22);
-    expect(outcome.sampleOnly.size).toBe(0);
+    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), budgetUsd: 0.05 });
+    expect(calls.map((c) => c.rows)).toEqual([22]);
+    expect(outcome.firstCall).toMatchObject({ size: 22, reviewed: 22, pageRejected: false });
+    expect(outcome.rejected).toEqual([]);
     expect(outcome.verdicts.size).toBe(22);
     const confirmed = [...outcome.verdicts].filter(([, v]) => v.verdict === "match").map(([i]) => i);
     expect(confirmed.map((i) => texts[i]).every(isEgyptFootball)).toBe(true);
     expect(outcome.unreviewed).toEqual([]);
   });
 
-  it("the doubtful rows are always reviewed, together with the sample, in one call", async () => {
+  it("a doubtful row is reviewed like every other row, in the same one call", async () => {
     const calls: Array<{ rows: number }> = [];
     const outcome = await reviewSocialPage({
       advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments",
-      rows: rowsOf([...FIXTURE.reaction, ...FIXTURE.onTopic]), suspicious: new Set([0]), budgetUsd: 0.05, random: firstOf,
+      rows: rowsOf([...FIXTURE.reaction, ...FIXTURE.onTopic]), budgetUsd: 0.05,
     });
     expect(calls).toEqual([{ rows: 5 }]);
-    expect(outcome.mustConfirm).toEqual(new Set([0]));
     expect(outcome.verdicts.get(0)?.verdict).toBe("no_match");
   });
 
-  it("a sample that could not be reviewed fails closed: the page is strict, every row waits in the review sheet, and the review is tried once more", async () => {
+  it("a page whose review could not be read fails closed: every row is unreviewed (none of them by budget), and the review is tried once more", async () => {
     let calls = 0;
     const failing: RowAdvisorFn = async () => { calls += 1; return { verdicts: new Map(), usage: usage(0.001), failure: "bad_reply", stopReason: "max_tokens" }; };
     const texts = [...FIXTURE.reaction, ...FIXTURE.onTopic];
-    const outcome = await reviewSocialPage({ advisor: failing, customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), suspicious: new Set([0]), budgetUsd: 0.05, random: firstOf });
-    const all = texts.map((_, i) => i);
+    const outcome = await reviewSocialPage({ advisor: failing, customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), budgetUsd: 0.05 });
     expect(calls).toBe(2);
-    expect(outcome.sample).toMatchObject({ reviewed: 0, rate: null, strictPage: true });
-    expect([...outcome.unreviewed].sort()).toEqual(all);
-    expect([...outcome.mustConfirm].sort()).toEqual(all);
+    expect(outcome.firstCall).toMatchObject({ reviewed: 0, rate: null, pageRejected: false });
+    expect([...outcome.unreviewed].sort()).toEqual(texts.map((_, i) => i));
+    expect(outcome.unreviewedByBudget).toEqual([]);
     expect(outcome.verdicts.size).toBe(0);
-    expect(outcome.sampleOnly.size).toBe(0);
   });
 
   describe("a review that times out never delivers a row", () => {
     const timedOut: RowAdvisorFn = async () => ({ verdicts: new Map(), usage: null, failure: "timeout" });
     const pageOf = (n: number) => Array.from({ length: n }, (_, i) => `${FIXTURE.onTopic[i % FIXTURE.onTopic.length]} ${i}`);
 
-    it("a page of 20 presumed rows: nothing is delivered on the gate alone, all 20 are unreviewed, and nothing is deliverable without the review", async () => {
+    it("a page of 20 rows: nothing is delivered, all 20 are unreviewed", async () => {
       const texts = pageOf(20);
-      const outcome = await reviewSocialPage({ advisor: timedOut, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
+      const outcome = await reviewSocialPage({ advisor: timedOut, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(texts), budgetUsd: 0.05 });
       const reviews = texts.map((_, index) => ({ index, decision: "match" as const, reasonAr: "يتضمن نص السجل موضوع البحث" }));
-      const deliverableWithoutReview = reviews.filter((rev) => !outcome.mustConfirm.has(rev.index)).length;
-      const applied = applyStrictAdvisory(reviews, outcome.verdicts, { only: (rev) => outcome.mustConfirm.has(rev.index) });
-      expect(deliverableWithoutReview).toBe(0);
+      const applied = applyStrictAdvisory(reviews, outcome.verdicts);
       expect(applied.reviews.filter((rev) => rev.decision === "match")).toHaveLength(0);
       expect(applied.unreviewed).toBe(20);
-      expect(outcome.sample?.strictPage).toBe(true);
+      expect(outcome.firstCall?.reviewed).toBe(0);
     });
 
     it("the call is tried twice and never a third time, and a timeout that cost nothing adds nothing", async () => {
       let calls = 0;
       const counting: RowAdvisorFn = async (input) => { calls += 1; return timedOut(input); };
-      const outcome = await reviewSocialPage({ advisor: counting, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
+      const outcome = await reviewSocialPage({ advisor: counting, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), budgetUsd: 0.05 });
       expect(calls).toBe(2);
       expect(outcome.costUsd).toBe(0);
       expect(outcome.attempts).toHaveLength(2);
@@ -145,10 +136,9 @@ describe("a page of a topic search through the sampled review", () => {
       let calls = 0;
       const flaky: RowAdvisorFn = async (input) => { calls += 1; return calls === 1 ? timedOut(input) : advisorByText()(input); };
       const texts = pageOf(20);
-      const outcome = await reviewSocialPage({ advisor: flaky, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
+      const outcome = await reviewSocialPage({ advisor: flaky, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(texts), budgetUsd: 0.05 });
       expect(calls).toBe(2);
-      expect(outcome.sample).toMatchObject({ reviewed: 15, off: 0, strictPage: false });
-      expect(outcome.mustConfirm.size).toBe(0);
+      expect(outcome.firstCall).toMatchObject({ reviewed: 20, off: 0, pageRejected: false });
       expect(outcome.unreviewed).toEqual([]);
       expect(outcome.attempts.map((attempt) => attempt.failure)).toEqual(["timeout", null]);
     });
@@ -157,44 +147,50 @@ describe("a page of a topic search through the sampled review", () => {
       for (const failure of ["no_key", "disabled"] as const) {
         let calls = 0;
         const unavailable: RowAdvisorFn = async () => { calls += 1; return { verdicts: new Map(), usage: null, failure }; };
-        const outcome = await reviewSocialPage({ advisor: unavailable, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
+        const outcome = await reviewSocialPage({ advisor: unavailable, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), budgetUsd: 0.05 });
         expect(calls, failure).toBe(1);
-        expect(outcome.sample?.strictPage, failure).toBe(true);
+        expect(outcome.firstCall?.reviewed, failure).toBe(0);
         expect(outcome.unreviewed, failure).toHaveLength(20);
+        expect(outcome.unreviewedByBudget, failure).toEqual([]);
       }
     });
 
-    it("a review that never ran because the budget was used up is not a failure: the page is left as before (presumed rows are not held for it)", async () => {
+    it("a review that never ran because the budget was used up is not a failure, and its rows are NOT delivered: all 20 are unreviewed by budget", async () => {
       let calls = 0;
       const never: RowAdvisorFn = async (input) => { calls += 1; return advisorByText()(input); };
-      const outcome = await reviewSocialPage({ advisor: never, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), suspicious: new Set(), budgetUsd: 0, random: firstOf });
+      const outcome = await reviewSocialPage({ advisor: never, customerRequest: REQUEST, kind: "social-x-posts", rows: rowsOf(pageOf(20)), budgetUsd: 0 });
       expect(calls).toBe(0);
       expect(outcome.stoppedBy).toBe("cap");
-      expect(outcome.sample).toMatchObject({ reviewed: 0, rate: null, strictPage: false });
-      expect(outcome.mustConfirm.size).toBe(0);
+      expect(outcome.firstCall).toMatchObject({ reviewed: 0, rate: null, pageRejected: false });
+      expect(outcome.unreviewed).toHaveLength(20);
+      expect(outcome.unreviewedByBudget).toHaveLength(20);
+      expect(outcome.verdicts.size).toBe(0);
     });
   });
 
-  it("the budget of the job holds: a strict page whose second call would exceed it leaves the rest unreviewed, not delivered", async () => {
-    const texts = [...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.realMadrid, ...FIXTURE.unrelated, ...FIXTURE.realMadrid, ...FIXTURE.onTopic];
-    const costly: RowAdvisorFn = async (input) => ({ verdicts: new Map(input.rows.map(({ index }) => [index, verdict("no_match")])), usage: usage(0.06), failure: null });
-    const outcome = await reviewSocialPage({ advisor: costly, customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), suspicious: new Set(), budgetUsd: 0.05, random: firstOf });
-    expect(outcome.sample?.strictPage).toBe(true);
+  it("the budget of the job holds: a long page whose second call would exceed it leaves the rest unreviewed by budget, not delivered", async () => {
+    // 40 rows; the first 25 hold 10 unrelated rows (40 percent, not above the rejection limit)
+    const texts = [...FIXTURE.realMadrid, ...FIXTURE.unrelated, "Hala Madrid 2", "Hala Madrid 3", "Hala Madrid 4", ...Array.from({ length: 15 }, (_, i) => `${FIXTURE.onTopic[i % 4]} ${i}`), ...Array.from({ length: 15 }, (_, i) => `${FIXTURE.onTopic[i % 4]} ${i + 15}`)];
+    expect(texts).toHaveLength(40);
+    const costly: RowAdvisorFn = async (input) => ({ verdicts: new Map(input.rows.map(({ index, row }) => [index, isEgyptFootball(String(row.text)) ? verdict("match") : verdict("no_match")])), usage: usage(0.06), failure: null });
+    const outcome = await reviewSocialPage({ advisor: costly, customerRequest: REQUEST, kind: "social-tiktok-comments", rows: rowsOf(texts), budgetUsd: 0.05 });
+    expect(outcome.firstCall).toMatchObject({ size: 25, reviewed: 25, off: 10, pageRejected: false });
     expect(outcome.stoppedBy).toBe("cap");
-    expect(outcome.unreviewed.length).toBe(texts.length - 15);
+    expect(outcome.unreviewed.length).toBe(15);
+    expect(outcome.unreviewedByBudget.length).toBe(15);
     expect(outcome.costUsd).toBeCloseTo(0.06, 6);
   });
 
   it("an empty page asks for nothing", async () => {
     const calls: Array<{ rows: number }> = [];
-    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: [], suspicious: new Set(), budgetUsd: 0.05 });
+    const outcome = await reviewSocialPage({ advisor: advisorByText(calls), customerRequest: REQUEST, kind: "social-tiktok-comments", rows: [], budgetUsd: 0.05 });
     expect(calls).toEqual([]);
-    expect(outcome.sample).toBeNull();
-    expect(SOCIAL_REVIEW_ROWS_PER_CALL).toBeGreaterThanOrEqual(REVIEW_SAMPLE_ROWS);
+    expect(outcome.firstCall).toBeNull();
+    expect(outcome.unreviewedByBudget).toEqual([]);
   });
 });
 
-describe("the fixtures through the deterministic gate: all of them are presumed, which is why the sample exists", () => {
+describe("the fixtures through the deterministic gate: all of them are presumed on topic (the review decides)", () => {
   const context = { capabilitySlug: "social-tiktok-comments", endpointId: "tikhub.tiktok.video.comments", params: { query: "كرة القدم", region: "EG" } };
   it("on-topic, Real Madrid and unrelated comments are presumed (the video decides); the bare «اتفقت» is a real comment, not flagged; emoji is dropped", () => {
     for (const text of [...FIXTURE.onTopic, ...FIXTURE.realMadrid, ...FIXTURE.unrelated]) expect(evaluateResearchRowRelevance({ text: text, video_title: "فيديو" }, context).decision, text).toBe("match");

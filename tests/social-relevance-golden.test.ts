@@ -16,6 +16,7 @@ const tiktokContext = { capabilitySlug: "social-tiktok-comments", endpointId: "t
  * word of the topic anywhere) is flagged for the automatic review. A feed with no topic filter keeps the strict evidence rule.
  */
 const PRESUMED = "من نتائج البحث بالموضوع المطلوب";
+const NO_TOPIC_WORD = "لا يذكر السجل كلمات من موضوع البحث";
 const FOOTBALL = { query: "كرة القدم", region: "EG" };
 const ytContext = { capabilitySlug: "social-youtube-comments", endpointId: "crawl4ai.youtube.video.comments", params: { query: "كرة القدم" } };
 type GateContext = { capabilitySlug: string; endpointId: string; params: Record<string, any> };
@@ -67,16 +68,41 @@ describe("topic search rows: short real football comments are delivered without 
 
 describe("X posts of a topic search", () => {
   it("on-topic posts, short posts and replies are delivered; the empty and the ad are not", () => {
-    for (const text of ["مباراة مصر والمغرب في كأس العالم كانت قوية جداً", "ماتش جامد", "اتفق معاك في كل كلمة عن الماتش"]) expect(evaluateResearchRowRelevance({ text }, xContext).decision, text).toBe("match");
+    for (const text of ["مباراة مصر والمغرب في كأس العالم كانت قوية جداً", "مباراة جامدة"]) expect(evaluateResearchRowRelevance({ text }, xContext), text).toEqual({ decision: "match", reasonAr: PRESUMED });
+    // A post with no word of the topic (and no country asked) is excluded by code before any review: it was presumed on topic before.
+    for (const text of ["ماتش جامد", "اتفق معاك في كل كلمة عن الماتش"]) expect(evaluateResearchRowRelevance({ text }, xContext), text).toEqual({ decision: "no_match", reasonAr: NO_TOPIC_WORD });
     expect(evaluateResearchRowRelevance({ text: "" }, xContext).decision).toBe("no_match");
     expect(evaluateResearchRowRelevance({ text: "😂😂" }, xContext).decision).toBe("no_match");
     expect(evaluateResearchRowRelevance({ text: "للتواصل واتساب 01012345678 خصم خاص" }, xContext).decision).toBe("no_match");
   });
 
-  it("a philosophical post and a bare «اتفقت» reply are flagged for the review, not delivered blindly", () => {
+  it("a philosophical post and a bare «اتفقت» reply with no word of the topic and no country are excluded by code, never sent to the review", () => {
     const philosophical = evaluateResearchRowRelevance({ text: "الحياة رحلة طويلة، والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون" }, xContext);
-    expect(philosophical).toMatchObject({ decision: "match", suspicious: true });
-    expect(evaluateResearchRowRelevance({ text: "اتفقت", is_reply: true }, xContext)).toMatchObject({ decision: "match", suspicious: true });
+    expect(philosophical).toEqual({ decision: "no_match", reasonAr: NO_TOPIC_WORD });
+    expect(evaluateResearchRowRelevance({ text: "اتفقت", is_reply: true }, xContext)).toEqual({ decision: "no_match", reasonAr: NO_TOPIC_WORD });
+  });
+
+  describe("a country was requested: the pre-filter excludes a post with no word of the topic AND no word of the country", () => {
+    const egypt = { ...xContext, params: { ...xContext.params, region: "EG" } };
+    const EGYPT_NO_TOPIC = "لا يذكر السجل موضوع البحث ولا الدولة المطلوبة";
+    it("no topic word and no country word: excluded, with the reason that names both", () => {
+      expect(evaluateResearchRowRelevance({ text: "الحياة رحلة طويلة، والإنسان يبحث دائماً عن معنى لوجوده في هذا الكون" }, egypt)).toEqual({ decision: "no_match", reasonAr: EGYPT_NO_TOPIC });
+      expect(evaluateResearchRowRelevance({ text: "اتفقت", is_reply: true }, egypt)).toEqual({ decision: "no_match", reasonAr: EGYPT_NO_TOPIC });
+    });
+    it("a country word without a topic word is kept, but only for the review (flagged), never delivered blindly", () => {
+      for (const text of ["الحياة رحلة طويلة والإنسان في مصر يبحث دائماً عن معنى لوجوده", "اتفقت يا مصر", "Egypt today"]) expect(evaluateResearchRowRelevance({ text }, egypt), text).toEqual({ decision: "match", reasonAr: PRESUMED, suspicious: true });
+    });
+    it("a topic word is kept and delivered on the gate as before, with or without a country word", () => {
+      for (const text of ["مباراة جامدة", "مباراة المنتخب المصري"]) expect(evaluateResearchRowRelevance({ text }, egypt), text).toEqual({ decision: "match", reasonAr: PRESUMED });
+    });
+    it("the country word is read after the same normalisation as the topic: the demonym, alef, ya and ta marbuta, and diacritics", () => {
+      for (const text of ["الحياة المصرية طويلة", "الحَيَاة في المِصريّة", "حياة المصريين اليوم", "life in EGYPT today"]) expect(evaluateResearchRowRelevance({ text }, egypt), text).toMatchObject({ decision: "match", suspicious: true });
+      expect(evaluateResearchRowRelevance({ text: "الحياة السعودية طويلة" }, egypt)).toEqual({ decision: "no_match", reasonAr: EGYPT_NO_TOPIC });
+    });
+    it("comments keep being judged by their video: the pre-filter does not look at a comment's own words", () => {
+      const comments = { capabilitySlug: "social-tiktok-comments", endpointId: "tikhub.tiktok.video.comments", params: { query: "كرة القدم", region: "EG" } };
+      expect(evaluateResearchRowRelevance({ comment_text: "الحياة رحلة طويلة والإنسان يبحث عن معنى", video_title: "فيديو" }, comments)).toEqual({ decision: "match", reasonAr: PRESUMED });
+    });
   });
 });
 
