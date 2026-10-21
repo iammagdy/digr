@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { MISSION_TEMPLATES } from "@/lib/missionTemplates";
+import { formatAr } from "@/lib/arabicDigits";
 
 interface StarterItem {
   label: string;
@@ -36,10 +37,13 @@ const STARTERS: StarterItem[] = [
 export default function EmptyChat({
   firstName,
   zeroBalance,
+  balance = null,
   onStart,
 }: {
   firstName: string;
   zeroBalance: boolean;
+  /** The customer's points, for the welcome line. */
+  balance?: number | null;
   onStart: (prompt: string) => void;
 }) {
   return (
@@ -53,6 +57,11 @@ export default function EmptyChat({
         <p className="mb-0 mt-2.5 text-[15px] font-light leading-[1.9] text-mut">
           اختر قالباً للتعديل عليه أو اكتب سؤالك البحثي بالعربية، وسنحدد التفاصيل والسعر معًا قبل أي جمع.
         </p>
+        {balance !== null && balance > 0 ? (
+          <p data-testid="welcome-balance" className="mb-0 mt-2 text-[13px] font-light leading-[1.9] text-ink2">
+            رصيدك الآن {formatAr(balance)} نقطة، ولا يُخصم منها إلا ما يُسلَّم لك فعلًا.
+          </p>
+        ) : null}
       </div>
       <div>
         <p className="m-0 mb-2 text-xs font-medium text-mut">مهام كبيرة</p>

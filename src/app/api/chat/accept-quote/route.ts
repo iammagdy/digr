@@ -9,6 +9,7 @@ import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../.
 import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../../lib/server/workerDispatch";
 import { recordWorkerStartFailure, startFailureEventAr, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
+import { getBusyState } from "../../../../lib/server/busyState";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
 
@@ -87,6 +88,12 @@ export async function POST(req: NextRequest) {
         },
         { status: 503 }
       );
+    }
+
+    // The provider's daily allowance or capacity is used up: no new request is started, and nothing is reserved. Read only; fails open.
+    const busy = await getBusyState(adminClient);
+    if (busy.busy) {
+      return NextResponse.json({ success: false, busy: true, error: busy.messageAr, queueAhead: busy.queueAhead, position: busy.position }, { status: 503 });
     }
 
     // Never reserve credits for a decision-maker quote unless its field-level

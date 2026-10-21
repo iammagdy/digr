@@ -6,14 +6,23 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { AuthLayout, AuthToast, authPrimaryBtn } from "@/components/AuthLayout";
+import { LATE_EMAIL_AFTER_SECONDS, LATE_EMAIL_HINT_AR, RESEND_BUTTON_AR, RESEND_LIMIT_REACHED_AR, authFailureMessageAr, resendState, resendWaitAr } from "@/lib/authHelp";
 
-const RESEND_SECONDS = 30;
+const SENDS_KEY = "diger.verifySends";
+
+/** How many times this browser asked for the e-mail, and when it last did: kept for the tab, so a refresh does not reset the limit. */
+function readSends(): { count: number; last: number } {
+  try { const v = JSON.parse(window.sessionStorage.getItem(SENDS_KEY) || "null"); return { count: Math.max(0, Number(v?.count) || 0), last: Number(v?.last) || 0 }; } catch { return { count: 0, last: 0 }; }
+}
+function writeSends(value: { count: number; last: number }) { try { window.sessionStorage.setItem(SENDS_KEY, JSON.stringify(value)); } catch { /* the limit then lives in memory only */ } }
 
 export default function VerifyPage() {
   const { user, loading, refresh, logout } = useUser();
   const router = useRouter();
   const [toast, setToast] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [wait, setWait] = useState(0);
+  const [sendsLeft, setSendsLeft] = useState(4);
+  const [late, setLate] = useState(false);
   const [busy, setBusy] = useState(false);
   const handled = useRef(false);
 
@@ -59,8 +68,30 @@ export default function VerifyPage() {
     return () => clearTimeout(t);
   }, [wait]);
 
+  // The limit survives a refresh, and a message that is late is said to be late (a busy network delays it).
+  useEffect(() => {
+    const sends = readSends();
+    const state = resendState(sends.count, (Date.now() - sends.last) / 1000);
+    setSendsLeft(state.sendsLeft);
+    if (state.waitSeconds > 0) setWait(state.waitSeconds);
+    const timer = setTimeout(() => setLate(true), LATE_EMAIL_AFTER_SECONDS * 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const resend = useCallback(async () => {
     if (wait > 0 || !user?.email) return;
+    const sends = readSends();
+    const state = resendState(sends.count, (Date.now() - sends.last) / 1000);
+    if (!state.allowed) {
+      setToast({ tone: "bad", text: state.sendsLeft === 0 ? RESEND_LIMIT_REACHED_AR : resendWaitAr(state.waitSeconds) });
+      setWait(state.waitSeconds);
+      return;
+    }
+    // counted before the call: a press that fails still uses the allowance, so tapping cannot flood the e-mail service
+    writeSends({ count: sends.count + 1, last: Date.now() });
+    const next = resendState(sends.count + 1, 0);
+    setSendsLeft(next.sendsLeft);
+    setWait(next.waitSeconds);
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.resend({
@@ -72,10 +103,9 @@ export default function VerifyPage() {
       });
       if (error) throw error;
       setToast({ tone: "ok", text: "أرسلنا رسالة تأكيد جديدة." });
-    } catch {
-      setToast({ tone: "bad", text: "تعذّر إرسال الرسالة الآن. حاول بعد قليل." });
+    } catch (err) {
+      setToast({ tone: "bad", text: authFailureMessageAr(err, "تعذّر إرسال الرسالة الآن. حاول بعد قليل.") });
     }
-    setWait(RESEND_SECONDS);
   }, [wait, user?.email]);
 
   const done = async () => {
@@ -104,10 +134,12 @@ export default function VerifyPage() {
           </span>
         </div>
         <p className="m-0 text-sm font-light leading-[1.9] text-mut">افتح الرسالة واضغط «تأكيد البريد». لن تتمكن من شحن الرصيد أو بدء بحث قبل التأكيد. لم تجدها؟ راجع مجلد الرسائل غير المرغوب فيها.</p>
+        {late && <p role="status" data-testid="late-email-hint" className="m-0 rounded-[14px] bg-sf2 px-3.5 py-3 text-[13px] font-light leading-[1.9] text-ink2">{LATE_EMAIL_HINT_AR}</p>}
+        {sendsLeft === 0 && <p role="alert" className="m-0 text-[13px] leading-[1.9] text-bad">{RESEND_LIMIT_REACHED_AR}</p>}
         <button type="button" onClick={done} disabled={busy} className={`${authPrimaryBtn} min-h-[58px] text-[15px]`}>أكّدت بريدي — متابعة</button>
         <div className="flex flex-wrap justify-center gap-x-[18px] gap-y-1">
-          <button type="button" onClick={resend} disabled={wait > 0} className="min-h-11 cursor-pointer border-0 bg-transparent text-[13px]" style={{ color: wait > 0 ? "var(--fnt)" : "var(--ink)" }}>
-            {wait > 0 ? `أُرسلت — يمكنك الطلب مجددًا بعد ${new Intl.NumberFormat("ar-EG").format(wait)} ثانية` : "إعادة إرسال الرسالة"}
+          <button type="button" onClick={resend} disabled={wait > 0 || sendsLeft === 0} className="min-h-11 cursor-pointer border-0 bg-transparent text-[13px]" style={{ color: wait > 0 ? "var(--fnt)" : "var(--ink)" }}>
+            {sendsLeft === 0 ? "بلغت حد الإرسال" : wait > 0 ? resendWaitAr(wait) : RESEND_BUTTON_AR}
           </button>
           <button type="button" onClick={changeEmail} className="min-h-11 cursor-pointer border-0 bg-transparent text-[13px] text-mut">تغيير البريد</button>
         </div>
