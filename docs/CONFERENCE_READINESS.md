@@ -59,6 +59,7 @@ Every template's default count above the cap is cut by the plan with the reason;
 | The model-spend guard late in a busy day | 1, 5 and 12 reads per turn at 900, 2 500 and 10 000 rows |
 | 20 approvals of the same quote at the same moment | exactly one reserve, one job, one start; the other 19 are told it was already started (409). The database function itself is a stand-in in this test: its real locks are SQL and unverified here |
 | Per-instance state | The public limiters (`publicRateLimit`), the busy-state cache (15 s) and the conference dashboard cache are in the memory of one server instance, per address. Each instance counts alone, so the effective limits are higher than written, never lower; the limits were sized for one venue address in #181. Documented in the code, not shared |
+| A real browser on the production build of the landing page (390 px wide, local server, no session) | 0 requests to `/api`, the database or the sign-in service; 0 WebSocket connections; no page error; the header shows «دخول» and «حساب جديد»; the QR path `/join/CONF26` lands on `/register?promo=CONF26` |
 | Hosting CPU model | `docs/CPU_MODEL.md` (calibrated to the owner's 0.108 s average invocation): after this work 0.35 to 0.75 h (base) and 0.58 to 1.55 h (stress) for 500 visitors against 3.42 h left; before this work 1.57 to 1.96 h (base) and 2.31 to 3.27 h (stress). The status poll was about 85 function runs per visitor per 90 minutes and is now answered by the edge |
 | Egress | 0.2 GB (chat only), 0.45 GB (25% missions), 1.2 GB (all missions) of 5 GB |
 
@@ -96,7 +97,8 @@ Every template's default count above the cap is cut by the plan with the reason;
 8. **Vercel > Usage:** Active CPU (hourly); if the day's total passes 2 hours before 14:00 set `DEGRADED_MODE=on`; at 3 hours set `closed`. Deployments: see section 9.
 9. **Backups (the free database plan has none):** export the five tables from `/admin/export` Thursday evening, every three hours on Saturday, and after (`docs/SUPABASE_FREE_PLAN.md` section 6).
 10. **After the first deployment of Friday, open `/api/busy-status` in a browser** and look at the response headers: `cache-control: public, s-maxage=15` and (on a second request) `x-vercel-cache: HIT`.
-11. The pressure test on a preview (`docs/PRESSURE_TEST_RUNBOOK.md`) is optional and must not be run in the last 24 hours (deployment quota).
+11. **To save deployments in the freeze** (optional): Vercel > Settings > Git > Ignored Build Step: `if [ "$VERCEL_ENV" = "production" ]; then exit 1; else exit 0; fi` skips every preview build (pull-request previews stop appearing) and keeps the production build of each merge. Remove it when the freeze ends.
+12. The pressure test on a preview (`docs/PRESSURE_TEST_RUNBOOK.md`) is optional and must not be run in the last 24 hours (deployment quota).
 
 ## 8. Fallback plan for the day
 
