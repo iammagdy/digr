@@ -6,12 +6,13 @@ import {
 } from "./providerKeyCrypto";
 import { envKeyConfigured, getLastAuthRejection, invalidateProviderKeyCache, resolveProviderKey, type AuthRejection, type KeySource, type StoreState } from "./providerKeys";
 import { selectAllRows } from "./selectAll";
+import { resolveProviderDailyCapUsd } from "./multiProvider/providerCaps";
 import {
   DEFAULT_LOW_BALANCE_THRESHOLD_USD, checkProviderKey, getProviderAccountEmail, getProviderStatus, invalidateProviderStatusCache, isLowBalance,
   type FetchLike, type ProviderStatusSnapshot,
 } from "./providerStatus";
 
-export const PROVIDER_LABEL_AR: Record<ProviderId, string> = { treg: "مزود البيانات", anthropic: "مزود النموذج الذكي" };
+export const PROVIDER_LABEL_AR: Record<ProviderId, string> = { treg: "مزود البيانات", anthropic: "مزود النموذج الذكي", firecrawl: "مزود قراءة المواقع (Firecrawl)", contextdev: "مزود البحث والقراءة (Context.dev)" };
 export const isProviderId = (v: unknown): v is ProviderId => typeof v === "string" && (PROVIDER_IDS as readonly string[]).includes(v);
 
 export const MSG = {
@@ -268,6 +269,8 @@ function utcStartOfDay(): string {
 }
 
 async function readCap(client: any, provider: ProviderId): Promise<number> {
+  // Firecrawl and Context.dev each have their own daily limit (0 until the owner sets one); TREG and the model are exactly as before.
+  if (provider === "firecrawl" || provider === "contextdev") return resolveProviderDailyCapUsd(client, provider);
   const { limits } = await resolveProviderLimits(client);
   return provider === "treg" ? limits.dailyUsd : limits.llmDailyUsd;
 }
@@ -277,10 +280,11 @@ async function readSpendAndActivity(client: any, provider: ProviderId): Promise<
   let todayUsd = 0;
   const activity: ActivityRow[] = [];
   try {
-    if (provider === "treg") {
-      const { data: today } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").gte("created_at", since), { orderBy: "id" });
+    if (provider === "treg" || provider === "firecrawl" || provider === "contextdev") {
+      // The same two reads for every data provider, each filtered by its OWN provider identifier (for TREG the calls are exactly the ones before).
+      const { data: today } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", provider).gte("created_at", since), { orderBy: "id" });
       for (const r of today || []) { const c = Number(r.cost_usd); if (Number.isFinite(c) && c > 0) todayUsd += c; }
-      const { data } = await client.from("provider_costs").select("job_id, units, cost_usd, created_at, is_estimate").eq("provider", "treg").order("created_at", { ascending: false }).limit(20);
+      const { data } = await client.from("provider_costs").select("job_id, units, cost_usd, created_at, is_estimate").eq("provider", provider).order("created_at", { ascending: false }).limit(20);
       for (const r of data || []) activity.push({ at: r.created_at, label: r.job_id ? `مهمة ${String(r.job_id).slice(-8)}` : "—", detail: `${Number(r.units) || 1} وحدة${r.is_estimate ? " · تقدير" : ""}`, amount: String(Number(r.cost_usd) || 0) });
     } else {
       const { data: today } = await selectAllRows(() => client.from("llm_usage").select("cost_usd").gte("created_at", since), { orderBy: "id" });
@@ -312,6 +316,11 @@ export async function loadProviderTabState(
   if (resolved.source === "none") noticesAr.push("لا يوجد أي مفتاح مضبوط لهذا المزود.");
   if (authRejection) noticesAr.push(`رفض المزود المفتاح المستخدم (HTTP ${authRejection.httpStatus}) ${authRejection.count > 1 ? `${authRejection.count} مرات` : "مرة"} على هذا الخادم، آخرها ${authRejection.at}. لم يجرِ أي تبديل تلقائي للمفتاح.`);
   if (provider === "anthropic") noticesAr.push("مزود النموذج الذكي لا يوفّر واجهة لقراءة الرصيد بمفتاح عادي، لذلك لا يظهر رصيد هنا. راجع لوحة المزود مباشرة.");
+  if (provider === "firecrawl" || provider === "contextdev") {
+    noticesAr.push("الرصيد المعروض هو عدد الرصيد (كريدت) كما يرده المزود نفسه بطلب مجاني، وليس رقمًا تقديريًا.");
+    if (provider === "contextdev") noticesAr.push("قراءة الرصيد وفحص الاتصال لهذا المزود تحتاجان مفتاحًا بصلاحية قراءة السجلات (logs:read). مفتاح بدونها يُرفض هنا.");
+    if (!capUsd) noticesAr.push("لم يُضبط حد يومي لهذا المزود بعد، لذلك لا يُسمح بأي إنفاق عليه حتى تحدده من قسم الحدود.");
+  }
 
   return {
     provider,
@@ -327,7 +336,7 @@ export async function loadProviderTabState(
     authRejection,
     settings,
     lowBalance: provider === "treg" && isLowBalance(status.balance, settings.lowBalanceThresholdUsd),
-    spend: { todayUsd, capUsd, capKind: provider === "treg" ? "provider_daily" : "llm_daily" },
+    spend: { todayUsd, capUsd, capKind: provider === "anthropic" ? "llm_daily" : "provider_daily" },
     activity,
     noticesAr,
   };

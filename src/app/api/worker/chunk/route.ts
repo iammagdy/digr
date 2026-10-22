@@ -13,6 +13,9 @@ import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type 
 import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
 import { companyActivityKeywords } from "../../../../lib/server/relevanceEvidence";
 import { NextRequest, NextResponse, after } from "next/server";
+import { multiProviderEnabled } from "../../../../lib/multiProvider/flag";
+import { isChainSlug } from "../../../../lib/multiProvider/routes";
+import { createChainAdapter } from "../../../../lib/server/multiProvider/chainAdapter";
 import { createAdminClient } from "../../../../lib/supabase/server";
 import {
   verifyCronSecret,
@@ -373,7 +376,17 @@ export async function POST(req: NextRequest) {
 
     // A1 Safety Guard: when neither live provider nor non-production test adapter is active,
     // never advance delivered_units or settle; release full reserve with zero charge.
-    if (!useMockProvider && !isLiveProviderReady) {
+    // A multi-provider chain job does not need TREG to be live (its providers may be others): the chain checks its own providers. Evaluated
+    // only while MULTI_PROVIDER_ENABLED is on and only when the TREG gate would have blocked the job; with the flag off nothing here runs.
+    const chainJobBypassesTregGate = async (): Promise<boolean> => {
+      if (!multiProviderEnabled()) return false;
+      try {
+        return isChainSlug((await resolveJobExecutionSpec(adminClient, jobId, userId, rawEndpointId, Number(unitPrice) || 1)).capabilitySlug);
+      } catch {
+        return false;
+      }
+    };
+    if (!useMockProvider && !isLiveProviderReady && !(await chainJobBypassesTregGate())) {
       console.warn("[worker_chunk:gate_blocked]", { jobId, reasonCode: gateStatus.reasonCode });
       const releaseReason =
         "محرك استخراج البيانات المباشر غير مفعل حالياً؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
@@ -406,6 +419,15 @@ export async function POST(req: NextRequest) {
       rawEndpointId,
       Number(unitPrice) || 1
     );
+
+    // A chain job whose feature was switched off after the quote was approved: nothing is called, the whole reserve is released with zero charge.
+    if (isChainSlug(spec.capabilitySlug) && !multiProviderEnabled()) {
+      const switchedOffAr = "هذه الخدمة غير متاحة حاليًا؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+      const rel = await executeReleaseConfirmation(adminClient, jobId, switchedOffAr);
+      if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
+      return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: switchedOffAr, release: rel.data }, { status: 503 });
+    }
+    const isChainJob = isChainSlug(spec.capabilitySlug) && multiProviderEnabled();
 
     // The provider is called and billed after this point. Refuse a people job
     // until field-level settlement exists, and release its reserve through the
@@ -498,11 +520,13 @@ export async function POST(req: NextRequest) {
       (!isPeopleJob || Number(decisionMakerSpendBudgetUsd) >= DECISION_MAKER_ROUTE_COST_CAP_USD);
     // Per-job and per-user ceilings (admin-editable). Read only when one is set, so the default path costs nothing extra.
     let ceilingHit: CeilingReason | null = null;
-    if (needsProvider && (providerLimits.perJobUsd !== null || providerLimits.perUserDailyUsd !== null)) {
+    if (needsProvider && !isChainJob && (providerLimits.perJobUsd !== null || providerLimits.perUserDailyUsd !== null)) {
       ceilingHit = evaluateSpendCeilings(providerLimits, await readSpendForCeilings(adminClient, { jobId, userId }), estimatedCostUsd);
     }
     const { data: spendReserve, error: spendErr } = ceilingHit
       ? { data: { allowed: false }, error: null }
+      : needsProvider && isChainJob
+      ? { data: { allowed: true, cost_id: null }, error: null } // the chain reserves each call against its OWN provider's daily cap (see chainRunner)
       : needsProvider
       ? await adminClient.rpc("reserve_provider_spend_atomic", {
           p_job_id: jobId,
@@ -549,8 +573,9 @@ export async function POST(req: NextRequest) {
     if (!providerBudgetStopped) spendCostId = spendReserve.cost_id ?? null;
 
     // 7. Call provider through adapter
-    const activeAdapter =
-      useMockProvider && injectedAdapter
+    const activeAdapter = isChainJob
+      ? createChainAdapter({ adminClient, fakeMode, tregFn: useMockProvider && injectedAdapter ? injectedAdapter : defaultTregAdapter })
+      : useMockProvider && injectedAdapter
         ? injectedAdapter
         : useMockProvider
         ? createBuiltInMockAdapter({
@@ -720,6 +745,7 @@ export async function POST(req: NextRequest) {
       deadlineMs,
       ...(videoSelector ? { videoSelector } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
+      ...(isChainJob ? { unitPricePoints: Number(unitPrice) } : {}),
     });
 
     // A page that fails AFTER rows were already delivered ends the collection instead of the job: the rows collected so
@@ -781,7 +807,7 @@ export async function POST(req: NextRequest) {
     // Social rows (comments, videos) are de-duplicated across pages the same way company rows are: a provider
     // can repeat its first page, and a repeated comment must be neither delivered twice nor billed twice.
     const socialCapability = getSocialCapability(spec.capabilitySlug);
-    const dedupeIdentity = dedupeIdentityFor(isCompanyCapability ? "company" : isPeopleJob ? "person" : "social");
+    const dedupeIdentity = dedupeIdentityFor(isCompanyCapability || isChainJob ? "company" : isPeopleJob ? "person" : "social");
     let duplicateExcludedCount = 0;
     // Accepted rows of each earlier page (null = unreadable): feeds the stop rule for pages that find nothing.
     const priorBatchUnits: Array<number | null> = Array.from({ length: currentStep }, () => null);
@@ -789,7 +815,7 @@ export async function POST(req: NextRequest) {
     const seenProviderCursors = new Set<string>();
     if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(cursorKey(currentCursor));
     // What the earlier chunks left behind (row identities, cursors, rows per page), read from ONE running record, not rebuilt from every earlier chunk.
-    const trackRunningSet = isCompanyCapability || Boolean(socialCapability) || isPeopleJob;
+    const trackRunningSet = isCompanyCapability || Boolean(socialCapability) || isPeopleJob || isChainJob;
     let runningSet: RunningSet | null = currentStep === 0 ? emptyRunningSet() : null;
     if (trackRunningSet && (rawRows.length > 0 || currentStep > 0)) {
       const seen = new Set<string>();
@@ -1253,7 +1279,7 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-      } else if (matchedForAdvice.length > 0) {
+      } else if (matchedForAdvice.length > 0 && !isChainJob) {
         try {
           const advisory = await getRowAdvisor()({
             customerRequest: [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]

@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 import { estimateSocialChunkCostUsd, getSocialCapability, socialRowsPerChunk } from "../socialSources";
+import { isChainSlug } from "../multiProvider/routes";
 
 const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
@@ -105,6 +106,22 @@ export async function resolveJobExecutionSpec(
     }
   } catch {
     // Continue with capability catalog resolution
+  }
+
+  // The multi-provider contact chain is not in the live TREG catalog or the registry table: its spec comes from the quote alone, and nothing is asked of the catalog.
+  if (isChainSlug(capabilitySlug)) {
+    return {
+      capabilitySlug,
+      endpointId,
+      method: "POST",
+      params,
+      paginationStrategy: "cursor",
+      pricingUnit: "item",
+      unitCostUsd: typeof unitCostUsd === "number" && unitCostUsd > 0 ? unitCostUsd : Math.max(0.0001, Number(((Number(unitPricePoints) || 1) / 5500).toFixed(6))),
+      pageSize: 10,
+      outputFormats,
+      ...(retryOfJobId ? { retryOfJobId } : {}),
+    };
   }
 
   // Verified social services carry their own source chain: nothing else in the catalog applies to them,

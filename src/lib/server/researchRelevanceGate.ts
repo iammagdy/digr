@@ -3,6 +3,8 @@ import { MIN_MEANINGFUL_CHARS, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
+import { isChainSlug } from "../multiProvider/routes";
+import { rowPassesGate } from "../multiProvider/policy";
 
 export interface ResearchRelevanceContext {
   capabilitySlug: string;
@@ -160,6 +162,14 @@ export function evaluateResearchRowRelevance(
   context: ResearchRelevanceContext,
 ): ResearchRelevanceResult {
   const { capabilitySlug, endpointId, params } = context;
+  // The multi-provider contact chain: a row counts only when every required contact field is VERIFIED (the chain's own policy); an unverified row
+  // is neither delivered nor charged. The chain already checked that the page was public; nothing here reads topic words.
+  if (isChainSlug(capabilitySlug)) {
+    const required = Array.isArray(params?.requiredFields) ? params.requiredFields.map(String) : ["work_email"];
+    return rowPassesGate(row, required)
+      ? { decision: "match", reasonAr: "حقول التواصل المطلوبة متحقَّق منها" }
+      : { decision: "no_match", reasonAr: "لم يكتمل التحقق من حقول التواصل المطلوبة؛ لم يُسلَّم السجل ولم يُحتسب" };
+  }
   const companyCapability = /compan|company|icypeas/i.test(`${capabilitySlug} ${endpointId}`);
 
   if (companyCapability) {

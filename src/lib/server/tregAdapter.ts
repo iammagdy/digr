@@ -611,6 +611,8 @@ export interface ProviderAdapterCallInput {
   decisionMakerSpendBudgetUsd?: number;
   /** Deadline timestamp in milliseconds for chunk execution. */
   deadlineMs?: number;
+  /** The job's unit price in points (set by the worker): the multi-provider chain derives its provider-spend budget from the reserve it implies. */
+  unitPricePoints?: number;
   /** Social topic searches only: judges the discovered videos before their comments are read (set by the worker). */
   videoSelector?: VideoSelector;
 }

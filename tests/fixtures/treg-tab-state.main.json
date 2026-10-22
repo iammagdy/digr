@@ -1,0 +1,72 @@
+{
+  "provider": "treg",
+  "keySource": "env",
+  "maskedKey": "••••••••••••7890",
+  "last4": "7890",
+  "storeState": "skipped",
+  "store": {
+    "ready": true,
+    "version": 3,
+    "activeSetAt": "2026-10-20T00:00:00.000Z",
+    "previousLast4": "1111",
+    "previousSetAt": "2026-10-19T00:00:00.000Z"
+  },
+  "encryptionConfigured": false,
+  "envKeyConfigured": true,
+  "status": {
+    "provider": "treg",
+    "health": {
+      "ok": true,
+      "reason": "ok",
+      "httpStatus": 200,
+      "statusClass": "2xx",
+      "latencyMs": 0,
+      "checkedAt": "2026-10-22T09:30:00.000Z"
+    },
+    "balance": {
+      "available": true,
+      "balanceMicro": 1234567,
+      "balanceUsd": 1.234567,
+      "heldMicro": 1000,
+      "orgId": "org_1",
+      "checkedAt": "2026-10-22T09:30:00.000Z"
+    },
+    "cachedAt": "2026-10-22T09:30:00.000Z",
+    "cacheTtlMs": 60000
+  },
+  "accountEmail": "owner@example.com",
+  "authRejection": null,
+  "settings": {
+    "lowBalanceThresholdUsd": 0.2,
+    "tregOrgId": "org_1"
+  },
+  "lowBalance": false,
+  "spend": {
+    "todayUsd": 0.0633,
+    "capUsd": 0.8,
+    "capKind": "provider_daily"
+  },
+  "activity": [
+    {
+      "at": "2026-10-22T08:00:00.000Z",
+      "label": "مهمة 12345678",
+      "detail": "3 وحدة",
+      "amount": "0.0123"
+    },
+    {
+      "at": "2026-10-22T07:00:00.000Z",
+      "label": "مهمة 99999999",
+      "detail": "1 وحدة · تقدير",
+      "amount": "0.05"
+    },
+    {
+      "at": "2026-10-21T07:00:00.000Z",
+      "label": "—",
+      "detail": "1 وحدة",
+      "amount": "0.001"
+    }
+  ],
+  "noticesAr": [
+    "المتغير PROVIDER_KEYS_ENCRYPTION_KEY غير مضبوط أو غير صالح في Vercel، لذلك لا يمكن حفظ مفتاح جديد. اضبطه ثم اضغط Redeploy."
+  ]
+}

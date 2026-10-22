@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { loadProviderLimitsState, saveProviderLimits } from "@/lib/server/providerLimitsAdmin";
+import { resolveAllProviderDailyCaps, readProviderSpendToday } from "@/lib/server/multiProvider/providerCaps";
 
 export const dynamic = "force-dynamic";
 
@@ -10,8 +11,15 @@ export async function GET(req: NextRequest) {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
   try {
-    const state = await loadProviderLimitsState(createAdminClient(), { forceRefresh: true });
-    return NextResponse.json({ state }, { headers: { "Cache-Control": "no-store" } });
+    const client = createAdminClient();
+    const state = await loadProviderLimitsState(client, { forceRefresh: true });
+    // The daily limits of the two extra data providers, beside the state above (which is exactly what it was): their own cap and today's recorded spend.
+    const [caps, firecrawlToday, contextdevToday] = await Promise.all([resolveAllProviderDailyCaps(client), readProviderSpendToday(client, "firecrawl"), readProviderSpendToday(client, "contextdev")]);
+    const extra = {
+      firecrawl: { dailyUsd: caps.firecrawl, todayUsd: firecrawlToday },
+      contextdev: { dailyUsd: caps.contextdev, todayUsd: contextdevToday },
+    };
+    return NextResponse.json({ state, extra }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "تعذر تحميل الحدود الآن." }, { status: 500 });
   }

@@ -146,9 +146,12 @@ export interface LimitsInput {
   perUserDailyUsd?: unknown;
   warnPercent?: unknown;
   llmDailyUsd?: unknown;
+  /** Daily limits of the two extra data providers (see multiProvider/providerCaps.ts). */
+  firecrawlDailyUsd?: unknown;
+  contextdevDailyUsd?: unknown;
 }
 
-export type LimitsPatch = Partial<{ dailyUsd: number; perJobUsd: number | null; perUserDailyUsd: number | null; warnPercent: number; llmDailyUsd: number }>;
+export type LimitsPatch = Partial<{ dailyUsd: number; perJobUsd: number | null; perUserDailyUsd: number | null; warnPercent: number; llmDailyUsd: number; firecrawlDailyUsd: number; contextdevDailyUsd: number }>;
 
 const FIELD_LABEL_AR: Record<string, string> = {
   dailyUsd: "الحد اليومي لإنفاق المزود",
@@ -156,6 +159,8 @@ const FIELD_LABEL_AR: Record<string, string> = {
   perUserDailyUsd: "سقف المزود اليومي لكل مستخدم",
   warnPercent: "نسبة التنبيه",
   llmDailyUsd: "الحد اليومي للنموذج الذكي",
+  firecrawlDailyUsd: "الحد اليومي لمزود قراءة المواقع",
+  contextdevDailyUsd: "الحد اليومي لمزود البحث والقراءة",
 };
 
 /** Partial update: only the fields present are validated. An empty ceiling clears it (no ceiling). */
@@ -164,7 +169,7 @@ export function validateLimitsInput(input: LimitsInput): { ok: true; value: Limi
   const has = (k: keyof LimitsInput) => input[k] !== undefined;
   const fail = (k: string, why: string) => ({ ok: false as const, messageAr: `${FIELD_LABEL_AR[k]}: ${why}` });
 
-  for (const k of ["dailyUsd", "llmDailyUsd"] as const) {
+  for (const k of ["dailyUsd", "llmDailyUsd", "firecrawlDailyUsd", "contextdevDailyUsd"] as const) {
     if (!has(k)) continue;
     const n = parseLimitNumber(input[k]);
     if (n === null) return fail(k, "اكتب رقمًا صحيحًا (مثال: ٠٫٨٠).");

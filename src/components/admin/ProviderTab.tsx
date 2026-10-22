@@ -6,8 +6,13 @@ import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import type { ProviderTabState } from "@/lib/server/providerKeyAdmin";
 import { agoAr, dateTimeAr, tint } from "./format";
 import { ProviderLimitsPanel } from "./ProviderLimitsPanel";
+import { ProviderCallLog } from "./ProviderCallLog";
 
-type Provider = "treg" | "anthropic";
+type Provider = "treg" | "anthropic" | "firecrawl" | "contextdev";
+/** The providers that collect data (the model provider has no call log of this kind). */
+const isDataProvider = (p: Provider): p is "treg" | "firecrawl" | "contextdev" => p !== "anthropic";
+/** Providers that sell credits: the balance is the provider's own credit count, not dollars. */
+const isCreditProvider = (p: Provider) => p === "firecrawl" || p === "contextdev";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text-sm text-ink outline-none text-left";
@@ -135,8 +140,23 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
 
       {/* Real balance (data provider only: the model provider has no balance API for a regular key) */}
       <section className={SECTION} aria-label="الرصيد">
-        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === "treg" ? "الرصيد لدى المزود" : "الرصيد"}</h3>
-        {b.available && typeof b.balanceUsd === "number" ? (
+        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === "treg" || isCreditProvider(provider) ? "الرصيد لدى المزود" : "الرصيد"}</h3>
+        {isCreditProvider(provider) ? (
+          b.available && typeof b.credits === "number" ? (
+            <div className="flex flex-col gap-1" data-testid="provider-credits">
+              <p className="m-0 text-[28px] font-semibold text-ink">{formatAr(b.credits)} <span className="text-[13px] font-normal text-mut">رصيد (كريدت)</span></p>
+              {typeof b.planCredits === "number" && <p className="m-0 text-xs text-mut">رصيد الباقة: {formatAr(b.planCredits)}</p>}
+              {typeof b.creditsUsedThisPeriod === "number" && <p className="m-0 text-xs text-mut">المستهلك في الفترة الحالية: {formatAr(b.creditsUsedThisPeriod)}</p>}
+              {b.periodEndsAt && <p className="m-0 text-xs text-mut">{provider === "firecrawl" ? "نهاية الفترة الحالية" : "موعد التجديد القادم"}: {dateTimeAr(b.periodEndsAt)}</p>}
+              <p className="m-0 text-xs text-mut">جُلب من المزود: {dateTimeAr(b.checkedAt)} · {agoAr(b.checkedAt)}</p>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-1" data-testid="provider-credits-unavailable">
+              <p className="m-0 text-[22px] font-semibold text-ink">غير متاح</p>
+              <p className="m-0 text-[13px] leading-[1.8] text-mut">{BALANCE_UNAVAILABLE_AR[b.unavailableReason ?? "check_failed"]}</p>
+            </div>
+          )
+        ) : b.available && typeof b.balanceUsd === "number" ? (
           <div className="flex flex-col gap-1">
             <p className="m-0 text-[28px] font-semibold text-ink" style={{ color: state.lowBalance ? "var(--bad)" : undefined }}>{usd(b.balanceUsd)}</p>
             <p className="m-0 text-xs text-mut">بوحدة المزود: {toArabicDigits(b.balanceMicro ?? 0)} ميكرو دولار (واحد من مليون)</p>
@@ -165,8 +185,8 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
 
       {/* Platform's own recorded spend today (read-only) against the cap */}
       <section className={SECTION} aria-label="استهلاك اليوم">
-        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === "treg" ? "استهلاك المنصة من المزود اليوم" : "إنفاق النموذج الذكي اليوم"}</h3>
-        <p className="m-0 text-[13px] text-ink">{usd(state.spend.todayUsd)} من {state.spend.capUsd == null ? "—" : usd(state.spend.capUsd)} <span className="text-mut">({provider === "treg" ? "السقف اليومي للمزود" : "السقف اليومي العام"})</span></p>
+        <h3 className="m-0 text-[15px] font-semibold text-ink">{provider === "treg" ? "استهلاك المنصة من المزود اليوم" : isCreditProvider(provider) ? "استهلاك المنصة من هذا المزود اليوم" : "إنفاق النموذج الذكي اليوم"}</h3>
+        <p className="m-0 text-[13px] text-ink">{usd(state.spend.todayUsd)} من {state.spend.capUsd == null ? "—" : usd(state.spend.capUsd)} <span className="text-mut">({provider === "treg" || isCreditProvider(provider) ? "السقف اليومي للمزود" : "السقف اليومي العام"})</span></p>
         <div className="h-2 overflow-hidden rounded-full bg-sf2" role="progressbar" aria-valuenow={Math.round(capPct)} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full rounded-full" style={{ width: `${capPct}%`, background: capPct >= 90 ? "var(--bad)" : "var(--gold)" }} />
         </div>
@@ -216,7 +236,7 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
         {state.activity.length === 0 ? <p className="m-0 text-[13px] text-mut">لا يوجد نشاط مسجّل بعد.</p> : (
           <div className="overflow-x-auto">
             <table className="w-full table-fixed border-collapse text-[11px]">
-              <thead><tr className="text-mut">{(provider === "treg" ? ["الوقت", "المهمة", "الوحدات", "التكلفة"] : ["الوقت", "السبب", "التوكنات", "التكلفة"]).map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+              <thead><tr className="text-mut">{(isDataProvider(provider) ? ["الوقت", "المهمة", "الوحدات", "التكلفة"] : ["الوقت", "السبب", "التوكنات", "التكلفة"]).map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
               <tbody>
                 {state.activity.map((r, i) => (
                   <tr key={i} className="text-ink"><td className="border-b border-ln py-2">{agoAr(r.at)}</td><td className="break-words border-b border-ln py-2">{r.label}</td><td className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
@@ -226,6 +246,7 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
           </div>
         )}
       </section>
+      {isDataProvider(provider) && <ProviderCallLog provider={provider} />}
     </div>
   );
 }
