@@ -131,9 +131,9 @@ describe("the reply sample: the head of the raw reply, scrubbed of row and reque
     expect(REVIEW_SAMPLE_EVENT_TYPE).toBe("review_sample");
     expect(isCustomerVisibleJobEvent("review_sample")).toBe(false);
     const message = reviewSampleEventMessage({ step: 0, rows: 20, stopReason: "end_turn", tokensIn: 2586, tokensOut: 1962, replyChars: 9120, sample: { head: 'Let me "think"\nfirst {"reviews":[', startsWithJson: false, reasonKeys: 3 } });
-    expect(message).toBe('review_sample step=0 rows=20 stop=end_turn in=2586 out=1962 reply_chars=9120 starts_json=0 reason_keys=3 head="Let me \\"think\\"\\nfirst {\\"reviews\\":["');
+    expect(message).toBe('review_sample step=0 rows=20 stop=end_turn in=2586 out=1962 thinking_tokens=none thinking=none reply_chars=9120 starts_json=0 reason_keys=3 head="Let me \\"think\\"\\nfirst {\\"reviews\\":["');
     expect(message.split("\n")).toHaveLength(1);
-    expect(reviewSampleEventMessage({ step: 2, rows: 5, stopReason: null, tokensIn: 0, tokensOut: 0, replyChars: null, sample: null })).toBe('review_sample step=2 rows=5 stop=none in=0 out=0 reply_chars=none starts_json=none reason_keys=none head=""');
+    expect(reviewSampleEventMessage({ step: 2, rows: 5, stopReason: null, tokensIn: 0, tokensOut: 0, replyChars: null, sample: null })).toBe('review_sample step=2 rows=5 stop=none in=0 out=0 thinking_tokens=none thinking=none reply_chars=none starts_json=none reason_keys=none head=""');
   });
 });
 

@@ -32,6 +32,8 @@ export interface AdvisoryUsage {
   costUsd: number;
   model: string;
   latencyMs: number;
+  /** The part of `outputTokens` the model spent thinking (`usage.output_tokens_details.thinking_tokens`), when the API reports it. */
+  thinkingTokens?: number;
 }
 
 export type AdvisoryFailureCode =
@@ -54,6 +56,10 @@ export interface AdvisoryResult {
   replyChars?: number;
   /** For the owner's diagnosis only (the internal `review_sample` row): the head of the raw reply with every run of row or request text removed, and its shape. */
   replySample?: ReplySample;
+  /** How thinking was set on this call: `off` (the REVIEW_THINKING flag), `default` (nothing sent), or `fallback` (the API rejected the parameter and the call was repeated once without it). */
+  thinkingMode?: ReviewThinkingSent;
+  /** Set when the API rejected the thinking parameter (HTTP 400) and the call was repeated once without it: the code and the provider's short error text, for the internal `review_failure` row. */
+  thinkingFallback?: { code: string; detail: string | null };
 }
 
 /** The first REPLY_SAMPLE_CHARS characters of a raw reply, scrubbed of row and request text, and what shape it had. Never customer data. */
@@ -120,6 +126,25 @@ export const REVIEW_SNIPPET_CHARS = 160;
 /** What is kept of a long text whose words of the request all lie beyond the cut: the start, then a window around the first of those words. */
 const FOCUS_HEAD_CHARS = 90;
 const FOCUS_WINDOW_CHARS = 66;
+
+/**
+ * Thinking on the model-review calls (callClaudeRowAdvisor and its retries, nothing else: chat and planning use another client). `off` sends
+ * `thinking: {"type": "disabled"}`; `default` sends no `thinking` field, so the model runs its own adaptive thinking, which is billed as output tokens
+ * and does not show in the reply. Anthropic's docs for claude-haiku-5-5 (platform.claude.com/docs/en/build-with-claude/effort, "Recommended effort levels
+ * for Claude Haiku 5.5"): adaptive thinking is on by default, the default effort is `medium`, and `thinking: {"type": "disabled"}` is accepted at `high`
+ * effort or below (a 400 at `xhigh` or `max`; no `effort` is sent here, so the default `medium` applies). The owner reverts it by changing THIS line.
+ */
+export type ReviewThinking = "off" | "default";
+export type ReviewThinkingSent = "off" | "default" | "fallback";
+export const REVIEW_THINKING: ReviewThinking = "off";
+let reviewThinkingOverride: ReviewThinking | null = null;
+/** Test-only: switch the flag for a test (null restores the constant). */
+export function setReviewThinkingForTesting(mode: ReviewThinking | null): void {
+  reviewThinkingOverride = mode;
+}
+export const reviewThinkingMode = (): ReviewThinking => reviewThinkingOverride ?? REVIEW_THINKING;
+/** The request fields the flag adds: the thinking parameter when it is `off`, nothing when it is `default`. */
+export const reviewThinkingFields = (mode: ReviewThinking = reviewThinkingMode()): { thinking?: { type: "disabled" } } => (mode === "off" ? { thinking: { type: "disabled" } } : {});
 
 /** The raw reply is kept for diagnosis up to this many characters (see `replySampleOf`). */
 export const REPLY_SAMPLE_CHARS = 500;
@@ -332,32 +357,46 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
     const key = (await resolveProviderKey("anthropic")).key;
     if (!key) return empty("no_key");
     const model = (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim();
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const prompt = buildPrompt(input);
+    const send = (withThinkingFields: boolean) => fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       signal: controller.signal,
-      body: JSON.stringify({ model, max_tokens: requestedMaxTokens(input), messages: [{ role: "user", content: buildPrompt(input) }] }),
+      body: JSON.stringify({ model, max_tokens: requestedMaxTokens(input), ...(withThinkingFields ? reviewThinkingFields() : {}), messages: [{ role: "user", content: prompt }] }),
     });
-    if (!response.ok) {
-      let detail: string | null = null;
+    const errorDetail = async (res: Response): Promise<string | null> => {
       try {
-        const body: any = await response.json();
-        detail = [body?.error?.type, body?.error?.message].filter((part) => typeof part === "string").join(": ").replace(/\s+/g, " ").slice(0, 160) || null;
+        const body: any = await res.json();
+        return [body?.error?.type, body?.error?.message].filter((part) => typeof part === "string").join(": ").replace(/\s+/g, " ").slice(0, 160) || null;
       } catch {
-        detail = null;
+        return null;
       }
-      return { ...empty(`http_${response.status}`), detail };
+    };
+    const thinkingFieldsSent = reviewThinkingFields().thinking !== undefined;
+    let thinkingMode: ReviewThinkingSent = thinkingFieldsSent ? "off" : "default";
+    let thinkingFallback: { code: string; detail: string | null } | undefined;
+    let response = await send(true);
+    // The API refused the request while it carried the thinking parameter: repeat the SAME request once without it (the review path must never break
+    // on this switch); the code and the provider's short error text are handed to the caller for an internal review_failure row.
+    if (!response.ok && response.status === 400 && thinkingFieldsSent) {
+      thinkingFallback = { code: "http_400", detail: await errorDetail(response) };
+      thinkingMode = "fallback";
+      response = await send(false);
+    }
+    if (!response.ok) {
+      return { ...empty(`http_${response.status}`), detail: await errorDetail(response), thinkingMode, ...(thinkingFallback ? { thinkingFallback } : {}) };
     }
     const data: any = await response.json();
     const text = Array.isArray(data?.content) ? data.content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("") : "";
     const inputTokens = Number(data?.usage?.input_tokens) || 0;
     const outputTokens = Number(data?.usage?.output_tokens) || 0;
+    const reportedThinking = Number(data?.usage?.output_tokens_details?.thinking_tokens);
     const pricing = getLlmPricingSettings("anthropic", model);
     const costUsd = (inputTokens * pricing.inputCostPerMillion + outputTokens * pricing.outputCostPerMillion) / 1_000_000;
     const verdicts = parseAdvisoryReply(text, { verdictOnly: isVerdictOnlyKind(input.kind) });
     const failure: AdvisoryFailureCode | null = verdicts.size === 0 && input.rows.length > 0 ? "bad_reply" : null;
     const stopReason = typeof data?.stop_reason === "string" ? data.stop_reason : null;
-    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure, stopReason, detail: failure === "bad_reply" ? `reply_chars=${text.length}` : null, replyChars: text.length, replySample: replySampleOf(text, input.rows, input.customerRequest) };
+    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started, ...(Number.isFinite(reportedThinking) ? { thinkingTokens: reportedThinking } : {}) }, failure, stopReason, detail: failure === "bad_reply" ? `reply_chars=${text.length}` : null, replyChars: text.length, replySample: replySampleOf(text, input.rows, input.customerRequest), thinkingMode, ...(thinkingFallback ? { thinkingFallback } : {}) };
   } catch (err: any) {
     const isTimeout = err?.name === "AbortError" || controller.signal.aborted;
     return empty(isTimeout ? "timeout" : "network");
@@ -499,6 +538,9 @@ export interface SocialReviewAttempt {
   replyChars: number | null;
   /** The scrubbed head and shape of the reply (null when the call got no answer), for the internal `review_sample` row. */
   replySample: ReplySample | null;
+  /** How thinking was set on the call (null for an advisor that does not say), and the API's rejection of the parameter when the call fell back. */
+  thinkingMode: ReviewThinkingSent | null;
+  thinkingFallback: { code: string; detail: string | null } | null;
   /** True for a call that repeats rows that had no verdict. */
   retry: boolean;
   /** How many rows of this call have no verdict after it. */
@@ -582,7 +624,7 @@ export async function reviewSocialRows(input: {
     }
     attempts.push({
       rows: batch.length, usage: result.usage, failure: result.failure ?? null, stopReason: result.stopReason ?? null, detail: result.detail ?? null,
-      maxTokens: requestedMaxTokens({ kind: input.kind, rows: batch, ...(retry ? { maxTokens: RETRY_MAX_TOKENS } : {}) }), replyChars: result.replyChars ?? null, replySample: result.replySample ?? null, retry, missing,
+      maxTokens: requestedMaxTokens({ kind: input.kind, rows: batch, ...(retry ? { maxTokens: RETRY_MAX_TOKENS } : {}) }), replyChars: result.replyChars ?? null, replySample: result.replySample ?? null, thinkingMode: result.thinkingMode ?? null, thinkingFallback: result.thinkingFallback ?? null, retry, missing,
     });
     return { stop: null, result };
   };
