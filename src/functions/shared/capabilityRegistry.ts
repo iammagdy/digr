@@ -1,6 +1,7 @@
 import { TablesDB } from "./dbCompat";
 import { SOCIAL_CAPABILITIES, SocialCapabilityDef } from "../../lib/socialSources";
 import { recordUnitPricePoints } from "../../lib/recordPricing";
+import { isPeopleSearchRequest } from "../../lib/planParameters";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
 export type CapabilityUnit = "page" | "query" | "profile" | "1000 items";
@@ -998,6 +999,58 @@ export function resolveCapabilityReference(
   return undefined;
 }
 
+
+/** The approved company-search service: a company request tries it first. */
+export const APPROVED_COMPANY_SEARCH_SLUG = "icypeas-companies-search";
+
+/** What the customer reads when no allowed company-search source is live: no plan, no reserve. */
+export const COMPANY_SOURCE_UNAVAILABLE_AR =
+  "مصدر بيانات الشركات غير متاح الآن، لذلك لم أجهّز خطة ولم يُحجز أي رصيد. جرّب مرة أخرى بعد قليل.";
+
+/**
+ * A company search by its ENDPOINT or SLUG («icypeas-companies-search», «icypeas.companies.search»). The catalog's platform or category
+ * label never decides: on 22 Oct 2026 a job-postings endpoint carried a companies label, was picked for «٥٠ شركة مقاولات في مصر», and
+ * delivered nothing. People and decision-maker services are not company searches.
+ */
+export function isCompanySearchCapabilityRef(slug?: string | null, endpointId?: string | null): boolean {
+  const text = `${slug || ""} ${endpointId || ""}`;
+  return /compan/i.test(text) && !/people|person|decision/i.test(text);
+}
+
+/**
+ * The capability a company request may use, from the capabilities that are live now: the approved company search first, then any other
+ * enabled, verified company search by endpoint or slug. Null when there is none: the caller answers honestly and plans nothing.
+ * The code catalog is NOT a fallback here: a company search the owner switched off must stay off.
+ */
+export function pickCompanySearchCapability(capabilities: Capability[]): Capability | null {
+  const live = (capabilities || []).filter(
+    (capability) => capability.enabled !== false && (capability.status === "verified" || capability.status === undefined),
+  );
+  const byName = live.filter((capability) => isCompanySearchCapabilityRef(capability.slug, capability.tregEndpointId || capability.id));
+  return byName.find((capability) => capability.slug === APPROVED_COMPANY_SEARCH_SLUG) || byName[0] || null;
+}
+
+/** The approved decision-maker service: a people request tries it first. */
+export const APPROVED_PEOPLE_SEARCH_SLUG = "professional-people-search";
+
+/** What the customer reads when a people-search plan would run on a source that is not a people search. */
+export const PEOPLE_SOURCE_UNAVAILABLE_AR =
+  "مصدر بيانات صناع القرار غير متاح الآن، لذلك لم أجهّز خطة ولم يُحجز أي رصيد. جرّب مرة أخرى بعد قليل.";
+
+/** A people search by its ENDPOINT or SLUG (never the catalog's platform label). An e-mail or phone finder is an enrichment, not a search. */
+export function isPeopleSearchCapabilityRef(slug?: string | null, endpointId?: string | null): boolean {
+  return /people[-_. ]?search|decision[-_. ]?mak/i.test(`${slug || ""} ${endpointId || ""}`);
+}
+
+/** The capability a people request may use, from the live ones: the approved service first, then another enabled, verified people search by name. */
+export function pickPeopleSearchCapability(capabilities: Capability[]): Capability | null {
+  const live = (capabilities || []).filter(
+    (capability) => capability.enabled !== false && (capability.status === "verified" || capability.status === undefined),
+  );
+  const byName = live.filter((capability) => isPeopleSearchCapabilityRef(capability.slug, capability.tregEndpointId || capability.id));
+  return byName.find((capability) => capability.slug === APPROVED_PEOPLE_SEARCH_SLUG) || byName[0] || null;
+}
+
 /**
  * Deterministic check: the platform(s) the user mentioned in their message
  * must match the platform(s) in the proposed plan, else block the plan.
@@ -1011,6 +1064,8 @@ export function validatePlanPlatformMatch(
   userPlatforms: string[];
   planPlatforms: string[];
   errorAr?: string;
+  /** Set when the plan was refused because its source is not an allowed company search. */
+  reasonCode?: "company_source_unavailable" | "people_source_unavailable";
 } {
   const planPlatforms = Array.from(
     new Set(
@@ -1025,6 +1080,26 @@ export function validatePlanPlatformMatch(
   const userPlatforms = planPlatforms.includes("people")
     ? mentionedPlatforms.filter((platform) => platform !== "companies")
     : mentionedPlatforms;
+
+  // A people request: an item the catalog labels «people» that is not a people search by its endpoint or slug is never a people source.
+  const peopleRequest = isPeopleSearchRequest(userMessage);
+  const mislabelledPeopleItem = peopleRequest && planItems.some((item) => {
+    const platform = inferCapabilityPlatform(item.capabilitySlug || item.endpointId || "", capabilities);
+    return platform === "people" && !isPeopleSearchCapabilityRef(item.capabilitySlug, item.endpointId) && !/people/i.test(`${item.capabilitySlug || ""} ${item.endpointId || ""}`);
+  });
+  if (mislabelledPeopleItem) {
+    return { valid: false, userPlatforms, planPlatforms, errorAr: PEOPLE_SOURCE_UNAVAILABLE_AR, reasonCode: "people_source_unavailable" };
+  }
+
+  // A plan item that the catalog labels «companies» (or «b2b») but that is not a company search by its endpoint or slug is never a
+  // company source: the label alone is not evidence (22 Oct 2026).
+  const mislabelledCompanyItem = !peopleRequest && userPlatforms.includes("companies") && planItems.some((item) => {
+    const platform = inferCapabilityPlatform(item.capabilitySlug || item.endpointId || "", capabilities);
+    return (platform === "companies" || platform === "b2b") && !isCompanySearchCapabilityRef(item.capabilitySlug, item.endpointId);
+  });
+  if (mislabelledCompanyItem) {
+    return { valid: false, userPlatforms, planPlatforms, errorAr: COMPANY_SOURCE_UNAVAILABLE_AR, reasonCode: "company_source_unavailable" };
+  }
 
   if (userPlatforms.length === 0) {
     return { valid: true, userPlatforms, planPlatforms };
