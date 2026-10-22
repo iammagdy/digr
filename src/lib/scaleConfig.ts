@@ -21,12 +21,20 @@ interface ScaleSpec {
   whatAr: string;
 }
 
+/**
+ * How many pages a large job may read per page it would need if every record matched (the slack for relevance misses). Defined HERE, once: the default of
+ * `largeJobPageAllowance` below, re-exported by providerCallCaps. Raised from 3 to 6 on 22 Oct 2026: the 300-post X job of that day stopped at page 18
+ * (6 pages needed x 3) with 33% of what it saw accepted, 118 delivered, and 0.067 of its 0.15 USD review budget unspent. The absolute ceiling
+ * (`absoluteMaxPages`, 300) and every other stop rule are unchanged.
+ */
+export const LARGE_JOB_PAGE_ALLOWANCE = 6;
+
 export const SCALE_SPECS: Record<ScaleKey, ScaleSpec> = {
   // Provider pages (chunks) one job may read; with a page of 50 rows this is the real limit of a feed job (300 x 50 = 15,000 rows). A full
-  // 600-point X job (4,453 posts) is 90 pages, 270 with the slack of 3 for relevance misses; a YouTube or TikTok one (1,897 comments) is 114.
+  // 600-point X job (4,453 posts) is 90 pages, so the ceiling of 300 binds with the slack of 6 (540); a YouTube or TikTok one (1,897 comments) is 38 pages, 228 with the slack.
   absoluteMaxPages: { env: "LONG_JOB_MAX_PAGES", def: 300, min: 1, max: 2000, whatAr: "أكبر عدد من الدفعات لمهمة واحدة" },
   // How many pages a large job may read per page it would need if every record matched (relevance misses use the slack).
-  largeJobPageAllowance: { env: "LONG_JOB_PAGE_ALLOWANCE", def: 3, min: 1, max: 10, whatAr: "هامش الدفعات الإضافية" },
+  largeJobPageAllowance: { env: "LONG_JOB_PAGE_ALLOWANCE", def: LARGE_JOB_PAGE_ALLOWANCE, min: 1, max: 10, whatAr: "هامش الدفعات الإضافية" },
   // Most rows one social plan item may ask for. 0 = the per-service defaults (500 or 1,000). Only comment and big post services rise.
   socialMaxRows: { env: "LONG_JOB_SOCIAL_MAX_ROWS", def: 0, min: 0, max: 100_000, whatAr: "أكبر عدد سجلات لبند اجتماعي واحد" },
   // Most comments taken from one video, and most videos one job reads.

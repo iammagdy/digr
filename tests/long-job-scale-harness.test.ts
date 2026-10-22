@@ -33,12 +33,12 @@ describe("the configuration of the ceilings: the defaults are today's numbers", 
   it("every ceiling defaults to what the platform runs on, and every value is clamped", () => {
     const empty = {} as Record<string, string | undefined>;
     expect(scaleValue("absoluteMaxPages", empty)).toBe(300);
-    expect(scaleValue("largeJobPageAllowance", empty)).toBe(3);
+    expect(scaleValue("largeJobPageAllowance", empty)).toBe(6);
     expect(scaleValue("maxPerVideo", empty)).toBe(500);
     expect(scaleValue("maxVideosPerJob", empty)).toBe(20);
     expect(scaleValue("socialMaxRows", empty)).toBe(0);
     expect(ABSOLUTE_MAX_PAGES).toBe(300);
-    expect(LARGE_JOB_PAGE_ALLOWANCE).toBe(3);
+    expect(LARGE_JOB_PAGE_ALLOWANCE).toBe(6);
     expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "100000" })).toBe(SCALE_SPECS.absoluteMaxPages.max);
     expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "0" })).toBe(1);
     expect(scaleValue("absoluteMaxPages", { LONG_JOB_MAX_PAGES: "abc" })).toBe(300);
@@ -67,15 +67,15 @@ describe("the configuration of the ceilings: the defaults are today's numbers", 
     setScaleOverridesForTesting({ absoluteMaxPages: 30 });
     expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(30);
     setScaleOverridesForTesting({ absoluteMaxPages: 400 });
-    expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(300); // ceil(5000/50) x allowance 3, under the new ceiling
+    expect(maxPagesForJob(5000, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(400); // ceil(5000/50) x allowance 6 = 600, held at the new ceiling of 400
     expect(scaleValue("absoluteMaxPages", { NODE_ENV: "production" })).toBe(300);
   });
 
   it("the page ceiling times the rows of a chunk is the real size limit of a feed job today (300 x 50 = 15,000; it was 30 x 50 = 1,500)", () => {
     expect(maxPagesForJob(50_000, SOCIAL_ROWS_PER_CHUNK, "feed") * SOCIAL_ROWS_PER_CHUNK).toBe(15000);
-    // a full 600-point job fits: 4,453 X posts need 90 pages (270 with the slack of 3), 1,897 comments 38 pages (114)
-    expect(maxPagesForJob(4453, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(270);
-    expect(maxPagesForJob(1897, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(114);
+    // a full 600-point job fits: 4,453 X posts need 90 pages (540 with the slack of 6, so the ceiling of 300 binds), 1,897 comments 38 pages (228)
+    expect(maxPagesForJob(4453, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(300);
+    expect(maxPagesForJob(1897, SOCIAL_ROWS_PER_CHUNK, "feed")).toBe(228);
   });
 });
 

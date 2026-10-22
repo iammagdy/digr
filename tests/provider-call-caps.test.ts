@@ -110,10 +110,10 @@ describe("provider call caps: the rules", () => {
     expect([1, 2, 3, 4, 10].map(smallJobPageSize)).toEqual([5, 6, 9, 10, 10]);
   });
 
-  it("larger jobs may use up to 3x the pages they would need, never above the hard ceiling", () => {
-    expect(maxPagesForJob(100, 50)).toBe(6);
-    expect(maxPagesForJob(500, 50)).toBe(30);
-    expect(maxPagesForJob(600, 10)).toBe(180);
+  it("larger jobs may use up to 6x the pages they would need, never above the hard ceiling", () => {
+    expect(maxPagesForJob(100, 50)).toBe(12);
+    expect(maxPagesForJob(500, 50)).toBe(60);
+    expect(maxPagesForJob(600, 10)).toBe(300);
     expect(maxPagesForJob(100000, 10)).toBe(ABSOLUTE_MAX_PAGES);
     expect(ABSOLUTE_MAX_PAGES).toBe(300);
   });
