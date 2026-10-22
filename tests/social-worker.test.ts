@@ -115,7 +115,7 @@ import ExcelJS from "exceljs";
 import { UNREVIEWED_SHEET_NOTICE_AR } from "../src/functions/shared/fileGenerators";
 import { isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
 import { setReviewDailyGuardForTesting } from "../src/lib/server/reviewDailyGuard";
-import { setRowAdvisorForTesting, setStrictSocialReviewForTesting, UNREVIEWED_BY_BUDGET_REASON_AR, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
+import { replySampleOf, setRowAdvisorForTesting, setStrictSocialReviewForTesting, UNREVIEWED_BY_BUDGET_REASON_AR, type RowAdvisorFn } from "../src/lib/server/rowReviewAdvisor";
 
 const JOB = jobIdForQuote("quote_social");
 const YT = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
@@ -718,7 +718,7 @@ describe("worker: social jobs", () => {
 
     describe("a review reply that is cut off (the 21 Oct 2026 failure): the complete verdicts are kept, only the missing rows are asked again, and the failure is recorded for the owner", () => {
       const internalFailures = () => db.events.filter((event) => event.event_type === "review_failure").map((event) => String(event.message));
-      const customerLines = () => db.events.filter((event) => event.event_type !== "review_failure" && event.event_type !== "review_cost").map((event) => String(event.message));
+      const customerLines = () => db.events.filter((event) => isCustomerVisibleJobEvent(event.event_type)).map((event) => String(event.message));
       const cutUsage = { inputTokens: 3325, outputTokens: 4000, costUsd: 0.0107, model: "claude-haiku-5-5", latencyMs: 9000 };
       type Seen = { indexes: number[]; maxTokens: number | undefined };
       /** The first call answers its first `answered` rows (a reply cut at the limit); a retry answers its first `answeredOnRetry` rows. */
@@ -860,6 +860,60 @@ describe("worker: social jobs", () => {
         expect(internal()).toEqual(["review_spend step=0 calls=1 usd=0.004000 total_calls=1 total_usd=0.004000 rows_seen=40 low_yield_stop=0"]);
         expect(db.events.filter((event) => event.event_type === "review_cost")).toHaveLength(1);
         expect(customer().every((line) => !line.startsWith("review_spend"))).toBe(true);
+      });
+
+      describe("the first reply of a job is kept once for the owner, scrubbed of row text (type review_sample, hidden from the customer)", () => {
+        const sampleRows = () => db.events.filter((event) => event.event_type === "review_sample");
+        /** A reviewer that thinks aloud and QUOTES the first post before its compact verdicts; it answers like the production call, sample included. */
+        const thinkingReviewer = (calls: number[]): RowAdvisorFn => async (input) => {
+          calls.push(input.rows.length);
+          const reply = `Looking at the rows first. Row 0 says "${input.rows[0].row.text}" which is about the topic.\n{"reviews":[${input.rows.map(({ index }) => `{"index":${index},"verdict":"${index === 0 ? "match" : "no_match"}"}`).join(",")}]}`;
+          return {
+            verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: index === 0 ? "match" as const : "no_match" as const, reasonAr: "x" }])),
+            usage: usage(0.004), failure: null, stopReason: "end_turn", replyChars: reply.length, replySample: replySampleOf(reply, input.rows, "x"),
+          };
+        };
+
+        it("a job of several chunks writes ONE sample row, from its first call: numbers, the head of the reply, no row text", async () => {
+          resetDb("social-x-posts", EGYPT_TOPIC, 40, 0.11715);
+          let providerCalls = 0;
+          useSource(async () => { providerCalls += 1; return ok({ ok: true, rows: pageRows(providerCalls, 20), next_cursor: `c${providerCalls}` }, 600); });
+          const calls: number[] = [];
+          strict(thinkingReviewer(calls));
+
+          await runAllChunks();
+
+          expect(calls.length).toBeGreaterThanOrEqual(3);
+          const rows = sampleRows();
+          expect(rows).toHaveLength(1);
+          const message = String(rows[0].message);
+          expect(message.startsWith("review_sample step=0 rows=20 stop=end_turn in=2000 out=500 reply_chars=")).toBe(true);
+          expect(message).toContain("starts_json=0 reason_keys=0 head=");
+          expect(message).toContain("Looking at the rows first.");
+          expect(message).toContain("which is about the topic.");
+          expect(message).not.toContain("في البطولة");
+          expect(message).not.toContain(TOPIC);
+          expect(rows[0].units).toBe(0);
+          expect(db.events.filter((event) => isCustomerVisibleJobEvent(event.event_type)).some((event) => String(event.message).includes("review_sample"))).toBe(false);
+        });
+
+        it("a second job writes its own single row (the rule is per job, not per instance)", async () => {
+          for (let run = 0; run < 2; run += 1) {
+            resetDb("social-x-posts", EGYPT_TOPIC, 20, 0.11715);
+            useSource(async () => ok({ ok: true, rows: pageRows(1, 20) }, 600));
+            strict(thinkingReviewer([]));
+            await runAllChunks();
+            expect(sampleRows()).toHaveLength(1);
+          }
+        });
+
+        it("no review call, no sample row", async () => {
+          resetDb("social-x-posts", EGYPT_TOPIC, 20, 0.11715);
+          useSource(async () => ok({ ok: true, rows: [] }, 600));
+          strict(thinkingReviewer([]));
+          await runAllChunks();
+          expect(sampleRows()).toEqual([]);
+        });
       });
 
       describe("the daily review guard: at the daily ceiling (or when it cannot be read) a job that has not started reviewing takes the previous budget rule", () => {

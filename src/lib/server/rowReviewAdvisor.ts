@@ -50,8 +50,19 @@ export interface AdvisoryResult {
   stopReason?: string | null;
   /** A short, secret-free note about a failure (the provider's error type), never row content. */
   detail?: string | null;
-  /** How many characters the reply had, when the call got an answer (never its text). */
+  /** How many characters the reply had, when the call got an answer. */
   replyChars?: number;
+  /** For the owner's diagnosis only (the internal `review_sample` row): the head of the raw reply with every run of row or request text removed, and its shape. */
+  replySample?: ReplySample;
+}
+
+/** The first REPLY_SAMPLE_CHARS characters of a raw reply, scrubbed of row and request text, and what shape it had. Never customer data. */
+export interface ReplySample {
+  head: string;
+  /** The reply begins with `{` (the compact format asked for), as opposed to words first. */
+  startsWithJson: boolean;
+  /** How many `reasonAr` or `reason` keys the reply holds: more than 0 means the model wrote reasons it was told not to. */
+  reasonKeys: number;
 }
 
 export interface RowAdvisoryInput {
@@ -109,6 +120,32 @@ export const REVIEW_SNIPPET_CHARS = 160;
 /** What is kept of a long text whose words of the request all lie beyond the cut: the start, then a window around the first of those words. */
 const FOCUS_HEAD_CHARS = 90;
 const FOCUS_WINDOW_CHARS = 66;
+
+/** The raw reply is kept for diagnosis up to this many characters (see `replySampleOf`). */
+export const REPLY_SAMPLE_CHARS = 500;
+/** A run of this many characters shared with a row's text or with the customer's request is removed from the sample. */
+const SCRUB_RUN_CHARS = 10;
+
+/**
+ * The head of a raw reply for the owner's internal `review_sample` row. The reply of a model that thinks aloud may quote the posts it is
+ * judging, so before it is kept every run of SCRUB_RUN_CHARS characters or more that also occurs in the text of one of the call's rows (the fields
+ * sent to the model) or in the customer's request is replaced by «…». What stays is the format, the verdict words, the numbers and any wording
+ * of the model's own. Pure.
+ */
+export function replySampleOf(reply: string, rows: Array<{ row: Record<string, any> }>, customerRequest: string): ReplySample {
+  const text = String(reply || "");
+  const sources = [String(customerRequest || ""), ...rows.flatMap(({ row }) => Object.values(summarizeRowForReview(row)))].map((value) => value.replace(/\s+/g, " "));
+  const grams = new Set<string>();
+  for (const source of sources) for (let at = 0; at + SCRUB_RUN_CHARS <= source.length; at += 1) grams.add(source.slice(at, at + SCRUB_RUN_CHARS));
+  const covered = new Array<boolean>(text.length).fill(false);
+  if (grams.size > 0) for (let at = 0; at + SCRUB_RUN_CHARS <= text.length; at += 1) if (grams.has(text.slice(at, at + SCRUB_RUN_CHARS))) for (let k = at; k < at + SCRUB_RUN_CHARS; k += 1) covered[k] = true;
+  let scrubbed = "";
+  for (let at = 0; at < text.length; at += 1) {
+    if (!covered[at]) scrubbed += text[at];
+    else if (!scrubbed.endsWith("…")) scrubbed += "…";
+  }
+  return { head: scrubbed.slice(0, REPLY_SAMPLE_CHARS), startsWithJson: text.trimStart().startsWith("{"), reasonKeys: (text.match(/"reason(?:Ar)?"\s*:/g) || []).length };
+}
 
 const ReviewItemSchema = z.object({
   index: z.number().int().min(0),
@@ -204,7 +241,10 @@ function salvageReviewItems(text: string): unknown[] {
  */
 export function parseAdvisoryReply(text: string, options: { verdictOnly?: boolean } = {}): Map<number, AdvisoryVerdict> {
   const verdicts = new Map<number, AdvisoryVerdict>();
-  const json = /\{[\s\S]*\}/.exec(text || "")?.[0];
+  // Words before the answer (a model that thinks aloud first) may hold braces of their own: the answer is read from its own opening.
+  const body = String(text || "");
+  const answerAt = body.search(/\{\s*"reviews"/);
+  const json = /\{[\s\S]*\}/.exec(answerAt >= 0 ? body.slice(answerAt) : body)?.[0];
   let reviews: unknown[] | null = null;
   if (json) {
     try {
@@ -215,7 +255,7 @@ export function parseAdvisoryReply(text: string, options: { verdictOnly?: boolea
       reviews = null;
     }
   }
-  for (const raw of (reviews ?? salvageReviewItems(text)).slice(0, ADVISORY_MAX_ROWS * 2)) {
+  for (const raw of (reviews ?? salvageReviewItems(answerAt >= 0 ? body.slice(answerAt) : body)).slice(0, ADVISORY_MAX_ROWS * 2)) {
     const item = ReviewItemSchema.safeParse(raw);
     if (!item.success) continue;
     // Verdict-only: whatever reason the model added is ignored; the standard Arabic reason of the verdict is used.
@@ -224,6 +264,17 @@ export function parseAdvisoryReply(text: string, options: { verdictOnly?: boolea
   }
   return verdicts;
 }
+
+/**
+ * What counts as a match for posts and comments (derived from the request's own topic, nothing hard-coded): the text is ABOUT the topic. An
+ * advertisement, a price list or product listing, a promotion and a passing mention are not (the Arabic words help the model recognise them in
+ * Arabic text).
+ */
+export const SOCIAL_NOT_A_MATCH_RULE = "NOT a match, whatever words they share with the topic: an advertisement or promotion (إعلان، ترويج، عرض، خصم), a price list or product or service listing (قائمة أسعار، منتجات)، a job or sales post, and a passing mention where the topic is only a side word in a text about something else (ذكر عابر).";
+/** A broad or abstract topic (a trend, a phenomenon, a feeling) is easy to touch without being discussed: a borderline row is held, never delivered. */
+export const SOCIAL_BROAD_TOPIC_RULE = "When the requested topic is broad or abstract (a general phenomenon rather than a named thing) and the text only touches it, or you cannot tell whether it is the subject, answer \"uncertain\", never \"match\". Hold a doubtful row rather than pass it.";
+/** The format is the cost: a reply that thinks aloud or explains is several times longer than its verdicts. */
+export const REVIEW_FORMAT_STRICT_RULE = "Strict format: the very first character of your reply is { and the last is }. Each item has exactly two keys, index and verdict. Never write reasoning, analysis, a reason key, a note or any other text, before, inside or after the JSON.";
 
 function buildPrompt(input: RowAdvisoryInput): string {
   // Posts, comments and videos are cut to REVIEW_SNIPPET_CHARS (keeping a window on the request's own words when they come late); companies and people are not.
@@ -241,7 +292,9 @@ function buildPrompt(input: RowAdvisoryInput): string {
       "A video with no description: judge from its channel and its sample comments; if they do not settle it, answer \"uncertain\".",
       "Never judge a video by how its comments are worded: short comments such as thanks, laughter or a reaction are normal under an on-topic video.",
     ] : /^social-|post|comment|video/i.test(input.kind) ? [
-      "The customer asked for posts, comments or videos ABOUT a topic. \"match\" only if the text itself is about that topic.",
+      "The customer asked for posts, comments or videos ABOUT a topic. \"match\" only if the text is itself ABOUT that topic: it discusses, reports, complains about or reacts to the requested topic as its subject.",
+      SOCIAL_NOT_A_MATCH_RULE,
+      SOCIAL_BROAD_TOPIC_RULE,
       "A text about another subject that merely shares a word with the topic is \"no_match\". An empty text is \"no_match\". A reply or comment that only agrees or reacts (for example \"agreed\", \"true\", an emoji) says nothing about the topic: \"uncertain\".",
       "For a comment, the video title is context only, never evidence by itself that the comment is about the topic.",
       "If the request names a country, a text about another country's clubs, league, team or events (for example a Spanish club for a request about Egypt) is not a match for that request.",
@@ -249,6 +302,7 @@ function buildPrompt(input: RowAdvisoryInput): string {
     ...(isVerdictOnlyKind(input.kind) ? [
       "Judge only from the row's own fields. Never guess a match. Do not explain: no reasons, no notes, no other text.",
       "Reply with ONLY this JSON, compact on a single line with no spaces, no markdown fence, nothing before it and nothing after it, one item per row in the order of the rows: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\"}]}",
+      REVIEW_FORMAT_STRICT_RULE,
     ] : [
       "Judge only from the row's own fields. Never guess a match. Give a short Arabic reason (at most twelve words, no emoji).",
       "Reply with ONLY JSON: {\"reviews\":[{\"index\":0,\"verdict\":\"match\"|\"no_match\"|\"uncertain\",\"reasonAr\":\"...\"}]}",
@@ -303,7 +357,7 @@ export const callClaudeRowAdvisor: RowAdvisorFn = async (input) => {
     const verdicts = parseAdvisoryReply(text, { verdictOnly: isVerdictOnlyKind(input.kind) });
     const failure: AdvisoryFailureCode | null = verdicts.size === 0 && input.rows.length > 0 ? "bad_reply" : null;
     const stopReason = typeof data?.stop_reason === "string" ? data.stop_reason : null;
-    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure, stopReason, detail: failure === "bad_reply" ? `reply_chars=${text.length}` : null, replyChars: text.length };
+    return { verdicts, usage: { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started }, failure, stopReason, detail: failure === "bad_reply" ? `reply_chars=${text.length}` : null, replyChars: text.length, replySample: replySampleOf(text, input.rows, input.customerRequest) };
   } catch (err: any) {
     const isTimeout = err?.name === "AbortError" || controller.signal.aborted;
     return empty(isTimeout ? "timeout" : "network");
@@ -443,6 +497,8 @@ export interface SocialReviewAttempt {
   maxTokens: number;
   /** How many characters the reply had (null when the call got no answer). */
   replyChars: number | null;
+  /** The scrubbed head and shape of the reply (null when the call got no answer), for the internal `review_sample` row. */
+  replySample: ReplySample | null;
   /** True for a call that repeats rows that had no verdict. */
   retry: boolean;
   /** How many rows of this call have no verdict after it. */
@@ -526,7 +582,7 @@ export async function reviewSocialRows(input: {
     }
     attempts.push({
       rows: batch.length, usage: result.usage, failure: result.failure ?? null, stopReason: result.stopReason ?? null, detail: result.detail ?? null,
-      maxTokens: requestedMaxTokens({ kind: input.kind, rows: batch, ...(retry ? { maxTokens: RETRY_MAX_TOKENS } : {}) }), replyChars: result.replyChars ?? null, retry, missing,
+      maxTokens: requestedMaxTokens({ kind: input.kind, rows: batch, ...(retry ? { maxTokens: RETRY_MAX_TOKENS } : {}) }), replyChars: result.replyChars ?? null, replySample: result.replySample ?? null, retry, missing,
     });
     return { stop: null, result };
   };
