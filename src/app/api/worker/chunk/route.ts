@@ -2,7 +2,7 @@ import { pointsAr } from "@/lib/pointsFormat";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
-import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSpendEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
+import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
 import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
@@ -567,7 +567,27 @@ export async function POST(req: NextRequest) {
     const selectsVideosFirst = Boolean(earlySocialCap) && earlySocialCap?.kind === "comments" && ["tiktok", "youtube"].includes(String(earlySocialCap?.platform))
       && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
     // The owner's internal rows about review calls that failed, were cut at the output limit or left rows without a verdict (never customer text).
-    const logReviewFailures = async (attempts: ReviewCallFacts[]) => {
+    const logReviewFailures = async (attempts: Array<ReviewCallFacts & { replySample?: { head: string; startsWithJson: boolean; reasonKeys: number } | null }>) => {
+      // Once per job: the FIRST review call of the job (this chunk's first, when no earlier chunk reviewed anything) leaves one internal row with the head of
+      // its reply, scrubbed of row text, so the owner can see why replies are longer than their verdicts. An unreadable earlier record writes nothing.
+      if (!reviewSampleLogged && attempts.length > 0) {
+        reviewSampleLogged = true;
+        const firstReviewOfJob = currentStep === 0 || (priorReviewSet !== null && (priorReviewSet.reviewCallCount ?? 0) === 0 && (priorReviewSet.reviewUsd ?? 0) === 0);
+        if (firstReviewOfJob && jobId) {
+          const first = attempts[0];
+          try {
+            await adminClient.from("job_events").insert({
+              job_id: jobId,
+              user_id: userId,
+              message: reviewSampleEventMessage({ step: currentStep, rows: first.rows, stopReason: first.stopReason, tokensIn: first.usage?.inputTokens ?? 0, tokensOut: first.usage?.outputTokens ?? 0, replyChars: first.replyChars, sample: first.replySample ?? null }),
+              units: 0,
+              event_type: REVIEW_SAMPLE_EVENT_TYPE,
+            });
+          } catch (evtErr: any) {
+            console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+          }
+        }
+      }
       let call = 0;
       for (const attempt of attempts) {
         call += 1;
@@ -579,6 +599,7 @@ export async function POST(req: NextRequest) {
         }
       }
     };
+    let reviewSampleLogged = false;
     let videoSelectionUsd = 0;
     let videoSelectionCalls = 0;
     let videoSelectionUnreviewed = false;
