@@ -364,10 +364,18 @@ describe("A. the worker honours a changed limit and the per-job / per-user ceili
     expect(r.json.ceiling).toBeUndefined();
   });
 
-  it("no ceilings set: no extra spend queries and the chunk runs as before", async () => {
-    state.costs = [{ provider: "treg", job_id: JOB, cost_usd: 99, created_at: new Date().toISOString() }];
+  it("no ceilings set: the default per-job ceiling applies, a job within it runs as before", async () => {
+    state.costs = [{ provider: "treg", job_id: JOB, cost_usd: 0.0001, created_at: new Date().toISOString() }];
     const r = await oneChunk();
     expect(r.providerCalls).toBe(1);
+  });
+
+  it("no ceilings set: a job that has already spent far more than its plan expects is stopped by the default ceiling, nothing is called", async () => {
+    state.costs = [{ provider: "treg", job_id: JOB, cost_usd: 99, created_at: new Date().toISOString() }];
+    const r = await oneChunk();
+    expect(r.providerCalls).toBe(0);
+    expect(r.json.ceiling).toBe("job");
+    expect(r.json.error).toBe(CEILING_MESSAGE_AR.job);
   });
 });
 

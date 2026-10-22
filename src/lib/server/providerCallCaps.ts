@@ -29,8 +29,9 @@ export const ABSOLUTE_MAX_PAGES = 300;
  */
 export const DIRECTORY_PAGE_ALLOWANCE = 3;
 export const DIRECTORY_MAX_PAGES = 30;
-/** A directory job that has delivered nothing after this many pages stops, however the earlier pages are recorded. */
-export const DIRECTORY_NO_PROGRESS_PAGES = 5;
+/** ANY job that has delivered nothing after this many pages stops, however the earlier pages are recorded. */
+export const NO_PROGRESS_PAGES = 5;
+export const DIRECTORY_NO_PROGRESS_PAGES = NO_PROGRESS_PAGES;
 /** Small company jobs request a page of 3x the wanted records, between these bounds, instead of exactly the wanted count. */
 export const SMALL_JOB_MIN_PAGE_SIZE = 5;
 export const SMALL_JOB_MAX_PAGE_SIZE = 10;
@@ -70,7 +71,7 @@ export function evaluateProviderCallCap(input: {
   targetMax: number;
   pageSize: number;
   kind?: CapKind;
-  /** Rows accepted by the whole job so far, this page included (directory jobs only: feeds are judged by their own rules). */
+  /** Rows accepted by the whole job so far, this page included (every kind of job). */
   deliveredTotal?: number;
 }): CallCapReason | null {
   const limit = isSmallJob(input.targetMax) ? MAX_CONSECUTIVE_EMPTY_PAGES_SMALL : MAX_CONSECUTIVE_EMPTY_PAGES_LARGE;
@@ -79,7 +80,7 @@ export function evaluateProviderCallCap(input: {
     for (let i = input.priorBatchUnits.length - 1; i >= 0 && input.priorBatchUnits[i] === 0; i--) streak++;
   }
   if (streak >= limit) return "empty_pages";
-  if (input.kind === "directory" && input.deliveredTotal === 0 && input.pagesDone >= DIRECTORY_NO_PROGRESS_PAGES) return "no_progress";
+  if (input.deliveredTotal === 0 && input.pagesDone >= NO_PROGRESS_PAGES) return "no_progress";
   if (input.pagesDone >= maxPagesForJob(input.targetMax, input.pageSize, input.kind)) return "page_cap";
   return null;
 }

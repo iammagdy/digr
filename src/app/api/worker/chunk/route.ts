@@ -43,7 +43,8 @@ import {
   getConfiguredProviderSpendCapUsd,
   getConfiguredJobPointsCap,
 } from "../../../../functions/shared/providerSpend";
-import { CEILING_MESSAGE_AR, evaluateSpendCeilings, readSpendForCeilings, resolveProviderLimits, type CeilingReason, type ProviderLimits } from "../../../../lib/server/providerLimits";
+import { defaultJobProviderCeilingUsd } from "../../../../lib/server/jobSpendCeiling";
+import { CEILING_MESSAGE_AR, evaluateSpendCeilings, readJobSpendUsd, readSpendForCeilings, resolveProviderLimits, type CeilingReason, type ProviderLimits } from "../../../../lib/server/providerLimits";
 import {
   generateMethodologyText,
   generateCsvReport,
@@ -476,8 +477,11 @@ export async function POST(req: NextRequest) {
 
     // A directory search is billed for every record REQUESTED on the page, matched or not: the estimate (and the daily cap
     // gate that reads it) is the full page, not only the records still wanted.
-    const isCompanySpecForCaps =
-      spec.capabilitySlug.includes("compan") || spec.endpointId.includes("compan") || spec.endpointId.includes("icypeas.compan");
+    // Any item-priced source that is not a social feed is treated the same way (a source the code does not know is billed for the whole
+    // page until shown otherwise).
+    const socialForCaps = getSocialCapability(spec.capabilitySlug);
+    const billsWholePage = !socialForCaps && !isPeopleJob;
+    const isCompanySpecForCaps = isCompanyDirectoryJob(spec.capabilitySlug, spec.endpointId, spec.params) || billsWholePage;
     const estUnitsThisCall =
       spec.pricingUnit === "item"
         ? (isCompanySpecForCaps ? Math.max(1, effectivePageSize) : Math.max(1, Math.min(effectivePageSize, remainingUnits)))
@@ -498,9 +502,24 @@ export async function POST(req: NextRequest) {
     const needsProvider = (remainingUnits > 0 || !retrySeed) &&
       (!isPeopleJob || Number(decisionMakerSpendBudgetUsd) >= DECISION_MAKER_ROUTE_COST_CAP_USD);
     // Per-job and per-user ceilings (admin-editable). Read only when one is set, so the default path costs nothing extra.
+    // EVERY job has a per-job ceiling: the owner's when set, otherwise 3 times the plan's expected provider cost (see jobSpendCeiling).
+    // A people job keeps its own decision-maker spend budget instead.
     let ceilingHit: CeilingReason | null = null;
-    if (needsProvider && (providerLimits.perJobUsd !== null || providerLimits.perUserDailyUsd !== null)) {
-      ceilingHit = evaluateSpendCeilings(providerLimits, await readSpendForCeilings(adminClient, { jobId, userId }), estimatedCostUsd);
+    const defaultJobCeilingUsd = isPeopleJob
+      ? null
+      : defaultJobProviderCeilingUsd({
+          unitCostUsd: spec.unitCostUsd,
+          targetMax,
+          pageSize: effectivePageSize,
+          kind: socialForCaps ? "feed" : "directory",
+          billsPerRequestedRecord: spec.pricingUnit === "item" && !socialForCaps,
+        });
+    const effectiveLimits: ProviderLimits = { ...providerLimits, perJobUsd: providerLimits.perJobUsd ?? defaultJobCeilingUsd };
+    if (needsProvider && (effectiveLimits.perJobUsd !== null || effectiveLimits.perUserDailyUsd !== null)) {
+      const spendForCeilings = effectiveLimits.perUserDailyUsd !== null
+        ? await readSpendForCeilings(adminClient, { jobId, userId })
+        : { jobUsd: await readJobSpendUsd(adminClient, jobId), userTodayUsd: 0 };
+      ceilingHit = evaluateSpendCeilings(effectiveLimits, spendForCeilings, estimatedCostUsd);
     }
     const { data: spendReserve, error: spendErr } = ceilingHit
       ? { data: { allowed: false }, error: null }
@@ -1410,17 +1429,16 @@ export async function POST(req: NextRequest) {
     // page until the source runs out. Rows already matched are kept and charged as usual.
     // Directory searches (companies) and feeds (comments, posts, videos) both stop on the same rule: keep going within the
     // documented caps until the MATCHING count is reached, then deliver honestly as partial and charge only matching rows.
-    const pageCapReason = isCompanyCapability || socialCapability
-      ? evaluateProviderCallCap({
-          pagesDone: currentStep + 1,
-          acceptedThisPage: acceptedRows.length,
-          priorBatchUnits,
-          targetMax,
-          pageSize: effectivePageSize,
-          kind: isCompanyCapability ? "directory" : "feed",
-          deliveredTotal: newDeliveredUnits,
-        })
-      : null;
+    // EVERY kind of job is capped, a source the code does not recognise included: it gets the directory rules, the strictest ones.
+    const pageCapReason = evaluateProviderCallCap({
+      pagesDone: currentStep + 1,
+      acceptedThisPage: acceptedRows.length,
+      priorBatchUnits,
+      targetMax,
+      pageSize: effectivePageSize,
+      kind: socialCapability ? "feed" : "directory",
+      deliveredTotal: newDeliveredUnits,
+    });
     // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
     const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : reviewStoppedForLowYield ? "review_low_yield" : reviewBudgetUsedUp ? "review_budget" : pageCapReason;
     const hasMorePages =
