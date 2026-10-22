@@ -32,6 +32,11 @@ import {
   detectMentionedPlatforms,
   getPlatformLabelAr,
   getClosestVerifiedCapability,
+  COMPANY_SOURCE_UNAVAILABLE_AR,
+  isCompanySearchCapabilityRef,
+  pickCompanySearchCapability,
+  pickPeopleSearchCapability,
+  PEOPLE_SOURCE_UNAVAILABLE_AR,
   getCustomerPriceUsdPerCatalogItem,
   computeRegistryPointsPerUnit,
   registryPointsPerUnit,
@@ -762,18 +767,33 @@ export function buildAutoPlanProposal(
     : (mentionedPlats.length > 0 ? mentionedPlats[0] : (brief.topics?.[0]?.includes("شرك") ? "companies" : "tiktok"));
   const platformNorm = platform.toLowerCase();
 
+  // A company request may only use a company search by endpoint or slug, the approved one first. The catalog's platform label
+  // never picks it, and nothing else is a fallback: with no such source live the answer is honest and there is no plan.
+  const wantsCompanies = !peopleSearch && !isAccountProfileRequest && (platformNorm === "companies" || platformNorm === "b2b");
+  const companySource = wantsCompanies ? pickCompanySearchCapability(validationCaps) : null;
+  if (wantsCompanies && !companySource) {
+    // Not a plan: callers dispatch on `type`, and this one is a plain answer (typed as the plan only to keep the callers' types).
+    return { type: "answer_question", answerAr: COMPANY_SOURCE_UNAVAILABLE_AR } as any;
+  }
+
   // Find matching capability in validationCaps
-  let matchedCap = isAccountProfileRequest
+  // The same rule for decision makers: a people search by endpoint or slug, the approved one first, never the platform label.
+  const peopleSource = peopleSearch && !isAccountProfileRequest ? pickPeopleSearchCapability(validationCaps) : null;
+  if (peopleSearch && !isAccountProfileRequest && !peopleSource) {
+    return { type: "answer_question", answerAr: PEOPLE_SOURCE_UNAVAILABLE_AR } as any;
+  }
+  let matchedCap = companySource
+    ? companySource
+    : peopleSource
+    ? peopleSource
+    : isAccountProfileRequest
     ? validationCaps.find((c) => /profile|user/i.test(c.slug) && (!mentionedPlats.length || mentionedPlats.some((p) => c.slug.includes(p))))
     : validationCaps.find((c) => {
     const cPlat = (c.platform || c.category || "").toLowerCase();
     const cSlug = (c.slug || "").toLowerCase();
     const cId = (c.tregEndpointId || c.id || "").toLowerCase();
     if (peopleSearch) {
-      return cPlat === "people" || cSlug.includes("people") || cId.includes("people");
-    }
-    if (platformNorm === "companies" || platformNorm === "b2b") {
-      return cPlat === "companies" || cPlat === "b2b" || cSlug.includes("companies") || cId.includes("companies");
+      return false; // chosen above by name; no other source is a people source
     }
     return cPlat === platformNorm || cSlug.includes(platformNorm);
     });
@@ -813,11 +833,7 @@ export function buildAutoPlanProposal(
     extractedCurrentTopic ||
     (cleanTopics.length > 0 ? cleanTopics[cleanTopics.length - 1] : "البيانات المطلوبة");
 
-  const isCompanySearch =
-    platformNorm === "companies" ||
-    platformNorm === "b2b" ||
-    matchedCap.slug.includes("companies") ||
-    Boolean(matchedCap.tregEndpointId && matchedCap.tregEndpointId.includes("companies"));
+  const isCompanySearch = isCompanySearchCapabilityRef(matchedCap.slug, matchedCap.tregEndpointId || matchedCap.id);
 
   const isPeopleCapability = peopleSearch || /people/i.test(`${matchedCap.slug} ${matchedCap.tregEndpointId || ""}`);
   const platformLabel = isPeopleCapability
@@ -956,9 +972,10 @@ export function buildDeterministicPlanFromIntent(
   if (getDeterministicDiscoveryQuestion(requestText, brief, capabilities, { skipped })) return null;
   const enabled = (capability: Capability) => capability.enabled !== false && (capability.status === "verified" || capability.status === undefined);
   if (intent.dataType === "companies") {
-    if (!capabilities.some((c) => enabled(c) && /compan/i.test(`${c.slug} ${c.platform || ""}`))) return null;
+    // Only a company search by endpoint or slug counts (never the catalog's platform label); with none live the answer is honest and nothing is planned.
+    if (!pickCompanySearchCapability(capabilities)) return { type: "answer_question", answerAr: COMPANY_SOURCE_UNAVAILABLE_AR };
   } else if (intent.dataType === "people") {
-    if (!capabilities.some((c) => enabled(c) && /people/i.test(`${c.slug} ${c.platform || ""}`))) return null;
+    if (!pickPeopleSearchCapability(capabilities)) return null;
   } else {
     const social = detectSocialIntent(requestText);
     if (!social.task || !social.platform || getMissingSocialTaskInputs(requestText).length > 0) return null;
@@ -978,10 +995,8 @@ export function routePeopleAlternative(
 ): any {
   if (!isPeopleSearchRequest(requestText)) return output;
 
-  const peopleCapability = capabilities.find((capability) =>
-    capability.enabled !== false && capability.status === "verified" &&
-    /people/i.test(`${capability.platform || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  ) || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search");
+  const peopleCapability = pickPeopleSearchCapability(capabilities)
+    || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "professional-people-search");
   if (!peopleCapability) {
     return output;
   }
@@ -1039,18 +1054,12 @@ export function routeCompanySearchRequest(
 ): any {
   if (isPeopleSearchRequest(requestText)) return output;
   const entity = extractEntityType(requestText);
-  if (entity.entityType !== "companies") return output;
+  // The Arabic entity words alone miss an English request («50 contractor companies in Egypt»): for a plan the model proposed, the
+  // request intent covers both languages (an answer the code built, such as the methodology file, is never rebuilt).
+  const englishCompanyPlan = output?.type === "propose_plan" && extractRequestIntent(requestText).dataType === "companies";
+  if (entity.entityType !== "companies" && !englishCompanyPlan) return output;
 
-  const companyCapability = capabilities.find((capability) =>
-    /companies|company/i.test(`${capability.platform || ""} ${capability.category || ""} ${capability.slug || ""} ${capability.tregEndpointId || capability.id || ""}`),
-  ) || APPROVED_CAPABILITY_CATALOG.find((capability) => capability.slug === "icypeas-companies-search");
-  if (!companyCapability) {
-    return output;
-  }
-  const companyCapabilities = capabilities.some((capability) => capability.slug === companyCapability.slug)
-    ? capabilities
-    : [...capabilities, companyCapability];
-
+  // The questions about the scope come first, whatever sources are live (they need no source).
   const missing = getMissingCompanyResearchRequirements(requestText);
   if (missing.length > 0) {
     const items = getCompanyRequirementItems(missing, requestText);
@@ -1064,6 +1073,14 @@ export function routeCompanySearchRequest(
       questionsAr: questions,
     };
   }
+
+  // Only a company search by endpoint or slug, the approved one first; the catalog's platform/category label never routes a company
+  // request. With none live the reply is honest: no plan, no reserve.
+  const companyCapability = pickCompanySearchCapability(capabilities);
+  if (!companyCapability) return { type: "answer_question", answerAr: COMPANY_SOURCE_UNAVAILABLE_AR };
+  const companyCapabilities = capabilities.some((capability) => capability.slug === companyCapability.slug)
+    ? capabilities
+    : [...capabilities, companyCapability];
 
   // Company requests need a single, priceable company-search capability. The
   // model may return a superficially relevant multi-step plan that later fails
@@ -3248,6 +3265,8 @@ export class ChatHandler {
         await saveConversationBrief(this.tables, conversationId, userId, brief);
         if ((isPhase2 || isCardAnswer) && brief.platforms.length > 0 && (brief.topics.length > 0 || brief.targetVolume)) {
           output = buildAutoPlanProposal(brief, validationCaps, message) as any;
+          // A company or people request with no allowed source live comes back as a plain answer, not a plan.
+          if (output.type === "answer_question") finalContentAr = (output as any).answerAr;
         } else {
           finalContentAr = output.answerAr;
         }
@@ -3619,7 +3638,7 @@ export class ChatHandler {
           } as any;
         } else if (!platformCheck.valid) {
           console.warn("[chat:platform_check_invalid]", { message, planItems });
-          finalContentAr = UNVERIFIED_PLATFORM_MESSAGE_AR;
+          finalContentAr = platformCheck.reasonCode === "company_source_unavailable" ? COMPANY_SOURCE_UNAVAILABLE_AR : platformCheck.reasonCode === "people_source_unavailable" ? PEOPLE_SOURCE_UNAVAILABLE_AR : UNVERIFIED_PLATFORM_MESSAGE_AR;
           output = {
             type: "answer_question",
             answerAr: finalContentAr,
@@ -3649,12 +3668,21 @@ export class ChatHandler {
               } as any;
             } else {
               const autoPlan = buildAutoPlanProposal(brief, validationCaps, message);
-              const autoPlanItems = dedupeRecordSearchItems<PlanItem>(mapPlanItems(autoPlan));
-              const autoCheck = validatePlanAgainstLiveCatalog(autoPlanItems, turnEndpoints, allCapabilities);
+              // A company request with no allowed company source live is answered honestly: no plan, no reserve.
+              const autoPlanRefused = (autoPlan as any).type !== "propose_plan";
+              const autoPlanItems = autoPlanRefused ? [] : dedupeRecordSearchItems<PlanItem>(mapPlanItems(autoPlan));
+              const autoCheck = autoPlanRefused
+                ? { valid: false, errors: ["company_source_unavailable"], issues: [] as LiveCatalogIssue[] }
+                : validatePlanAgainstLiveCatalog(autoPlanItems, turnEndpoints, allCapabilities);
               if (autoCheck.valid) {
                 planOutput = autoPlan;
                 planItems = autoPlanItems;
                 planValidation = { valid: true, errors: [], issues: [] };
+              } else if (autoPlanRefused) {
+                finalContentAr = (autoPlan as any).answerAr;
+                output = autoPlan as any;
+                planOutput = null;
+                planValidation = { valid: false, errors: autoCheck.errors, issues: [] as LiveCatalogIssue[] };
               } else {
                 console.warn("[chat:auto_plan_invalid_pricing]", { errors: autoCheck.errors });
                 // The generic sentence is only for a request with no topic at all. When the customer gave a topic (and maybe a
