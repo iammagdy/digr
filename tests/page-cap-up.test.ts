@@ -36,7 +36,7 @@ describe("the page cap of a large job: 6 times the pages its target needs, one n
     for (const target of [11, 30, 50, 51, 100, 299, 300, 301, 999, 1000, 1500]) {
       const needed = Math.ceil(target / 50);
       expect(maxPagesForJob(target, 50, "feed"), String(target)).toBe(Math.min(300, needed * 6));
-      expect(maxPagesForJob(target, 50, "directory"), String(target)).toBe(Math.min(300, needed * 6));
+      expect(maxPagesForJob(target, 50, "directory"), String(target)).toBe(Math.min(30, needed * 3));
     }
   });
 

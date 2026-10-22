@@ -61,6 +61,7 @@ import {
   detectIndustryFromText,
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
+import { isCompanyDirectoryJob } from "../../../../lib/server/directoryCapability";
 import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../../../../lib/server/researchRelevanceGate";
 import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
@@ -737,7 +738,7 @@ export async function POST(req: NextRequest) {
     const requestedDateFrom = typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
     const requestedDateTo = typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
     // People and companies are directories with no publication date: an explicit window never removes a row that has none.
-    const directoryJob = isPeopleJob || /compan|icypeas/i.test(`${spec.capabilitySlug} ${spec.endpointId}`);
+    const directoryJob = isPeopleJob || isCompanyDirectoryJob(spec.capabilitySlug, spec.endpointId, spec.params);
     const dateFiltered = filterRowsByDateRange(providerRows, requestedDateFrom, requestedDateTo, { keepUndated: directoryJob });
     let rawRows = dateFiltered.rows;
     const rawPageRowCount = rawRows.length;
@@ -773,11 +774,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const isCompanyCapability =
-      spec.capabilitySlug.includes("company") ||
-      spec.capabilitySlug.includes("companies") ||
-      spec.capabilitySlug === "web-company-search" ||
-      spec.endpointId.includes("icypeas");
+    const isCompanyCapability = isCompanyDirectoryJob(spec.capabilitySlug, spec.endpointId, spec.params);
     // Social rows (comments, videos) are de-duplicated across pages the same way company rows are: a provider
     // can repeat its first page, and a repeated comment must be neither delivered twice nor billed twice.
     const socialCapability = getSocialCapability(spec.capabilitySlug);
@@ -1421,6 +1418,7 @@ export async function POST(req: NextRequest) {
           targetMax,
           pageSize: effectivePageSize,
           kind: isCompanyCapability ? "directory" : "feed",
+          deliveredTotal: newDeliveredUnits,
         })
       : null;
     // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
@@ -1778,6 +1776,7 @@ export async function POST(req: NextRequest) {
         (spec.capabilitySlug.includes("company") ||
          spec.capabilitySlug.includes("companies") ||
          spec.capabilitySlug === "web-company-search" ||
+         isCompanyCapability ||
          finalRows.some((r) => r.company_name || r.cr_number || r.website_url || r.company_size || r.industry));
 
       const requestScopeText = [

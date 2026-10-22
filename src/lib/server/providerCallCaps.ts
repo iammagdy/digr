@@ -22,6 +22,15 @@ export const MAX_CONSECUTIVE_EMPTY_PAGES_LARGE = 3;
 export const LARGE_JOB_PAGE_ALLOWANCE = SCALE_LARGE_JOB_PAGE_ALLOWANCE;
 /** Hard ceiling on pages for any capped job. */
 export const ABSOLUTE_MAX_PAGES = 300;
+/**
+ * A directory search (companies) bills every requested record on every page, and its source has a bounded answer: it may use up to this
+ * multiple of the pages it would need if every record matched, and never more than DIRECTORY_MAX_PAGES (22 Oct 2026: a company job ran
+ * 175 pages with no stop at all). Feeds keep LARGE_JOB_PAGE_ALLOWANCE and ABSOLUTE_MAX_PAGES.
+ */
+export const DIRECTORY_PAGE_ALLOWANCE = 3;
+export const DIRECTORY_MAX_PAGES = 30;
+/** A directory job that has delivered nothing after this many pages stops, however the earlier pages are recorded. */
+export const DIRECTORY_NO_PROGRESS_PAGES = 5;
 /** Small company jobs request a page of 3x the wanted records, between these bounds, instead of exactly the wanted count. */
 export const SMALL_JOB_MIN_PAGE_SIZE = 5;
 export const SMALL_JOB_MAX_PAGE_SIZE = 10;
@@ -42,11 +51,12 @@ export function smallJobPageSize(targetMax: number): number {
 export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKind = "directory", allowance: number = scaleValue("largeJobPageAllowance")): number {
   if (isSmallJob(targetMax)) return kind === "feed" ? FEED_SMALL_JOB_MAX_PAGES : SMALL_JOB_MAX_PAGES;
   const needed = Math.max(1, Math.ceil(targetMax / Math.max(1, pageSize)));
+  if (kind === "directory") return Math.min(DIRECTORY_MAX_PAGES, needed * DIRECTORY_PAGE_ALLOWANCE);
   return Math.min(scaleValue("absoluteMaxPages"), needed * allowance);
 }
 
 /** `review_unavailable` and `review_low_yield` are set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run, or its budget is used up and almost nothing it saw was accepted. */
-export type CallCapReason = "page_cap" | "empty_pages" | "review_unavailable" | "review_low_yield" | "review_budget";
+export type CallCapReason = "page_cap" | "empty_pages" | "no_progress" | "review_unavailable" | "review_low_yield" | "review_budget";
 
 /**
  * Decides whether to stop fetching after the page that was just processed.
@@ -60,6 +70,8 @@ export function evaluateProviderCallCap(input: {
   targetMax: number;
   pageSize: number;
   kind?: CapKind;
+  /** Rows accepted by the whole job so far, this page included (directory jobs only: feeds are judged by their own rules). */
+  deliveredTotal?: number;
 }): CallCapReason | null {
   const limit = isSmallJob(input.targetMax) ? MAX_CONSECUTIVE_EMPTY_PAGES_SMALL : MAX_CONSECUTIVE_EMPTY_PAGES_LARGE;
   let streak = input.acceptedThisPage === 0 ? 1 : 0;
@@ -67,6 +79,7 @@ export function evaluateProviderCallCap(input: {
     for (let i = input.priorBatchUnits.length - 1; i >= 0 && input.priorBatchUnits[i] === 0; i--) streak++;
   }
   if (streak >= limit) return "empty_pages";
+  if (input.kind === "directory" && input.deliveredTotal === 0 && input.pagesDone >= DIRECTORY_NO_PROGRESS_PAGES) return "no_progress";
   if (input.pagesDone >= maxPagesForJob(input.targetMax, input.pageSize, input.kind)) return "page_cap";
   return null;
 }
@@ -83,6 +96,7 @@ export function worstCaseJobProviderUsd(unitCostUsd: number, targetMax: number, 
 
 export const CALL_CAP_NOTE_AR: Record<CallCapReason, string> = {
   page_cap: "توقف الجمع عند الحد الأقصى لعدد الصفحات المسموح لهذا الطلب، مع تسليم السجلات المطابقة التي جُمعت فقط",
+  no_progress: "توقف الجمع لأن عدة صفحات متتالية لم تُنتج أي سجل مطابق، ولم يُحتسب عليك إلا ما سُلّم",
   empty_pages: "توقف الجمع لأن الصفحات الأخيرة لم تُنتج سجلات مطابقة جديدة، مع تسليم السجلات المطابقة التي جُمعت فقط",
   review_unavailable: "توقف الجمع لأن التحقق الآلي من ملاءمة السجلات تعذّر الآن، ولم يُحتسب عليك إلا ما سُلّم",
   review_budget: "توقف الجمع لأن التحقق الآلي بلغ الحد المسموح لهذا الطلب؛ وُضعت السجلات التي لم تُراجَع في ورقة «غير مراجَع» ولم يُحتسب عليك إلا ما سُلّم",

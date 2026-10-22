@@ -2,6 +2,7 @@ import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName }
 import { MIN_MEANINGFUL_CHARS, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
+import { isCompanyDirectoryJob } from "./directoryCapability";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 
 export interface ResearchRelevanceContext {
@@ -160,7 +161,7 @@ export function evaluateResearchRowRelevance(
   context: ResearchRelevanceContext,
 ): ResearchRelevanceResult {
   const { capabilitySlug, endpointId, params } = context;
-  const companyCapability = /compan|company|icypeas/i.test(`${capabilitySlug} ${endpointId}`);
+  const companyCapability = isCompanyDirectoryJob(capabilitySlug, endpointId, params);
 
   if (companyCapability) {
     const industry = String(params.industry || params.search || topicFromParams(params) || "").trim();

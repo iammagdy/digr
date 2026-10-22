@@ -1,6 +1,8 @@
 import { toArabicDigits } from "./arabicDigits";
 import { DISCOVER_VIDEOS_PER_CHANNEL, SOCIAL_MAX_CALLS_PER_CHUNK, getSocialCapability, socialRowsPerChunk } from "./socialSources";
 import { closePageLineAr, type DriverMode } from "./driverMode";
+import { isCompanyDirectoryJob } from "./server/directoryCapability";
+import { isSmallJob, maxPagesForJob, smallJobPageSize } from "./server/providerCallCaps";
 
 /**
  * How long a mission will take, BEFORE the customer approves it: computed by code from the numbers of the real worker (records per
@@ -66,6 +68,12 @@ export interface DurationStep {
   extraCalls?: number;
   /** The step starts only after the previous one is complete (companies, then their decision makers). */
   dependsOnPrevious?: boolean;
+  /**
+   * Directory searches only: the most records the stop rules let the job request (pages allowed x page size). The pessimistic end of the
+   * range is computed for this many, because a search whose pages find few matches runs up to its page limit; the optimistic end stays
+   * the wanted count.
+   */
+  pessimisticRecords?: number;
 }
 
 export interface DurationInput {
@@ -116,7 +124,8 @@ interface StepNumbers {
 
 /** Calls, records per chunk and chunks of a step, for one side of the range (the time budget of a chunk bounds the work in it). */
 function stepNumbers(step: DurationStep, side: "optimistic" | "pessimistic"): StepNumbers {
-  const records = Math.max(0, Math.floor(step.records));
+  const wanted = Math.max(0, Math.floor(step.records));
+  const records = side === "pessimistic" ? Math.max(wanted, Math.floor(step.pessimisticRecords || 0)) : wanted;
   const perCall = Math.max(1, Math.floor(step.recordsPerCall));
   const callsPerRecord = step.callsPerRecord && step.callsPerRecord > 0 ? step.callsPerRecord : 0;
   const callSeconds = pick(DEFAULT_TIMINGS.callSeconds, side);
@@ -177,7 +186,7 @@ export function estimateMissionDuration(input: DurationInput): MissionDuration {
       // one chunk, wall to wall: measured when there are enough finished chunks, else calls + overhead + the driver's gap
       const chunkWall = isMeasured
         ? (side === "optimistic" ? measured!.p50 : measured!.p90)
-        : Math.min(CHUNK_BUDGET_SECONDS, Math.min(n.recordsPerChunk, step.records) / Math.max(1, step.recordsPerCall) * callSeconds * (step.callsPerRecord ? step.callsPerRecord * Math.max(1, step.recordsPerCall) : 1))
+        : Math.min(CHUNK_BUDGET_SECONDS, Math.min(n.recordsPerChunk, side === "pessimistic" ? Math.max(step.records, step.pessimisticRecords || 0) : step.records) / Math.max(1, step.recordsPerCall) * callSeconds * (step.callsPerRecord ? step.callsPerRecord * Math.max(1, step.recordsPerCall) : 1))
           + pick(DEFAULT_TIMINGS.chunkOverheadSeconds, side) + pick(DEFAULT_TIMINGS.gapSeconds[input.driver], side);
       addStage("collect", step.labelAr, side, n.chunks * chunkWall);
       if (step.extraCalls && step.extraCalls > 0) addStage("dependent", step.labelAr, side, step.extraCalls * (callSeconds + (isMeasured ? 0 : pick(DEFAULT_TIMINGS.chunkOverheadSeconds, side) / SOCIAL_MAX_CALLS_PER_CHUNK)));
@@ -256,14 +265,18 @@ const FAMILY_LABEL_AR: Record<TimingFamily, string> = {
 /** Records per call and dependent calls of one plan item, from its capability and parameters. */
 export function durationStepFromPlanItem(item: PlanItemLike, index = 0): DurationStep {
   const slug = String(item.capabilitySlug || item.endpointId || "");
-  const family = timingFamilyFor(slug);
+  // A company search is recognised by its plan shape too (see directoryCapability), whatever the source's name says.
+  const family = timingFamilyFor(slug) === "other" && isCompanyDirectoryJob(String(item.capabilitySlug || ""), String(item.endpointId || ""), item.params) ? "companies" : timingFamilyFor(slug);
   const records = Math.max(0, Math.floor(Number(item.targetVolumeMax) || 0));
   const params = item.params || {};
   if (family === "people") {
     return { labelAr: FAMILY_LABEL_AR.people, family, records, recordsPerCall: 10, callsPerRecord: 2, dependsOnPrevious: index > 0 };
   }
   if (family === "companies") {
-    return { labelAr: FAMILY_LABEL_AR.companies, family, records, recordsPerCall: 10, dependsOnPrevious: index > 0 };
+    // The page size and the page limit are the worker's (jobExecutionSpec, providerCallCaps): the worst case is every allowed page requested.
+    const pageSize = isSmallJob(records) ? smallJobPageSize(records) : Math.min(50, Math.max(10, records || 50));
+    const pessimisticRecords = maxPagesForJob(records, pageSize, "directory") * pageSize;
+    return { labelAr: FAMILY_LABEL_AR.companies, family, records, recordsPerCall: pageSize, dependsOnPrevious: index > 0, pessimisticRecords };
   }
   let extraCalls = 0;
   if (family === "social_comments") {
