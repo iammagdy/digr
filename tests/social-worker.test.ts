@@ -942,7 +942,7 @@ describe("worker: social jobs", () => {
 
       describe("the daily review guard: at the daily ceiling (or when it cannot be read) a job that has not started reviewing takes the previous budget rule", () => {
         const fallbackRows = () => db.events.filter((event) => event.event_type === "review_fallback").map((event) => String(event.message));
-        /** 40 X posts at the real price (0.11715): the per-job budget is 0.03984 USD, the previous rule 0.0083 USD. Pages of 20 posts, one confirmed post each, 0.004 USD a call: three pages are bought and reviewed under the per-job budget. */
+        /** 40 X posts at the real price (0.11715): the per-job budget is 0.03984 USD, the previous rule 0.0083 USD. Pages of 20 posts, one confirmed post each, 0.004 USD a call: six pages are bought (the page cap, 6 x the one page a 40-post job needs at 50 rows) and reviewed under the per-job budget (0.03984 USD). */
         const run = async (usageRows: number[] | null, options: { fail?: boolean } = {}) => {
           resetDb("social-x-posts", EGYPT_TOPIC, 40, 0.11715);
           db.usage = { rows: usageRows, fail: Boolean(options.fail), reads: 0 };
@@ -957,7 +957,7 @@ describe("worker: social jobs", () => {
 
         it("below the daily ceiling (11.99 of 12 USD) the job has the per-job budget and no fallback row is written", async () => {
           const { calls } = await run([11.99]);
-          expect(calls).toEqual([20, 20, 20]);
+          expect(calls).toEqual([20, 20, 20, 20, 20, 20]);
           expect(fallbackRows()).toEqual([]);
           expect(db.usage.reads).toBe(1);
         });
@@ -972,7 +972,7 @@ describe("worker: social jobs", () => {
 
         it("a spend several rows add up to the ceiling counts (6 + 6 USD), one cent under does not", async () => {
           expect((await run([6, 6])).calls).toEqual([20]);
-          expect((await run([6, 5.99])).calls).toEqual([20, 20, 20]);
+          expect((await run([6, 5.99])).calls).toEqual([20, 20, 20, 20, 20, 20]);
         });
 
         it("when today's spend cannot be read the previous rule applies, not the per-job budget, and the row says the read failed", async () => {
@@ -1008,7 +1008,7 @@ describe("worker: social jobs", () => {
           const calls: number[] = [];
           strict(strictAdvisor(calls, 0.004));
           await runAllChunks();
-          expect(calls).toEqual([20, 20, 20]);
+          expect(calls).toEqual([20, 20, 20, 20, 20, 20]);
           expect(fallbackRows()).toEqual([]);
           expect(db.usage.reads).toBe(1);
         });

@@ -465,9 +465,16 @@ export const REVIEW_JOB_CEILING_USD = 0.15;
 /** Rows a page of posts or comments holds (X: 20); with the page cap it gives the number of rows a job can collect. */
 export const REVIEW_PAGE_ROWS = 20;
 
-/** The most rows a job of this size can collect: the pages its page cap allows, full. Every one of them can be reviewed within the budget below, up to the ceiling. */
+/**
+ * The page allowance the review BUDGET is computed with: 3 times the pages a job needs, as when the budget was set (PR 195). The collection page cap
+ * itself is wider now (providerCallCaps, LARGE_JOB_PAGE_ALLOWANCE), and the budget must not move with it: it is pinned here, so the review budget of every
+ * job size is exactly what it was.
+ */
+export const REVIEW_BUDGET_PAGE_ALLOWANCE = 3;
+
+/** The rows the review budget is sized for: the pages the page cap allowed when the budget was set, full (REVIEW_BUDGET_PAGE_ALLOWANCE), whatever the cap is today. */
 export function collectableRows(targetMax: number): number {
-  return maxPagesForJob(Math.max(1, Math.floor(Number(targetMax) || 1)), REVIEW_PAGE_ROWS, "feed") * REVIEW_PAGE_ROWS;
+  return maxPagesForJob(Math.max(1, Math.floor(Number(targetMax) || 1)), REVIEW_PAGE_ROWS, "feed", REVIEW_BUDGET_PAGE_ALLOWANCE) * REVIEW_PAGE_ROWS;
 }
 
 /**

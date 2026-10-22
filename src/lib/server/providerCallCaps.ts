@@ -1,4 +1,4 @@
-import { scaleValue } from "../scaleConfig";
+import { LARGE_JOB_PAGE_ALLOWANCE as SCALE_LARGE_JOB_PAGE_ALLOWANCE, scaleValue } from "../scaleConfig";
 
 /**
  * Caps on provider pages per job. The provider bills per record REQUESTED on every page (a page of 10 costs 10 units
@@ -18,8 +18,8 @@ export const SMALL_JOB_MAX_PAGES = 3;
 /** Stop after this many CONSECUTIVE pages that produced no new matching record. */
 export const MAX_CONSECUTIVE_EMPTY_PAGES_SMALL = 2;
 export const MAX_CONSECUTIVE_EMPTY_PAGES_LARGE = 3;
-/** Larger jobs may use up to this multiple of the pages they would need if every record matched. */
-export const LARGE_JOB_PAGE_ALLOWANCE = 3;
+/** Larger jobs may use up to this multiple of the pages they would need if every record matched (defined once, in scaleConfig; 6 since 22 Oct 2026, it was 3). */
+export const LARGE_JOB_PAGE_ALLOWANCE = SCALE_LARGE_JOB_PAGE_ALLOWANCE;
 /** Hard ceiling on pages for any capped job. */
 export const ABSOLUTE_MAX_PAGES = 300;
 /** Small company jobs request a page of 3x the wanted records, between these bounds, instead of exactly the wanted count. */
@@ -39,10 +39,10 @@ export function smallJobPageSize(targetMax: number): number {
 }
 
 /** The two constants above are the defaults; the values in force come from the scale configuration (same numbers unless the owner sets them). */
-export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKind = "directory"): number {
+export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKind = "directory", allowance: number = scaleValue("largeJobPageAllowance")): number {
   if (isSmallJob(targetMax)) return kind === "feed" ? FEED_SMALL_JOB_MAX_PAGES : SMALL_JOB_MAX_PAGES;
   const needed = Math.max(1, Math.ceil(targetMax / Math.max(1, pageSize)));
-  return Math.min(scaleValue("absoluteMaxPages"), needed * scaleValue("largeJobPageAllowance"));
+  return Math.min(scaleValue("absoluteMaxPages"), needed * allowance);
 }
 
 /** `review_unavailable` and `review_low_yield` are set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run, or its budget is used up and almost nothing it saw was accepted. */
