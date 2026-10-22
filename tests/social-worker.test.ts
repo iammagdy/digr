@@ -887,7 +887,7 @@ describe("worker: social jobs", () => {
           const rows = sampleRows();
           expect(rows).toHaveLength(1);
           const message = String(rows[0].message);
-          expect(message.startsWith("review_sample step=0 rows=20 stop=end_turn in=2000 out=500 reply_chars=")).toBe(true);
+          expect(message.startsWith("review_sample step=0 rows=20 stop=end_turn in=2000 out=500 thinking_tokens=none thinking=none reply_chars=")).toBe(true);
           expect(message).toContain("starts_json=0 reason_keys=0 head=");
           expect(message).toContain("Looking at the rows first.");
           expect(message).toContain("which is about the topic.");
@@ -895,6 +895,30 @@ describe("worker: social jobs", () => {
           expect(message).not.toContain(TOPIC);
           expect(rows[0].units).toBe(0);
           expect(db.events.filter((event) => isCustomerVisibleJobEvent(event.event_type)).some((event) => String(event.message).includes("review_sample"))).toBe(false);
+        });
+
+        it("a call whose thinking parameter the API refused (repeated once without it) leaves one internal review_failure row with the code, and the sample row says so and shows the thinking tokens", async () => {
+          resetDb("social-x-posts", EGYPT_TOPIC, 20, 0.11715);
+          useSource(async () => ok({ ok: true, rows: pageRows(1, 20) }, 600));
+          let calls = 0;
+          strict(async (input) => {
+            calls += 1;
+            return {
+              verdicts: new Map(input.rows.map(({ index }) => [index, { verdict: index === 0 ? "match" as const : "no_match" as const, reasonAr: "x" }])),
+              usage: { ...usage(0.004), thinkingTokens: 1700 }, failure: null, stopReason: "end_turn", replyChars: 300,
+              replySample: { head: "{\"reviews\":[", startsWithJson: true, reasonKeys: 0 },
+              thinkingMode: "fallback" as const, thinkingFallback: { code: "http_400", detail: "invalid_request_error: thinking: bad" },
+            };
+          });
+
+          await runAllChunks();
+
+          const failures = db.events.filter((event) => event.event_type === "review_failure").map((event) => String(event.message));
+          expect(calls).toBe(1);
+          expect(failures).toEqual(['review_failure step=0 call=1 kind=thinking_param_rejected code=http_400 detail="invalid_request_error: thinking: bad" action=repeated_without_thinking_param']);
+          expect(db.events.filter((event) => isCustomerVisibleJobEvent(event.event_type)).some((event) => String(event.message).includes("thinking_param_rejected"))).toBe(false);
+          const sample = String(sampleRows()[0].message);
+          expect(sample).toContain("out=500 thinking_tokens=1700 thinking=fallback reply_chars=300");
         });
 
         it("a second job writes its own single row (the rule is per job, not per instance)", async () => {

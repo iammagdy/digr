@@ -43,7 +43,7 @@ export function reviewFallbackEventMessage(input: { step: number; reason: "daily
  * The internal `review_sample` line: the first review call of a job, to see why its reply is longer than its verdicts. Numbers and the scrubbed head of
  * the reply (see `replySampleOf`: no run of row or request text survives) only; the head is JSON-quoted so the line stays one line.
  */
-export function reviewSampleEventMessage(input: { step: number; rows: number; stopReason: string | null; tokensIn: number; tokensOut: number; replyChars: number | null; sample: { head: string; startsWithJson: boolean; reasonKeys: number } | null }): string {
+export function reviewSampleEventMessage(input: { step: number; rows: number; stopReason: string | null; tokensIn: number; tokensOut: number; thinkingTokens?: number | null; thinking?: string | null; replyChars: number | null; sample: { head: string; startsWithJson: boolean; reasonKeys: number } | null }): string {
   return [
     "review_sample",
     `step=${input.step}`,
@@ -51,6 +51,8 @@ export function reviewSampleEventMessage(input: { step: number; rows: number; st
     `stop=${input.stopReason ?? "none"}`,
     `in=${input.tokensIn}`,
     `out=${input.tokensOut}`,
+    `thinking_tokens=${typeof input.thinkingTokens === "number" ? input.thinkingTokens : "none"}`,
+    `thinking=${input.thinking ?? "none"}`,
     `reply_chars=${input.replyChars ?? "none"}`,
     `starts_json=${input.sample ? (input.sample.startsWithJson ? 1 : 0) : "none"}`,
     `reason_keys=${input.sample ? input.sample.reasonKeys : "none"}`,
@@ -63,11 +65,19 @@ export interface ReviewCallFacts {
   rows: number;
   failure: string | null;
   stopReason: string | null;
-  usage: { inputTokens: number; outputTokens: number } | null;
+  usage: { inputTokens: number; outputTokens: number; thinkingTokens?: number } | null;
   maxTokens: number;
   replyChars: number | null;
   retry: boolean;
   missing: number;
+}
+
+/**
+ * The internal `review_failure` line for a review call whose request the API refused (HTTP 400) while it carried the thinking parameter: the call was
+ * repeated once without it. The code and the provider's short error text only; no row content, no customer text.
+ */
+export function reviewThinkingFallbackEventMessage(step: number, call: number, fallback: { code: string; detail: string | null }): string {
+  return ["review_failure", `step=${step}`, `call=${call}`, "kind=thinking_param_rejected", `code=${fallback.code}`, `detail=${JSON.stringify((fallback.detail ?? "").slice(0, 160))}`, "action=repeated_without_thinking_param"].join(" ");
 }
 
 /** True for a call worth a `review_failure` line: it failed, was cut at the output limit, or left a row without a verdict. */
