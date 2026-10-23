@@ -40,6 +40,9 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 /** Said beside a count that the live extraction capacity cut: why, and what to do. No provider word, no money, no technical name. */
 export const CAPACITY_LIMITED_REASON_AR = "سعة المصدر المتاحة الآن محدودة، ونوصي بإعادة المحاولة لاحقًا.";
 
+/** Said when the service's own per-request ceiling, and neither the balance nor the points cap, is what limits the count. */
+export const SERVICE_CEILING_REASON_AR = "هذا حدّ الخدمة نفسها لكل طلب، وليس رصيدك.";
+
 /** The reason sentence shown whenever the plan holds fewer records than the customer asked for. */
 export const VOLUME_LIMIT_REASON_AR = "يتحدد الحد بسبب سقف المهمة الحالي.";
 
@@ -51,8 +54,11 @@ export function volumeLimitStatementAr(input: {
   askedUnits: number;
   fittedUnits: number;
   unitLabelAr?: string;
-  /** `capacity`: what the live extraction capacity allows right now cut the count, not the job's points cap. */
-  reason?: "capacity";
+  /** `capacity`: what the live extraction capacity allows right now cut the count, not the job's points cap.
+   *  `service`: the service's own ceiling per request cut it (not the balance, not the points cap): the number is `fittedUnits`. */
+  reason?: "capacity" | "service" | "reach";
+  /** `reach`: how the fitted count comes about («٢٠ منشورًا × ٢٠ تعليقًا لكل منشور»): the posts a job reads times the comments taken from each. */
+  reachDetailAr?: string;
   /** The points the plan holds back, said in the sentence when the cut came from the live capacity. */
   reservedPoints?: number;
 }): string | null {
@@ -63,6 +69,12 @@ export function volumeLimitStatementAr(input: {
   if (input.reason === "capacity") {
     const reserved = input.reservedPoints && input.reservedPoints > 0 ? `، وسيُحجز للخطة حتى ${pointsAr(input.reservedPoints, n)} ولا يُخصم منها إلا ما يُسلَّم` : "";
     return `طلبت ${n(asked)} ${unit}، والذي تتسع له سعة الاستخراج المتاحة الآن ${n(fitted)} ${unit}${reserved}.`;
+  }
+  if (input.reason === "reach" && input.reachDetailAr) {
+    return `طلبت ${n(asked)} ${unit}، والذي يتسع له هذا الطلب ${n(fitted)} ${unit} (${input.reachDetailAr}). هذا حدّ الطلب الواحد، وليس رصيدك. ويمكنك طلب الباقي في طلب منفصل.`;
+  }
+  if (input.reason === "service") {
+    return `طلبت ${n(asked)} ${unit}، والذي تتسع له هذه الخدمة في الطلب الواحد ${n(fitted)} ${unit}. ${SERVICE_CEILING_REASON_AR} ويمكنك طلب الباقي في طلب منفصل.`;
   }
   return `طلبت ${n(asked)} ${unit}، والذي يناسب الطلب الواحد الآن ${n(fitted)} ${unit}. ${VOLUME_LIMIT_REASON_AR}`;
 }

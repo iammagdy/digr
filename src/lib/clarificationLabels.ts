@@ -20,5 +20,9 @@ export const CLARIFICATION_ANSWER_LABELS: Record<string, string> = {
   social_x_topic_required: "موضوع البحث المطلوب",
   social_x_account_required: "اسم الحساب المطلوب",
   volume_cap_required: "الحد الأقصى المطلوب",
+  social_page_required: "الصفحة المطلوبة",
+  social_posts_count_required: "عدد المنشورات المطلوب",
+  social_comments_wanted: "التعليقات المطلوبة",
+  social_comments_per_post: "عدد التعليقات لكل منشور",
   topic_source_required: "المصدر المطلوب",
 };

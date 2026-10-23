@@ -14,6 +14,7 @@ import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
 import { missionStepsAr } from "@/lib/dependentSteps";
 import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
+import { balanceVerdictAr } from "@/lib/balanceVerdict";
 import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
 
 export interface PlanItem {
@@ -36,6 +37,12 @@ export interface PlanQuoteData {
   pointsCapConstrained?: boolean;
   /** The live extraction capacity (not the points cap) cut the count (set by the server). */
   capacityConstrained?: boolean;
+  /** The service's own per-request ceiling cut the count (not the balance, not the points cap): the number it holds (set by the server). */
+  serviceCeilingUnits?: number;
+  /** The sentence the server wrote for why the plan holds fewer records than asked (the service's ceiling, what the posts read can reach, the capacity). */
+  volumeLimitLineAr?: string;
+  /** One plain verdict on the balance, from the quote (set by the server; the card recomputes it from the live balance). */
+  balanceVerdictAr?: string;
   requestedVolumeMax?: number;
   /** What the customer asked, when the plan holds fewer records than that (set by the server). */
   askedVolumeMax?: number;
@@ -215,11 +222,12 @@ export default function PlanQuoteCard({
     ? defaultVolumeStatementAr({ noun: quote.defaultCap.noun, defaultUnits: quote.defaultCap.units, fittedUnits: quote.targetVolumeMax, quotedPoints: quote.quotedPoints, pointsCap: quote.pointsCap || JOB_MAX_POINTS_CAP, wordAr: quote.defaultCap.wordAr })
     : null;
   const capacityCut = Boolean(quote.capacityConstrained && !quote.pointsCapConstrained);
-  const volumeLimit = defaultStatement ? null : (quote.items?.length ?? 1) <= 1
+  const volumeLimit = defaultStatement ? null : quote.volumeLimitLineAr ? quote.volumeLimitLineAr : (quote.items?.length ?? 1) <= 1
     ? volumeLimitStatementAr({
         askedUnits: Math.max(quote.askedVolumeMax ?? 0, quote.requestedVolumeMax ?? 0),
         fittedUnits: quote.targetVolumeMax,
         ...(quote.capacityConstrained && !quote.pointsCapConstrained ? { reason: "capacity" as const, reservedPoints: quote.quotedPoints } : {}),
+        ...(quote.serviceCeilingUnits && !quote.capacityConstrained ? { reason: "service" as const } : {}),
       })
     : null;
   const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
@@ -343,7 +351,7 @@ export default function PlanQuoteCard({
 
       {volumeLimit ? (
         <p data-testid="plan-volume-limit" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
-          {volumeLimit} {capacityCut ? CAPACITY_LIMITED_REASON_AR : "يمكنك تقليل العدد أكثر إذا أردت."}
+          {volumeLimit} {capacityCut ? CAPACITY_LIMITED_REASON_AR : quote.serviceCeilingUnits || quote.volumeLimitLineAr?.includes("هذا حدّ") ? "" : "يمكنك تقليل العدد أكثر إذا أردت."}
         </p>
       ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
@@ -370,6 +378,10 @@ export default function PlanQuoteCard({
           هذا هو الباقي من طلبك بعد العينة: {formatAr(quote.afterSample.remainingUnits)} سجل دون ما وصلك فيها ({formatAr(quote.afterSample.deliveredInSample)} سجل، خُصم عنها {pointsAr(quote.afterSample.sampleChargedPoints)}). الإجمالي التقريبي مع العينة حوالي {pointsAr(quote.afterSample.approximateTotalPoints)}.
         </p>
       )}
+
+      <p data-testid="plan-balance-verdict" className="mb-0 mt-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2">
+        {balanceVerdictAr({ balance, quotedPoints: quote.quotedPoints, expectedPoints, targetVolumeMax: quote.targetVolumeMax, downscaledOffer: quote.downscaledOffer })}
+      </p>
 
       {quote.duration && (
         <div className="mt-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9]" data-testid="plan-duration">

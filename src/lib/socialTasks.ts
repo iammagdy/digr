@@ -207,6 +207,11 @@ export function detectSocialIntent(text: string): SocialIntent {
     task = "comments";
     discover = "channel";
     videosWithComments = true;
+  } else if (wantsComments && platform === "facebook" && !targetUrl && !channelRef && (wantsVideos || wantsPosts) && facebookPageNameIn(body)) {
+    // «تعليقات منشورات صفحة اليوم السابع»: the comments of a NAMED Facebook page's latest posts (the page is its scope, like a channel).
+    task = "comments";
+    discover = "channel";
+    videosWithComments = true;
   } else if (wantsComments) {
     task = "comments";
     discover = "keyword";
@@ -232,7 +237,7 @@ export function detectSocialIntent(text: string): SocialIntent {
     discover = "keyword";
   }
 
-  const pageName = platform === "facebook" && task === "page_posts" && discover === "keyword" && !channelRef ? facebookPageNameIn(body) : null;
+  const pageName = platform === "facebook" && !channelRef && ((task === "page_posts" && discover === "keyword") || (task === "comments" && discover === "channel")) ? facebookPageNameIn(body) : null;
 
   return { platform, wantsComments, wantsTrending, targetUrl, channelRef, pageName, task, discover, videosWithComments };
 }
