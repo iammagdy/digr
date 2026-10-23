@@ -60,7 +60,9 @@ describe("item 7: company Excel quality", () => {
 
   it("translates the category or marks an unknown one in Arabic", () => {
     expect(industryLabelForCell("Construction")).toBe("المقاولات والتشييد");
-    expect(industryLabelForCell("Fancy Niche Widgets")).toBe(`${INDUSTRY_NOT_TRANSLATED_AR} Fancy Niche Widgets`);
+    // The delivered file never carries the English source label (PHASE 3): an unknown one is a plain Arabic marker.
+    expect(industryLabelForCell("Fancy Niche Widgets")).toBe(INDUSTRY_NOT_TRANSLATED_AR);
+    expect(industryLabelForCell("Fancy Niche Widgets")).not.toMatch(/[A-Za-z]/);
     expect(industryLabelForCell("")).toBe("غير متاح");
   });
 

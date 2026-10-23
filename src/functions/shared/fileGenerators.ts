@@ -10,6 +10,8 @@ import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { arabicVerificationStatus } from "../../lib/contactVerification";
 import { industryLabelForCell } from "../../lib/industryLabels";
+import { cleanCompanyRecord } from "../../lib/companyRowHygiene";
+import { isoCountryCodeFromName } from "../../lib/planParameters";
 import { normalizeSocialRow } from "../../lib/server/socialRows";
 import { resolveCompanyLinks } from "../../lib/companyUrls";
 import { scaleValue } from "../../lib/scaleConfig";
@@ -643,7 +645,11 @@ async function generateCompanyDataWorkbook(
   const companyName = (r: any, index: number) => String(r.company_name || r.name || r.title || `شركة ${index + 1}`).trim();
   const cleanCellText = (v: unknown) => String(v ?? "").replace(/^'/, "").trim() || "غير متاح";
   const sectorLabel = (value: unknown) => industryLabelForCell(cleanCellText(value));
-  const rows = norm.rows;
+  // The delivered rows are cleaned once more here (a name without a page title's tail or markdown, a phone whose international prefix is another
+  // country's not delivered as this company's): the same rules whatever source the row came from.
+  const requestedCountry = detectCountryFromText(String((norm.metadata as any).reportContext?.scope?.country || (norm.metadata as any).country || ""));
+  const requestedIso = requestedCountry ? isoCountryCodeFromName(requestedCountry.canonicalEnglish) : undefined;
+  const rows = norm.rows.map((row) => cleanCompanyRecord(row, { countryIso: requestedIso }));
   rows.forEach((r, index) => {
     const rawAddress = cleanCellText(r.address || r.full_address || r.location);
     const rawCity = cleanCellText(r.city);

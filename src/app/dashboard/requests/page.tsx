@@ -52,7 +52,7 @@ const TABS: Array<["all" | "done" | "running" | "refunded", string]> = [
   ["all", "الكل"],
   ["done", "مكتملة"],
   ["running", "قيد التنفيذ"],
-  ["refunded", "مستردة"],
+  ["refunded", "حجز مُحرَّر"],
 ];
 
 function targetOf(params?: string): string {
@@ -84,19 +84,21 @@ function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
     cleaned.includes("لتأخر التنفيذ") ||
     cleaned.includes("تلقائياً")
   ) {
-    cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم إرجاع كامل نقاطك المحجوزة لرصيدك.";
+    cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم تحرير حجزك المؤقت كاملًا ولم يُخصم منك شيء.";
   }
 
   if (
     cleaned.includes("رجعت") ||
     cleaned.includes("استرجاع") ||
     cleaned.includes("إرجاع") ||
-    cleaned.includes("استرداد")
+    cleaned.includes("استرداد") ||
+    cleaned.includes("تحرير") ||
+    cleaned.includes("حُرّر")
   ) {
     return cleaned;
   }
 
-  return `${cleaned} — رجعت ${pointsAr(reservedCredits)} كاملة لرصيدك.`;
+  return `${cleaned} — حُرّر حجز مؤقت بقيمة ${pointsAr(reservedCredits)} كاملًا ولم يُخصم منك شيء.`;
 }
 
 const DL_ICON = "M12 4v11M7 10l5 5 5-5M5 20h14";

@@ -42,7 +42,7 @@ export default function AdminFinancePage() {
   const cards = [
     { k: "شحن معتمد", v: EGP(c.rev), c: "var(--ink)", sub: "تدفق نقدي داخل" },
     { k: "إيراد محقق", v: EGP(c.realized), c: "var(--ink)", sub: "نقاط خُصمت على سجلات مسلَّمة (تشمل المستهلك من الرصيد المجاني)" },
-    { k: "مستردات", v: EGP(c.refunds), c: "var(--goldT)", sub: "فرق الحجز المرتجع للمستخدمين" },
+    { k: "حجز مؤقت مُحرَّر", v: EGP(c.refunds), c: "var(--goldT)", sub: "حجز مؤقت رُفع ولم يُخصم من المستخدمين" },
     { k: "تكلفة TREG", v: EGP(c.treg), c: "var(--mut)", sub: "استدعاءات جمع البيانات" },
     { k: "تكلفة النماذج", v: EGP(c.llm), c: "var(--mut)", sub: providers ? `${providers.llm.provider === "openai" ? "OpenAI" : providers.llm.provider === "anthropic" ? "Anthropic" : "وضع تجريبي"} · ${providers.llm.model}` : "النماذج اللغوية" },
     { k: "صافي الربح", v: EGP(c.profit), c: "var(--ok)", sub: c.margin === null ? "لا إيرادات بعد" : `هامش ${formatAr(c.margin, 1)}٪` },
@@ -77,7 +77,7 @@ export default function AdminFinancePage() {
               ["نقاط ترويجية", formatAr(d.credit.promoPoints), "أكواد ترويجية"],
               ["نقاط هدية من الإدارة", formatAr(d.credit.adminGrantPoints), "إضافة يدوية"],
               ["نقاط مستهلكة", formatAr(d.credit.consumedPoints), "خصم على سجلات مسلَّمة"],
-              ["نقاط مستردة", formatAr(d.credit.refundedPoints), "فرق الحجز المرتجع"],
+              ["نقاط حجز مُحرَّرة", formatAr(d.credit.refundedPoints), "حجز مؤقت مُحرَّر"],
               ["صافي المتبقي للعملاء", formatAr(d.credit.outstandingPoints), "كل الأرصدة حتى نهاية الفترة"],
             ].map(([k, v, sub]) => (
               <div key={k} className="rounded-[16px] border border-ln bg-bg p-3"><p className="m-0 text-xs text-mut">{k}</p><p className="mb-0 mt-1.5 whitespace-nowrap font-display text-[26px] leading-none text-ink">{v}</p><p className="mb-0 mt-1.5 text-[11px] text-fnt">{sub}</p></div>
@@ -91,7 +91,7 @@ export default function AdminFinancePage() {
         <p className="mb-3.5 mt-0 text-xs text-fnt">الإيراد المحقق = النقاط المخصومة على السجلات المسلَّمة × قيمة النقطة</p>
         {!isMobile && (
           <div className="grid gap-2.5 border-b border-ln2 py-2.5 text-[11px] font-semibold text-mut" style={{ gridTemplateColumns: MON_COLS }}>
-            <span>الشهر</span><span>شحن معتمد</span><span>إيراد محقق</span><span>مستردات</span><span>تكلفة المزودين</span><span>صافي الربح</span><span>الهامش</span>
+            <span>الشهر</span><span>شحن معتمد</span><span>إيراد محقق</span><span>حجز مُحرَّر</span><span>تكلفة المزودين</span><span>صافي الربح</span><span>الهامش</span>
           </div>
         )}
         {d.monthly.map((m) => (

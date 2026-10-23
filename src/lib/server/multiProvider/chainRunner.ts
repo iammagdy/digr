@@ -6,6 +6,8 @@ import {
   buildContactRow, checkPublicBusinessUrl, checkRobots, companyDomain, extractEmails, extractPhones, extractProfileLink, linksFromMarkdown,
   parseDecisionMakers, pickContactPages, rowPassesGate, type DecisionMaker, type EnrichmentFacts, type FoundEmail, type FoundPhone, type RobotsFetch, type RobotsRules,
 } from "../../multiProvider/policy";
+import { cleanCompanyName, cleanMarkdownText, isListOrArticleTitle, markForeignPhones, nonCompanyReasonAr } from "../../companyRowHygiene";
+import { isoCountryCodeFromName } from "../../planParameters";
 import { reserveForUnits } from "../../recordPricing";
 import { HARD_LIMITS, YIELD, estimateRoute, routeByCode } from "../../multiProvider/routes";
 import type { CapabilityDef, DataProviderId, RequiredField, RouteDef, RouteRequest } from "../../multiProvider/types";
@@ -140,13 +142,20 @@ export function chainParamsOf(params: Record<string, any> | undefined): ChainPar
 const SOCIAL_EXCLUDE = ["facebook.com", "instagram.com", "linkedin.com", "twitter.com", "x.com", "tiktok.com", "youtube.com", "pinterest.com", "reddit.com", "wikipedia.org"];
 const DIRECTORY_NOISE = /(?:yellowpages|yelp|tripadvisor|booking|amazon|alibaba|indeed|glassdoor|crunchbase|zoominfo|dnb|clutch|trustpilot|forbes|bloomberg)\./i;
 
+/** The first heading (or the first line) of a page's markdown, as plain text. */
+function firstHeadingOf(markdown: string): string {
+  const text = String(markdown || "");
+  const heading = /^\s{0,3}#{1,2}\s+(.+)$/m.exec(text)?.[1];
+  return cleanMarkdownText(heading ?? text.split(/\r?\n/).find((line) => line.trim()) ?? "").slice(0, 200);
+}
+
 export function buildDiscoveryQuery(params: ChainParams): string {
   return [params.keyword, params.industry, params.country, "company official website"].filter((p) => typeof p === "string" && p.trim()).join(" ").slice(0, 300);
 }
 
 function nameFromTitle(title: string, host: string): string {
-  const cleaned = title.split(/\s[|\-–—•·:]\s/)[0].trim();
-  return (cleaned || host).slice(0, 120);
+  // «Utopia Pharmaceutical: Home» is «Utopia Pharmaceutical»; markdown symbols never stay in a name (see companyRowHygiene).
+  return cleanCompanyName(title, host);
 }
 
 /** A search hit becomes a candidate only if it is a public company homepage-like page: not a social network, not a directory or media site, not a login page. */
@@ -155,12 +164,14 @@ export function candidatesFromSearch(hits: SearchHit[]): ChainCandidate[] {
   const seen = new Set<string>();
   for (const hit of hits) {
     if (!checkPublicBusinessUrl(hit.url).ok) continue;
+    // A list, a ranking, a directory or an article about companies is not a company («Top 40 Pharmaceutical Companies…»): no page is read for it.
+    if (nonCompanyReasonAr({ title: hit.title, url: hit.url })) continue;
     const domain = companyDomain(hit.url);
     if (!domain || seen.has(domain) || DIRECTORY_NOISE.test(domain)) continue;
     seen.add(domain);
     let origin: string;
     try { origin = new URL(hit.url).origin; } catch { continue; }
-    out.push({ n: nameFromTitle(hit.title || "", domain), u: origin, d: hit.description ? hit.description.slice(0, 200) : undefined });
+    out.push({ n: nameFromTitle(hit.title || "", domain), u: origin, d: hit.description ? cleanMarkdownText(hit.description).slice(0, 200) : undefined });
   }
   return out;
 }
@@ -178,8 +189,9 @@ export function candidatesFromDirectory(rows: Record<string, any>[]): ChainCandi
     seen.add(domain);
     let origin: string;
     try { origin = new URL(url).origin; } catch { continue; }
-    const name = String(row?.company_name || row?.name || row?.title || domain).slice(0, 120);
-    out.push({ n: name, u: origin, i: typeof row?.industry === "string" ? row.industry.slice(0, 80) : undefined, l: typeof row?.location === "string" ? row.location.slice(0, 80) : typeof row?.country === "string" ? row.country.slice(0, 60) : undefined, d: typeof row?.description === "string" ? row.description.slice(0, 200) : undefined });
+    if (nonCompanyReasonAr({ title: row?.company_name || row?.name || row?.title })) continue;
+    const name = cleanCompanyName(row?.company_name || row?.name || row?.title || domain, domain);
+    out.push({ n: name, u: origin, i: typeof row?.industry === "string" ? row.industry.slice(0, 80) : undefined, l: typeof row?.location === "string" ? row.location.slice(0, 80) : typeof row?.country === "string" ? row.country.slice(0, 60) : undefined, d: typeof row?.description === "string" ? cleanMarkdownText(row.description).slice(0, 200) : undefined });
   }
   return out;
 }
@@ -346,9 +358,13 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
     if (!first) { unverified += 1; return; }
     enrichTrace().read += 1;
     const homeData = first.data as { markdown: string; links: string[] };
+    // The page behind a company's address turned out to be a list or an article (its own first heading says so): not a company, not delivered, not charged.
+    if (isListOrArticleTitle(firstHeadingOf(homeData.markdown))) { unverified += 1; trace.stage("verify", null, null).unverified += 1; return; }
     let links = [...(homeData.links || []), ...linksFromMarkdown(homeData.markdown)];
     const emails: FoundEmail[] = extractEmails(homeData.markdown, links, domain);
-    const phones: FoundPhone[] = extractPhones(homeData.markdown, links);
+    const countryIso = params.countryIso ?? (params.country ? isoCountryCodeFromName(params.country) : undefined);
+    // A number whose international prefix is another country's is not verified as this company's phone.
+    let phones: FoundPhone[] = markForeignPhones(extractPhones(homeData.markdown, links), countryIso);
     let profile = extractProfileLink(homeData.markdown, links);
     let sourcePage = c.u;
     const needEmail = params.requiredFields.includes("work_email");
@@ -366,7 +382,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
         const more = [...(d.links || []), ...linksFromMarkdown(d.markdown)];
         links = [...links, ...more];
         for (const e of extractEmails(d.markdown, more, domain)) if (!emails.some((x) => x.value === e.value)) emails.push(e);
-        for (const p of extractPhones(d.markdown, more)) if (!phones.some((x) => x.value === p.value)) phones.push(p);
+        for (const p of markForeignPhones(extractPhones(d.markdown, more), countryIso)) if (!phones.some((x) => x.value === p.value)) phones.push(p);
         profile = profile ?? extractProfileLink(d.markdown, more);
         sourcePage = page;
         if (enough()) break;

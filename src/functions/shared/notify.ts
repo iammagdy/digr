@@ -113,7 +113,7 @@ export interface JobOutcome {
   refundReason?: string;
 }
 
-/** In-app (+ email per preferences) events for a finished run: «اكتمل بحثك» and «رجعت N نقطة لرصيدك». */
+/** In-app (+ email per preferences) events for a finished run: «اكتمل بحثك» and «حُرّر حجز مؤقت بقيمة N نقطة». */
 export async function notifyJobOutcome(
   client: ConstructorParameters<typeof TablesDB>[0],
   userId: string,
@@ -139,11 +139,11 @@ export async function notifyJobOutcome(
     }, log);
     if (refund > 0) {
       await notifyUser(client, {
-        userId, kind: "refund", title: `رجعت ${pointsAr(refund, arDigits)} لرصيدك`,
-        body: "فرق الحجز من بحثك الأخير عاد إلى محفظتك.", link: "/dashboard/topup",
+        userId, kind: "refund", title: `حُرّر حجز مؤقت بقيمة ${pointsAr(refund, arDigits)}`,
+        body: "حجز مؤقت مُحرَّر: الجزء الذي لم يُستخدم من حجز بحثك الأخير لم يُخصم وهو متاح في رصيدك.", link: "/dashboard/topup",
         emailVars: {
           Points: arDigits(refund),
-          Reason: result.refundReason || "فرق الحجز من بحثك الأخير",
+          Reason: result.refundReason || "حجز مؤقت مُحرَّر من بحثك الأخير",
           JobTitle: jobTitle,
         },
       }, log);
@@ -151,8 +151,8 @@ export async function notifyJobOutcome(
   } else if (result.status === "failed") {
     const back = refund || Math.max(0, Number(result.reservedCredits ?? 0));
     await notifyUser(client, {
-      userId, kind: "refund", title: back > 0 ? `رجعت ${pointsAr(back, arDigits)} لرصيدك` : "تعذّر إكمال البحث",
-      body: "تعذّر إكمال البحث ولم يُخصم شيء — رجعت النقاط المحجوزة كاملة.", link: "/dashboard/requests",
+      userId, kind: "refund", title: back > 0 ? `حُرّر حجز مؤقت بقيمة ${pointsAr(back, arDigits)}` : "تعذّر إكمال البحث",
+      body: "تعذّر إكمال البحث ولم يُخصم شيء — حُرّر الحجز المؤقت كاملًا.", link: "/dashboard/requests",
       emailVars: {
         Points: arDigits(back),
         Reason: result.refundReason || "تعذّر إكمال البحث ولم يُخصم شيء",

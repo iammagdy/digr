@@ -13,7 +13,7 @@ const topupAmount = (t: any) => t.confirmedAmountEgp || t.amountEgp || 0;
  * Revenue & profit. Definitions (same as the design):
  *  - شحن معتمد: approved top-ups (confirmed amount), by review date
  *  - إيراد محقق: points charged on delivered records × point value
- *  - مستردات: (released − charged) points returned to users × point value
+ *  - حجز مؤقت مُحرَّر: (released − charged) points released back to users × point value
  *  - تكلفة المزودين: provider_costs (TREG + model)
  *  - صافي الربح: شحن معتمد − تكلفة المزودين
  */

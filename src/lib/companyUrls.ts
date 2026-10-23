@@ -2,6 +2,8 @@
  * A company's website and its LinkedIn page are different columns. Sources sometimes return the LinkedIn page in the
  * website field (or only a bare domain); a delivered workbook must never show a LinkedIn URL as the website.
  */
+import { isNotAWebsite } from "./companyRowHygiene";
+
 const LINKEDIN_HOST_RE = /(?:^|\.)linkedin\.com$/i;
 
 function hostOf(value: string): string {
@@ -40,7 +42,8 @@ export function resolveCompanyLinks(row: Record<string, any>): { website: string
   const linkedinCandidates = [row.linkedin_url, row.linkedin, row.company_linkedin]
     .map((value) => String(value ?? "").trim())
     .filter(Boolean);
-  const websiteCandidate = candidates.find((value) => !isLinkedInUrl(value) && !isSocialOrVideoUrl(value)) ?? "";
+  // An e-mail address or a map link in a website field is not a website (see companyRowHygiene).
+  const websiteCandidate = candidates.find((value) => !isLinkedInUrl(value) && !isSocialOrVideoUrl(value) && !isNotAWebsite(value)) ?? "";
   const linkedin =
     linkedinCandidates.find((value) => isLinkedInUrl(value) && /^https?:\/\//i.test(value)) ??
     // A LinkedIn page that came in through the website field belongs in the LinkedIn column.

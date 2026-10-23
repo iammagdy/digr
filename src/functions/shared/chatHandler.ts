@@ -112,6 +112,7 @@ import { DEFAULT_COMMENTS_CAP, DEFAULT_RECORDS_CAP, defaultCapFittedLineAr, defa
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
 import { scrubPlaceholderPhrases } from "../../lib/customerScrub";
+import { localizeSectorNamesInText } from "../../lib/industryLabels";
 import { CLARIFICATION_ANSWER_LABELS, INDEPENDENT_REQUEST_NOTE_AR, isCardAnswerText, isClarificationAnswerPayload, isFileShapingMessage, dropGreetingAndIdentityTurns, isGreetingOrIdentityTurn, isStandaloneResearchRequest, scopeRequestText } from "./requestScope";
 
 /** Customer messages the scope reads, and the latest rows the model is shown. */
@@ -3855,8 +3856,9 @@ export class ChatHandler {
             }
           }
 
-          planOutput.summaryAr = scrubPlaceholderPhrases(String(planOutput.summaryAr || ""));
-          managedQuote.summaryAr = scrubPlaceholderPhrases(String(managedQuote.summaryAr || ""));
+          // Last guard: an English sector name («Construction», «Information Technology & Services») never reaches the customer; it is read as its Arabic name.
+          planOutput.summaryAr = localizeSectorNamesInText(scrubPlaceholderPhrases(String(planOutput.summaryAr || "")));
+          managedQuote.summaryAr = localizeSectorNamesInText(scrubPlaceholderPhrases(String(managedQuote.summaryAr || "")));
           // A social plan counts what it collects in its own words (comments, posts), not in «records».
           const planUnitWord = verifiedSocialDef?.kind === "comments" ? "تعليق" : verifiedSocialDef?.kind === "posts" ? "منشور" : "سجل";
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;

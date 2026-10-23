@@ -9,6 +9,8 @@
  * caller and handed in as text).
  */
 
+import { cleanCompanyName, cleanMarkdownText } from "../companyRowHygiene";
+
 /** The only keys a collected row may carry. Anything else is dropped before a row leaves the chain. */
 export const ALLOWED_ROW_KEYS = [
   "company_name", "website", "industry", "location", "description",
@@ -314,11 +316,11 @@ export function buildContactRow(facts: EnrichmentFacts): Record<string, unknown>
   const phone = facts.phones.find((p) => p.status === "verified") ?? facts.phones[0] ?? null;
   const dm = facts.decisionMakers?.[0] ?? null;
   return sanitizeRowKeys({
-    company_name: facts.companyName,
+    company_name: cleanCompanyName(facts.companyName),
     website: facts.website,
     industry: facts.industry,
     location: facts.location,
-    description: facts.description,
+    description: facts.description ? cleanMarkdownText(facts.description) : facts.description,
     work_email: email?.value,
     work_email_verification_status: email ? (email.status === "verified" ? STATUS_VERIFIED_AR : STATUS_UNVERIFIED_AR) : STATUS_UNAVAILABLE_AR,
     phone: phone?.value,

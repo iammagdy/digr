@@ -295,7 +295,7 @@ export function planScopeRows(
       params.search ||
       "النشاط المطلوب";
     const detectedInd = detectIndustryFromText(String(rawInd));
-    const indVal = detectedInd?.arabicLabel || industryDisplayLabelAr(String(rawInd));
+    const indVal = industryDisplayLabelAr(detectedInd?.arabicLabel || String(rawInd));
     chips.push({
       label: "النشاط / التخصص:",
       value: indVal,

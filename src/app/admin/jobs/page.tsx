@@ -11,8 +11,8 @@ import { RoutingTracePanel } from "@/components/admin/RoutingTracePanel";
 interface JobRow { id: string; title: string; platform: string; createdAt: string; user: string; requested: number | null; delivered: number; held: number; charged: number; costEgp: number | null; chain?: boolean; status: "done" | "running" | "failed" | "refunded" }
 interface Resp { jobs: JobRow[]; stats: { last30: number; runningNow: number; successRate: number | null; refundedPoints: number } }
 
-const JST: Record<string, [string, string]> = { done: ["مكتمل", "var(--ok)"], running: ["قيد التنفيذ", "var(--info)"], failed: ["فشل · استرداد", "var(--bad)"], refunded: ["مسترد", "var(--goldT)"] };
-const TABS: Array<[string, string]> = [["all", "الكل"], ["running", "قيد التنفيذ"], ["done", "مكتمل"], ["failed", "فشل"], ["refunded", "مسترد"]];
+const JST: Record<string, [string, string]> = { done: ["مكتمل", "var(--ok)"], running: ["قيد التنفيذ", "var(--info)"], failed: ["فشل · حجز مُحرَّر", "var(--bad)"], refunded: ["حجز مُحرَّر", "var(--goldT)"] };
+const TABS: Array<[string, string]> = [["all", "الكل"], ["running", "قيد التنفيذ"], ["done", "مكتمل"], ["failed", "فشل"], ["refunded", "حجز مُحرَّر"]];
 const COLS = "minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.7fr) minmax(0,.8fr)";
 
 export default function AdminJobsPage() {
@@ -35,7 +35,7 @@ export default function AdminJobsPage() {
     { k: "مهام آخر ٣٠ يومًا", v: data ? formatAr(data.stats.last30) : "…", c: "var(--ink)" },
     { k: "قيد التنفيذ الآن", v: data ? formatAr(data.stats.runningNow) : "…", c: "var(--info)" },
     { k: "نسبة النجاح", v: data ? (data.stats.successRate == null ? "—" : `${formatAr(data.stats.successRate, 1)}٪`) : "…", c: "var(--ok)" },
-    { k: "نقاط مستردة", v: data ? formatAr(data.stats.refundedPoints) : "…", c: "var(--goldT)" },
+    { k: "نقاط حجز مُحرَّرة", v: data ? formatAr(data.stats.refundedPoints) : "…", c: "var(--goldT)" },
   ];
 
   return (
