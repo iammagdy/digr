@@ -320,6 +320,9 @@ const TOPIC_NOISE = new Set([
   "tiktok", "youtube", "facebook", "instagram", "twitter", "videos", "video", "posts", "post", "comments", "comment", "trending", "trend", "viral", "get", "me", "the", "of", "on", "from", "about", "for", "with", "and", "a", "an", "i", "want", "need",
 ]);
 
+/** «بالتعليقات», «وتعليقاتها», «بالكومنتات»: a task word with a clitic («مع/و/ب/ل/ف») or a pronoun ending is still the task, never the topic. */
+const TASK_WORD_FORM_RE = /^[بولفك]?(?:ال)?(?:تعليق|تعليقات|كومنت|كومنتات|كومنتس|منشور|منشورات|بوست|بوستات|فيديو|فيديوهات|مقطع|مقاطع|تغريدة|تغريدات)(?:ها|هم|ه|ك)?$/u;
+
 /** Words that make the country after them a LOCATION («في مصر», «من مصر», «داخل مصر», «بمصر»), not part of the topic. */
 const LOCATION_PREPOSITIONS = new Set(["في", "فى", "من", "داخل"]);
 
@@ -371,7 +374,7 @@ function topicTokens(text: string): string[] {
       if (isNumberWord(token) && COUNTED_NOUN.test(analyzed[index + 1]?.token || "")) return false;
       const bare = token.replace(/^ال/u, "");
       if (bare.length < 2) return false;
-      if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare)) return false;
+      if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare) || TASK_WORD_FORM_RE.test(token)) return false;
       // A location is a filter, not a topic word; an entity that is a country stays in the topic.
       if (location) return false;
       return true;

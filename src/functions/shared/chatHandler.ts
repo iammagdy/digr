@@ -16,7 +16,7 @@ import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
 import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, fileEditAnswerAr, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, unsupportedFileEdit, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
-import { planExplanationLinesAr, recordNounAr } from "../../lib/planExplanation";
+import { planExplanationLinesAr, recordNounAr, unitPriceLineAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
@@ -337,8 +337,9 @@ function socialDiscoveryGapQuestion(text: string, ignore: ReadonlySet<string>, c
   // The customer answered the page question and the answer is still only a name: say so in one sentence, never the same card twice.
   if (trigger === "page_link" && facebookPageLinkAlreadyAsked(text)) return { plain: true, id: "facebook_page_link_retry", text: FACEBOOK_PAGE_LINK_RETRY_AR };
   const id = trigger === "page" || trigger === "page_link" ? SOCIAL_DISCOVERY_IDS.page : SOCIAL_DISCOVERY_IDS.perPost;
-  if (ignore.has(id)) return null;
-  const first = socialDiscoveryItems(text, context).find((entry) => entry.id === id);
+  if (trigger !== "trend" && ignore.has(id)) return null;
+  const cardItems = socialDiscoveryItems(text, context).filter((entry) => !ignore.has(entry.id));
+  const first = trigger === "trend" ? cardItems[0] : cardItems.find((entry) => entry.id === id);
   return first ? { id: first.id, text: first.text, question: first.question, type: first.type, options: first.options, allowOther: first.allowOther } : null;
 }
 
@@ -3926,6 +3927,9 @@ export class ChatHandler {
           // A social plan counts what it collects in its own words (comments, posts), not in «records».
           const planUnitWord = verifiedSocialDef?.kind === "comments" ? "تعليق" : verifiedSocialDef?.kind === "posts" ? "منشور" : "سجل";
           let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
+          // The price of one record is on every plan: one service says it plainly, several say it for each.
+          const priceLine = unitPriceLineAr(managedQuote.items, managedQuote.unitPricePoints, customerFacingCapabilityLabel);
+          if (priceLine) planSummaryText += `\n- ${priceLine}`;
           if (managedQuote.items.length === 1) {
             const explanation = planExplanationLinesAr({
               capabilitySlug: managedQuote.items[0]?.capabilitySlug,

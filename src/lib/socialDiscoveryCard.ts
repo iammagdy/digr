@@ -1,7 +1,7 @@
 import { normalizeDigits } from "./arabicDigits";
 import { understandMission } from "./consultantCopy";
 import { SOCIAL_CONTENT_WORDS_RE, ACCOUNT_LOOKUP_RE, hasSocialTopic } from "./socialDiscovery";
-import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, type SocialIntent } from "./socialTasks";
+import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, TREND_WORDS_RE, type SocialIntent } from "./socialTasks";
 import { facebookPageUrl, isSocialCapabilitySlug } from "./socialSources";
 import { resolveTimeWindow, windowIsStatedByCustomer, WINDOW_OPTIONS_AR } from "./timeWindow";
 
@@ -49,6 +49,12 @@ export interface SocialFacts {
 
 const POSTS_ONLY_RE = /(?:المنشورات فقط|منشورات فقط|بوستات فقط|بدون تعليقات|من غير تعليقات|دون تعليقات)/u;
 
+/** «٥٠ منشور» / «١٠٠ بوست» in a request that does not ask for comments (the mission reads a count of posts only in a comments flow). */
+function postsCountIn(text: string): number | null {
+  const found = [...text.matchAll(/(?:^|[^\d])(\d{1,5})\s*(?:منشورات|منشور|بوستات|بوست)/gu)].pop();
+  return found ? Number(found[1]) : null;
+}
+
 export function readSocialFacts(rawText: string): SocialFacts {
   const text = normalizeDigits(rawText || "");
   const intent = detectSocialIntent(text);
@@ -61,7 +67,7 @@ export function readSocialFacts(rawText: string): SocialFacts {
     topic: hasSocialTopic(text),
     source: Boolean(intent.channelRef || intent.pageName || intent.targetUrl),
     period: windowIsStatedByCustomer(window),
-    postsCount: mission.videos ?? null,
+    postsCount: mission.videos ?? postsCountIn(text),
     commentsWanted,
     commentsPerPost: mission.commentsPerVideo ?? null,
     allComments: mission.allComments,
@@ -132,7 +138,7 @@ export interface DiscoveryContext {
  * per-post number), and, for Facebook with no page and no other verified Facebook service, the page itself (Facebook posts are read from one
  * public page, not searched by topic). Null when nothing of the sort is missing.
  */
-export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "page_link" | "per_post" | null {
+export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "page_link" | "per_post" | "trend" | null {
   const text = normalizeDigits(rawText || "");
   if (!SOCIAL_CONTENT_WORDS_RE.test(text) || ACCOUNT_LOOKUP_RE.test(text)) return null;
   const facts = readSocialFacts(text);
@@ -144,6 +150,9 @@ export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContex
   // request goes the way it always did, and so does any Facebook request while another verified Facebook service is registered.
   if (facts.platform === "facebook" && !facts.source && !context.otherFacebookService && facts.postsCount !== null && facts.commentsWanted === true) return "page";
   if (facts.platform === "facebook" && facts.commentsWanted === true && !facts.allComments && facts.postsCount !== null && facts.commentsPerPost === null) return "per_post";
+  // A Facebook TREND request on a topic with no page («الترندات الصحية في مصر من فيسبوك»): how many posts, comments or not and how many per post are
+  // the customer's to say, not defaults the plan picks behind their back. (The period has its own older question, asked first.)
+  if (facts.platform === "facebook" && !facts.source && facts.topic && TREND_WORDS_RE.test(text) && facts.commentsWanted !== false && (facts.postsCount === null || facts.commentsWanted === null)) return "trend";
   return null;
 }
 
@@ -172,7 +181,8 @@ export function socialDiscoveryItems(rawText: string, options: { skipped?: Reado
   if (facts.commentsWanted === null) {
     items.push(item(SOCIAL_DISCOVERY_IDS.commentsWanted, "هل تريد تعليقات المنشورات أيضًا؟", "single", [COMMENTS_YES_AR, COMMENTS_NO_AR]));
   }
-  if (facts.commentsWanted !== false && !facts.allComments && facts.commentsPerPost === null) {
+  // On a trend request «comments or not» is asked first; how many per post is asked only for the customer who wants them.
+  if ((facts.commentsWanted === true || (facts.commentsWanted === null && trigger !== "trend")) && !facts.allComments && facts.commentsPerPost === null) {
     items.push(item(SOCIAL_DISCOVERY_IDS.perPost, "كم تعليقًا تريد من كل منشور؟", "single", ["١٠", "٢٠", "٥٠", "١٠٠"]));
   }
   if (!facts.period && trigger === "page" && facts.commentsWanted !== false && facts.postsCount !== null) {

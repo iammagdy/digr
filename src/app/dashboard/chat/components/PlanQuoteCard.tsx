@@ -16,9 +16,13 @@ import { missionStepsAr } from "@/lib/dependentSteps";
 import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
 import { balanceVerdictAr } from "@/lib/balanceVerdict";
 import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
+import { unitPriceLineAr } from "@/lib/planExplanation";
+import { customerFacingCapabilityLabel } from "@/lib/customerFacingRequestLabels";
 
 export interface PlanItem {
   capabilitySlug: string;
+  /** The price of one record of this service, from the priced quote (set by the server). */
+  unitPricePoints?: number;
   params: Record<string, any>;
   targetVolumeMin: number;
   targetVolumeMax: number;
@@ -314,6 +318,12 @@ export default function PlanQuoteCard({
       <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
         سقف هذا الطلب: حتى {pointsAr(quote.quotedPoints)}، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
       </p>
+
+      {(quote.items?.length ?? 1) > 1 && quote.items?.some((item) => Number(item.unitPricePoints) > 0) ? (
+        <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-unit-price">
+          {unitPriceLineAr(quote.items!, quote.unitPricePoints, customerFacingCapabilityLabel)}
+        </p>
+      ) : null}
 
       {quote.unitPricePoints > 0 && (quote.items?.length ?? 1) <= 1 ? (
         <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-unit-price">

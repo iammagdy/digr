@@ -1,4 +1,4 @@
-import { pointsAr } from "./pointsFormat";
+import { pointsAr, unitPriceLabelAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 
 /**
@@ -51,4 +51,23 @@ export function planExplanationLinesAr(input: PlanExplanationInput): string[] {
     lines.push(`لم تحدد عددًا، فاقترحت عينة من ${n(input.targetVolumeMax)} ${noun}. غيّر العدد من بطاقة الخطة قبل الموافقة إن أردت أكثر.`);
   }
   return lines;
+}
+
+/**
+ * The price of ONE record, said on every plan (one service or several), from the unit prices of the priced quote: the model writes none of it.
+ * The charge is always what was delivered and matched, at this price, never above the hold.
+ */
+export function unitPriceLineAr(
+  items: Array<{ capabilitySlug?: string; unitPricePoints?: number }>,
+  quoteUnitPricePoints: number,
+  serviceLabelAr: (slug?: string) => string,
+): string | null {
+  const priced = (items.length > 0 ? items : [{}]).map((item: { capabilitySlug?: string; unitPricePoints?: number }) => ({
+    slug: item.capabilitySlug,
+    unit: Number(item.unitPricePoints) > 0 ? Number(item.unitPricePoints) : Number(quoteUnitPricePoints),
+  })).filter((entry) => Number.isFinite(entry.unit) && entry.unit > 0);
+  if (priced.length === 0) return null;
+  const tail = "ويُحتسب ما يُسلَّم ويطابق طلبك فقط.";
+  if (priced.length === 1) return `سعر السجل: ${unitPriceLabelAr(priced[0].unit, recordNounAr(priced[0].slug))}، ${tail}`;
+  return `سعر السجل: ${priced.map((entry) => `${serviceLabelAr(entry.slug)}: ${unitPriceLabelAr(entry.unit, recordNounAr(entry.slug))}`).join("، ")}، ${tail}`;
 }
