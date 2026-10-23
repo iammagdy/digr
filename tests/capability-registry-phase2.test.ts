@@ -160,4 +160,52 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
     expect(response.contentAr).not.toContain("تيك توك");
     expect(response.contentAr).not.toContain("LinkedIn");
   });
+
+  // The ORIGINAL wording of the test above (Facebook COMMENTS of a topic). It was blocked while no verified service existed; it now has one
+  // (social-facebook-keyword-comments), so a rogue plan of another platform is REPLACED by the verified Facebook plan, never shown and never blocked by the old message.
+  it("the original wording, «تعليقات فيسبوك» of a topic: a rogue TikTok plan from the model is replaced by the verified Facebook keyword plan; no unrelated platform, no unverified-platform message", async () => {
+    const mockTables: any = {
+      createRow: vi.fn().mockResolvedValue({ $id: "row-1" }),
+      getRow: vi.fn().mockResolvedValue({ totalTokens: 0 }),
+      listRows: vi.fn().mockImplementation(({ tableId }: any) => {
+        if (tableId === "messages") return Promise.resolve({ rows: [{ role: "user", content: "عايز تعليقات فيسبوك عن قائمة المنقولات" }] });
+        return Promise.resolve({ rows: [] });
+      }),
+      updateRow: vi.fn().mockResolvedValue({}),
+    };
+    const handler = new ChatHandler(mockTables);
+    const executeTurn = vi.spyOn((handler as any).llm, "executeTurn").mockResolvedValue({
+      output: {
+        type: "propose_plan",
+        summaryAr: "استخراج حساب تيك توك",
+        capabilities: [{ capabilitySlug: "tiktok-profile", params: { username: "someuser" }, targetVolumeMin: 1, targetVolumeMax: 1 }],
+        outputFormats: ["xlsx", "pdf", "csv"],
+        methodologyNotes: "منهجية",
+      },
+      inputTokens: 100,
+      outputTokens: 50,
+      costUsd: 0.0001,
+      model: "claude-haiku-5-5",
+    });
+
+    const response = await handler.handleUserMessage({
+      userId: "user-1",
+      conversationId: "conv-1",
+      message: "عايز تعليقات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
+      userBalance: 100,
+    });
+
+    // new correct behaviour: ONE verified Facebook keyword item, whatever the model proposed
+    expect(response.outputType).toBe("propose_plan");
+    expect(response.planQuote).toBeDefined();
+    expect(response.planQuote.items.map((item: any) => item.capabilitySlug)).toEqual(["social-facebook-keyword-comments"]);
+    expect(response.planQuote.items.some((item: any) => /tiktok/i.test(`${item.capabilitySlug} ${item.endpointId}`))).toBe(false);
+    expect(response.contentAr).not.toContain(UNVERIFIED_PLATFORM_MESSAGE_AR);
+    expect(response.contentAr).not.toContain("تيك توك");
+    expect(response.contentAr).not.toContain("LinkedIn");
+    expect(response.contentAr).toContain("فيسبوك");
+    // the model's rogue proposal is never what the customer is shown
+    expect(JSON.stringify(response.planQuote)).not.toContain("someuser");
+    expect(executeTurn.mock.calls.length).toBeLessThanOrEqual(1);
+  });
 });
