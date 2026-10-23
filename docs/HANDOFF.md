@@ -4,6 +4,68 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 000. Status after PR #211 (2026-10-23, main = `d12b831`)
+
+Written from git, the deployment API and the project's schema (read only). No secret appears here; where a setting matters only its NAME and where it lives are given.
+
+### Merged PRs #200 to #211 (merge commit, first parent, second parent)
+
+| PR | Merge SHA | Parents (main before, branch head) | What |
+|---|---|---|---|
+| #200 | `0b3922c` | `e4d8f4b`, `b18e6a8` | multi-provider contact chain |
+| #201 | `ecb5636` | `a2c2367`, `c8e04ae` | company review batch |
+| #202 | `e4d8f4b` | `ecb5636`, `c81acbd` | conference readiness |
+| #203 | `ad87357` | `0b3922c`, `c33260f` | admin calls log |
+| #204 | `b9d1215` | `ad87357`, `ada87ef` | wallet display fixes |
+| #205 | `4a7493b` | `b9d1215`, `1ab6dfd` | social root-cause fixes |
+| #206 | `cb766fe` | `4a7493b`, `b7accfd` | mega-fixes phase 1 |
+| #207 | `38541d3` | `cb766fe`, `d44684e` | mega-fixes phase 2 (request understanding) |
+| #208 | `a9da0d6` | `38541d3`, `5187905` | mega-fixes phase 3 (quality and text) |
+| #209 | `5ed38ce3503a6573be1cfe62ccd6a3391f711cdf` | `a9da0d6`, `6674f6c` | phase 4: one ETA, live preview, e-mail wiring and admin e-mail check |
+| #210 | `b0559ace66dca30812cd0f5e27238816cc1a3c33` | `5ed38ce`, `e3726ec` | phase 5: smart discovery, honest limits, balance verdict; job-cap-from-balance SQL proposal (NOT applied) |
+| #211 | `d12b831aad19aebc34f4ad480854d783c56318f2` | `b0559ac`, `b5789ae` | the remaining failures of the customer browser test: TikTok basketball relevance, Facebook page link question, follow-up numbers and topic, price per record on every plan, hold wording, live preview column bug |
+
+Short SHAs are the first seven characters of the merge commit in `git log --merges origin/main`. Rollback of any one merge: new branch from main, `git revert -m 1 <merge sha>`, open a PR; never push to main.
+
+### Proven live (read from the deployment API or the live site)
+
+- Production `diger.tech` runs the merge of #211: deployment `dpl_3QH9XRcpiqi334rDL4F22M8wsiq9`, READY, built SHA `d12b831aad19aebc34f4ad480854d783c56318f2`.
+- Without login: `/` 200 and `/login` 200 with no provider name in the HTML, `/api/jobs/x/preview` 401.
+- The production `jobs` table has NO `template_slug`, `platform` or `capability_slug` column (project schema, read only). The live preview route selected them, so it never returned a row; fixed in #211.
+- The ledger kinds are reserve, release, charge, topup, grant and goodwill; the wallet shows a release as «تحرير حجز مؤقت». Worker failure texts now say the same («حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد»), never a refund.
+
+### NOT PROVEN (nothing below has been seen on real data or in the real browser)
+
+- TikTok and Facebook results on live data. The basketball relevance fix (comments judged by their video), the video-level review and the Facebook link question are shown only by fixtures with a FAKE reviewer; no live paid call was made. The owner's 113-comments-0-delivered request has not been re-run.
+- That a Facebook page named only by its display name never works at the source. The code now asks for the link or username first; it was not shown that the name path always returns nothing.
+- A row appearing in the production live-preview panel after #211 (the column bug is proven and the new test fails before the fix; the panel itself was not watched).
+- The «٢٩ دقيقة» countdown being constant: not reproduced. It is read from the quote's own expiry and the clock; a freshly written quote reads ٢٩ and each follow-up writes a new quote.
+- The exact plan numbers of the live-model Facebook topic plan (513 points, 800 cut to 54): fake-model tests cannot build that plan. Only the deterministic parts were fixed (the topic no longer takes «بالتعليقات», the newest count wins, the price per record is on the plan).
+- Firecrawl and Context.dev chain yield and price per contact: unmeasured.
+- Authenticated production paths of #211 (plan card, the page-link card, worker messages): not exercised.
+
+### Open problems
+
+1. **TikTok and Facebook live results unproven** (see above).
+2. **E-mail:** the `send-email` Edge Function is NOT deployed in production, and `RESEND_API_KEY` exists only in Vercel (the function reads its own Supabase secrets). Until both are done no e-mail goes out; the in-app notices work. Setup and the admin check: `docs/proposals/10_email_delivery_setup.md`.
+3. **Driver mode is `tab`** (`LONG_JOB_DRIVER` unset): the chunks chain themselves and an open page resumes a broken chain; the customer is told «أبقِ الصفحة مفتوحة حتى تكتمل المهمة». The always-on driver is documented, not installed: `docs/proposals/08_long_job_driver_setup.md` and `08_pg_cron_driver.sql`.
+4. **Per-job cap is 600 points** (`JOB_MAX_POINTS_CAP`, and a hard 600 inside `create_quote_atomic` and the two settle functions). The proposal to make it depend on the customer's balance is `docs/proposals/job-cap-balance/` (steps 01 to 05 with rollbacks) and is NOT APPLIED; applying it also needs a companion code change (see its README). The Facebook ceilings (60 page posts, 500 comments per job, 20 posts per page) are the service's own and are not changed by it.
+5. **Firecrawl / Context.dev chain:** yield and price per contact are unproven.
+6. **`MULTI_PROVIDER_ENABLED` is true on Production.** The chain can therefore take company-contact jobs today with unmeasured yield and price. Keep that in mind before any spend decision (switch is `src/lib/multiProvider/flag.ts`).
+7. **Model-planned Facebook topic requests** still go through the live model; their numbers are not covered by fixtures (see NOT PROVEN).
+
+### Exact next steps
+
+1. Owner: re-run the TikTok request «٥٠ تعليق من فيديوهات تيك توك الأكثر انتشارًا عن كرة السلة في مصر» on the test account; read the activity lines (videos adopted, comments delivered) and the delivered count. If it is still 0, read the per-video decisions in the job events before changing the gate.
+2. Owner: re-run «١٠ بوست من صفحة اليوم السابع» and answer the link question with the page's real link; check rows arrive and the live preview shows them while the job runs.
+3. Owner (Supabase and Vercel settings, not code): deploy the `send-email` Edge Function, put the Resend key in Supabase secrets, then use the admin e-mail check. Keep the key out of the repository and of any message.
+4. Decide the driver: either install the scheduler and set `LONG_JOB_DRIVER=cron`, or keep `tab` and keep the page guidance as is.
+5. Decide the cap: choose `fixed` or `balance` and the ceiling, apply `job-cap-balance` steps 3 and 4 BEFORE the policy goes above 600, then 1, 2, 5 as its README orders them, then the companion code change. Not before the provider daily limit and the driver are decided.
+6. Measure the Firecrawl / Context.dev chain with one small owner-approved paid test (fake provider in all automated tests) and decide `MULTI_PROVIDER_ENABLED` from the measured yield and price.
+7. Process rules that cost time here: after every merge read the production deployment and compare its built SHA with the merge SHA; a removed-test-lines gate is a COUNT taken from `git diff -U0 origin/main -- tests | grep '^-' | grep -v '^---' | wc -l` on the head under review (a count stated from memory was wrong once: 29 said, 27 real); the Hobby plan allows 100 deployments per 24 hours, so push each branch as few times as possible.
+
+---
+
 ## 00. Second session (new account, 2026-10-21 Wednesday): verification of #175 to #182 and the failed harness build
 
 ### Failed preview build of `claude/wip-e1-harness` (read from the deployment API, now fixed)
