@@ -4,6 +4,7 @@ import { createHash } from "crypto";
 import { searchCatalog, getEndpointDetails } from "../../functions/shared/catalogClient";
 import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRegistry";
 import { estimateSocialChunkCostUsd, getSocialCapability, socialRowsPerChunk } from "../socialSources";
+import { isChainSlug } from "../multiProvider/routes";
 
 const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
@@ -23,6 +24,8 @@ export interface ResolvedJobExecutionSpec {
   outputFormats: Array<"xlsx" | "pdf" | "csv">;
   /** Failed job whose collected rows this retry reuses (set only by the server when the retry quote was created). */
   retryOfJobId?: string;
+  /** The accepted quote of the job (the multi-provider chain only: where its admin-only routing decision is kept). */
+  quoteId?: string;
 }
 
 export async function resolveJobExecutionSpec(
@@ -43,6 +46,7 @@ export async function resolveJobExecutionSpec(
   // Excel is the default format when a quote is unavailable or predates format selection.
   let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx"];
   let retryOfJobId: string | undefined;
+  let matchedQuoteId: string | undefined;
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
   try {
@@ -56,6 +60,7 @@ export async function resolveJobExecutionSpec(
           return `job_quote_${digest}` === jobId || q.id === jobId;
         });
         if (matched) {
+          matchedQuoteId = typeof matched.id === "string" ? matched.id : undefined;
           const selectedFormats = Array.isArray(matched.output_formats)
             ? matched.output_formats.filter((format: unknown): format is "xlsx" | "pdf" | "csv" =>
                 format === "xlsx" || format === "pdf" || format === "csv")
@@ -106,6 +111,23 @@ export async function resolveJobExecutionSpec(
     }
   } catch {
     // Continue with capability catalog resolution
+  }
+
+  // The multi-provider contact chain is not in the live TREG catalog or the registry table: its spec comes from the quote alone, and nothing is asked of the catalog.
+  if (isChainSlug(capabilitySlug)) {
+    return {
+      capabilitySlug,
+      endpointId,
+      method: "POST",
+      params,
+      paginationStrategy: "cursor",
+      pricingUnit: "item",
+      unitCostUsd: typeof unitCostUsd === "number" && unitCostUsd > 0 ? unitCostUsd : Math.max(0.0001, Number(((Number(unitPricePoints) || 1) / 5500).toFixed(6))),
+      pageSize: 10,
+      outputFormats,
+      ...(retryOfJobId ? { retryOfJobId } : {}),
+      ...(matchedQuoteId ? { quoteId: matchedQuoteId } : {}),
+    };
   }
 
   // Verified social services carry their own source chain: nothing else in the catalog applies to them,

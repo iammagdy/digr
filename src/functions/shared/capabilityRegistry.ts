@@ -1,6 +1,7 @@
 import { TablesDB } from "./dbCompat";
 import { SOCIAL_CAPABILITIES, SocialCapabilityDef } from "../../lib/socialSources";
 import { recordUnitPricePoints } from "../../lib/recordPricing";
+import { withMultiProviderCapabilities } from "./multiProviderCapability";
 import { isPeopleSearchRequest } from "../../lib/planParameters";
 
 export type CapabilityStatus = "verified" | "pending_verification" | "planned";
@@ -602,6 +603,14 @@ export async function getCatalogCapabilities(
   tables?: TablesDB | any,
   settings: RegistryPricingSettings = getRegistryPricingSettings()
 ): Promise<Capability[]> {
+  // With MULTI_PROVIDER_ENABLED off this returns the very list the catalog loader built (see multiProviderCapability.ts).
+  return withMultiProviderCapabilities(await loadCatalogCapabilities(tables, settings));
+}
+
+async function loadCatalogCapabilities(
+  tables?: TablesDB | any,
+  settings: RegistryPricingSettings = getRegistryPricingSettings()
+): Promise<Capability[]> {
   const baseCatalog = buildApprovedCatalog(settings);
   if (!tables) return baseCatalog;
 
@@ -819,6 +828,11 @@ export function clearRegistryRowStateCacheForTesting(): void {
  * and is always respected, and an unreadable registry never adds the service.
  */
 export async function getEnabledCapabilitiesWithCoreServices(tables?: TablesDB | any): Promise<Capability[]> {
+  // With MULTI_PROVIDER_ENABLED off this returns the very list the loader built (see multiProviderCapability.ts).
+  return withMultiProviderCapabilities(await loadEnabledCapabilitiesWithCoreServices(tables));
+}
+
+async function loadEnabledCapabilitiesWithCoreServices(tables?: TablesDB | any): Promise<Capability[]> {
   const enabled = await getEnabledCapabilities(tables);
   // Without a readable registry the seed fallback inside getEnabledCapabilities already served the catalog.
   if (!tables || typeof tables.from !== "function") return enabled;

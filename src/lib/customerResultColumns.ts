@@ -86,6 +86,8 @@ const RESULT_COLUMN_LABELS: Record<string, string> = {
   hearted_by_creator: "أعجب به صاحب المحتوى",
   hashtags: "الوسوم",
   collected_date: "تاريخ الاستخراج",
+  // The page of the company's own website a contact was read from (multi-provider contact data).
+  source_page: "صفحة المصدر على موقع الشركة",
 };
 
 /** Shown for a field with no known Arabic title: the customer never sees a technical field name. */

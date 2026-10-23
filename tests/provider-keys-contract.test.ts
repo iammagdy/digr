@@ -124,8 +124,8 @@ describe("admin screens", () => {
 
   it("one tab per provider, the data provider first", () => {
     expect(page).toMatch(/role="tablist"/);
-    expect(page.indexOf('["treg", "مزود البيانات"]')).toBeGreaterThan(-1);
-    expect(page.indexOf('["treg", "مزود البيانات"]')).toBeLessThan(page.indexOf('["anthropic", "مزود النموذج الذكي"]'));
+    expect(page.indexOf('["treg", "TREG: مزود البيانات"]')).toBeGreaterThan(-1);
+    expect(page.indexOf('["treg", "TREG: مزود البيانات"]')).toBeLessThan(page.indexOf('["anthropic", "مزود النموذج الذكي"]'));
     expect(page).toMatch(/useState<TabId>\("treg"\)/);
   });
 

@@ -1,3 +1,4 @@
+import { maybeUpgradeToChainPlan } from "../../lib/server/multiProvider/planUpgrade";
 import { pointsAr } from "../../lib/pointsFormat";
 import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
@@ -3753,6 +3754,14 @@ export class ChatHandler {
             planOutput.summaryAr = socialPlanSummaryAr(verifiedSocialDef, planItems[0].params || {}, Number(planItems[0].targetVolumeMax) || 1, toArabicDigits, socialIntent.discover === "keyword" ? (missionByTopicSubject ?? conversationRequestText) : undefined);
           }
           currentStep = "quote_save";
+          // With MULTI_PROVIDER_ENABLED on, a contact request the existing sources cannot verify is offered the multi-provider chain, only when the
+          // router lists an allowed route for it; otherwise (and with the flag off) the plan below is exactly the one built above.
+          const chainUpgrade = await maybeUpgradeToChainPlan({ client: this.tables, items: planItems, requestText: conversationRequestText, summaryAr: planOutput.summaryAr, methodologyNotes: planOutput.methodologyNotes });
+          if (chainUpgrade.upgraded) {
+            planItems = chainUpgrade.items;
+            planOutput.summaryAr = chainUpgrade.summaryAr;
+            planOutput.methodologyNotes = chainUpgrade.methodologyNotes;
+          }
           const plannedSocialVolume = Number(planItems[0]?.targetVolumeMax) || 1;
           const tQuoteStart = Date.now();
           awaitsCount++;
@@ -3763,7 +3772,7 @@ export class ChatHandler {
               summaryAr: planOutput.summaryAr,
               items: planItems,
               outputFormats: selectedOutputFormats,
-            methodologyNotes: isPeopleSearchRequest(conversationRequestText)
+            methodologyNotes: isPeopleSearchRequest(conversationRequestText) && !chainUpgrade.upgraded
                 ? `${planOutput.methodologyNotes || ""} سنحاول جمع البريد المهني ورقم الهاتف، ويُعرض كل حقل إذا ورد من المصادر المتاحة مع حالة التحقق التي أعادتها المصادر. لا تُحتسب السجلات التي لا تتضمن الحقلين المطلوبين.`.trim()
                 : planOutput.methodologyNotes,
             },
@@ -3800,7 +3809,7 @@ export class ChatHandler {
             capacityConstrained: managedQuote.capacityConstrained,
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
-            methodologyNotes: isPeopleSearchRequest(conversationRequestText)
+            methodologyNotes: isPeopleSearchRequest(conversationRequestText) && !chainUpgrade.upgraded
               ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_BILLING_NOTE_AR}`.trim()
               : planOutput.methodologyNotes,
           };

@@ -1,6 +1,10 @@
+import { CHAIN_CAPABILITY_SLUG } from "./multiProvider/routes";
+
 /** Customer-safe Arabic labels for internal research capability identifiers. */
 export function customerFacingCapabilityLabel(slug?: string | null): string {
   const value = String(slug || "").toLowerCase();
+  // The multi-provider contact capability: its own word (its id carries «contact», which would read as people).
+  if (value === CHAIN_CAPABILITY_SLUG) return "بيانات تواصل الشركات";
   if (value.includes("people") || value.includes("contact") || value.includes("lead") || value.includes("decision")) {
     return "صناع القرار والمسؤولين";
   }

@@ -6,14 +6,19 @@ import type { ProviderId } from "./providerKeyCrypto";
  *   TREG      GET {base}/auth/me                     authenticated identity read, no metered cost (https://treg.to/openapi.json)
  *             GET {base}/orgs/{org_id}/balance       prepaid balance in integer micro-USD; any team member may read it
  *   Anthropic GET https://api.anthropic.com/v1/models?limit=1   list-models read, no tokens are billed
- * Anthropic exposes no balance API for a regular key, so none is shown for it.
+ *   Firecrawl GET https://api.firecrawl.dev/v2/team/credit-usage  free read: data.remainingCredits, data.planCredits, billing period
+ *             (https://docs.firecrawl.dev/api-reference/endpoint/credit-usage)
+ *   Context.dev GET https://api.context.dev/v1/org/usage           free read (key scope logs:read): credits_remaining, period.credits_used, next_refill
+ *             (https://docs.context.dev/api-reference/usage/retrieve)
+ * Anthropic exposes no balance API for a regular key, so none is shown for it. Firecrawl and Context.dev answer one call that is both the
+ * health check and the real credit count.
  */
 export const STATUS_CACHE_TTL_MS = 60_000;
 export const CHECK_TIMEOUT_MS = 8_000;
 export const DEFAULT_LOW_BALANCE_THRESHOLD_USD = 0.2;
 
 export type StatusClass = "2xx" | "3xx" | "4xx" | "5xx" | "network" | "timeout";
-export type HealthReason = "ok" | "auth_rejected" | "rate_limited" | "server_error" | "network_error" | "timeout" | "unexpected" | "no_key";
+export type HealthReason = "ok" | "auth_rejected" | "rate_limited" | "server_error" | "network_error" | "timeout" | "unexpected" | "no_key" | "missing_scope";
 
 export interface HealthResult {
   ok: boolean;
@@ -27,11 +32,17 @@ export interface HealthResult {
 export interface BalanceResult {
   available: boolean;
   /** Why no number is shown: the provider has no balance API, the team id is unknown, or the answer was not readable. */
-  unavailableReason?: "no_balance_api" | "no_key" | "org_unknown" | "unreadable" | "check_failed";
+  unavailableReason?: "no_balance_api" | "no_key" | "org_unknown" | "unreadable" | "check_failed" | "missing_scope";
   balanceMicro?: number;
   balanceUsd?: number;
   heldMicro?: number | null;
   orgId?: string | null;
+  /** Credit-priced providers (Firecrawl, Context.dev): the provider's own count of remaining credits, as its usage endpoint answered. Never an estimate. */
+  credits?: number;
+  creditsUsedThisPeriod?: number | null;
+  planCredits?: number | null;
+  /** End of the billing period (Firecrawl) or the next refill (Context.dev), as the provider gave it. */
+  periodEndsAt?: string | null;
   checkedAt: string;
 }
 
@@ -88,7 +99,21 @@ export const noKeyHealth = (): HealthResult => ({ ok: false, reason: "no_key", h
 export async function checkProviderKey(provider: ProviderId, key: string, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<{ health: HealthResult; body: unknown }> {
   if (!key) return { health: noKeyHealth(), body: null };
   if (provider === "treg") return timedGet(`${tregBaseUrl()}/auth/me`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
+  if (provider === "firecrawl") return timedGet("https://api.firecrawl.dev/v2/team/credit-usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs);
+  if (provider === "contextdev") return contextDevCheck(await timedGet("https://api.context.dev/v1/org/usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs));
   return timedGet("https://api.anthropic.com/v1/models?limit=1", { "x-api-key": key, "anthropic-version": "2023-06-01", Accept: "application/json" }, fetchFn, timeoutMs);
+}
+
+/**
+ * Context.dev's usage read needs the key scope `logs:read`; a key without it answers 403 and names the permission it lacks. Such a key IS
+ * accepted by the provider (a rejected key answers 401), so it is healthy for scraping and searching: only the credit balance is unavailable.
+ * Any other 403 stays a rejected key.
+ */
+export function contextDevCheck(result: { health: HealthResult; body: unknown }): { health: HealthResult; body: unknown } {
+  if (result.health.httpStatus !== 403) return result;
+  const text = JSON.stringify(result.body ?? "");
+  if (!/required_permission|logs:read/i.test(text)) return result;
+  return { health: { ...result.health, ok: true, reason: "missing_scope" }, body: result.body };
 }
 
 const ORG_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -143,6 +168,32 @@ async function fetchTregBalanceWithBody(key: string, orgId: string | null, fetch
 
 export async function fetchTregBalance(key: string, orgId: string | null, fetchFn: FetchFn = fetch, timeoutMs: number = CHECK_TIMEOUT_MS): Promise<BalanceResult> {
   return (await fetchTregBalanceWithBody(key, orgId, fetchFn, timeoutMs)).result;
+}
+
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 0;
+
+/** Firecrawl's credit-usage answer: the remaining credits of the team, as an integer the provider gave. Null when the answer has none. */
+export function parseFirecrawlCredits(body: unknown): { credits: number; planCredits: number | null; periodEndsAt: string | null } | null {
+  const d = (body as any)?.data;
+  if (!d || !isCount(d.remainingCredits)) return null;
+  return { credits: d.remainingCredits, planCredits: isCount(d.planCredits) ? d.planCredits : null, periodEndsAt: typeof d.billingPeriodEnd === "string" ? d.billingPeriodEnd : null };
+}
+
+/** Context.dev's usage answer: the organisation's balance in credits, the credits used this period and the next refill. */
+export function parseContextDevCredits(body: unknown): { credits: number; usedThisPeriod: number | null; refillAt: string | null } | null {
+  const b = body as any;
+  if (!b || !isCount(b.credits_remaining)) return null;
+  return { credits: b.credits_remaining, usedThisPeriod: isCount(b.period?.credits_used) ? b.period.credits_used : null, refillAt: typeof b.next_refill?.at === "string" ? b.next_refill.at : null };
+}
+
+/** The real credit count of a credit-priced provider from the health call's own answer, or why none is shown. */
+function creditBalanceFrom(provider: "firecrawl" | "contextdev", body: unknown, checkedAt: string): BalanceResult {
+  if (provider === "firecrawl") {
+    const p = parseFirecrawlCredits(body);
+    return p ? { available: true, credits: p.credits, planCredits: p.planCredits, periodEndsAt: p.periodEndsAt, checkedAt } : { available: false, unavailableReason: "unreadable", checkedAt };
+  }
+  const p = parseContextDevCredits(body);
+  return p ? { available: true, credits: p.credits, creditsUsedThisPeriod: p.usedThisPeriod, periodEndsAt: p.refillAt, checkedAt } : { available: false, unavailableReason: "unreadable", checkedAt };
 }
 
 const statusCache = new Map<ProviderId, { at: number; snapshot: ProviderStatusSnapshot }>();
@@ -208,6 +259,10 @@ export async function getProviderStatus(
   let balance: BalanceResult;
   if (provider === "anthropic") {
     balance = { available: false, unavailableReason: "no_balance_api", checkedAt: health.checkedAt };
+  } else if (provider === "firecrawl" || provider === "contextdev") {
+    balance = !health.ok ? { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt }
+      : health.reason === "missing_scope" ? { available: false, unavailableReason: "missing_scope", checkedAt: health.checkedAt }
+      : creditBalanceFrom(provider, body, health.checkedAt);
   } else if (!health.ok) {
     balance = { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt };
   } else {

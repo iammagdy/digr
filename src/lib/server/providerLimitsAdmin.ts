@@ -40,7 +40,7 @@ function utcStartOfDay(): string {
 
 const sum = (rows: any[] | null | undefined) => (rows || []).reduce((a, r) => { const c = Number(r?.cost_usd); return Number.isFinite(c) && c > 0 ? a + c : a; }, 0);
 
-const LABEL: Record<string, string> = { dailyUsd: "الحد اليومي للمزود", perJobUsd: "سقف الطلب", perUserDailyUsd: "سقف المستخدم اليومي", warnPercent: "نسبة التنبيه", llmDailyUsd: "الحد اليومي للنموذج" };
+const LABEL: Record<string, string> = { dailyUsd: "الحد اليومي للمزود", perJobUsd: "سقف الطلب", perUserDailyUsd: "سقف المستخدم اليومي", warnPercent: "نسبة التنبيه", llmDailyUsd: "الحد اليومي للنموذج", firecrawlDailyUsd: "الحد اليومي لمزود قراءة المواقع", contextdevDailyUsd: "الحد اليومي لمزود البحث والقراءة" };
 
 /** One readable Arabic line per audit row: only the fields that changed, old to new. */
 export function auditSummaryAr(oldValue: any, newValue: any): string {
@@ -100,6 +100,8 @@ export async function saveProviderLimits(deps: { client: any }, input: { adminId
   }
   if (data?.success !== true) {
     const reason = String(data?.error || "failed");
+    // The two extra daily limits need the updated SQL function (a proposal): the old one does not know the keys.
+    if (reason === "unknown_key" && ("firecrawlDailyUsd" in parsed.value || "contextdevDailyUsd" in parsed.value)) return { ok: false, reason: "store_not_ready", messageAr: LIMITS_MSG.storeNotReady, status: 409 };
     return { ok: false, reason, messageAr: reason === "not_admin" ? LIMITS_MSG.notAdmin : (typeof data?.error_ar === "string" && data.error_ar) || LIMITS_MSG.failed, status: reason === "not_admin" ? 403 : 400 };
   }
   // Immediate effect on this instance; other instances pick it up within the 30 s cache.

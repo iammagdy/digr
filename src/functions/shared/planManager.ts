@@ -32,6 +32,11 @@ import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
 import { SOCIAL_CAPABILITIES } from "../../lib/socialSources";
+import { multiProviderEnabled } from "../../lib/multiProvider/flag";
+import { isChainSlug } from "../../lib/multiProvider/routes";
+import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
+import type { RoutingDecision } from "../../lib/multiProvider/trace";
+import { writeRoutingDecision } from "../../lib/server/multiProvider/traceStore";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -616,6 +621,8 @@ export async function createAndSaveManagedQuote(
   // The configured value may reduce the limit, but can never raise the settlement hard cap.
   const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);
 
+  // The router's decision for the (first) chain item, kept for the admin routing trace once the quote has an id. Never part of the quote.
+  let chainDecision: RoutingDecision | null = null;
   for (const it of plan.items) {
     // Match capability strictly; NEVER substitute capabilities[0]
     let cap = capabilities.find(
@@ -671,8 +678,20 @@ export async function createAndSaveManagedQuote(
       throw new Error("الخدمة المطلوبة غير معتمدة أو غير موجودة في الكتالوج.");
     }
 
-    const itemUnitCostUsd =
-      typeof cap.unitCostUsd === "number" && cap.unitCostUsd > 0
+    // The multi-provider contact chain (only exists while MULTI_PROVIDER_ENABLED is on): the ROUTER picks the route of this request and its
+    // cost per delivered row is what the one shared pricing rule prices. No route allowed means no plan, in plain Arabic.
+    let chainRouting: Extract<ChainItemRouting, { ok: true }> | null = null;
+    if (isChainSlug(cap.slug)) {
+      if (!multiProviderEnabled()) throw new Error("الخدمة المطلوبة غير معتمدة أو غير موجودة في الكتالوج.");
+      const routed = await resolveChainItemRouting({ client: tables, params: it.params, volume: it.targetVolumeMax, userId });
+      if (!routed.ok) throw new Error(routed.messageAr);
+      chainRouting = routed;
+      chainDecision = chainDecision ?? routed.decision;
+    }
+
+    const itemUnitCostUsd = chainRouting
+      ? chainRouting.costPerDeliveredRowUsd
+      : typeof cap.unitCostUsd === "number" && cap.unitCostUsd > 0
         ? cap.unitCostUsd
         : typeof it.unitCostUsd === "number" && it.unitCostUsd > 0
         ? it.unitCostUsd
@@ -730,6 +749,12 @@ export async function createAndSaveManagedQuote(
     const itemRawPoints = itemVolume * effectiveItemUnitPrice;
     const itemReservation = Math.max(1, reserveForUnits(itemVolume, effectiveItemUnitPrice, effectivePricing.safetyBuffer));
 
+    // The chain item keeps what the worker needs and nothing else: the opaque route code and the normalized fields. The provider budget is not stored: the worker derives it from the reserve.
+    if (chainRouting) {
+      it.params = { ...(it.params || {}), routeCode: chainRouting.routeCode, requiredFields: chainRouting.request.requiredFields };
+      delete (it.params as Record<string, unknown>).routeBudgetUsd;
+    }
+
     // Retain all required fields on the item
     it.capabilitySlug = cap.slug || it.capabilitySlug;
     it.endpointId =
@@ -756,7 +781,10 @@ export async function createAndSaveManagedQuote(
 
   // 1b. Check provider capacity (10% safety margin) across all items
   let capacityConstrained = false;
-  const totalEstimatedUsd = plan.items.reduce(
+  // The chain's providers have their own daily caps and balances, checked by the router and at every call: only the TREG items are held to TREG's gate.
+  const isChainItem = (it: PlanItem) => isChainSlug(it.capabilitySlug);
+  const onlyChainItems = plan.items.length > 0 && plan.items.every(isChainItem);
+  const totalEstimatedUsd = plan.items.filter((it) => !isChainItem(it)).reduce(
     (sum, it) => sum + it.targetVolumeMax * (it.unitCostUsd || 0.001),
     0
   );
@@ -768,12 +796,15 @@ export async function createAndSaveManagedQuote(
       userRemainingUsd = Math.max(0, limits.perUserDailyUsd - (await readUserSpendToday(tables as any, userId)));
     }
   } catch { userRemainingUsd = null; }
-  const capacityCheck = await checkPlanProviderCapacity(1, totalEstimatedUsd, tables, { userRemainingUsd });
+  const capacityCheck = onlyChainItems
+    ? { allowed: true, safeBudgetUsd: Number.POSITIVE_INFINITY, availableBalanceUsd: 0, originalVolume: 1, maxSafeVolume: 1, downscaled: false }
+    : await checkPlanProviderCapacity(1, totalEstimatedUsd, tables, { userRemainingUsd });
 
   if (capacityCheck.downscaled && capacityCheck.safeBudgetUsd < totalEstimatedUsd) {
     capacityConstrained = true;
     const scale = totalEstimatedUsd > 0 ? capacityCheck.safeBudgetUsd / totalEstimatedUsd : 1;
     for (const it of plan.items) {
+      if (isChainItem(it)) continue;
       it.targetVolumeMax = Math.max(1, Math.floor(it.targetVolumeMax * scale));
     }
 
@@ -1027,6 +1058,9 @@ export async function createAndSaveManagedQuote(
       },
     });
   }
+
+  // Admin-only routing trace (private storage bucket, best effort): what the router chose and why. Failure here changes nothing about the quote.
+  if (chainDecision) await writeRoutingDecision(tables, quoteId, chainDecision).catch(() => false);
 
   return {
     quoteId,

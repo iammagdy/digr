@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
-export type ProviderId = "treg" | "anthropic";
-export const PROVIDER_IDS: readonly ProviderId[] = ["treg", "anthropic"];
+export type ProviderId = "treg" | "anthropic" | "firecrawl" | "contextdev";
+export const PROVIDER_IDS: readonly ProviderId[] = ["treg", "anthropic", "firecrawl", "contextdev"];
 export const ENCRYPTION_KEY_ENV = "PROVIDER_KEYS_ENCRYPTION_KEY";
 
 /** Stored value: v1.<nonce>.<ciphertext>.<tag>, each part base64url. The provider name is authenticated data. */

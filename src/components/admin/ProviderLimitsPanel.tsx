@@ -32,8 +32,12 @@ export function SpendLimitBanner({ level, percent, label }: { level: "ok" | "war
  * Editable spend limits for one provider. Values apply at once on the server that saves (30 s elsewhere), with no
  * redeploy. Before the database update is applied the fields are read-only and the tab says so.
  */
-export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provider: "treg" | "anthropic"; balanceUsd?: number | null; onSaved?: () => void }) {
+type ExtraCaps = Record<"firecrawl" | "contextdev", { dailyUsd: number; todayUsd: number | null }>;
+const EXTRA_KEY = { firecrawl: "firecrawlDailyUsd", contextdev: "contextdevDailyUsd" } as const;
+
+export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provider: "treg" | "anthropic" | "firecrawl" | "contextdev"; balanceUsd?: number | null; onSaved?: () => void }) {
   const [state, setState] = useState<ProviderLimitsState | null>(null);
+  const [extra, setExtra] = useState<ExtraCaps | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -45,9 +49,10 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
 
   const load = useCallback(async () => {
     try {
-      const r = await adminFetch<{ state: ProviderLimitsState }>("/api/admin/provider-limits");
+      const r = await adminFetch<{ state: ProviderLimitsState; extra?: ExtraCaps }>("/api/admin/provider-limits");
       setState(r.state);
-      setDaily(String(r.state.limits.dailyUsd));
+      setExtra(r.extra ?? null);
+      setDaily(provider === "firecrawl" || provider === "contextdev" ? String(r.extra?.[provider]?.dailyUsd ?? 0) : String(r.state.limits.dailyUsd));
       setPerJob(asText(r.state.limits.perJobUsd));
       setPerUser(asText(r.state.limits.perUserDailyUsd));
       setWarn(String(r.state.limits.warnPercent));
@@ -56,7 +61,7 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
     } catch (e) {
       setError(e instanceof Error ? e.message : "تعذر تحميل الحدود.");
     }
-  }, []);
+  }, [provider]);
   useEffect(() => { void load(); }, [load]);
 
   const save = async () => {
@@ -64,6 +69,8 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
     setBusy(true); setMsg(null);
     const limits = provider === "treg"
       ? { dailyUsd: daily, perJobUsd: perJob, perUserDailyUsd: perUser, warnPercent: warn }
+      : provider === "firecrawl" || provider === "contextdev"
+      ? { [EXTRA_KEY[provider]]: daily, warnPercent: warn }
       : { llmDailyUsd: llmDaily, warnPercent: warn };
     try {
       const r = await adminFetch<{ success: boolean; message: string }>("/api/admin/provider-limits", { method: "POST", body: JSON.stringify({ limits }) });
@@ -79,19 +86,29 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
   if (!state) return <div className="h-40 rounded-[18px] bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />;
 
   const isTreg = provider === "treg";
-  const level = isTreg ? state.spend.level : state.spend.llmLevel;
-  const percent = isTreg ? state.spend.percent : state.spend.llmPercent;
-  const today = isTreg ? state.spend.todayUsd : state.spend.llmTodayUsd;
-  const limit = isTreg ? state.limits.dailyUsd : state.limits.llmDailyUsd;
+  const isExtra = provider === "firecrawl" || provider === "contextdev";
+  const extraCap = isExtra ? extra?.[provider] ?? { dailyUsd: 0, todayUsd: null } : null;
+  // The extra providers' level is computed here from the same two numbers (their spend is read from the cost table).
+  const extraToday = extraCap?.todayUsd ?? 0;
+  const extraLimit = extraCap?.dailyUsd ?? 0;
+  const extraPercent = extraLimit > 0 ? Math.min(100, (extraToday / extraLimit) * 100) : extraToday > 0 ? 100 : 0;
+  const extraLevel: "ok" | "warn" | "reached" = extraLimit <= 0 ? "ok" : extraToday >= extraLimit ? "reached" : extraPercent >= state.limits.warnPercent ? "warn" : "ok";
+  const level = isExtra ? extraLevel : isTreg ? state.spend.level : state.spend.llmLevel;
+  const percent = isExtra ? extraPercent : isTreg ? state.spend.percent : state.spend.llmPercent;
+  const today = isExtra ? extraToday : isTreg ? state.spend.todayUsd : state.spend.llmTodayUsd;
+  const limit = isExtra ? extraLimit : isTreg ? state.limits.dailyUsd : state.limits.llmDailyUsd;
   const readOnly = !state.storeReady;
 
   return (
     <section className={SECTION} aria-label="حدود الإنفاق">
-      <h3 className="m-0 text-[15px] font-semibold text-ink">{isTreg ? "حدود إنفاق مزود البيانات" : "الحد اليومي للنموذج الذكي"}</h3>
+      <h3 className="m-0 text-[15px] font-semibold text-ink">{isTreg ? "حدود إنفاق مزود البيانات" : isExtra ? "الحد اليومي لإنفاق هذا المزود" : "الحد اليومي للنموذج الذكي"}</h3>
       {!state.storeReady && state.noticesAr[0] && (
         <p role="status" className="m-0 rounded-[14px] px-3.5 py-3 text-[13px] leading-[1.8] text-ink" style={{ background: tint("var(--gold)", 14) }}>{state.noticesAr[0]}</p>
       )}
-      <SpendLimitBanner level={level} percent={percent} label={isTreg ? "مزود البيانات" : "النموذج الذكي"} />
+      {isExtra && extraLimit <= 0 && (
+        <p role="status" className="m-0 rounded-[14px] px-3.5 py-3 text-[13px] leading-[1.8] text-ink" style={{ background: tint("var(--gold)", 14) }}>لم يُضبط حد يومي لهذا المزود بعد (الصفر يعني: لا يُسمح بأي إنفاق). حدّد رقمًا ثم احفظ.</p>
+      )}
+      <SpendLimitBanner level={level} percent={percent} label={isTreg ? "مزود البيانات" : isExtra ? "هذا المزود" : "النموذج الذكي"} />
 
       <div className="grid gap-2 text-xs sm:grid-cols-3">
         <div className="rounded-xl bg-sf p-3"><p className="m-0 text-mut">إنفاق اليوم المسجّل</p><p className="mb-0 mt-1 text-[15px] font-semibold text-ink">{usd(today)}</p></div>
@@ -99,7 +116,9 @@ export function ProviderLimitsPanel({ provider, balanceUsd, onSaved }: { provide
         {isTreg && <div className="rounded-xl bg-sf p-3"><p className="m-0 text-mut">رصيدك الحقيقي لدى المزود</p><p className="mb-0 mt-1 text-[15px] font-semibold text-ink">{typeof balanceUsd === "number" ? usd(balanceUsd) : "غير متاح"}</p></div>}
       </div>
 
-      {isTreg ? (
+      {isExtra ? (
+        <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-mut">الحد اليومي لإنفاق هذا المزود (دولار)</span><input type="text" inputMode="decimal" dir="ltr" disabled={readOnly || busy} value={daily} onChange={(e) => setDaily(e.target.value)} className={FIELD} style={MONO} /></label>
+      ) : isTreg ? (
         <>
           <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-mut">الحد اليومي لإنفاق المزود (دولار)</span><input type="text" inputMode="decimal" dir="ltr" disabled={readOnly || busy} value={daily} onChange={(e) => setDaily(e.target.value)} className={FIELD} style={MONO} /></label>
           <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-mut">سقف المزود لكل طلب (دولار، اتركه فارغًا لعدم التحديد)</span><input type="text" inputMode="decimal" dir="ltr" disabled={readOnly || busy} value={perJob} onChange={(e) => setPerJob(e.target.value)} className={FIELD} style={MONO} /></label>

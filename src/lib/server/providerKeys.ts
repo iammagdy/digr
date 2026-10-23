@@ -33,6 +33,8 @@ export interface ResolvedProviderKey {
 const ENV_NAMES: Record<ProviderId, readonly string[]> = {
   treg: ["TREG_TOKEN", "TREG_API_KEY"],
   anthropic: ["ANTHROPIC_API_KEY"],
+  firecrawl: ["FIRECRAWL_API_KEY"],
+  contextdev: ["CONTEXT_DEV_API_KEY"],
 };
 
 interface CacheEntry { value: ResolvedProviderKey; expiresAt: number }

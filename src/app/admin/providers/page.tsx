@@ -26,7 +26,7 @@ function Switch({ on, onClick, label }: { on: boolean; onClick: () => void; labe
   );
 }
 
-type TabId = "treg" | "anthropic";
+type TabId = "treg" | "firecrawl" | "contextdev" | "anthropic";
 
 export default function AdminProvidersPage() {
   const { providers: shellProviders, refresh, toast, isMobile } = useAdmin();
@@ -136,11 +136,11 @@ export default function AdminProvidersPage() {
     </section>
   );
 
-  const tabs: Array<[TabId, string]> = [["treg", "مزود البيانات"], ["anthropic", "مزود النموذج الذكي"]];
+  const tabs: Array<[TabId, string]> = [["treg", "TREG: مزود البيانات"], ["firecrawl", "Firecrawl: مزود قراءة المواقع"], ["contextdev", "Context.dev: مزود البحث والقراءة"], ["anthropic", "مزود النموذج الذكي"]];
 
   return (
     <div data-screen-label="Providers" className="flex flex-col gap-3.5" style={{ maxWidth: isMobile ? undefined : 860 }}>
-      <div role="tablist" aria-label="مزودو الخدمة" className="grid grid-cols-2 gap-1 rounded-[14px] bg-sf2 p-1">
+      <div role="tablist" aria-label="مزودو الخدمة" className="grid grid-cols-2 gap-1 rounded-[14px] bg-sf2 p-1 sm:grid-cols-4">
         {tabs.map(([id, label]) => (
           <button key={id} id={`tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`panel-${id}`} onClick={() => setTab(id)}
             className="min-h-[46px] cursor-pointer rounded-[10px] border-0 text-[13px] font-semibold" style={{ background: tab === id ? "var(--sf)" : "transparent", color: tab === id ? "var(--ink)" : "var(--mut)", boxShadow: tab === id ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>{label}</button>
@@ -149,6 +149,8 @@ export default function AdminProvidersPage() {
       <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === "treg"
           ? <ProviderTab key="treg" provider="treg" onChanged={refresh}>{tregControls}</ProviderTab>
+          : tab === "firecrawl" || tab === "contextdev"
+          ? <ProviderTab key={tab} provider={tab} onChanged={refresh} />
           : <ProviderTab key="anthropic" provider="anthropic" onChanged={refresh}>{llmControls}</ProviderTab>}
       </div>
     </div>
