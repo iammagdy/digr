@@ -3,7 +3,7 @@ import { evaluateResearchRowRelevance } from "../src/lib/server/researchRelevanc
 import { companyActivityKeywords, evidenceText, hasActivityEvidence, keywordPhrases, stemEnglish } from "../src/lib/server/relevanceEvidence";
 import { decideCompanyRow, isGroundedEvidence, type CompanyReviewVerdict } from "../src/lib/server/relevanceDecision";
 import {
-  REVIEW_TOOL_NAME, REVIEW_BATCH_SIZE, callClaudeCompanyReviewer, parseReviewToolInput, runCompanyReview, summarizeCompanyRowForReview,
+  REVIEW_TOOL_NAME, REVIEW_BATCH_SIZE, REVIEW_MAX_TOKENS, REVIEW_MAX_ROWS, REVIEW_ATTEMPT_TIMEOUT_MS, callClaudeCompanyReviewer, parseReviewToolInput, runCompanyReview, summarizeCompanyRowForReview,
   type CompanyReviewAttempt, type CompanyReviewRequest, type CompanyReviewerFn,
 } from "../src/lib/server/companyRelevanceReview";
 import { resetProviderKeyCache } from "../src/lib/server/providerKeys";
@@ -175,6 +175,31 @@ describe("the structured review request and reply", () => {
     expect(result.usage!.costUsd).toBeGreaterThan(0);
   });
 
+  it("asks for up to 4000 output tokens (was 1500) with the forced tool unchanged, and a reply cut at that limit is returned with its stop reason", async () => {
+    expect(REVIEW_MAX_TOKENS).toBe(4000);
+    let sent: any = null;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: any) => {
+      sent = JSON.parse(init.body);
+      return { ok: true, status: 200, json: async () => ({ stop_reason: "max_tokens", content: [{ type: "tool_use", name: REVIEW_TOOL_NAME, input: {} }], usage: { input_tokens: 5642, output_tokens: 4000 } }) };
+    }));
+    const tenRows: CompanyReviewRequest = { ...request, rows: Array.from({ length: 10 }, (_, i) => ({ index: i, row: contractor })) };
+    const result = await callClaudeCompanyReviewer(tenRows, { timeoutMs: 5000 });
+    expect(sent.max_tokens).toBe(4000);
+    expect(sent.tool_choice).toEqual({ type: "tool", name: "submit_reviews" });
+    expect(JSON.parse(sent.messages[0].content).rows).toHaveLength(10);
+    expect(result.failure).toBe("bad_reply");
+    expect(result.stopReason).toBe("max_tokens");
+    expect(result.maxTokens).toBe(4000);
+    expect(result.usage).toMatchObject({ inputTokens: 5642, outputTokens: 4000 });
+    // a reply that ended normally reports its stop reason and the limit it was sent with
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ stop_reason: "tool_use", content: [{ type: "tool_use", name: REVIEW_TOOL_NAME, input: { reviews: [{ index: 0, coreActivity: "core", countryOk: "yes", evidence: "Electrical contracting", reasonAr: "مقاول" }] } }], usage: { input_tokens: 700, output_tokens: 90 } }) })));
+    const ok = await callClaudeCompanyReviewer(request, { timeoutMs: 5000 });
+    expect(ok).toMatchObject({ failure: null, stopReason: "tool_use", maxTokens: 4000 });
+    // an HTTP failure still says which limit the call carried
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 529, text: async () => "overloaded" })));
+    expect(await callClaudeCompanyReviewer(request, { timeoutMs: 5000 })).toMatchObject({ failure: "http_529", maxTokens: 4000 });
+  });
+
   it("failures are returned as codes, never thrown: http status, timeout, network, missing key, disabled, unusable reply (billed)", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 400, text: async () => "bad" })));
     expect((await callClaudeCompanyReviewer(request, { timeoutMs: 5000 })).failure).toBe("http_400");
@@ -298,14 +323,55 @@ describe("runCompanyReview: retry on the SAME rows, 2/4/8 s backoff, only while 
     expect(outcome.failure).toBeNull();
   });
 
-  it("rows are reviewed in batches of 25, at most 50 rows; the rest is reported as not reviewed", async () => {
+  it("rows are reviewed in batches of 10, at most 50 rows; the rest is reported as not reviewed", async () => {
     const sizes: number[] = [];
     const reviewer: CompanyReviewerFn = async (req) => { sizes.push(req.rows.length); return okAttempt(req.rows.map((r) => r.index)); };
     const outcome = await runCompanyReview(base(reviewer, 60).options);
-    expect(REVIEW_BATCH_SIZE).toBe(25);
-    expect(sizes.sort((a, b) => a - b)).toEqual([25, 25]);
+    expect(REVIEW_BATCH_SIZE).toBe(10);
+    expect(sizes.sort((a, b) => a - b)).toEqual([10, 10, 10, 10, 10]);
     expect(outcome.verdicts.size).toBe(50);
     expect(outcome.failure).toBe("too_many_rows");
+  });
+
+  it("a 50-row page is 5 calls of 10 rows, all started together, so they fit one attempt window of the worker's deadline", async () => {
+    expect(REVIEW_MAX_ROWS).toBe(50);
+    const sizes: number[] = [];
+    let active = 0;
+    let peak = 0;
+    const reviewer: CompanyReviewerFn = async (req) => {
+      sizes.push(req.rows.length);
+      active += 1; peak = Math.max(peak, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return okAttempt(req.rows.map((r) => r.index));
+    };
+    const t = base(reviewer, 50);
+    // the deadline leaves room for exactly ONE attempt: sequential batches could not all run, parallel ones all do
+    const outcome = await runCompanyReview({ ...t.options, deadlineMs: REVIEW_ATTEMPT_TIMEOUT_MS });
+    expect(sizes).toEqual([10, 10, 10, 10, 10]);
+    expect(peak).toBe(5);
+    expect(outcome).toMatchObject({ failure: null, attempts: 5 });
+    expect(outcome.verdicts.size).toBe(50);
+    expect(t.sleeps).toEqual([]);
+  });
+
+  it("every attempt is reported with its rows, its attempt number and the rows left without a verdict", async () => {
+    const reports: Array<{ rows: number; attemptNumber: number; missing: number; failure: string | null }> = [];
+    let n = 0;
+    const reviewer: CompanyReviewerFn = async (req) => {
+      n += 1;
+      if (n === 1) return failed("bad_reply");
+      if (n === 2) return okAttempt(req.rows.map((r) => r.index).slice(0, 6));
+      return okAttempt(req.rows.map((r) => r.index));
+    };
+    const t = base(reviewer, 10);
+    const outcome = await runCompanyReview({ ...t.options, onAttempt: (a, context) => { reports.push({ ...context, failure: a.failure }); } });
+    expect(outcome).toMatchObject({ failure: null, attempts: 3 });
+    expect(reports).toEqual([
+      { rows: 10, attemptNumber: 1, missing: 10, failure: "bad_reply" },
+      { rows: 10, attemptNumber: 2, missing: 4, failure: null },
+      { rows: 4, attemptNumber: 3, missing: 0, failure: null },
+    ]);
   });
 
   it("a reviewer that throws is a failed attempt, not a crash", async () => {

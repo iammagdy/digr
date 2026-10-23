@@ -105,6 +105,7 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setRowAdvisorForTesting } from "../src/lib/server/rowReviewAdvisor";
 import { callClaudeCompanyReviewer, setCompanyReviewTimingForTesting, setCompanyReviewerForTesting, type CompanyReviewAttempt, type CompanyReviewRequest, type CompanyReviewerFn } from "../src/lib/server/companyRelevanceReview";
 import { resetProviderKeyCache } from "../src/lib/server/providerKeys";
+import { isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
 import { contractor, empty, foreign, repair, trader, utility } from "./fixtures/relevance-rows";
 
 const JOB = jobIdForQuote("quote_strict");
@@ -230,14 +231,21 @@ describe("company job: strict review of the rows the gate matched", () => {
     // every attempt leaves a usage row, none of them a success
     expect(db.llmUsage).toHaveLength(3);
     expect(db.llmUsage.every((row) => row.reason === "relevance_review_failed" && row.cost_usd === 0)).toBe(true);
-    // The customer's lines (every event except the owner's internal review-spend row) carry no amount and no provider name; the internal row is checked below.
-    const messages = db.events.filter((e) => e.event_type !== "review_cost").map((e) => String(e.message));
+    // The customer's lines (every event the activity list shows: not the owner's internal review rows) carry no amount and no provider name; the internal rows are checked below.
+    const messages = db.events.filter((e) => isCustomerVisibleJobEvent(e.event_type)).map((e) => String(e.message));
     expect(messages.filter((m) => m === RETRY_NOTE)).toHaveLength(2);
     expect(messages.some((m) => /تعذّر التحقق الآلي من ملاءمة ٣ سجل الآن/.test(m) && m.includes("وُضعت في ورقة المراجعة ولم تُحتسب"))).toBe(true);
     for (const m of messages) expect(m).not.toMatch(/claude|anthropic|treg|icypeas|timeout|http|USD/i);
     // the owner's row: calls and USD of the job, in one internal line
     const spend = db.events.filter((e) => e.event_type === "review_cost").map((e) => String(e.message));
     expect(spend).toEqual(["review_spend step=0 calls=3 usd=0.000000 total_calls=3 total_usd=0.000000 rows_seen=3 low_yield_stop=0"]);
+    // the owner's failure rows: one per failed attempt, with the attempt number and no row text
+    const failures = db.events.filter((e) => e.event_type === "review_failure").map((e) => String(e.message));
+    expect(failures).toEqual([
+      "review_failure step=0 call=1 retry=0 attempt=1 rows=3 code=timeout stop=none in=0 out=0 max_tokens=0 reply_chars=none missing=3",
+      "review_failure step=0 call=2 retry=1 attempt=2 rows=3 code=timeout stop=none in=0 out=0 max_tokens=0 reply_chars=none missing=3",
+      "review_failure step=0 call=3 retry=1 attempt=3 rows=3 code=timeout stop=none in=0 out=0 max_tokens=0 reply_chars=none missing=3",
+    ]);
   });
 
   it("a failure that cannot change (the assistant is switched off) is not retried and still fails closed", async () => {
@@ -294,5 +302,72 @@ describe("company job: strict review of the rows the gate matched", () => {
     setCompanyReviewerForTesting(async (request) => coreFor(request, () => "core", (row) => (row.description as string).slice(0, 20)));
     const result = await run([[contractor, empty, foreign]]);
     expect(result.last.json).toMatchObject({ done: true, deliveredUnits: 1 });
+  });
+
+  const bigPage = (page: number, n = 50) => Array.from({ length: n }, (_, i) => ({ ...contractor, company_name: `Nile Electrical Contracting ${page}-${i}`, location: "Cairo, Egypt" }));
+  const evenIsCore = (request: CompanyReviewRequest): CompanyReviewAttempt => coreFor(request, (row) => (Number(String(row.company_name).split("-").pop()) % 2 === 0 ? "core" : "adjacent"), (row) => (row.description as string).slice(0, 24));
+
+  it("a 50-row page makes 5 review calls of 10 rows; the matching rows are delivered and charged, the others wait in the review sheet", async () => {
+    resetDb(50);
+    const asked: number[] = [];
+    setCompanyReviewerForTesting(async (request) => { asked.push(request.rows.length); return evenIsCore(request); });
+    const result = await run([bigPage(1)]);
+    expect(asked).toEqual([10, 10, 10, 10, 10]);
+    expect(result.last.json).toMatchObject({ done: true, deliveredUnits: 25 });
+    expect(names()).toContain("settle_job_atomic");
+    expect(result.last.json.settle).toMatchObject({ charged_credits: 75 });
+    expect(db.llmUsage).toHaveLength(5);
+    expect(db.llmUsage.every((row) => row.reason === "relevance_review")).toBe(true);
+    expect(db.events.filter((e) => e.event_type === "review_failure")).toEqual([]);
+    const wb = await workbook();
+    expect(wb.getWorksheet("بيانات الشركات")!.rowCount).toBe(26);
+    // the review sheet: a note row, a header row and the 25 rows that were checked but are not the company's own activity
+    expect(wb.getWorksheet("سجلات تحتاج مراجعة")!.rowCount).toBe(27);
+  });
+
+  it("50-row replay with fake replies over two pages: the matching rows are delivered and the job is not stopped", async () => {
+    resetDb(50);
+    const asked: number[] = [];
+    setCompanyReviewerForTesting(async (request) => { asked.push(request.rows.length); return evenIsCore(request); });
+    const result = await run([bigPage(1), bigPage(2)]);
+    expect(result.calls).toBe(2); // the second provider page was bought: nothing stopped the job after page 1
+    expect(asked).toEqual(Array(10).fill(10));
+    expect(result.last.json).toMatchObject({ done: true, deliveredUnits: 50 });
+    expect(names()).toContain("settle_job_atomic");
+    expect(names()).not.toContain("release_job_atomic");
+    expect(result.last.json.settle).toMatchObject({ charged_credits: 150 });
+    expect(db.events.some((e) => /توقف الجمع لأن التحقق الآلي/.test(String(e.message)))).toBe(false);
+    expect(db.events.some((e) => e.event_type === "review_failure")).toBe(false);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("a reply cut at the token limit leaves one internal review_failure row per call: code, stop reason, tokens, limit, rows, rows without a verdict, attempt; no row text, hidden from the customer", async () => {
+    resetDb(10);
+    let call = 0;
+    setCompanyReviewerForTesting(async (request) => {
+      call += 1;
+      if (call === 1) return { verdicts: new Map(), usage: { inputTokens: 5642, outputTokens: 4000, costUsd: 0.0225, model: "claude-haiku-5-5", latencyMs: 9000 }, failure: "bad_reply", stopReason: "max_tokens", maxTokens: 4000, replyChars: 11800 };
+      if (call === 2) {
+        // cut after 6 of the 10 verdicts: the 6 are kept, the call is still a failure row
+        const partial = coreFor({ ...request, rows: request.rows.slice(0, 6) }, () => "core", (row) => (row.description as string).slice(0, 24));
+        return { ...partial, stopReason: "max_tokens", maxTokens: 4000, replyChars: 3900, usage: { inputTokens: 5642, outputTokens: 4000, costUsd: 0.0225, model: "claude-haiku-5-5", latencyMs: 9000 } };
+      }
+      return { ...coreFor(request, () => "core", (row) => (row.description as string).slice(0, 24)), stopReason: "tool_use", maxTokens: 4000 };
+    });
+    const result = await run([bigPage(1, 10)]);
+    expect(call).toBe(3);
+    expect(result.last.json).toMatchObject({ done: true, deliveredUnits: 10 });
+    const failures = db.events.filter((e) => e.event_type === "review_failure");
+    expect(failures.map((e) => String(e.message))).toEqual([
+      "review_failure step=0 call=1 retry=0 attempt=1 rows=10 code=bad_reply stop=max_tokens in=5642 out=4000 max_tokens=4000 reply_chars=11800 missing=10",
+      "review_failure step=0 call=2 retry=1 attempt=2 rows=10 code=none stop=max_tokens in=5642 out=4000 max_tokens=4000 reply_chars=3900 missing=4",
+    ]);
+    // never customer text: no company name, no row content, and the activity list leaves the rows out
+    for (const e of failures) {
+      expect(String(e.message)).not.toMatch(/Nile|Electrical|Cairo|description/);
+      expect(isCustomerVisibleJobEvent(e.event_type)).toBe(false);
+    }
+    // the third call (the 4 missing rows) ended normally and leaves no failure row
+    expect(db.llmUsage.map((row) => row.reason)).toEqual(["relevance_review_failed", "relevance_review", "relevance_review"]);
   });
 });
