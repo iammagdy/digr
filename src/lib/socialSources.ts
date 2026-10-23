@@ -401,6 +401,18 @@ const YOUTUBE_TRENDING: SocialSource[] = [
   },
 ];
 
+/**
+ * The address of a public Facebook page for the sources that take a link: the link itself, or the page's username («youm7», «@youm7») under facebook.com.
+ * A display name with spaces or Arabic letters («اليوم السابع») is not an address: those sources are skipped and the source that takes a page NAME answers.
+ */
+export function facebookPageUrl(channel: string | undefined): string | null {
+  const raw = String(channel || "").trim();
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const handle = raw.replace(/^@/, "");
+  return /^[A-Za-z0-9.\-_]{3,50}$/.test(handle) ? `https://www.facebook.com/${handle}` : null;
+}
+
 const FACEBOOK_PAGE_POSTS: SocialSource[] = [
   {
     endpointId: "anyapi.facebook.user.posts",
@@ -411,7 +423,7 @@ const FACEBOOK_PAGE_POSTS: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 10,
     paging: "cursor",
-    build: (r) => (r.channel ? { url: /^https?:\/\//i.test(r.channel) ? r.channel : `https://www.facebook.com/${r.channel.replace(/^@/, "")}`, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
+    build: (r) => { const url = facebookPageUrl(r.channel); return url ? { url, ...(r.cursor ? { cursor: r.cursor } : {}) } : null; },
   },
   {
     endpointId: "scrapecreators.x.v1-facebook-profile-posts",
@@ -422,7 +434,7 @@ const FACEBOOK_PAGE_POSTS: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 3,
     paging: "cursor",
-    build: (r) => (r.channel ? { url: /^https?:\/\//i.test(r.channel) ? r.channel : `https://www.facebook.com/${r.channel.replace(/^@/, "")}`, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
+    build: (r) => { const url = facebookPageUrl(r.channel); return url ? { url, ...(r.cursor ? { cursor: r.cursor } : {}) } : null; },
   },
   {
     endpointId: "crawl4ai.facebook.user.posts",
@@ -770,8 +782,10 @@ export function socialCapabilityForIntent(intent: SocialIntent): SocialCapabilit
   const kind: SocialKind = intent.task === "comments" ? "comments" : intent.task === "x_posts" ? "posts" : "videos";
   const cap = socialCapabilityFor(intent.platform, kind);
   if (!cap) return undefined;
-  const mode: SocialMode | null =
-    intent.discover === "target" ? "url" : intent.discover === "keyword" ? "query" : intent.discover === "channel" ? "channel" : intent.discover === "trending" ? "trending" : null;
+  // A Facebook page named by its name is a page request (its latest posts), not a keyword search.
+  const mode: SocialMode | null = intent.pageName
+    ? "channel"
+    : intent.discover === "target" ? "url" : intent.discover === "keyword" ? "query" : intent.discover === "channel" ? "channel" : intent.discover === "trending" ? "trending" : null;
   return mode && cap.modes.includes(mode) ? cap : undefined;
 }
 
@@ -812,6 +826,7 @@ export function canonicalSocialParams(
   if (region) params.region = region;
   if (intent.discover === "target" && intent.targetUrl) params.url = intent.targetUrl.url;
   else if (intent.discover === "channel" && intent.channelRef) params.channel = intent.channelRef;
+  else if (intent.pageName) params.channel = intent.pageName;
   else if (intent.discover === "trending") {
     params.trending = true;
   } else if (intent.discover === "keyword") {

@@ -5,7 +5,7 @@ import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLa
 import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
 import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR, YOUTUBE_RECENT_SUPPLY_FROM_VOLUME, YOUTUBE_RECENT_SUPPLY_NOTE_AR } from "../../lib/youtubeRecency";
-import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
+import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowIsStatedByCustomer, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
@@ -320,12 +320,16 @@ function socialTimeWindowQuestion() {
  * a skipped question gets the proposed default window on the plan. Comments are never asked for a period (the plan proposes one).
  * Trending feeds, a single link and a named channel have their own scope.
  */
+const FACEBOOK_NAMED_PAGE_RE = /(?:^|\s)(?:صفحة|صفحه|بيج)\s+(?!(?:ال)?(?:فيسبوك|فيس)(?![\p{L}]))[\p{L}\p{N}_.\-]+/u;
+
 function shouldAskSocialTimeWindow(text: string): boolean {
   const intent = detectSocialIntent(text);
   if (!intent.platform || ACCOUNT_LOOKUP_RE.test(text)) return false;
   // Comments of videos or posts: the plan proposes the last month (or a known event's dates) instead of a question; one fewer step.
   if (intent.task === "comments") return false;
   if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
+  // «٢٠ بوست من صفحة اليوم السابع»: the latest posts of a NAMED page are scoped by the page, like a named channel's videos, not by a period.
+  if (intent.platform === "facebook" && intent.task === "page_posts" && FACEBOOK_NAMED_PAGE_RE.test(text)) return false;
   if (!SOCIAL_CONTENT_WORDS_RE.test(text)) return false;
   return resolveTimeWindow(text, { needsWindow: true }).status === "missing";
 }
@@ -949,7 +953,8 @@ export function requestDateFilters(...texts: Array<string | undefined>): { from?
   for (const text of texts) {
     if (!text) continue;
     const window = resolveTimeWindow(text, { needsWindow: true });
-    if (window.status === "resolved" && window.dateFrom && window.dateTo) return { from: window.dateFrom, to: window.dateTo };
+    // A proposal the plan makes for a request that says «ترند / أحدث» (source "default") is not a date the customer stated.
+    if (window.status === "resolved" && window.source !== "default" && window.dateFrom && window.dateTo) return { from: window.dateFrom, to: window.dateTo };
   }
   return {};
 }
@@ -3164,7 +3169,7 @@ export class ChatHandler {
         if (output.targetVolume) brief.targetVolume = output.targetVolume;
         if (output.commentsPerPost) brief.commentsPerPost = output.commentsPerPost;
         // The model may not invent a period: it is kept only when the customer's own words state one.
-        if (output.dateRange && resolveTimeWindow(conversationRequestText, { needsWindow: true }).status === "resolved") brief.dateRange = output.dateRange;
+        if (output.dateRange && windowIsStatedByCustomer(resolveTimeWindow(conversationRequestText, { needsWindow: true }))) brief.dateRange = output.dateRange;
         if (output.language) brief.language = output.language;
         if (output.formats) brief.formats = output.formats;
         if (output.notes) brief.notes = output.notes;

@@ -75,3 +75,55 @@ export function repeatKey(row: Record<string, any>): string {
   const video = String(row?.video_url ?? "").trim();
   return `${video}|${text}`;
 }
+
+/* ------------------------------------------------------------------ generic supplications and reactions */
+
+/**
+ * A comment that is only a supplication or blessing («اللهم …», «ما شاء الله», «بارك الله فيك») or «تسلم ايدك» says
+ * nothing about the subject of the video, whatever the video is. A topic search must not fill its volume with them, and they must not be a
+ * delivered (charged) unit: they are dropped by CODE before any review, with an Arabic reason. A comment that does name the topic is judged
+ * by the relevance gate as usual (the gate lets a topical comment through, see researchRelevanceGate).
+ *
+ * Deliberately narrow: «اللهم» as the first word, or EVERY word of a short comment (at most eight) taken from the list of blessing, supplication
+ * and «تسلم ايدك». A plain «شكرا» and the praise words that can describe the subject («حلو», «جامد اوي», «هدف رائع», «مبروك») are NOT on the list: the
+ * golden tests deliver short real comments of an on-topic video «whatever they say», and that rule stays. One other word in the comment («ماتش حلو») keeps it. `commentDropReason` is unchanged: this is a second rule.
+ */
+const GENERIC_WORDS = new Set([
+  // blessing and supplication formulas
+  "ما", "شاء", "ماشاء", "ماشاءالله", "الله", "لله", "الحمد", "سبحان", "تبارك", "جزاك", "جزاكم", "خيرا", "بارك", "فيك", "فيكم", "يبارك", "يحفظك", "يحفظكم", "حفظك", "حفظكم", "يحفظ",
+  "ربنا", "يوفقك", "يوفقكم", "يكرمك", "يرحمه", "يرحمك", "يعافيك", "يا", "رب", "يارب", "امين", "اكبر", "صلي", "علي", "النبي", "محمد", "عليه", "الصلاه", "والسلام", "وسلم", "والله",
+  // «تسلم ايدك» and its family
+  "تسلم", "ايدك", "ايديك", "الايادي", "ايدكم", "يسلمو", "يسلموا", "يسلم",
+  "mashallah", "bless", "god",
+]);
+const MAX_GENERIC_WORDS = 8;
+
+function normalizeGenericText(text: string): string {
+  return String(text || "")
+    .replace(URL_RE, " ")
+    .replace(MENTION_RE, " ")
+    .replace(/[ً-ٰٟـ]/gu, "")
+    .replace(/[أإآ]/gu, "ا")
+    .replace(/ى/gu, "ي")
+    .replace(/ة/gu, "ه")
+    .toLowerCase()
+    .replace(/[^\p{L}\s]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export type GenericComment = "supplication" | "reaction";
+
+export function genericCommentKind(text: string): GenericComment | null {
+  const norm = normalizeGenericText(text);
+  if (!norm) return null;
+  const words = norm.split(" ");
+  if (words[0] === "اللهم" || /^و?اللهم$/u.test(words[0])) return "supplication";
+  if (words.length > MAX_GENERIC_WORDS) return null;
+  return words.every((word) => GENERIC_WORDS.has(word.replace(/^و(?=\p{L}{3,})/u, "")) || GENERIC_WORDS.has(word)) ? "reaction" : null;
+}
+
+export const isGenericComment = (text: string): boolean => genericCommentKind(text) !== null;
+
+/** Said in the gate's reason column and in the plan notes: no provider word, no number. */
+export const GENERIC_COMMENT_REASON_AR = "تعليق دعاء أو عبارة عامة لا يتناول موضوع البحث";

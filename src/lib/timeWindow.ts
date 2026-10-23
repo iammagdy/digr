@@ -320,6 +320,30 @@ export function parseRelativeWindow(text: string, today: Date = new Date()): { f
   return { from, to, labelAr: `${phrase} (${windowLabelAr(from, to)})` };
 }
 
+/* ---------------------------------------------------------------- recency and popularity words */
+
+/**
+ * What a request without dates asks for by its own words:
+ *  - "recent": «ترند / أحدث / الأحدث / trending / latest»: what is happening NOW. A rolling window ending today is proposed, never the dates of an event.
+ *  - "popular": «الأكثر انتشارًا / مشاهدة / تفاعلًا / فيرال»: a ranking over every item the source can show; a one-month window would drop the very
+ *    videos asked for (an old viral video is still the most viral). The scope is open and the plan says so.
+ * «ترند» wins over a popularity word in the same request (a trend is about now). Dates the customer wrote always win over both.
+ */
+export type RecencyIntent = "recent" | "popular";
+
+const RECENT_WORDS_RE = /(?:^|[\s(])(?:ال)?(?:ترند|تريند|تراند|ترندنج|تريندنج|تراندنج|ستراندنج|استراندنج|سترندنج|ستريندنج|رائج|رايج|احدث|trending|trends?|latest|newest|recent)(?![\p{L}\d])/u;
+const POPULAR_WORDS_RE = /(?:ال)?(?:اكثر|اعلي)\s*(?:مشاهد[هة]|مشاهدات|تفاعل|انتشار|رواج|شعبي[هة])|فيرال|\bviral\b|most\s+(?:viewed|popular|viral|watched)/u;
+
+export function requestRecencyIntent(text: string): RecencyIntent | null {
+  const norm = normalizeWindowText(text);
+  if (RECENT_WORDS_RE.test(norm)) return "recent";
+  if (POPULAR_WORDS_RE.test(norm)) return "popular";
+  return null;
+}
+
+export const RECENT_WINDOW_REASON_AR = "طلبك عن الأحدث أو الرائج الآن ولم تذكر فترة، فاقترحت آخر ٣٠ يومًا حتى اليوم وتقدر تعدّلها في الخطة.";
+export const POPULAR_SCOPE_REASON_AR = "طلبك عن الأكثر انتشارًا ولم تذكر فترة، فلم أقيّد الطلب بفترة حتى لا تُستبعد الفيديوهات الأعلى مشاهدة لأنها أقدم؛ وتقدر تحدد فترة من الخطة.";
+
 /* ---------------------------------------------------------------- known events */
 
 export interface KnownEvent {
@@ -344,6 +368,9 @@ export function knownEventWindow(text: string, today: Date = new Date()): { from
   const event = KNOWN_EVENTS.find((e) => e.re.test(norm));
   if (!event) return null;
   const todayIso = today.toISOString().slice(0, 10);
+  // «ترند كأس العالم», «أحدث ...»: a request about what is happening now is not about the dates of an event that is over. An event still
+  // running (or to come) keeps its window; a finished one is dropped and the caller's rolling window or open scope applies.
+  if (requestRecencyIntent(text) && event.to < todayIso) return null;
   const verb = event.to < todayIso ? "جرت" : "تُقام";
   return {
     from: event.from,
@@ -418,6 +445,15 @@ export function resolveTimeWindow(text: string, options: ResolveWindowOptions): 
   const year = parseYearOnly(text);
   if (year) return { status: "resolved", source: "stated", dateFrom: year.from, dateTo: year.to, labelAr: windowLabelAr(year.from, year.to) };
 
+  const intent = requestRecencyIntent(text);
+  if (intent === "recent") {
+    const rolling = parseRelativeWindow("آخر شهر", today)!;
+    return { status: "resolved", source: "default", dateFrom: rolling.from, dateTo: rolling.to, labelAr: rolling.labelAr, reasonAr: RECENT_WINDOW_REASON_AR };
+  }
+  if (intent === "popular") {
+    return { status: "resolved", source: "open_scope", labelAr: "كل الفترة المتاحة", reasonAr: POPULAR_SCOPE_REASON_AR };
+  }
+
   if (options.rankingRequest) {
     return {
       status: "resolved",
@@ -427,6 +463,11 @@ export function resolveTimeWindow(text: string, options: ResolveWindowOptions): 
     };
   }
   return { status: "missing", question: windowQuestion() };
+}
+
+/** True when the customer's own words state the period (dates, a relative period, a known event): not a proposal the plan makes («ترند», «الأكثر انتشارًا»). */
+export function windowIsStatedByCustomer(window: ResolvedWindow): boolean {
+  return window.status === "resolved" && (window.source === "stated" || window.source === "relative" || window.source === "event");
 }
 
 /** The window fields a plan step carries: only dates the customer, a relative phrase or a known event produced. */

@@ -51,3 +51,25 @@ export function dateWindowPageEventAr(summary: RowDateSummary, returned: number,
   const verdict = allRowsOutsideWindow(summary, returned) ? ` ${OUTSIDE_WINDOW_SENTENCE_AR}.` : "";
   return `تم استبعاد ${toArabicDigits(dropped)} سجل من هذه الصفحة بسبب التاريخ: ${parts.join(" و")}${remaining}. ${range}.${verdict}${basis}${approximate}`;
 }
+
+/**
+ * Said when a job delivered fewer rows than asked and the date window removed some of what the source returned. Counts are the job's totals (every page),
+ * the same numbers the activity panel adds up. When most of what arrived was removed by date it says so first, and what to do about it.
+ */
+export function dateDropShortfallSentenceAr(received: number | null, dateDropped: number): string {
+  if (!(dateDropped > 0)) return "";
+  const dropped = toArabicDigits(dateDropped);
+  if (received !== null && received >= dateDropped && dateDropped * 2 >= received) {
+    return `استُبعد ${dropped} من ${toArabicDigits(received)} سجلاً وصل لأن تاريخه خارج الفترة التي حددتها أو لأنه بلا تاريخ نشر يمكن التحقق منه، ولا يُحتسب عليك؛ ولعدد أكبر وسّع الفترة.`;
+  }
+  return `استُبعد ${dropped} سجل لأن تاريخه خارج الفترة التي حددتها أو لأنه بلا تاريخ نشر يمكن التحقق منه، ولا يُحتسب عليك.`;
+}
+
+/**
+ * Said when nothing was delivered, some of the received rows were removed by date and the rest (inside the window) did not match the topic.
+ * The clause «وتواريخها داخل الفترة» is only true when NO row was removed by date, so it is never used here.
+ */
+export function emptyAfterDateDropSentenceAr(received: number, dateDropped: number, uncertain: number): string {
+  const inside = Math.max(0, received - dateDropped);
+  return `استلمنا ${toArabicDigits(received)} سجلاً من المصدر، استُبعد منها ${toArabicDigits(dateDropped)} لأن تاريخها خارج الفترة التي حددتها أو بلا تاريخ نشر يمكن التحقق منه، وبقي ${toArabicDigits(inside)} داخل الفترة لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertain ? ` (أُحيل ${toArabicDigits(uncertain)} إلى المراجعة ولم يُحتسب)` : ""}`;
+}

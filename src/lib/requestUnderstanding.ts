@@ -136,7 +136,7 @@ export function understandRequest(rawText: string, options: { today?: Date } = {
     : intent.dataType;
 
   const window = resolveTimeWindow(text, { today: options.today, needsWindow: true });
-  const timeFrame = window.status === "resolved" && window.source !== "open_scope"
+  const timeFrame = window.status === "resolved" && window.source !== "open_scope" && window.source !== "default"
     ? { labelAr: window.labelAr, ...(window.dateFrom ? { dateFrom: window.dateFrom } : {}), ...(window.dateTo ? { dateTo: window.dateTo } : {}) }
     : null;
 

@@ -7,6 +7,8 @@ import { normalizeEasternArabicDigits } from "./arabicNumbers";
  */
 /** The label of the running total of received records the worker writes on every page line after the first. */
 export const RECEIVED_SO_FAR_LABEL = "المستلم حتى الآن";
+/** The label of the rows the date window removed on a page («خارج الفترة ٢٩»): counted with the other exclusions, so the panel's numbers add up. */
+export const DATE_EXCLUDED_LABEL = "خارج الفترة";
 
 export interface ActivityCounts {
   /** Records the source returned, over every page line. */
@@ -42,6 +44,11 @@ export function summarizeActivityCounts(events: Array<{ textAr: string }> | null
     }
     const page = numberAfter(text, "مكرر أو مستبعد");
     if (page !== null) fromPages += page;
+    // A page line says «خارج الفترة N» for the rows the date window removed (only on lines that start with «الصفحة», like the other page counts).
+    if (/^\s*الصفحة\s+\d+/.test(text)) {
+      const byDate = numberAfter(text, DATE_EXCLUDED_LABEL);
+      if (byDate !== null) fromPages += byDate;
+    }
     const audit = text.match(/استبعاد\s+(\d+)\s+سجل\s+مكرر/);
     if (audit && audit[1]) fromAudit += parseInt(audit[1], 10);
   }
