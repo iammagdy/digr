@@ -361,7 +361,7 @@ describe("the e-mail template, in isolation", () => {
 describe("«you can close the page» only with the always-on driver", () => {
   it("the line for each state", () => {
     expect(closePageLineAr("cron")).toBe("تقدر تقفل الصفحة؛ المهمة تكمل وحدها وسنبلغك عند الاكتمال.");
-    expect(closePageLineAr("tab")).toBe("أبقِ الصفحة مفتوحة حتى لا يتوقف التنفيذ؛ وإن أغلقتها فستكمل المهمة عند عودتك.");
+    expect(closePageLineAr("tab")).toBe("أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
     expect(closePageLineAr("tab")).not.toContain("تقفل");
     expect(normalizeDriverMode(undefined)).toBe("tab");
     expect(normalizeDriverMode("cron")).toBe("cron");

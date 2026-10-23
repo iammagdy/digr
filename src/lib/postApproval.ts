@@ -6,7 +6,7 @@ import { normalizeDriverMode } from "./driverMode";
  * or the request continues when the customer comes back.
  */
 export const POST_APPROVAL_CRON_AR = "جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.";
-export const POST_APPROVAL_TAB_AR = "جاري سحب البيانات، وسيصلك إشعار عند الاكتمال. أبقِ الصفحة مفتوحة حتى لا يتوقف التنفيذ؛ وإن أغلقتها فستكمل المهمة عند عودتك.";
+export const POST_APPROVAL_TAB_AR = "جاري سحب البيانات، وسيصلك إشعار عند الاكتمال. أبقِ الصفحة مفتوحة حتى تكتمل المهمة.";
 
 export function postApprovalMessageAr(mode?: unknown): string {
   return normalizeDriverMode(mode) === "cron" ? POST_APPROVAL_CRON_AR : POST_APPROVAL_TAB_AR;

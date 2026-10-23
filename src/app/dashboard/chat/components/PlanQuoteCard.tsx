@@ -8,7 +8,7 @@ import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
 import { CAPACITY_LIMITED_REASON_AR, volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
-import { getQuoteApprovalState, isQuotePlanComplete, planApprovalNoteAr } from "@/lib/quoteApprovalState";
+import { expiryShortAr as expiryShort, getQuoteApprovalState, isQuotePlanComplete, planApprovalNoteAr } from "@/lib/quoteApprovalState";
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
@@ -136,15 +136,6 @@ export function formatExpiry(expiresAt: string): string {
 }
 
 const FORMAT_LABEL = CUSTOMER_FORMAT_LABEL_AR;
-
-/** «ينتهي العرض خلال ٢٨ دقيقة» */
-function expiryShort(expiresAt: string, now: number): string {
-  const ms = new Date(expiresAt).getTime() - now;
-  if (Number.isNaN(ms) || ms <= 0) return "";
-  const mins = Math.max(1, Math.floor(ms / 60000));
-  if (mins < 60) return `ينتهي العرض خلال ${formatAr(mins)} دقيقة`;
-  return `ينتهي العرض خلال ${formatAr(Math.floor(mins / 60))} ساعة`;
-}
 
 const PRIMARY_BTN =
   "inline-flex cursor-pointer items-center justify-center gap-2 rounded-full border-0 bg-ac text-onac focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-40";
@@ -317,6 +308,10 @@ export default function PlanQuoteCard({
 
       <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
         سقف هذا الطلب: حتى {pointsAr(quote.quotedPoints)}، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
+      </p>
+
+      <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-hold-line">
+        الحجز المؤقت: {pointsAr(quote.quotedPoints)} تُحجز من رصيدك عند الموافقة، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي كاملًا{quote.expectedPoints !== undefined ? ` (المتوقع حتى ${pointsAr(quote.expectedPoints)}، ويشمل الحجز احتياطي ١٥٪ على الحجز وحده)` : ""}.
       </p>
 
       {(quote.items?.length ?? 1) > 1 && quote.items?.some((item) => Number(item.unitPricePoints) > 0) ? (
