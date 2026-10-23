@@ -3,6 +3,7 @@ import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, isGenericComment, mean
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { isCompanyDirectoryJob } from "./directoryCapability";
+import { nonCompanyReasonAr } from "../companyRowHygiene";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 import { isChainSlug } from "../multiProvider/routes";
 import { rowPassesGate } from "../multiProvider/policy";
@@ -176,6 +177,9 @@ export function evaluateResearchRowRelevance(
   const companyCapability = isCompanyDirectoryJob(capabilitySlug, endpointId, params);
 
   if (companyCapability) {
+    // A list, a ranking, a directory or an article is never a company, whatever the source called it («Top 40 Pharmaceutical Companies…»).
+    const notACompany = nonCompanyReasonAr({ company_name: row.company_name, name: row.name, title: row.title, website: row.website, url: row.url });
+    if (notACompany) return { decision: "no_match", reasonAr: `${notACompany}؛ استُبعد السجل ولم يُحتسب` };
     const industry = String(params.industry || params.search || topicFromParams(params) || "").trim();
     const country = String(params.country || params.location || "").trim();
     const result = evaluateDeterministicRelevance(row, country, industry);

@@ -179,15 +179,22 @@ function inferParameterType(text: string): ClarificationParameterType | undefine
   return undefined;
 }
 
-function unique(values: string[]): string[] {
+function unique(values: string[], limit = 4): string[] {
   return [
     ...new Set(
       values
         .map((value) => value.trim())
         .filter((value) => Boolean(value) && !INTERNAL_DISCOVERY_KEYS.has(value.toLowerCase())),
     ),
-  ].slice(0, 4);
+  ].slice(0, limit);
 }
+
+/**
+ * The sector question lists the common sectors and ends with «أخرى» (the chip that opens the custom answer). A cut at four would drop that last
+ * chip, and with it the only way to name a sector that is not listed: this question may carry up to twelve.
+ */
+const WIDE_OPTION_QUESTION_IDS = new Set(["company_industry_required"]);
+const WIDE_OPTION_LIMIT = 12;
 
 function enabledPlatformOptions(context: ClarificationOptionContext): string[] {
   const categories = new Set(
@@ -300,7 +307,8 @@ export function normalizeClarificationQuestions(
       ? questionItem.options.filter((option): option is string => typeof option === "string")
       : [];
     const sourceOptions = bankOptions.length ? bankOptions : modelOptions;
-    const options = unique(sourceOptions.map((option) => sanitizeClarificationText(option, 40))).slice(0, 4);
+    const optionLimit = typeof questionItem.id === "string" && WIDE_OPTION_QUESTION_IDS.has(questionItem.id) ? WIDE_OPTION_LIMIT : 4;
+    const options = unique(sourceOptions.map((option) => sanitizeClarificationText(option, 40)), optionLimit).slice(0, optionLimit);
     const requestedDefault = sanitizeClarificationText(questionItem.defaultOption, 40);
     // Company scope fields are mandatory user decisions. Never preselect Egypt
     // or a sector on those questions, even if a generic option bank has a default.

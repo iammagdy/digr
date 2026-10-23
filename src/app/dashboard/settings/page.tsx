@@ -11,7 +11,7 @@ import type { PersonaType } from "@/functions/shared/personaConfigs";
 const NOTIF_PREFS: Array<[id: "topup" | "done" | "refund" | "news", label: string, sub: string]> = [
   ["topup", "اعتماد أو رفض الشحن", "بريد إلكتروني + إشعار داخل التطبيق"],
   ["done", "اكتمال البحث", "بريد إلكتروني عند جاهزية الملفات"],
-  ["refund", "استرداد النقاط", "عند رجوع أي نقاط لرصيدك"],
+  ["refund", "تحرير الحجز المؤقت", "عند تحرير أي حجز مؤقت من رصيدك"],
   ["news", "أخبار ونصائح بحثية", "رسالة شهرية على الأكثر"],
 ];
 const DEFAULT_PREFS = { topup: true, done: true, refund: true, news: false };

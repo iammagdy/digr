@@ -75,7 +75,7 @@ describe("renderEmailTemplate (branded platform emails)", () => {
 
   it("renders missing variables as empty, never leaking raw tokens", () => {
     const { subject, html } = renderEmailTemplate("refund", {});
-    expect(subject).toBe("رجعت  نقطة لرصيدك");
+    expect(subject).toBe("حُرّر حجز مؤقت بقيمة  نقطة");
     expect(html).not.toContain("{{");
   });
 
@@ -129,7 +129,7 @@ describe("notifyUser sends the branded template (not the old plain HTML)", () =>
     expect(db.emails).toHaveLength(2);
     expect(db.emails[0].subject).toContain("استخراج ملف حساب تيك توك العام");
     expect(db.emails[0].content).toContain("استخراج ملف حساب تيك توك العام");
-    expect(db.emails[1].subject).toBe("رجعت ٢٠ نقطة لرصيدك");
+    expect(db.emails[1].subject).toBe("حُرّر حجز مؤقت بقيمة ٢٠ نقطة");
   });
 
   it("failed jobs send a single refund email", async () => {
@@ -137,6 +137,6 @@ describe("notifyUser sends the branded template (not the old plain HTML)", () =>
       status: "failed", reservedCredits: 50, jobTitle: "استخراج ملف حساب تيك توك العام",
     });
     expect(db.emails).toHaveLength(1);
-    expect(db.emails[0].subject).toBe("رجعت ٥٠ نقطة لرصيدك");
+    expect(db.emails[0].subject).toBe("حُرّر حجز مؤقت بقيمة ٥٠ نقطة");
   });
 });

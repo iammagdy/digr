@@ -50,12 +50,12 @@ export async function POST(req: NextRequest) {
       jobId,
       releasedCredits: releaseData?.released_credits ?? 0,
       alreadyReleased: Boolean(releaseData?.already_released),
-      message: "تم استرداد الرصيد المحجوز بنجاح.",
+      message: "تم تحرير الحجز المؤقت بنجاح.",
     });
   } catch (err: any) {
     console.error("[admin:recover_job_exception]", err);
     return NextResponse.json(
-      { success: false, error: "حدث خطأ غير متوقع أثناء استرداد المهمة." },
+      { success: false, error: "حدث خطأ غير متوقع أثناء تحرير حجز المهمة." },
       { status: 500 }
     );
   }

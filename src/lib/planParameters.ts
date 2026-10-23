@@ -1,3 +1,4 @@
+import { industryLabelAr } from "./industryLabels";
 import { stripConstraintPhrases } from "./requestConstraints";
 const GREETING_WORDS = new Set([
   "ازيك",
@@ -163,14 +164,90 @@ export function detectCountryFromText(text: string): CountryMapping | null {
   return null;
 }
 
+/** The label of a sector the customer wrote in English that no rule knows. */
+export const CUSTOM_SECTOR_LABEL_AR = "النشاط الذي ذكرته";
+
+interface MoreSector { words: Array<{ text: string; latin?: boolean }>; englishKeywords: string[]; arabicLabel: string; exactTaxonomy: string[] }
+const w = (text: string) => ({ text });
+const lw = (text: string) => ({ text, latin: true });
+const MORE_SECTORS: MoreSector[] = [
+  { words: [w("اتصالات"), w("تليكوم"), w("تلكوم"), w("شبكات المحمول"), w("telecom"), w("telecommunication")], englishKeywords: ["telecommunications", "telecom", "mobile operators"], arabicLabel: "الاتصالات", exactTaxonomy: ["Telecommunications"] },
+  { words: [w("تأمين"), w("تامين"), w("insurance")], englishKeywords: ["insurance"], arabicLabel: "التأمين", exactTaxonomy: ["Insurance"] },
+  { words: [w("بنوك"), w("مصارف"), w("بنك"), w("مصرفي"), w("banking"), lw("banks?")], englishKeywords: ["banking", "financial services"], arabicLabel: "البنوك والخدمات المصرفية", exactTaxonomy: ["Banking", "Financial Services"] },
+  { words: [w("الخدمات المالية"), w("خدمات مالية"), w("استثمار"), w("financial services")], englishKeywords: ["financial services", "investment"], arabicLabel: "الخدمات المالية", exactTaxonomy: ["Financial Services", "Investment Banking"] },
+  { words: [w("صحة"), w("صحي"), w("مستشفي"), w("رعاية طبية"), w("عيادات"), w("طبي"), w("healthcare"), w("health care"), w("hospital")], englishKeywords: ["healthcare", "hospital", "medical"], arabicLabel: "الصحة والرعاية الطبية", exactTaxonomy: ["Hospital & Health Care", "Medical Devices"] },
+  { words: [w("تجزئة"), w("تجارة"), w("متاجر"), w("سوبر ماركت"), w("جملة"), w("retail"), w("wholesale")], englishKeywords: ["retail", "wholesale", "consumer goods"], arabicLabel: "التجارة والتجزئة", exactTaxonomy: ["Retail", "Wholesale", "Consumer Goods"] },
+  { words: [w("زراعة"), w("زراعي"), w("مزارع"), w("agricultur"), w("farming")], englishKeywords: ["agriculture", "farming"], arabicLabel: "الزراعة", exactTaxonomy: ["Farming", "Agriculture"] },
+  { words: [w("إعلام"), w("اعلام"), w("إعلان"), w("اعلان"), w("دعاية"), w("تسويق"), w("media"), w("advertising"), w("marketing")], englishKeywords: ["media", "advertising", "marketing"], arabicLabel: "الإعلام والتسويق", exactTaxonomy: ["Media Production", "Marketing & Advertising"] },
+  { words: [w("محاماة"), w("قانوني"), w("مكاتب محاماه"), w("legal"), w("law firm")], englishKeywords: ["legal services", "law firm"], arabicLabel: "الخدمات القانونية", exactTaxonomy: ["Legal Services", "Law Practice"] },
+  { words: [w("استشارات"), w("استشاري"), w("consulting")], englishKeywords: ["consulting", "management consulting"], arabicLabel: "الاستشارات", exactTaxonomy: ["Management Consulting"] },
+  { words: [w("كيماويات"), w("كيماوي"), w("بلاستيك"), w("chemical"), w("plastics")], englishKeywords: ["chemicals", "plastics"], arabicLabel: "الكيماويات والبلاستيك", exactTaxonomy: ["Chemicals", "Plastics"] },
+  { words: [w("نسيج"), w("منسوجات"), w("ملابس"), w("أزياء"), w("ازياء"), w("textile"), w("apparel"), w("fashion")], englishKeywords: ["textiles", "apparel", "fashion"], arabicLabel: "النسيج والملابس", exactTaxonomy: ["Textiles", "Apparel & Fashion"] },
+  { words: [w("تعدين"), w("معادن"), w("mining"), w("metals")], englishKeywords: ["mining", "metals"], arabicLabel: "التعدين والمعادن", exactTaxonomy: ["Mining & Metals"] },
+  { words: [w("توظيف"), w("موارد بشرية"), w("staffing"), w("recruiting")], englishKeywords: ["staffing", "recruiting", "human resources"], arabicLabel: "التوظيف والموارد البشرية", exactTaxonomy: ["Staffing & Recruiting", "Human Resources"] },
+  { words: [w("طباعة"), w("تغليف"), w("printing"), w("packaging")], englishKeywords: ["printing", "packaging"], arabicLabel: "الطباعة والتغليف", exactTaxonomy: ["Printing", "Packaging & Containers"] },
+];
+
+/** The chip that opens the custom-answer field. As an answer it says nothing about the sector. */
+const OTHER_CHIP_RE = /^(?:أخرى|اخرى|أخري|اخري|other|others)[\s.!،]*$/iu;
+/** The other stored answer labels: an answer ends where the next label begins. */
+const NEXT_ANSWER_LABEL = "(?:الدولة المطلوبة|المجال المطلوب|إجابة هدف التواصل|إجابة المقصود|عدد الشركات المطلوب|نطاق صناع القرار|المسميات المطلوبة|عدد صناع القرار المطلوب|موضوع البحث المطلوب|منصة البحث المطلوبة|الفترة المطلوبة|اسم الحساب المطلوب)";
+const INDUSTRY_ANSWER_RE = new RegExp(`(?:^|[\\s|])المجال المطلوب:\\s*([^|\\n]+?)(?=\\s+${NEXT_ANSWER_LABEL}:|\\s*\\||\\n|$)`, "gu");
+
+/** «اتصالات اتصالات» (the card repeats the answer) reads as «اتصالات». */
+function collapseRepeatedAnswer(value: string): string {
+  const words = value.trim().split(/\s+/);
+  if (words.length % 2 === 0) {
+    const half = words.length / 2;
+    if (words.slice(0, half).join(" ") === words.slice(half).join(" ")) return words.slice(0, half).join(" ");
+  }
+  return value.trim();
+}
+
+/**
+ * What the customer answered to the sector question, as it sits in the request text («… المجال المطلوب: اتصالات»), wherever in the text it sits
+ * (the card answers are joined with a space as well as with « | »). The chip «أخرى» alone is not an answer. The last real answer wins.
+ */
+export function industryAnswerFromText(text: string): string | null {
+  let answer: string | null = null;
+  for (const match of String(text || "").matchAll(INDUSTRY_ANSWER_RE)) {
+    const value = collapseRepeatedAnswer(match[1].replace(/[\u200B-\u200F\u2060\u2063]/gu, ""));
+    if (value && !OTHER_CHIP_RE.test(value)) answer = value;
+  }
+  return answer;
+}
+
+/** True when the only thing said about the sector is the chip «أخرى»: the custom field was opened and nothing was written in it. */
+export function industryAnsweredWithOtherChipOnly(text: string): boolean {
+  let sawChip = false;
+  for (const match of String(text || "").matchAll(INDUSTRY_ANSWER_RE)) {
+    const value = collapseRepeatedAnswer(match[1].replace(/[\u200B-\u200F\u2060\u2063]/gu, ""));
+    if (!value) continue;
+    if (OTHER_CHIP_RE.test(value)) sawChip = true;
+    else return false;
+  }
+  return sawChip;
+}
+
 export function detectIndustryFromText(text: string): IndustryMapping {
-  const lowered = (text || "").toLowerCase().trim();
+  // The sector the customer answered with wins over everything else said in the conversation, and is read on its own (the words of the
+  // question around it are not part of the sector).
+  const answered = industryAnswerFromText(text);
+  const lowered = (answered ?? text ?? "").toLowerCase().trim();
   // The sector words are written without the definite article («تطوير عقاري»); the customer's text and the plan's own Arabic
   // label carry it («التطوير العقاري»). Both spellings are searched, so a label is always read back as the sector it names.
   const withoutArticle = lowered.replace(/(^|[\s،,.:؛()«»"'])(?:وال|بال|لل|ال)(?=[\u0621-\u064A])/g, "$1");
   const t = withoutArticle === lowered ? lowered : `${lowered} ${withoutArticle}`;
 
   const hasLatinWord = (word: string) => new RegExp(`(?<![a-z0-9])${word}(?![a-z0-9])`).test(t);
+
+  // The two-sector chips of the sector question, read as both sectors.
+  if (/بنوك\s*و\s*تأمين|بنوك\s*و\s*تامين|مصارف\s*و\s*تأمين|banking\s*(?:and|&)\s*insurance/.test(t)) {
+    return { englishKeywords: ["banking", "insurance", "financial services"], arabicLabel: "البنوك والتأمين", exactTaxonomy: ["Banking", "Insurance", "Financial Services"] };
+  }
+  if (/مقاولات\s*و\s*عقارات|مقاولات\s*وتطوير\s*عقاري|construction\s*(?:and|&)\s*real\s*estate/.test(t)) {
+    return { englishKeywords: ["construction", "contracting", "real estate"], arabicLabel: "المقاولات والعقارات", exactTaxonomy: ["Construction", "Real Estate"] };
+  }
 
   if (
     t.includes("fintech") || t.includes("financial technology") ||
@@ -236,6 +313,8 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     t.includes("برمجيات") ||
     t.includes("برمجة") ||
     t.includes("software") ||
+    t.includes("information technology") ||
+    t.includes("it services") ||
     // Whole Latin words only: a bare substring test matched "united", "italy", "technical" and "electricity".
     hasLatinWord("tech") ||
     hasLatinWord("it")
@@ -323,6 +402,13 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     };
   }
 
+  // More sectors, by the words customers use (Arabic and English). The taxonomy is the source's own English names; the label is Arabic.
+  for (const sector of MORE_SECTORS) {
+    if (sector.words.some((word) => (word.latin ? hasLatinWord(word.text) : t.includes(word.text)))) {
+      return { englishKeywords: sector.englishKeywords, arabicLabel: sector.arabicLabel, exactTaxonomy: sector.exactTaxonomy };
+    }
+  }
+
   const cleaned = t
     .replace(/[^\w\s\u0600-\u06FF]/g, " ")
     .replace(/[٠-٩0-9]/g, " ")
@@ -332,7 +418,8 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     .trim();
 
   if (cleaned.length > 0) {
-    return { englishKeywords: [cleaned], arabicLabel: cleaned };
+    // A sector written in English that no rule knows is searched by its words, but its label is Arabic: the customer never reads an English sector name.
+    return { englishKeywords: [cleaned], arabicLabel: /[؀-ۿ]/u.test(cleaned) ? cleaned : CUSTOM_SECTOR_LABEL_AR };
   }
 
   return { englishKeywords: [], arabicLabel: "يلزم تحديد النشاط" };
@@ -340,8 +427,11 @@ export function detectIndustryFromText(text: string): IndustryMapping {
 
 /** Customer-facing industry label for recognized English taxonomy names. */
 export function industryDisplayLabelAr(label: string): string {
-  if (label.trim().toLowerCase() === "fintech") return "التقنية المالية";
-  return label;
+  const value = String(label ?? "");
+  if (value.trim().toLowerCase() === "fintech") return "التقنية المالية";
+  // An English sector name never reaches the customer: a known taxonomy name is read as its Arabic name, any other English label as a neutral Arabic phrase.
+  if (value.trim() && !/[؀-ۿ]/u.test(value) && /[A-Za-z]/.test(value)) return industryLabelAr(value) ?? CUSTOM_SECTOR_LABEL_AR;
+  return value;
 }
 
 /** Pull the searchable subject out of a generated social/video task title. */
@@ -656,7 +746,9 @@ export function getMissingCompanyResearchRequirements(text: string): CompanyRese
   // Unknown residue (for example, an organization name plus a sales purpose)
   // is not an industry. Accept a custom industry only when it is supplied as
   // the answer to the industry field or explicitly introduced as a sector.
-  const hasExplicitIndustryAnswer = /(?:^|\|\s*)المجال المطلوب:\s*\S+/i.test(text || "");
+  // The answer is read wherever it sits in the text (the card answers are joined with a space as well as with « | »; before this it was only
+  // found at the start or after « | », so every sector outside the known taxonomy was asked for again, for ever). The chip «أخرى» alone is no answer.
+  const hasExplicitIndustryAnswer = industryAnswerFromText(text || "") !== null;
   const hasExplicitIndustryPhrase = /(?:في\s+(?:مجال|قطاع|نشاط)|\b(?:industry|sector)\s*:)\s*[\p{L}\p{N}]/iu.test(text || "");
   const hasRecognizedIndustry = Boolean(industry.exactTaxonomy?.length) || industry.arabicLabel === "صيد الحيتان";
   return [
@@ -699,14 +791,21 @@ export function getAmbiguousCompanyReference(text: string): string | null {
   return candidate;
 }
 
+/**
+ * The sector chips of the company question: the common sectors, each one a phrase the sector rules read back as that sector (so tapping one
+ * always produces a plan). «أخرى» is added last and opens the custom-answer field.
+ */
+export const COMPANY_SECTOR_CHIPS = ["تقنية وبرمجيات", "اتصالات", "التقنية المالية", "بنوك وتأمين", "تصنيع", "مقاولات وعقارات", "أغذية ومطاعم", "صحة وأدوية", "تجارة وتجزئة", "نقل وشحن"];
+const COMPANY_SECTOR_CHIPS_OUTREACH = ["تقنية وبرمجيات", "اتصالات", "التقنية المالية", "بنوك وتأمين", "أغذية ومطاعم", "صحة وأدوية", "تجارة وتجزئة", "نقل وشحن"];
+
 /** Compact, adaptive answer chips for the company-search details UI. The final
  * chip always opens the custom-answer field, so suggestions never constrain
  * what the customer can ask for. */
 export function getCompanyRequirementItems(
   missing: CompanyResearchRequirement[],
   requestText = "",
-): Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> {
-  const items: Array<{ id: string; text: string; question: string; type: "single"; options: string[]; allowOther: true }> = [];
+): Array<{ id: string; text: string; question: string; type: "single" | "free"; options: string[]; allowOther: true }> {
+  const items: Array<{ id: string; text: string; question: string; type: "single" | "free"; options: string[]; allowOther: true }> = [];
   const hasResolvedAsCompanyList = /قائمة\s+(?:من\s+)?شركات?\s+للتواصل\s+التجاري|قائمة\s+الشركات\s+للتواصل\s+التجاري|\b(?:company list|list of companies)\b/i.test(requestText);
   const ambiguousNamedEntity = hasResolvedAsCompanyList ? null : getAmbiguousCompanyReference(requestText);
   if (ambiguousNamedEntity && missing.includes("outreach_details")) {
@@ -728,11 +827,17 @@ export function getCompanyRequirementItems(
     const text = ambiguousNamedEntity
       ? `ما القطاع أو مجال «${ambiguousNamedEntity.slice(0, 36)}»، أو ما المجال المطلوب للشركات التي تبحث عنها؟`
       : "ما القطاع أو المجال الذي تعمل فيه الشركات المطلوبة؟";
-    const lower = requestText.toLowerCase();
-    const options = /تواصل|outreach|تجاري|business/i.test(lower)
-      ? ["تقنية وبرمجيات", "التقنية المالية", "أغذية ومطاعم", "أخرى"]
-      : ["تقنية وبرمجيات", "تصنيع", "التقنية المالية", "أخرى"];
-    items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
+    if (industryAnsweredWithOtherChipOnly(requestText)) {
+      // «أخرى» was chosen but nothing was written: ask once, in the customer's own words, with no chips to loop on.
+      const freeText = "اكتب القطاع الذي تريده بكلماتك، مثل: الاتصالات أو التأمين أو الطباعة.";
+      items.push({ id: "company_industry_required", text: freeText, question: freeText, type: "free", options: [], allowOther: true });
+    } else {
+      const lower = requestText.toLowerCase();
+      const options = /تواصل|outreach|تجاري|business/i.test(lower)
+        ? [...COMPANY_SECTOR_CHIPS_OUTREACH, "أخرى"]
+        : [...COMPANY_SECTOR_CHIPS, "أخرى"];
+      items.push({ id: "company_industry_required", text, question: text, type: "single", options, allowOther: true });
+    }
   }
   if (missing.includes("outreach_details") && !ambiguousNamedEntity) {
     const text = "ما المقصود بالتواصل التجاري تحديداً، وما بيانات الشركات التي تحتاجها؟";

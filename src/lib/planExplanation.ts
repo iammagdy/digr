@@ -46,7 +46,7 @@ export function planExplanationLinesAr(input: PlanExplanationInput): string[] {
   const noun = recordNounAr(input.capabilitySlug);
   const lines: string[] = [];
   lines.push(`ما ستستلمه: ملف ${formatsAr(input.outputFormats)} فيه حتى ${n(input.targetVolumeMax)} ${noun} مطابق لطلبك بأعمدة عربية. ما لا نتأكد من مطابقته يُوضع في ورقة مراجعة منفصلة ولا يُحتسب عليك.`);
-  lines.push(`نطاق التكلفة: من ${formatPointsAr(input.unitPricePoints)} نقطة (${noun} واحد مطابق) إلى ${pointsAr(input.expectedPoints, n)} إن سُلّم العدد كاملًا، ويُحجز ${pointsAr(input.quotedPoints, n)} مؤقتًا كحد أقصى. لا يُخصم إلا ما يُسلَّم فعلًا وتُردّ الفروق.`);
+  lines.push(`نطاق التكلفة: من ${formatPointsAr(input.unitPricePoints)} نقطة (${noun} واحد مطابق) إلى ${pointsAr(input.expectedPoints, n)} إن سُلّم العدد كاملًا، ويُحجز ${pointsAr(input.quotedPoints, n)} مؤقتًا كحد أقصى. لا يُخصم إلا ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز المؤقت.`);
   if (!input.countStated) {
     lines.push(`لم تحدد عددًا، فاقترحت عينة من ${n(input.targetVolumeMax)} ${noun}. غيّر العدد من بطاقة الخطة قبل الموافقة إن أردت أكثر.`);
   }

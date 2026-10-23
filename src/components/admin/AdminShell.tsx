@@ -142,8 +142,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
     }
     if (alerts.failedTotal > 0) {
       items.push({
-        key: "fj", icon: ADMIN_IC.alert, color: "var(--bad)", fresh: false, title: "فشل بحث واسترداد",
-        body: `رجعت ${formatAr(alerts.failedJobs[0]?.reservedCredits ?? 0)} نقطة للمستخدم`, when: agoAr(alerts.failedJobs[0]?.createdAt), go: () => router.push("/admin/jobs"),
+        key: "fj", icon: ADMIN_IC.alert, color: "var(--bad)", fresh: false, title: "فشل بحث وتحرير حجز",
+        body: `حُرّر حجز مؤقت بقيمة ${formatAr(alerts.failedJobs[0]?.reservedCredits ?? 0)} نقطة للمستخدم`, when: agoAr(alerts.failedJobs[0]?.createdAt), go: () => router.push("/admin/jobs"),
       });
     }
     return items;

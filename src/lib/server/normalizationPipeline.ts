@@ -1,3 +1,4 @@
+import { cleanCompanyRecord } from "../companyRowHygiene";
 import crypto from "crypto";
 import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, toIsoDate, type SocialRowKind } from "./socialRows";
 import { toArabicDigits } from "../arabicDigits";
@@ -319,6 +320,11 @@ export function normalizeRecord(raw: any, index: number): Record<string, any> {
     scrubbed.company_linkedin !== undefined
   );
   if (hasWebsiteInput || hasLinkedinInput || scrubbed.company_name) {
+    // An e-mail address written in the website field is the company's e-mail, not its website.
+    for (const key of ["website", "website_url", "company_website", "domain"] as const) {
+      const raw = typeof scrubbed[key] === "string" ? scrubbed[key].trim().replace(/^mailto:/i, "") : "";
+      if (/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(raw) && !scrubbed.work_email && !scrubbed.email && !out.work_email) out.work_email = escapeFormula(raw);
+    }
     const { website, linkedin } = resolveCompanyLinks(scrubbed);
     if (hasWebsiteInput || website) {
       out.website = website ? escapeFormula(website) : "";
@@ -342,6 +348,10 @@ export function normalizeRecord(raw: any, index: number): Record<string, any> {
       }
     }
   }
+
+  // A company record: the name without a page title's tail or markdown, the description as plain text, a website column that holds a website,
+  // a founding year that is a year (see companyRowHygiene).
+  if (typeof out.company_name === "string" || "founded_year" in out || hasWebsiteInput) return cleanCompanyRecord(out);
 
   return out;
 }

@@ -13,7 +13,7 @@ export const REQUEST_STATUS_LABEL_AR: Record<RequestKind, string> = {
   done: "مكتمل",
   partial: "مكتمل جزئياً",
   running: "قيد التنفيذ",
-  refunded: "تعذر التنفيذ · رصيدك مسترد",
+  refunded: "تعذر التنفيذ · حجز مؤقت مُحرَّر",
 };
 
 const FINISHED = new Set(["done", "completed"]);
