@@ -147,7 +147,7 @@ describe("2. the month card no longer calls lifted holds a refund", () => {
   });
 
   it("the history labels a release row as a lifted hold, not a refund", () => {
-    expect(CREDIT_KIND_LABEL_AR.release).toBe("تحرير حجز مؤقت");
+    expect(CREDIT_KIND_LABEL_AR.release).toBe("حجز مؤقت مُحرَّر");
     expect(CREDIT_KIND_LABEL_AR.release).not.toContain("استرداد");
     expect(readFileSync("src/app/dashboard/topup/page.tsx", "utf8")).toContain('["refund", "حجز مُحرَّر"]');
   });

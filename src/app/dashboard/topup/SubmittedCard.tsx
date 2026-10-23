@@ -27,7 +27,7 @@ export default function SubmittedCard({
     [st === "approved" ? "النقاط المضافة" : "النقاط المتوقعة", pts === null ? "—" : pointsAr(pts), "rtl"],
     ["اسم المحوِّل", topup.senderName || "—", "rtl"],
     ["رقم الموبايل", topup.senderPhone || "—", "ltr"],
-    ["الرقم المرجعي", topup.reference, "ltr"],
+    ["نوع الطلب", "شحن عبر إنستاباي", "rtl"],
     ["الإيصال", topup.receiptFileId ? "مرفق" : "بدون إيصال", "rtl"],
     ["تاريخ الطلب", when, "rtl"],
   ];

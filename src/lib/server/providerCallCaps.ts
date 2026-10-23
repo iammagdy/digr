@@ -57,7 +57,7 @@ export function maxPagesForJob(targetMax: number, pageSize: number, kind: CapKin
 }
 
 /** `review_unavailable` and `review_low_yield` are set by the worker (not by evaluateProviderCallCap): the automatic relevance review could not run, or its budget is used up and almost nothing it saw was accepted. */
-export type CallCapReason = "page_cap" | "empty_pages" | "no_progress" | "review_unavailable" | "review_low_yield" | "review_budget";
+export type CallCapReason = "page_cap" | "empty_pages" | "no_progress" | "source_repeats" | "review_unavailable" | "review_low_yield" | "review_budget";
 
 /**
  * Decides whether to stop fetching after the page that was just processed.
@@ -73,7 +73,13 @@ export function evaluateProviderCallCap(input: {
   kind?: CapKind;
   /** Rows accepted by the whole job so far, this page included (every kind of job). */
   deliveredTotal?: number;
+  /** Every row this page returned was one the job already delivered: the source repeats itself (a Facebook page's three posts, read again as «page 2» and «page 3»). */
+  pageRepeatedOnly?: boolean;
 }): CallCapReason | null {
+  // A page made only of rows already delivered, right after a page that brought nothing new either: the source has no more new items. This is the same
+  // «two empty pages in a row» rule the small jobs already follow, held for every job size when the cause is a repeat (large jobs waited for three).
+  // ONE repeated page followed by new rows stays allowed: a source may repeat a page and then go on.
+  if (input.pageRepeatedOnly && input.acceptedThisPage === 0 && input.priorBatchUnits[input.priorBatchUnits.length - 1] === 0) return "source_repeats";
   const limit = isSmallJob(input.targetMax) ? MAX_CONSECUTIVE_EMPTY_PAGES_SMALL : MAX_CONSECUTIVE_EMPTY_PAGES_LARGE;
   let streak = input.acceptedThisPage === 0 ? 1 : 0;
   if (streak > 0) {
@@ -98,6 +104,7 @@ export function worstCaseJobProviderUsd(unitCostUsd: number, targetMax: number, 
 export const CALL_CAP_NOTE_AR: Record<CallCapReason, string> = {
   page_cap: "توقف الجمع عند الحد الأقصى لعدد الصفحات المسموح لهذا الطلب، مع تسليم السجلات المطابقة التي جُمعت فقط",
   no_progress: "توقف الجمع لأن عدة صفحات متتالية لم تُنتج أي سجل مطابق، ولم يُحتسب عليك إلا ما سُلّم",
+  source_repeats: "توقف الجمع لأن المصدر لا يحتوي على عناصر جديدة أخرى؛ أعاد السجلات نفسها التي سُلّمت، ولم يُحتسب عليك إلا ما سُلّم وحُرّر الباقي من الحجز المؤقت",
   empty_pages: "توقف الجمع لأن الصفحات الأخيرة لم تُنتج سجلات مطابقة جديدة، مع تسليم السجلات المطابقة التي جُمعت فقط",
   review_unavailable: "توقف الجمع لأن التحقق الآلي من ملاءمة السجلات تعذّر الآن، ولم يُحتسب عليك إلا ما سُلّم",
   review_budget: "توقف الجمع لأن التحقق الآلي بلغ الحد المسموح لهذا الطلب؛ وُضعت السجلات التي لم تُراجَع في ورقة «غير مراجَع» ولم يُحتسب عليك إلا ما سُلّم",

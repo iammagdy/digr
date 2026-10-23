@@ -521,6 +521,25 @@ export function socialSubjectText(text: string): string {
   return tokens.slice(0, end).join(" ");
 }
 
+/**
+ * The topic of a request as the plan shows it: the subject and the place the customer named («الترندات الصحية في مصر»), with no request verb, count,
+ * platform or task word in it. Empty when the request names no subject.
+ */
+export function cleanSocialTopicAr(text: string): string {
+  const subject = socialSubjectText(text).trim();
+  if (!subject) return "";
+  const place = socialLocationText(text).trim();
+  return place && !subject.includes(place) ? `${subject} في ${place}` : subject;
+}
+
+/** True when a search text carries words that are not a topic (a request verb, a count, the platform or a task word), so the plan shows the clean topic instead. */
+export function searchTextNeedsCleaning(query: unknown): boolean {
+  const text = String(query ?? "").trim();
+  if (!text) return true;
+  if (/[0-9٠-٩]/u.test(text) || text.length > 60) return true;
+  return /(?:^|\s)(?:عايز|عايزه|عاوز|اريد|أريد|محتاج|هات|اسحب|استخرج|بوست|بوستات|منشور|منشورات|تعليق|تعليقات|وتعليقاتهم|فيسبوك|الفيسبوك|facebook)(?=\s|$)/iu.test(text);
+}
+
 /** Customer-facing social subject; trending feeds are a task type rather than a keyword topic. */
 export function socialSubjectForDisplay(text: string, trending = false): string {
   return trending ? "الفيديوهات الرائجة" : socialSubjectText(text);

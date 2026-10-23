@@ -539,6 +539,12 @@ const TOPIC_DISCOVERY_VIDEOS = 20;
 /** Comments kept aside (non-Arabic, for an Arabic request) and the smallest read per adopted video. */
 const MAX_SPILL_ROWS = 40;
 const MIN_READ_PER_VIDEO = 20;
+/**
+ * A topic search reads comments from at least this many adopted videos when the source has them: with only one or two adopted videos on the first page of
+ * results, one video would carry the whole job (33 comments came from 2 videos). One more page of results is judged (never more than one, and only inside
+ * the chunk's own call limit) before any comment is read. The relevance judgement of the videos is the same one: nothing is adopted that it did not adopt.
+ */
+const MIN_DIVERSE_VIDEOS = 5;
 const SPILL_KEYS = [
   "comment_id", "cid", "id", "text", "comment", "comment_text", "content", "author", "author_name", "username", "likes", "like_count", "replies", "reply_count",
   "published_date", "published_at", "create_time", "date", "published_time", "publishedTime", "published_time_text", "time_ago", "timeAgo",
@@ -663,6 +669,27 @@ async function runCommentsChunk(
               if (second) {
                 selection = second;
                 if (cap.platform === "youtube" && windowed) windowHint = "recency_unsupported";
+              }
+            }
+          }
+        }
+        // Too few videos to spread the job over: ONE more page of results is judged, by the same video review, before any comment is read.
+        if (selection && selection.adopted.length > 0) {
+          const wantVideos = Math.min(MIN_DIVERSE_VIDEOS, askedVideos || MIN_DIVERSE_VIDEOS);
+          const haveVideos = () => selection!.adopted.length + (selection!.deferred?.length ?? 0);
+          if (haveVideos() < wantVideos && chain.nextCursor && clock.canCallAgain()) {
+            const more = await runChain(sources, { ...request, cursor: chain.nextCursor }, chain.sourceIndex, deps, clock, `${keyPrefix}_d4`);
+            absorb(more);
+            if (more.ok) {
+              const fresh = videosInWindowFirst(refsOfPage(cap.platform, more.rows, videoCount).filter((ref) => !judgedIdentities.has(refIdentity(ref))), params);
+              if (fresh.length > 0) {
+                const extra = await deps.videoSelector(fresh).catch(() => null);
+                if (extra) {
+                  selection = {
+                    adopted: [...selection.adopted, ...extra.adopted],
+                    deferred: [...(selection.deferred || []), ...(extra.deferred || [])],
+                  };
+                }
               }
             }
           }

@@ -4,9 +4,16 @@
  */
 const INTERNAL_ID = /\b(?:job_quote|job|quote|res|rel|chg|top|promo|adm|conv|msg|usr)_[A-Za-z0-9-]{4,}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|\b[0-9a-f]{20,}\b/gi;
 
-/** Product names in Latin letters become their Arabic spelling. */
+/**
+ * What the customer reads for one of their top-up requests. The stored reference («rcpt_…») is an internal id: it is never shown, the row
+ * carries this plain label instead.
+ */
+export const TOPUP_REQUEST_LABEL_AR = "طلب شحن عبر إنستاباي";
+
+/** Product names in Latin letters become their Arabic spelling; a released hold is always «حجز مؤقت مُحرَّر» (never «تحرير حجز» and never «استرداد»). */
 export function walletDisplayText(text: unknown): string {
   return String(text ?? "")
+    .replace(/تحرير\s+(?:ال)?حجز\s+المؤقت|تحرير\s+حجز\s+مؤقت/g, "حجز مؤقت مُحرَّر")
     .replace(/\s*\(\s*IPA\s*\)/g, "")
     .replace(/\bIPA\b/g, "الدفع اللحظي")
     .replace(/\bInsta\s?pay\b/gi, "إنستاباي")

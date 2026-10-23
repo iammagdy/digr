@@ -31,7 +31,7 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type Conta
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
-import { SOCIAL_CAPABILITIES } from "../../lib/socialSources";
+import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit";
 import { multiProviderEnabled } from "../../lib/multiProvider/flag";
 import { isChainSlug } from "../../lib/multiProvider/routes";
 import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
@@ -571,7 +571,7 @@ export interface ManagedQuoteResult {
   capacityConstrained?: boolean;
   pointsCapConstrained?: boolean;
   requestedVolumeMax?: number;
-  pointsCap?: number;
+  pointsCap?: number; fit?: { reason: FitReason; asked: number[]; perPost: number; noticeAr: string }; // a posts + comments plan reduced to fit: what each service asked for, why, and the one sentence that says so
   userBalance: number;
   expiresAt: string;
   createdAt: string;
@@ -617,7 +617,7 @@ export async function createAndSaveManagedQuote(
   let totalVolumeMax = 0;
   let totalRawPoints = 0;
   let effectiveUnitPrice = 0;
-  const requestedVolumeMax = plan.items.reduce((sum, item) => sum + Math.max(1, item.targetVolumeMax || 1), 0);
+  const askedVolumes = plan.items.map((item) => Math.max(1, item.targetVolumeMax || 1)); const requestedVolumeMax = askedVolumes.reduce((sum, volume) => sum + volume, 0);
   // The configured value may reduce the limit, but can never raise the settlement hard cap.
   const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);
 
@@ -850,6 +850,32 @@ export async function createAndSaveManagedQuote(
       totalVolumeMax += item.targetVolumeMax;
     }
   };
+  // A Facebook posts + their comments plan is fitted as ONE size (the comments per post the customer asked for are kept, the posts are the
+  // most that fit the service ceilings and the reserve under the cap), never by shrinking each service by its own ratio: that left 4 posts
+  // beside 44 comments and two different counts on one card.
+  let fit: ManagedQuoteResult["fit"];
+  const pairFit = peopleOnlyPlan ? null : fitPostsAndComments(plan.items as any, pointsCap, effectivePricing.safetyBuffer, askedVolumes);
+  if (pairFit?.reduced && pairFit.reason) {
+    pairFit.volumes.forEach((volume, index) => { plan.items[index].targetVolumeMax = volume; });
+    totalRawPoints = 0;
+    totalQuotedPoints = 0;
+    totalVolumeMax = 0;
+    for (const item of plan.items) {
+      item.rawPoints = item.targetVolumeMax * (item.unitPricePoints || 1);
+      item.itemReservation = Math.max(1, reserveForUnits(item.targetVolumeMax, item.unitPricePoints || 1, effectivePricing.safetyBuffer));
+      item.reservedPoints = item.itemReservation;
+      totalRawPoints += item.rawPoints;
+      totalQuotedPoints += item.itemReservation;
+      totalVolumeMax += item.targetVolumeMax;
+    }
+    pointsCapConstrained = pairFit.reason === "cap";
+    fit = {
+      reason: pairFit.reason,
+      asked: pairFit.asked,
+      perPost: pairFit.perPost,
+      noticeAr: fitNoticeAr({ items: plan.items, asked: pairFit.asked, reason: pairFit.reason, pointsCap, perPost: pairFit.perPost }),
+    };
+  }
   if (peopleOnlyPlan) {
     if (rawChargeTotal() > pointsCap) {
       pointsCapConstrained = true;
@@ -1079,6 +1105,7 @@ export async function createAndSaveManagedQuote(
     pointsCapConstrained,
     requestedVolumeMax,
     pointsCap,
+    ...(fit ? { fit } : {}),
     userBalance,
     expiresAt,
     createdAt: nowIso,

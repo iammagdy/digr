@@ -81,7 +81,7 @@ describe("the notices of a long job", () => {
       expect(honest.body).toContain("أبقِ الصفحة مفتوحة حتى تكتمل المهمة");
       expect(honest.body).not.toContain("عند عودتك");
       expect(honest.body).toContain("حتى ١٥٠٠ سجل");
-      expect(honest.body).toContain("سنخبرك عند اكتماله");
+      expect(honest.body).not.toContain("سنخبرك عند اكتماله");
       expect(honest.body).toContain("تعود نقاطك المحجوزة كاملة");
     }
   });

@@ -104,7 +104,9 @@ import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
-import { SOCIAL_TASK_PLATFORMS, detectSocialIntent, getMissingSocialTaskInputs, socialTaskQuestion } from "../../lib/socialTasks";
+import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
+import { planCountLineAr, planCountPartsAr } from "../../lib/planCounts";
+import { pairRoleOf } from "../../lib/planFit";
 import { videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { loadMeasuredTimings } from "../../lib/server/jobTimings";
@@ -3568,6 +3570,14 @@ export class ChatHandler {
               if (topic) params = { ...params, query: topic };
             }
           }
+          // The search text of a model-planned Facebook topic request stays the clean topic («الترندات الصحية في مصر»): a query that still carries the
+          // request's verbs, count or platform words is replaced by the subject and place the customer named.
+          if (socialIntent.platform === "facebook" && params && typeof params === "object" && "query" in params
+            && pairRoleOf({ capabilitySlug: capability?.slug || item.capabilitySlug, endpointId: capability?.tregEndpointId || item.endpointId }) === "posts"
+            && searchTextNeedsCleaning((params as any).query)) {
+            const cleanTopic = cleanSocialTopicAr(conversationRequestText);
+            if (cleanTopic) params = { ...params, query: cleanTopic };
+          }
           return capability
             ? {
                 ...item,
@@ -3852,6 +3862,15 @@ export class ChatHandler {
           tQuoteMs = Date.now() - tQuoteStart;
           quoteMs = tQuoteMs;
           quoteRpcMs += quoteMs;
+          // A Facebook posts + comments plan states what it holds in ONE line written by code (the model's own line may still carry the size that was asked).
+          if (managedQuote.items.length === 2 && managedQuote.items.some((it) => pairRoleOf(it as any) === "posts") && managedQuote.items.some((it) => pairRoleOf(it as any) === "comments")) {
+            const pairTopic = cleanSocialTopicAr(conversationRequestText);
+            if (pairTopic) {
+              const pairSummary = `جمع ${planCountPartsAr(managedQuote.items)} عن «${pairTopic}» على فيسبوك`;
+              managedQuote.summaryAr = pairSummary;
+              planOutput.summaryAr = pairSummary;
+            }
+          }
           // The goal line must not promise the volume that was asked once the job cap has cut it: it states what the plan holds.
           if (verifiedSocialDef && managedQuote.items.length === 1 && managedQuote.targetVolumeMax < plannedSocialVolume) {
             const fittedSummary = socialPlanSummaryAr(verifiedSocialDef, managedQuote.items[0].params || {}, managedQuote.targetVolumeMax, toArabicDigits, socialIntent.discover === "keyword" ? (missionByTopicSubject ?? conversationRequestText) : undefined);
@@ -3926,7 +3945,7 @@ export class ChatHandler {
           managedQuote.summaryAr = localizeSectorNamesInText(scrubPlaceholderPhrases(String(managedQuote.summaryAr || "")));
           // A social plan counts what it collects in its own words (comments, posts), not in «records».
           const planUnitWord = verifiedSocialDef?.kind === "comments" ? "تعليق" : verifiedSocialDef?.kind === "posts" ? "منشور" : "سجل";
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: ${managedQuote.items.length > 1 ? planCountLineAr(managedQuote.items, managedQuote.targetVolumeMax) : `حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}`}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           // The price of one record is on every plan: one service says it plainly, several say it for each.
           const priceLine = unitPriceLineAr(managedQuote.items, managedQuote.unitPricePoints, customerFacingCapabilityLabel);
           if (priceLine) planSummaryText += `\n- ${priceLine}`;
@@ -4004,7 +4023,12 @@ export class ChatHandler {
             planSummaryText += `\n- ${volumeLimitLine}`;
             planQuoteData.volumeLimitLineAr = volumeLimitLine;
           }
-          if (managedQuote.pointsCapConstrained && !defaultCapNow) {
+          // A posts + comments plan that was reduced to fit says so once, with both sizes: the same sentence on the card.
+          if (managedQuote.fit) {
+            planSummaryText += `\n- ${managedQuote.fit.noticeAr}`;
+            planQuoteData.volumeLimitLineAr = managedQuote.fit.noticeAr;
+          }
+          if (managedQuote.pointsCapConstrained && !defaultCapNow && !managedQuote.fit) {
             const requestedUnits = askedUnitsForText;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
             const capStatement = managedQuote.items.length === 1
@@ -4020,7 +4044,7 @@ export class ChatHandler {
             planSummaryText += capStatement
               ? `\n- ${capStatement}`
               : managedQuote.targetVolumeMax < requestedUnits
-              ? `\n- تم ضبط العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
+              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
               : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}.`;
           }
           // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.

@@ -16,7 +16,8 @@ import { missionStepsAr } from "@/lib/dependentSteps";
 import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
 import { balanceVerdictAr } from "@/lib/balanceVerdict";
 import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
-import { unitPriceLineAr } from "@/lib/planExplanation";
+import { priceVsHoldLineAr, unitPriceLineAr } from "@/lib/planExplanation";
+import { planCountLineAr, planCountPartsAr } from "@/lib/planCounts";
 import { customerFacingCapabilityLabel } from "@/lib/customerFacingRequestLabels";
 
 export interface PlanItem {
@@ -301,12 +302,16 @@ export default function PlanQuoteCard({
           </p>
         </div>
         <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
-          حتى {formatAr(quote.targetVolumeMax)} سجل<br />
+          {planCountLineAr(quote.items, quote.targetVolumeMax)}<br />
           {!locked && !expired && expiryShort(quote.expiresAt, now) && <>{expiryShort(quote.expiresAt, now)}</>}
         </p>
       </div>
 
-      <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
+      <p className="mb-0 mt-3 text-[12px] font-light leading-[1.9] text-ink2" data-testid="plan-price-vs-hold">
+        {priceVsHoldLineAr({ targetVolumeMax: quote.targetVolumeMax, unitPricePoints: quote.unitPricePoints, expectedPoints, quotedPoints: quote.quotedPoints, severalServices: (quote.items?.length ?? 1) > 1 })}
+      </p>
+
+      <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
         سقف هذا الطلب: حتى {pointsAr(quote.quotedPoints)}، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
       </p>
 
@@ -361,7 +366,7 @@ export default function PlanQuoteCard({
       ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
           {quote.targetVolumeMax < (quote.requestedVolumeMax || quote.targetVolumeMax)
-            ? `تم ضبط العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(quote.pointsCap || JOB_MAX_POINTS_CAP)}.`
+            ? `تم ضبط ${(quote.items?.length ?? 1) > 1 ? `الطلب إلى ${planCountPartsAr(quote.items)}` : `العدد من ${formatAr(quote.requestedVolumeMax || quote.targetVolumeMax)} إلى ${formatAr(quote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(quote.pointsCap || JOB_MAX_POINTS_CAP)}.`
             : `العدد المطلوب ${formatAr(quote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(quote.quotedPoints)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(quote.pointsCap || JOB_MAX_POINTS_CAP)}.`} يمكنك تقليل العدد أكثر إذا أردت.
         </p>
       ) : null}

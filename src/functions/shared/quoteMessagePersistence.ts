@@ -1,4 +1,6 @@
 import { pointsAr } from "../../lib/pointsFormat";
+import { toArabicDigits } from "../../lib/arabicDigits";
+import { planCountLineAr } from "../../lib/planCounts";
 type PersistEditedQuoteInput = {
   conversationId: string;
   userId: string;
@@ -7,6 +9,7 @@ type PersistEditedQuoteInput = {
     quoteId: string;
     targetVolumeMax: number;
     quotedPoints: number;
+    items?: ReadonlyArray<{ capabilitySlug?: string; endpointId?: string; targetVolumeMax?: number }>;
   };
 };
 
@@ -74,7 +77,7 @@ export async function persistEditedQuoteMessage(database: any, input: PersistEdi
     .from("messages")
     .update({
       quote: input.quote,
-      content_ar: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${input.quote.targetVolumeMax} سجل\n• التكلفة الإجمالية: ${pointsAr(Number(input.quote.quotedPoints), String)}`,
+      content_ar: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: ${planCountLineAr(input.quote.items, input.quote.targetVolumeMax)}\n• التكلفة الإجمالية: ${pointsAr(Number(input.quote.quotedPoints), toArabicDigits)}`,
     })
     .eq("id", matchingMessage.id)
     .eq("conversation_id", input.conversationId)

@@ -10,6 +10,7 @@ import type { VideoSelector } from "../../../../lib/server/socialAdapter";
 import { regionNameAr } from "../../../../lib/regionNames";
 import { videosCountAr } from "../../../../lib/channelNames";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
+import { settlementEventAr } from "../../../../lib/releaseWording";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
 import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
 import { companyActivityKeywords } from "../../../../lib/server/relevanceEvidence";
@@ -846,6 +847,8 @@ export async function POST(req: NextRequest) {
     // Cursors already used by this job, in the form the running set keeps them (see cursorKey).
     const seenProviderCursors = new Set<string>();
     if (currentCursor && currentCursor !== "completed") seenProviderCursors.add(cursorKey(currentCursor));
+    // Rows this page brought before the repeats of earlier pages are taken out: a page that is ALL repeats means the source has nothing new.
+    const rowsBeforeDedupe = rawRows.length;
     // What the earlier chunks left behind (row identities, cursors, rows per page), read from ONE running record, not rebuilt from every earlier chunk.
     const trackRunningSet = isCompanyCapability || Boolean(socialCapability) || isPeopleJob || isChainJob;
     let runningSet: RunningSet | null = currentStep === 0 ? emptyRunningSet() : null;
@@ -1511,6 +1514,7 @@ export async function POST(req: NextRequest) {
       pageSize: effectivePageSize,
       kind: socialCapability ? "feed" : "directory",
       deliveredTotal: newDeliveredUnits,
+      pageRepeatedOnly: trackRunningSet && currentStep > 0 && rowsBeforeDedupe > 0 && duplicateExcludedCount >= rowsBeforeDedupe,
     });
     // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
     const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : reviewStoppedForLowYield ? "review_low_yield" : reviewBudgetUsedUp ? "review_budget" : pageCapReason;
@@ -2259,6 +2263,8 @@ export async function POST(req: NextRequest) {
           const dateSentence = dateDropShortfallSentenceAr(receivedTotal > 0 ? receivedTotal : null, dateExcludedTotal);
           const reason = providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
+            : callCapReason === "source_repeats"
+            ? CALL_CAP_NOTE_AR.source_repeats
             : dateSentence
             ? `${dateSentence}${excluded > 0 ? ` واستُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.` : ""}`
             : excluded > 0
@@ -2282,7 +2288,7 @@ export async function POST(req: NextRequest) {
           await adminClient.from("job_events").insert({
             job_id: jobId,
             user_id: userId,
-            message: `تم خصم ${pointsAr(chargedPts, toArabicDigits)} وتحرير ${pointsAr(refundedPts, toArabicDigits)} متبقية تلقائياً لرصيدك.`,
+            message: settlementEventAr({ reservedPoints: chargedPts + refundedPts, chargedPoints: chargedPts }, toArabicDigits),
             units: finalRows.length,
             event_type: "info",
             created_at: completedAtIso,

@@ -9,7 +9,7 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { relativeDateDisplay } from "@/lib/relativeDateDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import type { LivePreviewSample } from "@/lib/liveJobView";
-import { customerResultColumnLabel, previewColumns } from "@/lib/customerResultColumns";
+import { customerResultColumnLabel, ensurePostLinkColumn, previewColumns } from "@/lib/customerResultColumns";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
 
@@ -223,7 +223,7 @@ export default function ResultsCanvas({
     orderedColumns = candidateColumns;
   }
 
-  const tableColumns = previewColumns(orderedColumns, isCompanyDataset).filter((key, index, shown) => {
+  const tableColumns = ensurePostLinkColumn(previewColumns(orderedColumns, isCompanyDataset), orderedColumns, profile?.sourcePlatform).filter((key, index, shown) => {
     const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key);
     return (
       shown.findIndex(
