@@ -7,9 +7,10 @@ import { rowIdentity } from "./retryReuse";
  *    then the normalised name;
  *  - person: the professional profile link, else name + company, else the record id;
  *  - a comment under a known video with a known author: the video, the author and the text (a word-for-word repeat is one comment);
- *  - everything else (posts, videos): the source's own id, as before.
+ *  - a post (X): its normalised text, so the same tweet text under different ids and links is one post (see `postDedupeIdentity`);
+ *  - everything else (videos): the source's own id, as before.
  */
-export type DedupeKind = "company" | "person" | "social";
+export type DedupeKind = "company" | "person" | "social" | "social_post";
 
 const compact = (value: unknown) => String(value ?? "").normalize("NFKC").toLocaleLowerCase().replace(/[\p{P}\p{S}\s]+/gu, "").trim();
 
@@ -53,8 +54,46 @@ export function socialDedupeIdentity(row: any): string | null {
   return rowIdentity(row);
 }
 
+const URL_IN_TEXT_RE = /(?:https?:\/\/|www\.)\S+/giu;
+/** Fewer letters than this say too little to call two posts the same («Wow»): such a post keeps the source's own id. */
+const MIN_POST_TEXT_LETTERS = 8;
+
+/** The text of a post as one comparable string: no links (each copy carries its own short link), marks, spaces, punctuation or emoji; Arabic letter variants unified. */
+export function normalizedPostText(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(URL_IN_TEXT_RE, " ")
+    .toLocaleLowerCase()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, "")
+    .replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+/** A short stable hash (cyrb53), so the running record keeps a few characters per post and not its whole text. */
+function hashText(text: string): string {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+/**
+ * Posts (X): the same text under another id or link is the same post, whatever account or time it came from, so it is delivered and charged
+ * once, the first time it appears. A post with too little text keeps the source's own id.
+ */
+export function postDedupeIdentity(row: any): string | null {
+  const text = normalizedPostText(row?.text ?? row?.full_text ?? row?.post_text ?? row?.tweet_text);
+  if ([...text].filter((ch) => /\p{L}/u.test(ch)).length >= MIN_POST_TEXT_LETTERS) return `post:${text.length}:${hashText(text)}`;
+  return rowIdentity(row);
+}
+
 export function dedupeIdentityFor(kind: DedupeKind): (row: any) => string | null {
-  return kind === "company" ? companyDedupeIdentity : kind === "person" ? personDedupeIdentity : socialDedupeIdentity;
+  return kind === "company" ? companyDedupeIdentity : kind === "person" ? personDedupeIdentity : kind === "social_post" ? postDedupeIdentity : socialDedupeIdentity;
 }
 
 /** Keeps the first occurrence of each identity; `seen` is shared across pages so later pages drop earlier rows. */

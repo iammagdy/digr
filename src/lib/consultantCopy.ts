@@ -136,7 +136,7 @@ const REPLIES_RE = /ردود|replies|وردود/iu;
 const SUBJECT_STOP = new Set([
   "في", "من", "على", "علي", "مع", "خلال", "آخر", "اخر", "لحد", "حتى", "الى", "إلى", "بين", "لمدة",
   // the next request words end the subject («… منتخب مصر كل تعليقات ٣ فيديوهات»): they are never part of it
-  "كل", "جميع", "تعليقات", "تعليق", "كومنتات", "فيديوهات", "فيديو", "منشورات", "بوستات", "تغريدات", "ورابط", "ورابطه",
+  "كل", "جميع", "تعليقات", "تعليق", "كومنتات", "فيديوهات", "فيديو", "منشورات", "بوستات", "تغريدات", "ورابط", "ورابطه", "ثم", "تعليقاتها", "وتعليقاتها",
 ]);
 
 /** «عن ماتش مصر والمغرب في …»: the phrase after «عن», cut at the first period/place/platform word. */
@@ -153,6 +153,16 @@ function subjectAfterAbout(text: string): string {
     if (kept.length >= 8) break;
   }
   return kept.join(" ");
+}
+
+/** The topic of a named channel's videos: the phrase after «عن», without any handle or link (the channel is not its own topic). Empty when none was said. */
+function channelSubjectAfterAbout(text: string): string {
+  const subject = subjectAfterAbout(text)
+    .split(/\s+/)
+    .filter((word) => word && !word.startsWith("@") && !/^https?:/i.test(word))
+    .join(" ")
+    .trim();
+  return /\p{L}/u.test(subject) ? subject : "";
 }
 
 export function understandMission(rawText: string, options: { today?: Date } = {}): MissionUnderstanding {
@@ -225,7 +235,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   const window = commentsFlow && asked.status === "missing" ? proposedDefaultWindow(options.today) : asked;
 
   const topicAnswer = channelsSkipped ? topicAnswerFromText(text) : null;
-  const subjectRaw = topicAnswer || (kind === "social_feed" || kind === "social_channel_topic" ? subjectAfterAbout(text) || socialSubjectText(text) : "");
+  // A named channel is scoped by the channel itself: its subject is only what the customer said after «عن», never the words left over once
+  // the platform and task words are removed (those are the request's own sentence and the card answers, and would filter every video out).
+  const subjectRaw = topicAnswer || (kind === "social_feed" ? subjectAfterAbout(text) || socialSubjectText(text) : kind === "social_channel_topic" ? channelSubjectAfterAbout(text) : "");
   const subject = subjectRaw || (intent.industry?.arabic ?? null) || null;
 
   const missing: MissingInput[] = [];

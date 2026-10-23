@@ -112,6 +112,7 @@ import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "../src/
 import { estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/socialSources";
 import { setRelativeDateClockForTesting } from "../src/lib/server/relativeDate";
 import ExcelJS from "exceljs";
+import { summarizeActivityCounts } from "../src/lib/activityCounts";
 import { UNREVIEWED_SHEET_NOTICE_AR } from "../src/functions/shared/fileGenerators";
 import { isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
 import { setReviewDailyGuardForTesting } from "../src/lib/server/reviewDailyGuard";
@@ -728,7 +729,8 @@ describe("worker: social jobs", () => {
     const TOPIC = "مباراة مصر والمغرب كأس العالم";
     const ordinary = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `p${i}`, text: `منشور ${i} عن ${TOPIC} في البطولة` }));
     // Doubtful rows that reach the review: no word of the topic, but they name the requested country (a row with neither is excluded by code first).
-    const reactions = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `r${i}`, text: i % 2 ? "اتفقت يا مصر" : "اتفقت تماما يا مصر", is_reply: true }));
+    // Each reaction has its own number: a tweet text repeated under other ids is one post (see postDedupeIdentity), and these rows are meant to be different posts.
+    const reactions = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `r${i}`, text: `${i % 2 ? "اتفقت يا مصر" : "اتفقت تماما يا مصر"} ${i}`, is_reply: true }));
     const EGYPT_TOPIC = { query: TOPIC, region: "EG" };
     const usage = (costUsd: number) => ({ inputTokens: 2000, outputTokens: 500, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
     const strict = (advisor: RowAdvisorFn) => { setStrictSocialReviewForTesting(true); setRowAdvisorForTesting(advisor); };
@@ -1371,6 +1373,70 @@ describe("worker: social jobs", () => {
       const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
       expect(String(release.args.p_error_message)).toBe("لم يجد البحث أي فيديو عن موضوعك على يوتيوب الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.");
       expect(String(release.args.p_error_message)).not.toContain("لم يُعثر على أي بيانات مطابقة");
+    });
+  });
+  describe("the same X text under different ids and links, and the counters of a long job", () => {
+    const secs = (iso: string) => Math.floor(Date.parse(iso) / 1000);
+
+    it("a tweet text repeated under other ids and links is delivered once and charged once, and the repeats are counted as removed", async () => {
+      resetDb("social-x-posts", { query: "كأس العالم" }, 20, 5);
+      const A = "منتخب مصر يستعد لمباراة كأس العالم القادمة";
+      const B = "جدول مباريات كأس العالم اليوم كاملا";
+      const rows = [
+        { tweet_id: "a1", text: A, url: "https://x.com/u1/status/a1" },
+        { tweet_id: "a2", text: `${A} https://t.co/aaa`, url: "https://x.com/u2/status/a2" },
+        { tweet_id: "a3", text: A, url: "https://x.com/u3/status/a3" },
+        { tweet_id: "b1", text: B, url: "https://x.com/u4/status/b1" },
+        { tweet_id: "b2", text: B, url: "https://x.com/u5/status/b2" },
+        ...Array.from({ length: 7 }, (_, i) => ({ tweet_id: `u${i}`, text: `منشور مختلف رقم ${i} عن كأس العالم والبطولة`, url: `https://x.com/z/status/u${i}` })),
+      ];
+      useSource(async () => ok({ ok: true, rows }, 600));
+
+      const { json } = await runAllChunks();
+
+      // 12 rows, 9 different texts: delivered and charged by the unique ones only (ceil(units x price), the settlement function unchanged)
+      expect(json.deliveredUnits).toBe(9);
+      expect(json.settle.charged_credits).toBe(9 * 5);
+      const csv = db.results.get(`user_1/${JOB}/result.csv`)!.toString("utf-8");
+      expect(csv.split("\n").filter((line) => line.includes(A))).toHaveLength(1);
+      expect(csv.split("\n").filter((line) => line.includes(B))).toHaveLength(1);
+      expect(db.events.some((event) => String(event.message).includes("مكرر أو مستبعد ٣"))).toBe(true);
+    });
+
+    it("a repeat on a LATER page is dropped too (the identities travel with the job)", async () => {
+      resetDb("social-x-posts", { query: "كأس العالم" }, 40, 5);
+      const TEXT = "تحليل مباراة كأس العالم بين مصر والمغرب";
+      let page = 0;
+      useSource(async () => {
+        page += 1;
+        const rows = page === 1
+          ? [{ tweet_id: "p1", text: TEXT }, ...Array.from({ length: 4 }, (_, i) => ({ tweet_id: `f${i}`, text: `منشور أول رقم ${i} عن كأس العالم` }))]
+          : [{ tweet_id: "p2", text: TEXT }, ...Array.from({ length: 4 }, (_, i) => ({ tweet_id: `g${i}`, text: `منشور ثان رقم ${i} عن كأس العالم` }))];
+        return ok({ ok: true, rows, next_cursor: page === 1 ? "c1" : undefined }, 600);
+      });
+      const { json } = await runAllChunks();
+      expect(json.deliveredUnits).toBe(9);
+      expect(json.settle.charged_credits).toBe(9 * 5);
+    });
+
+    it("the final message and the page lines carry the same running total of received rows, so the panel never shows less than the job did", async () => {
+      resetDb("social-x-posts", { query: "مباراة مصر والمغرب كأس العالم", dateFrom: "2026-06-11", dateTo: "2026-07-19" }, 50, 5);
+      let n = 0;
+      useSource(async () => {
+        n++;
+        return ok({ ok: true, rows: Array.from({ length: 20 }, (_, i) => ({ tweet_id: `later${n}_${i}`, text: `منشور ${n} ${i}`, createdUtc: secs("2026-10-12T07:00:00Z") + i * 3600 })), next_cursor: `cur_${n}` }, 600);
+      });
+
+      await runAllChunks();
+
+      const release = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
+      expect(String(release.args.p_error_message)).toContain("استلمنا ٦٠ سجلاً من المصدر");
+      const pageLines = db.events.map((event) => String(event.message)).filter((line) => /^الصفحة\s/u.test(line));
+      expect(pageLines).toHaveLength(3);
+      expect(pageLines[1]).toContain("المستلم حتى الآن ٤٠");
+      expect(pageLines[2]).toContain("المستلم حتى الآن ٦٠");
+      // the panel holds only the newest events: the last line alone still says 60
+      expect(summarizeActivityCounts([{ textAr: pageLines[2] }]).received).toBe(60);
     });
   });
 });

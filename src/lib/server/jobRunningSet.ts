@@ -27,6 +27,8 @@ export interface RunningSet {
   reviewFallback?: boolean;
   /** Rows that reached the relevance gate so far (absent for a record from before they were counted: the low-yield stop then does not apply). */
   rowsSeen?: number;
+  /** Rows the source returned so far, over every page (absent for a record from before they were counted: the line then shows this page only). */
+  received?: number;
 }
 
 export const runningSetKey = (jobId: string, step: number) => `${jobId}/seen_${step}.json`;
@@ -48,6 +50,7 @@ export interface StepSummary {
   reviewCallCount?: unknown;
   reviewFallback?: unknown;
   rowsSeen?: unknown;
+  receivedRows?: unknown;
 }
 
 export const emptyRunningSet = (): RunningSet => ({ step: -1, identities: [], cursors: [], batchUnits: [] });
@@ -75,7 +78,9 @@ export function extendRunningSet(previous: RunningSet, step: number, summary: St
   // The count stays unknown (absent) once any chunk before it did not record it: a stop rule built on a partial count would be wrong.
   const seenBefore = previous.step < 0 ? 0 : previous.rowsSeen;
   const rowsSeen = typeof seenBefore === "number" && typeof summary.rowsSeen === "number" && summary.rowsSeen >= 0 ? seenBefore + Math.floor(summary.rowsSeen) : undefined;
-  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}), ...(reviewCallCount > 0 ? { reviewCallCount } : {}), ...(reviewFallback ? { reviewFallback } : {}), ...(rowsSeen !== undefined ? { rowsSeen } : {}) };
+  const receivedBefore = previous.step < 0 ? 0 : previous.received;
+  const received = typeof receivedBefore === "number" && typeof summary.receivedRows === "number" && summary.receivedRows >= 0 ? receivedBefore + Math.floor(summary.receivedRows) : undefined;
+  return { step, identities: [...identities], cursors: [...cursors], batchUnits, ...(reviewUsd > 0 ? { reviewUsd } : {}), ...(reviewCallCount > 0 ? { reviewCallCount } : {}), ...(reviewFallback ? { reviewFallback } : {}), ...(rowsSeen !== undefined ? { rowsSeen } : {}), ...(received !== undefined ? { received } : {}) };
 }
 
 /**
@@ -90,7 +95,7 @@ export async function rebuildRunningSet(chunks: number, identityOf: (row: any) =
       const batchUnits = state.batchUnits.slice();
       batchUnits[step] = null;
       // An unreadable chunk leaves the count of rows seen unknown from here on (see extendRunningSet).
-      const { rowsSeen: _unknownFromHere, ...rest } = state;
+      const { rowsSeen: _unknownFromHere, received: _receivedUnknownFromHere, ...rest } = state;
       state = { ...rest, step, batchUnits };
       continue;
     }
@@ -108,7 +113,8 @@ function isRunningSet(value: any, step: number): value is RunningSet {
     && (value.reviewUsd === undefined || (typeof value.reviewUsd === "number" && Number.isFinite(value.reviewUsd)))
     && (value.reviewCallCount === undefined || (typeof value.reviewCallCount === "number" && Number.isFinite(value.reviewCallCount)))
     && (value.reviewFallback === undefined || typeof value.reviewFallback === "boolean")
-    && (value.rowsSeen === undefined || (typeof value.rowsSeen === "number" && Number.isFinite(value.rowsSeen)));
+    && (value.rowsSeen === undefined || (typeof value.rowsSeen === "number" && Number.isFinite(value.rowsSeen)))
+    && (value.received === undefined || (typeof value.received === "number" && Number.isFinite(value.received)));
 }
 
 interface Bucket {
