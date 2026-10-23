@@ -136,7 +136,7 @@ export default function AdminProvidersPage() {
     </section>
   );
 
-  const tabs: Array<[TabId, string]> = [["treg", "مزود البيانات"], ["firecrawl", "Firecrawl"], ["contextdev", "Context.dev"], ["anthropic", "مزود النموذج الذكي"]];
+  const tabs: Array<[TabId, string]> = [["treg", "TREG: مزود البيانات"], ["firecrawl", "Firecrawl: مزود قراءة المواقع"], ["contextdev", "Context.dev: مزود البحث والقراءة"], ["anthropic", "مزود النموذج الذكي"]];
 
   return (
     <div data-screen-label="Providers" className="flex flex-col gap-3.5" style={{ maxWidth: isMobile ? undefined : 860 }}>
