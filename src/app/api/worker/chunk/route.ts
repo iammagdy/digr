@@ -8,6 +8,7 @@ import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
 import { regionNameAr } from "../../../../lib/regionNames";
+import { videosCountAr } from "../../../../lib/channelNames";
 import { refundedPointsFromSettle } from "../../../../lib/server/settleRefund";
 import { getCompanyReviewer, hasInjectedCompanyReviewer, runCompanyReview, type CompanyReviewOutcome } from "../../../../lib/server/companyRelevanceReview";
 import { decideCompanyRow } from "../../../../lib/server/relevanceDecision";
@@ -81,6 +82,9 @@ import {
   readDecisionMakerSpendToDate,
   remainingDecisionMakerSpendUsd,
 } from "../../../../lib/server/decisionMakerSpend";
+
+/** What a customer can do when the videos of a topic search could not be confirmed. */
+const NO_CONFIRMED_VIDEO_HINT_AR = "جرّب إرسال رابط فيديو أو اسم قناة، أو اكتب موضوعاً أدق.";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -631,6 +635,8 @@ export async function POST(req: NextRequest) {
     let videoSelectionUsd = 0;
     let videoSelectionCalls = 0;
     let videoSelectionUnreviewed = false;
+    // Videos of the topic search the title review looked at (this job's selection calls), for the customer's line when none could be confirmed.
+    let videoSelectionReviewed = 0;
     // What the job's earlier chunks already spent on review (read from the running record, before the adapter runs: the video selection
     // happens inside it). An unreadable record counts as nothing here; the page-level review below reads it again and rebuilds it.
     let reviewUsdBeforeThisChunk = 0;
@@ -688,7 +694,8 @@ export async function POST(req: NextRequest) {
           videoSelectionUsd += outcome.costUsd;
           videoSelectionCalls += outcome.attempts.length;
           await logReviewFailures(outcome.attempts);
-          videoSelectionUnreviewed = [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
+          videoSelectionUnreviewed = videoSelectionUnreviewed || [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
+          videoSelectionReviewed += outcome.judgements.size;
           if (userId) {
             for (const attempt of outcome.attempts) {
               try {
@@ -709,11 +716,14 @@ export async function POST(req: NextRequest) {
             }
           }
           try {
-            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values()), units: effectiveDelivered, event_type: "info" });
+            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values(), { carried: true }), units: effectiveDelivered, event_type: "info" });
           } catch (evtErr: any) {
             console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
           }
-          return { adopted: judgeable.filter(({ i }) => outcome.judgements.get(`v${i}`)?.decision === "match").map(({ ref }) => ref), deferred };
+          // A video the review could not settle from its title is not dropped: its comments are read (after the adopted videos) and the page-level review
+          // judges the video with a few of them, fail closed. A video nobody could review at all (a failed call, the budget) is still left out.
+          const unsure = judgeable.filter(({ i }) => { const judgement = outcome.judgements.get(`v${i}`); return judgement?.decision === "uncertain" && judgement.by === "review"; }).map(({ ref }) => ref);
+          return { adopted: judgeable.filter(({ i }) => outcome.judgements.get(`v${i}`)?.decision === "match").map(({ ref }) => ref), deferred: [...unsure, ...deferred] };
         }
       : undefined;
 
@@ -1480,12 +1490,15 @@ export async function POST(req: NextRequest) {
         : receivedFromSource > 0
         ? socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
-          ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+          ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
           : `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
         ? videoSelectionUnreviewed
           ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
-          : `وجدنا فيديوهات عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+          : videoSelectionReviewed > 0
+            // Videos were found and reviewed but none could be confirmed (off the topic or not settled): nothing was read, nothing is charged.
+            ? `راجعنا ${videosCountAr(videoSelectionReviewed)} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : "تيك توك"} ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم. ${NO_CONFIRMED_VIDEO_HINT_AR}`
+            : `وجدنا فيديوهات عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : rawAdapterResult.emptyReason === "no_videos" && socialCapability
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
         ? `لم يجد البحث أي فيديو عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`

@@ -1,4 +1,4 @@
-import { regionEvidenceWords } from "./regionNames";
+import { regionEvidenceWords, regionNameAr } from "./regionNames";
 
 /**
  * The X search returns the LATEST posts first, so a window in the past ("the match in June") is only reachable
@@ -53,4 +53,19 @@ export function withXCountryTerms(query: string, region?: string | null): string
   const lower = text.toLowerCase();
   if (terms.some((word) => lower.includes(word.toLowerCase()))) return text;
   return `${text} (${terms.join(" OR ")})`;
+}
+
+/**
+ * A topic search for videos (YouTube, TikTok) has no country filter the sources apply reliably (YouTube's search takes none; TikTok's region filter is
+ * only on one source), so a request that names a country puts the country's Arabic name in the search text: `<query> مصر`. The stored plan query is
+ * never changed (the reviewers read it as the customer's topic); only the text sent to the source carries the word. A query that already names the
+ * country by one of its words, a request with no country and an unknown region are left as they are.
+ */
+export function withTopicCountryWord(query: string, region?: string | null): string {
+  const text = query.trim();
+  const name = regionNameAr(region);
+  if (!name || !text) return text;
+  const lower = text.toLowerCase();
+  if (regionEvidenceWords(region).some((word) => word.trim().length > 0 && lower.includes(word.toLowerCase()))) return text;
+  return `${text} ${name}`;
 }

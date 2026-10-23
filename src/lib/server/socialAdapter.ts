@@ -449,6 +449,26 @@ function discoveryRequest(mode: Exclude<SocialMode, "url">, params: Record<strin
   };
 }
 
+/** The identity of a video in a discovery list: its id, else its link, else its title. */
+const refIdentity = (ref: SocialRef): string => String(ref.id || ref.url || ref.title || "");
+
+/** A second search can differ from the first only by dropping the country word and the recency control, or by asking the other source first. */
+function canWiden(request: SocialSourceRequest, sources: SocialSource[]): boolean {
+  return Boolean(request.region) || Boolean(request.recency) || sources.length > 1;
+}
+
+/** The first search without the country (its name is no longer in the search text) and without the recency control. */
+function widerRequest(request: SocialSourceRequest): SocialSourceRequest {
+  const { region: _region, recency: _recency, ...rest } = request;
+  return rest;
+}
+
+/** The sources in the order of the second search: the ones after the source that answered first, then the rest. */
+function widerSources(sources: SocialSource[], answeredIndex: number): SocialSource[] {
+  const at = Math.max(0, Math.min(sources.length - 1, answeredIndex));
+  return [...sources.slice(at + 1), ...sources.slice(0, at + 1)];
+}
+
 /**
  * When the window needs a recency control, the sources that take one are asked first (the others cannot find videos of a past
  * period at all); the rest follow as fallbacks. Without a window the catalog order is kept. The order depends only on the
@@ -628,7 +648,24 @@ async function runCommentsChunk(
       let pv: number | undefined = state.pv;
       let adoptedCount = 0;
       if (topicSearch && deps.videoSelector) {
-        const selection = await deps.videoSelector(refs).catch(() => null);
+        const judgedIdentities = new Set(refs.map(refIdentity));
+        let selection = await deps.videoSelector(refs).catch(() => null);
+        // No video to read after the first search: ONE wider search before the job stops (the country word and the recency control are dropped
+        // and the other source answers first), inside this chunk's call limit. Videos the first search showed are not judged again.
+        if (selection && selection.adopted.length + (selection.deferred?.length ?? 0) === 0 && canWiden(request, sources) && clock.canCallAgain()) {
+          const again = await runChain(widerSources(sources, chain.sourceIndex), widerRequest(request), null, deps, clock, `${keyPrefix}_d3`);
+          absorb(again);
+          if (again.ok) {
+            const fresh = videosInWindowFirst(refsOfPage(cap.platform, again.rows, videoCount).filter((ref) => !judgedIdentities.has(refIdentity(ref))), params);
+            if (fresh.length > 0) {
+              const second = await deps.videoSelector(fresh).catch(() => null);
+              if (second) {
+                selection = second;
+                if (cap.platform === "youtube" && windowed) windowHint = "recency_unsupported";
+              }
+            }
+          }
+        }
         if (selection) {
           adoptedCount = selection.adopted.length;
           refs = [...selection.adopted, ...(selection.deferred || [])];
