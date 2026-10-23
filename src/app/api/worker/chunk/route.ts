@@ -33,6 +33,7 @@ import { fakeProviderActive } from "../../../../lib/server/fakeProviderMode";
 import { createFakeProviderAdapter } from "../../../../lib/server/fakeSocialSource";
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { resolveJobExecutionSpec } from "../../../../lib/server/jobExecutionSpec";
+import { commitTregSpend, tregCapabilityIdOf, tregCallStatusOf } from "../../../../lib/server/tregCallRecord";
 import { resultFileManifest } from "../../../../lib/server/resultFileManifest";
 import {
   buildRejectedSample,
@@ -757,6 +758,7 @@ export async function POST(req: NextRequest) {
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
+    const providerCallStartedAt = Date.now();
     const rawAdapterResult = providerBudgetStopped || !needsProvider ? noProviderCall : await activeAdapter({
       jobId,
       userId,
@@ -789,6 +791,7 @@ export async function POST(req: NextRequest) {
       console.warn(`[worker:provider_failed_after_delivery] jobId=${jobId} delivered=${effectiveDelivered}`);
     }
 
+    const providerCallDurationMs = Math.max(0, Date.now() - providerCallStartedAt);
     // The provider's real cost is committed whatever the outcome of the page.
     const actualCostUsd = Math.max(0, Number(rawAdapterResult.costUsd) || 0);
     const providerRows = adapterResult.ok ? (adapterResult.rows || []) : [];
@@ -1458,12 +1461,18 @@ export async function POST(req: NextRequest) {
 
     // 8. Commit provider spend with the real cost from the provider response
     if (spendCostId !== null) {
-      await adminClient.rpc("commit_provider_spend", {
-        p_cost_id: spendCostId,
-        p_actual_cost_usd: actualCostUsd,
+      // The same amount and units as always, now through the approved v2 function so the row also says what the call was (capability),
+      // how it ended (success / failed / empty) and how long it took; the old function records it when v2 is missing.
+      await commitTregSpend(adminClient, {
+        costId: spendCostId,
+        costUsd: actualCostUsd,
         // DM units are provider call attempts, preserving a conservative
         // per-job estimate from route caps across worker chunks.
-        p_units: isPeopleJob ? Number(rawAdapterResult.providerCallCount) || 0 : acceptedRows.length,
+        units: isPeopleJob ? Number(rawAdapterResult.providerCallCount) || 0 : acceptedRows.length,
+        capabilityId: tregCapabilityIdOf(spec),
+        status: tregCallStatusOf(rawAdapterResult),
+        durationMs: providerCallDurationMs,
+        jobId,
       });
     }
 

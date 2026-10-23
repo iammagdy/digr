@@ -1,6 +1,6 @@
-import { capabilityById } from "../../multiProvider/catalog";
 import { DATA_PROVIDER_IDS, type DataProviderId } from "../../multiProvider/types";
 import { selectAllRows } from "../selectAll";
+import { adminCapabilityLabelAr } from "../adminJobLabels";
 
 /**
  * The per-provider API call log of the admin tab. READ ONLY: it reads provider_costs and never writes (admin pages never write to money
@@ -82,7 +82,7 @@ function utcDayStart(date: Date = new Date()): string {
 }
 
 export function labelForCapability(id: unknown): string | null {
-  return typeof id === "string" && id ? capabilityById(id)?.labelAr ?? id : null;
+  return adminCapabilityLabelAr(id);
 }
 
 export async function readProviderCallLog(client: any, query: CallLogQuery, now: Date = new Date()): Promise<CallLogResult> {

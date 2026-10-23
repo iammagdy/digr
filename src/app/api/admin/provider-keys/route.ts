@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
+import { readActivityJobContext } from "@/lib/server/adminCallsLog";
+import { isDataProviderId } from "@/lib/server/multiProvider/callLog";
 import {
   MSG, PROVIDER_LABEL_AR, isProviderId, loadProviderTabState, replaceProviderKey, rollbackProviderKey,
   saveProviderKeySettings, validateSettingsInput,
@@ -16,8 +18,12 @@ export async function GET(req: NextRequest) {
   if (!isProviderId(provider)) return NextResponse.json({ error: "مزود غير معروف." }, { status: 400 });
   const refresh = req.nextUrl.searchParams.get("refresh") === "1";
   try {
-    const state = await loadProviderTabState({ client: createAdminClient() }, provider, { forceRefresh: refresh });
-    return NextResponse.json({ state }, { headers: { "Cache-Control": "no-store" } });
+    const client = createAdminClient();
+    const state = await loadProviderTabState({ client }, provider, { forceRefresh: refresh });
+    // The recent-activity rows of a data provider also say what each job is, who owns it (with the test-account flag) and where to open it.
+    // A separate list in the same order; the tab's own state is untouched.
+    const activityJobs = isDataProviderId(provider) ? await readActivityJobContext(client, provider) : [];
+    return NextResponse.json({ state, activityJobs }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return NextResponse.json({ error: "تعذر تحميل بيانات المزود الآن." }, { status: 500 });
   }

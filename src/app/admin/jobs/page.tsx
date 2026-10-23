@@ -20,10 +20,16 @@ export default function AdminJobsPage() {
   const [filter, setFilter] = useState("all");
   const [data, setData] = useState<Resp | null>(null);
   const [error, setError] = useState("");
+  // Opened from a call log: `?job=<id>` shows that one job.
+  const [oneJob, setOneJob] = useState("");
+  useEffect(() => {
+    try { setOneJob(new URLSearchParams(window.location.search).get("job") || ""); } catch { setOneJob(""); }
+  }, []);
 
   useEffect(() => {
-    adminFetch<Resp>(`/api/admin/jobs?status=${filter}`).then((r) => { setData(r); setError(""); }).catch((e) => setError(e.message));
-  }, [filter]);
+    const q = oneJob ? `&job=${encodeURIComponent(oneJob)}` : "";
+    adminFetch<Resp>(`/api/admin/jobs?status=${oneJob ? "all" : filter}${q}`).then((r) => { setData(r); setError(""); }).catch((e) => setError(e.message));
+  }, [filter, oneJob]);
 
   const stats = [
     { k: "مهام آخر ٣٠ يومًا", v: data ? formatAr(data.stats.last30) : "…", c: "var(--ink)" },
@@ -37,6 +43,12 @@ export default function AdminJobsPage() {
       <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,160px),1fr))" }}>
         {stats.map((s) => <div key={s.k} className="rounded-[18px] border border-ln bg-sf p-3.5"><p className="m-0 text-xs text-mut">{s.k}</p><p className="mb-0 mt-1.5 font-display text-[30px] leading-none" style={{ color: s.c }}>{s.v}</p></div>)}
       </div>
+      {oneJob && (
+        <p role="status" className="m-0 flex flex-wrap items-center gap-2 rounded-[14px] bg-sf2 px-3.5 py-3 text-[13px] text-ink" data-testid="one-job-banner">
+          <span>تعرض هذه الصفحة مهمة واحدة فقط (من سجل الاستدعاءات).</span>
+          <a href="/admin/jobs" className="font-semibold text-ink underline">عرض كل المهام</a>
+        </p>
+      )}
       <div className="no-scrollbar flex max-w-full gap-1 self-start overflow-x-auto rounded-[14px] bg-sf2 p-1" role="tablist">
         {TABS.map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={filter === id} onClick={() => setFilter(id)} className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-[10px] border-0 px-3 text-xs font-semibold" style={{ background: filter === id ? "var(--sf)" : "transparent", color: filter === id ? "var(--ink)" : "var(--mut)", boxShadow: filter === id ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>{label}</button>

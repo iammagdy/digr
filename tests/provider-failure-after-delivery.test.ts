@@ -158,7 +158,7 @@ describe("a provider page that fails after rows were delivered", () => {
     // ceil(2 matching rows x 3 points) = 6, never above the reserve (14)
     expect(last.json.settle).toMatchObject({ charged_credits: 6, reserved_credits: 14 });
     // the failed page's real provider cost is still committed, with no delivered units
-    const commits = db.rpcCalls.filter((c) => c.name === "commit_provider_spend");
+    const commits = db.rpcCalls.filter((c) => c.name === "commit_provider_spend" || c.name === "commit_provider_spend_v2");
     expect(commits).toHaveLength(2);
     expect(commits[1].args).toMatchObject({ p_actual_cost_usd: 0.0001, p_units: 0 });
   });

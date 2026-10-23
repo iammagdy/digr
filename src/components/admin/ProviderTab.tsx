@@ -7,6 +7,8 @@ import type { ProviderTabState } from "@/lib/server/providerKeyAdmin";
 import { agoAr, dateTimeAr, tint } from "./format";
 import { ProviderLimitsPanel } from "./ProviderLimitsPanel";
 import { ProviderCallLog } from "./ProviderCallLog";
+import { JobCell } from "./JobCell";
+import type { ActivityJobRow } from "@/lib/server/adminCallsLog";
 
 type Provider = "treg" | "anthropic" | "firecrawl" | "contextdev";
 /** The providers that collect data (the model provider has no call log of this kind). */
@@ -64,6 +66,7 @@ function Spinner() {
 
 export function ProviderTab({ provider, onChanged, children }: { provider: Provider; onChanged?: () => void; children?: ReactNode }) {
   const [state, setState] = useState<ProviderTabState | null>(null);
+  const [activityJobs, setActivityJobs] = useState<ActivityJobRow[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<"" | "refresh" | "replace" | "rollback" | "settings">("");
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -75,8 +78,9 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
   const load = useCallback(async (refresh: boolean) => {
     setBusy("refresh");
     try {
-      const r = await adminFetch<{ state: ProviderTabState }>(`/api/admin/provider-keys?provider=${provider}${refresh ? "&refresh=1" : ""}`);
+      const r = await adminFetch<{ state: ProviderTabState; activityJobs?: ActivityJobRow[] }>(`/api/admin/provider-keys?provider=${provider}${refresh ? "&refresh=1" : ""}`);
       setState(r.state);
+      setActivityJobs(Array.isArray(r.activityJobs) ? r.activityJobs : []);
       setThreshold(String(r.state.settings.lowBalanceThresholdUsd));
       setOrgId(r.state.settings.tregOrgId ?? "");
       setError("");
@@ -241,7 +245,7 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
               <thead><tr className="text-mut">{(isDataProvider(provider) ? ["الوقت", "المهمة", "الوحدات", "التكلفة"] : ["الوقت", "السبب", "التوكنات", "التكلفة"]).map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
               <tbody>
                 {state.activity.map((r, i) => (
-                  <tr key={i} className="text-ink"><td className="border-b border-ln py-2">{agoAr(r.at)}</td><td className="break-words border-b border-ln py-2">{r.label}</td><td className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
+                  <tr key={i} className="text-ink"><td className="border-b border-ln py-2">{agoAr(r.at)}</td><td className="break-words border-b border-ln py-2">{isDataProvider(provider) && activityJobs[i]?.jobId && activityJobs[i].at === r.at ? <JobCell info={activityJobs[i]} /> : r.label}</td><td className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
                 ))}
               </tbody>
             </table>

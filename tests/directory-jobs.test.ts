@@ -35,7 +35,7 @@ vi.mock("../src/lib/supabase/server", () => ({
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.endpointId, unit_price: db.unitPrice }, error: null };
       if (name === "reserve_provider_spend_atomic") return { data: { allowed: true, cost_id: 11 }, error: null };
-      if (name === "commit_provider_spend") { db.costs.push({ provider: "treg", job_id: JOB_ID_FOR_COSTS(), cost_usd: Number(args.p_actual_cost_usd) || 0 }); return { data: { success: true }, error: null }; }
+      if (name === "commit_provider_spend" || name === "commit_provider_spend_v2") { db.costs.push({ provider: "treg", job_id: JOB_ID_FOR_COSTS(), cost_usd: Number(args.p_actual_cost_usd) || 0 }); return { data: { success: true }, error: null }; }
       if (name === "complete_chunk") {
         db.step += 1; db.deliveredUnits = args.p_new_delivered_units; db.cursor = args.p_new_cursor;
         const job = db.jobs.find((row) => row.id === args.p_job_id);
