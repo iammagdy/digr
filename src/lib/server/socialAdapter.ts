@@ -67,6 +67,8 @@ export interface VideoSelection {
   adopted: SocialRef[];
   /** Videos with no text of their own to judge (no title, no description): read after the adopted ones and judged by the worker with a few of their comments. */
   deferred?: SocialRef[];
+  /** The job's review budget ran out while this list was judged: videos left unreviewed are not adopted, and a paged topic search stops searching (nothing more could be reviewed). */
+  budgetStop?: boolean;
 }
 export type VideoSelector = (refs: SocialRef[]) => Promise<VideoSelection | null>;
 
@@ -86,6 +88,41 @@ const MAX_VIDEOS = MAX_VIDEOS_PER_JOB;
 const MAX_COMMENTS_PER_VIDEO = MAX_PER_VIDEO;
 /** Rows a mission chunk may return: whole videos are finished inside a chunk where possible, so a source that cannot page is never truncated. */
 const MISSION_ROWS_PER_CHUNK = 500;
+/**
+ * A paged topic search (Facebook) never reads more than this many pages of search results in one job, never stops looking before this many pages in a row brought no adopted post,
+ * and keeps the identity of this many latest posts in the chunk cursor. 150 pages is 300 posts at one adopted post in three pages of 6: the most a 300-post job can need, and the
+ * bound on what the search can cost (150 calls at 0.02952 USD = 4.43 USD, against the 35 USD the full job is charged).
+ */
+const PAGED_MAX_DISCOVERY_PAGES = 150;
+/**
+ * The posts of a paged search are judged in LISTS, not page by page: a search page lists about 6 posts, and one review call costs about the same for 6 posts as for 50 (the model
+ * is paid for its instructions as much as for the titles), so judging page by page would pay for 100 calls where 12 do. Pages are collected until this many posts wait (fewer when
+ * fewer are still wanted: twice the posts missing), then the whole list goes to the judge once.
+ */
+const PAGED_JUDGE_BATCH = 50;
+const PAGED_MIN_JUDGE_BATCH = 6;
+/** What a waiting post keeps in the chunk cursor: its link, a shortened text, nothing else. */
+const compactPending = (ref: SocialRef): SocialRef => ({ ...(ref.url ? { url: ref.url } : {}), ...(ref.id ? { id: ref.id } : {}), ...(ref.title ? { title: ref.title.slice(0, 120) } : {}), ...(typeof ref.publishedAtMs === "number" ? { publishedAtMs: ref.publishedAtMs } : {}) });
+/**
+ * A search that finds no post about the topic stops by itself. Posts are counted, not pages: the first list judged is a short probe (12 posts, two pages), and the search ends after
+ * 36 listed posts without one adopted (6 pages, 0.18 USD at the first source's price); once a post has been adopted the search ends after 50 more in a row without one (one full list,
+ * 9 pages). Nothing is charged to the customer for a search that found nothing: these bounds are what such a job costs the platform.
+ */
+const PAGED_PROBE_POSTS = 12;
+const PAGED_BARREN_POSTS_BEFORE_FIRST = 36;
+const PAGED_BARREN_POSTS_AFTER_FIRST = 50;
+const PAGED_MAX_REPEAT_PAGES = 2;
+const PAGED_SEEN_POSTS_KEPT = 300;
+
+/** A short stable identity of a post for the list of posts already seen (FNV-1a, 8 hex digits): small enough to travel in the chunk cursor. */
+function shortIdentity(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
 
 interface SocialState {
   /** Stage: d = discovering videos, c = collecting comments. */
@@ -112,6 +149,15 @@ interface SocialState {
   ad?: number;
   /** Non-Arabic comments kept aside for an Arabic request: delivered only if the volume cannot be filled otherwise. */
   sp?: Record<string, any>[];
+  /** Paged topic search (a service with `pagedDiscovery`): the source that gave `dc`, discovery pages read, posts adopted so far, pages in a row with no adopted post, pages in a row that only repeated posts already seen, and a short identity of the latest posts seen. */
+  ds?: number | null;
+  pg?: number;
+  pp?: number;
+  np?: number;
+  rp?: number;
+  sk?: string[];
+  /** Paged topic search: the posts listed by earlier pages that wait to be judged as one list. */
+  pq?: SocialRef[];
 }
 
 function encodeState(state: SocialState): string {
@@ -581,11 +627,15 @@ async function runCommentsChunk(
   }
   const commentSources = cap.comments || [];
   const target = Math.max(1, input.targetVolumeMax || wanted);
-  const askedPerVideo = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : SOCIAL_COMMENTS_PER_VIDEO;
-  const perVideo = mode === "url" ? Math.min(MAX_COMMENTS_PER_VIDEO, target) : Math.min(MAX_COMMENTS_PER_VIDEO, askedPerVideo, target);
   // A topic search (videos found by a keyword): the videos are judged first, the comments of adopted videos are read deeply, and the
   // comments themselves are filtered for usefulness. A named video, a channel or the trending list keep the plain reading.
   const topicSearch = mode === "query" && String(params.query || "").trim() !== "";
+  // A service with paged discovery (Facebook posts of a topic) keeps searching page after page until the posts wanted are adopted; the others judge one page of videos.
+  const pagedTopic = topicSearch && Boolean(cap.pagedDiscovery);
+  const askedPerVideo = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : pagedTopic ? cap.minPerVideo ?? SOCIAL_COMMENTS_PER_VIDEO : SOCIAL_COMMENTS_PER_VIDEO;
+  const perVideo = mode === "url" ? Math.min(MAX_COMMENTS_PER_VIDEO, target) : Math.min(MAX_COMMENTS_PER_VIDEO, askedPerVideo, target);
+  // Posts a paged job may adopt: the number the customer asked for, else twice what the comments wanted need (posts can give fewer comments than asked), never above the service's ceiling.
+  const postAllowance = pagedTopic ? Math.min(cap.maxVideos ?? MAX_VIDEOS, Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : Math.ceil(target / perVideo) * 2) : 0;
   const arabicFirst = topicSearch && requestWantsArabicComments(params);
   const perVideoStated = Number(params.perVideo) > 0;
 
@@ -620,6 +670,73 @@ async function runCommentsChunk(
   while (countedRows() < wanted && clock.canCallAgain()) {
     if (state.ph === "d") {
       if (mode === "url") break;
+      if (pagedTopic) {
+        const postsSoFar: number = state.pp ?? 0;
+        const pageNumber: number = state.pg ?? 0;
+        // The posts wanted are adopted (or the pages allowed are read): the job ends here with what its posts gave.
+        if (postsSoFar >= postAllowance || pageNumber >= PAGED_MAX_DISCOVERY_PAGES) return withHint(success(flushSpill(), null, totals));
+        const sources = cap.discover[mode] || [];
+        // The page asks for twice the posts still wanted (about half of the posts found are about the topic), at most one page of the widest source.
+        const request = discoveryRequest(mode, params, Math.min(20, Math.max(1, (postAllowance - postsSoFar) * 2)), state.dc ?? null, deps.now());
+        const chain = await runChain(sources, request, state.dc ? state.ds ?? null : null, deps, clock, `${keyPrefix}_d`);
+        absorb(chain);
+        if (!chain.ok) {
+          // The comments this chunk already read are kept; the next chunk asks for this page again. With none, the failure ends the job (the worker keeps what earlier chunks delivered).
+          if (rows.length > 0) return withHint(success(rows, encodeState(state), totals));
+          return failure({ ...totals, httpStatus: chain.httpStatus, errorCode: chain.errorCode, errorMessageAr: chain.errorMessageAr });
+        }
+        if (pageNumber === 0 && chain.rows.length === 0) return { ...success([], null, totals), emptyReason: "no_videos" };
+        const pageRefs = videosInWindowFirst(refsOfPage(cap.platform, chain.rows, 20), params);
+        if (pageNumber === 0 && chain.rows.length > 0 && pageRefs.length === 0) {
+          return failure(totals, "تعذر تحديد روابط المنشورات من نتائج البحث؛ لم يُحتسب أي خصم.");
+        }
+        const known: Set<string> = new Set(state.sk || []);
+        const fresh: SocialRef[] = pageRefs.filter((ref: SocialRef) => !known.has(shortIdentity(refIdentity(ref))));
+        const seenNow: string[] = [...(state.sk || []), ...fresh.map((ref: SocialRef) => shortIdentity(refIdentity(ref)))].slice(-PAGED_SEEN_POSTS_KEPT);
+        // A page made only of posts already seen: the source repeats itself. Two such pages in a row (or a page with no way to go on) end the search.
+        const repeats: number = pageRefs.length > 0 && fresh.length === 0 ? (state.rp ?? 0) + 1 : 0;
+        const goOn = Boolean(chain.nextCursor) && chain.rows.length > 0 && repeats < PAGED_MAX_REPEAT_PAGES && pageNumber + 1 < PAGED_MAX_DISCOVERY_PAGES;
+        const pending: SocialRef[] = [...(state.pq || []), ...fresh.map(compactPending)];
+        // Posts are judged as a list: another page is read first while fewer posts wait than one review list holds (and more pages exist).
+        const listWanted = Math.min(postsSoFar === 0 ? PAGED_PROBE_POSTS : PAGED_JUDGE_BATCH, Math.max(PAGED_MIN_JUDGE_BATCH, (postAllowance - postsSoFar) * 2));
+        if (goOn && pending.length < listWanted) {
+          state = { ph: "d", dc: chain.nextCursor, ds: chain.sourceIndex, pg: pageNumber + 1, pp: postsSoFar, np: state.np ?? 0, rp: repeats, sk: seenNow, ...(pending.length ? { pq: pending } : {}), ...(spill.length ? { sp: spill } : {}) };
+          continue;
+        }
+        // The posts about the topic are chosen BEFORE any comment is read; only adopted posts are read (a post the review could not settle is not read, and a failed selection adopts nothing).
+        // While the search goes on the list is exactly one review list of posts (the posts of the last page that do not fit wait for the next list: two calls of 25 are cheaper than three of 25, 25 and 4).
+        const judged: SocialRef[] = goOn ? pending.slice(0, listWanted) : pending;
+        const carried: SocialRef[] = goOn ? pending.slice(listWanted) : [];
+        let adopted: SocialRef[] = judged;
+        let adoptedCount = 0;
+        let budgetStop = false;
+        if (deps.videoSelector && judged.length > 0) {
+          const selection = await deps.videoSelector(judged).catch(() => null);
+          adopted = selection ? selection.adopted : [];
+          budgetStop = Boolean(selection?.budgetStop);
+        }
+        adopted = adopted.slice(0, Math.max(0, postAllowance - postsSoFar));
+        if (deps.videoSelector) adoptedCount = adopted.length;
+        const searchOn = goOn && !budgetStop;
+        if (adopted.length === 0) {
+          // posts judged in a row without one adopted (not pages: a list is several pages)
+          const barren: number = (state.np ?? 0) + judged.length;
+          if (!searchOn || barren >= (postsSoFar === 0 ? PAGED_BARREN_POSTS_BEFORE_FIRST : PAGED_BARREN_POSTS_AFTER_FIRST)) {
+            if (postsSoFar === 0 && rows.length === 0 && (input.deliveredSoFar || 0) === 0) return withHint({ ...success([], null, totals), emptyReason: "no_relevant_videos" });
+            return withHint(success(flushSpill(), null, totals));
+          }
+          state = { ph: "d", dc: chain.nextCursor, ds: chain.sourceIndex, pg: pageNumber + 1, pp: postsSoFar, np: barren, rp: repeats, sk: seenNow, ...(carried.length ? { pq: carried } : {}), ...(spill.length ? { sp: spill } : {}) };
+          continue;
+        }
+        state = {
+          ph: "c", refs: adopted, i: 0, cc: null, n: 0, si: null, pv: perVideo,
+          ...(adoptedCount ? { ad: adoptedCount } : {}),
+          dc: searchOn ? chain.nextCursor : null, ds: chain.sourceIndex, pg: pageNumber + 1, pp: postsSoFar + adopted.length, np: 0, rp: repeats, sk: seenNow,
+          ...(carried.length && searchOn ? { pq: carried } : {}),
+          ...(spill.length ? { sp: spill } : {}),
+        };
+        continue;
+      }
       const askedVideos = Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0;
       const wantedVideos = Math.ceil(target / perVideo) + 2;
       const videoCount = Math.min(MAX_VIDEOS, askedVideos || (topicSearch ? Math.max(TOPIC_DISCOVERY_VIDEOS, wantedVideos) : wantedVideos));
@@ -712,6 +829,11 @@ async function runCommentsChunk(
     const refs: SocialRef[] = state.refs || [];
     const index: number = state.i ?? 0;
     if (index >= refs.length) {
+      // The adopted posts of this page are read: a paged search asks for the next page while posts are still wanted.
+      if (pagedTopic && state.dc && (state.pp ?? 0) < postAllowance) {
+        state = { ph: "d", dc: state.dc, ds: state.ds, pg: state.pg, pp: state.pp, np: state.np, rp: state.rp, sk: state.sk, ...(state.pq?.length ? { pq: state.pq } : {}), ...(spill.length ? { sp: spill } : {}) };
+        continue;
+      }
       return withHint(success(flushSpill(), null, totals));
     }
     const ref: SocialRef = refs[index];
@@ -742,9 +864,13 @@ async function runCommentsChunk(
     const pageRows: Record<string, any>[] = [];
     let consumed = 0;
     let uniqueConsumed = 0;
+    // A paged topic search takes at most `readPerVideo` usable comments from a post (the price is built on that many) and reads a post with ONE call.
+    let postUsable = 0;
+    let postQuotaReached = false;
     for (const row of dated) {
       // A topic search stops at the chunk's share: the rest of the list stays for the next chunk (read again from where this one stopped).
       if (topicSearch && countedRows() + credited(pageRows) >= wanted) break;
+      if (pagedTopic && postUsable >= readPerVideo) { postQuotaReached = true; break; }
       consumed += 1;
       if (!topicSearch) { pageRows.push(row); continue; }
       const identity = rowKey(row);
@@ -763,13 +889,14 @@ async function runCommentsChunk(
         continue;
       }
       pageRows.push(tagged);
+      postUsable += 1;
     }
     for (const row of pageRows) rows.push(row);
-    const stoppedEarly = topicSearch && consumed < dated.length;
+    const stoppedEarly = topicSearch && consumed < dated.length && !postQuotaReached;
     const taken: number = (state.n ?? 0) + (topicSearch ? uniqueConsumed : fresh.length);
     // A video whose comments are all outside the window is not read further: its other pages would be outside too.
     const pageOutsideWindow: boolean = windowed && pageRows.length > 0 && insideWindowCount(pageRows, params) === 0;
-    const moreOnThisVideo: boolean = Boolean(chain.nextCursor) && taken < readPerVideo && dated.length > 0 && !pageOutsideWindow;
+    const moreOnThisVideo: boolean = !pagedTopic && Boolean(chain.nextCursor) && taken < readPerVideo && dated.length > 0 && !pageOutsideWindow;
     state = stoppedEarly
       ? { ...state, cc: state.cc ?? null, n: taken, po: startAt + consumed, si: chain.sourceIndex }
       : moreOnThisVideo
@@ -777,7 +904,8 @@ async function runCommentsChunk(
         : { ...state, i: index + 1, cc: null, n: 0, po: 0, si: null };
   }
 
-  const finished = state.ph === "c" && (state.i ?? 0) >= (state.refs?.length ?? 0) && state.refs !== undefined;
+  const moreToDiscover = pagedTopic && Boolean(state.dc) && (state.pp ?? 0) < postAllowance;
+  const finished = state.ph === "c" && (state.i ?? 0) >= (state.refs?.length ?? 0) && state.refs !== undefined && !moreToDiscover;
 
   /** Non-Arabic comments set aside for an Arabic request come last, and only to fill what the Arabic ones could not. */
   function flushSpill(): Record<string, any>[] {

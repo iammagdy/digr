@@ -53,6 +53,16 @@ describe.skipIf(!replicaAvailable())("the 25,000-point cap proposal on the repli
     expect(caps.find((row) => row.proname === "settle_people_job_atomic")?.people_hard_cap).toBe("600");
   });
 
+  it("BASELINE for the Facebook keyword mission (12.925 points a comment): its 1,500-comment job (reserve 22,296) is refused at the cap of 600; a 40-comment job (reserve 595) is accepted", async () => {
+    const user = await seedUser(db.pool, 100_000);
+    const unit = 12.925;
+    expect(exactReserve(1500, 12_925)).toBe(22_296);
+    expect(exactReserve(40, 12_925)).toBe(595);
+    await expect(createQuote(db.pool, user, { unit, volume: 1500, reserve: 22_296 })).rejects.toThrow(/between 0 and 600 points/);
+    const small = await startJob(db.pool, user, { unit, volume: 40, reserve: 595 });
+    expect(small.accepted.success).toBe(true);
+  });
+
   it("applies in order 1, 2, 3, 4: settlement first (it only lifts an upper limit), the settings number, the quote writer last (it opens the gate)", async () => {
     const before = await ledgerRows();
     await db.exec(file(`${STEP.settle}.sql`));
@@ -110,6 +120,74 @@ describe.skipIf(!replicaAvailable())("the 25,000-point cap proposal on the repli
     expect(ledger.net).toBe(-18_900);
     expect(await balanceOf(db.pool, user)).toBe(before - 18_900);
     expect(ledger.counts).toEqual({ reserve: 1, release: 1, charge: 1 });
+  });
+
+  describe("the Facebook keyword mission as ONE item (12.925 points a comment, 300 posts x 5 comments = 1,500 comments, reserve 22,296)", () => {
+    const UNIT_THOUSANDTHS = 12_925;
+    const start = async (volume: number, balance = 30_000) => {
+      const user = await seedUser(db.pool, balance);
+      const before = await balanceOf(db.pool, user);
+      const reserve = exactReserve(volume, UNIT_THOUSANDTHS);
+      const started = await startJob(db.pool, user, { unit: 12.925, volume, reserve });
+      return { user, before, reserve, started };
+    };
+
+    it("a quote of ONE item with the real unit price is accepted (the single-item rule holds), the hold is 22,296, and a full delivery charges 19,388", async () => {
+      const { user, before, reserve, started } = await start(1500);
+      expect(reserve).toBe(22_296);
+      expect(started.accepted.success).toBe(true);
+      expect(await balanceOf(db.pool, user)).toBe(before - reserve);
+      await deliver(db.pool, started.jobId!, 1500, 25, true);
+      const settled = await settle(db.pool, started.jobId!, NEW_CAP);
+      expect(Number(settled.charged_credits)).toBe(exactCharge(1500, UNIT_THOUSANDTHS));
+      expect(Number(settled.charged_credits)).toBe(19_388);
+      expect(Number(settled.charged_credits)).toBeLessThanOrEqual(reserve);
+      const ledger = await ledgerOf(db.pool, started.jobId!);
+      expect(ledger.counts).toEqual({ reserve: 1, release: 1, charge: 1 });
+      expect(ledger.net).toBe(-19_388);
+      expect(await balanceOf(db.pool, user)).toBe(before - 19_388);
+    });
+
+    it("a partial delivery (the job stopped: a stall, the review budget, a source that ran dry) charges ceil(delivered x 12.925) and releases the rest; settling twice charges once", async () => {
+      const { user, before, reserve, started } = await start(1500);
+      await deliver(db.pool, started.jobId!, 733, 25, true);
+      const settled = await settle(db.pool, started.jobId!, NEW_CAP);
+      expect(Number(settled.charged_credits)).toBe(exactCharge(733, UNIT_THOUSANDTHS));
+      expect(Number(settled.charged_credits)).toBe(9_475); // 733 x 12.925 = 9,474.025
+      const again = await settle(db.pool, started.jobId!, NEW_CAP);
+      expect(Number(again.charged_credits)).toBe(9_475);
+      const ledger = await ledgerOf(db.pool, started.jobId!);
+      expect(ledger.counts).toEqual({ reserve: 1, release: 1, charge: 1 });
+      expect(await balanceOf(db.pool, user)).toBe(before - 9_475);
+      expect(reserve - 9_475).toBeGreaterThan(0);
+    });
+
+    it("nothing delivered (no post about the topic): the whole hold goes back and nothing is charged", async () => {
+      const { user, before, started } = await start(1500);
+      await deliver(db.pool, started.jobId!, 0, 25, true);
+      const settled = await settle(db.pool, started.jobId!, NEW_CAP);
+      expect(Number(settled.charged_credits ?? 0)).toBe(0);
+      expect(await balanceOf(db.pool, user)).toBe(before);
+    });
+
+    it("the charge never exceeds the reserve at any delivered count of the job (every count from 0 to 1,500 in steps, exact arithmetic)", () => {
+      const reserve = exactReserve(1500, UNIT_THOUSANDTHS);
+      for (let delivered = 0; delivered <= 1500; delivered += 1) expect(exactCharge(delivered, UNIT_THOUSANDTHS)).toBeLessThanOrEqual(reserve);
+    });
+
+    it("TWO items are still refused by the database (single_item_quote_required): the mission exists so that one item is enough", async () => {
+      const user = await seedUser(db.pool, 30_000);
+      const created = await createQuote(db.pool, user, { unit: 8, volume: 300, reserve: 2760 });
+      expect(created.result.success).toBe(true);
+      const two = await db.pool.query(
+        "update public.plans_quotes set items = items || items where id = $1 returning jsonb_array_length(items) as n",
+        [created.quoteId],
+      );
+      expect(Number(two.rows[0].n)).toBe(2);
+      const accepted = await acceptQuote(db.pool, user, created.quoteId);
+      expect(accepted.success).toBe(false);
+      expect(accepted.error).toBe("single_item_quote_required");
+    });
   });
 
   it("settlement with NO cap argument now uses the new default: the same job is not cut at 600 (the old default would have charged 600)", async () => {

@@ -1,4 +1,24 @@
 {
+ "anyapi.facebook.search_posts": {
+  "capturedAt": "2026-10-23",
+  "costUsd": 0.06606,
+  "method": "POST",
+  "okRate": null,
+  "p50Ms": null,
+  "params": [
+   "endDate",
+   "limit",
+   "location",
+   "query",
+   "startDate"
+  ],
+  "required": [
+   "query"
+  ],
+  "samples": null,
+  "requiresSession": false,
+  "sessionNote": "none"
+ },
  "anyapi.facebook.user.posts": {
   "capturedAt": "2026-10-17",
   "costUsd": 0.002,
@@ -162,6 +182,25 @@
    "video"
   ],
   "samples": 2304,
+  "requiresSession": false,
+  "sessionNote": "none"
+ },
+ "justoneapi.x.facebook-search-post-v1": {
+  "capturedAt": "2026-10-23",
+  "costUsd": 0.02952,
+  "method": "GET",
+  "okRate": null,
+  "p50Ms": null,
+  "params": [
+   "cursor",
+   "endDate",
+   "keyword",
+   "startDate"
+  ],
+  "required": [
+   "keyword"
+  ],
+  "samples": null,
   "requiresSession": false,
   "sessionNote": "none"
  },

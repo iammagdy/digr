@@ -144,7 +144,7 @@ describe("post-level review: the model sees posts, never comments, and the budge
     const caps = fs.readFileSync("src/lib/server/providerCallCaps.ts", "utf8");
     expect(caps).toContain("review_budget:");
     expect(worker).toContain("usesPostLevelReview(spec.capabilitySlug, spec.params)");
-    expect(worker).toContain('level: postLevelJob ? "post" : "row"');
+    expect(worker).toContain('level: postLevelJob ? (getSocialCapability(spec.capabilitySlug)?.pagedDiscovery ? "paged_post" : "post") : "row"');
   });
 });
 

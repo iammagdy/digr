@@ -132,7 +132,8 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
       conversationId: "conv-1",
       // The discovery gate (owner decision D5) asks for a missing topic before any model call,
       // so this request names its topic and reaches the unreachable model.
-      message: "عايز تعليقات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
+      // (Facebook comments of a topic have a verified service now and are planned by code without the model; a request for Facebook POSTS of a topic still reaches it.)
+      message: "عايز منشورات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
       userBalance: 100,
     });
 

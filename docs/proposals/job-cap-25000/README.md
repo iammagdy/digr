@@ -35,15 +35,16 @@ Run it: `npx vitest run tests/sql/job-cap-25000.replica.test.ts` (skipped visibl
 
 * **`accept_quote_atomic`'s record limit (`v_target_max > 5000`) is unchanged.** The owner's request needs 300 posts and 1,500 comments, and every service ceiling in code is at or below 5,000 (X posts 4,500, TikTok and YouTube comments 2,000,
   Facebook comments 1,500); the plan schema in `planManager.ts` (`max(5000)`) agrees with it.
-* **`accept_quote_atomic` accepts ONE item per quote** (`single_item_quote_required`; the app says the same, `src/lib/supabase/quoteAccept.ts`). This is NOT a cap and is NOT changed here. It matters for the owner's request: see the report. A plan of
-  two services (a posts service and a comments service) can be shown but cannot be approved today, with or without this cap.
+* **`accept_quote_atomic` accepts ONE item per quote** (`single_item_quote_required`; the app says the same, `src/lib/supabase/quoteAccept.ts`). Neither is changed. A plan of two services (a posts service and a comments service) can be shown but still cannot be approved.
+  The owner's request is therefore served as ONE item: the service `social-facebook-keyword-comments` (a keyword, the posts found and judged, their comments; 12.925 points a comment, 1,500 comments, reserve 22,296). The replica test
+  `tests/sql/job-cap-25000.replica.test.ts` accepts that one item after the steps below and charges 19,388; it also shows the database still refusing two items. See `docs/COST_REPORT_FACEBOOK_TOPIC_300.md`.
 * Unit prices, the 15% buffer, the charge formula, the ledger ids (`res_`, `rel_`, `chg_`), release-first and idempotency are untouched.
 
 ## Risks the owner must weigh
 
 1. **Provider balance.** One point costs the platform at most `1 / 5,500` USD at the unit-price rule. A full 25,000-point job can in the worst case spend about 4.5 USD of provider money (the request above is estimated at about 0.65 to 1.2 USD, see `docs/COST_REPORT_FACEBOOK_TOPIC_300.md`).
-2. **The provider daily limit (admin-editable, default 0.80 USD) is now the real brake.** The plan gate estimates this request at about 3.2 USD (it prices every comment as one call) and, for a plan above 600 points, REFUSES it in one Arabic sentence instead of clipping it
-   (`src/lib/capacityRefusal.ts`). To let it through the admin must raise the daily limit in «حدود المزود»; no code change is needed.
+2. **The provider daily limit (admin-editable, default 0.80 USD) is now the real brake.** The plan gate estimates the keyword mission at 1,500 x 0.00235 = 3.525 USD and, because the gate keeps 10% back, needs 3.92 USD of the day's remaining limit and of the provider's real balance. For a plan above 600 points it REFUSES the request
+   in one Arabic sentence instead of clipping it (`src/lib/capacityRefusal.ts`). To let it through the admin must raise the daily limit in «حدود المزود»; no code change is needed. The estimate of the job itself is 3.5 USD on the stated assumptions and at most 5.0 USD by the adapter's own bounds.
 3. **Long jobs on Vercel Hobby.** The page must stay open (driver mode `tab`): 1,800 records is about 36 chunks at 50 rows; the always-on driver is still not installed.
 4. **A bigger hold.** The customer's balance is held for the whole duration; the concurrency limit (2 active jobs) is unchanged.
 5. **People jobs.** The cap is shared: a decision-makers job (193 points a person) can now reserve up to 25,000 points (about 112 people) against the more expensive provider; the daily limit and the 5,000-record limit still apply.

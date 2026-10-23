@@ -231,6 +231,8 @@ export interface PlanItemLike {
 }
 
 const MAX_PER_CALL_DEFAULT = 20;
+/** The share of the posts a keyword search lists that are about the keyword (ASSUMED: no job has measured it). */
+const PAGED_ADOPTION_SHARE = 0.5;
 
 function firstSourceMaxPerCall(slug: string, mode: "comments" | "discover"): number {
   const def = getSocialCapability(slug);
@@ -299,7 +301,9 @@ export function durationStepFromPlanItem(item: PlanItemLike, index = 0): Duratio
       const videos = Math.max(1, Math.floor(Number(params.videoCount) || Math.ceil(records / Math.max(1, Number(params.perVideo) || 50))));
       const perVideoRecords = records / videos;
       const baseCalls = Math.ceil(records / perCall);
-      extraCalls = Math.ceil(videos / Math.max(1, discoverPerCall)) + Math.max(0, videos * Math.max(1, Math.ceil(perVideoRecords / perCall)) - baseCalls);
+      // A paged search (Facebook posts of a keyword) lists about two posts for each one adopted (ASSUMED, the share the unit price is built on), so it needs twice the pages.
+      const listedPerCall = getSocialCapability(slug)?.pagedDiscovery ? discoverPerCall * PAGED_ADOPTION_SHARE : discoverPerCall;
+      extraCalls = Math.ceil(videos / Math.max(1, listedPerCall)) + Math.max(0, videos * Math.max(1, Math.ceil(perVideoRecords / perCall)) - baseCalls);
     }
     return { labelAr: FAMILY_LABEL_AR.social_comments, family, records, recordsPerCall: perCall, extraCalls };
   }

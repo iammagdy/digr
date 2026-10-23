@@ -318,7 +318,8 @@ describe("one chunk's provider spend estimate covers its worst case", () => {
     for (const cap of SOCIAL_CAPABILITIES) {
       const prices = [...(cap.comments || []), ...Object.values(cap.discover).flatMap((s) => s || [])].map((s) => s.costUsd);
       expect(estimateSocialChunkCostUsd(cap)).toBeCloseTo(Math.max(...prices) * SOCIAL_MAX_CALLS_PER_CHUNK, 6);
-      expect(estimateSocialChunkCostUsd(cap)).toBeLessThan(0.05);
+      // the Facebook topic service pays 0.02952 to 0.06606 USD for ONE search call (catalog read of 2026-10-23), so its worst chunk is the dearest search times six; every other service stays under 0.05
+      expect(estimateSocialChunkCostUsd(cap)).toBeLessThan(cap.pagedDiscovery ? 0.4 : 0.05);
     }
   });
 });

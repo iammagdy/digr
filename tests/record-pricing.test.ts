@@ -22,7 +22,7 @@ describe("unit price = cost per delivered record x 5,500, fractional", () => {
   it("every cost carries its basis, MEASURED or ASSUMED", () => {
     expect(Object.fromEntries(Object.entries(RECORD_COSTS).map(([k, v]) => [k, v.basis]))).toEqual({
       "social-x-posts": "MEASURED", "social-youtube-comments": "ASSUMED", "social-tiktok-comments": "ASSUMED",
-      "social-facebook-comments": "ASSUMED", "social-facebook-posts": "ASSUMED", "icypeas-companies-search": "MEASURED",
+      "social-facebook-comments": "ASSUMED", "social-facebook-keyword-comments": "ASSUMED", "social-facebook-posts": "ASSUMED", "icypeas-companies-search": "MEASURED",
     });
   });
   it("the price never undercuts its cost (rounded up at the sixth decimal)", () => {

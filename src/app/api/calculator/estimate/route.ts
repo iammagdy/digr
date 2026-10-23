@@ -44,6 +44,7 @@ export async function POST(req: NextRequest) {
       volume: positiveInt(body.volume, 1_000_000),
       budgetPoints: positiveInt(body.budgetPoints, 10_000_000),
       openEnded: body.openEnded === true,
+      byKeyword: body.byKeyword === true,
     };
   } else {
     return NextResponse.json({ success: false, error: "اختر نوع البيانات أو اكتب طلبك." }, { status: 400 });

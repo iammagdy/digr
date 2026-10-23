@@ -157,55 +157,49 @@ describe("the owner's plan, 300 posts and 1,500 comments, in the quote writer", 
   });
 });
 
-describe("the owner's request through the chat: 300 posts, 5 comments each", () => {
-  const REQUEST = "عايز ٣٠٠ بوست وتعليقاتهم عن الترندات الصحية على فيسبوك في مصر";
-  async function session() {
+describe("the owner's request through the chat: 300 posts, 5 comments each (ONE item: the Facebook keyword service)", () => {
+  const REQUEST = "عايز ٣٠٠ منشور على فيسبوك عن الترندات الصحية مع ٥ تعليقات لكل منشور في مصر";
+  async function ask(message = REQUEST) {
     const db: any = createChatDb();
     const handler = new ChatHandler(db);
-    const plan = {
-      type: "propose_plan", summaryAr: "جمع ٣٠٠ بوست و١٥٠٠ تعليق", conversationTitle: "عايز بوستات وتعليقاتهم عن الترندات الصحية",
-      capabilities: [
-        { stepId: "s1", capabilitySlug: "facebook-post-search", endpointId: "treg.facebook.search.posts", params: { query: REQUEST }, targetVolumeMin: 1, targetVolumeMax: 300, paginationStrategy: "cursor" },
-        { stepId: "s2", capabilitySlug: "facebook-post-comments", endpointId: "treg.facebook.post.comments", params: { postUrl: "https://www.facebook.com/post/1" }, targetVolumeMin: 1, targetVolumeMax: 1500, paginationStrategy: "cursor", dependsOn: ["s1"], inputFrom: { stepId: "s1", field: "postUrl", paramKey: "postUrl" }, fanOutCap: 300 },
-      ],
-      outputFormats: ["xlsx"],
-    };
-    (handler as any).llm.executeTurn = vi.fn(async () => ({ output: plan, inputTokens: 10, outputTokens: 10, costUsd: 0, model: "fake", promptVersion: "x" }));
+    // a verified service is planned by code: the model is never asked
+    const executeTurn = vi.fn(async () => { throw new Error("the model must not be asked"); });
+    (handler as any).llm.executeTurn = executeTurn;
     await db.createRow({ tableId: "conversations", rowId: "conv_300", data: { userId: "user_300", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
     clearBriefCacheForTesting();
-    const send = (message: string): Promise<any> => handler.handleUserMessage({ userId: "user_300", conversationId: "conv_300", message, userBalance: 40_000 }) as Promise<any>;
-    const answer = (value: string) => send(JSON.stringify({ type: "clarification_answers", answers: [{ question: "social_comments_per_post", questionId: "social_comments_per_post", value }] }));
-    return { send, answer };
+    const r: any = await handler.handleUserMessage({ userId: "user_300", conversationId: "conv_300", message, userBalance: 40_000 });
+    return { r, executeTurn };
   }
 
-  it("with capacity: ONE plan of 300 posts and 1,500 comments, the hold 21,735, no reduction sentence, one count line, a clean topic", async () => {
+  it("with capacity: ONE item of 300 posts and 1,500 comments, the hold 22,296 under the 25,000 cap, no reduction sentence, one count, a clean topic", async () => {
     setProviderBalanceForTesting(50);
-    const s = await session();
-    const first = await s.send(REQUEST);
-    expect(first.outputType).toBe("ask_clarification");
-    expect((first.clarificationItems as any[]).map((q) => q.id)).toEqual(["social_comments_per_post"]);
-    const r = await s.answer("٥");
+    const { r, executeTurn } = await ask();
+    expect(executeTurn).not.toHaveBeenCalled();
     expect(r.outputType).toBe("propose_plan");
     const q = r.planQuote;
-    expect(q.items.map((i: any) => [i.capabilitySlug, i.targetVolumeMax])).toEqual([["facebook-post-search", 300], ["facebook-post-comments", 1500]]);
-    expect(q.quotedPoints).toBe(21_735);
-    expect(q.expectedPoints).toBe(18_900);
-    expect(q.summaryAr).toBe("جمع ٣٠٠ منشورًا و١٥٠٠ تعليقًا عن «الترندات الصحية في مصر» على فيسبوك");
-    expect(r.contentAr).toContain("- الحد الأقصى: حتى ٣٠٠ منشورًا و١٥٠٠ تعليقًا");
+    expect(q.items).toHaveLength(1);
+    expect(q.items.map((i: any) => [i.capabilitySlug, i.targetVolumeMax])).toEqual([["social-facebook-keyword-comments", 1500]]);
+    expect(q.items[0].params).toMatchObject({ query: "الترندات الصحية", region: "EG", perVideo: 5, videoCount: 300 });
+    expect(q.items[0].unitPricePoints).toBe(12.925);
+    expect(q.quotedPoints).toBe(22_296);
+    expect(q.expectedPoints).toBe(19_388);
+    expect(q.expectedPoints).toBeLessThanOrEqual(q.quotedPoints);
+    expect(q.quotedPoints).toBeLessThanOrEqual(25_000);
+    expect(q.pointsCap).toBe(25_000);
+    expect(r.contentAr).toContain("- المنشورات: ٣٠٠ منشور، والتعليقات: حتى ١٥٠٠ تعليق من كل ما فيها.");
+    expect(r.contentAr).toContain("- الحد الأقصى: حتى ١٥٠٠ تعليق");
+    expect(r.contentAr).toContain("ويُحجز ٢٢٢٩٦ نقطة مؤقتًا كحد أقصى");
     expect(r.contentAr).not.toContain("تم تقليل الطلب");
     expect(q.volumeLimitLineAr).toBeUndefined();
-    expect(q.items[0].params.query).toBe("الترندات الصحية في مصر");
-    expect(q.pointsCap).toBe(25_000);
+    expect(planCountLineAr(q.items)).toBe("حتى ١٥٠٠ سجل");
   });
 
   it("without capacity today: the customer gets ONE honest sentence as the reply, no plan card, nothing quoted", async () => {
     setProviderBalanceForTesting(1);
-    const s = await session();
-    await s.send(REQUEST);
-    const r = await s.answer("٥");
+    const { r } = await ask();
     expect(r.planQuote).toBeUndefined();
     expect(r.outputType).not.toBe("propose_plan");
-    expect(r.contentAr).toMatch(/^هذا الطلب أكبر من طاقة الاستخراج المتاحة اليوم؛ تتسع الطاقة الحالية لنحو [٠-٩]+ منشورًا و[٠-٩]+ تعليقًا فقط\./);
+    expect(r.contentAr).toMatch(/^هذا الطلب أكبر من طاقة الاستخراج المتاحة اليوم؛ تتسع الطاقة الحالية لنحو [٠-٩]+ تعليقًا فقط\./);
     expect(r.contentAr).toContain("ولم يُحجز أي رصيد");
     expect(r.contentAr).not.toMatch(/[A-Za-z]|usd|\$|treg|endpoint/i);
     expect(r.contentAr).not.toMatch(/\p{Extended_Pictographic}/u);

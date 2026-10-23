@@ -20,6 +20,7 @@ const SELLABLE: Array<{ slug: string; shapes: string }> = [
   { slug: "social-tiktok-comments", shapes: "تعليقات فيديو برابط، أو فيديوهات تُعثر عليها بكلمة/قناة/ترند، أو مهمة قنوات (أعلى فيديوهات ثم التعليقات)" },
   { slug: "social-youtube-comments", shapes: "كما سبق على يوتيوب (بحث بكلمة مع نافذة تاريخ، أو قنوات، أو رابط)" },
   { slug: "social-facebook-comments", shapes: "تعليقات منشور برابطه أو منشورات صفحة عامة" },
+  { slug: "social-facebook-keyword-comments", shapes: "تعليقات منشورات فيسبوك العامة التي يجدها النظام بكلمة أو موضوع (اختيار المنشورات المتعلقة بالموضوع ثم قراءة تعليقاتها)؛ خدمة جديدة لم تُجرَّب حيًّا بعد" },
   { slug: "social-tiktok-videos", shapes: "فيديوهات تيك توك بكلمة أو قناة أو ترند دولة" },
   { slug: "social-youtube-videos", shapes: "فيديوهات يوتيوب بكلمة أو قناة أو شورتس رائجة" },
   { slug: "social-facebook-posts", shapes: "منشورات صفحة فيسبوك عامة" },

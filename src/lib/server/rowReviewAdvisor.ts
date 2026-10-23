@@ -462,6 +462,14 @@ export const REVIEW_MIN_BUDGET_USD = REVIEW_CALL_COST_ESTIMATE_USD;
  */
 export const REVIEW_JOB_CEILING_USD = 0.15;
 
+/**
+ * The ceiling of a job whose POSTS are searched page by page and judged in lists of 50 (the Facebook keyword service). Such a job lists about two posts for every post it adopts, so the
+ * 300 posts of the owner's request mean about 600 posts to judge: 24 review calls, 0.2 USD at the measured 0.0083 USD a call, which the 0.15 ceiling above cannot pay (the fixture
+ * run of the worker stopped at 47% to 75% of the request with the posts' budget sentence). 0.25 USD pays for 30 calls, is 0.7% of the 35 USD the full request is charged, and the
+ * 20%-of-revenue rule below still applies on top of it. A SECOND constant, owner decision pending: the ceiling of every other job is unchanged.
+ */
+export const REVIEW_PAGED_JOB_CEILING_USD = 0.25;
+
 /** Rows a page of posts or comments holds (X: 20); with the page cap it gives the number of rows a job can collect. */
 export const REVIEW_PAGE_ROWS = 20;
 
@@ -487,11 +495,11 @@ export function collectableRows(targetMax: number): number {
 export function socialReviewCapUsd(targetMax: number, unitPricePoints: number, level: ReviewLevel = "row"): number {
   if (!(Number(unitPricePoints) > 0)) return 0;
   const everyRowUsd = (collectableRows(targetMax) * REVIEW_CALL_COST_ESTIMATE_USD) / SOCIAL_REVIEW_ROWS_PER_CALL;
-  const budget = Math.min(REVIEW_JOB_CEILING_USD, Math.max(REVIEW_MIN_BUDGET_USD, everyRowUsd));
+  const budget = Math.min(level === "paged_post" ? REVIEW_PAGED_JOB_CEILING_USD : REVIEW_JOB_CEILING_USD, Math.max(REVIEW_MIN_BUDGET_USD, everyRowUsd));
   const perJob = Math.floor(budget * 1_000_000 + 1e-6) / 1_000_000;
   // A job reviewed at the level of its posts (comments of a topic search) also stays within 20% of its own revenue (owner decision: the share of revenue the
   // review may cost). The per-row jobs (X posts) keep the rule above: their review is one call per 25 POSTS and 20% of a post's price does not pay for it (see REVIEW_REVENUE_SHARE).
-  return level === "post" ? Math.min(perJob, socialReviewCapPreviousRuleUsd(targetMax, unitPricePoints)) : perJob;
+  return level === "row" ? perJob : Math.min(perJob, socialReviewCapPreviousRuleUsd(targetMax, unitPricePoints));
 }
 
 /**
@@ -505,7 +513,7 @@ export const REVIEW_FALLBACK_SHARE = 0.2;
 /** The share of a job's revenue the automatic review of a post-level job may cost: the owner's 20%. One number, here. */
 export const REVIEW_REVENUE_SHARE = REVIEW_FALLBACK_SHARE;
 /** How a job is reviewed: row by row (X posts: every matched post is a row of a model call) or at the level of the post a comment was written under. */
-export type ReviewLevel = "row" | "post";
+export type ReviewLevel = "row" | "post" | "paged_post";
 
 /**
  * The previous budget rule, kept as the fallback: 20% of the job's revenue (its expected charge, ceil(target records x unit price) points at 0.10 EGP

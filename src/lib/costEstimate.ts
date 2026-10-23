@@ -1,5 +1,5 @@
 import { calculateCapabilityUnitPricePoints, DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
-import { chargeForUnits, reserveForUnits } from "./recordPricing";
+import { chargeForUnits, recordUnitPricePoints, reserveForUnits } from "./recordPricing";
 import { REVIEW_CALL_COST_ESTIMATE_USD, SOCIAL_REVIEW_ROWS_PER_CALL } from "./server/rowReviewAdvisor";
 
 /**
@@ -118,4 +118,121 @@ export function facebookTopicCostReport(input: CostInputs = DEFAULT_INPUTS, revi
     revenueUsd: round(revenueUsd, 2),
     scenarios: [a0, a, b],
   };
+}
+
+/* ------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ * The Facebook KEYWORD MISSION (one item: `social-facebook-keyword-comments`): posts are searched by a keyword, judged as lists, and the comments of the adopted posts
+ * are read. Written from the public catalog read of 2026-10-23 (a free GET of the catalog page; no endpoint was called):
+ *   CATALOG  the first search source costs 0.02952 USD a call (0.2 CNY), the second 0.06606 USD, a comments call 0.00188 USD;
+ *   MEASURED the planning call (0.0155 USD) and the review call (0.0083 USD per 25 rows), the figures of the owner and of production;
+ *   ASSUMED  posts one search call returns (the catalog publishes NONE: one catalog review reports 6), the share of listed posts that are about the topic, the share of
+ *            listed posts whose own text settles them without the model. Nobody has measured these three: the sensitivity grid below shows what each does to the bill.
+ * ------------------------------------------------------------------------------------------------------------------------------------------------------------------ */
+export interface MissionInputs {
+  posts: number;
+  commentsPerPost: number;
+  searchCallUsd: number;
+  searchRowsPerCall: number;
+  postRelevance: number;
+  commentsCallUsd: number;
+  planningUsd: number;
+  reviewCallUsd: number;
+  /** Share of the listed posts that the post's own text settles (they never reach the model). */
+  evidenceShare: number;
+}
+
+export const MISSION_DEFAULT_INPUTS: MissionInputs = {
+  posts: 300,
+  commentsPerPost: 5,
+  searchCallUsd: 0.02952,
+  searchRowsPerCall: 6,
+  postRelevance: 0.5,
+  commentsCallUsd: 0.00188,
+  planningUsd: 0.0155,
+  reviewCallUsd: REVIEW_CALL_COST_ESTIMATE_USD,
+  evidenceShare: 0.5,
+};
+
+export const MISSION_BASIS: Record<keyof MissionInputs, Basis> = {
+  posts: "ASSUMED",
+  commentsPerPost: "ASSUMED",
+  searchCallUsd: "CATALOG",
+  searchRowsPerCall: "ASSUMED",
+  postRelevance: "ASSUMED",
+  commentsCallUsd: "CATALOG",
+  planningUsd: "MEASURED",
+  reviewCallUsd: "MEASURED",
+  evidenceShare: "ASSUMED",
+};
+
+/** The most pages of search results one job reads (the adapter's bound, `PAGED_MAX_DISCOVERY_PAGES`) and the posts a review list holds. */
+export const MISSION_MAX_SEARCH_PAGES = 150;
+const MISSION_REVIEW_LIST = 50;
+
+export interface MissionReport {
+  unitPoints: number;
+  comments: number;
+  charge: number;
+  reserve: number;
+  revenueUsd: number;
+  listedPosts: number;
+  searchCalls: number;
+  commentCalls: number;
+  providerUsd: number;
+  reviewCalls: number;
+  modelUsd: number;
+  totalCostUsd: number;
+  costPerCommentUsd: number;
+  /** The cost the unit price is built on (`RECORD_COSTS`, 0.00235 USD a delivered comment). */
+  costBasisUsd: number;
+  /** True when the real cost per comment is at or under the cost the price is built on. */
+  basisHolds: boolean;
+  marginShare: number;
+  /** What the capacity gate estimates for this plan (volume x the cost per record). */
+  gateEstimateUsd: number;
+  /** The most the search can cost one job whatever the source does: the page bound times the dearest-call price, plus one comments call per post. */
+  worstCaseProviderUsd: number;
+}
+
+export function facebookKeywordMissionReport(input: MissionInputs = MISSION_DEFAULT_INPUTS, costBasisUsd = 0.00235): MissionReport {
+  const unitPoints = recordUnitPricePoints("social-facebook-keyword-comments")!;
+  const comments = input.posts * input.commentsPerPost;
+  const charge = chargeForUnits(comments, unitPoints);
+  const reserve = reserveForUnits(comments, unitPoints);
+  const revenueUsd = charge * REVENUE_USD_PER_POINT;
+  const listedPosts = Math.ceil(input.posts / input.postRelevance);
+  const searchCalls = Math.ceil(listedPosts / input.searchRowsPerCall);
+  const commentCalls = input.posts;
+  const providerUsd = searchCalls * input.searchCallUsd + commentCalls * input.commentsCallUsd;
+  // the posts the text settles never reach the model; the others go in lists of 50 (two calls of 25 each)
+  const needReview = Math.ceil(listedPosts * (1 - input.evidenceShare));
+  const reviewCalls = Math.ceil(needReview / SOCIAL_REVIEW_ROWS_PER_CALL);
+  const modelUsd = input.planningUsd + reviewCalls * input.reviewCallUsd;
+  const totalCostUsd = providerUsd + modelUsd;
+  const costPerCommentUsd = providerUsd / comments;
+  return {
+    unitPoints,
+    comments,
+    charge,
+    reserve,
+    revenueUsd: round(revenueUsd, 2),
+    listedPosts,
+    searchCalls,
+    commentCalls,
+    providerUsd: round(providerUsd),
+    reviewCalls,
+    modelUsd: round(modelUsd),
+    totalCostUsd: round(totalCostUsd),
+    costPerCommentUsd: round(costPerCommentUsd, 6),
+    costBasisUsd,
+    basisHolds: costPerCommentUsd <= costBasisUsd + 1e-12,
+    marginShare: round(1 - totalCostUsd / revenueUsd, 3),
+    gateEstimateUsd: round(comments * costBasisUsd),
+    worstCaseProviderUsd: round(MISSION_MAX_SEARCH_PAGES * input.searchCallUsd + commentCalls * input.commentsCallUsd),
+  };
+}
+
+/** The bill and the margin for every combination of the two figures nobody has measured: posts a search call returns, and the share of listed posts about the topic. */
+export function facebookKeywordMissionSensitivity(rowsPerCall = [3, 6, 10, 20], relevance = [0.25, 0.5, 0.75]): Array<{ rowsPerCall: number; relevance: number; report: MissionReport }> {
+  return rowsPerCall.flatMap((rows) => relevance.map((share) => ({ rowsPerCall: rows, relevance: share, report: facebookKeywordMissionReport({ ...MISSION_DEFAULT_INPUTS, searchRowsPerCall: rows, postRelevance: share }) })));
 }

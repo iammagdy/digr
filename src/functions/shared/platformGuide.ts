@@ -35,6 +35,8 @@ export const PLATFORM_GUIDE = {
         ? ["platform", "video_url_or_topic", "channel_if_channel_mode", "country_if_trending"]
         : cap.slug === "social-facebook-comments"
           ? ["platform", "post_url_or_page"]
+          : cap.slug === "social-facebook-keyword-comments"
+            ? ["platform", "topic"]
           : cap.slug === "social-tiktok-videos"
             ? ["topic_or_channel", "country_if_trending"]
             : cap.slug === "social-youtube-videos"
@@ -46,6 +48,7 @@ export const PLATFORM_GUIDE = {
       exampleAr: cap.slug === "social-youtube-comments" ? "هات ١٠ تعليقات على فيديو يوتيوب، وألصق رابط الفيديو في رسالتك" :
         cap.slug === "social-tiktok-videos" ? "عايز ١٠ فيديوهات ترند على تيك توك في مصر" :
         cap.slug === "social-facebook-comments" ? "هات كومنتات بوست فيسبوك، وألصق رابط البوست في رسالتك" :
+        cap.slug === "social-facebook-keyword-comments" ? "هات ١٠٠ منشور فيسبوك عن الترندات الصحية بخمسة تعليقات لكل منشور" :
         cap.slug === "social-tiktok-comments" ? "هات ١٠ كومنتس على فيديو تيك توك، وألصق رابط الفيديو في رسالتك" :
         cap.slug === "social-youtube-videos" ? "هات ١٠ فيديوهات من قناة يوتيوب، واكتب اسم القناة أو رابطها في رسالتك" :
         cap.slug === "social-x-posts" ? "هات ٢٠ تغريدة عن كرة السلة من الأسبوع الماضي" :
@@ -64,7 +67,7 @@ export const PLATFORM_GUIDE = {
     "استخدم القائمة الكاملة للخدمات في كل مرة، حتى إن كانت نتائج بحث الكتالوج مقتصرة على خدمة واحدة.",
     "اعتبر كل خدمة مدرجة ضمن قدرات ديجر؛ اسأل عن المدخل الناقص فقط، ولا تقترح منصة لا تطابق طلب العميل.",
     "إذا نقص مدخل أساسي، اسأل سؤالاً قصيراً واحداً فقط في كل رسالة.",
-    "حد المهمة ٦٠٠ نقطة، وحد السجلات تحدده الخدمة. اذكر تقليل العدد إذا لم يلائم السقف.",
+    `حد المهمة ${effectiveJobPointsCap().toLocaleString("ar-EG")} نقطة، وحد السجلات تحدده الخدمة. اذكر تقليل العدد إذا لم يلائم السقف.`,
     "الأسعار والحجز والخصم يحسبها الخادم فقط؛ لا تستنتج أو تعد بسعر من عندك.",
   ],
 } as const;

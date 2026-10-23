@@ -115,7 +115,7 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
       listRows: vi.fn().mockImplementation(({ tableId }: any) => {
         if (tableId === "messages") {
           return Promise.resolve({
-            rows: [{ role: "user", content: "عايز تعليقات فيسبوك عن قائمة المنقولات" }],
+            rows: [{ role: "user", content: "عايز منشورات فيسبوك عن قائمة المنقولات" }],
           });
         }
         return Promise.resolve({ rows: [] });
@@ -149,7 +149,8 @@ describe("Phase 2: Approved Capability Catalog, Settings-Driven Points, and Plat
     const response = await handler.handleUserMessage({
       userId: "user-1",
       conversationId: "conv-1",
-      message: "عايز تعليقات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
+      // (Facebook comments of a topic have a verified service now: a request for Facebook POSTS of a topic is the unserved one this test is about.)
+      message: "عايز منشورات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
       userBalance: 100,
     });
 
