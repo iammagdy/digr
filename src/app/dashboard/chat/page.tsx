@@ -44,7 +44,8 @@ import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { buildChatTimeline } from "@/lib/chatTimeline";
-import ActivityTimeline, { JobEvent } from "./components/ActivityTimeline";
+import { type TerminalEvent as JobEvent } from "./components/ActivityTerminal";
+import RunningIndicator from "./components/RunningIndicator";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import EmptyChat from "./components/EmptyChat";
 import { FilesSection } from "./components/RunSections";
@@ -1857,15 +1858,14 @@ export default function ChatWorkspacePage() {
   const runNode = activeJob ? (
     activeJob.status !== "failed" ? (
       <div className="space-y-3">
-        <ActivityTimeline
-          status={activeJob.status}
-          events={activeJob.events}
-          rowsCollected={activeJob.rowsCollected}
-          eventLimit={EVENT_HISTORY_LIMIT}
-          spentPoints={activeJob.chargedCredits}
-          reservedPoints={activeJob.reservedCredits}
-          requestedRows={activeJob.requestedRows}
-        />
+        {/* The live activity list lives in the results panel only; the chat keeps this short status line and the way to open the panel. */}
+        <div className="mt-4" data-testid="chat-run-status">
+          {activeJob.status === "running" || activeJob.status === "queued" ? (
+            <RunningIndicator />
+          ) : (
+            <p role="status" className="m-0 text-xs font-medium text-ink2">{activeJob.status === "done" ? "اكتمل طلبك" : "توقف طلبك"}</p>
+          )}
+        </div>
         {progress && (
           <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-progress">{progress.lineAr}{progress.remainingAr ? "، تقديري ويتحدث مع كل دفعة." : "."}</p>
         )}
@@ -2078,6 +2078,7 @@ export default function ChatWorkspacePage() {
               jobId={activeJob?.jobId || null}
               jobStatus={activeJob?.status}
               jobEvents={activeJob?.events}
+              eventLimit={EVENT_HISTORY_LIMIT}
               rowsCollected={activeJob?.rowsCollected}
               requestedRows={activeJob?.requestedRows}
               reservedPoints={activeJob?.reservedCredits}

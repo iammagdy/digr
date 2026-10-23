@@ -23,6 +23,8 @@ interface ResultsCanvasProps {
   jobId: string | null;
   jobStatus?: "queued" | "running" | "done" | "failed" | "cancelled";
   jobEvents?: TerminalEvent[];
+  /** Number of events fetched in this read; the activity list says so when a limited history is shown. */
+  eventLimit?: number;
   rowsCollected?: number;
   requestedRows?: number;
   reservedPoints?: number;
@@ -116,6 +118,7 @@ export default function ResultsCanvas({
   jobId,
   jobStatus,
   jobEvents = [],
+  eventLimit,
   rowsCollected = 0,
   requestedRows,
   reservedPoints,
@@ -330,6 +333,7 @@ export default function ResultsCanvas({
             errorAr={errorAr}
             onDownload={onDownload}
             fileIds={fileIds}
+            eventLimit={eventLimit}
           />
         </div>
       ) : (

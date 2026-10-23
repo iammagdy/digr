@@ -195,7 +195,7 @@ describe("Phase 4: Live Activity Feed (Arabic & Points Only, Throttled Updates, 
     expect(snapshot.reservedPoints).toBe(450);
     expect(snapshot.capReached?.kind).toBe("post_cap");
 
-    const timelineSource = readFileSync("src/app/dashboard/chat/components/ActivityTimeline.tsx", "utf-8");
+    const timelineSource = readFileSync("src/app/dashboard/chat/components/ActivityTerminal.tsx", "utf-8");
     expect(timelineSource).toContain("deriveLiveActivitySnapshot");
     expect(timelineSource).toContain("مصروف ${formatAr(spent)} من ${formatAr(reserved)}");
     expect(timelineSource).toContain("sanitizeActivityText");
