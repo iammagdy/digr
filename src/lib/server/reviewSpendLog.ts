@@ -70,6 +70,8 @@ export interface ReviewCallFacts {
   replyChars: number | null;
   retry: boolean;
   missing: number;
+  /** The attempt on these rows (1 first call, 2 and 3 retries), when the caller knows it. */
+  attempt?: number;
 }
 
 /**
@@ -89,6 +91,7 @@ export function reviewFailureEventMessage(step: number, call: number, facts: Rev
     `step=${step}`,
     `call=${call}`,
     `retry=${facts.retry ? 1 : 0}`,
+    ...(facts.attempt !== undefined ? [`attempt=${facts.attempt}`] : []),
     `rows=${facts.rows}`,
     `code=${facts.failure ?? "none"}`,
     `stop=${facts.stopReason ?? "none"}`,

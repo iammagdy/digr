@@ -34,12 +34,31 @@ export interface CompanyReviewAttempt {
   verdicts: Map<number, CompanyReviewVerdict>;
   usage: ReviewUsage | null;
   failure: ReviewFailure | null;
+  /** Why the model stopped writing (`end_turn`, `max_tokens`, ...) when the call got an answer: proves a reply cut at the output limit. */
+  stopReason?: string | null;
+  /** The output limit the call was sent with. */
+  maxTokens?: number;
+  /** Characters of the tool input the model wrote (a count, never the text). */
+  replyChars?: number | null;
+}
+
+/** What the runner knows about one attempt besides the reviewer's answer: the facts of the internal `review_failure` row. */
+export interface CompanyReviewAttemptContext {
+  /** Rows in this call. */
+  rows: number;
+  /** 1 for the first call on these rows, 2 and 3 for the retries. */
+  attemptNumber: number;
+  /** Rows of this call that got no usable verdict (all of them when the call failed). */
+  missing: number;
 }
 
 /** One attempt (one call) over one batch of rows. Never throws. */
 export type CompanyReviewerFn = (request: CompanyReviewRequest, options: { timeoutMs: number }) => Promise<CompanyReviewAttempt>;
 
-export const REVIEW_BATCH_SIZE = 25;
+/** Rows per call. A reply of one verdict per row measured 70 to 105 output tokens per row (10-row calls of 22 Oct 2026), so 25 rows did not fit the old 1500-token limit. */
+export const REVIEW_BATCH_SIZE = 10;
+/** The output limit of a review call (was 1500, which cut a 25-row reply on all three attempts). Output is billed only when it is written. */
+export const REVIEW_MAX_TOKENS = 4000;
 export const REVIEW_MAX_ROWS = 50;
 export const REVIEW_ATTEMPT_TIMEOUT_MS = 10_000;
 export const REVIEW_MAX_ATTEMPTS = 3;
@@ -131,7 +150,7 @@ function reviewDisabled(): boolean {
 
 /** The production reviewer: one call, a short timeout, never throws, no sampling parameters. */
 export const callClaudeCompanyReviewer: CompanyReviewerFn = async (request, options) => {
-  const none = (failure: ReviewFailure, usage: ReviewUsage | null = null): CompanyReviewAttempt => ({ verdicts: new Map(), usage, failure });
+  const none = (failure: ReviewFailure, usage: ReviewUsage | null = null, extra: Partial<CompanyReviewAttempt> = {}): CompanyReviewAttempt => ({ verdicts: new Map(), usage, failure, maxTokens: REVIEW_MAX_TOKENS, ...extra });
   if (request.rows.length === 0) return { verdicts: new Map(), usage: null, failure: null };
   if (reviewDisabled()) return none("disabled");
   const controller = new AbortController();
@@ -153,7 +172,7 @@ export const callClaudeCompanyReviewer: CompanyReviewerFn = async (request, opti
       signal: controller.signal,
       body: JSON.stringify({
         model,
-        max_tokens: 1500,
+        max_tokens: REVIEW_MAX_TOKENS,
         system: RUBRIC,
         messages: [{ role: "user", content: userContent }],
         tools: [{ name: REVIEW_TOOL_NAME, description: "Submit the review of every row.", input_schema: REVIEW_TOOL_SCHEMA }],
@@ -169,9 +188,11 @@ export const callClaudeCompanyReviewer: CompanyReviewerFn = async (request, opti
     const usage: ReviewUsage = { inputTokens, outputTokens, costUsd, model, latencyMs: Date.now() - started };
     const toolUse = Array.isArray(data?.content) ? data.content.find((block: any) => block?.type === "tool_use" && block?.name === REVIEW_TOOL_NAME) : null;
     const verdicts = parseReviewToolInput(toolUse?.input, new Set(request.rows.map((r) => r.index)));
+    const stopReason = typeof data?.stop_reason === "string" ? data.stop_reason : null;
+    const replyChars = toolUse?.input === undefined ? 0 : JSON.stringify(toolUse.input).length;
     // A reply that arrived (and was billed) but has no usable review keeps its usage, so the spend is visible.
-    if (!verdicts) return none("bad_reply", usage);
-    return { verdicts, usage, failure: null };
+    if (!verdicts) return none("bad_reply", usage, { stopReason, replyChars });
+    return { verdicts, usage, failure: null, stopReason, maxTokens: REVIEW_MAX_TOKENS, replyChars };
   } catch (err: any) {
     return none(err?.name === "AbortError" ? "timeout" : "network");
   } finally {
@@ -222,8 +243,8 @@ export interface RunCompanyReviewOptions {
   deadlineMs: number;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
-  /** Called after EVERY attempt (usage rows are written from here). */
-  onAttempt?: (attempt: CompanyReviewAttempt) => Promise<void> | void;
+  /** Called after EVERY attempt (usage rows and the internal review_failure rows are written from here). */
+  onAttempt?: (attempt: CompanyReviewAttempt, context: CompanyReviewAttemptContext) => Promise<void> | void;
   /** Called before a retry on the same rows (the customer-visible progress note is written from here). */
   onRetry?: (nextAttemptNumber: number, failure: ReviewFailure) => Promise<void> | void;
 }
@@ -266,7 +287,7 @@ export async function runCompanyReview(options: RunCompanyReviewOptions): Promis
         // A reviewer is meant never to throw; if one does, that attempt is a failed attempt, not a crashed job.
         result = { verdicts: new Map(), usage: null, failure: "network" };
       }
-      await options.onAttempt?.(result);
+      await options.onAttempt?.(result, { rows: pending.length, attemptNumber: attempt, missing: result.failure ? pending.length : pending.filter((row) => !result.verdicts.has(row.index)).length });
       if (result.failure) {
         lastFailure = result.failure;
         if (!isRetryableReviewFailure(result.failure)) break;
