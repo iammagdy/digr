@@ -16,7 +16,11 @@ import { loadRouterState, normalizeRequiredFields, routeRequestFromParams } from
 
 const EMAIL_RE = /إيميل|ايميل|بريد|email|e-?mail/i;
 const PHONE_RE = /(?<![\p{L}])(?:و)?(?:ال)?(?:أرقام|ارقام|رقم|هاتف|هواتف|تليفون|تليفونات|موبايل|موبايلات)|phone/iu;
-const DECISION_RE = /صناع\s+(?:ال)?قرار|صانعي\s+(?:ال)?قرار|أصحاب\s+(?:ال)?قرار|decision[\s-]*makers?|المدير(?:ين)?\s+(?:ال)?تنفيذي|مالك(?:ي)?\s+(?:ال)?شرك|أصحاب\s+(?:ال)?شركات|مديري\s+(?:ال)?شركات/i;
+/**
+ * Who the customer asks for. «صناع القرار» is only one of the ways: a named role («مدير المشتريات», «مسؤولي التسويق», «رئيس مجلس الإدارة», «المؤسسين»,
+ * «CEO») is the same request when it is asked for from the companies' public team pages (the route needs BOTH, see TEAM_PAGES_RE).
+ */
+const DECISION_RE = /صان(?:ع|عي|عو)\s+(?:ال)?قرار|صناع\s+(?:ال)?قرار|أصحاب\s+(?:ال)?قرار|decision[\s-]*makers?|المدير(?:ين)?\s+(?:ال)?تنفيذي|مالك(?:ي)?\s+(?:ال)?شرك|أصحاب\s+(?:ال)?شركات|مديري\s+(?:ال)?شركات|(?<![\p{L}])(?:ال)?(?:مسؤول|مسئول)(?:ين|ي|و)?(?![\p{L}])|(?<![\p{L}])(?:ال)?(?:مدير|مديري|مديرين|مدراء)(?![\p{L}])|(?<![\p{L}])(?:ال)?(?:رئيس|رؤساء)(?![\p{L}])|(?<![\p{L}])(?:ال)?(?:مؤسس|مؤسسي|مؤسسين)(?![\p{L}])|\b(?:ceo|cto|cfo|coo|cmo)\b|\b(?:managers?|executives?|owners?|founders?|directors?)\b/iu;
 const TEAM_PAGES_RE = /صفحات?\s+(?:ال)?فريق|صفحة\s+(?:ال)?إدارة|مواقع\s+(?:ال)?شركات|المنشور(?:ة|ين)?\s+(?:على|في)\s+(?:مواقع|المواقع)|team\s+pages?|public\s+team/i;
 const COMPANY_SLUG_RE = /compan|b2b/i;
 const PEOPLE_SLUG_RE = /people/i;

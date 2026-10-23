@@ -125,6 +125,8 @@ export interface SocialIntent {
   targetUrl: SocialUrl | null;
   /** A channel/account the customer named by link or @handle. */
   channelRef: string | null;
+  /** A public Facebook page the customer named by its NAME («صفحة اليوم السابع») with no link or handle: its latest posts are wanted, scoped by the page. */
+  pageName: string | null;
   /** Task the customer is asking for, or null when the text is not a social-content request. */
   task: SocialTask | null;
   /** After the comments, the videos they come from are searched/ranked by this: trending feed, keyword, or a channel. */
@@ -151,6 +153,26 @@ function detectChannelRef(text: string, urls: SocialUrl[]): string | null {
 function namesTopicBesidesTrend(text: string): boolean {
   const withoutTrend = text.replace(new RegExp(`[\\p{L}]*(?:${TREND_WORDS_RE.source})[\\p{L}]*`, "giu"), " ");
   return topicTokens(withoutTrend).length > 0;
+}
+
+/** Words that end the name of a Facebook page written after «صفحة» (the platform, the kind of item, a period or a filler word). */
+const PAGE_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "مع", "من", "ال", "فيسبوك", "الفيسبوك", "فيس", "الفيس", "facebook", "fb", "كل", "بتاعة", "بتاعت", "اخر", "آخر", "احدث", "أحدث", "الاحدث", "الأحدث", "بوست", "بوستات", "منشور", "منشورات", "الرسمية", "الرسميه"]);
+
+/**
+ * The public Facebook page a request names after the singular «صفحة» («٢٠ بوست من صفحة اليوم السابع»): the page's name as the customer wrote it.
+ * A page's own latest posts are scoped by the page, never by a topic: without this the name was read as a topic («السابع»), the request had no verified
+ * service, and the model was left to choose one from the whole live catalog (it chose a post-comments service with an invented link).
+ */
+export function facebookPageNameIn(text: string): string | null {
+  const m = /(?:^|[\s(])(?:صفحة|صفحه|بيج|page)\s+((?:[\p{L}\p{N}_.\-]+\s?){1,5})/iu.exec(text);
+  if (!m) return null;
+  const kept: string[] = [];
+  for (const word of m[1].trim().split(/\s+/)) {
+    if (PAGE_NAME_STOP.has(word.toLowerCase())) break;
+    kept.push(word);
+  }
+  if (kept.length === 0 || /^\d+$/.test(kept[0])) return null;
+  return kept.join(" ");
 }
 
 export function detectSocialIntent(text: string): SocialIntent {
@@ -210,7 +232,9 @@ export function detectSocialIntent(text: string): SocialIntent {
     discover = "keyword";
   }
 
-  return { platform, wantsComments, wantsTrending, targetUrl, channelRef, task, discover, videosWithComments };
+  const pageName = platform === "facebook" && task === "page_posts" && discover === "keyword" && !channelRef ? facebookPageNameIn(body) : null;
+
+  return { platform, wantsComments, wantsTrending, targetUrl, channelRef, pageName, task, discover, videosWithComments };
 }
 
 /** English phrase the live catalog's search understands for this request. */

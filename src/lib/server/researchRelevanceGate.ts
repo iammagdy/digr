@@ -1,5 +1,5 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
-import { MIN_MEANINGFUL_CHARS, meaningfulChars } from "./commentQuality";
+import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, isGenericComment, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { isCompanyDirectoryJob } from "./directoryCapability";
@@ -105,6 +105,8 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
     return { decision: "no_match", reasonAr: "لغة النص لا تحمل محتوى يمكن مطابقته مع موضوع البحث" };
   }
   const evidence = hasTopicEvidence(stems, own);
+  // «اللهم …», «ما شاء الله», «تسلم»: a supplication or a reaction that does not name the topic says nothing about it, under any video.
+  if (commentRow && !evidence && isGenericComment(rawOwn)) return { decision: "no_match", reasonAr: GENERIC_COMMENT_REASON_AR };
   if ((URL_RE.test(rawOwn) || PHONE_RE.test(rawOwn) || AD_RE.test(rawOwn)) && !evidence) {
     URL_RE.lastIndex = 0;
     return { decision: "no_match", reasonAr: "المحتوى إعلان أو ترويج لا يتناول موضوع البحث" };

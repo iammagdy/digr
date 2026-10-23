@@ -33,7 +33,7 @@ import { timeNeededForAnotherCallMs } from "./chunkSizing";
 import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { youtubeRecencyFor } from "../youtubeRecency";
 import { videoEvidence } from "./videoRelevance";
-import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
+import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, isGenericComment, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
 import { maxPagesForJob } from "./providerCallCaps";
 import { VIDEO_ADOPTED_KEY } from "./videoAdoption";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
@@ -606,7 +606,8 @@ async function runCommentsChunk(
   // would end the job after one old video that was entirely outside the window.
   // A topic search also counts only comments that say something: the others still travel to the worker (which rejects them with its
   // own reason) but never fill the volume.
-  const credited = (list: Record<string, any>[]) => countInsideOf(topicSearch ? list.filter(isUsableComment) : list, params);
+  const countsAsComment = (row: Record<string, any>) => isUsableComment(row) && !isGenericComment(commentTextOf(row));
+  const credited = (list: Record<string, any>[]) => countInsideOf(topicSearch ? list.filter(countsAsComment) : list, params);
   const countedRows = () => credited(rows);
   const withHint = (out: ProviderAdapterCallOutput): ProviderAdapterCallOutput => (windowHint ? { ...out, discoveryWindow: windowHint } : out);
 
@@ -725,7 +726,7 @@ async function runCommentsChunk(
         seen.add(identity);
       }
       uniqueConsumed += 1;
-      if (!isUsableComment(row)) { pageRows.push(row); continue; }
+      if (!countsAsComment(row)) { pageRows.push(row); continue; }
       const repeat = repeatKey(row);
       if (seenRepeats.has(repeat)) continue;
       seenRepeats.add(repeat);

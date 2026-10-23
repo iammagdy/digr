@@ -74,13 +74,13 @@ import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "..
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { countApproximateDates, DATE_BASIS_KEY, filterRowsByDateRange, sampleUndatedFields, summarizeRowDates, VIDEO_PUBLISHED_AT_KEY, type RowDateSummary } from "../../../../lib/server/dateRangeFilter";
-import { allRowsOutsideWindow, dateWindowPageEventAr, OUTSIDE_WINDOW_SENTENCE_AR, youtubeRecencySentenceAr } from "../../../../lib/server/dateWindowNotes";
+import { allRowsOutsideWindow, dateDropShortfallSentenceAr, dateWindowPageEventAr, emptyAfterDateDropSentenceAr, OUTSIDE_WINDOW_SENTENCE_AR, youtubeRecencySentenceAr } from "../../../../lib/server/dateWindowNotes";
 import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 import { cursorKey, emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, removeRunningSets, runningSetKey, saveRunningSet, type RunningSet } from "../../../../lib/server/jobRunningSet";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
 import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
-import { RECEIVED_SO_FAR_LABEL } from "../../../../lib/activityCounts";
+import { DATE_EXCLUDED_LABEL, RECEIVED_SO_FAR_LABEL } from "../../../../lib/activityCounts";
 import {
   DECISION_MAKER_ROUTE_COST_CAP_USD,
   estimateDecisionMakerChunkSpendUsd,
@@ -905,6 +905,10 @@ export async function POST(req: NextRequest) {
 
     // Rows the source returned over the whole job (null when an earlier record did not count them): the page line and the final message show the same total.
     const receivedSoFar: number | null = currentStep === 0 ? providerRows.length : typeof runningSet?.received === "number" ? runningSet.received + providerRows.length : null;
+    // Rows the date window removed over the whole job, with the same totals the activity panel adds up. Unknown (a record from before it was counted) is
+    // never reported as «none removed».
+    const datesDroppedKnown = currentStep === 0 || typeof runningSet?.dateDropped === "number";
+    const datesDroppedTotal = (currentStep === 0 ? 0 : runningSet?.dateDropped ?? 0) + dateFiltered.excludedCount;
     let filteredRows = rawRows;
     if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
       const rules = spec.params.exclusionRules;
@@ -1529,9 +1533,13 @@ export async function POST(req: NextRequest) {
         : reviewBudgetUsedUp && unreviewedRows.length > 0
         ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، وتم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : receivedFromSource > 0
-        ? socialCapability && rawPageRowCount > 0
+        ? socialCapability && feedHasWindow && datesDroppedKnown && datesDroppedTotal > 0 && receivedShown - datesDroppedTotal > 0
+          // Some rows were removed by date and the rest (inside the window) did not match the topic: say both, with the job's own totals.
+          // «وتواريخها داخل الفترة» would be false here, and it used to be said whenever the LAST page had a row left after the date filter.
+          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, uncertainRows.length)}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
+        : socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
-          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
+          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
           : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
         ? videoSelectionUnreviewed
@@ -1553,6 +1561,7 @@ export async function POST(req: NextRequest) {
             `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(providerRows.length)} سجل`,
             currentStep > 0 && receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(receivedSoFar)}` : null,
             "الجديد ٠",
+            dateFiltered.excludedCount ? `${DATE_EXCLUDED_LABEL} ${toArabicDigits(dateFiltered.excludedCount)}` : null,
           ].filter(Boolean).join(" · "),
           units: 0,
           event_type: "progress",
@@ -1587,6 +1596,7 @@ export async function POST(req: NextRequest) {
       batchUnits: acceptedRows.length,
       rawRowsCount: rawPageRowCount,
       receivedRows: providerRows.length,
+      dateExcludedCount: dateFiltered.excludedCount,
       ...(undatedFieldSample.length > 0 ? { undatedFieldSample } : {}),
       ...(dateSummary ? { dateWindow: { missing: dateSummary.missing, outside: dateSummary.outside, inside: dateSummary.inside, ...(videoBasisRows > 0 ? { videoBasis: videoBasisRows } : {}), oldest: dateSummary.oldest, newest: dateSummary.newest, sampleDates: dateSummary.sampleDates } } : {}),
       baselineExcludedCount: duplicateExcludedCount,
@@ -1705,6 +1715,7 @@ export async function POST(req: NextRequest) {
           `الجديد ${toArabicDigits(acceptedRows.length)}`,
           `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,
+          dateFiltered.excludedCount ? `${DATE_EXCLUDED_LABEL} ${toArabicDigits(dateFiltered.excludedCount)}` : null,
           relevanceExcludedCount ? `غير مطابق ${toArabicDigits(relevanceExcludedCount)}` : null,
           uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
           unreviewedRows.length ? `غير مراجَع ${toArabicDigits(unreviewedRows.length)}` : null,
@@ -1772,6 +1783,8 @@ export async function POST(req: NextRequest) {
       let rawRowsCollected = 0;
       let baselineExcludedCount = 0;
       let relevanceExcludedCount = 0;
+      let dateExcludedTotal = 0;
+      let receivedTotal = 0;
       const partialsBucket = adminClient.storage.from("partials");
 
       // Rows reused from the failed earlier run come first; the stored delivered count already includes them.
@@ -1841,6 +1854,8 @@ export async function POST(req: NextRequest) {
         rawRowsCollected += Number(stepObj.rawRowsCount ?? stepObj.rows.length) || 0;
         baselineExcludedCount += Number(stepObj.baselineExcludedCount) || 0;
         relevanceExcludedCount += Number(stepObj.relevanceExcludedCount) || 0;
+        dateExcludedTotal += Number(stepObj.dateExcludedCount) || 0;
+        receivedTotal += Number(stepObj.receivedRows) || 0;
         if (!firstRawProfile && stepObj.rawProfile) {
           firstRawProfile = stepObj.rawProfile;
         }
@@ -2239,8 +2254,12 @@ export async function POST(req: NextRequest) {
         // Fewer rows than requested: say why in the customer's words, never leave the gap unexplained.
         if (finalRows.length < targetMax) {
           const excluded = relevanceExcludedCount + baselineExcludedCount;
+          // Rows removed by the date window are counted apart (they never reach the relevance gate): said first, with the job's totals.
+          const dateSentence = dateDropShortfallSentenceAr(receivedTotal > 0 ? receivedTotal : null, dateExcludedTotal);
           const reason = providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
+            : dateSentence
+            ? `${dateSentence}${excluded > 0 ? ` واستُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.` : ""}`
             : excluded > 0
             ? `استُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.`
             : callCapReason
