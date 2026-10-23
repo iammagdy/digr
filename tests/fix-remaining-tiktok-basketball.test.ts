@@ -40,8 +40,10 @@ describe("TikTok basketball comments found by the topic search", () => {
 
   it("a short comment under a video whose text names neither sport is held for the video-level review, not rejected on its own words", () => {
     for (const video_title of ["", "🔥🔥 دانك خرافي من لاعب الأهلي", "#nba", "فيديو"]) {
-      expect(decide({ text: "ماتش حلو", video_title }), video_title).toMatchObject({ decision: "match" });
+      expect(decide({ text: "ماتش حلو", video_title, video_url: VIDEOS[2].url }), video_title).toMatchObject({ decision: "match" });
     }
+    // a comment that names no video at all and says nothing of the sport has nothing to be judged by
+    expect(decide({ text: "ماتش حلو" }).decision).toBe("no_match");
   });
 
   it("a comment under a basketball video, even a bare reaction, is delivered with the video", () => {

@@ -109,7 +109,8 @@ function namedChannels(text: string): string[] {
       if (CHANNEL_NAME_STOP.has(w)) break;
       kept.push(w);
     }
-    if (kept.length && !/^\d+$/.test(kept[0])) add(kept.join(" "));
+    // «صفحة https://…»: the word after the noun is the start of a link (already read as a channel above), not a second name.
+    if (kept.length && !/^\d+$/.test(kept[0]) && !/^https?$/iu.test(kept[0])) add(kept.join(" "));
   }
   return out;
 }

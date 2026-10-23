@@ -56,7 +56,7 @@ class Chat {
 const chat = (balance?: number) => new Chat(balance).start();
 const visible = (r: any) => [r.contentAr, r.clarificationIntro, ...(r.clarificationQuestions || []), ...((r.clarificationItems || []).flatMap((q: any) => [q.text, ...(q.options || [])]))].filter(Boolean).join(" \n ");
 
-const PAGE_REQUEST = "هات ٤٠٠ منشور بالتعليقات من صفحة اليوم السابع على فيسبوك آخر ٣ شهور";
+const PAGE_REQUEST = "هات ٤٠٠ منشور بالتعليقات من صفحة https://www.facebook.com/youm7 على فيسبوك آخر ٣ شهور";
 
 describe("A1: ask only what the request does not already say", () => {
   it("reads the facts of the owner's request: platform, topic, period, posts and comments are stated; only the comments per post is not", () => {
@@ -93,15 +93,15 @@ describe("A1: ask only what the request does not already say", () => {
     const ids = (text: string) => socialDiscoveryItems(text, { otherFacebookService: false }).map((q) => q.id);
     expect(ids("بوستات فيسبوك بالتعليقات 50 منشور")).toEqual(["social_page_required", "social_comments_per_post", "social_time_required"]);
     expect(ids(PAGE_REQUEST)).toEqual(["social_comments_per_post"]);
-    expect(ids("هات ٤٠٠ منشور بالتعليقات من صفحة اليوم السابع على فيسبوك ٢٠ تعليق من كل منشور")).toEqual([]);
+    expect(ids("هات ٤٠٠ منشور بالتعليقات من صفحة https://www.facebook.com/youm7 على فيسبوك ٢٠ تعليق من كل منشور")).toEqual([]);
   });
 
   it("does nothing when the request is complete, is not stated with posts and comments, or another verified Facebook service can serve a topic", () => {
-    expect(socialDiscoveryTrigger("هات ٤٠٠ منشور بالتعليقات من صفحة اليوم السابع على فيسبوك ٢٠ تعليق من كل منشور")).toBeNull();
+    expect(socialDiscoveryTrigger("هات ٤٠٠ منشور بالتعليقات من صفحة https://www.facebook.com/youm7 على فيسبوك ٢٠ تعليق من كل منشور")).toBeNull();
     expect(socialDiscoveryTrigger("الترندات الصحية في مصر آخر ٣ شهور من تيك توك ٤٠٠ منشور بالتعليقات")).toBeNull();
     expect(socialDiscoveryTrigger(OWNER_REQUEST, { otherFacebookService: true })).toBe("per_post");
     expect(socialDiscoveryTrigger("عايز بيانات من فيسبوك عن الدهب")).toBeNull(); // a plain topic request keeps its old route
-    expect(socialDiscoveryTrigger("هات ٥٠ منشور من صفحة اليوم السابع على فيسبوك")).toBeNull(); // posts only: nothing to ask
+    expect(socialDiscoveryTrigger("هات ٥٠ منشور من صفحة https://www.facebook.com/youm7 على فيسبوك")).toBeNull(); // posts only: nothing to ask
     expect(otherFacebookServiceExists([{ slug: "social-facebook-comments", platform: "facebook", enabled: true, status: "verified" }])).toBe(false);
     expect(otherFacebookServiceExists([{ slug: "facebook-hashtag-search", platform: "facebook", enabled: true, status: "verified" }])).toBe(true);
     expect(otherFacebookServiceExists([{ slug: "facebook-hashtag-search", platform: "facebook", enabled: false, status: "verified" }])).toBe(false);
@@ -127,7 +127,7 @@ describe("A1: ask only what the request does not already say", () => {
     await c.send(PAGE_REQUEST);
     const r = await c.answer([{ questionId: "social_comments_per_post", value: "٢٠" }]);
     expect(r.outputType).toBe("propose_plan"); // the platform, the page and the period of the first message are still there
-    expect(r.planQuote.items[0].params).toMatchObject({ channels: ["اليوم السابع"], perVideo: 20 });
+    expect(r.planQuote.items[0].params).toMatchObject({ channels: ["https://www.facebook.com/youm7"], perVideo: 20 });
   });
 
   it("a Facebook page named in the request is the scope of its comments (it went to the model before)", () => {
@@ -150,7 +150,7 @@ describe("A2 + A3: the plan says honestly what fits, why, and whether the balanc
     expect(r.outputType).toBe("propose_plan");
     const item = r.planQuote.items[0];
     expect(item.capabilitySlug).toBe("social-facebook-comments");
-    expect(item.params).toMatchObject({ channels: ["اليوم السابع"], topPerChannel: 20, perVideo: 20, dateFrom: "2026-07-23", dateTo: "2026-10-23" });
+    expect(item.params).toMatchObject({ channels: ["https://www.facebook.com/youm7"], topPerChannel: 20, perVideo: 20, dateFrom: "2026-07-23", dateTo: "2026-10-23" });
     expect(r.planQuote.targetVolumeMax).toBe(400); // 20 posts x 20 comments: never more than can be read
     expect(r.planQuote.askedVolumeMax).toBe(8000); // 400 posts x 20 comments
   });
@@ -192,7 +192,7 @@ describe("A2 + A3: the plan says honestly what fits, why, and whether the balanc
 
   it("a Facebook page's posts, asked for 400: the plan holds 60 and says it is the service's own ceiling, not the job cap and not the balance", async () => {
     const c = await chat(20000);
-    const r = await c.send("هات ٤٠٠ منشور من صفحة اليوم السابع على فيسبوك آخر ٣ شهور");
+    const r = await c.send("هات ٤٠٠ منشور من صفحة https://www.facebook.com/youm7 على فيسبوك آخر ٣ شهور");
     expect(r.outputType).toBe("propose_plan");
     expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(60);
     expect(r.planQuote.targetVolumeMax).toBe(60);

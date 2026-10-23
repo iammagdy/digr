@@ -233,6 +233,9 @@ export function evaluateResearchRowRelevance(
     const contextBasket = countPattern(context, BASKETBALL_TOPIC_RE);
     const footballTerms = countPattern(`${own} ${context}`, FOOTBALL_TOPIC_RE);
     if (!own) return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
+    // A comment that names neither its video nor the sport has nothing to be judged by: it is not presumed on topic.
+    const hasVideo = context !== "" || (typeof row.video_url === "string" && row.video_url.trim() !== "");
+    if (ownBasket === 0 && !hasVideo) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
     if (ownBasket + contextBasket === 0 && footballTerms > 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
     if (ownBasket + contextBasket > 0 && footballTerms >= ownBasket + contextBasket) return { decision: "uncertain", reasonAr: "يذكر السجل كرة السلة وكرة القدم معاً؛ أُحيل للمراجعة ولم يُحتسب" };
     return presumeTopicSearchRow(row, [], true, requestedRegion, ownBasket > 0);

@@ -2,7 +2,7 @@ import { normalizeDigits } from "./arabicDigits";
 import { understandMission } from "./consultantCopy";
 import { SOCIAL_CONTENT_WORDS_RE, ACCOUNT_LOOKUP_RE, hasSocialTopic } from "./socialDiscovery";
 import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, type SocialIntent } from "./socialTasks";
-import { isSocialCapabilitySlug } from "./socialSources";
+import { facebookPageUrl, isSocialCapabilitySlug } from "./socialSources";
 import { resolveTimeWindow, windowIsStatedByCustomer, WINDOW_OPTIONS_AR } from "./timeWindow";
 
 /**
@@ -93,6 +93,35 @@ export function otherFacebookServiceExists(capabilities: ReadonlyArray<{ slug?: 
   return (capabilities || []).some((cap) => cap.enabled !== false && cap.status === "verified" && !isSocialCapabilitySlug(cap.slug) && /facebook/i.test(`${cap.platform ?? ""} ${cap.slug ?? ""} ${cap.tregEndpointId ?? ""} ${cap.nameEn ?? ""}`));
 }
 
+/**
+ * The page a Facebook request names by a display name that is not an address, or null. A link, a username («youm7», «@youm7») and a request that
+ * names no page are not this case. The customer's own answer to the question below is in the text too: once a link or a username was given the
+ * page is that address and nothing is asked again.
+ */
+export function facebookPageDisplayName(rawText: string): string | null {
+  const text = normalizeDigits(rawText || "");
+  const intent = detectSocialIntent(text);
+  if (intent.platform !== "facebook" || !intent.pageName || intent.channelRef || intent.targetUrl) return null;
+  return facebookPageUrl(intent.pageName) ? null : intent.pageName;
+}
+
+/** True when the page's name was given but still is not an address (after the question below, or from the start). */
+export function facebookPageNameNeedsLink(rawText: string): boolean {
+  return facebookPageDisplayName(rawText) !== null;
+}
+
+/** True when the customer already answered the page question (the answer travels in the text under its label) and it still names no address. */
+export function facebookPageLinkAlreadyAsked(rawText: string): boolean {
+  return /الصفحة المطلوبة\s*:/u.test(rawText || "");
+}
+
+export const FACEBOOK_PAGE_LINK_RETRY_AR = "لم أتمكن من التعرف على هذه الصفحة من اسمها. افتح الصفحة على فيسبوك وانسخ رابطها من شريط العنوان، أو اكتب اسم المستخدم الظاهر بعد علامة @ في صفحتها، وسأجهز لك الخطة.";
+
+/** The one question that stops a page named only by its display name. */
+export function facebookPageLinkQuestionAr(pageName: string): string {
+  return `فيسبوك: ما رابط صفحة «${pageName}»؟ انسخه من شريط العنوان بعد فتح الصفحة، أو اكتب اسم المستخدم الظاهر بعد علامة @.`;
+}
+
 export interface DiscoveryContext {
   /** Another Facebook service is registered (see otherFacebookServiceExists): a topic request is then left to the plan builder. */
   otherFacebookService?: boolean;
@@ -103,11 +132,14 @@ export interface DiscoveryContext {
  * per-post number), and, for Facebook with no page and no other verified Facebook service, the page itself (Facebook posts are read from one
  * public page, not searched by topic). Null when nothing of the sort is missing.
  */
-export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "per_post" | null {
+export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "page_link" | "per_post" | null {
   const text = normalizeDigits(rawText || "");
   if (!SOCIAL_CONTENT_WORDS_RE.test(text) || ACCOUNT_LOOKUP_RE.test(text)) return null;
   const facts = readSocialFacts(text);
   if (!facts.platform) return null;
+  // A page named by its DISPLAY name («اليوم السابع»): no verified service can find a page by that name (they take a link, a username or an id), and a
+  // source that finds nothing fails after the customer has approved. Ask once for the link, before any plan or hold.
+  if (facebookPageNameNeedsLink(text)) return "page_link";
   // Only the shape the verified services cannot read by topic («N منشور بالتعليقات» with no page) is stopped for a page. A plain Facebook topic
   // request goes the way it always did, and so does any Facebook request while another verified Facebook service is registered.
   if (facts.platform === "facebook" && !facts.source && !context.otherFacebookService && facts.postsCount !== null && facts.commentsWanted === true) return "page";
@@ -123,6 +155,10 @@ export function socialDiscoveryItems(rawText: string, options: { skipped?: Reado
   const trigger = socialDiscoveryTrigger(rawText, options);
   if (!trigger) return [];
   const skipped = options.skipped ?? new Set<string>();
+  if (trigger === "page_link") {
+    const name = facebookPageDisplayName(rawText) ?? "";
+    return skipped.has(SOCIAL_DISCOVERY_IDS.page) ? [] : [item(SOCIAL_DISCOVERY_IDS.page, facebookPageLinkQuestionAr(name), "free")];
+  }
   const facts = readSocialFacts(rawText);
   const items: DiscoveryItem[] = [];
   if (!facts.source && trigger === "page") {
@@ -168,9 +204,16 @@ export function discoveryAnswerAsRequestText(questionId: string, rawValue: strin
   }
 }
 
+/** A link typed without its scheme («facebook.com/youm7») is made a link, so the readers that look for links find it. */
+export function withLinkScheme(value: string): string {
+  const text = String(value || "").trim();
+  return /^(?:www\.|m\.facebook\.com|facebook\.com|fb\.com)/iu.test(text) ? `https://${text}` : text;
+}
+
 /** One line before the questions: what was understood, so nothing already said is asked again. */
 export function socialDiscoveryIntroAr(rawText: string, context: DiscoveryContext = {}): string {
   const trigger = socialDiscoveryTrigger(rawText, context);
+  if (trigger === "page_link") return "فهمت طلبك على فيسبوك. أقرأ الصفحة من رابطها أو اسم مستخدمها، لا من اسمها المكتوب فقط، ولن أبدأ مهمة قد تعود فارغة.";
   if (trigger === "page") return `فهمت طلبك على فيسبوك. ${FACEBOOK_NO_TOPIC_SEARCH_AR} وأسأل فقط عمّا لم تذكره:`;
   return "فهمت طلبك، وأسأل فقط عمّا لم تذكره:";
 }

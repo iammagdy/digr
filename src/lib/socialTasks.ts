@@ -164,6 +164,10 @@ const PAGE_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "م�
  * service, and the model was left to choose one from the whole live catalog (it chose a post-comments service with an invented link).
  */
 export function facebookPageNameIn(text: string): string | null {
+  // The customer's own answer to «ما رابط صفحة…؟» («الصفحة المطلوبة: صفحة youm7 ·») is the page: it wins over the display name typed earlier.
+  const answers = [...(text || "").matchAll(/الصفحة المطلوبة\s*:\s*(?:صفحة\s+)?([^·]+?)\s*·/gu)];
+  const answered = answers.length > 0 ? answers[answers.length - 1][1].trim() : "";
+  if (answered && !/^https?:\/\//iu.test(answered)) return answered;
   const m = /(?:^|[\s(])(?:صفحة|صفحه|بيج|page)\s+((?:[\p{L}\p{N}_.\-]+\s?){1,5})/iu.exec(text);
   if (!m) return null;
   const kept: string[] = [];
@@ -172,6 +176,8 @@ export function facebookPageNameIn(text: string): string | null {
     kept.push(word);
   }
   if (kept.length === 0 || /^\d+$/.test(kept[0])) return null;
+  // «صفحة https://…»: the word after «صفحة» is the start of a link, not a name (the link is read as the page by its own reader).
+  if (/^https?$/iu.test(kept[0])) return null;
   return kept.join(" ");
 }
 

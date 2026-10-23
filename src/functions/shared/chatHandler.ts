@@ -9,7 +9,7 @@ import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWin
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
-import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_NO_TOPIC_SEARCH_AR } from "../../lib/socialDiscoveryCard";
+import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_NO_TOPIC_SEARCH_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -180,7 +180,7 @@ function customerAuthoredRequirementText(message: string): string {
         // The discovery card's answers (a Facebook page, the number of posts, comments or not, comments per post) are stored as plain request words.
         if (SOCIAL_DISCOVERY_OWN_IDS.has(answer?.questionId)) {
           const raw = Array.isArray(answer?.value) ? answer.value.filter((v: unknown): v is string => typeof v === "string").join(" ") : typeof answer?.value === "string" ? answer.value : "";
-          const words = discoveryAnswerAsRequestText(answer.questionId, sanitizeClarificationText(raw, 200));
+          const words = discoveryAnswerAsRequestText(answer.questionId, answer.questionId === SOCIAL_DISCOVERY_IDS.page ? withLinkScheme(sanitizeClarificationText(raw, 200)) : sanitizeClarificationText(raw, 200));
           // Prefixed with the card's label, so it travels with the request it completes (a bare «٢٠ تعليق من كل منشور» would read as a new request).
           return words ? [`${labels[answer.questionId]}: ${words}`] : [];
         }
@@ -253,7 +253,8 @@ export function getDeterministicDiscoveryQuestion(
     const question = discoveryQuestionFor(text, brief, capabilities, ignore);
     if (!question || !skipped.has(question.id)) return question;
     if (PROCEED_WHEN_SKIPPED.has(question.id)) { ignore.add(question.id); continue; }
-    return { plain: true, id: `skipped_${question.id}`, text: PLAIN_AFTER_SKIP_AR[question.id] ?? PLAIN_AFTER_SKIP_GENERIC_AR };
+    const pageLinkSkipped = question.id === SOCIAL_DISCOVERY_IDS.page && /ما رابط صفحة/u.test(String(question.text));
+    return { plain: true, id: `skipped_${question.id}`, text: pageLinkSkipped ? FACEBOOK_PAGE_LINK_RETRY_AR : PLAIN_AFTER_SKIP_AR[question.id] ?? PLAIN_AFTER_SKIP_GENERIC_AR };
   }
   return null;
 }
@@ -333,7 +334,9 @@ function socialDiscoveryGapQuestion(text: string, ignore: ReadonlySet<string>, c
   const context = { otherFacebookService: otherFacebookServiceExists(capabilities) };
   const trigger = socialDiscoveryTrigger(text, context);
   if (!trigger) return null;
-  const id = trigger === "page" ? SOCIAL_DISCOVERY_IDS.page : SOCIAL_DISCOVERY_IDS.perPost;
+  // The customer answered the page question and the answer is still only a name: say so in one sentence, never the same card twice.
+  if (trigger === "page_link" && facebookPageLinkAlreadyAsked(text)) return { plain: true, id: "facebook_page_link_retry", text: FACEBOOK_PAGE_LINK_RETRY_AR };
+  const id = trigger === "page" || trigger === "page_link" ? SOCIAL_DISCOVERY_IDS.page : SOCIAL_DISCOVERY_IDS.perPost;
   if (ignore.has(id)) return null;
   const first = socialDiscoveryItems(text, context).find((entry) => entry.id === id);
   return first ? { id: first.id, text: first.text, question: first.question, type: first.type, options: first.options, allowOther: first.allowOther } : null;
