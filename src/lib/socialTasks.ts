@@ -301,6 +301,8 @@ export function hasRegionHint(text: string): boolean {
 /** Words that add nothing to a topic: request verbs, platform names, quantities and the task words themselves. */
 const TOPIC_NOISE = new Set([
   "عايز", "عايزه", "عايزة", "عاوز", "عاوزه", "اريد", "أريد", "محتاج", "محتاجة", "ابغى", "أبغى", "هات", "هاتلي", "اسحب", "سحب", "استخرج", "جمع", "اجمع", "ابحث", "لي", "لى", "ليا", "لنا",
+  // request verbs with a hamza, «talk about» verbs of a dialect sentence («بيتكلموا عن الدهب») and the «لآخر» of «لآخر شهر»: never the topic (they went into the search text of a keyword job)
+  "أجمع", "أسحب", "أستخرج", "اجمعلي", "اسحبلي", "بيتكلموا", "بيتكلم", "بتتكلم", "بتتكلموا", "يتكلموا", "يتكلم", "لآخر", "لاخر", "للآخر",
   "من", "على", "علي", "في", "فى", "داخل", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
   // Labels of stored card answers and placeholder words: never a topic.
   "موضوع", "البحث", "المطلوب", "المطلوبه", "مصدر", "القنوات", "قنوات", "تخطي", "الحد", "الأقصى", "الاقصى", "أقصى", "اقصى", "الإجابة", "الاجابة", "إجابة", "اجابة",

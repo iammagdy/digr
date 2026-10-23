@@ -313,12 +313,25 @@ describe("a plan item says exactly one thing to collect", () => {
   });
 });
 
+describe("the looser per-chunk bound (0.4 USD) belongs to ONE service only", () => {
+  it("`pagedDiscovery` is set on the Facebook keyword service and on no other; every other service keeps the 0.05 USD bound, and the paged one is pinned to its exact value", () => {
+    expect(SOCIAL_CAPABILITIES.filter((cap) => cap.pagedDiscovery).map((cap) => cap.slug)).toEqual(["social-facebook-keyword-comments"]);
+    for (const cap of SOCIAL_CAPABILITIES.filter((candidate) => !candidate.pagedDiscovery)) expect(estimateSocialChunkCostUsd(cap), cap.slug).toBeLessThan(0.05);
+    // the paged service: the dearest of its sources (0.06606, the one-page fallback) times the six calls a chunk may make, and nothing looser
+    const paged = getSocialCapability("social-facebook-keyword-comments")!;
+    expect(estimateSocialChunkCostUsd(paged)).toBeCloseTo(0.06606 * SOCIAL_MAX_CALLS_PER_CHUNK, 6);
+    expect(estimateSocialChunkCostUsd(paged)).toBeLessThan(0.4);
+    expect(estimateSocialChunkCostUsd(paged)).toBeGreaterThan(0.05);
+  });
+});
+
 describe("one chunk's provider spend estimate covers its worst case", () => {
   it("is the dearest source times the most calls a chunk may make", () => {
     for (const cap of SOCIAL_CAPABILITIES) {
       const prices = [...(cap.comments || []), ...Object.values(cap.discover).flatMap((s) => s || [])].map((s) => s.costUsd);
       expect(estimateSocialChunkCostUsd(cap)).toBeCloseTo(Math.max(...prices) * SOCIAL_MAX_CALLS_PER_CHUNK, 6);
-      expect(estimateSocialChunkCostUsd(cap)).toBeLessThan(0.05);
+      // the Facebook topic service pays 0.02952 to 0.06606 USD for ONE search call (catalog read of 2026-10-23), so its worst chunk is the dearest search times six; every other service stays under 0.05
+      expect(estimateSocialChunkCostUsd(cap)).toBeLessThan(cap.pagedDiscovery ? 0.4 : 0.05);
     }
   });
 });

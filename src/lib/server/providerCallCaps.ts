@@ -101,6 +101,9 @@ export function worstCaseJobProviderUsd(unitCostUsd: number, targetMax: number, 
   return Number((maxPagesForJob(targetMax, pageSize) * Math.max(1, pageSize) * unitCostUsd).toFixed(6));
 }
 
+/** The review budget ran out while the posts of a topic search were being chosen: no comment of a post nobody reviewed is read, and nothing is charged for it. One sentence, said instead of the row-level one (no sheet is involved). */
+export const POST_REVIEW_BUDGET_NOTE_AR = "توقف الجمع لأن التحقق الآلي من المنشورات بلغ الحد المسموح لهذا الطلب قبل بلوغ العدد المطلوب؛ لم تُقرأ تعليقات أي منشور لم يُراجَع، ولم يُحتسب عليك إلا ما سُلّم وحُرّر الباقي من الحجز المؤقت";
+
 export const CALL_CAP_NOTE_AR: Record<CallCapReason, string> = {
   page_cap: "توقف الجمع عند الحد الأقصى لعدد الصفحات المسموح لهذا الطلب، مع تسليم السجلات المطابقة التي جُمعت فقط",
   no_progress: "توقف الجمع لأن عدة صفحات متتالية لم تُنتج أي سجل مطابق، ولم يُحتسب عليك إلا ما سُلّم",

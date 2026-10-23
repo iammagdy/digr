@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { JOB_MAX_POINTS_CAP } from "../src/lib/jobPointsCap";
 import { chargeForUnits, reserveForUnits } from "../src/lib/recordPricing";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { DEFINITIONS_DIR, replicaAvailable, startReplica, type ReplicaDb } from "./helpers/replicaDb";
 import {
   acceptQuote, balanceOf, createQuote, deliver, exactCharge, exactReserve, hash64, ledgerOf, mulberry32, priceOf, seedUser, settle, startJob,
@@ -11,16 +13,22 @@ import {
  * in a real local PostgreSQL. The per-job cap is the production one (600), taken from the one shared constant; nothing here changes a
  * function. Nothing here touches Supabase, a provider or a model. Skipped visibly when no local PostgreSQL server is installed.
  */
+// the proposal's steps (docs/proposals/job-cap-25000/), applied on top of the production bodies exactly as the owner would apply them by hand: 1, 2, 4 (step 3 is a settings row)
+const PROPOSAL_DIR = path.resolve(__dirname, "../docs/proposals/job-cap-25000");
+const proposalSteps = ["01_settle_job_atomic_cap_25000.sql", "02_settle_people_job_atomic_cap_25000.sql", "04_create_quote_atomic_cap_25000.sql"].map((name) => readFileSync(path.join(PROPOSAL_DIR, name), "utf8"));
 const VARIANTS = [
-  { name: "production bodies, cap 600", dir: DEFINITIONS_DIR, cap: JOB_MAX_POINTS_CAP, volumeCeiling: 5000, before: [] as string[] },
+  // what is live today: the production bodies with their cap of 600 (a literal: the TypeScript cap is 25,000 now)
+  { name: "production bodies, cap 600", dir: DEFINITIONS_DIR, cap: 600, volumeCeiling: 5000, before: [] as string[], extra: [] as string[] },
+  // the owner's decision: the same bodies after the cap proposal, with the cap taken from the one shared constant
+  { name: "production bodies after the job-cap-25000 proposal", dir: DEFINITIONS_DIR, cap: JOB_MAX_POINTS_CAP, volumeCeiling: 5000, before: [] as string[], extra: proposalSteps },
 ];
 
 // unit prices as exact thousandths: fractions such as 0.12, 0.28, 3.17, 193 and awkward ones
 const NAMED_PRICES = [120, 280, 3170, 193000, 82, 1, 500, 5500, 1000, 7777, 33333];
 
-describe.skipIf(!replicaAvailable()).each(VARIANTS)("money properties on the replica: $name", ({ dir, cap, volumeCeiling, before }) => {
+describe.skipIf(!replicaAvailable()).each(VARIANTS)("money properties on the replica: $name", ({ dir, cap, volumeCeiling, before, extra }) => {
   let db: ReplicaDb;
-  beforeAll(async () => { db = await startReplica(); await db.reset({ functionsDir: dir, beforeFunctions: before }); }, 90_000);
+  beforeAll(async () => { db = await startReplica(); await db.reset({ functionsDir: dir, beforeFunctions: before, extraSql: extra }); }, 90_000);
   afterAll(async () => { await db?.stop(); });
 
   it("the sellable ceiling is exactly the cap: a reserve of the cap is quoted, one point more is refused", async () => {

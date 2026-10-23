@@ -225,7 +225,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     }
     if (channels.count) stripped = stripped.replace(new RegExp(`${COUNT}\\s*${CHANNEL_WORD}`), " ");
     if (top !== null) stripped = stripped.replace(/(?:اعلي|اعلى|أعلى|اكتر|أكتر|اكثر|أكثر|اعلا|توب|top)?\s*\d+\s*(?:فيديو|فيديوهات|مقطع|مقاطع)/iu, " ");
-    const counted = /(\d{2,7})\s*(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة)/iu.exec(stripped);
+    const counted = /(\d{2,7})\s*(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة|comments?|posts?|tweets?)/iu.exec(stripped);
     // The answer to the cap question is stored as «الحد الأقصى المطلوب: N»; a bare number there is the cap too.
     const capAnswer = CAP_ANSWER_RE.exec(text);
     const capNumber = capAnswer ? extractNumberFromText(capAnswer[1]) : undefined;
@@ -407,7 +407,7 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
     case "social_feed": {
       const about = u.subject ? ` عن «${u.subject}»` : "";
       if (u.commentsFlow) {
-        const container = u.videos ? videosCountAr(u.videos, u.videosNoun) : u.videosNoun === "posts" ? "منشورات" : "فيديوهات";
+        const container = u.videos ? videosCountAr(u.videos, u.videosNoun) : u.videosNoun === "posts" || u.platform === "facebook" ? "منشورات" : "فيديوهات";
         const cap = u.volume ? `، حتى ${formatAr(u.volume)} تعليق` : "";
         return `فهمت أنك تريد ${u.allComments ? "كل تعليقات" : "تعليقات"} ${container}${about}${where}${cap}${windowText}.`;
       }

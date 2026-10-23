@@ -58,7 +58,7 @@ describe("the configuration of the ceilings: the defaults are today's numbers", 
     expect(getSocialCapability("social-tiktok-comments")!.maxRows).toBe(2000);
     expect(getSocialCapability("social-youtube-comments")!.maxRows).toBe(2000);
     expect(getSocialCapability("social-x-posts")!.maxRows).toBe(4500);
-    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(60);
+    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(300);
     expect(getSocialCapability("social-youtube-videos")?.maxRows ?? 48).toBe(48);
   });
 

@@ -1,6 +1,6 @@
 import { maybeUpgradeToChainPlan } from "../../lib/server/multiProvider/planUpgrade";
 import { pointsAr } from "../../lib/pointsFormat";
-import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
+import { effectiveJobPointsCap } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
 import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
@@ -106,9 +106,10 @@ import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusable
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
 import { planCountLineAr, planCountPartsAr } from "../../lib/planCounts";
+import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { pairRoleOf } from "../../lib/planFit";
 import { videosCountAr } from "../../lib/channelNames";
-import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { loadMeasuredTimings } from "../../lib/server/jobTimings";
 import { missionDurationForPlan } from "../../lib/missionDuration";
 import { longJobDriverMode } from "../../lib/driverMode";
@@ -3450,6 +3451,8 @@ export class ChatHandler {
         let reachCutNow = null as { units: number; detailAr: string } | null;
         /** The top videos found by a topic because the customer skipped the channels: the plan says so. */
         let missionByTopicSubject = null as string | null;
+        /** The customer asked for fewer comments from each post than the service reads from one (its price is built on that many): what they asked and the posts they named. */
+        let perPostRaisedNow = null as { asked: number; posts: number | null } | null;
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
           // A social request is served by its verified capability whatever the model proposed; the link, channel,
           // keyword and country are rebuilt from the customer's own words.
@@ -3511,6 +3514,7 @@ export class ChatHandler {
               : commentsOfPosts
               ? understanding.commentsPerVideo ?? (askedVideos ? Math.min(MAX_PER_VIDEO, Math.ceil(statedVolume / askedVideos)) : perVideoBrief)
               : perVideoBrief;
+            if (verifiedSocialDef.minPerVideo && perVideoForPlan && perVideoForPlan < verifiedSocialDef.minPerVideo) perPostRaisedNow = { asked: perVideoForPlan, posts: askedVideos ?? null };
             const params = canonicalSocialParams(verifiedSocialDef, socialIntent, conversationRequestText, item.params, {
               dateFrom: dates.from,
               dateTo: dates.to,
@@ -3534,7 +3538,8 @@ export class ChatHandler {
             const reachable = Math.min(params.videoCount && params.perVideo ? Number(params.videoCount) * Number(params.perVideo) : Infinity, missionReachable);
             const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows, reachable));
             askedVolumeForCard = items.length === 1 ? statedVolume : null;
-            if (items.length === 1 && verifiedSocialDef.maxRows < Math.min(statedVolume, reachable)) serviceCeilingNow = verifiedSocialDef.maxRows;
+            // (a tie with what the posts can reach is the service ceiling too: «٤٠٠ منشور بخمسة تعليقات» reaches 1,500 at the ceiling of 300 posts, and the ceiling is what cut the 2,000)
+            if (items.length === 1 && verifiedSocialDef.maxRows < statedVolume && verifiedSocialDef.maxRows <= reachable) serviceCeilingNow = verifiedSocialDef.maxRows;
             // What the posts a job reads times the comments from each can reach is what cut it (not the balance, not the points cap).
             if (items.length === 1 && Number.isFinite(reachable) && reachable < Math.min(statedVolume, verifiedSocialDef.maxRows)) {
               const postsReadable = Number(params.topPerChannel) > 0 && Array.isArray(params.channels) ? Number(params.topPerChannel) * params.channels.length : Number(params.videoCount);
@@ -3844,7 +3849,11 @@ export class ChatHandler {
           const plannedSocialVolume = Number(planItems[0]?.targetVolumeMax) || 1;
           const tQuoteStart = Date.now();
           awaitsCount++;
-          const managedQuote = await createAndSaveManagedQuote(this.tables, {
+          // A large plan that today's provider capacity cannot hold is REFUSED in one plain sentence (see planManager: PlanRefusalError), never clipped.
+          let quoteRefusalAr: string | null = null;
+          let managedQuoteOrNull: Awaited<ReturnType<typeof createAndSaveManagedQuote>> | null = null;
+          try {
+          managedQuoteOrNull = await createAndSaveManagedQuote(this.tables, {
             conversationId,
             userId,
             plan: {
@@ -3859,6 +3868,17 @@ export class ChatHandler {
             capabilities: validationCaps,
             enforceScope: true,
           });
+          } catch (quoteErr: any) {
+            if (!(quoteErr instanceof PlanRefusalError)) throw quoteErr;
+            quoteRefusalAr = quoteErr.messageAr;
+          }
+          if (quoteRefusalAr !== null) {
+            output = { type: "refuse", reasonAr: quoteRefusalAr } as any;
+            planOutput = null;
+            planValidation = { valid: false, errors: [quoteRefusalAr], issues: [] };
+            finalContentAr = quoteRefusalAr;
+          } else {
+          const managedQuote = managedQuoteOrNull!;
           tQuoteMs = Date.now() - tQuoteStart;
           quoteMs = tQuoteMs;
           quoteRpcMs += quoteMs;
@@ -3988,12 +4008,17 @@ export class ChatHandler {
             topPerChannel: managedQuote.items[0]?.params?.topPerChannel ?? null,
             maxChannels: MAX_CHANNELS_PER_JOB,
           });
+          // The service reads at least a few comments from each post (its price assumes it): fewer asked is said, with the posts the plan covers instead.
+          if (perPostRaisedNow && verifiedSocialDef?.minPerVideo && managedQuote.items.length === 1) {
+            const planned = postsForVolume({ videoCount: perPostRaisedNow.posts ?? undefined, perVideo: managedQuote.items[0]?.params?.perVideo }, managedQuote.targetVolumeMax);
+            coverageLines.push(`تُقرأ ${toArabicDigits(verifiedSocialDef.minPerVideo)} تعليقات على الأقل من كل منشور${planned && perPostRaisedNow.posts && planned !== perPostRaisedNow.posts ? `؛ لذلك تشمل الخطة ${videosCountAr(planned, "posts")} بدل ${videosCountAr(perPostRaisedNow.posts, "posts")}، مع الإبقاء على عدد التعليقات الذي طلبته` : ""}.`);
+          }
           for (const line of coverageLines) planSummaryText += `\n- ${line}`;
           // The plan card shows the same sentences (fewer channels than the template said, a lower top, videos found by a topic).
           if (coverageLines.length > 0) planQuoteData.coverageLinesAr = coverageLines;
           // Videos and comments are two quantities: the plan names both, so «٣ فيديوهات» can never read as three comments.
           if (videosStatedForPlan && managedQuote.items.length === 1) {
-            planSummaryText += `\n- الفيديوهات: ${videosCountAr(videosStatedForPlan.count, videosStatedForPlan.noun)}، والتعليقات: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} تعليق من كل ما فيها.`;
+            planSummaryText += `\n- ${videosStatedForPlan.noun === "posts" ? "المنشورات" : "الفيديوهات"}: ${videosCountAr(verifiedSocialDef?.pagedDiscovery ? postsForVolume({ videoCount: videosStatedForPlan.count, perVideo: managedQuote.items[0]?.params?.perVideo }, managedQuote.targetVolumeMax) || videosStatedForPlan.count : videosStatedForPlan.count, videosStatedForPlan.noun)}، والتعليقات: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} تعليق من كل ما فيها.`;
           }
           // A count the customer left open is a visible default on the plan, never a hidden number.
           const defaultCapNow = defaultCapUsed && managedQuote.items.length === 1 ? defaultCapUsed : null;
@@ -4003,7 +4028,7 @@ export class ChatHandler {
             planSummaryText += `\n- ${defaultCapLineAr(defaultCapNow.noun, defaultCapNow.units)}`;
             // A default is not something the customer asked for: when the job cuts it, the plan says what it holds, never «you asked for».
             if (managedQuote.targetVolumeMax < defaultCapNow.units) {
-              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP })}`;
+              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || effectiveJobPointsCap() })}`;
             }
           }
           // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
@@ -4036,7 +4061,7 @@ export class ChatHandler {
                   requestedUnits,
                   fittedUnits: managedQuote.targetVolumeMax,
                   unitPricePoints: managedQuote.unitPricePoints,
-                  pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP,
+                  pointsCap: managedQuote.pointsCap || effectiveJobPointsCap(),
                   safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
                   quotedPoints: managedQuote.quotedPoints,
                 })
@@ -4044,8 +4069,8 @@ export class ChatHandler {
             planSummaryText += capStatement
               ? `\n- ${capStatement}`
               : managedQuote.targetVolumeMax < requestedUnits
-              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
-              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}.`;
+              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
+              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}.`;
           }
           // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
           const explorationCandidate = isExplorationCandidate({
@@ -4097,6 +4122,7 @@ export class ChatHandler {
           // The plan response is pre-approval. Keep it entirely server-authored so
           // free-form model text cannot claim that collection has already started.
           finalContentAr = planSummaryText;
+          }
         }
       } else if (output.type === "edit_plan") {
         let activeQuote: any = null;
@@ -4193,7 +4219,7 @@ export class ChatHandler {
 
               finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           if (managedQuote.pointsCapConstrained) {
-            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`;
+            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`;
           }
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;

@@ -1,4 +1,4 @@
-import { JOB_MAX_POINTS_CAP } from "./jobPointsCap";
+import { effectiveJobPointsCap } from "./jobPointsCap";
 
 /**
  * Price of one DELIVERED record, in points, from the real cost of one delivered record:
@@ -49,6 +49,12 @@ export const RECORD_COSTS: Record<string, RecordCost> = {
   "social-youtube-comments": { costUsdPerRecord: 0.00005, primaryCostUsdPerRecord: 0.0000018, basis: "ASSUMED", note: "worst path 0.001 per call and 20 comments; first path 0.0009 per call and 500 comments" },
   "social-tiktok-comments": { costUsdPerRecord: 0.00005, primaryCostUsdPerRecord: 0.00005, basis: "ASSUMED", note: "0.001 per call and 20 comments" },
   "social-facebook-comments": { costUsdPerRecord: 0.000188, primaryCostUsdPerRecord: 0.000188, basis: "ASSUMED", note: "0.00188 per call and 10 comments" },
+  // A topic job pays for the SEARCH that finds a post as well as for the post's comments, so its cost per delivered comment is far above the comments of a known link. Built from the catalog read
+  // of 2026-10-23, worst source path, on stated assumptions (none measured): the first search source costs 0.02952 USD per call (JustOne API, 0.2 CNY) and returns about 6 posts a call (the one
+  // figure the catalog's reviews give; the catalog publishes none); about half of the posts found are about the topic; one comments call per adopted post costs 0.00188 USD and the 5 comments
+  // taken from it are all delivered. Per adopted post: 0.02952 / (6 x 0.5) + 0.00188 = 0.01172 USD; per comment: 0.01172 / 5 = 0.002344, rounded up to 0.00235. The review model is not in this
+  // figure (the table counts what the provider charges). If a call returns more posts or more of them match, the real cost is lower; if fewer, higher (see docs/COST_REPORT_FACEBOOK_TOPIC_300.md).
+  "social-facebook-keyword-comments": { costUsdPerRecord: 0.00235, primaryCostUsdPerRecord: 0.00235, basis: "ASSUMED", note: "0.02952 per search call of 6 posts, half adopted, 0.00188 per post for 5 comments" },
   "social-facebook-posts": { costUsdPerRecord: 0.000627, primaryCostUsdPerRecord: 0.0002, basis: "ASSUMED", note: "worst path 0.00188 per 3 posts; first path 0.002 per 10" },
   "icypeas-companies-search": { costUsdPerRecord: 0.000576, primaryCostUsdPerRecord: null, basis: "MEASURED", note: "434 records in 44 completed requests" },
 };
@@ -112,12 +118,12 @@ export function maxVolumeUnderCap(capPoints: number, unitPoints: number, buffer:
 }
 
 /** The most records one job holds by the shared rule: the reserve stays within the cap in force. */
-export function maxRecordsInOneJob(unitPoints: number, capPoints: number = JOB_MAX_POINTS_CAP, buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
+export function maxRecordsInOneJob(unitPoints: number, capPoints: number = effectiveJobPointsCap(), buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
   return maxVolumeUnderCap(capPoints, unitPoints, buffer);
 }
 
 /** The largest CHARGE a job can end with under the cap: the buffer is held back, so it is below the cap (about cap / 1.15). */
-export function maxChargeInOneJob(unitPoints: number, capPoints: number = JOB_MAX_POINTS_CAP, buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
+export function maxChargeInOneJob(unitPoints: number, capPoints: number = effectiveJobPointsCap(), buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
   return chargeForUnits(maxRecordsInOneJob(unitPoints, capPoints, buffer), unitPoints);
 }
 

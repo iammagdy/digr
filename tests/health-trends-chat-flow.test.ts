@@ -64,38 +64,41 @@ describe("the owner's health-trends request, end to end", () => {
     expect(s.executeTurn).not.toHaveBeenCalled();
   });
 
-  it("50 posts x 10 comments is bigger than one job: the plan is reduced to ONE size, 4 posts and 40 comments, with the sentence that says so", async () => {
+  it("50 posts x 10 comments is bigger than one job: ONE item (the Facebook keyword service), reduced to ONE size, 4 posts and 40 comments, with the sentence that says so", async () => {
     const s = await session(50, 500, REQUEST);
     await s.send(REQUEST);
     const r = await s.answer("social_comments_per_post", "١٠");
     expect(r.outputType).toBe("propose_plan");
     const q = r.planQuote;
-    expect(q.items.map((i: any) => [i.capabilitySlug, i.targetVolumeMax])).toEqual([["facebook-post-search", 4], ["facebook-post-comments", 40]]);
+    // one item in the quote (so the single-item acceptance rule holds), the model was not asked for a plan
+    expect(q.items.map((i: any) => [i.capabilitySlug, i.targetVolumeMax])).toEqual([["social-facebook-keyword-comments", 40]]);
+    expect(s.executeTurn).not.toHaveBeenCalled();
     // the hold is under the per-job cap of 600, the charge of the whole plan is ceil(delivered x price) and never above the hold
-    expect(q.quotedPoints).toBe(543);
+    expect(q.items[0].unitPricePoints).toBe(12.925);
+    expect(q.quotedPoints).toBe(595);
     expect(q.quotedPoints).toBeLessThanOrEqual(600);
     expect(q.pointsCap).toBe(600);
-    expect(q.expectedPoints).toBe(4 * 8 + 40 * 11);
+    expect(q.expectedPoints).toBe(Math.ceil(40 * 12.925));
     expect(q.expectedPoints).toBeLessThanOrEqual(q.quotedPoints);
-    // one count, said once and the same in the summary line, the title of the plan and the sentence
-    const count = "٤ منشورات و٤٠ تعليقًا";
-    expect(q.summaryAr).toBe(`جمع ${count} عن «الترندات الصحية في مصر» على فيسبوك`);
-    expect(r.contentAr).toContain(`- الحد الأقصى: حتى ${count}`);
-    expect(q.volumeLimitLineAr).toBe("طلبت ٥٠ منشورًا و٥٠٠ تعليقًا، وتم تقليل الطلب إلى ٤ منشورات و٤٠ تعليقًا (حتى ١٠ تعليقات لكل منشور) ليناسب حدّ الطلب الواحد (حجز لا يتجاوز ٦٠٠ نقطة)، وليس رصيدك. يمكنك طلب الباقي في طلب منفصل.");
+    // one count, said once: the posts the plan reads are the comments cut to, at 10 a post
+    expect(q.summaryAr).toBe("سحب التعليقات من ٤ منشورات على فيسبوك عن «الترندات الصحية»، ويُضاف اسم الدولة (مصر) إلى كلمات البحث ليقتصر على المنشورات التي تخصها، حتى ٤٠ تعليقاً إجمالاً، ولا تُقرأ إلا تعليقات المنشورات المتعلقة بموضوعك");
+    expect(r.contentAr).toContain("- الحد الأقصى: حتى ٤٠ تعليق");
+    expect(r.contentAr).toContain("- المنشورات: ٤ منشورات، والتعليقات: حتى ٤٠ تعليق من كل ما فيها.");
+    expect(q.volumeLimitLineAr).toBe("طلبت ٥٠٠ سجل، والذي يناسب الطلب الواحد الآن ٤٠ سجل. يتحدد الحد بسبب سقف المهمة الحالي.");
     expect(r.contentAr).toContain(q.volumeLimitLineAr);
     // never two different counts
-    for (const stale of ["٤٨ سجل", "٤٤ سجل", "حتى ٤ سجل", "٥٠ بوست", "٥٠٠ تعليق،"]) expect(visibleText(r), stale).not.toContain(stale);
+    for (const stale of ["٤٨ سجل", "٤٤ سجل", "حتى ٤ سجل", "٥٠ بوست", "٥٠٠ تعليق،", "٥٠ منشور"]) expect(visibleText(r), stale).not.toContain(stale);
     // the price per record is on the plan, from the quote (the model never states it)
-    expect(r.contentAr).toContain("٨ نقطة لكل منشور");
-    expect(r.contentAr).toContain("١١ نقطة لكل تعليق");
+    expect(r.contentAr).toContain("١٬٢٩٢٫٥ نقطة لكل ١٠٠ تعليق");
   });
 
   it("the topic text stays clean: the request's verbs, count and platform words never reach the plan", async () => {
     const s = await session(50, 500, REQUEST);
     await s.send(REQUEST);
     const r = await s.answer("social_comments_per_post", "١٠");
-    expect(r.planQuote.items[0].params.query).toBe("الترندات الصحية في مصر");
-    expect(visibleText(r)).toContain("«الترندات الصحية في مصر»");
+    expect(r.planQuote.items[0].params.query).toBe("الترندات الصحية");
+    expect(r.planQuote.items[0].params.region).toBe("EG");
+    expect(visibleText(r)).toContain("«الترندات الصحية»");
     expect(visibleText(r)).not.toMatch(/عايز|بوست وتعليقاتهم/);
   });
 
@@ -104,10 +107,11 @@ describe("the owner's health-trends request, end to end", () => {
     await s.send("عايز ٣ بوست وتعليقاتهم عن الترندات الصحية على فيسبوك في مصر");
     const r = await s.answer("social_comments_per_post", "٥");
     expect(r.outputType).toBe("propose_plan");
-    expect(r.planQuote.items.map((i: any) => i.targetVolumeMax)).toEqual([3, 15]);
+    expect(r.planQuote.items.map((i: any) => i.targetVolumeMax)).toEqual([15]);
     expect(r.planQuote.volumeLimitLineAr).toBeUndefined();
-    expect(r.contentAr).toContain("- الحد الأقصى: حتى ٣ منشورات و١٥ تعليقًا");
-    expect(r.contentAr).not.toContain("تم تقليل الطلب");
+    expect(r.contentAr).toContain("- الحد الأقصى: حتى ١٥ تعليق");
+    expect(r.contentAr).toContain("- المنشورات: ٣ منشورات، والتعليقات: حتى ١٥ تعليق من كل ما فيها.");
+    expect(r.contentAr).not.toContain("طلبت");
   });
 
   it("the customer-facing text is Arabic only: no provider name, no Latin letters, no emoji, no markdown heading", async () => {

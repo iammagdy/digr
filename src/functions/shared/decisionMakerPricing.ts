@@ -1,4 +1,4 @@
-import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
+import { effectiveJobPointsCap } from "../../lib/jobPointsCap";
 export type ContactField = "work_email" | "phone";
 export interface ContactUnitPricesPoints {
   basePerson: number;
@@ -48,7 +48,7 @@ export function markContactRowsForReview(
 export function decisionMakerChargePoints(
   units: { baseUnits: number; emailUnits: number; phoneUnits: number },
   prices: ContactUnitPricesPoints,
-  cap = JOB_MAX_POINTS_CAP,
+  cap = effectiveJobPointsCap(),
 ): number {
   const raw = units.baseUnits * prices.basePerson +
     units.emailUnits * prices.workEmail + units.phoneUnits * prices.phone;
@@ -60,7 +60,7 @@ export function decisionMakerQuotePoints(
   requestedFields: ContactField[],
   prices: ContactUnitPricesPoints,
   safetyBuffer = 0.15,
-  cap = JOB_MAX_POINTS_CAP,
+  cap = effectiveJobPointsCap(),
 ): number {
   const perPerson = prices.basePerson +
     (requestedFields.includes("work_email") ? prices.workEmail : 0) +

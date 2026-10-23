@@ -1,5 +1,7 @@
 import { pointsAr } from "@/lib/pointsFormat";
-import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
+import { JOB_MAX_POINTS_CAP } from "../../../../lib/jobPointsCap";
+import { usesPostLevelReview } from "../../../../lib/server/postLevelReview";
+import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, POST_REVIEW_BUDGET_NOTE_AR, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
@@ -91,6 +93,7 @@ import {
 
 /** What a customer can do when the videos of a topic search could not be confirmed. */
 const NO_CONFIRMED_VIDEO_HINT_AR = "جرّب إرسال رابط فيديو أو اسم قناة، أو اكتب موضوعاً أدق.";
+const NO_CONFIRMED_POST_HINT_AR = "جرّب إرسال رابط منشور أو اسم صفحة، أو اكتب موضوعاً أدق.";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -137,15 +140,18 @@ async function resolveLimitsFromSettings(adminClient: any): Promise<{
   // The daily limit and the per-job / per-user ceilings come from the ONE shared resolver (admin-editable, 30 s cache,
   // falls back to the current constants). The points cap stays on its own existing source.
   const { limits } = await resolveProviderLimits(adminClient);
-  let jobPointsCap = getConfiguredJobPointsCap();
+  // The settlement cap is the shared CONSTANT, never the environment-lowered cap: a job sold under a higher cap must never be under-charged when the cap is lowered afterwards.
+  let jobPointsCap = Math.max(getConfiguredJobPointsCap(), JOB_MAX_POINTS_CAP);
 
   try {
     const query = adminClient?.from?.("settings_private")?.select?.("key, value");
     if (query && typeof query.eq === "function") {
       const { data: row } = await query.eq("key", "pricing").maybeSingle();
       const val = row?.value && typeof row.value === "object" ? row.value : row;
+      // The settlement cap is never BELOW the cap a quote may be sold under (the shared constant): a stale stored 600 would otherwise cut the charge of a
+      // job whose reserve is larger. A stored value above the constant is still honoured.
       if (typeof val?.jobMaxPointsCap === "number" && val.jobMaxPointsCap > 0) {
-        jobPointsCap = val.jobMaxPointsCap;
+        jobPointsCap = Math.max(val.jobMaxPointsCap, JOB_MAX_POINTS_CAP);
       }
     }
   } catch {
@@ -618,8 +624,9 @@ export async function POST(req: NextRequest) {
     // and delivered only under videos about the topic, and an adopted video can be read deeply. The review is the same as the page-level
     // one below (evidence first, then one call on the list, fail closed, inside the job's review budget).
     const earlySocialCap = getSocialCapability(spec.capabilitySlug);
-    const selectsVideosFirst = Boolean(earlySocialCap) && earlySocialCap?.kind === "comments" && ["tiktok", "youtube"].includes(String(earlySocialCap?.platform))
-      && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
+    // (TikTok, YouTube and, for a topic search, Facebook: see postLevelReview.ts)
+    const postLevelJob = usesPostLevelReview(spec.capabilitySlug, spec.params);
+    const selectsVideosFirst = Boolean(earlySocialCap) && postLevelJob && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
     // The owner's internal rows about review calls that failed, were cut at the output limit or left rows without a verdict (never customer text).
     const logReviewFailures = async (attempts: Array<ReviewCallFacts & { replySample?: { head: string; startsWithJson: boolean; reasonKeys: number } | null; thinkingMode?: string | null; thinkingFallback?: { code: string; detail: string | null } | null }>) => {
       // Once per job: the FIRST review call of the job (this chunk's first, when no earlier chunk reviewed anything) leaves one internal row with the head of
@@ -665,6 +672,9 @@ export async function POST(req: NextRequest) {
     let videoSelectionUsd = 0;
     let videoSelectionCalls = 0;
     let videoSelectionUnreviewed = false;
+    // The review budget ran out while the posts of a PAGED topic search were being chosen: the search stops and the job says so (set only for the services that page their search).
+    let videoSelectionBudgetStop = false;
+    const stopNoteAr = (reason: CallCapReason): string => (reason === "review_budget" && videoSelectionBudgetStop ? POST_REVIEW_BUDGET_NOTE_AR : CALL_CAP_NOTE_AR[reason]);
     // Videos of the topic search the title review looked at (this job's selection calls), for the customer's line when none could be confirmed.
     let videoSelectionReviewed = 0;
     // What the job's earlier chunks already spent on review (read from the running record, before the adapter runs: the video selection
@@ -687,6 +697,8 @@ export async function POST(req: NextRequest) {
         unitPricePoints: Number(unitPrice),
         stickyFallback: priorReviewSet?.reviewFallback === true,
         alreadyReviewing: (priorReviewSet?.reviewCallCount ?? 0) > 0 || (priorReviewSet?.reviewUsd ?? 0) > 0,
+        // a job reviewed at the level of its posts also stays within 20% of its own revenue
+        level: postLevelJob ? (getSocialCapability(spec.capabilitySlug)?.pagedDiscovery ? "paged_post" : "post") : "row",
       });
       reviewCapUsd = budget.capUsd;
       reviewFallbackThisJob = budget.rule !== "normal";
@@ -753,7 +765,9 @@ export async function POST(req: NextRequest) {
           // A video the review could not settle from its title is not dropped: its comments are read (after the adopted videos) and the page-level review
           // judges the video with a few of them, fail closed. A video nobody could review at all (a failed call, the budget) is still left out.
           const unsure = judgeable.filter(({ i }) => { const judgement = outcome.judgements.get(`v${i}`); return judgement?.decision === "uncertain" && judgement.by === "review"; }).map(({ ref }) => ref);
-          return { adopted: judgeable.filter(({ i }) => outcome.judgements.get(`v${i}`)?.decision === "match").map(({ ref }) => ref), deferred: [...unsure, ...deferred] };
+          const budgetStop = Boolean(getSocialCapability(spec.capabilitySlug)?.pagedDiscovery) && [...outcome.judgements.values()].some((judgement) => judgement.budget === true);
+          if (budgetStop) videoSelectionBudgetStop = true;
+          return { adopted: judgeable.filter(({ i }) => outcome.judgements.get(`v${i}`)?.decision === "match").map(({ ref }) => ref), deferred: [...unsure, ...deferred], ...(budgetStop ? { budgetStop: true } : {}) };
         }
       : undefined;
 
@@ -959,7 +973,7 @@ export async function POST(req: NextRequest) {
     // Rows nobody reviewed because the job's review budget was used up: not delivered, not charged, listed apart in the «غير مراجَع» sheet.
     let unreviewedRows: any[] = [];
     const budgetUnreviewed = new Set<number>();
-    let reviewBudgetUsedUp = false;
+    let reviewBudgetUsedUp = videoSelectionBudgetStop;
     let reviewUsdThisChunk = videoSelectionUsd;
     // Review calls of this chunk (the video selection inside the adapter counts), what the company review spent (logged, not part of the social budget), rows that reached the gate.
     let reviewCallsThisChunk = videoSelectionCalls;
@@ -1037,11 +1051,12 @@ export async function POST(req: NextRequest) {
       const strictCompanyReview = isCompanyCapability && (!useMockProvider || hasInjectedCompanyReviewer());
       // Posts and comments of a topic search (X, TikTok, YouTube) are presumed on topic; only the rows the gate flags as doubtful are
       // reviewed, and those are delivered only when the review confirms them (fail closed). Feeds without a topic filter keep the strict gate., with the reviewer of rows and a cost cap per job.
-      const strictSocialReview = ["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
+      // Facebook is reviewed only for a topic search of comments (post level); its page posts and page comments keep the deterministic gate as before.
+      const strictSocialReview = (["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) || postLevelJob) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
 
       // Comments of a topic search on TikTok or YouTube are judged by their video; X posts keep the per-post review.
       const socialCapabilityDef = getSocialCapability(spec.capabilitySlug);
-      const videoLevelComments = strictSocialReview && socialCapabilityDef?.kind === "comments" && ["tiktok", "youtube"].includes(String(socialCapabilityDef.platform)) && isTopicSearchRequest(spec.params || {});
+      const videoLevelComments = strictSocialReview && postLevelJob;
 
       if (strictCompanyReview) {
         const reviewKeywords = [...new Set([...companyActivityKeywords(spec.params), ...companyActivityKeywords({ industry: expectedIndustry }), ...(recognizedSector?.englishKeywords || [])])];
@@ -1531,6 +1546,7 @@ export async function POST(req: NextRequest) {
       // A valid but empty answer and "records arrived but none matched the request" are different
       // situations and are explained differently; both release the full reserve with zero charge.
       const receivedFromSource = providerRows.length;
+      const noConfirmedHintAr = socialCapability?.platform === "facebook" ? NO_CONFIRMED_POST_HINT_AR : NO_CONFIRMED_VIDEO_HINT_AR;
       // What the customer reads is the job's total, the same number the activity panel shows, never only the last page.
       const receivedShown = receivedSoFar ?? receivedFromSource;
       const emptyErrorAr = reviewUnavailable
@@ -1541,21 +1557,21 @@ export async function POST(req: NextRequest) {
         ? socialCapability && feedHasWindow && datesDroppedKnown && datesDroppedTotal > 0 && receivedShown - datesDroppedTotal > 0
           // Some rows were removed by date and the rest (inside the window) did not match the topic: say both, with the job's own totals.
           // «وتواريخها داخل الفترة» would be false here, and it used to be said whenever the LAST page had a row left after the date filter.
-          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, uncertainRows.length)}؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
+          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, uncertainRows.length)}؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
         : socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
-          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
+          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
           : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.`
         : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
         ? videoSelectionUnreviewed
           ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
           : videoSelectionReviewed > 0
             // Videos were found and reviewed but none could be confirmed (off the topic or not settled): nothing was read, nothing is charged.
-            ? `راجعنا ${videosCountAr(videoSelectionReviewed)} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : "تيك توك"} ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد. ${NO_CONFIRMED_VIDEO_HINT_AR}`
-            : `وجدنا فيديوهات عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.`
+            ? `راجعنا ${videosCountAr(videoSelectionReviewed, socialCapability.platform === "facebook" ? "posts" : "videos")} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "facebook" ? "فيسبوك" : "تيك توك"} ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد. ${noConfirmedHintAr}`
+            : `وجدنا ${socialCapability.platform === "facebook" ? "منشورات" : "فيديوهات"} عن بحثك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "facebook" ? "فيسبوك" : "تيك توك"} لكن لم يتناول أيٌّ منها موضوع طلبك، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.`
         : rawAdapterResult.emptyReason === "no_videos" && socialCapability
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
-        ? `لم يجد البحث أي فيديو عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.`
+        ? `لم يجد البحث أي ${socialCapability.platform === "facebook" ? "منشور" : "فيديو"} عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : socialCapability.platform === "facebook" ? "فيسبوك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.`
         : "لم يُعثر على أي بيانات مطابقة من المصدر؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.";
       // The page that ends the job with nothing delivered leaves its own line too, so the panel counts it like every other page.
       try {
@@ -1725,7 +1741,7 @@ export async function POST(req: NextRequest) {
           uncertainRows.length ? `قيد المراجعة ${toArabicDigits(uncertainRows.length)}` : null,
           unreviewedRows.length ? `غير مراجَع ${toArabicDigits(unreviewedRows.length)}` : null,
           cursorWouldRepeat ? "توقف الجمع لأن المصدر كرر صفحة سبق استلامها" : null,
-          callCapReason && newDeliveredUnits < targetMax ? CALL_CAP_NOTE_AR[callCapReason] : null,
+          callCapReason && newDeliveredUnits < targetMax ? stopNoteAr(callCapReason) : null,
           providerBudgetStopped ? "توقف الجمع عند الحد اليومي الآمن، مع تسليم السجلات المطابقة التي جُمعت" : null,
           providerFailedAfterDelivery ? "توقف الجمع لأن المصدر لم يستجب، مع تسليم السجلات المطابقة التي جُمعت" : null,
           skipReason,
@@ -2270,7 +2286,7 @@ export async function POST(req: NextRequest) {
             : excluded > 0
             ? `استُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.`
             : callCapReason
-              ? CALL_CAP_NOTE_AR[callCapReason]
+              ? stopNoteAr(callCapReason)
               : "لم يتوفر في المصدر عدد أكبر يطابق طلبك.";
           await adminClient.from("job_events").insert({
             job_id: jobId,

@@ -9,7 +9,7 @@
  *
  * This module is pure data and pure functions (no network), so it can be tested exhaustively.
  */
-import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig";
+import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings"; import { facebookTopicCapability, type PostTopicTraits } from "./facebookTopicSources";
 
 import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
@@ -76,7 +76,7 @@ export interface SocialSource {
   nextCursor?(rowCount: number, request: SocialSourceRequest): string | null;
 }
 
-export interface SocialCapabilityDef {
+export interface SocialCapabilityDef extends PostTopicTraits {
   slug: string;
   platform: SocialPlatformId;
   kind: SocialKind;
@@ -569,7 +569,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     modes: ["url", "channel"],
     rowCostUsd: 0.00188,
     customerPriceUsdPerItem: 0.0019,
-    maxRows: 500,
+    maxRows: FACEBOOK_JOB_CEILINGS.comments,
     successRate: 0.99,
     discover: { channel: FACEBOOK_PAGE_POSTS },
     comments: FACEBOOK_COMMENTS,
@@ -609,11 +609,11 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     descriptionAr: "سحب أحدث منشورات صفحة فيسبوك عامة برابطها أو اسمها، مع التفاعلات وعدد التعليقات.",
     modes: ["channel"],
     rowCostUsd: 0.002,
-    maxRows: 60,
+    maxRows: FACEBOOK_JOB_CEILINGS.posts,
     successRate: 0.995,
     discover: { channel: FACEBOOK_PAGE_POSTS },
   },
-];
+  facebookTopicCapability(FACEBOOK_COMMENTS)];
 
 // The row ceiling of each service follows the scale configuration (the defaults above unless the owner raised them).
 for (const cap of SOCIAL_CAPABILITIES) cap.maxRows = effectiveSocialMaxRows(cap.maxRows, cap.kind);
@@ -780,13 +780,12 @@ export function socialResultTitleAr(cap: SocialCapabilityDef): string {
 export function socialCapabilityForIntent(intent: SocialIntent): SocialCapabilityDef | undefined {
   if (!intent.task || !intent.platform) return undefined;
   const kind: SocialKind = intent.task === "comments" ? "comments" : intent.task === "x_posts" ? "posts" : "videos";
-  const cap = socialCapabilityFor(intent.platform, kind);
-  if (!cap) return undefined;
   // A Facebook page named by its name is a page request (its latest posts), not a keyword search.
   const mode: SocialMode | null = intent.pageName
     ? "channel"
     : intent.discover === "target" ? "url" : intent.discover === "keyword" ? "query" : intent.discover === "channel" ? "channel" : intent.discover === "trending" ? "trending" : null;
-  return mode && cap.modes.includes(mode) ? cap : undefined;
+  // A platform may have two services of the same kind (Facebook comments of a link or a page, and Facebook comments of a topic): the one that serves the request's mode.
+  return mode ? SOCIAL_CAPABILITIES.find((cap) => cap.platform === intent.platform && cap.kind === kind && cap.modes.includes(mode)) : undefined;
 }
 
 export interface SocialParamHints {
@@ -852,7 +851,9 @@ export function canonicalSocialParams(
   }
   if (cap.kind === "comments" && intent.discover !== "target") {
     if (hints.perVideo && hints.perVideo > 0) params.perVideo = Math.min(MAX_PER_VIDEO, Math.floor(hints.perVideo));
-    if (hints.videoCount && hints.videoCount > 0) params.videoCount = Math.min(MAX_VIDEOS_PER_JOB, Math.floor(hints.videoCount));
+    // A service priced on a minimum read per post never reads fewer comments from a post than that minimum (its price assumes it).
+    if (cap.minPerVideo) params.perVideo = Math.min(MAX_PER_VIDEO, Math.max(cap.minPerVideo, Number(params.perVideo) || 0));
+    if (hints.videoCount && hints.videoCount > 0) params.videoCount = Math.min(cap.maxVideos ?? MAX_VIDEOS_PER_JOB, Math.floor(hints.videoCount));
   }
   return params;
 }
@@ -862,9 +863,20 @@ export const MAX_PER_VIDEO = scaleValue("maxPerVideo");
 export const MAX_VIDEOS_PER_JOB = scaleValue("maxVideosPerJob");
 
 /** «٣ فيديوهات يوتيوب» when the plan names how many videos, otherwise «فيديوهات يوتيوب»: the videos and the comments are two quantities. */
-function videoCountPhrase(params: Record<string, any>, platform: string): string {
+function videoCountPhrase(params: Record<string, any>, platform: string, noun: "videos" | "posts" = "videos"): string {
   const count = Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0;
-  return count ? `${videosCountAr(count)} على ${platform}` : `فيديوهات ${platform}`;
+  return count ? `${videosCountAr(count, noun)} على ${platform}` : `${noun === "posts" ? "منشورات" : "فيديوهات"} ${platform}`;
+}
+
+/**
+ * The posts a plan of `volume` comments reads: the posts the customer asked for, never more than the comments need at the comments taken from each (a plan cut to 40 comments
+ * at 10 a post reads 4 posts, and says 4). The count the plan shows, so the posts and the comments are never two different sizes of one job.
+ */
+export function postsForVolume(params: Record<string, any>, volume: number): number {
+  const asked = Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0;
+  const perPost = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : 0;
+  if (!asked) return 0;
+  return perPost > 0 ? Math.max(1, Math.min(asked, Math.ceil(Math.max(1, volume) / perPost))) : asked;
 }
 
 /** The one-line Arabic goal shown on the plan card, written by the server so it always matches what will run. */
@@ -875,12 +887,12 @@ export function xCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, 
   return name ? `، ولأن إكس لا يتيح تحديد الدولة يقتصر البحث على المنشورات التي تذكر ${name} أو ما يُنسب إليها` : "";
 }
 
-/** YouTube and TikTok topic searches carry the country's name in the search text when a country was asked for: the plan says so. Empty otherwise. */
+/** YouTube, TikTok and Facebook topic searches carry the country's name in the search text when a country was asked for: the plan says so. Empty otherwise. */
 export function topicCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, any>): string {
-  if (cap.platform !== "youtube" && cap.platform !== "tiktok") return "";
+  if (cap.platform !== "youtube" && cap.platform !== "tiktok" && !cap.pagedDiscovery) return "";
   if (cap.kind !== "comments" && cap.kind !== "videos") return "";
   const name = regionNameAr(params?.region);
-  return name ? `، ويُضاف اسم الدولة (${name}) إلى كلمات البحث ليقتصر على الفيديوهات التي تخصها` : "";
+  return name ? `، ويُضاف اسم الدولة (${name}) إلى كلمات البحث ليقتصر على ${cap.pagedDiscovery ? "المنشورات" : "الفيديوهات"} التي تخصها` : "";
 }
 
 export function socialPlanSummaryAr(
@@ -899,7 +911,7 @@ export function socialPlanSummaryAr(
   const commentLimit = cap.kind === "comments" && mode !== "url"
     ? videosNamed
       ? `، حتى ${formatNumber(volume)} تعليقاً إجمالاً`
-      : `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل فيديو، و${formatNumber(volume)} تعليقاً إجمالاً`
+      : `، بحد أقصى ${formatNumber(Math.min(perVideo, Math.max(1, volume)))} تعليقاً من كل ${cap.pagedDiscovery ? "منشور" : "فيديو"}، و${formatNumber(volume)} تعليقاً إجمالاً`
     : "";
   const query = mode === "query" && requestText ? socialSubjectText(requestText) : String(params.query || "").trim();
   const missionChannels = channelsOf(params);
@@ -919,7 +931,7 @@ export function socialPlanSummaryAr(
       return `سحب ${what} للرابط المحدد على ${platform}`;
     case "query":
       return cap.kind === "comments"
-        ? `سحب ${what} من ${videoCountPhrase(params, platform)} عن «${query}»${topicCountryNoteAr(cap, params)}${commentLimit}`
+        ? `سحب ${what} من ${videoCountPhrase(cap.pagedDiscovery ? { ...params, videoCount: postsForVolume(params, volume) } : params, platform, cap.platform === "facebook" ? "posts" : "videos")} عن «${query}»${topicCountryNoteAr(cap, params)}${commentLimit}${cap.pagedDiscovery ? "، ولا تُقرأ إلا تعليقات المنشورات المتعلقة بموضوعك" : ""}`
         // On X the replies come with the search when the source returns them; the plan says so instead of promising them.
         : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}${xCountryNoteAr(cap, params)}${topicCountryNoteAr(cap, params)}`;
     case "channel":

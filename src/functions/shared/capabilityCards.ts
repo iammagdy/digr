@@ -111,6 +111,16 @@ export const CAPABILITY_CARDS: CapabilityCard[] = [
     examples: [{ ask: "تعليقات هذا المنشور https://www.facebook.com/page/posts/1", params: { url: "https://www.facebook.com/page/posts/1" } }],
   },
   {
+    slug: "social-facebook-keyword-comments",
+    what: "تعليقات منشورات فيسبوك العامة التي يجدها النظام بكلمة أو موضوع: يختار المنشورات المتعلقة بالموضوع فقط ثم يقرأ تعليقاتها",
+    inputs: ["query=الموضوع كما كتبه العميل"],
+    filters: SOCIAL_FILTERS,
+    returns: "نص التعليق، الكاتب، التاريخ، الإعجابات، رابط المنشور",
+    goodFor: "آراء الناس على منشورات فيسبوك في موضوع، مثل «٣٠٠ منشور عن الترندات الصحية بخمسة تعليقات لكل منشور»",
+    notFor: "منشورات صفحة بعينها أو رابط منشور (استخدم خدمة تعليقات فيسبوك)، أو منشورات بلا تعليقاتها",
+    examples: [{ ask: "٣٠٠ منشور فيسبوك عن الترندات الصحية بخمسة تعليقات لكل منشور", params: { query: "الترندات الصحية" } }],
+  },
+  {
     slug: "social-tiktok-videos",
     what: "فيديوهات تيك توك: بحث بكلمة، أو فيديوهات قناة، أو الرائج في دولة",
     inputs: ["query=الموضوع", "channel=@قناة", "trending=true", "region=رمز الدولة ISO (إلزامي للرائج)"],

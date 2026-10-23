@@ -29,7 +29,7 @@ import { VOLUME_LIMIT_REASON_AR, SERVICE_CEILING_REASON_AR, volumeLimitStatement
 import { detectSocialIntent, facebookPageNameIn } from "../src/lib/socialTasks";
 import { understandMission } from "../src/lib/consultantCopy";
 import { getSocialCapability } from "../src/lib/socialSources";
-import { JOB_MAX_POINTS_CAP } from "../src/lib/jobPointsCap";
+import { JOB_MAX_POINTS_CAP, effectiveJobPointsCap } from "../src/lib/jobPointsCap";
 
 const OWNER_REQUEST = "الترندات الصحية في مصر آخر ٣ شهور من فيسبوك ٤٠٠ منشور بالتعليقات";
 const PROVIDER_WORDS = /treg|icypeas|firecrawl|context\.dev|tikhub|apify|openai|anthropic|resend|supabase|usd|\$|endpoint/i;
@@ -190,23 +190,29 @@ describe("A2 + A3: the plan says honestly what fits, why, and whether the balanc
     expect(r.contentAr).toContain("تنبيه الرصيد"); // the options and the top-up line are unchanged
   });
 
-  it("a Facebook page's posts, asked for 400: the plan holds 60 and says it is the service's own ceiling, not the job cap and not the balance", async () => {
-    const c = await chat(20000);
-    const r = await c.send("هات ٤٠٠ منشور من صفحة https://www.facebook.com/youm7 على فيسبوك آخر ٣ شهور");
-    expect(r.outputType).toBe("propose_plan");
-    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(60);
-    expect(r.planQuote.targetVolumeMax).toBe(60);
-    expect(r.planQuote.serviceCeilingUnits).toBe(60);
-    expect(r.contentAr).toContain("طلبت ٤٠٠ منشور، والذي تتسع له هذه الخدمة في الطلب الواحد ٦٠ منشور");
-    expect(r.contentAr).toContain(SERVICE_CEILING_REASON_AR);
-    expect(r.contentAr).not.toContain(VOLUME_LIMIT_REASON_AR);
+  it("a Facebook page's posts, asked for 400: the plan holds 300 and says it is the service's own ceiling, not the job cap and not the balance", async () => {
+    // the ceiling (300) is below what the 25,000-point cap holds (the lowered cap of the other suites would cut this plan first), so the cap in force is the real default here
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
+    try {
+      const c = await chat(20000);
+      const r = await c.send("هات ٤٠٠ منشور من صفحة https://www.facebook.com/youm7 على فيسبوك آخر ٣ شهور");
+      expect(r.outputType).toBe("propose_plan");
+      expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(300);
+      expect(r.planQuote.targetVolumeMax).toBe(300);
+      expect(r.planQuote.serviceCeilingUnits).toBe(300);
+      expect(r.contentAr).toContain("طلبت ٤٠٠ منشور، والذي تتسع له هذه الخدمة في الطلب الواحد ٣٠٠ منشور");
+      expect(r.contentAr).toContain(SERVICE_CEILING_REASON_AR);
+      expect(r.contentAr).not.toContain(VOLUME_LIMIT_REASON_AR);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("when the points cap IS what limits a request, it still says so (unchanged), with the number that fits and what the whole request needed", async () => {
     const c = await chat(20000);
     const r = await c.send("هات ٥٠٠٠ تعليق من فيديوهات تيك توك عن كرة السلة آخر شهر");
     expect(r.planQuote.pointsCapConstrained).toBe(true);
-    expect(r.planQuote.pointsCap).toBe(JOB_MAX_POINTS_CAP);
+    expect(r.planQuote.pointsCap).toBe(effectiveJobPointsCap()); // the cap in force (these suites run with it lowered to 600; the default is 25,000)
     expect(r.contentAr).toContain(VOLUME_LIMIT_REASON_AR);
     expect(r.contentAr).toContain("وهو أكبر من سقف الطلب الواحد");
     expect(r.contentAr).toContain("- الرصيد: يكفي رصيدك");
@@ -242,16 +248,20 @@ describe("skipping a question", () => {
 
 describe("limits and constants: where the per-job cap and the Facebook ceilings live (a change to one without the others fails here)", () => {
   const read = (file: string) => readFileSync(file, "utf8");
-  it("the points cap is 600 in the one TypeScript constant and in the three SQL functions that hold it", () => {
-    expect(JOB_MAX_POINTS_CAP).toBe(600);
+  it("the points cap is 25,000 in the one TypeScript constant; the repository migrations still say 600 (what is live) and the proposal says 25000 in the three SQL functions that hold it", () => {
+    expect(JOB_MAX_POINTS_CAP).toBe(25000);
     expect(read("supabase/migrations/20261017180000_create_quote_atomic.sql")).toMatch(/v_cap numeric := 600;/);
     expect(read("supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql")).toMatch(/p_points_cap numeric DEFAULT 600/);
     expect(read("supabase/migrations/20261017181000_settle_decision_maker_fields.sql")).toMatch(/COALESCE\(p_points_cap,600\), 600/);
+    expect(read("docs/proposals/job-cap-25000/04_create_quote_atomic_cap_25000.sql")).toMatch(/v_cap numeric := 25000;/);
+    expect(read("docs/proposals/job-cap-25000/01_settle_job_atomic_cap_25000.sql")).toMatch(/p_points_cap numeric DEFAULT 25000/);
+    expect(read("docs/proposals/job-cap-25000/02_settle_people_job_atomic_cap_25000.sql")).toMatch(/COALESCE\(p_points_cap,25000\), 25000/);
   });
 
-  it("the service ceilings: Facebook posts 60 (not raisable), Facebook comments 500, page posts per mission 20", () => {
-    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(60);
-    expect(getSocialCapability("social-facebook-comments")!.maxRows).toBe(500);
+  it("the service ceilings: Facebook posts 300 and comments 1,500 (one place: facebookCeilings.ts), page posts per mission 20", () => {
+    expect(getSocialCapability("social-facebook-posts")!.maxRows).toBe(300);
+    expect(getSocialCapability("social-facebook-comments")!.maxRows).toBe(1500);
+    expect(read("src/lib/facebookCeilings.ts")).toContain("{ posts: 300, comments: 1500 }");
     const sources = read("src/lib/socialSources.ts");
     expect(sources).toContain("export const MAX_TOP_PER_CHANNEL = 20;");
     expect(read("src/lib/scaleConfig.ts")).toContain('kind === "comments" || (kind === "posts" && defaultMaxRows >= 500)');
@@ -259,12 +269,12 @@ describe("limits and constants: where the per-job cap and the Facebook ceilings 
 
   it("the proposal's file:line references still point at the constants they name", () => {
     const lineOf = (file: string, needle: string) => read(file).split("\n").findIndex((line) => line.includes(needle)) + 1;
-    expect(lineOf("src/lib/jobPointsCap.ts", "export const JOB_MAX_POINTS_CAP = 600;")).toBe(8);
+    expect(lineOf("src/lib/jobPointsCap.ts", "export const JOB_MAX_POINTS_CAP = 25_000;")).toBe(13);
     expect(lineOf("supabase/migrations/20261017180000_create_quote_atomic.sql", "v_cap numeric := 600;")).toBe(19);
     expect(lineOf("supabase/migrations/20261017181000_settle_decision_maker_fields.sql", "COALESCE(p_points_cap,600), 600")).toBe(75);
     expect(lineOf("supabase/migrations/20261017175500_settle_completed_jobs_with_stale_lease.sql", "LEAST(v_raw_charge, v_job.reserved_credits, p_points_cap)")).toBe(98);
     expect(lineOf("src/functions/shared/planManager.ts", "const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);")).toBe(622);
-    expect(lineOf("src/lib/socialSources.ts", "maxRows: 60,")).toBe(612);
+    expect(lineOf("src/lib/socialSources.ts", "maxRows: FACEBOOK_JOB_CEILINGS.posts,")).toBe(612);
     expect(lineOf("src/lib/socialSources.ts", "export const MAX_TOP_PER_CHANNEL = 20;")).toBe(660);
   });
 });

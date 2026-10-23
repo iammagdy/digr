@@ -4,7 +4,7 @@ import { DEFAULT_JOB_POINTS_CAP, computePublicCalculatorQuote, getPublicCalculat
 import { chargeForUnits, reserveForUnits } from "./recordPricing";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField } from "../functions/shared/decisionMakerPricing";
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
-import { SOCIAL_PLATFORM_LABEL_AR, type SocialPlatformId } from "./socialTasks";
+import { SOCIAL_PLATFORM_LABEL_AR, detectSocialIntent, type SocialPlatformId } from "./socialTasks";
 import { understandMission, understoodLineAr } from "./consultantCopy";
 import { volumeForPointsCap } from "./pointsCap";
 import { decisionMakersPerRequestLineAr, limitedByServiceCeiling, recordsInOneJob, reserveInOneJob } from "./jobSizing";
@@ -30,6 +30,8 @@ export interface EstimateInput {
   contactFields?: ContactField[];
   /** The live daily limit as points, when known (the server reads it). */
   dailyCapPoints?: number;
+  /** The posts are FOUND by a keyword or topic (not a link, a page or a channel): on Facebook that is another service, priced for the search that finds each post. */
+  byKeyword?: boolean;
 }
 
 export type EstimateResult =
@@ -66,10 +68,11 @@ const SOCIAL_SLUG: Record<string, string> = {
   "posts:facebook": "social-facebook-posts",
 };
 
-export function estimateSlug(kind: EstimateKind, platform?: SocialPlatformId | null): string | null {
+export function estimateSlug(kind: EstimateKind, platform?: SocialPlatformId | null, byKeyword = false): string | null {
   if (kind === "companies") return "icypeas-companies-search";
   if (kind === "people") return "professional-people-search";
   if (!platform) return null;
+  if (byKeyword && kind === "comments" && platform === "facebook") return "social-facebook-keyword-comments";
   // «videos» on Facebook are its page posts
   const key = `${kind === "videos" && platform === "facebook" ? "posts" : kind}:${platform}`;
   return SOCIAL_SLUG[key] ?? null;
@@ -100,7 +103,7 @@ const egp = (points: number, creditValueEgp: number) => Number((points * creditV
 
 export function estimateMission(input: EstimateInput): EstimateResult {
   const settings = DEFAULT_PRICING_SETTINGS;
-  const slug = estimateSlug(input.kind, input.platform);
+  const slug = estimateSlug(input.kind, input.platform, input.byKeyword === true);
   if (!slug) {
     return input.kind === "comments" || input.kind === "posts" || input.kind === "videos"
       ? input.platform
@@ -196,11 +199,11 @@ export function parseEstimateText(text: string, today: Date = new Date()): Parse
   if (!kind) return { input: null, understoodAr: null, missingAr: ["لم أفهم نوع البيانات؛ اذكر المنصة ونوع البيانات (تعليقات، منشورات، فيديوهات، شركات)."] };
 
   if ((kind === "comments" || kind === "posts" || kind === "videos") && !mission.platform) missingAr.push("اذكر المنصة.");
-  const openEnded = mission.needsCap && !mission.volume;
-  if (!mission.volume && !openEnded && kind !== "people" && kind !== "companies") missingAr.push("اذكر العدد المطلوب أو ميزانيتك بالنقاط.");
+  const openEnded = mission.needsCap && !mission.volume && !mission.impliedVolume;
+  if (!mission.volume && !mission.impliedVolume && !openEnded && kind !== "people" && kind !== "companies") missingAr.push("اذكر العدد المطلوب أو ميزانيتك بالنقاط.");
   const budget = /(?:ميزاني[ةه]|بحد\s*أقصى|حد\s*أقصى)[^\d٠-٩]{0,12}([\d٠-٩]+)\s*نقط/.exec(body.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))));
   return {
-    input: { kind, platform: mission.platform, volume: mission.volume, budgetPoints: budget ? Number(budget[1]) : null, openEnded, contactFields: kind === "people" ? (/إيميل|بريد|email/i.test(body) && !/هاتف|تليفون|رقم/.test(body) ? ["work_email"] : /هاتف|تليفون|رقم/.test(body) && !/إيميل|بريد|email/i.test(body) ? ["phone"] : ["work_email", "phone"]) : undefined },
+    input: { kind, platform: mission.platform, volume: mission.volume ?? mission.impliedVolume, byKeyword: kind === "comments" && mission.platform === "facebook" && detectSocialIntent(body).discover === "keyword", budgetPoints: budget ? Number(budget[1]) : null, openEnded, contactFields: kind === "people" ? (/إيميل|بريد|email/i.test(body) && !/هاتف|تليفون|رقم/.test(body) ? ["work_email"] : /هاتف|تليفون|رقم/.test(body) && !/إيميل|بريد|email/i.test(body) ? ["phone"] : ["work_email", "phone"]) : undefined },
     understoodAr: understoodLineAr(mission),
     missingAr,
   };

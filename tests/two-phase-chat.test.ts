@@ -281,8 +281,12 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
         userBalance: 500,
       });
 
+      // Facebook comments of a topic have a verified service now (like TikTok and YouTube): the first message already gets its plan, with the default count the plan labels,
+      // and a verified service is never looked up in the live catalog.
       expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
-      expect(res1.planQuote).toBeUndefined();
+      expect(res1.outputType).toBe("propose_plan");
+      expect(res1.planQuote.items.map((item: any) => item.capabilitySlug)).toEqual(["social-facebook-keyword-comments"]);
+      expect(res1.planQuote.defaultCap).toMatchObject({ noun: "comments" });
 
       // Turn 2: user provides target volume in the same conversation
       const res2 = await handler.handleUserMessage({
@@ -313,8 +317,10 @@ describe("Task 2: Two-Phase Speed Chat (Owner's Design)", () => {
         userBalance: 500,
       });
 
+      // (a verified service: the first message already gets its plan, see test (h))
       expect(mockedSearchCatalog).toHaveBeenCalledTimes(0);
-      expect(res1.planQuote).toBeUndefined();
+      expect(res1.outputType).toBe("propose_plan");
+      expect(res1.planQuote.items.map((item: any) => item.capabilitySlug)).toEqual(["social-facebook-keyword-comments"]);
 
       // Turn 2: user answers clarification card via answers array (e.g. sample size > 500)
       const res2 = await handler.handleUserMessage({

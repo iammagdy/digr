@@ -72,9 +72,9 @@ describe("the plan-edit check uses the code ceiling over a lower stored registry
     const caps = await getEnabledCapabilitiesWithCoreServices(tables);
     expect(validatePlanAgainstSchemas([item("social-x-posts", 4453)], caps as any).valid).toBe(true);
     expect(validatePlanAgainstSchemas([item("social-x-posts", 4501)], caps as any).valid).toBe(false);
-    expect(validatePlanAgainstSchemas([item("social-facebook-posts", 61)], caps as any).valid).toBe(false);
-    expect(validatePlanAgainstSchemas([item("social-facebook-posts", 60)], caps as any).valid).toBe(true);
-    expect(validatePlanAgainstSchemas([item("social-facebook-comments", 501)], caps as any).valid).toBe(false);
+    expect(validatePlanAgainstSchemas([item("social-facebook-posts", 301)], caps as any).valid).toBe(false);
+    expect(validatePlanAgainstSchemas([item("social-facebook-posts", 300)], caps as any).valid).toBe(true);
+    expect(validatePlanAgainstSchemas([item("social-facebook-comments", 1501)], caps as any).valid).toBe(false);
     expect(writes).toEqual([]);
   });
 

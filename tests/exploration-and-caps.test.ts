@@ -170,12 +170,12 @@ describe("8. JOB_MAX_POINTS_CAP_LARGE: documented, off, behind an explicit confi
       return statSync(full).isDirectory() ? walk(full) : /\.(ts|tsx)$/.test(name) ? [full] : [];
     });
 
-  it("the live cap is still 600", () => {
-    expect(DEFAULT_JOB_POINTS_CAP).toBe(600);
+  it("the live cap is 25,000 points (the owner's decision: one shared constant)", () => {
+    expect(DEFAULT_JOB_POINTS_CAP).toBe(25000);
     expect(JOB_MAX_POINTS_CAP_LARGE).toBe(2000);
     const saved = process.env.JOB_MAX_POINTS_CAP;
     delete process.env.JOB_MAX_POINTS_CAP;
-    expect(getConfiguredJobPointsCap()).toBe(600);
+    expect(getConfiguredJobPointsCap()).toBe(25000);
     if (saved !== undefined) process.env.JOB_MAX_POINTS_CAP = saved;
   });
 

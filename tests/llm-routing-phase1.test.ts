@@ -132,7 +132,8 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
       conversationId: "conv-1",
       // The discovery gate (owner decision D5) asks for a missing topic before any model call,
       // so this request names its topic and reaches the unreachable model.
-      message: "عايز تعليقات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
+      // (Facebook comments of a topic have a verified service now and are planned by code without the model; a request for Facebook POSTS of a topic still reaches it.)
+      message: "عايز منشورات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
       userBalance: 100,
     });
 
@@ -142,6 +143,42 @@ describe("Phase 1: LLM Routing, Runtime Env Resolution, Error Honesty & Admin St
     expect(response.planQuote).toBeUndefined();
     expect(response.tokensUsed.costUsd).toBe(0);
     expect(getLlmStatusSnapshot().last_fallback_reason).toBe("provider_unreachable");
+  });
+
+  // The ORIGINAL wording of the test above (Facebook COMMENTS of a topic). With the model unreachable it used to end in the honest «assistant unavailable» refusal because only
+  // the model could plan it. It has a verified service now: code plans it, the model is not asked (no fetch at all), nothing is held, nothing is refused.
+  it("the original wording, «تعليقات فيسبوك» of a topic, with the model unreachable: planned by code without the model; the unreachable model is never touched and nothing is held", async () => {
+    process.env.LLM_PROVIDER = "anthropic";
+    process.env.LLM_ENABLED = "true";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-mock-secret-9999";
+    delete process.env.LLM_LIVE;
+    const fetchSpy = vi.fn().mockRejectedValue(new Error("fetch failed: ECONNREFUSED"));
+    vi.stubGlobal("fetch", fetchSpy);
+    setLastLlmFallbackReason(null);
+
+    const mockTables: any = {
+      createRow: vi.fn().mockResolvedValue({ $id: "row-1" }),
+      getRow: vi.fn().mockResolvedValue({ totalTokens: 0 }),
+      listRows: vi.fn().mockResolvedValue({ rows: [] }),
+      updateRow: vi.fn().mockResolvedValue({}),
+    };
+    const handler = new ChatHandler(mockTables);
+    const response = await handler.handleUserMessage({
+      userId: "user-1",
+      conversationId: "conv-1",
+      message: "عايز تعليقات فيسبوك عن قائمة المنقولات في ٢٠٢٥",
+      userBalance: 100,
+    });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(response.outputType).toBe("propose_plan");
+    expect(response.contentAr).not.toContain("المساعد غير متاح الآن");
+    expect(response.contentAr).not.toContain("LinkedIn");
+    expect(response.planQuote.items.map((item: any) => item.capabilitySlug)).toEqual(["social-facebook-keyword-comments"]);
+    expect(response.tokensUsed.costUsd).toBe(0); // no model call was paid for
+    expect(getLlmStatusSnapshot().last_fallback_reason).toBeNull();
+    // a plan is only proposed: no credit is reserved by this turn (a reservation is a separate, approved step)
+    expect(mockTables.createRow.mock.calls.some((call: any[]) => /credit|ledger|reserve/i.test(String(call[0]?.tableId)))).toBe(false);
   });
 
   it("never maps Facebook requests to LinkedIn in fake fallback mode", async () => {

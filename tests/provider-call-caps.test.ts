@@ -223,8 +223,8 @@ describe("provider call caps: the production job shapes replayed through the wor
     const { readFileSync } = await import("node:fs");
     const pricing = readFileSync("src/lib/calculatorPricing.ts", "utf8");
     expect(pricing).toContain("DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80");
-    // the job cap is one shared constant (600); providerSpend reads it from there
+    // the job cap is one shared constant (25,000); providerSpend reads it from there
     expect(readFileSync("src/functions/shared/providerSpend.ts", "utf8")).toContain("DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP");
-    expect(readFileSync("src/lib/jobPointsCap.ts", "utf8")).toContain("JOB_MAX_POINTS_CAP = 600");
+    expect(readFileSync("src/lib/jobPointsCap.ts", "utf8")).toContain("JOB_MAX_POINTS_CAP = 25_000");
   });
 });
