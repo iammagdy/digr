@@ -180,7 +180,7 @@ function customerAuthoredRequirementText(message: string): string {
         // The discovery card's answers (a Facebook page, the number of posts, comments or not, comments per post) are stored as plain request words.
         if (SOCIAL_DISCOVERY_OWN_IDS.has(answer?.questionId)) {
           const raw = Array.isArray(answer?.value) ? answer.value.filter((v: unknown): v is string => typeof v === "string").join(" ") : typeof answer?.value === "string" ? answer.value : "";
-          const words = discoveryAnswerAsRequestText(answer.questionId, answer.questionId === SOCIAL_DISCOVERY_IDS.page ? withLinkScheme(sanitizeClarificationText(raw, 200)) : sanitizeClarificationText(raw, 200));
+          const words = discoveryAnswerAsRequestText(answer.questionId, answer.questionId === SOCIAL_DISCOVERY_IDS.page ? withLinkScheme(/(?:https?:\/\/|facebook\.com|fb\.com)/iu.test(raw) ? plainChannelAnswerText(raw) : sanitizeClarificationText(raw, 200)) : sanitizeClarificationText(raw, 200));
           // Prefixed with the card's label, so it travels with the request it completes (a bare «٢٠ تعليق من كل منشور» would read as a new request).
           return words ? [`${labels[answer.questionId]}: ${words}`] : [];
         }
