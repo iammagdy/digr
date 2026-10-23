@@ -1,8 +1,8 @@
 -- PROPOSAL, NOT APPLIED. Run by hand in the Supabase SQL editor after the owner's review.
--- ROLLBACK of Step 4 of 4 (LAST): create_quote_atomic back to the cap 600
--- Restores the production definition byte for byte.
--- Only the per-job cap constant changes (600 -> 25000). Locks, idempotency, deterministic ids and the charge formula are exactly the PRODUCTION definition
--- (read with SELECT on 2026-10-21, saved in tests/replica/prod-definitions/). Run 00_verify_before_apply.sql first: if the live definition differs, stop.
+-- ROLLBACK of Step 4 of 4 (LAST): create_quote_atomic back to the cap 600 (this file restores the cap to 600; it undoes the 25000 of the apply file)
+-- The function body is the saved PRODUCTION body (tests/replica/prod-definitions/create_quote_atomic.sql); the only change against the apply file is v_cap: 25000 -> 600.
+-- Locks, idempotency, deterministic ids and the charge formula are untouched. Apply it in the reverse order of the steps (4, 3, 2, 1).
+-- (production read with SELECT on 2026-10-21). Afterwards run 05_verify_after_apply.sql: the cap numbers must read 600 again.
 -- SECURITY DEFINER with a pinned search_path is kept; execute is revoked from PUBLIC, anon and authenticated and granted to service_role only (last two statements).
 
 CREATE OR REPLACE FUNCTION public.create_quote_atomic(p_user_id uuid, p_quote_id text, p_quote_hash text, p_items jsonb, p_total_points numeric, p_output_formats text[], p_expires_at timestamp with time zone, p_previous_quote_ids text[] DEFAULT '{}'::text[])

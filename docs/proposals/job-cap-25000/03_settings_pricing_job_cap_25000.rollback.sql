@@ -1,6 +1,6 @@
 -- PROPOSAL, NOT APPLIED. Run by hand in the Supabase SQL editor after the owner's review.
 -- ROLLBACK of step 3: settings_private.pricing.jobMaxPointsCap back to 600
--- 
+-- This restores the stored cap to 600 (it undoes the 25000 of step 3); apply it in the reverse order of the steps (4, 3, 2, 1).
 -- Data only: one stored number. No function, no table definition, no grant and no money table is touched (the ledger and the jobs are not read or written).
 
 UPDATE public.settings_private
