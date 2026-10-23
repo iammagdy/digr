@@ -118,6 +118,29 @@ export function hasTopicEvidence(topicStemList: string[], content: string): bool
 }
 
 /**
+ * Basketball is not football: «كرة» is in both names, so the generic stems of «كرة السلة» would count a football text as evidence. A basketball
+ * request is judged against the sport's own words instead (the name, the NBA, a league, a team or a player «of the basket»), after the same
+ * normalisation as any other text. The patterns are for NORMALISED text (alef, ya, ta marbuta, diacritics, punctuation as spaces).
+ */
+export const BASKETBALL_TOPIC_RE = /كره (?:ال)?سله|كوره (?:ال)?سله|basketball|\bnba\b|hoops|باسكت|(?:دوري|لاعب\w*|مباراه|مباريات|منتخب|اتحاد|نادي|فريق|بطوله)\s+(?:ال)?سله/u;
+export const FOOTBALL_TOPIC_RE = /كره (?:ال)?قدم|football|soccer|(?<![\p{L}\p{N}])القدم(?![\p{L}\p{N}])/u;
+
+/** True when the request is about basketball (checked on the request's own words, not on a row). */
+export function isBasketballTopic(topic: string): boolean {
+  return /كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\bnba\b|hoops/i.test(topic) || BASKETBALL_TOPIC_RE.test(normalizeText(topic));
+}
+
+export function countPattern(value: string, pattern: RegExp): number {
+  return [...value.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))].length;
+}
+
+/** What a text says about the two sports: how many words of each. */
+export function sportTermCounts(text: string): { basketball: number; football: number } {
+  const normalized = normalizeText(text);
+  return { basketball: countPattern(normalized, BASKETBALL_TOPIC_RE), football: countPattern(normalized, FOOTBALL_TOPIC_RE) };
+}
+
+/**
  * True when the text shows a word of the requested country: its name or its demonym, in Arabic or English, compared after the same
  * normalisation (alef, ya, ta marbuta, diacritics) and light stemming as the topic. False when no country was requested or the
  * country has no word list: callers that need «a country was asked and the text names none» check `regionEvidenceWords` first.

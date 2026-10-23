@@ -1,7 +1,7 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, isGenericComment, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
-import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
+import { BASKETBALL_TOPIC_RE, FOOTBALL_TOPIC_RE, countPattern, hasRegionEvidence, hasTopicEvidence, isBasketballTopic, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { isCompanyDirectoryJob } from "./directoryCapability";
 import { nonCompanyReasonAr } from "../companyRowHygiene";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
@@ -91,7 +91,7 @@ function rawTextOf(row: Record<string, any>, keys: string[]): string {
  * with no Arabic or Latin letters at all. A short real comment («ماتش حلو») does not have to repeat the topic's words. Only rows
  * that look doubtful are flagged for the automatic review.
  */
-function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commentRow: boolean, region: string): ResearchRelevanceResult {
+function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commentRow: boolean, region: string, evidenceOverride?: boolean): ResearchRelevanceResult {
   const ownKeys = commentRow ? COMMENT_OWN_KEYS : ["text", "full_text", "fullText", "content", "comment", "comment_text", "commentText", "message", "title", "description", "caption", "video_caption", "video_title", "post_text", "body", "summary"];
   const rawOwn = rawTextOf(row, ownKeys);
   const own = normalizeText(rawOwn);
@@ -105,7 +105,7 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
   if (!letters.some((ch) => /[\u0600-\u06FF\u0750-\u077Fa-z]/i.test(ch))) {
     return { decision: "no_match", reasonAr: "لغة النص لا تحمل محتوى يمكن مطابقته مع موضوع البحث" };
   }
-  const evidence = hasTopicEvidence(stems, own);
+  const evidence = evidenceOverride ?? hasTopicEvidence(stems, own);
   // «اللهم …», «ما شاء الله», «تسلم»: a supplication or a reaction that does not name the topic says nothing about it, under any video.
   if (commentRow && !evidence && isGenericComment(rawOwn)) return { decision: "no_match", reasonAr: GENERIC_COMMENT_REASON_AR };
   if ((URL_RE.test(rawOwn) || PHONE_RE.test(rawOwn) || AD_RE.test(rawOwn)) && !evidence) {
@@ -213,7 +213,7 @@ export function evaluateResearchRowRelevance(
   // trend age (resurfacing videos can be old), so age never rejects a row here; an explicit customer date window is
   // enforced separately by filterRowsByDateRange before this gate.
   const topic = topicFromParams(params);
-  const basketball = /كره (?:ال)?سله|كرة (?:ال)?سلة|basketball|\bnba\b|hoops/i.test(topic);
+  const basketball = isBasketballTopic(topic);
   const stems = basketball ? [] : topicStems(topic);
   if (!basketball && stems.length === 0) return { decision: "match", reasonAr: "لا يتضمن الطلب موضوعاً نصياً يلزم مطابقته" };
 
@@ -222,6 +222,21 @@ export function evaluateResearchRowRelevance(
   // stays for feeds with no topic filter (an account, a channel, a link), for videos (the title IS the deliverable) and for the
   // basketball/football separation.
   if (/^social-(?:x-posts|tiktok-comments|youtube-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow, requestedRegion);
+  // Basketball comments found by the source's own topic search (TikTok, YouTube): a short comment under a basketball video is a real comment
+  // even when it never says «كرة السلة» (the same rule as every other topic). What stays strict: a comment or a video that is plainly about
+  // FOOTBALL (the sports share the word «كرة»), a bare reaction, an ad. A video whose own text names neither sport is not rejected here: the
+  // video-level review decides it (see videoRelevance), so its comments are delivered only when the video is on topic.
+  if (basketball && commentRow && /^social-(?:tiktok-comments|youtube-comments)$/i.test(capabilitySlug) && isTopicSearchRequest(params)) {
+    const own = textOf(row, COMMENT_OWN_KEYS);
+    const context = textOf(row, COMMENT_CONTEXT_KEYS);
+    const ownBasket = countPattern(own, BASKETBALL_TOPIC_RE);
+    const contextBasket = countPattern(context, BASKETBALL_TOPIC_RE);
+    const footballTerms = countPattern(`${own} ${context}`, FOOTBALL_TOPIC_RE);
+    if (!own) return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
+    if (ownBasket + contextBasket === 0 && footballTerms > 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
+    if (ownBasket + contextBasket > 0 && footballTerms >= ownBasket + contextBasket) return { decision: "uncertain", reasonAr: "يذكر السجل كرة السلة وكرة القدم معاً؛ أُحيل للمراجعة ولم يُحتسب" };
+    return presumeTopicSearchRow(row, [], true, requestedRegion, ownBasket > 0);
+  }
   const ownContent = commentRow ? textOf(row, COMMENT_OWN_KEYS) : "";
   // A comment is judged by its own words first. The video it sits under is context: it can support a comment that has content of
   // its own, never a bare «اتفقت». Posts, videos and everything else are judged by their own text as before.
@@ -229,7 +244,7 @@ export function evaluateResearchRowRelevance(
   if (!content) return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
 
   if (basketball) {
-    const BASKETBALL = /كره (?:ال)?سله|basketball|\bnba\b|hoops|(?:دوري|لاعب\w*|مباراه|منتخب|اتحاد|نادي)\s+(?:ال)?سله/;
+    const BASKETBALL = BASKETBALL_TOPIC_RE;
     let basis = content;
     if (commentRow && countMatches(basis, BASKETBALL) === 0) {
       // A comment with no topic word of its own is supported by the video it sits under, unless it only reacts.
@@ -240,7 +255,7 @@ export function evaluateResearchRowRelevance(
       }
     }
     const basketballTerms = countMatches(basis, BASKETBALL);
-    const footballTerms = countMatches(basis, /كره (?:ال)?قدم|football|soccer|(?<![\p{L}\p{N}])القدم(?![\p{L}\p{N}])/u);
+    const footballTerms = countMatches(basis, FOOTBALL_TOPIC_RE);
     if (basketballTerms === 0) return { decision: "no_match", reasonAr: "لا يتضمن نص السجل كلمات من موضوع البحث" };
     if (footballTerms > 0 && footballTerms >= basketballTerms) return { decision: "uncertain", reasonAr: "يذكر السجل كرة السلة وكرة القدم معاً؛ أُحيل للمراجعة ولم يُحتسب" };
   } else {
