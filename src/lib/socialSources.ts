@@ -9,7 +9,7 @@
  *
  * This module is pure data and pure functions (no network), so it can be tested exhaustively.
  */
-import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig";
+import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings";
 
 import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
@@ -569,7 +569,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     modes: ["url", "channel"],
     rowCostUsd: 0.00188,
     customerPriceUsdPerItem: 0.0019,
-    maxRows: 500,
+    maxRows: FACEBOOK_JOB_CEILINGS.comments,
     successRate: 0.99,
     discover: { channel: FACEBOOK_PAGE_POSTS },
     comments: FACEBOOK_COMMENTS,
@@ -609,7 +609,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     descriptionAr: "سحب أحدث منشورات صفحة فيسبوك عامة برابطها أو اسمها، مع التفاعلات وعدد التعليقات.",
     modes: ["channel"],
     rowCostUsd: 0.002,
-    maxRows: 60,
+    maxRows: FACEBOOK_JOB_CEILINGS.posts,
     successRate: 0.995,
     discover: { channel: FACEBOOK_PAGE_POSTS },
   },

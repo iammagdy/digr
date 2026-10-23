@@ -1,7 +1,7 @@
 import { APPROVED_CAPABILITY_CATALOG, registryPointsPerUnit } from "../functions/shared/capabilityRegistry";
 import { SOCIAL_CAPABILITIES } from "./socialSources";
 import { effectiveSocialMaxRows } from "./scaleConfig";
-import { getConfiguredJobPointsCap } from "../functions/shared/providerSpend";
+import { JOB_MAX_POINTS_CAP } from "./jobPointsCap";
 import { volumeForPointsCap } from "./pointsCap";
 import { COVERAGE_FAMILIES } from "./requestCoverage";
 import { EGYPT_NEWS_SOURCES, NEWS_SOURCES_VERIFIED_ON, hasMachineAccess } from "./newsSources";
@@ -33,7 +33,7 @@ export function buildCoverageDoc(): string {
   lines.push("# تغطية ديجر: ما الذي نبيعه فعلًا، وما الذي لا نبيعه");
   lines.push("");
   lines.push("> يُولَّد هذا الملف من جداول الكود نفسها (`npx tsx scripts/generate-coverage-doc.ts`)، ويقارنه اختبار بالنسخة المولّدة، فلا يختلف ما تقرأه عمّا تستخدمه المنصة.");
-  lines.push("> السعر بالنقاط (١ نقطة = ٠٫١٠ جنيه). سقف المهمة الواحدة حاليًا " + n(getConfiguredJobPointsCap()) + " نقطة، والحجز يتضمن هامش ١٥٪. لا شيء هنا يغيّر سعرًا أو سقفًا.");
+  lines.push("> السعر بالنقاط (١ نقطة = ٠٫١٠ جنيه). سقف المهمة الواحدة حاليًا " + n(JOB_MAX_POINTS_CAP) + " نقطة، والحجز يتضمن هامش ١٥٪. لا شيء هنا يغيّر سعرًا أو سقفًا.");
   lines.push("");
   lines.push("## ١. ما نبيعه اليوم");
   lines.push("");
@@ -47,7 +47,7 @@ export function buildCoverageDoc(): string {
       ? [...new Set([...(social.comments ?? []), ...Object.values(social.discover).flatMap((sources) => sources ?? [])].map((source) => source.endpointId))].join("، ")
       : String((capability as any).tregEndpointId ?? "");
     const unit = social ? registryPointsPerUnit(social.slug, social.customerPriceUsdPerItem ?? social.rowCostUsd) : Number(capability.pointsPerUnit ?? 0);
-    const byCap = volumeForPointsCap(getConfiguredJobPointsCap(), unit);
+    const byCap = volumeForPointsCap(JOB_MAX_POINTS_CAP, unit);
     const rows = social ? effectiveSocialMaxRows(social.maxRows, social.kind) : Number((capability as any).maxRows ?? 0);
     lines.push(`| ${capability.nameAr} (\`${slug}\`) | ${endpoints} | ${String((capability as any).pricingUnit ?? capability.unit) === "item" ? "سجل" : String((capability as any).pricingUnit ?? capability.unit)} | ${unit} | ${n(byCap)} | ${n(rows)} | ${shapes} |`);
   }

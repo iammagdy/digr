@@ -1,6 +1,6 @@
 import { maybeUpgradeToChainPlan } from "../../lib/server/multiProvider/planUpgrade";
 import { pointsAr } from "../../lib/pointsFormat";
-import { JOB_MAX_POINTS_CAP } from "../../lib/jobPointsCap";
+import { effectiveJobPointsCap } from "../../lib/jobPointsCap";
 import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLabels";
 import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
@@ -4019,7 +4019,7 @@ export class ChatHandler {
             planSummaryText += `\n- ${defaultCapLineAr(defaultCapNow.noun, defaultCapNow.units)}`;
             // A default is not something the customer asked for: when the job cuts it, the plan says what it holds, never «you asked for».
             if (managedQuote.targetVolumeMax < defaultCapNow.units) {
-              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP })}`;
+              planSummaryText += ` ${defaultCapFittedLineAr({ noun: defaultCapNow.noun, fittedUnits: managedQuote.targetVolumeMax, quotedPoints: managedQuote.quotedPoints, pointsCap: managedQuote.pointsCap || effectiveJobPointsCap() })}`;
             }
           }
           // Never shrink silently: what was asked, what fits one job now, and why (also when only a service ceiling cut it).
@@ -4052,7 +4052,7 @@ export class ChatHandler {
                   requestedUnits,
                   fittedUnits: managedQuote.targetVolumeMax,
                   unitPricePoints: managedQuote.unitPricePoints,
-                  pointsCap: managedQuote.pointsCap || JOB_MAX_POINTS_CAP,
+                  pointsCap: managedQuote.pointsCap || effectiveJobPointsCap(),
                   safetyBuffer: DEFAULT_PRICING_SETTINGS.safetyBuffer,
                   quotedPoints: managedQuote.quotedPoints,
                 })
@@ -4060,8 +4060,8 @@ export class ChatHandler {
             planSummaryText += capStatement
               ? `\n- ${capStatement}`
               : managedQuote.targetVolumeMax < requestedUnits
-              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
-              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}.`;
+              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
+              : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}.`;
           }
           // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
           const explorationCandidate = isExplorationCandidate({
@@ -4210,7 +4210,7 @@ export class ChatHandler {
 
               finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           if (managedQuote.pointsCapConstrained) {
-            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${pointsAr(managedQuote.pointsCap || JOB_MAX_POINTS_CAP, toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`;
+            finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`;
           }
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;

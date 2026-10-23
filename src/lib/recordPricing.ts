@@ -1,4 +1,4 @@
-import { JOB_MAX_POINTS_CAP } from "./jobPointsCap";
+import { effectiveJobPointsCap } from "./jobPointsCap";
 
 /**
  * Price of one DELIVERED record, in points, from the real cost of one delivered record:
@@ -112,12 +112,12 @@ export function maxVolumeUnderCap(capPoints: number, unitPoints: number, buffer:
 }
 
 /** The most records one job holds by the shared rule: the reserve stays within the cap in force. */
-export function maxRecordsInOneJob(unitPoints: number, capPoints: number = JOB_MAX_POINTS_CAP, buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
+export function maxRecordsInOneJob(unitPoints: number, capPoints: number = effectiveJobPointsCap(), buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
   return maxVolumeUnderCap(capPoints, unitPoints, buffer);
 }
 
 /** The largest CHARGE a job can end with under the cap: the buffer is held back, so it is below the cap (about cap / 1.15). */
-export function maxChargeInOneJob(unitPoints: number, capPoints: number = JOB_MAX_POINTS_CAP, buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
+export function maxChargeInOneJob(unitPoints: number, capPoints: number = effectiveJobPointsCap(), buffer: number = DEFAULT_PRICING_BASIS.safetyBuffer): number {
   return chargeForUnits(maxRecordsInOneJob(unitPoints, capPoints, buffer), unitPoints);
 }
 

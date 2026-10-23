@@ -3,7 +3,7 @@ import { toArabicDigits } from "./arabicDigits";
 import { reserveForUnits } from "./recordPricing";
 
 /**
- * The live per-job points cap is JOB_MAX_POINTS_CAP (600, `src/lib/jobPointsCap.ts`), enforced by the quote builder and the settlement function.
+ * The live per-job points cap is JOB_MAX_POINTS_CAP (25,000, `src/lib/jobPointsCap.ts`), enforced by the quote builder and the settlement function.
  * Nothing in this file changes it.
  *
  * JOB_MAX_POINTS_CAP_LARGE is a PROPOSAL for very large per-record jobs. It is documented here only: the planner and

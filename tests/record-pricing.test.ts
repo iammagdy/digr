@@ -99,12 +99,13 @@ describe("the sizes at the 600-point cap", () => {
     expect(maxChargeInOneJob(1, 575)).toBeGreaterThanOrEqual(500);
     expect(maxChargeInOneJob(1)).toBeGreaterThanOrEqual(500);
   });
-  it("the shared cap constant is 600 and the environment can only lower it", () => {
-    expect(JOB_MAX_POINTS_CAP).toBe(600);
-    expect(effectiveJobPointsCap({})).toBe(600);
+  it("the shared cap constant is 25,000 and the environment can only lower it", () => {
+    expect(JOB_MAX_POINTS_CAP).toBe(25000);
+    expect(effectiveJobPointsCap({})).toBe(25000);
     expect(effectiveJobPointsCap({ JOB_MAX_POINTS_CAP: "300" })).toBe(300);
-    expect(effectiveJobPointsCap({ JOB_MAX_POINTS_CAP: "99999" })).toBe(600);
-    expect(effectiveJobPointsCap({ JOB_MAX_POINTS_CAP: "abc" })).toBe(600);
+    expect(effectiveJobPointsCap({ JOB_MAX_POINTS_CAP: "600" })).toBe(600);
+    expect(effectiveJobPointsCap({ JOB_MAX_POINTS_CAP: "99999" })).toBe(25000);
+    expect(effectiveJobPointsCap({ JOB_MAX_POINTS_CAP: "abc" })).toBe(25000);
   });
 });
 

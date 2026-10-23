@@ -85,12 +85,12 @@ describe("the fit of posts and their comments (the 550-to-600 case: 50 posts + 5
     expect(fitPostsAndComments([items[1], items[0]], 600, 0.15)!.volumes).toEqual([40, 4]);
   });
 
-  it("the service's own ceilings apply even when the money fits: 60 posts and 500 comments at most", () => {
-    const cheap = [{ capabilitySlug: "facebook-post-search", targetVolumeMax: 100, unitPricePoints: 1 }, { capabilitySlug: "facebook-post-comments", targetVolumeMax: 1000, unitPricePoints: 0.1 }];
+  it("the service's own ceilings apply even when the money fits: 300 posts and 1,500 comments at most", () => {
+    const cheap = [{ capabilitySlug: "facebook-post-search", targetVolumeMax: 400, unitPricePoints: 1 }, { capabilitySlug: "facebook-post-comments", targetVolumeMax: 4000, unitPricePoints: 0.1 }];
     const fit = fitPostsAndComments(cheap, 600, 0.15)!;
     expect(fit.reason).toBe("ceiling");
-    expect(fit.volumes[0]).toBeLessThanOrEqual(60);
-    expect(fit.volumes[1]).toBeLessThanOrEqual(500);
+    expect(fit.volumes[0]).toBeLessThanOrEqual(300);
+    expect(fit.volumes[1]).toBeLessThanOrEqual(1500);
     expect(fit.volumes[1]).toBe(fit.volumes[0] * 10);
   });
 

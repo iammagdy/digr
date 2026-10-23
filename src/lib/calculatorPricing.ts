@@ -14,8 +14,8 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionM
 import { limitedByServiceCeiling, recordsInOneJob, reserveInOneJob } from "./jobSizing";
 import { reserveForUnits } from "./recordPricing";
 export const DEFAULT_PROVIDER_DAILY_SPEND_CAP_USD = 0.80;
-import { JOB_MAX_POINTS_CAP } from "./jobPointsCap";
-export const DEFAULT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
+import { effectiveJobPointsCap } from "./jobPointsCap";
+export const DEFAULT_JOB_POINTS_CAP = effectiveJobPointsCap();
 
 export interface PublicCalculatorOption {
   slug: string;

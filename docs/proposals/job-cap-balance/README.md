@@ -23,7 +23,7 @@ No other money function holds the number: `reserve_credits_atomic` and `accept_q
 
 | What | Where |
 |---|---|
-| The one constant: `JOB_MAX_POINTS_CAP = 600`; the environment may only lower it (`effectiveJobPointsCap`) | `src/lib/jobPointsCap.ts:8`, `:11-14` |
+| The one constant: `JOB_MAX_POINTS_CAP` (600 when this proposal was written; **25,000 since the owner's decision of 2026-10-23, see `docs/proposals/job-cap-25000/`**); the environment may only lower it (`effectiveJobPointsCap`) | `src/lib/jobPointsCap.ts:13`, `:19-22` |
 | The cap in force for a plan: `Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP)` | `src/functions/shared/planManager.ts:622` (cut to it at `:829-885`) |
 | `getConfiguredJobPointsCap()` returns `effectiveJobPointsCap()` | `src/functions/shared/providerSpend.ts:56-58` (`DEFAULT_JOB_POINTS_CAP` at `:9`) |
 | The worker reads `jobMaxPointsCap` from settings (NOT clamped to 600) and passes it as `p_points_cap` | `src/app/api/worker/chunk/route.ts:139-148` and `:2210`, `:2215` |
@@ -34,8 +34,8 @@ No other money function holds the number: `reserve_credits_atomic` and `accept_q
 
 | Service | Ceiling | Line |
 |---|---|---|
-| Facebook page **posts** | **60** records per job; cannot be raised by `LONG_JOB_SOCIAL_MAX_ROWS` (only comments, and posts of 500 or more, can) | `:612` (the raise rule: `src/lib/scaleConfig.ts:75-79`) |
-| Facebook **comments** | **500** records per job (raisable by `LONG_JOB_SOCIAL_MAX_ROWS`) | `:572` |
+| Facebook page **posts** | **300** records per job since 2026-10-23 (was 60); one place: `src/lib/facebookCeilings.ts`; not raised by `LONG_JOB_SOCIAL_MAX_ROWS` (only comments, and posts of 500 or more, can) | `:612` (the raise rule: `src/lib/scaleConfig.ts:75-79`) |
+| Facebook **comments** | **1,500** records per job since 2026-10-23 (was 500); the same file; raisable by `LONG_JOB_SOCIAL_MAX_ROWS` | `:572` |
 | TikTok / YouTube comments | 2,000 | `:542`, `:557` |
 | X posts | 4,500 | `:529` |
 | TikTok videos / YouTube videos | 200 / 48 | `:586`, `:599` |
