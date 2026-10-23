@@ -101,7 +101,8 @@ function namedChannels(text: string): string[] {
   };
   for (const m of text.matchAll(CHANNEL_ANSWER_RE)) for (const name of parseChannelAnswer(m[1])) add(name);
   for (const handle of handlesInText(text)) add(handle);
-  const m = /(?:قناة|قناه|صفحة)\s+((?:[\p{L}\p{N}_.]+\s?){1,3})/u.exec(text.replace(CHANNEL_ANSWER_RE, " "));
+  // «الصفحة المطلوبة: …» is the label of a stored card answer, not the noun «صفحة» followed by a name: the noun must start its word.
+  const m = /(?<![\p{L}\p{N}])(?:قناة|قناه|صفحة)\s+((?:[\p{L}\p{N}_.]+\s?){1,3})/u.exec(text.replace(CHANNEL_ANSWER_RE, " "));
   if (m) {
     const words = m[1].trim().split(/\s+/);
     const kept: string[] = [];
@@ -109,7 +110,8 @@ function namedChannels(text: string): string[] {
       if (CHANNEL_NAME_STOP.has(w)) break;
       kept.push(w);
     }
-    if (kept.length && !/^\d+$/.test(kept[0])) add(kept.join(" "));
+    // «صفحة https://…»: the word after the noun is the start of a link (already read as a channel above), not a second name.
+    if (kept.length && !/^\d+$/.test(kept[0]) && !/^https?$/iu.test(kept[0])) add(kept.join(" "));
   }
   return out;
 }
@@ -167,6 +169,20 @@ function channelSubjectAfterAbout(text: string): string {
   return /\p{L}/u.test(subject) ? subject : "";
 }
 
+/**
+ * The LAST match of a pattern: a later message that restates a number («٥٠ منشور بالتعليقات» after «٤٠٠ منشور بالتعليقات») is the customer
+ * changing it, so the newest figure wins and the older one is not read again. The text is the earlier request followed by the later words.
+ */
+function lastMatch(re: RegExp, text: string): RegExpExecArray | null {
+  let found: RegExpExecArray | null = null;
+  const global = new RegExp(re.source, re.flags.includes("g") ? re.flags : `${re.flags}g`);
+  for (let m = global.exec(text); m; m = global.exec(text)) {
+    found = m;
+    if (m[0].length === 0) global.lastIndex += 1;
+  }
+  return found;
+}
+
 export function understandMission(rawText: string, options: { today?: Date } = {}): MissionUnderstanding {
   const text = digits(rawText || "");
   const social = detectSocialIntent(text);
@@ -180,9 +196,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
 
   const commentsFlow = social.wantsComments || allComments;
   // In a comments request «٣ فيديوهات» counts the videos; «٥٠ تعليق لكل فيديو» counts comments per video. Neither is the comment cap.
-  const perVideoMatch = commentsFlow ? PER_VIDEO_RE.exec(text) : null;
+  const perVideoMatch = commentsFlow ? lastMatch(PER_VIDEO_RE, text) : null;
   const commentsPerVideo = perVideoMatch ? Number(perVideoMatch[1]) : null;
-  const containerMatch = commentsFlow && top === null ? CONTAINER_COUNT_RE.exec(text.replace(PER_VIDEO_RE, " ")) : null;
+  const containerMatch = commentsFlow && top === null ? lastMatch(CONTAINER_COUNT_RE, text.replace(new RegExp(PER_VIDEO_RE.source, "gu"), " ")) : null;
   const videos = containerMatch ? Number(containerMatch[1]) : null;
   const videosNoun: "videos" | "posts" = containerMatch && /بوست|منشور/u.test(containerMatch[0]) ? "posts" : "videos";
 
@@ -204,8 +220,8 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   if (!isDirectory) {
     let stripped = text;
     if (commentsFlow) {
-      stripped = stripped.replace(PER_VIDEO_RE, " ");
-      if (videos !== null) stripped = stripped.replace(CONTAINER_COUNT_RE, " ");
+      stripped = stripped.replace(new RegExp(PER_VIDEO_RE.source, "gu"), " ");
+      if (videos !== null) stripped = stripped.replace(new RegExp(CONTAINER_COUNT_RE.source, "gu"), " ");
     }
     if (channels.count) stripped = stripped.replace(new RegExp(`${COUNT}\\s*${CHANNEL_WORD}`), " ");
     if (top !== null) stripped = stripped.replace(/(?:اعلي|اعلى|أعلى|اكتر|أكتر|اكثر|أكثر|اعلا|توب|top)?\s*\d+\s*(?:فيديو|فيديوهات|مقطع|مقاطع)/iu, " ");

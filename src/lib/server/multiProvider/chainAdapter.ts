@@ -34,7 +34,7 @@ const testHooksAllowed = () => process.env.NODE_ENV !== "production";
 export function createChainAdapter(env: ChainAdapterEnv): ProviderAdapterFn {
   return async (input) => {
     if (!multiProviderEnabled()) {
-      return { ok: false, httpStatus: 503, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode: "multi_provider_off", errorMessageAr: "هذه الخدمة غير متاحة حاليًا؛ تم استرداد كامل الرصيد المحجوز دون أي خصم." };
+      return { ok: false, httpStatus: 503, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode: "multi_provider_off", errorMessageAr: "هذه الخدمة غير متاحة حاليًا؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد." };
     }
     const hooks = testHooksAllowed() ? testTransport : null;
     const keys: Partial<Record<DataProviderId, string>> = { ...(hooks?.keys ?? {}) };

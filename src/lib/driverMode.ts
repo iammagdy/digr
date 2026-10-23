@@ -19,7 +19,7 @@ export const canClosePage = (mode: DriverMode): boolean => mode === "cron";
 export function closePageLineAr(mode: DriverMode): string {
   return canClosePage(mode)
     ? "تقدر تقفل الصفحة؛ المهمة تكمل وحدها وسنبلغك عند الاكتمال."
-    : "أبقِ الصفحة مفتوحة حتى لا يتوقف التنفيذ؛ وإن أغلقتها فستكمل المهمة عند عودتك.";
+    : "أبقِ الصفحة مفتوحة حتى تكتمل المهمة.";
 }
 
 /** Anything the server did not send is treated as «tab»: never assume the driver is on. */

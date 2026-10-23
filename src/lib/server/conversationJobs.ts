@@ -13,7 +13,8 @@ export interface ConversationJob {
   platform?: string | null;
 }
 
-const JOB_COLUMNS = "id, user_id, status, template_slug, endpoint_id, capability_slug, platform";
+/** `*`, not a column list: the jobs table has no template_slug, capability_slug or platform column, and a column it lacks fails the whole query (the same cause as the live preview). */
+const JOB_COLUMNS = "*";
 
 /**
  * The job ids of a conversation, newest first. A job row does not carry its conversation: its id is derived from the quote

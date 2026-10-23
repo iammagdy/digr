@@ -1,7 +1,7 @@
 import { toArabicDigits } from "../arabicDigits";
 import { regionEvidenceWords } from "../regionNames";
 import { reviewSocialRows, UNREVIEWED_BY_BUDGET_REASON_AR, type AdvisoryUsage, type RowAdvisorFn, type SocialReviewAttempt, type SocialReviewStop } from "./rowReviewAdvisor";
-import { hasRegionEvidence, hasTopicEvidence, normalizeText, topicStems } from "./topicMatch";
+import { hasRegionEvidence, hasTopicEvidence, isBasketballTopic, normalizeText, sportTermCounts, topicStems } from "./topicMatch";
 
 /**
  * Comments found by a topic search (TikTok, YouTube) are judged at the level of the VIDEO they were written under: a short comment
@@ -20,7 +20,15 @@ export type VideoEvidence = "match" | "needs_review";
 export function videoEvidence(videoText: string, request: { query?: string; region?: string }): VideoEvidence {
   const text = String(videoText || "").trim();
   if (!text) return "needs_review";
-  const stems = topicStems(String(request.query || ""));
+  const query = String(request.query || "");
+  if (isBasketballTopic(query)) {
+    // «كرة» is in both sports' names: a basketball video needs a word of the sport itself, and a video that names football more than it
+    // names basketball is not evidence (it goes to the review, never straight to delivery).
+    const { basketball, football } = sportTermCounts(text);
+    if (basketball === 0 || football >= basketball) return "needs_review";
+    return regionEvidenceWords(request.region).length === 0 || hasRegionEvidence(request.region, text) ? "match" : "needs_review";
+  }
+  const stems = topicStems(query);
   if (stems.length === 0 || !hasTopicEvidence(stems, text)) return "needs_review";
   if (regionEvidenceWords(request.region).length === 0) return "match";
   return hasRegionEvidence(request.region, text) ? "match" : "needs_review";

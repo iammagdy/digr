@@ -74,7 +74,7 @@ export default async ({ req, res, log, error }: any) => {
         job.userId,
         jobId,
         job.reservedCredits,
-        "تأكيد استرجاع الرصيد المحجوز لطلب متعثر"
+        "تأكيد تحرير الحجز المؤقت لطلب متعثر"
       );
       log(`[job-worker] Job ${jobId} is already failed (alreadyReleased=${relCheck.alreadyReleased}).`);
       return res.json({

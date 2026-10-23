@@ -78,7 +78,8 @@ describe("the notices of a long job", () => {
       const honest = jobStartedNotice({ targetVolumeMax: 1500, driver });
       expect(honest.body).not.toContain("يمكنك إغلاق الصفحة");
       expect(honest.body).toContain("أبقِ الصفحة مفتوحة");
-      expect(honest.body).toContain("فستكمل عند عودتك");
+      expect(honest.body).toContain("أبقِ الصفحة مفتوحة حتى تكتمل المهمة");
+      expect(honest.body).not.toContain("عند عودتك");
       expect(honest.body).toContain("حتى ١٥٠٠ سجل");
       expect(honest.body).toContain("سنخبرك عند اكتماله");
       expect(honest.body).toContain("تعود نقاطك المحجوزة كاملة");

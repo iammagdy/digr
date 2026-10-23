@@ -167,9 +167,9 @@ describe("a public Facebook page named by its name", () => {
   });
 
   it("the plan is the page-posts service for that page, with no period question and no model call", async () => {
-    const r = await plan("٢٠ بوست من صفحة اليوم السابع على فيسبوك");
+    const r = await plan("٢٠ بوست من صفحة youm7 على فيسبوك");
     expect(r.outputType).toBe("propose_plan");
-    expect(r.planQuote.items[0]).toMatchObject({ capabilitySlug: "social-facebook-posts", params: { channel: "اليوم السابع" }, targetVolumeMax: 20 });
+    expect(r.planQuote.items[0]).toMatchObject({ capabilitySlug: "social-facebook-posts", params: { channel: "youm7" }, targetVolumeMax: 20 });
     expect((r.clarificationItems ?? []).length).toBe(0);
     expect(String(r.contentAr)).not.toMatch(/tikhub|crawl4ai|anyapi|scrapecreators|treg|post\/123/i);
   });

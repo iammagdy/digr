@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
 
     const adminClient = createAdminClient();
     const releaseReason =
-      reason || "تم إلغاء الطلب واسترجاع الرصيد المحجوز بواسطة الإدارة.";
+      reason || "تم إلغاء الطلب وتحرير الحجز المؤقت بواسطة الإدارة.";
 
     const { data: releaseData, error: relErr } = await adminClient.rpc(
       "release_job_atomic",

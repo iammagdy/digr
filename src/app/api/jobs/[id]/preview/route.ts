@@ -27,7 +27,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const admin = createAdminClient();
     const { data: job } = await admin
       .from("jobs")
-      .select("id, user_id, status, step, template_slug, endpoint_id, platform, capability_slug, delivered_units")
+      // Only columns the jobs table has (id, user, status, step, endpoint, delivered units). A column it does not have made the whole query fail, so the
+      // job read as «not found» and the panel never received a row.
+      .select("id, user_id, status, step, endpoint_id, delivered_units")
       .eq("id", jobId)
       .maybeSingle();
     if (!job) return NextResponse.json({ success: false, error: "الطلب غير موجود." }, { status: 404 });
@@ -58,12 +60,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!rows.length) return NextResponse.json({ success: true, status: job.status, delivered: Number(job.delivered_units) || 0, sample: null });
 
     const normalized = normalizeDataset(
-      { rows, metadata: { template: job.template_slug || job.endpoint_id } },
+      { rows, metadata: { template: job.endpoint_id } },
       {
-        platform: job.platform || undefined,
         title: "معاينة",
         jobId,
-        socialKind: inferSocialRowKind(job.endpoint_id, job.template_slug, job.capability_slug, job.platform),
+        socialKind: inferSocialRowKind(job.endpoint_id, undefined, undefined, undefined),
       },
     );
     const isCompanyDataset = normalized.metadata.entityType === "companies" || normalized.metadata.entityType === "people";

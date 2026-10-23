@@ -1,3 +1,4 @@
+import { toArabicDigits } from "./arabicDigits";
 export interface QuoteApprovalState {
   canApprove: boolean;
   expiredByTime: boolean;
@@ -67,4 +68,16 @@ export function shouldShowPlanPanel(input: {
   if (!finished) return false;
   if (input.jobIdForQuote(latest.quoteId) === input.activeJob.jobId) return false;
   return getQuoteApprovalState(latest.status, latest.expiresAt, input.now ?? Date.now()).canApprove;
+}
+
+/**
+ * «ينتهي العرض خلال ٢٨ دقيقة»: the minutes left until the quote's own expiry, read from the clock passed in (the card passes a clock that moves),
+ * never a stored number. Empty once the offer has expired.
+ */
+export function expiryShortAr(expiresAt: string, now: number): string {
+  const ms = new Date(expiresAt).getTime() - now;
+  if (Number.isNaN(ms) || ms <= 0) return "";
+  const mins = Math.max(1, Math.floor(ms / 60000));
+  if (mins < 60) return `ينتهي العرض خلال ${toArabicDigits(mins)} دقيقة`;
+  return `ينتهي العرض خلال ${toArabicDigits(Math.floor(mins / 60))} ساعة`;
 }

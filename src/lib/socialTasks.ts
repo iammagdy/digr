@@ -164,6 +164,10 @@ const PAGE_NAME_STOP = new Set(["على", "في", "عن", "اللي", "و", "م�
  * service, and the model was left to choose one from the whole live catalog (it chose a post-comments service with an invented link).
  */
 export function facebookPageNameIn(text: string): string | null {
+  // The customer's own answer to «ما رابط صفحة…؟» («الصفحة المطلوبة: صفحة youm7 ·») is the page: it wins over the display name typed earlier.
+  const answers = [...(text || "").matchAll(/الصفحة المطلوبة\s*:\s*(?:صفحة\s+)?([^·]+?)\s*·/gu)];
+  const answered = answers.length > 0 ? answers[answers.length - 1][1].trim() : "";
+  if (answered && !/^https?:\/\//iu.test(answered)) return answered;
   const m = /(?:^|[\s(])(?:صفحة|صفحه|بيج|page)\s+((?:[\p{L}\p{N}_.\-]+\s?){1,5})/iu.exec(text);
   if (!m) return null;
   const kept: string[] = [];
@@ -172,6 +176,8 @@ export function facebookPageNameIn(text: string): string | null {
     kept.push(word);
   }
   if (kept.length === 0 || /^\d+$/.test(kept[0])) return null;
+  // «صفحة https://…»: the word after «صفحة» is the start of a link, not a name (the link is read as the page by its own reader).
+  if (/^https?$/iu.test(kept[0])) return null;
   return kept.join(" ");
 }
 
@@ -314,6 +320,9 @@ const TOPIC_NOISE = new Set([
   "tiktok", "youtube", "facebook", "instagram", "twitter", "videos", "video", "posts", "post", "comments", "comment", "trending", "trend", "viral", "get", "me", "the", "of", "on", "from", "about", "for", "with", "and", "a", "an", "i", "want", "need",
 ]);
 
+/** «بالتعليقات», «وتعليقاتها», «بالكومنتات»: a task word with a clitic («مع/و/ب/ل/ف») or a pronoun ending is still the task, never the topic. */
+const TASK_WORD_FORM_RE = /^[بولفك]?(?:ال)?(?:تعليق|تعليقات|كومنت|كومنتات|كومنتس|منشور|منشورات|بوست|بوستات|فيديو|فيديوهات|مقطع|مقاطع|تغريدة|تغريدات)(?:ها|هم|ه|ك)?$/u;
+
 /** Words that make the country after them a LOCATION («في مصر», «من مصر», «داخل مصر», «بمصر»), not part of the topic. */
 const LOCATION_PREPOSITIONS = new Set(["في", "فى", "من", "داخل"]);
 
@@ -365,7 +374,7 @@ function topicTokens(text: string): string[] {
       if (isNumberWord(token) && COUNTED_NOUN.test(analyzed[index + 1]?.token || "")) return false;
       const bare = token.replace(/^ال/u, "");
       if (bare.length < 2) return false;
-      if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare)) return false;
+      if (TOPIC_NOISE.has(token) || TOPIC_NOISE.has(bare) || TASK_WORD_FORM_RE.test(token)) return false;
       // A location is a filter, not a topic word; an entity that is a country stays in the topic.
       if (location) return false;
       return true;

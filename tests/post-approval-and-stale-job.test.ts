@@ -11,7 +11,8 @@ describe("post-approval message", () => {
     for (const mode of ["tab", undefined, null, "", "yes", "CRON ", 1]) expect(postApprovalMessageAr(mode as any)).toBe(POST_APPROVAL_TAB_AR);
     expect(POST_APPROVAL_TAB_AR).not.toContain("ويمكنك إغلاق الصفحة");
     expect(POST_APPROVAL_TAB_AR).toContain("أبقِ الصفحة مفتوحة");
-    expect(POST_APPROVAL_TAB_AR).toContain("فستكمل المهمة عند عودتك");
+    expect(POST_APPROVAL_TAB_AR).toContain("أبقِ الصفحة مفتوحة حتى تكتمل المهمة");
+    expect(POST_APPROVAL_TAB_AR).not.toContain("عند عودتك");
     expect(chatPage).toContain("content: postApprovalMessageAr(data.driverMode)");
   });
 
