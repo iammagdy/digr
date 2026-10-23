@@ -25,3 +25,9 @@ export function customerFacingQuoteSummary(slug?: string | null): string | undef
   if (!slug) return undefined;
   return `طلب ${customerFacingCapabilityLabel(slug)}`;
 }
+
+/** The request's name in an e-mail: «بحث تيك توك», or «بحثك» when the capability has no customer word. Never an internal id. */
+export function customerEmailJobTitle(slug?: string | null): string {
+  const label = customerFacingCapabilityLabel(slug);
+  return label === "بحث" ? "بحثك" : `بحث ${label}`;
+}

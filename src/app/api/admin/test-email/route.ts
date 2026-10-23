@@ -55,7 +55,8 @@ export async function POST(req: NextRequest) {
   }
 
   const { subject } = renderEmailTemplate(template, { Name: target.name || "مستخدم", ...vars });
-  await sendPlatformEmail(template, target.email, { Name: target.name || "مستخدم", ...(vars ?? {}) });
+  const sent = await sendPlatformEmail(template, target.email, { Name: target.name || "مستخدم", ...(vars ?? {}) });
 
-  return NextResponse.json({ success: true, template, to: target.email, subject });
+  // The real result: a send that did not go out (the function is not published, the key is missing, ...) is never reported as «success».
+  return NextResponse.json({ success: sent.ok, template, to: target.email, subject, ...(sent.ok ? {} : { reason: sent.reason }) });
 }

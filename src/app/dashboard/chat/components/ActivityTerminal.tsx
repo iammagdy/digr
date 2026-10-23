@@ -7,6 +7,7 @@ import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestS
 import { summarizeActivityCounts } from "@/lib/activityCounts";
 import { settleTimelineEvents, timelineWaitingText } from "@/lib/honestDisplay";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
+import { liveEventsForDisplay, PREVIEW_TITLE_AR, PREVIEW_WAITING_AR, previewCountsLineAr, type LivePreviewSample } from "@/lib/liveJobView";
 import RunningIndicator from "./RunningIndicator";
 
 const FORMAT_LABEL_AR: Record<ResultFormat, string> = { xlsx: "إكسل", pdf: "بي دي إف", csv: "سي إس في" };
@@ -34,6 +35,8 @@ interface ActivityTerminalProps {
   fileIds?: ResultFileIds | null;
   /** Number of events fetched in this read; shown so a limited history is never mistaken for complete. */
   eventLimit?: number;
+  /** A few accepted rows of the running request; null or missing: the counts only. */
+  preview?: LivePreviewSample | null;
 }
 
 const clock = (iso?: string) => {
@@ -88,6 +91,7 @@ export default function ActivityTerminal({
   onDownload,
   fileIds,
   eventLimit,
+  preview,
 }: ActivityTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAutoScrollActive = useRef(true);
@@ -132,7 +136,9 @@ export default function ActivityTerminal({
 
   // The failure panel below renders the final, customer-safe reason, so its duplicate error event is left out of the list.
   const settledEvents = settleTimelineEvents(status === "failed" && errorAr ? events.filter((e) => e.kind !== "error") : events, status);
-  const displayEvents: TerminalEvent[] = settledEvents && settledEvents.length > 0 ? settledEvents : [];
+  // One remaining-time figure on the screen (the chat's, from the real chunk times): the worker's own time inside a page line is dropped here,
+  // and a line that repeats the one before it is shown once.
+  const displayEvents: TerminalEvent[] = settledEvents && settledEvents.length > 0 ? liveEventsForDisplay(settledEvents) : [];
   const liveSnapshot = deriveLiveActivitySnapshot({ events: displayEvents, rowsCollected, chargedCredits: chargedPoints, reservedCredits: reservedPoints, status });
   const spent = liveSnapshot.spentPoints ?? chargedPoints ?? 0;
   const reserved = liveSnapshot.reservedPoints ?? reservedPoints;
@@ -226,6 +232,39 @@ export default function ActivityTerminal({
           <p className="mb-2 mt-0 rounded-xl px-3 py-2 text-xs text-ink" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)" }}>
             {liveSnapshot.capReached.messageAr}
           </p>
+        )}
+
+        {isLive && (
+          <section className="mb-2 rounded-xl border border-ln bg-sf2 p-2" data-testid="live-preview" aria-label={PREVIEW_TITLE_AR}>
+            <h3 className="m-0 mb-1 text-[11px] font-semibold text-ink">{PREVIEW_TITLE_AR}</h3>
+            {preview && preview.rows.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-0 border-collapse text-[11px] leading-4" data-testid="live-preview-table">
+                  <thead>
+                    <tr>
+                      {preview.columns.map((column) => (
+                        <th key={column.key} className="border-b border-ln px-1.5 py-1 text-start font-semibold text-mut">{column.titleAr}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {preview.rows.map((row, rowIndex) => (
+                      <tr key={rowIndex}>
+                        {row.map((cell, cellIndex) => (
+                          <td key={cellIndex} className="max-w-[10rem] break-words border-b border-ln/60 px-1.5 py-1 align-top text-ink">{cell}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="m-0 text-[11px] leading-4 text-mut" data-testid="live-preview-waiting">{PREVIEW_WAITING_AR}</p>
+            )}
+            <p className="m-0 mt-1 text-[11px] leading-4 text-mut" data-testid="live-preview-counts">
+              {previewCountsLineAr({ accepted: rowsCollected, requested: requestedRows, received: counts.received, underReview: counts.underReview })}
+            </p>
+          </section>
         )}
 
         {displayEvents.length === 0 && (

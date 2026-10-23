@@ -72,10 +72,10 @@ import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../../../../
 import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
-import { customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
+import { customerEmailJobTitle, customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
 import { countApproximateDates, DATE_BASIS_KEY, filterRowsByDateRange, sampleUndatedFields, summarizeRowDates, VIDEO_PUBLISHED_AT_KEY, type RowDateSummary } from "../../../../lib/server/dateRangeFilter";
 import { allRowsOutsideWindow, dateDropShortfallSentenceAr, dateWindowPageEventAr, emptyAfterDateDropSentenceAr, OUTSIDE_WINDOW_SENTENCE_AR, youtubeRecencySentenceAr } from "../../../../lib/server/dateWindowNotes";
-import { estimateRemainingSecondsFromBatchDurations } from "../../../../functions/shared/liveActivityFeed";
+import { estimateRemainingSecondsFromBatchDurations, sanitizeActivityError } from "../../../../functions/shared/liveActivityFeed";
 import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../lib/server/retryReuse";
 import { cursorKey, emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, removeRunningSets, runningSetKey, saveRunningSet, type RunningSet } from "../../../../lib/server/jobRunningSet";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
@@ -207,8 +207,9 @@ async function executeReleaseConfirmation(
               await sendPlatformEmail("refund", rcpt.email, {
                 Name: rcpt.name,
                 Points: String(Math.round(releasedCredits)),
-                JobTitle: endpointId ? `نتائج استخراج ${endpointId}` : "بحثك",
-                Reason: reason,
+                // Customer words only: never the internal endpoint id, never a raw upstream message.
+                JobTitle: customerEmailJobTitle(endpointId),
+                Reason: sanitizeActivityError(reason),
                 Balance: String(balance),
               });
             }
@@ -2315,7 +2316,7 @@ export async function POST(req: NextRequest) {
           const chargedPoints = Math.round(Number(settleData?.charged_credits) || 0);
           await sendPlatformEmail("job-done", rcpt.email, {
             Name: rcpt.name,
-            JobTitle: `بحث ${customerFacingCapabilityLabel(spec.capabilitySlug)}`,
+            JobTitle: customerEmailJobTitle(spec.capabilitySlug),
             Delivered: toArabicDigits(finalRows.length),
             Requested: toArabicDigits(targetMax),
             Charged: toArabicDigits(chargedPoints),
@@ -2422,7 +2423,7 @@ export async function POST(req: NextRequest) {
         if (releaseConfirmed && lastFailureData?.released) {
           try {
             const { data: failedJob } = await adminClient.from("jobs").select("user_id").eq("id", jobId).maybeSingle();
-            if (failedJob?.user_id) await sendJobNotice(adminClient, failedJob.user_id, jobId, releasedNoticeFull(Number(lastFailureData?.released_credits) || 0));
+            if (failedJob?.user_id) await sendJobNotice(adminClient, failedJob.user_id, jobId, releasedNoticeFull(Number(lastFailureData?.released_credits) || 0, { withEmail: true }));
           } catch {
             // a notice never changes the failure response
           }
