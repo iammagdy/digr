@@ -1,5 +1,6 @@
 import { toArabicDigits } from "./arabicDigits";
 import { customerResultColumnLabel, previewColumns } from "./customerResultColumns";
+import { relativeDateDisplay } from "./relativeDateDisplay";
 
 /**
  * What the customer sees while a request runs, kept in small pure helpers:
@@ -40,9 +41,17 @@ export interface LivePreviewSample {
   rows: string[][];
 }
 
+/** A date or a date with a time as the files keep it (ISO text): the preview shows it in Arabic-Indic digits, like the results table. */
+const ISO_DATE_TEXT = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
+
 const cellText = (value: unknown): string => {
   if (value === null || value === undefined) return "";
+  // numbers and dates are shown in Arabic-Indic digits (a comment's own words are left as written)
+  if (typeof value === "number" && Number.isFinite(value)) return toArabicDigits(value);
   const text = (typeof value === "object" ? JSON.stringify(value) : String(value)).replace(/[#*_`>~|\\]+/g, " ").replace(/\s+/g, " ").trim();
+  if (ISO_DATE_TEXT.test(text)) return toArabicDigits(text);
+  const relative = text ? relativeDateDisplay(text) : null;
+  if (relative) return relative;
   return text.length <= PREVIEW_CELL_MAX_CHARS ? text : `${text.slice(0, PREVIEW_CELL_MAX_CHARS - 1).trimEnd()}…`;
 };
 

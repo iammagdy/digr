@@ -18,7 +18,7 @@ import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import PromoCodeBox from "./PromoCodeBox";
 import { CREDIT_KIND_LABEL_AR, classifyLedgerRow } from "@/lib/creditKinds";
-import { walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
+import { TOPUP_REQUEST_LABEL_AR, walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
 import { creditedPointsByTopup, creditedPointsOf, kindOfLedgerRow as kindOf, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
@@ -332,7 +332,7 @@ export default function WalletPage() {
                 <div key={t.$id} className="flex items-center gap-3.5 border-b border-ln py-3.5">
                   <div className="min-w-0 flex-1">
                     <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م{pts === null ? "" : ` · ${pointsAr(pts)}`}</p>
-                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt"><span dir="ltr" className="inline-block max-w-[140px] truncate align-bottom font-mono text-[11px]" title={t.reference}>{t.reference.length > 20 ? t.reference.slice(0, 16) + "…" : t.reference}</span> · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
+                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{TOPUP_REQUEST_LABEL_AR} · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
                     {t.status === "rejected" && t.rejectReason && <p className="mb-0 mt-1.5 text-xs leading-[1.7] text-bad">سبب الرفض: {t.rejectReason}</p>}
                   </div>
                   <span className="shrink-0 rounded-full px-3 py-1 text-xs font-medium" style={{ background: b.bg, color: b.fg }}>{USER_STATUS[t.status]}</span>

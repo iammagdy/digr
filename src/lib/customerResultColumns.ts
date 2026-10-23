@@ -109,6 +109,17 @@ const PREVIEW_HIDDEN_SOCIAL_COLUMNS = new Set([
   "url", "video_url", "profile_url", "bio_link",
 ]);
 
+/**
+ * A Facebook table always carries the link to its post: the posts table hides the plain link column like every other social table, so
+ * the link column of the data (the post's own address) is added back when none is shown. Other platforms keep their columns.
+ */
+export function ensurePostLinkColumn(shown: string[], available: readonly string[], platform: string | undefined | null): string[] {
+  if (String(platform || "").toLowerCase() !== "facebook") return shown;
+  if (shown.includes("url") || shown.includes("video_url")) return shown;
+  const link = (["url", "video_url"] as const).find((key) => available.includes(key));
+  return link ? [...shown, link] : shown;
+}
+
 export function previewColumns(columns: string[], isCompanyDataset: boolean): string[] {
   if (isCompanyDataset) return columns.filter((key) => key !== "id" && key !== "source_id");
   // A comment is read with the video it sits under: the video's title and link stay in the preview of a comments table.

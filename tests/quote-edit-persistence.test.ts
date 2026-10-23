@@ -118,7 +118,7 @@ describe("edited quote persistence", () => {
     expect(updates).toEqual([{
       values: expect.objectContaining({
         quote: newQuote,
-        content_ar: expect.stringContaining("50"),
+        content_ar: expect.stringContaining("٥٠"),
       }),
       filters: expect.arrayContaining([
         ["id", "message-1"],

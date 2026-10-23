@@ -71,3 +71,28 @@ export function unitPriceLineAr(
   if (priced.length === 1) return `سعر السجل: ${unitPriceLabelAr(priced[0].unit, recordNounAr(priced[0].slug))}، ${tail}`;
   return `سعر السجل: ${priced.map((entry) => `${serviceLabelAr(entry.slug)}: ${unitPriceLabelAr(entry.unit, recordNounAr(entry.slug))}`).join("، ")}، ${tail}`;
 }
+
+export interface PriceVsHoldInput {
+  targetVolumeMax: number;
+  /** Price of one record (one service) or 0 when the plan has several services. */
+  unitPricePoints?: number;
+  /** The estimate: ceil(volume x unit price), no buffer. */
+  expectedPoints: number;
+  /** The hold: ceil(volume x unit price x 1.15). */
+  quotedPoints: number;
+  bufferPercent?: number;
+  /** True for a plan of several services: the formula is per service, so the line gives the two totals only. */
+  severalServices?: boolean;
+}
+
+/**
+ * The estimate and the hold, said apart and in this order: the PRICE (what is charged for what is delivered, at most) and the HOLD (the same
+ * with the buffer of 15% added to the hold only, released again unless it is charged). 5 companies at 3.168 points: price ceil(5 x 3.168) = 16,
+ * hold ceil(5 x 3.168 x 1.15) = 19. Both numbers come from the quote; nothing here computes a price.
+ */
+export function priceVsHoldLineAr(input: PriceVsHoldInput): string {
+  const buffer = toArabicDigits(Math.round(input.bufferPercent ?? 15));
+  const unit = Number(input.unitPricePoints) || 0;
+  const formula = !input.severalServices && unit > 0 ? ` (${n(input.targetVolumeMax)} × ${formatPointsAr(unit)} نقطة، ويُقرَّب لأعلى)` : "";
+  return `السعر التقديري ${pointsAr(input.expectedPoints, toArabicDigits)}${formula}، ويُخصم منه فقط ما يُسلَّم فعلًا. والحجز المؤقت ${pointsAr(input.quotedPoints, toArabicDigits)} هو هذا السعر مع احتياطي ${buffer}٪ على الحجز وحده، ولا يُخصم الاحتياطي.`;
+}

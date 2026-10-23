@@ -29,6 +29,7 @@ import { getSlowFactor } from "@/lib/degradedClient";
 import BusyBanner from "@/components/BusyBanner";
 import { usePendingPromo } from "@/hooks/usePendingPromo";
 import { formatAr } from "@/lib/arabicDigits";
+import { planCountLineAr } from "@/lib/planCounts";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
 import { parsePersistedClarificationAnswers, type DiscoveryAnswer } from "./components/discoveryQuestions";
@@ -1141,7 +1142,7 @@ export default function ChatWorkspacePage() {
         if (msg.planQuote?.quoteId === currentQuote.quoteId) {
           return {
             ...msg,
-            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: حتى ${formatAr(updatedQuote.targetVolumeMax)} سجل\n• التكلفة الإجمالية: ${pointsAr(updatedQuote.quotedPoints)}`,
+            content: `تم تعديل تفاصيل الخطة وتحديث عرض السعر:\n• السجلات المعتمدة: ${planCountLineAr(updatedQuote.items, updatedQuote.targetVolumeMax)}\n• التكلفة الإجمالية: ${pointsAr(updatedQuote.quotedPoints)}`,
             planQuote: updatedQuote,
           };
         }

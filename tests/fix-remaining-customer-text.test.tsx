@@ -43,7 +43,7 @@ describe("D1: «استرداد» is gone from what a failed or empty job says; t
 describe("D2: the page guidance says one thing", () => {
   it("while the page drives the job (the default), the only guidance is «أبقِ الصفحة مفتوحة حتى تكتمل المهمة»", () => {
     expect(closePageLineAr("tab")).toBe("أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
-    expect(POST_APPROVAL_TAB_AR).toBe("جاري سحب البيانات، وسيصلك إشعار عند الاكتمال. أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
+    expect(POST_APPROVAL_TAB_AR).toBe("جاري سحب البيانات. أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
     for (const driver of ["tab", undefined] as const) {
       const body = jobStartedNotice({ targetVolumeMax: 1500, driver }).body;
       expect(body).toContain("أبقِ الصفحة مفتوحة حتى تكتمل المهمة");
