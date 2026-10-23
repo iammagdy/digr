@@ -14,6 +14,7 @@ import { estimateFromSample, explorationResultMessageAr } from "@/lib/exploratio
 import { approximateTotalPoints, remainingUnits, sampleRestMessageAr } from "@/lib/sampleFirst";
 import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
 import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
+import type { LivePreviewSample } from "@/lib/liveJobView";
 import { encodeFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
@@ -187,6 +188,8 @@ export default function ChatWorkspacePage() {
   const [conversationsLoading, setConversationsLoading] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [canvasOpen, setCanvasOpen] = useState(false);
+  // A few accepted rows of the running request, for the activity panel; kept with the job they belong to so another job never shows them.
+  const [livePreview, setLivePreview] = useState<{ jobId: string; sample: LivePreviewSample | null } | null>(null);
   const [methodologyConfirmOpen, setMethodologyConfirmOpen] = useState(false);
   const [methodologyPurchasing, setMethodologyPurchasing] = useState(false);
   // Which jobs' methodology file is already bought, read from the ledger row `chg_meth_<jobId>` (survives reload, device and conversation).
@@ -573,6 +576,25 @@ export default function ChatWorkspacePage() {
       }
     };
   }, [activeJob?.jobId, loadBalance]);
+
+  // Live preview of the running request: after each new page (the accepted count changes) the panel asks for a few accepted rows. A failed or
+  // empty answer leaves the counts-only view; nothing here writes or charges.
+  useEffect(() => {
+    const jId = activeJob?.jobId;
+    const live = activeJob?.status === "running" || activeJob?.status === "queued";
+    if (!jId || !live || !canvasOpen) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/jobs/${jId}/preview`);
+        const json = await res.json();
+        if (!cancelled && json?.success) setLivePreview({ jobId: jId, sample: json.sample ?? null });
+      } catch {
+        // counts only
+      }
+    }, 1200);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [activeJob?.jobId, activeJob?.status, activeJob?.rowsCollected, canvasOpen]);
 
   // Send message
   async function handleSendMessage(messageContent: string, attachedFile?: AttachedFile | null): Promise<boolean> {
@@ -1853,6 +1875,8 @@ export default function ChatWorkspacePage() {
         retrying: Boolean(activeJob.nextAttemptAt && new Date(activeJob.nextAttemptAt).getTime() > Date.now()) || Number(activeJob.attemptCount || 0) > 0,
       })
     : null;
+  // The approval message already says whether the page may be closed; the same sentence is not repeated under it while that message is on screen.
+  const postApprovalNoticeVisible = messages.some((m) => shouldShowProgressNotice(m, activeJob, terminalJobs));
   const jobStalled = Boolean(jobIsLive && activeJob && isJobStalled({ status: activeJob.status === "running" ? "running" : "queued", updated_at: activeJob.updatedAt, lease_until: activeJob.leaseUntil }, Date.now()));
 
   const runNode = activeJob ? (
@@ -1861,7 +1885,8 @@ export default function ChatWorkspacePage() {
         {/* The live activity list lives in the results panel only; the chat keeps this short status line and the way to open the panel. */}
         <div className="mt-4" data-testid="chat-run-status">
           {activeJob.status === "running" || activeJob.status === "queued" ? (
-            <RunningIndicator />
+            // one in-progress sign on the screen: while the activity panel is open it carries its own, so the chat shows none
+            canvasOpen ? null : <RunningIndicator />
           ) : (
             <p role="status" className="m-0 text-xs font-medium text-ink2">{activeJob.status === "done" ? "اكتمل طلبك" : "توقف طلبك"}</p>
           )}
@@ -1869,7 +1894,7 @@ export default function ChatWorkspacePage() {
         {progress && (
           <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-progress">{progress.lineAr}{progress.remainingAr ? "، تقديري ويتحدث مع كل دفعة." : "."}</p>
         )}
-        {jobIsLive && (
+        {jobIsLive && !postApprovalNoticeVisible && (
           <p className="m-0 text-xs font-light leading-[1.8] text-mut" data-testid="job-close-page">{closePageLineAr(driverMode)}</p>
         )}
         {jobStalled && (
@@ -2079,6 +2104,7 @@ export default function ChatWorkspacePage() {
               jobStatus={activeJob?.status}
               jobEvents={activeJob?.events}
               eventLimit={EVENT_HISTORY_LIMIT}
+              livePreview={livePreview && livePreview.jobId === activeJob?.jobId ? livePreview.sample : null}
               rowsCollected={activeJob?.rowsCollected}
               requestedRows={activeJob?.requestedRows}
               reservedPoints={activeJob?.reservedCredits}

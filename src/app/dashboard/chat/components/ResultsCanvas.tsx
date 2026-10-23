@@ -8,6 +8,7 @@ import { formatNumber } from "@/lib/honestDisplay";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { relativeDateDisplay } from "@/lib/relativeDateDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
+import type { LivePreviewSample } from "@/lib/liveJobView";
 import { customerResultColumnLabel, previewColumns } from "@/lib/customerResultColumns";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
@@ -25,6 +26,8 @@ interface ResultsCanvasProps {
   jobEvents?: TerminalEvent[];
   /** Number of events fetched in this read; the activity list says so when a limited history is shown. */
   eventLimit?: number;
+  /** A few accepted rows of the running request, for the panel's live preview (null: counts only). */
+  livePreview?: LivePreviewSample | null;
   rowsCollected?: number;
   requestedRows?: number;
   reservedPoints?: number;
@@ -119,6 +122,7 @@ export default function ResultsCanvas({
   jobStatus,
   jobEvents = [],
   eventLimit,
+  livePreview,
   rowsCollected = 0,
   requestedRows,
   reservedPoints,
@@ -334,6 +338,7 @@ export default function ResultsCanvas({
             onDownload={onDownload}
             fileIds={fileIds}
             eventLimit={eventLimit}
+            preview={livePreview}
           />
         </div>
       ) : (

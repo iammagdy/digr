@@ -5,6 +5,7 @@ import { adminFetch } from "@/lib/adminApi";
 import { formatAr, normalizeDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { agoAr, initials } from "@/components/admin/format";
+import EmailCheckCard from "@/components/admin/EmailCheckCard";
 
 interface Settings { creditValueEgp: number; maxPendingTopups: number; ipa: string; admins: Array<{ id: string; name: string; email: string; lastLogin: string | null }> }
 
@@ -75,6 +76,8 @@ export default function AdminSettingsPage() {
         <p className="m-0 text-xs text-fnt">يظهران في صفحة «تواصل معنا». ما دامت الخانتان فارغتين تظهر عبارة «سيُضاف قريبًا».</p>
         <button type="button" onClick={saveSupport} disabled={supportBusy} className="min-h-[46px] cursor-pointer self-start rounded-full border-0 bg-ac px-[22px] text-[13px] font-semibold text-onac disabled:opacity-60">حفظ بيانات الدعم</button>
       </section>
+
+      <EmailCheckCard />
 
       <section className={`${SECTION} !gap-2.5`}>
         <div><p className="m-0 text-[11px] text-fnt">labels: admin</p><h2 className="mb-0 mt-1 text-[17px] font-semibold text-ink">فريق الإدارة</h2></div>

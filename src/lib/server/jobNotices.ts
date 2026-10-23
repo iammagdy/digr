@@ -113,10 +113,16 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
 }
 
 /** The request could not finish and its whole reserve came back with no charge. */
-export function releasedNoticeFull(refundedPoints: number): JobNoticeFull {
+export function releasedNoticeFull(refundedPoints: number, options: { withEmail?: boolean } = {}): JobNoticeFull {
   const detail = refundedPoints > 0 ? `أعدنا ${pointsAr(refundedPoints, arCount)} محجوزة كاملة إلى رصيدك دون أي خصم.` : "أعدنا نقاطك المحجوزة كاملة إلى رصيدك دون أي خصم.";
   const lead = "تعذّر استكمال طلبك.";
-  return { kind: "released", title: "تعذّر تنفيذ طلبك وأعدنا نقاطك", body: `${lead} ${detail}`, link: "/dashboard/requests", email: null };
+  const title = "تعذّر تنفيذ طلبك وأعدنا نقاطك";
+  // By default in-app only: the release that goes through the refund e-mail already has one. A release made inside the failure record has no
+  // other e-mail, so its caller asks for this one (the same notice id and e-mail key, so it is sent at most once per job).
+  return {
+    kind: "released", title, body: `${lead} ${detail}`, link: "/dashboard/requests",
+    email: options.withEmail ? { subject: title, heading: title, lead, detail1: detail, detail2: "", buttonLabel: buttonRequests } : null,
+  };
 }
 
 /**
