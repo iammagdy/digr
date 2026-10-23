@@ -193,6 +193,27 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     for (const m of messages) expect(m).not.toMatch(/firecrawl|context\.?dev|treg|icypeas|usd|\$|http|api/i);
   });
 
+  it("the admin-only routing trace is kept in the private bucket (decision from the quote + one entry per chunk) and nowhere a customer can read", async () => {
+    resetDb();
+    const decision = { at: "t", routeId: "chain:contextdev>firecrawl", routeCode: routeCodeOf("chain:contextdev>firecrawl"), source: "cheapest_allowed", reason: null, fallbackReason: "no_chooser", modelCalled: false, request: { count: 3, requiredFields: ["work_email"] }, count: 3, unitPricePoints: 100, reservePoints: 345, budgetUsd: 0.06, stages: [], allowed: [], excluded: [] };
+    db.partials.set("routing/quote_chain_1.json", Buffer.from(JSON.stringify(decision)));
+    await run(defaultFakeWorld(10));
+    const stored = db.partials.get(`${JOB}/routing_trace.json`);
+    expect(stored).toBeTruthy();
+    const trace = JSON.parse(stored!.toString("utf-8"));
+    expect(trace.decision.routeId).toBe("chain:contextdev>firecrawl");
+    expect(trace.chunks.length).toBeGreaterThan(0);
+    const steps = trace.chunks.map((c: any) => c.step);
+    expect(new Set(steps).size).toBe(steps.length); // each step once
+    const stages = trace.chunks.flatMap((c: any) => c.stages);
+    expect(stages.some((s: any) => s.capabilityId === "contextdev.search" && s.calls >= 1)).toBe(true);
+    // the provider calls in the trace equal the recorded cost rows of the job
+    expect(stages.reduce((a: number, s: any) => a + s.calls, 0)).toBe(db.costs.length);
+    // nothing of it is in the customer's rows: job_events and the quote's items carry no trace, route id, provider or capability id
+    const customerText = JSON.stringify(db.events) + JSON.stringify(db.quotes);
+    expect(customerText).not.toMatch(/routing_trace|chain:contextdev|contextdev\.|firecrawl\./i);
+  });
+
   it("zero verified rows: the whole reserve is released with zero charge, nothing is settled", async () => {
     resetDb();
     const world = defaultFakeWorld(8).map((c) => ({ ...c, email: undefined, phone: undefined }));

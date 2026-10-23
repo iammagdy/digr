@@ -1,8 +1,10 @@
 import { getLlmPricingSettings } from "../../../functions/shared/llmClient";
 import { NO_ROUTE_AR } from "../../multiProvider/copy";
 import { multiProviderEnabled } from "../../multiProvider/flag";
+import { PREVIEW_WORLD_DAILY_CAP_USD, previewWorldActive } from "../../multiProvider/previewWorld";
 import { buildAllowedRoutes, chooseRoute, defaultRouterState, type ProviderState, type RouteChoice, type RouteChooser, type RouterState } from "../../multiProvider/router";
 import { routeByCode, routeCodeOf } from "../../multiProvider/routes";
+import type { RoutingDecision } from "../../multiProvider/trace";
 import type { DataProviderId, RequiredField, RouteRequest } from "../../multiProvider/types";
 import { getLiveProviderGateStatusFromSettings } from "../providerGate";
 import { resolveProviderKey } from "../providerKeys";
@@ -21,8 +23,9 @@ const REQUIRED: readonly RequiredField[] = ["work_email", "office_phone", "profi
 export function normalizeRequiredFields(value: unknown): RequiredField[] {
   const list = Array.isArray(value) ? value.filter((f): f is RequiredField => (REQUIRED as readonly unknown[]).includes(f)) : [];
   const unique = [...new Set(list)];
-  // A contact job needs at least one contact field: without one the request is a plain company list, which the existing directory serves.
-  return unique.some((f) => f === "work_email" || f === "office_phone") ? unique : ["work_email", ...unique];
+  // A chain job needs at least one verifiable field (an email, a phone, a decision maker): without one the request is a plain company list,
+  // which the existing directory serves.
+  return unique.some((f) => f === "work_email" || f === "office_phone" || f === "decision_maker") ? unique : ["work_email", ...unique];
 }
 
 export function routeRequestFromParams(params: Record<string, any> | undefined, volume: number): RouteRequest {
@@ -43,6 +46,11 @@ export async function loadRouterState(client: any, options: { fetchFn?: (input: 
   const empty = (): ProviderState => ({ enabled: false, keyPresent: false, healthOk: false, dailyCapUsd: 0, spentTodayUsd: 0 });
   const providers: Record<DataProviderId, ProviderState> = { treg: empty(), firecrawl: empty(), contextdev: empty() };
   if (!flagOn) return defaultRouterState(false, providers);
+  // A preview on a test database with the fake world: every provider is ready within a small limit (never on a live deployment).
+  if (previewWorldActive()) {
+    const ready = (): ProviderState => ({ enabled: true, keyPresent: true, healthOk: true, dailyCapUsd: PREVIEW_WORLD_DAILY_CAP_USD, spentTodayUsd: 0 });
+    return defaultRouterState(true, { treg: ready(), firecrawl: ready(), contextdev: ready() });
+  }
 
   const caps = await resolveAllProviderDailyCaps(client).catch(() => ({ treg: 0, firecrawl: 0, contextdev: 0 }));
   const settings = await readProviderKeySettings(client).catch(() => null);
@@ -102,7 +110,7 @@ export function createClaudeRouteChooser(client: any, userId: string | null): Ro
 }
 
 export type ChainItemRouting =
-  | { ok: true; routeCode: string; routeId: string; costPerDeliveredRowUsd: number; budgetUsd: number; count: number; unitPricePoints: number; reservePoints: number; choice: Pick<RouteChoice, "source" | "reason" | "fallbackReason">; request: RouteRequest }
+  | { ok: true; routeCode: string; routeId: string; costPerDeliveredRowUsd: number; budgetUsd: number; count: number; unitPricePoints: number; reservePoints: number; choice: Pick<RouteChoice, "source" | "reason" | "fallbackReason">; request: RouteRequest; decision: RoutingDecision }
   | { ok: false; messageAr: string };
 
 /**
@@ -112,7 +120,7 @@ export type ChainItemRouting =
 export async function resolveChainItemRouting(args: { client: any; params: Record<string, any> | undefined; volume: number; userId?: string | null; state?: RouterState }): Promise<ChainItemRouting> {
   const request = routeRequestFromParams(args.params, args.volume);
   const state = args.state ?? (await loadRouterState(args.client));
-  const { allowed } = buildAllowedRoutes(request, state);
+  const { allowed, excluded } = buildAllowedRoutes(request, state);
   if (allowed.length === 0) return { ok: false, messageAr: NO_ROUTE_AR };
 
   const kept = routeByCode(args.params?.routeCode);
@@ -122,6 +130,23 @@ export async function resolveChainItemRouting(args: { client: any; params: Recor
     : await chooseRoute(allowed, request, chooserForTests !== undefined ? chooserForTests : createClaudeRouteChooser(args.client, args.userId ?? null));
   if (!choice) return { ok: false, messageAr: NO_ROUTE_AR };
   const r = choice.route;
+  const decision: RoutingDecision = {
+    at: new Date().toISOString(),
+    routeId: r.id,
+    routeCode: routeCodeOf(r.id),
+    source: choice.source,
+    reason: choice.reason,
+    ...(choice.fallbackReason ? { fallbackReason: choice.fallbackReason } : {}),
+    modelCalled: choice.source === "model" || choice.fallbackReason === "model_failed" || choice.fallbackReason === "invalid_choice",
+    request,
+    count: r.count,
+    unitPricePoints: r.unitPricePoints,
+    reservePoints: r.reservePoints,
+    budgetUsd: r.estimate.budgetUsd,
+    stages: r.estimate.stages.map((s) => ({ stage: s.stage, provider: s.provider, capabilityId: s.capabilityId, unitPricePoints: s.unitPricePoints, maxCalls: s.maxCalls, expectedYield: s.expectedYield, estimatedJobUsd: s.jobUsd })),
+    allowed: allowed.map((a) => ({ routeId: a.id, costPerDeliveredRowUsd: a.estimate.costPerDeliveredRowUsd, unitPricePoints: a.unitPricePoints, reservePoints: a.reservePoints, count: a.count })),
+    excluded: excluded.map((e) => ({ routeId: e.routeId, reason: e.reason, ...(e.provider ? { provider: e.provider } : {}), ...(e.capabilityId ? { capabilityId: e.capabilityId } : {}) })),
+  };
   return {
     ok: true,
     routeCode: routeCodeOf(r.id),
@@ -133,5 +158,6 @@ export async function resolveChainItemRouting(args: { client: any; params: Recor
     reservePoints: r.reservePoints,
     choice: { source: choice.source, reason: choice.reason, ...(choice.fallbackReason ? { fallbackReason: choice.fallbackReason } : {}) },
     request,
+    decision,
   };
 }

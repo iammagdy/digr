@@ -14,7 +14,7 @@ export const ALLOWED_ROW_KEYS = [
   "company_name", "website", "industry", "location", "description",
   "work_email", "work_email_verification_status",
   "phone", "phone_verification_status",
-  "linkedin_url", "contact_name", "job_title",
+  "linkedin_url", "contact_name", "job_title", "contact_verification_status",
   "source_page",
 ] as const;
 const ALLOWED_SET: ReadonlySet<string> = new Set(ALLOWED_ROW_KEYS);
@@ -326,19 +326,23 @@ export function buildContactRow(facts: EnrichmentFacts): Record<string, unknown>
     linkedin_url: facts.profileLink || undefined,
     contact_name: dm?.name,
     job_title: dm?.title,
+    // A name and a leadership title the company's OWN public page lists are verified by that page itself; nothing else is a decision maker.
+    contact_verification_status: dm ? STATUS_VERIFIED_AR : STATUS_UNAVAILABLE_AR,
     source_page: facts.sourcePage,
   });
 }
 
 /**
- * The delivery gate: a row counts (and is charged) only when EVERY required contact field is present and verified. An unverified
- * row is not delivered and not charged. With nothing required, a row needs a verified email or phone, so a row with no contact
- * at all is never a delivered unit of a contact job.
+ * The delivery gate: a row counts (and is charged) only when EVERY required field is present and verified: the work email, the office
+ * phone, and a decision maker (a name AND a leadership title listed on the company's own public page). An unverified row is not
+ * delivered and not charged. With nothing required, a row needs a verified email or phone, so a row with no contact at all is never a
+ * delivered unit of a contact job.
  */
 export function rowPassesGate(row: Record<string, any>, requiredFields: string[]): boolean {
   const emailOk = Boolean(row?.work_email) && row?.work_email_verification_status === STATUS_VERIFIED_AR;
   const phoneOk = Boolean(row?.phone) && row?.phone_verification_status === STATUS_VERIFIED_AR;
-  const required = requiredFields.filter((f) => f === "work_email" || f === "office_phone");
+  const dmOk = Boolean(row?.contact_name) && Boolean(row?.job_title) && row?.contact_verification_status === STATUS_VERIFIED_AR;
+  const required = requiredFields.filter((f) => f === "work_email" || f === "office_phone" || f === "decision_maker");
   if (required.length === 0) return emailOk || phoneOk;
-  return required.every((f) => (f === "work_email" ? emailOk : phoneOk));
+  return required.every((f) => (f === "work_email" ? emailOk : f === "office_phone" ? phoneOk : dmOk));
 }

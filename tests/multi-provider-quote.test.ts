@@ -146,7 +146,7 @@ describe("flag ON: the capability, the label and the quote", () => {
 
   it("a request with no contact field gets the email by default (a plain company list is the existing directory's job)", () => {
     expect(normalizeRequiredFields([])).toEqual(["work_email"]);
-    expect(normalizeRequiredFields(["decision_maker"])).toEqual(["work_email", "decision_maker"]);
+    expect(normalizeRequiredFields(["decision_maker"])).toEqual(["decision_maker"]);
     expect(normalizeRequiredFields(["office_phone", "junk", "office_phone"])).toEqual(["office_phone"]);
     expect(normalizeRequiredFields("x")).toEqual(["work_email"]);
   });
@@ -211,5 +211,33 @@ describe("flag OFF: the router state is built without touching a provider, a key
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("the router's decision is kept for the admin trace, outside the quote", () => {
+  it("is written to the private bucket under the quote id; the quote, its items and its params carry none of it", async () => {
+    process.env.MULTI_PROVIDER_ENABLED = "true";
+    setRouterStateForTesting(stateOf());
+    const files = new Map<string, string>();
+    const tables: any = { ...mockTables, storage: { from: (bucket: string) => ({ upload: async (path: string, body: Buffer) => { files.set(`${bucket}/${path}`, body.toString("utf-8")); return { error: null }; } }) } };
+    const q = await createAndSaveManagedQuote(tables, { conversationId: "c_mp", userId: "u_mp", userBalance: 100_000, capabilities: withMultiProviderCapabilities(APPROVED_CAPABILITY_CATALOG, { MULTI_PROVIDER_ENABLED: "true" }), pricingSettings: DEFAULT_PRICING_SETTINGS, plan: { summaryAr: "خطة", items: [chainItem({}, 5)], outputFormats: ["xlsx"] } });
+    const stored = files.get(`partials/routing/${q.quoteId}.json`);
+    expect(stored).toBeTruthy();
+    const decision = JSON.parse(stored!);
+    expect(decision.routeCode).toBe(q.items[0].params.routeCode);
+    expect(decision.unitPricePoints).toBe(q.items[0].unitPricePoints);
+    expect(["model", "cheapest_allowed", "only_option"]).toContain(decision.source);
+    // none of the decision reaches the customer-readable quote
+    const customer = JSON.stringify({ items: q.items, summaryAr: q.summaryAr });
+    expect(customer).not.toMatch(/chain:|excluded|fallbackReason|modelCalled|estimatedJobUsd/);
+  });
+
+  it("a storage failure does not touch the quote", async () => {
+    process.env.MULTI_PROVIDER_ENABLED = "true";
+    setRouterStateForTesting(stateOf());
+    const tables: any = { ...mockTables, storage: { from: () => ({ upload: async () => { throw new Error("storage down"); } }) } };
+    const q = await createAndSaveManagedQuote(tables, { conversationId: "c_mp", userId: "u_mp", userBalance: 100_000, capabilities: withMultiProviderCapabilities(APPROVED_CAPABILITY_CATALOG, { MULTI_PROVIDER_ENABLED: "true" }), pricingSettings: DEFAULT_PRICING_SETTINGS, plan: { summaryAr: "خطة", items: [chainItem({}, 5)], outputFormats: ["xlsx"] } });
+    expect(q.quoteId).toBeTruthy();
+    expect(q.items[0].unitPricePoints).toBeGreaterThan(0);
   });
 });

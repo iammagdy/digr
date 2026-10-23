@@ -766,7 +766,7 @@ export async function POST(req: NextRequest) {
       deadlineMs,
       ...(videoSelector ? { videoSelector } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
-      ...(isChainJob ? { unitPricePoints: Number(unitPrice) } : {}),
+      ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
     });
 
     // A page that fails AFTER rows were already delivered ends the collection instead of the job: the rows collected so

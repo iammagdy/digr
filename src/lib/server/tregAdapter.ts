@@ -613,6 +613,8 @@ export interface ProviderAdapterCallInput {
   deadlineMs?: number;
   /** The job's unit price in points (set by the worker): the multi-provider chain derives its provider-spend budget from the reserve it implies. */
   unitPricePoints?: number;
+  /** The accepted quote of the job (set by the worker for a chain job: where its admin-only routing decision is kept). */
+  quoteId?: string;
   /** Social topic searches only: judges the discovered videos before their comments are read (set by the worker). */
   videoSelector?: VideoSelector;
 }

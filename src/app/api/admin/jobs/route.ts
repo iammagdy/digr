@@ -14,6 +14,7 @@ function uiStatus(j: any): UiStatus {
 
 function platformOf(slug: string): string {
   const s = (slug || "").toLowerCase();
+  if (s === "mp-business-contacts") return "جهات اتصال الأعمال (مزودون متعددون)";
   if (s.includes("tiktok")) return "تيك توك";
   if (s.includes("instagram")) return "إنستجرام";
   if (s.includes("youtube")) return "يوتيوب";
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
     return {
       id: j.$id,
       title: (q && convTitle.get(q.conversationId)) || q?.summaryAr || target || "طلب بحث",
-      platform: platformOf(j.templateSlug),
+      platform: platformOf(j.templateSlug || j.endpointId || j.capabilitySlug),
       createdAt: j.createdAt,
       user: dir.get(j.userId)?.name || dir.get(j.userId)?.email || "—",
       requested: q?.targetVolumeMax ?? null,
@@ -64,6 +65,7 @@ export async function GET(req: NextRequest) {
       held: j.reservedCredits ?? 0,
       charged: j.chargedCredits ?? 0,
       costEgp: costByJob.get(j.$id) ?? null,
+      chain: [j.templateSlug, j.endpointId, j.capabilitySlug].some((v) => v === "mp-business-contacts"),
       status: uiStatus(j),
     };
   }).filter((r: any) => statusFilter === "all" || r.status === statusFilter);

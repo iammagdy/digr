@@ -18,7 +18,7 @@ export const CHECK_TIMEOUT_MS = 8_000;
 export const DEFAULT_LOW_BALANCE_THRESHOLD_USD = 0.2;
 
 export type StatusClass = "2xx" | "3xx" | "4xx" | "5xx" | "network" | "timeout";
-export type HealthReason = "ok" | "auth_rejected" | "rate_limited" | "server_error" | "network_error" | "timeout" | "unexpected" | "no_key";
+export type HealthReason = "ok" | "auth_rejected" | "rate_limited" | "server_error" | "network_error" | "timeout" | "unexpected" | "no_key" | "missing_scope";
 
 export interface HealthResult {
   ok: boolean;
@@ -32,7 +32,7 @@ export interface HealthResult {
 export interface BalanceResult {
   available: boolean;
   /** Why no number is shown: the provider has no balance API, the team id is unknown, or the answer was not readable. */
-  unavailableReason?: "no_balance_api" | "no_key" | "org_unknown" | "unreadable" | "check_failed";
+  unavailableReason?: "no_balance_api" | "no_key" | "org_unknown" | "unreadable" | "check_failed" | "missing_scope";
   balanceMicro?: number;
   balanceUsd?: number;
   heldMicro?: number | null;
@@ -100,8 +100,20 @@ export async function checkProviderKey(provider: ProviderId, key: string, fetchF
   if (!key) return { health: noKeyHealth(), body: null };
   if (provider === "treg") return timedGet(`${tregBaseUrl()}/auth/me`, { "X-Treg-Token": key, Accept: "application/json" }, fetchFn, timeoutMs);
   if (provider === "firecrawl") return timedGet("https://api.firecrawl.dev/v2/team/credit-usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs);
-  if (provider === "contextdev") return timedGet("https://api.context.dev/v1/org/usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs);
+  if (provider === "contextdev") return contextDevCheck(await timedGet("https://api.context.dev/v1/org/usage", { Authorization: `Bearer ${key}`, Accept: "application/json" }, fetchFn, timeoutMs));
   return timedGet("https://api.anthropic.com/v1/models?limit=1", { "x-api-key": key, "anthropic-version": "2023-06-01", Accept: "application/json" }, fetchFn, timeoutMs);
+}
+
+/**
+ * Context.dev's usage read needs the key scope `logs:read`; a key without it answers 403 and names the permission it lacks. Such a key IS
+ * accepted by the provider (a rejected key answers 401), so it is healthy for scraping and searching: only the credit balance is unavailable.
+ * Any other 403 stays a rejected key.
+ */
+export function contextDevCheck(result: { health: HealthResult; body: unknown }): { health: HealthResult; body: unknown } {
+  if (result.health.httpStatus !== 403) return result;
+  const text = JSON.stringify(result.body ?? "");
+  if (!/required_permission|logs:read/i.test(text)) return result;
+  return { health: { ...result.health, ok: true, reason: "missing_scope" }, body: result.body };
 }
 
 const ORG_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -248,7 +260,9 @@ export async function getProviderStatus(
   if (provider === "anthropic") {
     balance = { available: false, unavailableReason: "no_balance_api", checkedAt: health.checkedAt };
   } else if (provider === "firecrawl" || provider === "contextdev") {
-    balance = !health.ok ? { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt } : creditBalanceFrom(provider, body, health.checkedAt);
+    balance = !health.ok ? { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt }
+      : health.reason === "missing_scope" ? { available: false, unavailableReason: "missing_scope", checkedAt: health.checkedAt }
+      : creditBalanceFrom(provider, body, health.checkedAt);
   } else if (!health.ok) {
     balance = { available: false, unavailableReason: key ? "check_failed" : "no_key", checkedAt: health.checkedAt };
   } else {

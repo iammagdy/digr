@@ -6,7 +6,9 @@ import type { FetchFn } from "./adapterTypes";
 import { createCallRecorder } from "./callRecorder";
 import { runChainChunk, type ChainDeps } from "./chainRunner";
 import { getProviderTransport, getRobotsTransport } from "./fakeTransport";
-import { readJobProviderSpendUsd } from "./providerCaps";
+import { PREVIEW_WORLD_DAILY_CAP_USD } from "../../multiProvider/previewWorld";
+import { readJobProviderSpendUsd, resolveProviderDailyCapUsd } from "./providerCaps";
+import { appendChunkTrace } from "./traceStore";
 import type { RobotsFetch } from "../../multiProvider/policy";
 
 /**
@@ -48,9 +50,12 @@ export function createChainAdapter(env: ChainAdapterEnv): ProviderAdapterFn {
       providerKeys: keys,
       fetchFn: hooks?.fetchFn ?? getProviderTransport(env.fakeMode),
       robotsFetch: hooks?.robotsFetch ?? getRobotsTransport(env.fakeMode),
-      recorder: createCallRecorder(env.adminClient),
+      // In the fake world a provider with no limit set gets the small preview limit (the real limit applies when one is set).
+      recorder: createCallRecorder(env.adminClient, env.fakeMode ? { capFor: async (provider) => { const set = await resolveProviderDailyCapUsd(env.adminClient, provider).catch(() => 0); return set > 0 ? set : PREVIEW_WORLD_DAILY_CAP_USD; } } : {}),
       tregFn: env.tregFn,
       spentUsdSoFar: () => readJobProviderSpendUsd(env.adminClient, input.jobId),
+      step: input.step,
+      trace: async (chunk) => { await appendChunkTrace(env.adminClient, { jobId: input.jobId, quoteId: input.quoteId ?? null, chunk }); },
       emit: async (message, units) => {
         try {
           await env.adminClient.from("job_events").insert({ job_id: input.jobId, user_id: input.userId, message, units, event_type: "progress" });

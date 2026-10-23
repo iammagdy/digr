@@ -35,6 +35,8 @@ import { SOCIAL_CAPABILITIES } from "../../lib/socialSources";
 import { multiProviderEnabled } from "../../lib/multiProvider/flag";
 import { isChainSlug } from "../../lib/multiProvider/routes";
 import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
+import type { RoutingDecision } from "../../lib/multiProvider/trace";
+import { writeRoutingDecision } from "../../lib/server/multiProvider/traceStore";
 
 // ================= Schemas for Strict Plan Editing =================
 
@@ -619,6 +621,8 @@ export async function createAndSaveManagedQuote(
   // The configured value may reduce the limit, but can never raise the settlement hard cap.
   const pointsCap = Math.min(getConfiguredJobPointsCap(), DEFAULT_JOB_POINTS_CAP);
 
+  // The router's decision for the (first) chain item, kept for the admin routing trace once the quote has an id. Never part of the quote.
+  let chainDecision: RoutingDecision | null = null;
   for (const it of plan.items) {
     // Match capability strictly; NEVER substitute capabilities[0]
     let cap = capabilities.find(
@@ -682,6 +686,7 @@ export async function createAndSaveManagedQuote(
       const routed = await resolveChainItemRouting({ client: tables, params: it.params, volume: it.targetVolumeMax, userId });
       if (!routed.ok) throw new Error(routed.messageAr);
       chainRouting = routed;
+      chainDecision = chainDecision ?? routed.decision;
     }
 
     const itemUnitCostUsd = chainRouting
@@ -1053,6 +1058,9 @@ export async function createAndSaveManagedQuote(
       },
     });
   }
+
+  // Admin-only routing trace (private storage bucket, best effort): what the router chose and why. Failure here changes nothing about the quote.
+  if (chainDecision) await writeRoutingDecision(tables, quoteId, chainDecision).catch(() => false);
 
   return {
     quoteId,

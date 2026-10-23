@@ -28,6 +28,7 @@ const REASON_AR: Record<string, string> = {
   timeout: "انتهت مهلة الاتصال بالمزود",
   unexpected: "ردّ غير متوقع من المزود",
   no_key: "لا يوجد مفتاح مضبوط",
+  missing_scope: "المفتاح مقبول لكن ينقصه إذن قراءة الاستخدام (logs:read)؛ يعمل المزود ولا يُعرض الرصيد",
 };
 const CLASS_AR: Record<string, string> = { "2xx": "نجاح (٢xx)", "3xx": "تحويل (٣xx)", "4xx": "رفض من العميل (٤xx)", "5xx": "خطأ من الخادم (٥xx)", network: "لا رد", timeout: "مهلة" };
 const BALANCE_UNAVAILABLE_AR: Record<string, string> = {
@@ -36,6 +37,7 @@ const BALANCE_UNAVAILABLE_AR: Record<string, string> = {
   org_unknown: "تعذر تحديد معرّف الفريق لدى المزود. أدخله في الإعدادات أدناه لقراءة الرصيد.",
   unreadable: "ردّ المزود لا يحتوي رصيدًا يمكن قراءته، فلا يُعرض رقم.",
   check_failed: "فشل فحص الاتصال، لذلك لا يمكن قراءة الرصيد الآن.",
+  missing_scope: "ينقص المفتاح إذن قراءة الاستخدام (logs:read) في لوحة المزود، لذلك لا يمكن عرض الرصيد. أعد إنشاء المفتاح بهذا الإذن إن أردت رؤية الرصيد هنا.",
 };
 /** Shown when the provider's own answer carries no e-mail for the connected account. */
 export const ACCOUNT_EMAIL_UNAVAILABLE_AR = "الإيميل غير متاح من المزود";

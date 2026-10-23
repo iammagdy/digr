@@ -12,6 +12,7 @@ import type { CapabilityDef, DataProviderId, RequiredField, RouteDef, RouteReque
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput, ProviderAdapterFn } from "../tregAdapter";
 import { ADAPTERS, runTregDirectoryPage } from "./adapters";
 import type { AdapterContext, CallRecorder, FetchFn, OperationResult, SearchHit } from "./adapterTypes";
+import { ChunkTraceCollector, type ChunkTrace } from "../../multiProvider/trace";
 
 /**
  * Runs one chunk of a bounded chain: DISCOVER companies (a provider, with fallbacks) -> ENRICH each company from its public contact
@@ -37,6 +38,10 @@ export interface ChainDeps {
   spentUsdSoFar: () => Promise<number>;
   /** One plain-Arabic line of the job's activity log (the existing job_events mechanism). */
   emit: (lineAr: string, units: number) => Promise<void>;
+  /** Receives this chunk's routing trace (admin only; see trace.ts). Best effort: a failure here never touches the job. */
+  trace?: (chunk: ChunkTrace) => Promise<void>;
+  /** The worker's step number of this chunk (the trace is merged by step, so a retried chunk replaces itself). */
+  step?: number;
   now?: () => number;
 }
 
@@ -105,6 +110,11 @@ export interface ChainParams {
   industry?: string;
   country?: string;
   keyword?: string;
+  /** Two-letter country code for the web searches (the directory takes the English name in `country`). */
+  countryIso?: string;
+  /** The customer's own Arabic words for the activity and the country: what the delivered rows say (never sent to a provider). */
+  industryAr?: string;
+  countryAr?: string;
   requiredFields: RequiredField[];
   count: number;
 }
@@ -119,6 +129,9 @@ export function chainParamsOf(params: Record<string, any> | undefined): ChainPar
     industry: typeof p.industry === "string" ? p.industry : undefined,
     country: typeof p.country === "string" ? p.country : undefined,
     keyword: typeof p.keyword === "string" ? p.keyword : undefined,
+    countryIso: typeof p.countryIso === "string" && /^[A-Za-z]{2}$/.test(p.countryIso) ? p.countryIso : undefined,
+    industryAr: typeof p.industryAr === "string" ? p.industryAr.slice(0, 80) : undefined,
+    countryAr: typeof p.countryAr === "string" ? p.countryAr.slice(0, 60) : undefined,
     requiredFields: required,
     count: Math.max(1, Math.floor(Number(p.count) || 1)),
   };
@@ -171,6 +184,8 @@ export function candidatesFromDirectory(rows: Record<string, any>[]): ChainCandi
   return out;
 }
 
+type ReadResult = OperationResult<any> & { capId: string };
+
 const TEAM_PROMPT = "List the people this page publicly lists as company leaders or owners, with their exact job titles. Return only what the page states.";
 const TEAM_SCHEMA = { type: "object", properties: { people: { type: "array", items: { type: "object", properties: { name: { type: "string" }, title: { type: "string" } }, required: ["name", "title"] } } }, required: ["people"] };
 
@@ -194,6 +209,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
 
   let chunkUsd = 0;
   const spentBefore = await deps.spentUsdSoFar().catch(() => 0);
+  const trace = new ChunkTraceCollector(deps.step ?? 0, spentBefore);
   // The provider spend of the whole job may not pass the RESERVE the customer's points hold, expressed in provider cost: the reserve is
   // ceil(volume x unit price x 1.15) points and 5,500 points are the price of 1 USD of provider cost, so the budget is reserve / 5,500 USD
   // (the estimate plus the 15% buffer, rounded up with the whole-point price). Without a unit price the router's own estimate applies.
@@ -228,6 +244,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
             ctx: { recorder: deps.recorder, jobId: input.jobId, now: deps.now },
           });
           chunkUsd += page.costUsd;
+          trace.call("discover", "treg", cap.id, { status: page.ok ? (page.rows.length > 0 ? "success" : "empty") : "failed", costUsd: page.costUsd, durationMs: 0 });
           if (page.ok && page.rows.length > 0) {
             candidates = candidatesFromDirectory(page.rows);
             state.tc = page.nextCursor;
@@ -235,8 +252,9 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
           }
         } else {
           const limit = Math.min(HARD_LIMITS.maxDiscoveryResults, Math.max(10, estimate.discoveryResults));
-          const res: OperationResult<SearchHit[]> = await ADAPTERS[cap.provider].run("discover.web_search", { query: buildDiscoveryQuery(params), limit, country: params.country && /^[A-Za-z]{2}$/.test(params.country) ? params.country : undefined, excludeDomains: SOCIAL_EXCLUDE }, ctxFor(cap.provider));
+          const res: OperationResult<SearchHit[]> = await ADAPTERS[cap.provider].run("discover.web_search", { query: buildDiscoveryQuery(params), limit, country: params.countryIso ?? (params.country && /^[A-Za-z]{2}$/.test(params.country) ? params.country : undefined), excludeDomains: SOCIAL_EXCLUDE }, ctxFor(cap.provider));
           track(res);
+          trace.call("discover", cap.provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
           if (res.ok && res.data && res.data.length > 0) {
             candidates = candidatesFromSearch(res.data);
             state.dx = true; // a search is one answer: it has no next page
@@ -244,6 +262,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
         }
         if (candidates.length > 0) { got = candidates; break; }
         // This provider failed or gave nothing usable: the next allowed one for the stage.
+        trace.fallback({ stage: "discover", fromCapabilityId: cap.id, toCapabilityId: caps[k + 1]?.id ?? null, reason: "no_usable_results" });
         if (k < caps.length - 1) await deps.emit(stageFallbackLineAr(), state.out);
         state.dx = false;
       }
@@ -255,6 +274,11 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
       state.rest.push(...fresh);
       state.taken += fresh.length;
       discoveredNow = fresh.length;
+      if (got.length > 0 && fresh.length >= 0) {
+        // The stage that delivered the candidates is the last one that was tried and answered.
+        const delivering = [...caps].reverse().find((c) => trace.stage("discover", c.provider, c.id).success > 0);
+        if (delivering) { const t = trace.stage("discover", delivering.provider, delivering.id); t.found += got.length; t.fresh += fresh.length; t.duplicate += got.length - unseen.length; }
+      }
       if (attempted) {
         if (got.length > 0) await deps.emit(discoveryLineAr({ found: got.length, fresh: fresh.length, duplicate: got.length - unseen.length, total: state.taken }), state.out);
         else { await deps.emit(discoveryEmptyLineAr(), state.out); if (state.tc === null) state.dx = true; }
@@ -277,26 +301,37 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
   const leftover: ChainCandidate[] = [];
 
   /** Reads a page with the stage's providers in order. "blocked" means the SITE refused: no other provider is tried. */
-  const readPage = async (url: string, structured = false): Promise<OperationResult<any> | "blocked" | null> => {
+  const readPage = async (url: string, structured = false): Promise<ReadResult | "blocked" | null> => {
+    let failed: CapabilityDef | null = null;
+    let failedReason = "";
+    const closeFallback = (to: CapabilityDef | null) => { if (failed) { trace.fallback({ stage: "enrich", fromCapabilityId: failed.id, toCapabilityId: to?.id ?? null, reason: failedReason }); failed = null; } };
     for (const capId of enrichStage?.capabilityIds ?? []) {
       const base = capabilityById(capId);
       const cap = structured && base ? capabilityById(base.provider === "firecrawl" ? "firecrawl.scrape_json" : "contextdev.scrape_json") : base;
       if (!usable(cap)) continue;
-      if (state.ec >= maxEnrichCalls) return null;
-      if (!canAfford(cap)) { budgetStop = true; return null; }
+      if (state.ec >= maxEnrichCalls) { closeFallback(null); return null; }
+      if (!canAfford(cap)) { budgetStop = true; closeFallback(null); return null; }
+      closeFallback(cap);
       state.ec += 1;
       const adapter = ADAPTERS[cap.provider];
       const res: OperationResult<any> = structured
         ? await adapter.run("page.read_structured", { url, prompt: TEAM_PROMPT, schema: TEAM_SCHEMA }, ctxFor(cap.provider))
         : await adapter.run("page.read", { url }, ctxFor(cap.provider));
       track(res);
-      if (res.ok && res.status !== "empty") return res;
+      trace.call("enrich", cap.provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
+      if (res.ok && res.status !== "empty") return Object.assign(res, { capId: cap.id });
       if (res.errorCode === "blocked_site") return "blocked";
       // not found / refused request: another provider would get the same answer. Anything else (a timeout, a busy provider, an empty page, a cap) tries the next provider.
       if (res.errorCode === "not_found" || res.errorCode === "bad_request") return null;
+      failed = cap;
+      failedReason = res.errorCode ?? "empty";
     }
+    closeFallback(null);
     return null;
   };
+
+  const TEAM_URL = /team|leadership|management|about|people|founder|الفريق|الإدارة|من-?نحن/i;
+  const readableUrl = (u: string) => { try { return decodeURIComponent(u); } catch { return u; } };
 
   const processCandidate = async (c: ChainCandidate): Promise<void> => {
     const domain = companyDomain(c.u);
@@ -305,16 +340,22 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
     const first = await readPage(c.u);
     if (first === "blocked") { skipped += 1; return; }
     read += 1;
+    const servedBy = first ? capabilityById(first.capId) : undefined;
+    const enrichTrace = () => trace.stage("enrich", servedBy?.provider ?? null, servedBy?.id ?? null);
     if (!first) { unverified += 1; return; }
+    enrichTrace().read += 1;
     const homeData = first.data as { markdown: string; links: string[] };
-    const links = [...(homeData.links || []), ...linksFromMarkdown(homeData.markdown)];
+    let links = [...(homeData.links || []), ...linksFromMarkdown(homeData.markdown)];
     const emails: FoundEmail[] = extractEmails(homeData.markdown, links, domain);
     const phones: FoundPhone[] = extractPhones(homeData.markdown, links);
     let profile = extractProfileLink(homeData.markdown, links);
     let sourcePage = c.u;
     const needEmail = params.requiredFields.includes("work_email");
     const needPhone = params.requiredFields.includes("office_phone");
-    const enough = () => (!needEmail || emails.some((e) => e.status === "verified")) && (!needPhone || phones.some((p) => p.status === "verified")) && (needEmail || needPhone || emails.length + phones.length > 0);
+    const needDm = params.requiredFields.includes("decision_maker");
+    // A people-only request needs no contact page: the team page is the one to read.
+    const contactNeeded = needEmail || needPhone || !needDm;
+    const enough = () => !contactNeeded || ((!needEmail || emails.some((e) => e.status === "verified")) && (!needPhone || phones.some((p) => p.status === "verified")) && (needEmail || needPhone || emails.length + phones.length > 0));
     if (!enough()) {
       for (const page of pickContactPages(links, c.u, YIELD.pagesPerCompany - 1)) {
         if (!(await checkRobots(page, deps.robotsFetch, robotsCache)).allowed) continue;
@@ -322,6 +363,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
         if (!res || res === "blocked") continue;
         const d = res.data as { markdown: string; links: string[] };
         const more = [...(d.links || []), ...linksFromMarkdown(d.markdown)];
+        links = [...links, ...more];
         for (const e of extractEmails(d.markdown, more, domain)) if (!emails.some((x) => x.value === e.value)) emails.push(e);
         for (const p of extractPhones(d.markdown, more)) if (!phones.some((x) => x.value === p.value)) phones.push(p);
         profile = profile ?? extractProfileLink(d.markdown, more);
@@ -330,17 +372,18 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
       }
     }
     let decisionMakers: DecisionMaker[] = [];
-    if (params.requiredFields.includes("decision_maker")) {
-      const team = pickContactPages(links, c.u, 3).find((u) => /team|leadership|management|about|الفريق|الإدارة|من-?نحن/i.test(decodeURIComponent(u)));
+    if (needDm) {
+      // The team page is looked for in the links of EVERY page read so far (the home page or a contact page may be the one that links it).
+      const team = pickContactPages(links, c.u, 6).find((u) => TEAM_URL.test(readableUrl(u)));
       if (team && (await checkRobots(team, deps.robotsFetch, robotsCache)).allowed) {
         const res = await readPage(team, true);
-        if (res && res !== "blocked") decisionMakers = parseDecisionMakers((res.data as { json: unknown }).json);
+        if (res && res !== "blocked") { decisionMakers = parseDecisionMakers((res.data as { json: unknown }).json); if (decisionMakers.length > 0) sourcePage = team; }
       }
     }
-    const facts: EnrichmentFacts = { companyName: c.n, website: c.u, industry: c.i ?? params.industry, location: c.l ?? params.country, description: c.d, emails, phones, profileLink: profile, decisionMakers, sourcePage };
+    const facts: EnrichmentFacts = { companyName: c.n, website: c.u, industry: c.i ?? params.industryAr ?? params.industry, location: c.l ?? params.countryAr ?? params.country, description: c.d, emails, phones, profileLink: profile, decisionMakers, sourcePage };
     const row = buildContactRow(facts);
-    if (rowPassesGate(row, params.requiredFields)) rows.push(row);
-    else unverified += 1;
+    if (rowPassesGate(row, params.requiredFields)) { rows.push(row); trace.stage("verify", null, null).verified += 1; }
+    else { unverified += 1; trace.stage("verify", null, null).unverified += 1; }
   };
 
   // Two companies at a time (both providers limit concurrent requests per plan); one company's own pages are read one after the other.
@@ -367,6 +410,10 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
   const finished = budgetStop || noMoreWork || input.deliveredSoFar + delivered.length >= params.count;
   if (budgetStop) await deps.emit(budgetStopLineAr(state.out), state.out);
   else if (finished) await deps.emit(chainFinishedLineAr({ delivered: state.out }), state.out);
+
+  const stoppedBy: ChunkTrace["stoppedBy"] = budgetStop ? "budget" : input.deliveredSoFar + delivered.length >= params.count ? "target_reached" : noMoreWork ? "no_more_work" : null;
+  trace.stage("verify", null, null).skipped += skipped;
+  if (deps.trace) await deps.trace(trace.finish({ at: new Date(now()).toISOString(), delivered: delivered.length, costUsd: chunkUsd, stoppedBy })).catch(() => {});
 
   return {
     ok: true,

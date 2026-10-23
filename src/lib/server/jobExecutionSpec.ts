@@ -24,6 +24,8 @@ export interface ResolvedJobExecutionSpec {
   outputFormats: Array<"xlsx" | "pdf" | "csv">;
   /** Failed job whose collected rows this retry reuses (set only by the server when the retry quote was created). */
   retryOfJobId?: string;
+  /** The accepted quote of the job (the multi-provider chain only: where its admin-only routing decision is kept). */
+  quoteId?: string;
 }
 
 export async function resolveJobExecutionSpec(
@@ -44,6 +46,7 @@ export async function resolveJobExecutionSpec(
   // Excel is the default format when a quote is unavailable or predates format selection.
   let outputFormats: Array<"xlsx" | "pdf" | "csv"> = ["xlsx"];
   let retryOfJobId: string | undefined;
+  let matchedQuoteId: string | undefined;
 
   // 1. Match accepted quote in plans_quotes where 'job_quote_' + md5(quote.id) === jobId
   try {
@@ -57,6 +60,7 @@ export async function resolveJobExecutionSpec(
           return `job_quote_${digest}` === jobId || q.id === jobId;
         });
         if (matched) {
+          matchedQuoteId = typeof matched.id === "string" ? matched.id : undefined;
           const selectedFormats = Array.isArray(matched.output_formats)
             ? matched.output_formats.filter((format: unknown): format is "xlsx" | "pdf" | "csv" =>
                 format === "xlsx" || format === "pdf" || format === "csv")
@@ -122,6 +126,7 @@ export async function resolveJobExecutionSpec(
       pageSize: 10,
       outputFormats,
       ...(retryOfJobId ? { retryOfJobId } : {}),
+      ...(matchedQuoteId ? { quoteId: matchedQuoteId } : {}),
     };
   }
 
