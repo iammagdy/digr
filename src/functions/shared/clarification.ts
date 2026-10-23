@@ -2,11 +2,12 @@ import { z } from "zod";
 import { WINDOW_OPTIONS_AR } from "../../lib/timeWindow";
 import type { Capability } from "./capabilityRegistry";
 import { SOCIAL_TASK_QUESTION_IDS } from "../../lib/socialTasks";
+import { SOCIAL_DISCOVERY_OWN_IDS } from "../../lib/socialDiscoveryCard";
 
 export const MAX_CLARIFICATION_QUESTIONS = 8;
 
 /** Questions built by code whose choices are their own (a comment cap, the kind of data): the generic option banks never replace them. */
-export const OWN_OPTION_QUESTION_IDS: ReadonlySet<string> = new Set(["volume_cap_required", "goal_required"]);
+export const OWN_OPTION_QUESTION_IDS: ReadonlySet<string> = new Set(["volume_cap_required", "goal_required", ...SOCIAL_DISCOVERY_OWN_IDS]);
 
 export const ClarificationParameterTypeSchema = z.enum([
   "platform",

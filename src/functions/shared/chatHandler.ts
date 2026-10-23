@@ -8,6 +8,8 @@ import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR, YOUTUBE_RECENT_SUPPLY_FR
 import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowIsStatedByCustomer, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
+import { balanceVerdictAr } from "../../lib/balanceVerdict";
+import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_NO_TOPIC_SEARCH_AR } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -175,6 +177,13 @@ function customerAuthoredRequirementText(message: string): string {
         if ((answer?.questionId === "shape_sort_asc_required" || answer?.questionId === "shape_sort_desc_required") && typeof answer?.value === "string" && answer.value.trim()) {
           return [`رتب الملف حسب ${sanitizeClarificationText(answer.value, 80)}${answer.questionId === "shape_sort_desc_required" ? " تنازلياً" : ""}`];
         }
+        // The discovery card's answers (a Facebook page, the number of posts, comments or not, comments per post) are stored as plain request words.
+        if (SOCIAL_DISCOVERY_OWN_IDS.has(answer?.questionId)) {
+          const raw = Array.isArray(answer?.value) ? answer.value.filter((v: unknown): v is string => typeof v === "string").join(" ") : typeof answer?.value === "string" ? answer.value : "";
+          const words = discoveryAnswerAsRequestText(answer.questionId, sanitizeClarificationText(raw, 200));
+          // Prefixed with the card's label, so it travels with the request it completes (a bare «٢٠ تعليق من كل منشور» would read as a new request).
+          return words ? [`${labels[answer.questionId]}: ${words}`] : [];
+        }
         const label = labels[answer?.questionId] || "الإجابة";
         // The channels of a mission: links and long lists are the answer itself, so they are kept (text only, no markup).
         if (answer?.questionId === "social_channel_required") {
@@ -214,10 +223,11 @@ function hasExplicitPeopleScope(text: string): boolean {
 }
 
 /** Questions the customer may skip and the plan still go ahead (the period is then left open, the cap is the job's own). */
-const PROCEED_WHEN_SKIPPED = new Set(["social_time_required", "volume_cap_required"]);
+const PROCEED_WHEN_SKIPPED = new Set(["social_time_required", "volume_cap_required", SOCIAL_DISCOVERY_IDS.perPost]);
 
 /** What to say, in one plain sentence and without a card, when a question that cannot be inferred was skipped. */
 const PLAIN_AFTER_SKIP_AR: Record<string, string> = {
+  [SOCIAL_DISCOVERY_IDS.page]: `${FACEBOOK_NO_TOPIC_SEARCH_AR} اكتب اسم الصفحة في رسالتك، أو غيّر المنصة إلى تيك توك أو يوتيوب أو إكس لأبحث لك بالموضوع.`,
   social_platform_required: "أحتاج أن أعرف المنصة لأجهز لك الخطة. اكتب اسمها في رسالتك، مثل «يوتيوب» أو «تيك توك» أو «إكس»، وسأكمل من حيث توقفنا.",
   social_comment_target_required: "لم يتبقَّ سوى مصدر التعليقات. اكتب موضوع الفيديوهات أو اسم القناة في رسالتك، أو الصق رابط فيديو، وسأجهز لك الخطة.",
   social_channel_required: "لتجهيز الخطة أحتاج اسم قناة واحدة على الأقل. اكتب اسم القناة أو الصق رابطها في رسالتك، أو اكتب موضوعًا وسأبحث لك عن فيديوهاته.",
@@ -278,6 +288,11 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
     const mission = understandMission(normalized);
     if (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") {
       const step = nextStep(mission, ignore);
+      // «N منشور بالتعليقات» from a page, with no comments per post: the total is posts x per post, so the per-post card replaces the cap question.
+      if (step.type === "ask_one" && step.id === "volume_cap_required") {
+        const perPostGap = socialDiscoveryGapQuestion(normalized, ignore, capabilities);
+        if (perPostGap?.id === SOCIAL_DISCOVERY_IDS.perPost) return perPostGap;
+      }
       return step.type === "ask_one" ? questionForStep(step) : null;
     }
     const missingSocialTask = getMissingSocialTaskInputs(normalized)[0];
@@ -290,16 +305,38 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
     if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) {
       if (!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
       // «كل التعليقات / كل المنشورات» always carries a cap the customer chooses.
-      return ignore.has("volume_cap_required") ? null : capQuestionFor(mission);
+      const capQuestion = ignore.has("volume_cap_required") ? null : capQuestionFor(mission);
+      const gapQuestion = socialDiscoveryGapQuestion(normalized, ignore, capabilities);
+      // «N منشور بالتعليقات» with no comments per post would ask for the total cap; the per-post card is the better question (the total is posts x per post).
+      if (capQuestion && gapQuestion?.id === SOCIAL_DISCOVERY_IDS.perPost) return gapQuestion;
+      return capQuestion ?? gapQuestion;
     }
   }
   if (isSocialTopic) {
     const missingSocial = getMissingSocialInputs(normalized);
+    if (missingSocial.length === 0 && !(!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized))) {
+      const gap = socialDiscoveryGapQuestion(normalized, ignore, capabilities);
+      if (gap) return gap;
+    }
     if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
     if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
     if (!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
   }
   return null;
+}
+
+/**
+ * What a Facebook request still needs before it can be planned: the page (Facebook is not searched by topic) or the comments per post. The
+ * FIRST question only; the handler turns it into the full card (see socialDiscoveryItems). A question the customer skipped is not asked again.
+ */
+function socialDiscoveryGapQuestion(text: string, ignore: ReadonlySet<string>, capabilities: Capability[] = []) {
+  const context = { otherFacebookService: otherFacebookServiceExists(capabilities) };
+  const trigger = socialDiscoveryTrigger(text, context);
+  if (!trigger) return null;
+  const id = trigger === "page" ? SOCIAL_DISCOVERY_IDS.page : SOCIAL_DISCOVERY_IDS.perPost;
+  if (ignore.has(id)) return null;
+  const first = socialDiscoveryItems(text, context).find((entry) => entry.id === id);
+  return first ? { id: first.id, text: first.text, question: first.question, type: first.type, options: first.options, allowOther: first.allowOther } : null;
 }
 
 /** The ONE window question: the four periods, never preselected. The warning about long periods rides with its intro. */
@@ -2627,13 +2664,20 @@ export class ChatHandler {
       }
       // A turn about the delivered file never asks research questions (a column named «الشركة» is not a company request).
       if (requiredDiscoveryQuestion && !requiredDiscoveryQuestion.plain && !isFileShapingTurn) {
-        const intro = consultantIntroAr(conversationRequestText, requiredDiscoveryQuestion.id);
-        const normalizedQuestion = normalizeClarificationQuestions({ questions: [requiredDiscoveryQuestion] }, {
+        // A Facebook request that needs a page (or the comments per post) becomes ONE card with every question the request leaves open, and only those.
+        const discoveryCardItems = SOCIAL_DISCOVERY_OWN_IDS.has(requiredDiscoveryQuestion.id)
+          ? socialDiscoveryItems(conversationRequestText, { skipped: skippedQuestionIds, otherFacebookService: otherFacebookServiceExists(allCapabilities) })
+          : [];
+        const intro = discoveryCardItems.length > 0
+          ? socialDiscoveryIntroAr(conversationRequestText, { otherFacebookService: otherFacebookServiceExists(allCapabilities) })
+          : consultantIntroAr(conversationRequestText, requiredDiscoveryQuestion.id);
+        const normalizedCardQuestions = normalizeClarificationQuestions({ questions: discoveryCardItems.length > 0 ? discoveryCardItems : [requiredDiscoveryQuestion] }, {
           capabilities: allCapabilities,
           userBalancePoints: userBalance,
           persona: userProfile?.persona,
-        })[0] || requiredDiscoveryQuestion;
-        const textAr = `${intro}\n${normalizedQuestion.text || normalizedQuestion.question}`;
+        });
+        const normalizedQuestion = normalizedCardQuestions[0] || requiredDiscoveryQuestion;
+        const textAr = `${intro}\n${(normalizedCardQuestions.length > 0 ? normalizedCardQuestions : [normalizedQuestion]).map((q: any) => q.text || q.question).join("\n")}`;
         const tDiscoveryWrite = Date.now();
         if (sb) {
           awaitsCount += 2;
@@ -2657,8 +2701,8 @@ export class ChatHandler {
           outputType: "ask_clarification",
           intent: "research",
           clarificationIntro: intro,
-          clarificationQuestions: [normalizedQuestion.text || normalizedQuestion.question],
-          clarificationItems: [normalizedQuestion],
+          clarificationQuestions: (normalizedCardQuestions.length > 0 ? normalizedCardQuestions : [normalizedQuestion]).map((q: any) => q.text || q.question),
+          clarificationItems: normalizedCardQuestions.length > 0 ? normalizedCardQuestions : [normalizedQuestion],
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
           turnStats: currentTurnStats(),
         };
@@ -3395,6 +3439,9 @@ export class ChatHandler {
         let defaultCapUsed = null as { noun: DefaultNoun; units: number } | null;
         /** The number of videos the customer asked for in a comments request: a quantity of its own, shown next to the comment count. */
         let videosStatedForPlan = null as { count: number; noun: "videos" | "posts" } | null;
+        // The service's own per-request ceiling, when IT (not the balance, not the points cap) is what cuts the count: said as such on the plan.
+        let serviceCeilingNow = null as number | null;
+        let reachCutNow = null as { units: number; detailAr: string } | null;
         /** The top videos found by a topic because the customer skipped the channels: the plan says so. */
         let missionByTopicSubject = null as string | null;
         const canonicalizePlanItems = (items: PlanItem[]) => items.map((item) => {
@@ -3423,7 +3470,8 @@ export class ChatHandler {
             // The channels were skipped and a topic was given: the top videos are searched by that topic, as many as the template asked for in all.
             const byTopic = Boolean(mission && mission.kind === "social_ranked_comments" && mission.channelsSkipped && mission.subject && !isMission);
             // A mission's count is the comment cap: the customer's, or an explicit default the plan shows (never a hidden 10).
-            const missionCap = (isMission || byTopic) && mission ? mission.volume ?? DEFAULT_COMMENTS_CAP : null;
+            // posts x comments per post, when the customer stated both, is THEIR count (never the default the plan labels «لأنك لم تحدد عددًا»)
+            const missionCap = (isMission || byTopic) && mission ? mission.volume ?? mission.impliedVolume ?? DEFAULT_COMMENTS_CAP : null;
             const topicVideoCount = byTopic && mission ? Math.min(MAX_VIDEOS_PER_JOB, Math.max(1, (mission.topPerChannel ?? 10) * Math.max(1, mission.channels.count ?? 1))) : undefined;
             // Comments of videos found by a topic or a link: the number of videos and the number of comments are two quantities. «٣ فيديوهات»
             // is never the comment cap; the cap is the customer's number, or an explicit default the plan shows.
@@ -3452,7 +3500,8 @@ export class ChatHandler {
             const perVideoForPlan = byTopic && topicVideoCount
               ? Math.min(MAX_PER_VIDEO, Math.ceil(statedVolume / topicVideoCount))
               : isMission
-              ? undefined
+              // a mission's own per-post number («٢٠ تعليق من كل منشور») is the customer's, and is kept (it was dropped before)
+              ? mission?.commentsPerVideo ?? undefined
               : commentsOfPosts
               ? understanding.commentsPerVideo ?? (askedVideos ? Math.min(MAX_PER_VIDEO, Math.ceil(statedVolume / askedVideos)) : perVideoBrief)
               : perVideoBrief;
@@ -3471,11 +3520,21 @@ export class ChatHandler {
                 topic: mission.kind === "social_channel_topic" ? mission.subject ?? undefined : undefined,
               } : {}),
             });
-            // Videos x most comments per video is the most that can be read; the plan never promises more than that.
-            const reachable = params.videoCount && params.perVideo ? Number(params.videoCount) * Number(params.perVideo) : Infinity;
+            // Videos x most comments per video is the most that can be read; the plan never promises more than that. A mission over pages or
+            // channels reads at most (the top posts of each) x (the comments taken from each).
+            const missionReachable = Number(params.topPerChannel) > 0 && Number(params.perVideo) > 0 && Array.isArray(params.channels)
+              ? Number(params.topPerChannel) * params.channels.length * Number(params.perVideo)
+              : Infinity;
+            const reachable = Math.min(params.videoCount && params.perVideo ? Number(params.videoCount) * Number(params.perVideo) : Infinity, missionReachable);
             const volume = Math.max(1, Math.min(statedVolume, verifiedSocialDef.maxRows, reachable));
             askedVolumeForCard = items.length === 1 ? statedVolume : null;
-            if ((missionCap && mission && mission.volume === null) || capIsDefault) defaultCapUsed = { noun: isCommentsKind ? "comments" : verifiedSocialDef.kind === "videos" ? "videos" : "records", units: statedVolume };
+            if (items.length === 1 && verifiedSocialDef.maxRows < Math.min(statedVolume, reachable)) serviceCeilingNow = verifiedSocialDef.maxRows;
+            // What the posts a job reads times the comments from each can reach is what cut it (not the balance, not the points cap).
+            if (items.length === 1 && Number.isFinite(reachable) && reachable < Math.min(statedVolume, verifiedSocialDef.maxRows)) {
+              const postsReadable = Number(params.topPerChannel) > 0 && Array.isArray(params.channels) ? Number(params.topPerChannel) * params.channels.length : Number(params.videoCount);
+              reachCutNow = { units: reachable, detailAr: `${videosCountAr(postsReadable, verifiedSocialDef.platform === "facebook" ? "posts" : "videos")} × ${toArabicDigits(Number(params.perVideo))} تعليقًا لكل ${verifiedSocialDef.platform === "facebook" ? "منشور" : "فيديو"}` };
+            }
+            if ((missionCap && mission && mission.volume === null && mission.impliedVolume === null) || capIsDefault) defaultCapUsed = { noun: isCommentsKind ? "comments" : verifiedSocialDef.kind === "videos" ? "videos" : "records", units: statedVolume };
             if (isCommentsKind && understanding.videos && !isMission && !byTopic) videosStatedForPlan = { count: understanding.videos, noun: understanding.videosNoun };
             if (byTopic && mission?.subject) missionByTopicSubject = mission.subject;
             return {
@@ -3809,6 +3868,8 @@ export class ChatHandler {
             pointsCapConstrained: managedQuote.pointsCapConstrained,
             requestedVolumeMax: managedQuote.requestedVolumeMax,
             ...(askedVolumeForCard && askedVolumeForCard > managedQuote.targetVolumeMax ? { askedVolumeMax: askedVolumeForCard } : {}),
+            // The count was cut by the service's own ceiling (not the balance, not the points cap): the card says so with the number.
+            ...(serviceCeilingNow && managedQuote.items.length === 1 && managedQuote.targetVolumeMax === serviceCeilingNow && !managedQuote.pointsCapConstrained ? { serviceCeilingUnits: serviceCeilingNow } : {}),
             pointsCap: managedQuote.pointsCap,
             userBalance,
             downscaledOffer: managedQuote.downscaledOffer,
@@ -3927,9 +3988,15 @@ export class ChatHandler {
                 fittedUnits: managedQuote.targetVolumeMax,
                 // The count was cut by the live extraction capacity, not by the points cap: say so, and say what is held back.
                 ...(managedQuote.capacityConstrained && !managedQuote.pointsCapConstrained ? { reason: "capacity" as const, reservedPoints: managedQuote.quotedPoints } : {}),
+                // The service's own ceiling cut it: not the job cap, not the balance. Say which, with the number that fits.
+                ...(planQuoteData.serviceCeilingUnits && !managedQuote.capacityConstrained ? { reason: "service" as const, unitLabelAr: /-comments$/.test(String(managedQuote.items[0]?.capabilitySlug)) ? "تعليق" : verifiedSocialDef?.kind === "videos" ? "منشور" : undefined } : {}),
+                ...(reachCutNow && !managedQuote.capacityConstrained && !managedQuote.pointsCapConstrained && managedQuote.targetVolumeMax === reachCutNow.units ? { reason: "reach" as const, reachDetailAr: reachCutNow.detailAr, unitLabelAr: "تعليق" } : {}),
               })
             : null;
-          if (volumeLimitLine) planSummaryText += `\n- ${volumeLimitLine}`;
+          if (volumeLimitLine) {
+            planSummaryText += `\n- ${volumeLimitLine}`;
+            planQuoteData.volumeLimitLineAr = volumeLimitLine;
+          }
           if (managedQuote.pointsCapConstrained && !defaultCapNow) {
             const requestedUnits = askedUnitsForText;
             // When the request was cut to fit the cap, say plainly how many records fit and what the whole request needed.
@@ -3975,6 +4042,16 @@ export class ChatHandler {
           if (managedQuote.capacityConstrained) {
             planSummaryText += `\n- سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;
           }
+          // The verdict on the balance, before approval: «يكفي رصيدك» or «رصيدك لا يكفي، أقصى عدد يتسع X». Code writes it from the quote.
+          const balanceVerdict = balanceVerdictAr({
+            balance: userBalance ?? 0,
+            quotedPoints: managedQuote.quotedPoints,
+            expectedPoints: managedQuote.expectedPoints,
+            targetVolumeMax: managedQuote.targetVolumeMax,
+            downscaledOffer: managedQuote.downscaledOffer,
+          });
+          planQuoteData.balanceVerdictAr = balanceVerdict;
+          planSummaryText += `\n- الرصيد: ${balanceVerdict}`;
           if (!managedQuote.isAffordable) {
             // Low balance: the offer (reduce to what fits, or top up and continue here) is written by code from the quote.
             const lowBalanceText = lowBalanceMessageAr({
@@ -4090,6 +4167,13 @@ export class ChatHandler {
               if (managedQuote.capacityConstrained) {
                 finalContentAr += `\n• سبب الحد: ${CAPACITY_LIMITED_REASON_AR}`;
               }
+              finalContentAr += `\n• الرصيد: ${balanceVerdictAr({
+                balance: userBalance ?? 0,
+                quotedPoints: managedQuote.quotedPoints,
+                expectedPoints: managedQuote.expectedPoints,
+                targetVolumeMax: managedQuote.targetVolumeMax,
+                downscaledOffer: managedQuote.downscaledOffer,
+              })}`;
               if (!managedQuote.isAffordable) {
                 const lowBalanceText = lowBalanceMessageAr({
                   balance: userBalance ?? 0,

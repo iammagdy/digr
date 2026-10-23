@@ -29,6 +29,8 @@ export interface MissionUnderstanding {
   includeReplies: boolean;
   /** A count the customer stated for the records themselves (posts, comments, companies); never the number of videos or channels. */
   volume: number | null;
+  /** videos x comments per video, when the customer stated both and wrote no count of their own; null otherwise. */
+  impliedVolume: number | null;
   /** «كل تعليقات ٣ فيديوهات»: the videos (or posts) whose comments are wanted. A quantity of its own, never the comment count. */
   videos: number | null;
   videosNoun: "videos" | "posts";
@@ -226,6 +228,10 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     volume = intent.count;
   }
 
+  // «٤٠٠ منشور بـ ٢٠ تعليقًا لكل منشور»: both quantities are the customer's, so the comments in all are their product, not an open count to ask a cap
+  // for. Kept apart from `volume` (the count the customer wrote) so nothing that reads the written count changes.
+  const impliedVolume = volume === null && commentsFlow && videos !== null && commentsPerVideo !== null && videos > 0 && commentsPerVideo > 0 ? videos * commentsPerVideo : null;
+
   const feedKind = kind === "social_feed" || kind === "social_channel_topic" || kind === "social_ranked_comments";
   // A named channel's own videos or posts are scoped by the channel (the latest N), not by a period.
   const needsWindow = feedKind && !social.wantsTrending && !social.targetUrl && !(kind === "social_feed" && channelMode);
@@ -258,7 +264,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     if (kind === "social_channel_topic" && channels.named.length === 0 && !social.channelRef) missing.push("channels");
     if (kind === "social_feed" && !subject && !channelMode) missing.push("subject");
     // «كل التعليقات» or an unstated volume over channels always carries a cap the customer chooses.
-    if ((kind === "social_ranked_comments" || kind === "social_channel_topic") && volume === null) missing.push("cap");
+    if ((kind === "social_ranked_comments" || kind === "social_channel_topic") && volume === null && impliedVolume === null) missing.push("cap");
     else if ((kind === "social_feed" || kind === "social_comments_url") && (allComments || allItems) && volume === null) missing.push("cap");
     if (window.status === "missing") missing.push("window");
   }
@@ -273,6 +279,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     allComments,
     includeReplies,
     volume,
+    impliedVolume,
     videos,
     videosNoun,
     commentsPerVideo,
@@ -423,6 +430,10 @@ export function missionCoverageLinesAr(u: MissionUnderstanding, planned: { chann
   }
   if (given > planned.maxChannels) {
     lines.push(`القنوات: كتبت ${channelsCountAr(given)}، واعتمدت أول ${channelsCountAr(planned.maxChannels)} لأن المهمة الواحدة لا تتسع لأكثر، ويمكنك تقديم طلب آخر لبقية القنوات.`);
+  }
+  // «٤٠٠ منشور» from a named page: the posts a page contributes to one job are limited, and the plan says how many it reads and why.
+  if (u.kind === "social_channel_topic" && !u.topPerChannel && u.videos && planned.topPerChannel && planned.topPerChannel < u.videos) {
+    lines.push(`طلبت ${videosCountAr(u.videos, u.videosNoun)}، واعتمدت أحدث ${videosCountAr(planned.topPerChannel, u.videosNoun)} من كل ${u.platform === "facebook" ? "صفحة" : "قناة"} لأن الطلب الواحد لا يتسع لأكثر من ذلك (حدّ الطلب الواحد لا رصيدك)، ويمكنك طلب الباقي في طلب منفصل.`);
   }
   if (u.topPerChannel && planned.topPerChannel && planned.topPerChannel < u.topPerChannel) {
     lines.push(`الفيديوهات: خفّضت أعلى ${num(u.topPerChannel)} فيديوهات لكل قناة إلى ${num(planned.topPerChannel)} حتى لا تتجاوز المهمة الواحدة حدّ الفيديوهات.`);

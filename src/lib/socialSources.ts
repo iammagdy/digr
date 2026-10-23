@@ -905,8 +905,12 @@ export function socialPlanSummaryAr(
   const missionChannels = channelsOf(params);
   if (cap.kind === "comments" && missionChannels.length > 0) {
     const top = Number(params.topPerChannel) > 0 ? Number(params.topPerChannel) : 0;
-    const ranking = top ? `أعلى ${formatNumber(top)} فيديوهات${params.rankBy === "views" ? " مشاهدة" : ""} لكل قناة` : "فيديوهات القنوات";
-    const channelsText = missionChannels.length > 1 ? channelsCountAr(missionChannels.length) : "القناة المحددة";
+    // A Facebook page has posts, not videos, and without a ranking by views its top N are its latest N.
+    const onPage = cap.platform === "facebook";
+    const ranking = top
+      ? onPage && params.rankBy !== "views" ? `أحدث ${formatNumber(top)} منشورًا لكل صفحة` : `أعلى ${formatNumber(top)} فيديوهات${params.rankBy === "views" ? " مشاهدة" : ""} لكل قناة`
+      : onPage ? "منشورات الصفحات" : "فيديوهات القنوات";
+    const channelsText = missionChannels.length > 1 ? channelsCountAr(missionChannels.length) : onPage ? "الصفحة المحددة" : "القناة المحددة";
     const topic = typeof params.topic === "string" && params.topic.trim() ? ` عن «${params.topic.trim()}»` : "";
     return `سحب تعليقات ${ranking} من ${channelsText} على ${platform}${topic}، حتى ${formatNumber(volume)} تعليقاً إجمالاً`;
   }
