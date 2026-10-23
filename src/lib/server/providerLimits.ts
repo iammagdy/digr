@@ -260,6 +260,16 @@ export async function readUserSpendToday(client: any, userId: string): Promise<n
   return total;
 }
 
+/** This job's recorded provider spend so far (USD). Read only; an unreadable store counts as 0 (the daily limit still applies). */
+export async function readJobSpendUsd(client: any, jobId: string): Promise<number> {
+  try {
+    const { data: jobRows } = await selectAllRows(() => client.from("provider_costs").select("cost_usd").eq("provider", "treg").eq("job_id", jobId), { orderBy: "id" });
+    return sumCost(jobRows);
+  } catch {
+    return 0;
+  }
+}
+
 /** Real recorded provider spend (read-only): this job so far, and this user today across their jobs. */
 export async function readSpendForCeilings(client: any, ids: { jobId: string; userId: string }): Promise<{ jobUsd: number; userTodayUsd: number }> {
   try {

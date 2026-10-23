@@ -2,6 +2,7 @@ import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName }
 import { MIN_MEANINGFUL_CHARS, meaningfulChars } from "./commentQuality";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { hasRegionEvidence, hasTopicEvidence, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
+import { isCompanyDirectoryJob } from "./directoryCapability";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 import { isChainSlug } from "../multiProvider/routes";
 import { rowPassesGate } from "../multiProvider/policy";
@@ -170,7 +171,7 @@ export function evaluateResearchRowRelevance(
       ? { decision: "match", reasonAr: "حقول التواصل المطلوبة متحقَّق منها" }
       : { decision: "no_match", reasonAr: "لم يكتمل التحقق من حقول التواصل المطلوبة؛ لم يُسلَّم السجل ولم يُحتسب" };
   }
-  const companyCapability = /compan|company|icypeas/i.test(`${capabilitySlug} ${endpointId}`);
+  const companyCapability = isCompanyDirectoryJob(capabilitySlug, endpointId, params);
 
   if (companyCapability) {
     const industry = String(params.industry || params.search || topicFromParams(params) || "").trim();
