@@ -147,13 +147,22 @@ function detectChannelRef(text: string, urls: SocialUrl[]): string | null {
   return handle ? `@${handle}` : null;
 }
 
+/** True when the text names a subject once the trend, request and platform words are removed. */
+function namesTopicBesidesTrend(text: string): boolean {
+  const withoutTrend = text.replace(new RegExp(`[\\p{L}]*(?:${TREND_WORDS_RE.source})[\\p{L}]*`, "giu"), " ");
+  return topicTokens(withoutTrend).length > 0;
+}
+
 export function detectSocialIntent(text: string): SocialIntent {
   const body = text || "";
   const urls = extractUrls(body);
   const platform = detectPlatform(body, urls);
   // On X, «posts and their replies» is one posts collection; only the other comment words make it a comments request.
   const wantsComments = (platform === "x" ? COMMENT_WORDS_NO_REPLIES_RE : COMMENT_WORDS_RE).test(body);
-  const wantsTrending = TREND_WORDS_RE.test(body);
+  // A trend word with a topic («الأكثر انتشارًا عن كرة السلة») asks for the popular videos OF that topic: a topic search. The trending feed
+  // has no topic filter, so routing it there would drop the topic and read unrelated videos. Trend words alone stay the trending feed.
+  const trendWithTopic = TREND_WORDS_RE.test(body) && namesTopicBesidesTrend(body);
+  const wantsTrending = TREND_WORDS_RE.test(body) && !trendWithTopic;
   const wantsPosts = POST_WORDS_RE.test(body);
   const wantsXTweets = platform === "x" && (X_POST_WORDS_RE.test(body) || POST_WORDS_RE.test(body));
   const wantsVideos = VIDEO_WORDS_RE.test(body);
@@ -195,6 +204,10 @@ export function detectSocialIntent(text: string): SocialIntent {
   } else if (wantsPosts && platform === "facebook") {
     task = "page_posts";
     discover = channelRef ? "channel" : "keyword";
+  } else if (trendWithTopic && (platform === "tiktok" || platform === "youtube" || platform === "x")) {
+    // «ترند كرة السلة على تيك توك»: the popular items of a topic are searched by that topic.
+    task = platform === "x" ? "x_posts" : "video_search";
+    discover = "keyword";
   }
 
   return { platform, wantsComments, wantsTrending, targetUrl, channelRef, task, discover, videosWithComments };
@@ -263,7 +276,7 @@ const TOPIC_NOISE = new Set([
   "قناة", "حساب", "صفحة", "رابط", "ريلز", "شورتس", "الفيس", "اليوم", "النهاردة", "حاليا", "حالياً", "دلوقتي", "الان", "الآن", "اخر", "آخر", "جديد",
   // magnitude words of a count («٥ آلاف تعليق», «مليون منشور») are quantity, never subject
   "ألف", "الف", "آلاف", "الاف", "ألفين", "الفين", "مليون", "مليونين", "ملايين", "مليار", "بليون",
-  "عدد", "كام", "كم", "رقم", "حوالي", "تقريبا", "تقريباً", "لكل", "ولكل", "بتاع", "بتاعت", "بتاعه", "خاص", "خاصة", "الخاصة", "الخاص", "مع",
+  "أحدث", "احدث", "الأحدث", "الاحدث", "عدد", "كام", "كم", "رقم", "حوالي", "تقريبا", "تقريباً", "لكل", "ولكل", "بتاع", "بتاعت", "بتاعه", "بتاعتها", "بتاعها", "بتاعتهم", "بتاعهم", "بتوعها", "بتوعهم", "ثم", "خاص", "خاصة", "الخاصة", "الخاص", "مع",
   // Discovery answers are merged with the original request. Time-window labels must not leak into
   // the provider topic (for example: "كرة السلة الفترة المطلوبة شهر").
   "فترة", "الفترة", "زمنية", "الزمنية", "مطلوبة", "المطلوبة", "اسبوع", "أسبوع", "الشهر", "شهر", "اشهر", "أشهر", "سنة", "سنوات",

@@ -79,6 +79,7 @@ import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../l
 import { cursorKey, emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, removeRunningSets, runningSetKey, saveRunningSet, type RunningSet } from "../../../../lib/server/jobRunningSet";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
 import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
+import { RECEIVED_SO_FAR_LABEL } from "../../../../lib/activityCounts";
 import {
   DECISION_MAKER_ROUTE_COST_CAP_USD,
   estimateDecisionMakerChunkSpendUsd,
@@ -834,7 +835,7 @@ export async function POST(req: NextRequest) {
     // Social rows (comments, videos) are de-duplicated across pages the same way company rows are: a provider
     // can repeat its first page, and a repeated comment must be neither delivered twice nor billed twice.
     const socialCapability = getSocialCapability(spec.capabilitySlug);
-    const dedupeIdentity = dedupeIdentityFor(isCompanyCapability || isChainJob ? "company" : isPeopleJob ? "person" : "social");
+    const dedupeIdentity = dedupeIdentityFor(isCompanyCapability || isChainJob ? "company" : isPeopleJob ? "person" : socialCapability?.kind === "posts" ? "social_post" : "social");
     let duplicateExcludedCount = 0;
     // Accepted rows of each earlier page (null = unreadable): feeds the stop rule for pages that find nothing.
     const priorBatchUnits: Array<number | null> = Array.from({ length: currentStep }, () => null);
@@ -899,6 +900,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Rows the source returned over the whole job (null when an earlier record did not count them): the page line and the final message show the same total.
+    const receivedSoFar: number | null = currentStep === 0 ? providerRows.length : typeof runningSet?.received === "number" ? runningSet.received + providerRows.length : null;
     let filteredRows = rawRows;
     if (spec.params?.exclusionRules && Array.isArray(rawRows) && rawRows.length > 0) {
       const rules = spec.params.exclusionRules;
@@ -1510,15 +1513,17 @@ export async function POST(req: NextRequest) {
       // A valid but empty answer and "records arrived but none matched the request" are different
       // situations and are explained differently; both release the full reserve with zero charge.
       const receivedFromSource = providerRows.length;
+      // What the customer reads is the job's total, the same number the activity panel shows, never only the last page.
+      const receivedShown = receivedSoFar ?? receivedFromSource;
       const emptyErrorAr = reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
         : reviewBudgetUsedUp && unreviewedRows.length > 0
-        ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، وتم استرداد كامل الرصيد المحجوز دون أي خصم.`
+        ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، وتم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : receivedFromSource > 0
         ? socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
-          ? `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
-          : `استلمنا ${toArabicDigits(receivedFromSource)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
+          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.${videoSelectionReviewed > 0 ? ` ${NO_CONFIRMED_VIDEO_HINT_AR}` : ""}`
+          : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
         ? videoSelectionUnreviewed
           ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
@@ -1530,6 +1535,22 @@ export async function POST(req: NextRequest) {
         // The search for videos found none, so no comments were asked for: say that, not «no matching data».
         ? `لم يجد البحث أي فيديو عن موضوعك على ${socialCapability.platform === "youtube" ? "يوتيوب" : socialCapability.platform === "tiktok" ? "تيك توك" : "المنصة"} الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.`
         : "لم يُعثر على أي بيانات مطابقة من المصدر؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.";
+      // The page that ends the job with nothing delivered leaves its own line too, so the panel counts it like every other page.
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: [
+            `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(providerRows.length)} سجل`,
+            currentStep > 0 && receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(receivedSoFar)}` : null,
+            "الجديد ٠",
+          ].filter(Boolean).join(" · "),
+          units: 0,
+          event_type: "progress",
+        });
+      } catch (evtErr: any) {
+        console.warn("[worker:page_summary_event_warning]", evtErr?.message || "");
+      }
       const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
       if (!rel.confirmed) {
         return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -1556,6 +1577,7 @@ export async function POST(req: NextRequest) {
       cursor: adapterResult.nextCursor,
       batchUnits: acceptedRows.length,
       rawRowsCount: rawPageRowCount,
+      receivedRows: providerRows.length,
       ...(undatedFieldSample.length > 0 ? { undatedFieldSample } : {}),
       ...(dateSummary ? { dateWindow: { missing: dateSummary.missing, outside: dateSummary.outside, inside: dateSummary.inside, ...(videoBasisRows > 0 ? { videoBasis: videoBasisRows } : {}), oldest: dateSummary.oldest, newest: dateSummary.newest, sampleDates: dateSummary.sampleDates } } : {}),
       baselineExcludedCount: duplicateExcludedCount,
@@ -1669,7 +1691,8 @@ export async function POST(req: NextRequest) {
             ? "توقف جلب صفحات إضافية بعد بلوغ الحد اليومي الآمن"
             : providerFailedAfterDelivery
               ? "توقف جلب صفحات إضافية لتعذر الوصول إلى المصدر"
-              : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(rawPageRowCount)} سجل`,
+              : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(providerRows.length)} سجل`,
+          currentStep > 0 && receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(receivedSoFar)}` : null,
           `الجديد ${toArabicDigits(acceptedRows.length)}`,
           `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
           duplicateExcludedCount ? `مكرر أو مستبعد ${toArabicDigits(duplicateExcludedCount)}` : null,

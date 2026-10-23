@@ -5,6 +5,9 @@ import { normalizeEasternArabicDigits } from "./arabicNumbers";
  * مكرر أو مستبعد ٧ · قيد المراجعة ٤٠ · ...»). Display only: the counts come from the lines the worker already wrote, never from a guess.
  * `received` and `underReview` are null until a page line says so (an empty panel shows a dash, not a zero).
  */
+/** The label of the running total of received records the worker writes on every page line after the first. */
+export const RECEIVED_SO_FAR_LABEL = "المستلم حتى الآن";
+
 export interface ActivityCounts {
   /** Records the source returned, over every page line. */
   received: number | null;
@@ -24,11 +27,16 @@ export function summarizeActivityCounts(events: Array<{ textAr: string }> | null
   let underReview: number | null = null;
   let fromPages = 0;
   let fromAudit = 0;
+  // The panel reads only the newest events, so the page lines of a long job are not all there: the newest running total wins over a sum of
+  // the lines that are. A job from before the total was written is summed as it always was.
+  let runningTotal: number | null = null;
   for (const event of events || []) {
     const text = normalizeEasternArabicDigits(String(event.textAr || ""));
     if (/^\s*الصفحة\s+\d+/.test(text)) {
       const got = numberAfter(text, "استلمنا");
       if (got !== null) received = (received ?? 0) + got;
+      const total = numberAfter(text, RECEIVED_SO_FAR_LABEL);
+      if (total !== null) runningTotal = Math.max(runningTotal ?? 0, total);
       const held = numberAfter(text, "قيد المراجعة");
       if (held !== null) underReview = (underReview ?? 0) + held;
     }
@@ -38,5 +46,5 @@ export function summarizeActivityCounts(events: Array<{ textAr: string }> | null
     if (audit && audit[1]) fromAudit += parseInt(audit[1], 10);
   }
   // Per-page lines already include every exclusion of that page, so they win over the separate audit line.
-  return { received, underReview, excluded: fromPages > 0 ? fromPages : fromAudit };
+  return { received: runningTotal !== null ? Math.max(runningTotal, received ?? 0) : received, underReview, excluded: fromPages > 0 ? fromPages : fromAudit };
 }
