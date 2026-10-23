@@ -223,7 +223,7 @@ describe("the country reaches the source's own filter and the reviewer's brief",
       paginationStrategy: "cursor" as const, cursor: null, pageSize: 20, remainingNeeded: 20, targetVolumeMax: 20, deliveredSoFar: 0,
     });
     await runSocialChunk(input({ query: "كرة القدم", region: "EG", dateFrom: "2026-09-20", dateTo: "2026-10-20" }), { call });
-    expect(seen.find((entry) => entry.endpoint === "tikhub.tiktok.search.videos")!.params).toMatchObject({ keyword: "كرة القدم", offset: 0, region: "EG" });
+    expect(seen.find((entry) => entry.endpoint === "tikhub.tiktok.search.videos")!.params).toMatchObject({ keyword: "كرة القدم مصر", offset: 0, region: "EG" });
     seen.length = 0;
     await runSocialChunk(input({ query: "كرة القدم" }), { call });
     const withoutCountry = seen.find((entry) => entry.endpoint === "tikhub.tiktok.search.videos")!.params;

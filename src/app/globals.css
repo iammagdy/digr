@@ -323,6 +323,11 @@ input::placeholder, textarea::placeholder { color: var(--fnt); }
 @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
 @keyframes spin { to { transform: rotate(360deg) } }
 
+/* «جاري العمل على طلبك»: three dots that rise in turn. The last keyframe is the resting state, so reduced motion (which cuts animations to one
+   instant pass above) leaves the dots still and fully visible. */
+@keyframes run-dots { 0%, 80% { opacity: .3; transform: translateY(0) } 40% { opacity: 1; transform: translateY(-3px) } 100% { opacity: 1; transform: none } }
+.run-dot { animation: run-dots 1.2s ease-in-out infinite; }
+
 /* Extends the tap area to 44px without changing the visual size. */
 .hit { position: relative; }
 .hit::after { content: ""; position: absolute; inset: -7px -4px; }
