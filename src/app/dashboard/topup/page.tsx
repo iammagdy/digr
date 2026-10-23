@@ -17,17 +17,13 @@ import { getSlowFactor } from "@/lib/degradedClient";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import PromoCodeBox from "./PromoCodeBox";
-import { CREDIT_KIND_LABEL_AR, classifyLedgerRow, type CreditKind } from "@/lib/creditKinds";
+import { CREDIT_KIND_LABEL_AR, classifyLedgerRow } from "@/lib/creditKinds";
 import { walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
+import { creditedPointsByTopup, creditedPointsOf, kindOfLedgerRow as kindOf, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
-type LedgerKind = "topup" | "charge" | "refund";
-const kindOf = (row: LedgerRow): LedgerKind => {
-  const kind: CreditKind = classifyLedgerRow({ type: row.type, kind: row.kind });
-  return kind === "release" ? "refund" : kind === "reserve" || kind === "charge" ? "charge" : "topup";
-};
 const ledgerLabel = (row: LedgerRow): string => walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]);
-const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "استرداد"]];
+const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "حجز مُحرَّر"]];
 
 const ipaFromEnv = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
 
@@ -50,6 +46,7 @@ export default function WalletPage() {
 
   const [ledger, setLedger] = useState<LedgerRow[]>([]);
   const [ledgerFailed, setLedgerFailed] = useState(false);
+  const [ledgerLoaded, setLedgerLoaded] = useState(false);
   const [topups, setTopups] = useState<TopupRecord[]>([]);
   const [monthRows, setMonthRows] = useState(0);
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
@@ -115,6 +112,7 @@ export default function WalletPage() {
           jobId: r.jobId, topupId: r.topupId, note: r.note || "", createdAt: r.createdAt,
         })));
         setLedgerFailed(false);
+        setLedgerLoaded(true);
         return;
       }
     } catch { /* fall through to the direct read */ }
@@ -140,6 +138,7 @@ export default function WalletPage() {
       }));
       setLedger(rows);
       setLedgerFailed(false);
+      setLedgerLoaded(true);
     } catch {
       setLedgerFailed(true);
     }
@@ -232,49 +231,17 @@ export default function WalletPage() {
   }, [user, hasPendingTopup, loadTopups, refreshBalance, loadLedger]);
 
   /* month figures + held points from the ledger */
-  const stats = useMemo(() => {
-    const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);
-    const inMonth = (r: LedgerRow) => new Date(r.createdAt) >= start;
-    const byJob = new Map<string, { reserve: number; release: number; charge: number; releaseInMonth: boolean }>();
-    for (const r of ledger) {
-      if (!r.jobId) continue;
-      const j = byJob.get(r.jobId) ?? { reserve: 0, release: 0, charge: 0, releaseInMonth: false };
-      if (r.type === "reserve") j.reserve += Math.abs(r.delta);
-      if (r.type === "release") { j.release += Math.abs(r.delta); j.releaseInMonth = inMonth(r); }
-      if (r.type === "charge") j.charge += Math.abs(r.delta);
-      byJob.set(r.jobId, j);
-    }
-    let held = 0, refunded = 0, refundJobs = 0;
-    for (const j of byJob.values()) {
-      if (j.reserve > 0 && j.release === 0) held += j.reserve;
-      if (j.releaseInMonth) {
-        const back = Math.max(0, j.release - j.charge);
-        if (back > 0) { refunded += back; refundJobs += 1; }
-      }
-    }
-    const charged = ledger.filter((r) => r.type === "charge" && inMonth(r)).reduce((a, r) => a + Math.abs(r.delta), 0);
-    return { held, refunded, refundJobs, charged };
-  }, [ledger]);
+  const stats = useMemo(() => walletMonthStats(ledger), [ledger]);
 
   const available = balance.status === "ready" ? balance.value! : null;
   const total = (available ?? 0) + stats.held;
   const pendingCount = topups.filter((t) => t.status === "pending").length;
-  const creditsByTopup = new Map<string, number>();
-  for (const row of ledger) {
-    if (row.type === "topup" && row.topupId && row.delta > 0) {
-      creditsByTopup.set(row.topupId, (creditsByTopup.get(row.topupId) || 0) + row.delta);
-    }
-  }
-  const displayTopups = topups.map((topup) => ({
-    ...topup,
-    credits: topup.credits && topup.credits > 0 ? topup.credits : creditsByTopup.get(topup.$id) ?? topup.credits,
-  }));
-  const displaySubmitted = submitted ? {
-    ...submitted,
-    credits: submitted.credits && submitted.credits > 0 ? submitted.credits : creditsByTopup.get(submitted.$id) ?? submitted.credits,
-  } : null;
+  /* points an approved top-up credited, read from its ledger row (approve_topup_atomic writes it as top_<id> with no topup_id) */
+  const creditsByTopup = creditedPointsByTopup(ledger);
+  const displayTopups = topups.map((topup) => ({ ...topup, credits: creditedPointsOf(topup, creditsByTopup) }));
+  const displaySubmitted = submitted ? { ...submitted, credits: creditedPointsOf(submitted, creditsByTopup) } : null;
 
-  const visibleLedger = ledger.filter((r) => r.type !== undefined && (ledFilter === "all" || kindOf(r) === ledFilter));
+  const visibleLedger = visibleLedgerRows(ledger, ledFilter);
 
   const scrollToForm = () => {
     setSubmitted(null);
@@ -313,9 +280,9 @@ export default function WalletPage() {
             </div>
           </div>
           <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
-            <p className="m-0 text-xs text-mut">رجع لرصيدك هذا الشهر</p>
-            <p className="m-0 text-2xl font-medium text-goldT" dir="ltr" style={{ textAlign: "right" }}>+{formatAr(stats.refunded)}</p>
-            <p className="m-0 text-[11px] text-fnt">فرق الحجز من {searchesAr(stats.refundJobs)}</p>
+            <p className="m-0 text-xs text-mut">محجوز ومُحرَّر هذا الشهر</p>
+            <p className="m-0 text-2xl font-medium text-ink">{formatAr(stats.releasedHold)}</p>
+            <p className="m-0 text-[11px] text-fnt">حجز مؤقت رُفع ولم يُخصم، من {searchesAr(stats.releasedJobs)}</p>
           </div>
           <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
             <p className="m-0 text-xs text-mut">خُصم هذا الشهر</p>
@@ -360,11 +327,11 @@ export default function WalletPage() {
             <h3 className="mb-1.5 mt-0 text-[15px] font-medium text-ink">طلبات الشحن</h3>
             {displayTopups.map((t) => {
               const b = statusBadge(t.status);
-              const pts = t.status === "approved" ? (t.credits ?? 0) : Math.floor(t.amountEgp / creditValue);
+              const pts = t.status === "approved" ? t.credits : Math.floor(t.amountEgp / creditValue);
               return (
                 <div key={t.$id} className="flex items-center gap-3.5 border-b border-ln py-3.5">
                   <div className="min-w-0 flex-1">
-                    <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م · {pointsAr(pts)}</p>
+                    <p className="m-0 text-[15px] text-ink">{formatAr(t.amountEgp)} ج.م{pts === null ? "" : ` · ${pointsAr(pts)}`}</p>
                     <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt"><span dir="ltr" className="inline-block max-w-[140px] truncate align-bottom font-mono text-[11px]" title={t.reference}>{t.reference.length > 20 ? t.reference.slice(0, 16) + "…" : t.reference}</span> · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
                     {t.status === "rejected" && t.rejectReason && <p className="mb-0 mt-1.5 text-xs leading-[1.7] text-bad">سبب الرفض: {t.rejectReason}</p>}
                   </div>
@@ -410,7 +377,8 @@ export default function WalletPage() {
               </div>
             );
           })}
-          {!ledgerFailed && visibleLedger.length === 0 && <p className="py-6 text-center text-[13px] font-light text-fnt">لا توجد حركات بعد.</p>}
+          {!ledgerFailed && !ledgerLoaded && <p className="py-6 text-center text-[13px] font-light text-fnt">جارٍ تحميل الحركات…</p>}
+          {!ledgerFailed && ledgerLoaded && visibleLedger.length === 0 && <p className="py-6 text-center text-[13px] font-light text-fnt">لا توجد حركات بعد.</p>}
         </div>
       </div>
     </div>

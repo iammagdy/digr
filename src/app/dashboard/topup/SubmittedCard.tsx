@@ -12,18 +12,19 @@ export default function SubmittedCard({
   topup, creditValue, onBack, onContinue,
 }: { topup: TopupRecord; creditValue: number; onBack: () => void; onContinue: () => void }) {
   const st = topup.status;
-  const pts = st === "approved" ? (topup.credits ?? 0) : Math.floor(topup.amountEgp / creditValue);
+  /* approved: the points the ledger row recorded; never recomputed here, and never shown as ٠ when not known yet */
+  const pts: number | null = st === "approved" ? (topup.credits && topup.credits > 0 ? topup.credits : null) : Math.floor(topup.amountEgp / creditValue);
   const ring = st === "rejected" ? BAD : st === "approved" ? OK : GOLD;
   const icon = st === "rejected" ? "M27 27 L49 49 M49 27 L27 49" : "M24 39 l10 10 l19 -21";
   const stepDef = st === "approved" ? [2, 2, 2] : st === "rejected" ? [2, 3, 0] : [2, 1, 0];
   const labels = ["تم الإرسال", st === "rejected" ? "مرفوض" : "مراجعة الإدارة", "إضافة النقاط"];
-  const title = st === "approved" ? `تم اعتماد الطلب وإضافة ${pointsAr(pts)}` : st === "rejected" ? "تم رفض طلب الشحن" : "تم استلام طلب الشحن بنجاح";
+  const title = st === "approved" ? pts === null ? "تم اعتماد الطلب وإضافة النقاط" : `تم اعتماد الطلب وإضافة ${pointsAr(pts)}` : st === "rejected" ? "تم رفض طلب الشحن" : "تم استلام طلب الشحن بنجاح";
   const sub = st === "approved" ? "أُضيفت النقاط إلى رصيدك ويمكنك استخدامها في أبحاثك الآن." : st === "rejected" ? "راجع سبب الرفض وأرسل طلباً جديداً بإيصال تحويل صحيح ومكتمل." : "سيتم مراجعته واعتماد النقاط لمحفظتك فور التحقق.";
   const badge = statusBadge(st);
   const when = `${formatDate(topup.createdAt)}، ${formatTime(topup.createdAt)}`;
   const rows: Array<[string, string, "rtl" | "ltr"]> = [
     ["المبلغ المحوّل", `${formatAr(st === "approved" && topup.confirmedAmountEgp ? topup.confirmedAmountEgp : topup.amountEgp)} ج.م`, "rtl"],
-    [st === "approved" ? "النقاط المضافة" : "النقاط المتوقعة", `${pointsAr(pts)}`, "rtl"],
+    [st === "approved" ? "النقاط المضافة" : "النقاط المتوقعة", pts === null ? "—" : pointsAr(pts), "rtl"],
     ["اسم المحوِّل", topup.senderName || "—", "rtl"],
     ["رقم الموبايل", topup.senderPhone || "—", "ltr"],
     ["الرقم المرجعي", topup.reference, "ltr"],
