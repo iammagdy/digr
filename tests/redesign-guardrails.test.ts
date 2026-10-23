@@ -146,7 +146,7 @@ describe("data-honesty corrections (PR #11 fixes)", () => {
   });
 
   it("activity timeline never marks stages complete from assumptions", () => {
-    const tl = src("src/app/dashboard/chat/components/ActivityTimeline.tsx");
+    const tl = src("src/app/dashboard/chat/components/ActivityTerminal.tsx");
     expect(tl).not.toMatch(/done:\s*true/);
     expect(tl).toContain("timelineWaitingText");
     expect(tl).toContain("eventLimit");

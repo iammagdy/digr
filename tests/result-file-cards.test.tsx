@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { onRequestFormats, producedFormats } from "../src/lib/producedFormats";
 import { settleTimelineEvents } from "../src/lib/honestDisplay";
-import ActivityTimeline from "../src/app/dashboard/chat/components/ActivityTimeline";
+import ActivityTerminal from "../src/app/dashboard/chat/components/ActivityTerminal";
 import { FilesSection } from "../src/app/dashboard/chat/components/RunSections";
 
 const noop = () => {};
@@ -109,8 +109,8 @@ describe("A6: a finished run clears the stale «collecting / preparing» status"
   });
 
   it("the rendered timeline of a completed job has no «جاري» line left", () => {
-    const html = renderToStaticMarkup(createElement(ActivityTimeline as any, {
-      status: "done", events, rowsCollected: 2, requestedRows: 2, spentPoints: 1, reservedPoints: 0,
+    const html = renderToStaticMarkup(createElement(ActivityTerminal as any, {
+      status: "done", events, rowsCollected: 2, requestedRows: 2, chargedPoints: 1, reservedPoints: 0,
     }));
     expect(html).toContain("تم إكمال استخراج");
     expect(html).not.toContain("جاري تجهيز ملفات النتائج");
@@ -118,8 +118,8 @@ describe("A6: a finished run clears the stale «collecting / preparing» status"
   });
 
   it("the rendered timeline of a running job still shows its progress lines", () => {
-    const html = renderToStaticMarkup(createElement(ActivityTimeline as any, {
-      status: "running", events, rowsCollected: 1, requestedRows: 2, spentPoints: 0, reservedPoints: 1,
+    const html = renderToStaticMarkup(createElement(ActivityTerminal as any, {
+      status: "running", events, rowsCollected: 1, requestedRows: 2, chargedPoints: 0, reservedPoints: 1,
     }));
     expect(html).toContain("جاري تجهيز ملفات النتائج");
   });

@@ -15,7 +15,7 @@ import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
 import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
-import { withXCountryTerms, withXDateOperators } from "./xSearchWindow";
+import { withTopicCountryWord, withXCountryTerms, withXDateOperators } from "./xSearchWindow";
 import { regionNameAr } from "./regionNames";
 import type { YoutubeRecency } from "./youtubeRecency";
 import { rowDateMs } from "./server/dateRangeFilter";
@@ -253,7 +253,7 @@ const TIKTOK_SEARCH: SocialSource[] = [
     maxPerCall: 20,
     paging: "offset",
     // The country goes to the source's own `region` filter when the request names one: it is the only place the source can apply it.
-    build: (r) => (r.query ? { keyword: r.query, count: Math.min(20, Math.max(1, r.limit)), offset: Number(r.cursor || 0), ...(r.region ? { region: r.region } : {}) } : null),
+    build: (r) => (r.query ? { keyword: withTopicCountryWord(r.query, r.region), count: Math.min(20, Math.max(1, r.limit)), offset: Number(r.cursor || 0), ...(r.region ? { region: r.region } : {}) } : null),
     nextCursor: (rowCount, r) => (rowCount > 0 ? String(Number(r.cursor || 0) + rowCount) : null),
   },
   {
@@ -265,7 +265,7 @@ const TIKTOK_SEARCH: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 20,
     paging: "cursor",
-    build: (r) => (r.query ? { query: r.query, ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
+    build: (r) => (r.query ? { query: withTopicCountryWord(r.query, r.region), ...(r.cursor ? { cursor: r.cursor } : {}) } : null),
   },
 ];
 
@@ -329,7 +329,7 @@ const YOUTUBE_SEARCH: SocialSource[] = [
     requiresSession: false,
     maxPerCall: 20,
     paging: "none",
-    build: (r) => (r.query ? { query: r.query, limit: Math.min(20, Math.max(1, r.limit)) } : null),
+    build: (r) => (r.query ? { query: withTopicCountryWord(r.query, r.region), limit: Math.min(20, Math.max(1, r.limit)) } : null),
   },
   {
     endpointId: "tikhub.youtube.search.videos",
@@ -341,7 +341,7 @@ const YOUTUBE_SEARCH: SocialSource[] = [
     maxPerCall: 20,
     paging: "none",
     recency: true,
-    build: (r) => (r.query ? { keyword: r.query, ...(r.recency?.upload_date ? { upload_date: r.recency.upload_date } : {}), ...(r.recency ? { sort_by: r.recency.sort_by } : {}) } : null),
+    build: (r) => (r.query ? { keyword: withTopicCountryWord(r.query, r.region), ...(r.recency?.upload_date ? { upload_date: r.recency.upload_date } : {}), ...(r.recency ? { sort_by: r.recency.sort_by } : {}) } : null),
   },
 ];
 
@@ -860,6 +860,14 @@ export function xCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, 
   return name ? `، ولأن إكس لا يتيح تحديد الدولة يقتصر البحث على المنشورات التي تذكر ${name} أو ما يُنسب إليها` : "";
 }
 
+/** YouTube and TikTok topic searches carry the country's name in the search text when a country was asked for: the plan says so. Empty otherwise. */
+export function topicCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, any>): string {
+  if (cap.platform !== "youtube" && cap.platform !== "tiktok") return "";
+  if (cap.kind !== "comments" && cap.kind !== "videos") return "";
+  const name = regionNameAr(params?.region);
+  return name ? `، ويُضاف اسم الدولة (${name}) إلى كلمات البحث ليقتصر على الفيديوهات التي تخصها` : "";
+}
+
 export function socialPlanSummaryAr(
   cap: SocialCapabilityDef,
   params: Record<string, any>,
@@ -892,9 +900,9 @@ export function socialPlanSummaryAr(
       return `سحب ${what} للرابط المحدد على ${platform}`;
     case "query":
       return cap.kind === "comments"
-        ? `سحب ${what} من ${videoCountPhrase(params, platform)} عن «${query}»${commentLimit}`
+        ? `سحب ${what} من ${videoCountPhrase(params, platform)} عن «${query}»${topicCountryNoteAr(cap, params)}${commentLimit}`
         // On X the replies come with the search when the source returns them; the plan says so instead of promising them.
-        : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}${xCountryNoteAr(cap, params)}`;
+        : `سحب ${what} على ${platform} عن «${query}»${cap.platform === "x" && requestText && wantsReplies(requestText) ? "، مع ردودها إن أعادها المصدر" : ""}${xCountryNoteAr(cap, params)}${topicCountryNoteAr(cap, params)}`;
     case "channel":
       return cap.kind === "comments"
         ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${commentLimit}`

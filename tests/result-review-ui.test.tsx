@@ -13,7 +13,7 @@ describe("result review UI contracts (release branch)", () => {
   const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
   const sidebar = readFileSync("src/components/app/AppShell.tsx", "utf8");
   const quote = readFileSync("src/app/dashboard/chat/components/PlanQuoteCard.tsx", "utf8");
-  const activity = readFileSync("src/app/dashboard/chat/components/ActivityTimeline.tsx", "utf8");
+  const activity = readFileSync("src/app/dashboard/chat/components/ActivityTerminal.tsx", "utf8");
 
   it("shows the review comparison and user-controlled keep/edit actions", () => {
     expect(canvas).toContain("مراجعة النتيجة");

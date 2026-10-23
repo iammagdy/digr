@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
-import { sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
+import { deriveLiveActivitySnapshot, sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
 import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
-import { normalizeEasternArabicDigits } from "@/lib/arabicNumbers";
-import { settleTimelineEvents } from "@/lib/honestDisplay";
+import { summarizeActivityCounts } from "@/lib/activityCounts";
+import { settleTimelineEvents, timelineWaitingText } from "@/lib/honestDisplay";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
+import RunningIndicator from "./RunningIndicator";
 
 const FORMAT_LABEL_AR: Record<ResultFormat, string> = { xlsx: "إكسل", pdf: "بي دي إف", csv: "سي إس في" };
 
@@ -31,6 +32,8 @@ interface ActivityTerminalProps {
   onDownload?: (ext: "xlsx" | "pdf" | "csv") => void;
   /** Stored file ids of the finished job; a missing id means that format was not produced. */
   fileIds?: ResultFileIds | null;
+  /** Number of events fetched in this read; shown so a limited history is never mistaken for complete. */
+  eventLimit?: number;
 }
 
 const clock = (iso?: string) => {
@@ -53,7 +56,7 @@ const PHASE_LABELS: Record<string, { label: string; badgeClass: string; dotClass
   running: {
     label: "جاري التنفيذ",
     badgeClass: "bg-sf border border-ln text-ink",
-    dotClass: "bg-teal animate-pulse",
+    dotClass: "bg-ac animate-pulse",
   },
   done: {
     label: "اكتمل بنجاح",
@@ -84,26 +87,16 @@ export default function ActivityTerminal({
   onClose,
   onDownload,
   fileIds,
+  eventLimit,
 }: ActivityTerminalProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAutoScrollActive = useRef(true);
   const [userScrolledUp, setUserScrolledUp] = useState(false);
 
-  // Parse duplicates removed from events if not explicitly passed. Events carry Arabic-Indic digits.
-  // Per-page lines already include every exclusion of that page, so they win over the separate audit line.
-  let effectiveDuplicates = duplicatesRemoved;
-  if (!effectiveDuplicates && events) {
-    let fromPages = 0;
-    let fromAudit = 0;
-    for (const ev of events) {
-      const text = normalizeEasternArabicDigits(ev.textAr);
-      const page = text.match(/مكرر أو مستبعد\s+(\d+)/);
-      if (page && page[1]) fromPages += parseInt(page[1], 10);
-      const audit = text.match(/استبعاد\s+(\d+)\s+سجل\s+مكرر/);
-      if (audit && audit[1]) fromAudit += parseInt(audit[1], 10);
-    }
-    effectiveDuplicates = fromPages > 0 ? fromPages : fromAudit;
-  }
+  // Counts come from the page lines the run already wrote (Arabic-Indic digits are read back). An explicit duplicates count wins.
+  const counts = summarizeActivityCounts(events);
+  const effectiveDuplicates = duplicatesRemoved || counts.excluded;
+  const isLive = status === "running" || status === "queued";
 
   // Handle user scroll detection
   const handleScroll = () => {
@@ -137,41 +130,37 @@ export default function ActivityTerminal({
     ? { ...basePhase, label: REQUEST_STATUS_LABEL_AR[finishedKind], dotClass: finishedKind === "partial" ? "bg-gold" : basePhase.dotClass }
     : basePhase;
 
-  // Fallback initial event when events list is empty
-  const settledEvents = events ? settleTimelineEvents(events, status) : events;
-  const displayEvents: TerminalEvent[] =
-    settledEvents && settledEvents.length > 0
-      ? settledEvents
-      : [
-          {
-            $id: "init_default",
-            textAr: "تم قبول الطلب وجاري بدء التنفيذ...",
-            kind: "info",
-            createdAt: new Date().toISOString(),
-          },
-        ];
+  // The failure panel below renders the final, customer-safe reason, so its duplicate error event is left out of the list.
+  const settledEvents = settleTimelineEvents(status === "failed" && errorAr ? events.filter((e) => e.kind !== "error") : events, status);
+  const displayEvents: TerminalEvent[] = settledEvents && settledEvents.length > 0 ? settledEvents : [];
+  const liveSnapshot = deriveLiveActivitySnapshot({ events: displayEvents, rowsCollected, chargedCredits: chargedPoints, reservedCredits: reservedPoints, status });
+  const spent = liveSnapshot.spentPoints ?? chargedPoints ?? 0;
+  const reserved = liveSnapshot.reservedPoints ?? reservedPoints;
+  const scopeNote = eventLimit !== undefined && displayEvents.length > 0 && events.length >= eventLimit ? `يعرض أحدث ${formatAr(eventLimit)} حدثًا مسجَّلًا.` : null;
+  // While the review runs the accepted count is still being decided: it is shown as a plain count with a note, never as a shortfall.
+  const acceptedNote = isLive && (counts.underReview ?? 0) > 0 ? "بعد انتهاء المراجعة" : requestedRows ? `من ${formatAr(requestedRows)} مطلوب` : null;
 
   return (
     <div
       dir="rtl"
-      className="flex h-full w-full flex-col overflow-hidden bg-sf text-ink font-sans antialiased select-text"
+      className="flex h-full w-full min-w-0 flex-col overflow-hidden bg-sf text-ink font-sans antialiased select-text"
     >
       {/* 1. Panel Header */}
-      <div className="flex shrink-0 flex-col border-b border-ln bg-sf2 px-4 py-3">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-2.5 w-2.5 rounded-full relative">
+      <div className="flex shrink-0 flex-col border-b border-ln bg-sf2 px-3 py-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="flex h-2 w-2 shrink-0 rounded-full relative">
               <span className={`h-full w-full rounded-full ${phase.dotClass}`} />
             </span>
             <span className="text-xs font-semibold text-ink">سجل النشاط والتنفيذ</span>
             <span
-              className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium leading-none ${phase.badgeClass}`}
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-none ${phase.badgeClass}`}
             >
               {phase.label}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-1.5">
             {onClose && (
               <button
                 type="button"
@@ -187,28 +176,29 @@ export default function ActivityTerminal({
           </div>
         </div>
 
-        {/* Real-time KPI Summary */}
-        <div className="mt-3 grid grid-cols-3 gap-2 rounded-2xl border border-ln bg-sf p-2.5 text-center text-xs">
-          <div className="flex flex-col items-center justify-center">
-            <span className="text-[11px] text-mut">المقبول الفريد</span>
-            <span className="mt-0.5 text-xs font-semibold text-ink">
-              {formatAr(rowsCollected)}
-              {requestedRows ? ` / ${formatAr(requestedRows)}` : ""}
-            </span>
+        {/* Real-time summary: what the source returned, what waits for review, what was accepted, and the points */}
+        <div className="mt-2 grid grid-cols-4 gap-1 rounded-xl border border-ln bg-sf p-1.5 text-center" data-testid="activity-kpis">
+          <div className="flex min-w-0 flex-col items-center justify-center" data-testid="kpi-received">
+            <span className="text-[10px] leading-4 text-mut">استلمنا</span>
+            <span className="text-xs font-semibold leading-5 text-ink">{counts.received === null ? "—" : formatAr(counts.received)}</span>
           </div>
 
-          <div className="flex flex-col items-center justify-center border-x border-ln">
-            <span className="text-[11px] text-mut">التكرار المستبعد</span>
-            <span className="mt-0.5 text-xs font-semibold text-ink">
-              {formatAr(effectiveDuplicates)}
-            </span>
+          <div className="flex min-w-0 flex-col items-center justify-center border-s border-ln" data-testid="kpi-under-review">
+            <span className="text-[10px] leading-4 text-mut">قيد المراجعة</span>
+            <span className="text-xs font-semibold leading-5 text-ink">{counts.underReview === null ? "—" : formatAr(counts.underReview)}</span>
           </div>
 
-          <div className="flex flex-col items-center justify-center">
-            <span className="text-[11px] text-mut">
+          <div className="flex min-w-0 flex-col items-center justify-center border-s border-ln" data-testid="kpi-accepted">
+            <span className="text-[10px] leading-4 text-mut">المقبول</span>
+            <span className="text-xs font-semibold leading-5 text-ink">{formatAr(rowsCollected)}</span>
+            {acceptedNote && <span className="text-[9px] leading-3 text-fnt" data-testid="kpi-accepted-note">{acceptedNote}</span>}
+          </div>
+
+          <div className="flex min-w-0 flex-col items-center justify-center border-s border-ln" data-testid="kpi-points">
+            <span className="text-[10px] leading-4 text-mut">
               {status === "done" ? "النقاط المخصومة" : "النقاط المحجوزة"}
             </span>
-            <span className="mt-0.5 text-xs font-semibold text-gold">
+            <span className="text-xs font-semibold leading-5 text-gold">
               {status === "done" && typeof chargedPoints === "number"
                 ? formatAr(chargedPoints)
                 : typeof reservedPoints === "number"
@@ -217,59 +207,86 @@ export default function ActivityTerminal({
             </span>
           </div>
         </div>
+        {(effectiveDuplicates > 0 || (typeof reserved === "number" && reserved > 0)) && (
+          <p className="m-0 mt-1.5 text-[11px] leading-4 text-mut" data-testid="activity-caption">
+            {effectiveDuplicates > 0 ? `مكرر أو مستبعد ${formatAr(effectiveDuplicates)}` : ""}
+            {effectiveDuplicates > 0 && typeof reserved === "number" && reserved > 0 ? " · " : ""}
+            {typeof reserved === "number" && reserved > 0 ? `مصروف ${formatAr(spent)} من ${formatAr(reserved)}` : ""}
+          </p>
+        )}
       </div>
 
       {/* 2. Scrolling Events Output */}
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto p-4 text-[13px] leading-relaxed space-y-3"
+        className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 text-xs leading-5"
       >
-        {displayEvents.map((evt, idx) => {
-          const isError = evt.kind === "error";
-          const isProgress = evt.kind === "progress";
-          const isWarning = evt.kind === "warning";
+        {liveSnapshot.capReached && (
+          <p className="mb-2 mt-0 rounded-xl px-3 py-2 text-xs text-ink" style={{ background: "color-mix(in oklab, var(--gold) 10%, transparent)" }}>
+            {liveSnapshot.capReached.messageAr}
+          </p>
+        )}
 
-          const dotColor = isError
-            ? "bg-bad"
-            : isWarning
-            ? "bg-gold"
-            : isProgress
-            ? "bg-teal"
-            : "bg-mut/50";
+        {displayEvents.length === 0 && (
+          <p className="m-0 py-1 text-xs text-mut" data-testid="activity-waiting">{timelineWaitingText(status)}</p>
+        )}
 
-          return (
-            <div
-              key={evt.$id || idx}
-              className="flex items-start gap-2.5 rounded-xl px-2 py-1.5 transition-colors hover:bg-sf2"
-            >
-              <span className="shrink-0 text-fnt select-none text-xs tnum pt-0.5">
-                {clock(evt.createdAt)}
-              </span>
-              <span className={`h-2 w-2 rounded-full shrink-0 mt-1.5 ${dotColor}`} />
-              <span className={`flex-1 break-words leading-relaxed ${isError ? "text-bad font-medium" : "text-ink"}`}>
-                {toArabicDigits(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr))}
-                {typeof evt.count === "number" && evt.count > 0 && (
-                  <span className="mr-1.5 rounded-full bg-sf2 border border-ln px-2 py-0.5 text-[11px] text-mut">
-                    {formatAr(evt.count)}
-                  </span>
-                )}
-              </span>
-            </div>
-          );
-        })}
+        <ol className="m-0 flex list-none flex-col gap-0.5 p-0" data-testid="activity-events">
+          {displayEvents.map((evt, idx) => {
+            const isError = evt.kind === "error";
+            const isProgress = evt.kind === "progress";
+            const isWarning = evt.kind === "warning";
+
+            const dotColor = isError
+              ? "bg-bad"
+              : isWarning
+              ? "bg-gold"
+              : isProgress
+              ? "bg-ac"
+              : "bg-mut/50";
+
+            return (
+              <li
+                key={evt.$id || idx}
+                data-testid="activity-event"
+                className="flex items-start gap-2 rounded-lg px-1.5 py-1 transition-colors hover:bg-sf2"
+              >
+                {/* The time has its own fixed-width box, isolated from the surrounding right-to-left text, so it never touches the line. */}
+                <time
+                  dir="ltr"
+                  dateTime={evt.createdAt}
+                  data-testid="activity-time"
+                  className="tnum w-[3.6rem] shrink-0 select-none pt-px text-start text-[11px] leading-5 text-fnt"
+                  style={{ unicodeBidi: "isolate" }}
+                >
+                  {clock(evt.createdAt)}
+                </time>
+                <span className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`} />
+                <span className={`min-w-0 flex-1 break-words ${isError ? "font-medium text-bad" : "text-ink"}`} data-testid="activity-text">
+                  {toArabicDigits(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr))}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+
+        {scopeNote && <p className="m-0 mt-2 text-[11px] text-fnt">{scopeNote}</p>}
 
         {status === "failed" && errorAr && !displayEvents.some((e) => e.kind === "error" || (errorAr && (e.textAr.includes(errorAr) || errorAr.includes(e.textAr)))) && (
-          <div className="mt-3 rounded-2xl border border-bad/30 bg-bad/5 p-3 text-xs text-bad leading-relaxed">
+          <div className="mt-2 rounded-xl border border-bad/30 bg-bad/5 p-2.5 text-xs text-bad leading-5">
             {sanitizeActivityError(errorAr)}
           </div>
         )}
 
         {status === "done" && (
-          <div className="mt-3 rounded-2xl border border-ln bg-sf2 p-3 text-xs text-ink leading-relaxed">
+          <div className="mt-2 rounded-xl border border-ln bg-sf2 p-2.5 text-xs text-ink leading-5">
             تم استخراج السجلات وإعداد ملفات النتائج وتوثيقها بنجاح.
           </div>
         )}
+
+        {/* In-progress sign at the bottom of the list: only while the request runs, gone when it ends or fails. */}
+        {isLive && <RunningIndicator className="mt-2 px-1.5 py-1" />}
       </div>
 
       {/* User Scrolled Up Pill */}
@@ -287,7 +304,7 @@ export default function ActivityTerminal({
 
       {/* 3. Footer Actions (when completed) */}
       {status === "done" && onDownload && (
-        <div className="shrink-0 border-t border-ln bg-sf2 p-3.5">
+        <div className="shrink-0 border-t border-ln bg-sf2 p-3">
           <div className="text-xs text-mut mb-2 font-medium">الملفات الجاهزة للتحميل:</div>
           <div className="flex flex-wrap gap-2">
             {producedFormats(fileIds).map((ext) => (

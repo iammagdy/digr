@@ -139,7 +139,7 @@ export async function judgeVideos(input: {
 }
 
 /** One line for the activity log: how many videos were selected and why the others were not. Arabic only, Arabic-Indic digits. */
-export function videoSelectionEventAr(judgements: Iterable<VideoJudgement>): string {
+export function videoSelectionEventAr(judgements: Iterable<VideoJudgement>, options: { carried?: boolean } = {}): string {
   let matched = 0, excluded = 0, held = 0;
   let firstOffReason = "";
   for (const judgement of judgements) {
@@ -149,7 +149,7 @@ export function videoSelectionEventAr(judgements: Iterable<VideoJudgement>): str
   }
   const parts = [`اعتمدنا ${toArabicDigits(matched)} فيديو`];
   if (excluded > 0) parts.push(`واستبعدنا ${toArabicDigits(excluded)} لأنها لا تتناول موضوعك${firstOffReason ? ` (${firstOffReason})` : ""}`);
-  if (held > 0) parts.push(`وأحلنا ${toArabicDigits(held)} إلى المراجعة لعدم التأكد من موضوعها`);
+  if (held > 0) parts.push(options.carried ? `وسنقرأ تعليقات ${toArabicDigits(held)} للتحقق من موضوعها` : `وأحلنا ${toArabicDigits(held)} إلى المراجعة لعدم التأكد من موضوعها`);
   return `راجعنا فيديوهات هذه الصفحة: ${parts.join("، ")}.`;
 }
 

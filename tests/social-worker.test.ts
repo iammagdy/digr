@@ -558,6 +558,172 @@ describe("worker: social jobs", () => {
       expect(calls[0]).toBe(VIDEOS.onTopic.id);
     });
   });
+  describe("comments by topic in a country (YouTube, TikTok): videos the title cannot settle are read and judged, the search is widened once, nothing unconfirmed is delivered", () => {
+    const usage = (costUsd: number) => ({ inputTokens: 800, outputTokens: 50, costUsd, model: "claude-haiku-5-5", latencyMs: 20 });
+    const lines = () => db.events.map((event) => String(event.message));
+    const csv = () => db.results.get(`user_1/${JOB}/result.csv`)?.toString("utf-8") ?? "";
+    const id = (name: string) => `vid${name}`.padEnd(11, "x");
+    const arabicComments = (tag: string, n = 4) => Array.from({ length: n }, (_, i) => `تعليق ${tag} رقم ${i + 1} عن الماتش`);
+    type Verdict = "match" | "no_match" | "uncertain" | "missing";
+    type Asked = { kind: string; titleLevel: boolean; rows: Array<{ index: number; row: Record<string, any> }> };
+    const ON_TOPIC_TITLE = "مباراة الأهلي والزمالك في الدوري المصري #كرة_القدم";
+
+    const runYoutube = async (opts: { searches: Array<Array<{ id: string; title: string }>>; commentsOf?: (id: string) => string[]; titleVerdict: (row: Record<string, any>) => Verdict; pageVerdict?: (row: Record<string, any>) => Verdict; params?: Record<string, unknown> }) => {
+      resetDb("social-youtube-comments", opts.params ?? { query: "كرة القدم", region: "EG", perVideo: 30 }, 30, 6);
+      const searches: Array<{ endpoint: string; params: Record<string, any> }> = [];
+      const reads: string[] = [];
+      const known = opts.searches.flat().map((video) => video.id);
+      useSource(async (source, params) => {
+        if (source.endpointId.includes(".search.")) {
+          searches.push({ endpoint: source.endpointId, params });
+          const list = opts.searches[Math.min(searches.length - 1, opts.searches.length - 1)];
+          return ok({ ok: true, rows: list.map((video) => ({ video_id: video.id, title: video.title })) });
+        }
+        const videoId = known.find((candidate) => String(params.video).includes(candidate)) ?? "";
+        reads.push(videoId);
+        return ok({ ok: true, rows: (opts.commentsOf ?? (() => []))(videoId).map((text, i) => ({ comment_id: `${videoId}_${i}`, text, author: "منى" })) });
+      });
+      const asked: Asked[] = [];
+      setStrictSocialReviewForTesting(true);
+      setRowAdvisorForTesting(async (input) => {
+        const titleLevel = !input.rows.some(({ row }) => row.comments_sample);
+        asked.push({ kind: input.kind, titleLevel, rows: input.rows });
+        return {
+          verdicts: new Map(input.rows.flatMap(({ index, row }) => {
+            const v = titleLevel ? opts.titleVerdict(row) : (opts.pageVerdict ?? opts.titleVerdict)(row);
+            return v === "missing" ? [] : [[index, { verdict: v, reasonAr: "تقدير آلي" }]];
+          })),
+          usage: usage(0.002), failure: null,
+        };
+      });
+      const result = await runAllChunks();
+      return { ...result, searches, reads, asked };
+    };
+
+    it("a YouTube job whose videos are ALL unsure: their comments are read, the page review decides per video, only the confirmed video's comments are delivered and charged", async () => {
+      const A = { id: id("a"), title: "ملخص مباراة قوية" };
+      const B = { id: id("b"), title: "ملخص مباراة ثانية" };
+      const C = { id: id("c"), title: "أهداف الجولة" };
+      const out = await runYoutube({
+        searches: [[A, B, C]],
+        commentsOf: (videoId) => arabicComments(videoId),
+        titleVerdict: () => "uncertain",
+        pageVerdict: (row) => (String(row.title) === A.title ? "match" : String(row.title) === B.title ? "no_match" : "uncertain"),
+      });
+      // the title review saw only titles; the unsure videos were NOT dropped: every one of them was read, in the order the search gave
+      expect(out.asked.map((entry) => entry.titleLevel)).toEqual([true, false]);
+      expect(out.asked[0].rows.map(({ row }) => String(row.title))).toEqual([A.title, B.title, C.title]);
+      expect(out.reads).toEqual([A.id, B.id, C.id]);
+      // the comment-level review saw each video with a few of its comments and decided
+      expect(out.asked[1].kind).toBe("social-youtube-comments-video-list");
+      expect(out.asked[1].rows).toHaveLength(3);
+      expect(out.json).toMatchObject({ done: true, deliveredUnits: 4 });
+      expect(out.json.settle.charged_credits).toBe(4 * 6);
+      const delivered = csv();
+      for (let i = 1; i <= 4; i++) expect(delivered).toContain(`تعليق ${A.id} رقم ${i} عن الماتش`);
+      // nothing from the video judged off the topic or still unsure is delivered
+      expect(delivered).not.toContain(B.id);
+      expect(delivered).not.toContain(C.id);
+      const titleLine = lines().find((entry) => entry.includes("راجعنا فيديوهات هذه الصفحة") && entry.includes("وسنقرأ تعليقات"))!;
+      expect(titleLine).toBe("راجعنا فيديوهات هذه الصفحة: اعتمدنا ٠ فيديو، وسنقرأ تعليقات ٣ للتحقق من موضوعها.");
+      // the only line that holds a video is the comment-level one, after the comments were read and the video stayed unsure
+      expect(lines().filter((entry) => entry.includes("أحلنا"))).toEqual(["راجعنا فيديوهات هذه الصفحة: اعتمدنا ١ فيديو، واستبعدنا ١ لأنها لا تتناول موضوعك (تقدير آلي)، وأحلنا ١ إلى المراجعة لعدم التأكد من موضوعها."]);
+    });
+
+    it("every unsure video stays unsure after its comments are read: nothing is delivered, nothing is charged, the whole reserve is released", async () => {
+      const A = { id: id("a"), title: "ملخص مباراة قوية" };
+      const B = { id: id("b"), title: "أهداف الجولة" };
+      const out = await runYoutube({ searches: [[A, B]], commentsOf: (videoId) => arabicComments(videoId), titleVerdict: () => "uncertain" });
+      expect(out.reads).toEqual([A.id, B.id]);
+      expect(out.json.released).toBe(true);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      expect(csv()).not.toContain(A.id);
+    });
+
+    it("the country's name goes into the search text; the plan's own query stays the customer's topic", async () => {
+      const A = { id: id("a"), title: ON_TOPIC_TITLE };
+      const out = await runYoutube({ searches: [[A]], commentsOf: (videoId) => arabicComments(videoId), titleVerdict: () => "match" });
+      expect(out.searches[0].endpoint).toBe("crawl4ai.youtube.search.videos");
+      expect(out.searches[0].params).toEqual({ query: "كرة القدم مصر", limit: 20 });
+      expect(out.asked).toHaveLength(0); // the title names the topic and the country: no review call at all
+      expect(out.json).toMatchObject({ done: true });
+      expect(db.quotes[0].items[0].params.query).toBe("كرة القدم");
+    });
+
+    it("no video approved or held after the first search: ONE wider search (the other source, no country word) is made, its videos are judged, and the on-topic one is read and delivered", async () => {
+      const madrid = { id: id("m"), title: "Real Madrid vs Barcelona highlights goal match" };
+      const onTopic = { id: id("e"), title: ON_TOPIC_TITLE };
+      const out = await runYoutube({
+        searches: [[madrid], [madrid, onTopic]],
+        commentsOf: (videoId) => arabicComments(videoId),
+        titleVerdict: (row) => (/real madrid/i.test(String(row.title)) ? "no_match" : "match"),
+      });
+      expect(out.searches).toHaveLength(2);
+      expect(out.searches[0]).toMatchObject({ endpoint: "crawl4ai.youtube.search.videos", params: { query: "كرة القدم مصر", limit: 20 } });
+      expect(out.searches[1].endpoint).toBe("tikhub.youtube.search.videos");
+      expect(out.searches[1].params).toEqual({ keyword: "كرة القدم" });
+      // the video the first search showed is not judged twice
+      expect(out.asked).toHaveLength(1);
+      expect(out.asked[0].rows.map(({ row }) => String(row.title))).toEqual([madrid.title]);
+      expect(out.reads).toEqual([onTopic.id]);
+      expect(out.json).toMatchObject({ done: true, deliveredUnits: 4 });
+      expect(out.json.settle.charged_credits).toBe(4 * 6);
+      expect(csv()).not.toContain(madrid.id);
+    });
+
+    it("no approved video after the second search either: it stops there (two searches, no comment read) with the whole reserve returned and the plain wording", async () => {
+      const first = [{ id: id("1"), title: "Real Madrid highlights goal" }, { id: id("2"), title: "Barcelona match goal" }];
+      const second = [{ id: id("3"), title: "Arsenal goal highlights" }, { id: id("4"), title: "Chelsea match goal" }];
+      const out = await runYoutube({ searches: [first, second], commentsOf: (videoId) => arabicComments(videoId), titleVerdict: () => "no_match" });
+      expect(out.searches).toHaveLength(2); // ONE wider search, never a third
+      expect(out.reads).toHaveLength(0);
+      expect(out.asked).toHaveLength(2);
+      expect(out.json.released).toBe(true);
+      expect(out.json.chargedCredits).toBe(0);
+      expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
+      expect(out.json.error).toBe("راجعنا ٤ فيديوهات عن بحثك على يوتيوب ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم. جرّب إرسال رابط فيديو أو اسم قناة، أو اكتب موضوعاً أدق.");
+      expect(out.json.error).not.toMatch(/USD|treg|claude|anthropic|crawl4ai|tikhub|[A-Za-z]/i);
+    });
+
+    it("videos nobody could review (no verdict at all) are NOT carried forward: nothing is read, the job says the review could not run", async () => {
+      const A = { id: id("a"), title: "ملخص مباراة قوية" };
+      const out = await runYoutube({ searches: [[A]], commentsOf: (videoId) => arabicComments(videoId), titleVerdict: () => "missing" });
+      expect(out.reads).toHaveLength(0);
+      expect(out.json.released).toBe(true);
+      expect(out.json.error).toBe("تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل.");
+    });
+
+    it("TikTok has the same fixes: the country's name is in the search text, unsure videos are read and judged, and only the confirmed video's comments are delivered", async () => {
+      resetDb("social-tiktok-comments", { query: "كرة القدم", region: "EG", perVideo: 30 }, 30, 6);
+      const videos = [{ id: "7231337071831321911", desc: "ملخص مباراة قوية" }, { id: "7231337071831321912", desc: "أهداف الجولة" }];
+      const searchParams: Array<Record<string, any>> = [];
+      const reads: string[] = [];
+      useSource(async (_source, params) => {
+        if (params.aweme_id) {
+          reads.push(String(params.aweme_id));
+          return ok({ data: { comments: arabicComments(String(params.aweme_id).slice(-2)).map((text, i) => ({ cid: `${params.aweme_id}_${i}`, text, user: { nickname: "منى" } })), cursor: 0, has_more: 0 } });
+        }
+        searchParams.push(params);
+        return ok({ aweme_list: videos.map((video) => ({ aweme_id: video.id, desc: video.desc, share_url: `https://www.tiktok.com/@u/video/${video.id}` })) });
+      });
+      const asked: Asked[] = [];
+      setStrictSocialReviewForTesting(true);
+      setRowAdvisorForTesting(async (input) => {
+        const titleLevel = !input.rows.some(({ row }) => row.comments_sample);
+        asked.push({ kind: input.kind, titleLevel, rows: input.rows });
+        return { verdicts: new Map(input.rows.map(({ index, row }) => [index, { verdict: titleLevel ? "uncertain" : String(row.title) === videos[0].desc ? "match" : "no_match", reasonAr: "تقدير آلي" } as const])), usage: usage(0.002), failure: null };
+      });
+      const out = await runAllChunks();
+      expect(searchParams[0]).toMatchObject({ keyword: "كرة القدم مصر", region: "EG" });
+      expect(asked.map((entry) => entry.titleLevel)).toEqual([true, false]);
+      expect(reads).toEqual(videos.map((video) => video.id));
+      expect(out.json).toMatchObject({ done: true, deliveredUnits: 4 });
+      expect(out.json.settle.charged_credits).toBe(4 * 6);
+      expect(csv()).toContain("تعليق 11 رقم 1 عن الماتش");
+      expect(csv()).not.toContain("تعليق 12 رقم 1 عن الماتش");
+    });
+  });
+
   describe("X posts of a topic search: the rows are presumed on topic, and the doubtful ones need the automatic review", () => {
     const TOPIC = "مباراة مصر والمغرب كأس العالم";
     const ordinary = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `p${i}`, text: `منشور ${i} عن ${TOPIC} في البطولة` }));
