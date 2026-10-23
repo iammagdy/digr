@@ -276,8 +276,9 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
       discoveredNow = fresh.length;
       if (got.length > 0 && fresh.length >= 0) {
         // The stage that delivered the candidates is the last one that was tried and answered.
-        const delivering = [...caps].reverse().find((c) => trace.stage("discover", c.provider, c.id).success > 0);
-        if (delivering) { const t = trace.stage("discover", delivering.provider, delivering.id); t.found += got.length; t.fresh += fresh.length; t.duplicate += got.length - unseen.length; }
+        const delivering = [...caps].reverse().find((c) => (trace.peek("discover", c.id)?.success ?? 0) > 0);
+        const t = delivering ? trace.peek("discover", delivering.id) : undefined;
+        if (delivering && t) { t.found += got.length; t.fresh += fresh.length; t.duplicate += got.length - unseen.length; }
       }
       if (attempted) {
         if (got.length > 0) await deps.emit(discoveryLineAr({ found: got.length, fresh: fresh.length, duplicate: got.length - unseen.length, total: state.taken }), state.out);

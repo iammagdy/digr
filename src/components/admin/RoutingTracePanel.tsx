@@ -66,7 +66,7 @@ export function RoutingTracePanel({ jobId }: { jobId: string }) {
                 {decision.stages.map((s, i) => (
                   <li key={`${s.stage}-${i}`} className="rounded-xl bg-sf p-2.5">
                     <span className="font-semibold text-ink">{STAGE_AR[s.stage] ?? s.stage}</span>
-                    {" · "}{providerLabel(s.provider)} · {capLabel(s.capabilityId)} · حتى {formatAr(s.maxCalls)} استدعاء
+                    {s.capabilityId ? ` · ${providerLabel(s.provider)} · ${capLabel(s.capabilityId)} · حتى ${formatAr(s.maxCalls)} استدعاء` : ""}
                     {s.expectedYield != null ? ` · العائد المتوقع ${formatAr(Math.round(s.expectedYield * 100))}٪ (افتراض)` : ""}
                     {" · "}التكلفة التقديرية {usd(s.estimatedJobUsd)}
                   </li>

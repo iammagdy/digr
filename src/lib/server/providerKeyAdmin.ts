@@ -318,7 +318,7 @@ export async function loadProviderTabState(
   if (provider === "anthropic") noticesAr.push("مزود النموذج الذكي لا يوفّر واجهة لقراءة الرصيد بمفتاح عادي، لذلك لا يظهر رصيد هنا. راجع لوحة المزود مباشرة.");
   if (provider === "firecrawl" || provider === "contextdev") {
     noticesAr.push("الرصيد المعروض هو عدد الرصيد (كريدت) كما يرده المزود نفسه بطلب مجاني، وليس رقمًا تقديريًا.");
-    if (provider === "contextdev") noticesAr.push("قراءة الرصيد وفحص الاتصال لهذا المزود تحتاجان مفتاحًا بصلاحية قراءة السجلات (logs:read). مفتاح بدونها يُرفض هنا.");
+    if (provider === "contextdev") noticesAr.push("قراءة الرصيد تحتاج مفتاحًا بصلاحية قراءة السجلات (logs:read). مفتاح بدونها يظل مقبولًا ويعمل في البحث والقراءة، لكن لا يُعرض رصيده هنا.");
     if (!capUsd) noticesAr.push("لم يُضبط حد يومي لهذا المزود بعد، لذلك لا يُسمح بأي إنفاق عليه حتى تحدده من قسم الحدود.");
   }
 

@@ -84,6 +84,8 @@ describe("routing trace: what each stage did, per chunk, collected by the chain"
     const trace: RoutingTrace = h.traces.reduce((t, c) => mergeChunkTrace(t, c), { v: 1, jobId: "job_trace_1", decision: null, chunks: [] } as RoutingTrace);
     const summary = summarizeTrace(trace);
 
+    // a capability that was never called leaves no line in the trace
+    expect(summary.stages.every((s) => s.stage === "verify" || s.calls > 0)).toBe(true);
     const discover = summary.stages.find((s) => s.stage === "discover")!;
     expect(discover.capabilityId).toBe("contextdev.search");
     expect(discover.provider).toBe("contextdev");

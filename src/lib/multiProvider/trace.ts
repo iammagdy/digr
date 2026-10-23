@@ -108,6 +108,9 @@ export class ChunkTraceCollector {
     return entry;
   }
 
+  /** The stage entry if it exists: a lookup never creates an empty line for a capability that was not used. */
+  peek(stage: TraceStageName, capabilityId: string | null): StageTrace | undefined { return this.stages.get(`${stage}|${capabilityId ?? ""}`); }
+
   call(stage: TraceStageName, provider: DataProviderId, capabilityId: string, result: { status: "success" | "failed" | "empty"; costUsd: number; durationMs: number }): void {
     const s = this.stage(stage, provider, capabilityId);
     s.calls += 1;
