@@ -1029,7 +1029,7 @@ export async function POST(req: NextRequest) {
             request: { customerRequest: reviewCustomerRequest, activityKeywords: reviewKeywords, country: expectedCountry || "", rows: matchedForAdvice },
             // leave time after the review for saving the page, building the files and settling
             deadlineMs: deadlineMs - 8_000,
-            onAttempt: async (attempt) => {
+            onAttempt: async (attempt, context) => {
               reviewCallsThisChunk += 1;
               companyReviewUsdThisChunk += Math.max(0, attempt.usage?.costUsd ?? 0);
               if (!userId) return;
@@ -1048,6 +1048,25 @@ export async function POST(req: NextRequest) {
                 console.warn("[worker:relevance_review_usage_log_failed]", usageErr?.message || "");
               }
               if (attempt.failure) console.warn(`[worker:relevance_review_failed] code=${attempt.failure}`);
+              // The owner's internal row (never shown to customers, no row text) for a call that failed, was cut at the output limit or left rows without a verdict.
+              const facts: ReviewCallFacts = {
+                rows: context.rows,
+                failure: attempt.failure,
+                stopReason: attempt.stopReason ?? null,
+                usage: attempt.usage,
+                maxTokens: attempt.maxTokens ?? 0,
+                replyChars: attempt.replyChars ?? null,
+                retry: context.attemptNumber > 1,
+                missing: context.missing,
+                attempt: context.attemptNumber,
+              };
+              if (jobId && isReviewCallFailure(facts)) {
+                try {
+                  await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: reviewFailureEventMessage(currentStep, reviewCallsThisChunk, facts), units: effectiveDelivered, event_type: REVIEW_FAILURE_EVENT_TYPE });
+                } catch (evtErr: any) {
+                  console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
+                }
+              }
             },
             onRetry: async () => {
               try {
