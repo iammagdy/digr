@@ -322,7 +322,7 @@ describe("worker: social jobs", () => {
       const release = db.rpcCalls.find((c) => c.name === "release_job_atomic");
       expect(release).toBeDefined();
       expect(String(release!.args.p_error_message)).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
-      expect(String(release!.args.p_error_message)).toContain("تم استرداد كامل الرصيد المحجوز دون أي خصم");
+      expect(String(release!.args.p_error_message)).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
       expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
       expect(json.released).toBe(true);
       // The step file of a page that ended the chunk keeps at most three dates, never row content.
@@ -682,7 +682,7 @@ describe("worker: social jobs", () => {
       expect(out.json.released).toBe(true);
       expect(out.json.chargedCredits).toBe(0);
       expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
-      expect(out.json.error).toBe("راجعنا ٤ فيديوهات عن بحثك على يوتيوب ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم. جرّب إرسال رابط فيديو أو اسم قناة، أو اكتب موضوعاً أدق.");
+      expect(out.json.error).toBe("راجعنا ٤ فيديوهات عن بحثك على يوتيوب ولم نتمكن من تأكيد أيٍّ منها لموضوع طلبك، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد. جرّب إرسال رابط فيديو أو اسم قناة، أو اكتب موضوعاً أدق.");
       expect(out.json.error).not.toMatch(/USD|treg|claude|anthropic|crawl4ai|tikhub|[A-Za-z]/i);
     });
 
@@ -1340,7 +1340,7 @@ describe("worker: social jobs", () => {
       const reason = String(release.args.p_error_message);
       expect(reason).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
       expect(reason).toContain("ننصح بإرسال روابط الفيديوهات أو اسم القناة");
-      expect(reason).toContain("تم استرداد كامل الرصيد المحجوز دون أي خصم");
+      expect(reason).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
     });
 
     it("a YouTube video about something else is excluded by the video review, and the comments of an on-topic video are delivered whatever they say", async () => {
@@ -1371,7 +1371,7 @@ describe("worker: social jobs", () => {
       const { json } = await runYoutube({ videos: [], comments: [] });
       expect(json.released).toBe(true);
       const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
-      expect(String(release.args.p_error_message)).toBe("لم يجد البحث أي فيديو عن موضوعك على يوتيوب الآن، فلم تُجمع تعليقات؛ تم استرداد كامل الرصيد المحجوز دون أي خصم.");
+      expect(String(release.args.p_error_message)).toBe("لم يجد البحث أي فيديو عن موضوعك على يوتيوب الآن، فلم تُجمع تعليقات؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.");
       expect(String(release.args.p_error_message)).not.toContain("لم يُعثر على أي بيانات مطابقة");
     });
   });

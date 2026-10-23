@@ -381,7 +381,7 @@ export async function executeMultiStepJob(
   // STRICT GUARD 1: Refuse fake/mock execution in production
   if (isProduction && !isLive) {
     const errorAr = "تعذر بدء الطلب. تم إرجاع النقاط المحجوزة إلى رصيدك.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء واسترجاع كامل الرصيد: منع البيانات التجريبية في الإنتاج");
+    await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء وتحرير الحجز المؤقت كاملًا: منع البيانات التجريبية في الإنتاج");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -412,7 +412,7 @@ export async function executeMultiStepJob(
       userId,
       jobId,
       reservedCredits,
-      "استرجاع الرصيد المحجوز لعدم تفعيل مزود البيانات الحقيقي"
+      "تحرير الحجز المؤقت لعدم تفعيل مزود البيانات الحقيقي"
     );
     try {
       await tables.updateRow({
@@ -529,7 +529,7 @@ export async function executeMultiStepJob(
             }
           }
 
-          await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لفشل الاستخراج");
+          await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لفشل الاستخراج");
           await tables.updateRow({
             databaseId: "digr",
             tableId: "jobs",
@@ -688,7 +688,7 @@ export async function executeMultiStepJob(
         if (currentChargeEstimate + estPagePoints > reservedCredits || currentChargeEstimate + estPagePoints > jobPointsCap) {
           if (collectedRows.length === 0) {
             const errorAr = "الرصيد المحجوز غير كافٍ لمعالجة الدفعة الأولى من السجلات.";
-            await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم كفاية الرصيد للدفعة الأولى");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لعدم كفاية الرصيد للدفعة الأولى");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -715,7 +715,7 @@ export async function executeMultiStepJob(
         if (!spendCapCheck.allowed) {
           if (collectedRows.length === 0) {
             const errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
-            await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع الرصيد لبلوغ الحد اليومي للمزود");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت لبلوغ الحد اليومي للمزود");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -808,7 +808,7 @@ export async function executeMultiStepJob(
               errorAr = "تعذر إكمال البحث حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
             }
 
-            await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لفشل الاستخراج من المصدر");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لفشل الاستخراج من المصدر");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -870,7 +870,7 @@ export async function executeMultiStepJob(
 
   if (collectedRows.length === 0) {
     const errorAr = "لم يُعثر على أي بيانات مطابقة من المصدر.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لعدم وجود بيانات");
+    await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لعدم وجود بيانات");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -897,8 +897,8 @@ export async function executeMultiStepJob(
   });
 
   if (hasPlaceholder) {
-    const errorAr = "تم رصد سجلات غير حقيقية أو تجريبية. تم إلغاء الطلب واسترجاع كامل الرصيد تلقائياً.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "استرجاع كامل الرصيد لرصد سجلات تجريبية");
+    const errorAr = "تم رصد سجلات غير حقيقية أو تجريبية. تم إلغاء الطلب وتحرير الحجز المؤقت كاملًا تلقائياً.";
+    await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لرصد سجلات تجريبية");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -1078,7 +1078,7 @@ export async function executeMultiStepJob(
   } catch {}
 
   await emitProgress(
-    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، وتم استرداد ${pointsAr(Number(refundCredits), String)} لمحافظتك.`,
+    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، وحُرّر ${pointsAr(Number(refundCredits), String)} من الحجز المؤقت إلى رصيدك المتاح.`,
     deliveredUnits,
     "info"
   );
@@ -1151,7 +1151,7 @@ export async function runJobWatchdog(
         job.userId,
         job.$id,
         job.reservedCredits,
-        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب واسترجاع كامل النقاط"
+        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب وتحرير الحجز المؤقت كاملًا"
       );
 
       if (releaseRes.alreadyReleased) {

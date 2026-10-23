@@ -27,7 +27,7 @@ function Step({ def, stage, last, failed, children }: { def: StepDef; stage: num
   const ring = failed ? "var(--bad)" : done ? "var(--gold)" : cur ? "var(--ink)" : "var(--ln2)";
   const bg = failed ? "var(--bad)" : done ? "var(--gold)" : "transparent";
   const fg = failed || done ? "#fff" : cur ? "var(--ink)" : "var(--fnt)";
-  const status = failed ? "تعذّر الإكمال · استُرد الرصيد" : done ? def.labels[0] : cur ? def.labels[1] : def.labels[2];
+  const status = failed ? "تعذّر الإكمال · حُرّر الحجز المؤقت" : done ? def.labels[0] : cur ? def.labels[1] : def.labels[2];
   return (
     <section
       className="relative"
