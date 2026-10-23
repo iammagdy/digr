@@ -1,8 +1,8 @@
-import { capabilityById } from "../multiProvider/catalog";
 import { DATA_PROVIDER_IDS, type DataProviderId } from "../multiProvider/types";
 import { selectAllRows } from "./selectAll";
 import { resolveAllProviderDailyCaps, readProviderSpendToday } from "./multiProvider/providerCaps";
 import { isTestAccount } from "./testAccounts";
+import { adminCapabilityLabelAr, adminJobHref, deriveJobLabelAr, deriveStatusFromRow, jobSlugOf } from "./adminJobLabels";
 
 /**
  * The admin CALLS LOG: every provider API call (TREG, Firecrawl, Context.dev) in one list, with the user behind it. READ ONLY. It reads
@@ -47,6 +47,14 @@ export interface CallsLogRow {
   status: CallStatus | null;
   durationMs: number | null;
   isEstimate: boolean;
+  /** READ LAYER ONLY (nothing is written): what the job behind the row says, for rows written before a call carried its own metadata. */
+  jobLabelAr: string | null;
+  /** The capability label read from the job when the row has none of its own. */
+  capabilityDerivedAr: string | null;
+  /** The status the row itself settles (a committed row that returned units), when the row has no status of its own. */
+  statusDerived: CallStatus | null;
+  /** The admin page of the job, when the row has a job. */
+  jobHref: string | null;
 }
 
 export interface ProviderSummary { calls: number; costUsd: number; lastCallAt: string | null }
@@ -114,33 +122,108 @@ const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n
 const chunk = <T,>(list: T[], size: number): T[][] => { const out: T[][] = []; for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size)); return out; };
 
 export function labelForCapability(id: unknown): string | null {
-  return typeof id === "string" && id ? capabilityById(id)?.labelAr ?? id : null;
+  return adminCapabilityLabelAr(id);
 }
 
-interface OwnerInfo { userId: string; email: string | null; name: string | null }
+export interface JobContext {
+  userId: string;
+  email: string | null;
+  name: string | null;
+  isTestAccount: boolean;
+  /** Short Arabic label of the job (type — topic), or null when nothing can be read. */
+  jobLabelAr: string | null;
+  /** The label of the capability the job ran. */
+  capabilityLabelAr: string | null;
+}
 
-/** job id -> owner, through jobs.user_id and profiles. Unknown jobs and unreadable owners stay unknown: nothing is guessed. */
-async function resolveOwners(client: any, jobIds: string[]): Promise<Map<string, OwnerInfo>> {
-  const jobToUser = new Map<string, string>();
+/**
+ * job id -> owner and job label, through jobs (user, capability, parameters), plans_quotes (the plan card text), conversations (the title) and
+ * profiles (email, name). READ ONLY. Unknown jobs and unreadable parts stay unknown: nothing is guessed.
+ */
+export async function resolveJobContexts(client: any, jobIds: string[]): Promise<Map<string, JobContext>> {
+  const jobs = new Map<string, Record<string, any>>();
   for (const ids of chunk(jobIds, 100)) {
     try {
-      const { data } = await client.from("jobs").select("id, user_id").in("id", ids);
-      for (const j of data || []) if (j?.id && j?.user_id) jobToUser.set(String(j.id), String(j.user_id));
+      const { data } = await client.from("jobs").select("*").in("id", ids);
+      for (const j of data || []) if (j?.id && j?.user_id) jobs.set(String(j.id), j);
     } catch { /* an unreadable batch leaves its jobs unknown */ }
   }
+  const quotes = new Map<string, Record<string, any>>();
+  for (const ids of chunk([...jobs.keys()], 100)) {
+    try {
+      const { data } = await client.from("plans_quotes").select("*").in("job_id", ids);
+      for (const q of data || []) if (q?.job_id) quotes.set(String(q.job_id), q);
+    } catch { /* the plan text is optional */ }
+  }
+  const titles = new Map<string, string>();
+  const conversationIds = [...new Set([...quotes.values()].map((q) => String(q.conversation_id || "")).filter(Boolean))];
+  for (const ids of chunk(conversationIds, 100)) {
+    try {
+      const { data } = await client.from("conversations").select("id, title").in("id", ids);
+      for (const c of data || []) if (c?.id && c?.title) titles.set(String(c.id), String(c.title));
+    } catch { /* the title is optional */ }
+  }
   const profiles = new Map<string, { email: string | null; name: string | null }>();
-  for (const ids of chunk([...new Set(jobToUser.values())], 100)) {
+  for (const ids of chunk([...new Set([...jobs.values()].map((j) => String(j.user_id)))], 100)) {
     try {
       const { data } = await client.from("profiles").select("*").in("id", ids);
       for (const p of data || []) if (p?.id) profiles.set(String(p.id), { email: p.email || null, name: p.name || p.sender_name || null });
     } catch { /* ids without a profile keep only the id */ }
   }
-  const out = new Map<string, OwnerInfo>();
-  for (const [jobId, userId] of jobToUser) {
+  const out = new Map<string, JobContext>();
+  for (const [jobId, job] of jobs) {
+    const userId = String(job.user_id);
     const profile = profiles.get(userId);
-    out.set(jobId, { userId, email: profile?.email ?? null, name: profile?.name ?? null });
+    const quote = quotes.get(jobId) ?? null;
+    const sources = { job, quote, conversationTitle: quote?.conversation_id ? titles.get(String(quote.conversation_id)) ?? null : null };
+    out.set(jobId, {
+      userId,
+      email: profile?.email ?? null,
+      name: profile?.name ?? null,
+      isTestAccount: isTestAccount({ id: userId, email: profile?.email ?? null }),
+      jobLabelAr: deriveJobLabelAr(sources),
+      capabilityLabelAr: adminCapabilityLabelAr(jobSlugOf(sources)),
+    });
   }
   return out;
+}
+
+/** What the screens add to a call row: the job label, the owner with the test flag, the link to the job and the derived fields of an old row. */
+export interface CallRowContext {
+  jobLabelAr: string | null;
+  userId: string | null;
+  userEmail: string | null;
+  userName: string | null;
+  isTestAccount: boolean;
+  capabilityDerivedAr: string | null;
+  statusDerived: CallStatus | null;
+  jobHref: string | null;
+}
+
+export function callRowContext(
+  row: { jobId: string | null; units: number; isEstimate: boolean; capabilityLabelAr: string | null; status: CallStatus | null },
+  ctx: JobContext | undefined,
+): CallRowContext {
+  return {
+    jobLabelAr: ctx?.jobLabelAr ?? null,
+    userId: ctx?.userId ?? null,
+    userEmail: ctx?.email ?? null,
+    userName: ctx?.name ?? null,
+    isTestAccount: ctx?.isTestAccount ?? false,
+    capabilityDerivedAr: row.capabilityLabelAr ? null : ctx?.capabilityLabelAr ?? null,
+    statusDerived: row.status ? null : deriveStatusFromRow(row),
+    jobHref: row.jobId ? adminJobHref(row.jobId) : null,
+  };
+}
+
+/** Adds the job context to rows that carry a jobId (the per-provider log and the activity list). One batch of reads, no write. */
+export async function withJobContext<T extends { jobId: string | null; units: number; isEstimate: boolean; capabilityLabelAr: string | null; status: CallStatus | null }>(
+  client: any,
+  rows: T[],
+): Promise<Array<T & CallRowContext>> {
+  const ids = [...new Set(rows.map((r) => r.jobId).filter((j): j is string => typeof j === "string" && j.length > 0))];
+  const contexts = ids.length ? await resolveJobContexts(client, ids) : new Map<string, JobContext>();
+  return rows.map((r) => ({ ...r, ...callRowContext(r, r.jobId ? contexts.get(r.jobId) : undefined) }));
 }
 
 const utcStart = (date: string) => `${date}T00:00:00.000Z`;
@@ -170,26 +253,23 @@ export async function readFilteredCalls(client: any, query: CallsLogQuery): Prom
   }, { orderBy: "id" });
 
   const jobIds = [...new Set((data || []).map((r: any) => r.job_id).filter((j: unknown): j is string => typeof j === "string" && j.length > 0))];
-  const owners = jobIds.length ? await resolveOwners(client, jobIds) : new Map<string, OwnerInfo>();
+  const owners = jobIds.length ? await resolveJobContexts(client, jobIds) : new Map<string, JobContext>();
 
   let rows: CallsLogRow[] = (data || []).map((r: any) => {
     const owner = r.job_id ? owners.get(String(r.job_id)) : undefined;
-    return {
+    const base = {
       id: r.id ?? null,
       at: String(r.created_at),
       provider: r.provider as DataProviderId,
       capabilityLabelAr: metadataAvailable ? labelForCapability(r.capability) : null,
       jobId: r.job_id ?? null,
-      userId: owner?.userId ?? null,
-      userEmail: owner?.email ?? null,
-      userName: owner?.name ?? null,
-      isTestAccount: owner ? isTestAccount({ id: owner.userId, email: owner.email }) : false,
       units: num(r.units),
       costUsd: Math.max(0, num(r.cost_usd)),
       status: metadataAvailable && (CALL_STATUSES as readonly string[]).includes(r.status) ? (r.status as CallStatus) : null,
       durationMs: metadataAvailable && r.duration_ms !== null && r.duration_ms !== undefined ? num(r.duration_ms) : null,
       isEstimate: Boolean(r.is_estimate),
     };
+    return { ...base, ...callRowContext(base, owner) };
   });
 
   if (query.test === "test") rows = rows.filter((r) => r.isTestAccount);
@@ -218,6 +298,21 @@ export function summarizeCalls(rows: CallsLogRow[]): CallsLogSummary {
     byStatus[r.status ?? "unknown"] += 1;
   }
   return { calls: rows.length, costUsd, byProvider, byStatus };
+}
+
+export interface ActivityJobRow extends CallRowContext { jobId: string | null; at: string }
+
+/**
+ * The same 20 newest rows the provider tab's recent-activity list shows (same provider, same order), each with its job label, owner and link.
+ * A separate read, so the tab's own state stays exactly as it was. READ ONLY; an unreadable table gives an empty list.
+ */
+export async function readActivityJobContext(client: any, provider: DataProviderId): Promise<ActivityJobRow[]> {
+  try {
+    const { data } = await client.from("provider_costs").select("job_id, units, cost_usd, created_at, is_estimate").eq("provider", provider).order("created_at", { ascending: false }).limit(20);
+    const base = (data || []).map((r: any) => ({ jobId: r.job_id ?? null, at: String(r.created_at), units: num(r.units), isEstimate: Boolean(r.is_estimate), capabilityLabelAr: null as string | null, status: null as CallStatus | null }));
+    const rows = await withJobContext<(typeof base)[number]>(client, base);
+    return rows.map(({ jobId, at, jobLabelAr, userId, userEmail, userName, isTestAccount, capabilityDerivedAr, statusDerived, jobHref }) => ({ jobId, at, jobLabelAr, userId, userEmail, userName, isTestAccount, capabilityDerivedAr, statusDerived, jobHref }));
+  } catch { return []; }
 }
 
 export async function readCallsLog(client: any, query: CallsLogQuery): Promise<CallsLogResult> {

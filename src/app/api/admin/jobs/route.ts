@@ -33,7 +33,10 @@ export async function GET(req: NextRequest) {
   const now = Date.now();
   const monthAgo = new Date(now - 30 * DAY_MS).toISOString();
 
-  const jobs = (await tables.listRows({ databaseId: "digr", tableId: "jobs", queries: [Query.orderDesc("createdAt"), Query.limit(100)] })).rows as any[];
+  // A link from a call log opens ONE job (read only): `?job=<id>`. Without it, the 100 newest jobs as before.
+  const oneJob = (req.nextUrl.searchParams.get("job") || "").trim();
+  const oneJobId = /^[A-Za-z0-9_.:-]{1,120}$/.test(oneJob) ? oneJob : "";
+  const jobs = (await tables.listRows({ databaseId: "digr", tableId: "jobs", queries: oneJobId ? [Query.equal("$id", oneJobId), Query.limit(1)] : [Query.orderDesc("createdAt"), Query.limit(100)] })).rows as any[];
   const ids = jobs.map((j) => j.$id);
 
   const [quotes, costs, convs, monthJobs, ledger] = await Promise.all([

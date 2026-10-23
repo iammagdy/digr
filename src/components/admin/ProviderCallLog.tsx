@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
-import type { CallLogResult, CallLogStatus } from "@/lib/server/multiProvider/callLog";
+import type { CallLogResult, CallLogRow, CallLogStatus } from "@/lib/server/multiProvider/callLog";
+import type { CallRowContext } from "@/lib/server/adminCallsLog";
+import { JobCell, NOT_RECORDED } from "./JobCell";
 import { dateTimeAr, tint } from "./format";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
@@ -13,6 +15,7 @@ const BTN = "min-h-11 cursor-pointer whitespace-nowrap rounded-full border borde
 const STATUS_AR: Record<CallLogStatus, string> = { success: "نجح", failed: "فشل", empty: "بلا نتيجة" };
 const STATUS_COLOR: Record<CallLogStatus, string> = { success: "var(--ok)", failed: "var(--bad)", empty: "var(--mut)" };
 const UNAVAILABLE = "غير متاح";
+type Row = CallLogRow & Partial<CallRowContext>;
 
 /** Dollars with up to 6 decimals in Arabic-Indic digits (admin only). */
 const usd = (n: number) => `${toArabicDigits(n.toFixed(6).replace(/0+$/, "").replace(/\.$/, "") || "0")} دولار`;
@@ -84,19 +87,23 @@ export function ProviderCallLog({ provider }: { provider: "treg" | "firecrawl" |
       {log && log.rows.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[640px] border-collapse text-[11px]">
-            <thead><tr className="text-mut">{["الوقت", "نوع الاستدعاء", "المهمة", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+            <thead><tr className="text-mut">{["الوقت", "نوع الاستدعاء", "المهمة والمستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
             <tbody>
-              {log.rows.map((r, i) => (
+              {(log.rows as Row[]).map((r, i) => {
+                const missing = log.metadataAvailable ? NOT_RECORDED : UNAVAILABLE;
+                const status = r.status ?? r.statusDerived ?? null;
+                return (
                 <tr key={r.id ?? i} className="text-ink">
                   <td className="border-b border-ln py-2">{dateTimeAr(r.at)}</td>
-                  <td className="border-b border-ln py-2">{r.capabilityLabelAr ?? UNAVAILABLE}</td>
-                  <td className="border-b border-ln py-2" dir="ltr">{r.jobId ? toArabicDigits(String(r.jobId).slice(-8)) : "—"}</td>
+                  <td className="border-b border-ln py-2">{r.capabilityLabelAr ?? (r.capabilityDerivedAr ? `${r.capabilityDerivedAr} (من المهمة)` : missing)}</td>
+                  <td className="border-b border-ln py-2"><JobCell info={{ jobId: r.jobId, jobLabelAr: r.jobLabelAr, userEmail: r.userEmail, userName: r.userName, isTestAccount: r.isTestAccount, jobHref: r.jobHref }} /></td>
                   <td className="border-b border-ln py-2">{formatAr(r.units)}</td>
                   <td className="border-b border-ln py-2" dir="ltr">{usd(r.costUsd)}{r.isEstimate ? " · تقدير" : ""}</td>
-                  <td className="border-b border-ln py-2" style={{ color: r.status ? STATUS_COLOR[r.status] : undefined }}>{r.status ? STATUS_AR[r.status] : UNAVAILABLE}</td>
-                  <td className="border-b border-ln py-2">{r.durationMs === null ? UNAVAILABLE : `${formatAr(r.durationMs)} مللي ثانية`}</td>
+                  <td className="border-b border-ln py-2" style={{ color: status ? STATUS_COLOR[status] : undefined }}>{status ? `${STATUS_AR[status]}${r.status ? "" : " (مُستنتج)"}` : missing}</td>
+                  <td className="border-b border-ln py-2">{r.durationMs === null ? missing : `${formatAr(r.durationMs)} مللي ثانية`}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

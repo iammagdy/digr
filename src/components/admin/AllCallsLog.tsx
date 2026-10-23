@@ -5,6 +5,7 @@ import { adminDownload, adminFetch } from "@/lib/adminApi";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import type { CallsLogResult, CallStatus, TestFilter } from "@/lib/server/adminCallsLog";
 import { dateTimeAr, tint } from "./format";
+import { JobCell, NOT_RECORDED } from "./JobCell";
 
 /**
  * The admin CALLS LOG: every provider API call with the user behind it (admin only, read only). Provider names are shown here because only an
@@ -151,29 +152,24 @@ export function AllCallsLog() {
         {log && log.rows.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] border-collapse text-[11px]" data-testid="calls-table">
-              <thead><tr className="text-mut">{["الوقت", "المزود", "نوع الاستدعاء", "رقم المهمة", "المستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+              <thead><tr className="text-mut">{["الوقت", "المزود", "نوع الاستدعاء", "المهمة والمستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
               <tbody>
-                {log.rows.map((r, i) => (
-                  <tr key={r.id ?? i} className="text-ink">
-                    <td className="border-b border-ln py-2">{dateTimeAr(r.at)}</td>
-                    <td className="border-b border-ln py-2" dir="ltr">{PROVIDER_NAME[r.provider] ?? r.provider}</td>
-                    <td className="border-b border-ln py-2">{r.capabilityLabelAr ?? UNAVAILABLE}</td>
-                    <td className="border-b border-ln py-2" dir="ltr">{r.jobId ? toArabicDigits(String(r.jobId).slice(-8)) : "—"}</td>
-                    <td className="border-b border-ln py-2">
-                      {r.userId ? (
-                        <span className="flex flex-col gap-0.5">
-                          <span dir="ltr">{r.userEmail || r.userName || UNAVAILABLE}</span>
-                          <span className="text-mut" dir="ltr">{toArabicDigits(r.userId.slice(0, 8))}</span>
-                          {r.isTestAccount && <span className="w-fit rounded-full px-2 py-[1px] text-[10px] font-semibold text-goldT" style={{ background: tint("var(--gold)", 16) }}>حساب تجريبي</span>}
-                        </span>
-                      ) : "—"}
-                    </td>
-                    <td className="border-b border-ln py-2">{formatAr(r.units)}</td>
-                    <td className="border-b border-ln py-2" dir="ltr">{usd(r.costUsd)}{r.isEstimate ? " · تقدير" : ""}</td>
-                    <td className="border-b border-ln py-2" style={{ color: r.status ? STATUS_COLOR[r.status] : undefined }}>{r.status ? STATUS_AR[r.status] : UNAVAILABLE}</td>
-                    <td className="border-b border-ln py-2">{r.durationMs === null ? UNAVAILABLE : `${formatAr(r.durationMs)} مللي ثانية`}</td>
-                  </tr>
-                ))}
+                {log.rows.map((r, i) => {
+                  const missing = log.metadataAvailable ? NOT_RECORDED : UNAVAILABLE;
+                  const status = r.status ?? r.statusDerived ?? null;
+                  return (
+                    <tr key={r.id ?? i} className="text-ink">
+                      <td className="border-b border-ln py-2">{dateTimeAr(r.at)}</td>
+                      <td className="border-b border-ln py-2" dir="ltr">{PROVIDER_NAME[r.provider] ?? r.provider}</td>
+                      <td className="border-b border-ln py-2">{r.capabilityLabelAr ?? (r.capabilityDerivedAr ? `${r.capabilityDerivedAr} (من المهمة)` : missing)}</td>
+                      <td className="border-b border-ln py-2"><JobCell info={r} /></td>
+                      <td className="border-b border-ln py-2">{formatAr(r.units)}</td>
+                      <td className="border-b border-ln py-2" dir="ltr">{usd(r.costUsd)}{r.isEstimate ? " · تقدير" : ""}</td>
+                      <td className="border-b border-ln py-2" style={{ color: status ? STATUS_COLOR[status] : undefined }}>{status ? `${STATUS_AR[status]}${r.status ? "" : " (مُستنتج)"}` : missing}</td>
+                      <td className="border-b border-ln py-2">{r.durationMs === null ? missing : `${formatAr(r.durationMs)} مللي ثانية`}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

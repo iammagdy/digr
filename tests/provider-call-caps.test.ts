@@ -182,7 +182,7 @@ describe("provider call caps: the production job shapes replayed through the wor
     expect(db.rpcCalls.filter((c) => c.name === "reserve_provider_spend_atomic")).toHaveLength(2);
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
     // provider spend: 12 records requested (0.00456 USD) instead of the measured 0.01444 USD
-    const spent = db.rpcCalls.filter((c) => c.name === "commit_provider_spend").length;
+    const spent = db.rpcCalls.filter((c) => c.name === "commit_provider_spend" || c.name === "commit_provider_spend_v2").length;
     expect(spent).toBe(2);
     expect(calls * 6 * UNIT_COST).toBeLessThan(0.0145 / 3);
   });
