@@ -484,11 +484,14 @@ export function collectableRows(targetMax: number): number {
  * closed). A row the review cannot cover inside the budget is not delivered and not charged (fail closed); it is the reviewer's cost only and
  * never changes what the customer pays, which stays ceil(delivered x unit price).
  */
-export function socialReviewCapUsd(targetMax: number, unitPricePoints: number): number {
+export function socialReviewCapUsd(targetMax: number, unitPricePoints: number, level: ReviewLevel = "row"): number {
   if (!(Number(unitPricePoints) > 0)) return 0;
   const everyRowUsd = (collectableRows(targetMax) * REVIEW_CALL_COST_ESTIMATE_USD) / SOCIAL_REVIEW_ROWS_PER_CALL;
   const budget = Math.min(REVIEW_JOB_CEILING_USD, Math.max(REVIEW_MIN_BUDGET_USD, everyRowUsd));
-  return Math.floor(budget * 1_000_000 + 1e-6) / 1_000_000;
+  const perJob = Math.floor(budget * 1_000_000 + 1e-6) / 1_000_000;
+  // A job reviewed at the level of its posts (comments of a topic search) also stays within 20% of its own revenue (owner decision: the share of revenue the
+  // review may cost). The per-row jobs (X posts) keep the rule above: their review is one call per 25 POSTS and 20% of a post's price does not pay for it (see REVIEW_REVENUE_SHARE).
+  return level === "post" ? Math.min(perJob, socialReviewCapPreviousRuleUsd(targetMax, unitPricePoints)) : perJob;
 }
 
 /**
@@ -499,6 +502,10 @@ export const REVIEW_DAILY_CEILING_USD = 12;
 
 /** The share of a job's revenue the previous budget rule allowed (the fallback when the daily ceiling is reached or cannot be read). */
 export const REVIEW_FALLBACK_SHARE = 0.2;
+/** The share of a job's revenue the automatic review of a post-level job may cost: the owner's 20%. One number, here. */
+export const REVIEW_REVENUE_SHARE = REVIEW_FALLBACK_SHARE;
+/** How a job is reviewed: row by row (X posts: every matched post is a row of a model call) or at the level of the post a comment was written under. */
+export type ReviewLevel = "row" | "post";
 
 /**
  * The previous budget rule, kept as the fallback: 20% of the job's revenue (its expected charge, ceil(target records x unit price) points at 0.10 EGP

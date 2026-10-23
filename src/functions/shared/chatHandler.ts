@@ -106,6 +106,7 @@ import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusable
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
 import { planCountLineAr, planCountPartsAr } from "../../lib/planCounts";
+import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { pairRoleOf } from "../../lib/planFit";
 import { videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
@@ -3844,7 +3845,11 @@ export class ChatHandler {
           const plannedSocialVolume = Number(planItems[0]?.targetVolumeMax) || 1;
           const tQuoteStart = Date.now();
           awaitsCount++;
-          const managedQuote = await createAndSaveManagedQuote(this.tables, {
+          // A large plan that today's provider capacity cannot hold is REFUSED in one plain sentence (see planManager: PlanRefusalError), never clipped.
+          let quoteRefusalAr: string | null = null;
+          let managedQuoteOrNull: Awaited<ReturnType<typeof createAndSaveManagedQuote>> | null = null;
+          try {
+          managedQuoteOrNull = await createAndSaveManagedQuote(this.tables, {
             conversationId,
             userId,
             plan: {
@@ -3859,6 +3864,17 @@ export class ChatHandler {
             capabilities: validationCaps,
             enforceScope: true,
           });
+          } catch (quoteErr: any) {
+            if (!(quoteErr instanceof PlanRefusalError)) throw quoteErr;
+            quoteRefusalAr = quoteErr.messageAr;
+          }
+          if (quoteRefusalAr !== null) {
+            output = { type: "refuse", reasonAr: quoteRefusalAr } as any;
+            planOutput = null;
+            planValidation = { valid: false, errors: [quoteRefusalAr], issues: [] };
+            finalContentAr = quoteRefusalAr;
+          } else {
+          const managedQuote = managedQuoteOrNull!;
           tQuoteMs = Date.now() - tQuoteStart;
           quoteMs = tQuoteMs;
           quoteRpcMs += quoteMs;
@@ -4097,6 +4113,7 @@ export class ChatHandler {
           // The plan response is pre-approval. Keep it entirely server-authored so
           // free-form model text cannot claim that collection has already started.
           finalContentAr = planSummaryText;
+          }
         }
       } else if (output.type === "edit_plan") {
         let activeQuote: any = null;

@@ -27,7 +27,7 @@ export function pairRoleOf(item: Pick<FitItem, "capabilitySlug" | "endpointId">)
   return /post|search/.test(id) ? "posts" : null;
 }
 
-/** The service's own ceilings for one job: 60 page posts, 500 comments (read from the capability table, which the owner's scale settings may raise for comments). */
+/** The ceilings of one Facebook job: posts and comments (read from the capability table, which the owner's scale settings may raise for comments). */
 export function facebookCeilings(): { posts: number; comments: number } {
   return {
     posts: getSocialCapability("social-facebook-posts")?.maxRows ?? 60,

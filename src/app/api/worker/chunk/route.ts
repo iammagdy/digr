@@ -1,4 +1,6 @@
 import { pointsAr } from "@/lib/pointsFormat";
+import { JOB_MAX_POINTS_CAP } from "../../../../lib/jobPointsCap";
+import { usesPostLevelReview } from "../../../../lib/server/postLevelReview";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
@@ -144,8 +146,10 @@ async function resolveLimitsFromSettings(adminClient: any): Promise<{
     if (query && typeof query.eq === "function") {
       const { data: row } = await query.eq("key", "pricing").maybeSingle();
       const val = row?.value && typeof row.value === "object" ? row.value : row;
+      // The settlement cap is never BELOW the cap a quote may be sold under (the shared constant): a stale stored 600 would otherwise cut the charge of a
+      // job whose reserve is larger. A stored value above the constant is still honoured.
       if (typeof val?.jobMaxPointsCap === "number" && val.jobMaxPointsCap > 0) {
-        jobPointsCap = val.jobMaxPointsCap;
+        jobPointsCap = Math.max(val.jobMaxPointsCap, JOB_MAX_POINTS_CAP);
       }
     }
   } catch {
@@ -618,8 +622,9 @@ export async function POST(req: NextRequest) {
     // and delivered only under videos about the topic, and an adopted video can be read deeply. The review is the same as the page-level
     // one below (evidence first, then one call on the list, fail closed, inside the job's review budget).
     const earlySocialCap = getSocialCapability(spec.capabilitySlug);
-    const selectsVideosFirst = Boolean(earlySocialCap) && earlySocialCap?.kind === "comments" && ["tiktok", "youtube"].includes(String(earlySocialCap?.platform))
-      && !isPeopleJob && isTopicSearchRequest(spec.params || {}) && (!useMockProvider || strictSocialReviewForcedByTests());
+    // (TikTok, YouTube and, for a topic search, Facebook: see postLevelReview.ts)
+    const postLevelJob = usesPostLevelReview(spec.capabilitySlug, spec.params);
+    const selectsVideosFirst = Boolean(earlySocialCap) && postLevelJob && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
     // The owner's internal rows about review calls that failed, were cut at the output limit or left rows without a verdict (never customer text).
     const logReviewFailures = async (attempts: Array<ReviewCallFacts & { replySample?: { head: string; startsWithJson: boolean; reasonKeys: number } | null; thinkingMode?: string | null; thinkingFallback?: { code: string; detail: string | null } | null }>) => {
       // Once per job: the FIRST review call of the job (this chunk's first, when no earlier chunk reviewed anything) leaves one internal row with the head of
@@ -687,6 +692,8 @@ export async function POST(req: NextRequest) {
         unitPricePoints: Number(unitPrice),
         stickyFallback: priorReviewSet?.reviewFallback === true,
         alreadyReviewing: (priorReviewSet?.reviewCallCount ?? 0) > 0 || (priorReviewSet?.reviewUsd ?? 0) > 0,
+        // a job reviewed at the level of its posts also stays within 20% of its own revenue
+        level: postLevelJob ? "post" : "row",
       });
       reviewCapUsd = budget.capUsd;
       reviewFallbackThisJob = budget.rule !== "normal";
@@ -1037,11 +1044,12 @@ export async function POST(req: NextRequest) {
       const strictCompanyReview = isCompanyCapability && (!useMockProvider || hasInjectedCompanyReviewer());
       // Posts and comments of a topic search (X, TikTok, YouTube) are presumed on topic; only the rows the gate flags as doubtful are
       // reviewed, and those are delivered only when the review confirms them (fail closed). Feeds without a topic filter keep the strict gate., with the reviewer of rows and a cost cap per job.
-      const strictSocialReview = ["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
+      // Facebook is reviewed only for a topic search of comments (post level); its page posts and page comments keep the deterministic gate as before.
+      const strictSocialReview = (["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) || postLevelJob) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
 
       // Comments of a topic search on TikTok or YouTube are judged by their video; X posts keep the per-post review.
       const socialCapabilityDef = getSocialCapability(spec.capabilitySlug);
-      const videoLevelComments = strictSocialReview && socialCapabilityDef?.kind === "comments" && ["tiktok", "youtube"].includes(String(socialCapabilityDef.platform)) && isTopicSearchRequest(spec.params || {});
+      const videoLevelComments = strictSocialReview && postLevelJob;
 
       if (strictCompanyReview) {
         const reviewKeywords = [...new Set([...companyActivityKeywords(spec.params), ...companyActivityKeywords({ industry: expectedIndustry }), ...(recognizedSector?.englishKeywords || [])])];

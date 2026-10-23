@@ -1,4 +1,4 @@
-import { REVIEW_DAILY_CEILING_USD, socialReviewCapPreviousRuleUsd, socialReviewCapUsd } from "./rowReviewAdvisor";
+import { REVIEW_DAILY_CEILING_USD, socialReviewCapPreviousRuleUsd, socialReviewCapUsd, type ReviewLevel } from "./rowReviewAdvisor";
 
 /**
  * The daily guard on the automatic review: what the review has cost today (UTC day, from the `llm_usage` rows whose reason starts with
@@ -85,8 +85,8 @@ export interface ReviewBudgetDecision {
  *  - A job that has already reviewed something keeps the rule it began with (`alreadyReviewing`): the daily ceiling decides only for a job that has not started.
  *  - Otherwise: below the ceiling the per-job rule (socialReviewCapUsd); at or above it, or when today's spend cannot be read, the previous rule.
  */
-export async function resolveReviewBudget(input: { admin: any; targetMax: number; unitPricePoints: number; stickyFallback?: boolean; alreadyReviewing?: boolean; now?: number }): Promise<ReviewBudgetDecision> {
-  const normal = socialReviewCapUsd(input.targetMax, input.unitPricePoints);
+export async function resolveReviewBudget(input: { admin: any; targetMax: number; unitPricePoints: number; stickyFallback?: boolean; alreadyReviewing?: boolean; level?: ReviewLevel; now?: number }): Promise<ReviewBudgetDecision> {
+  const normal = socialReviewCapUsd(input.targetMax, input.unitPricePoints, input.level ?? "row");
   const previous = socialReviewCapPreviousRuleUsd(input.targetMax, input.unitPricePoints);
   if (input.stickyFallback) return { capUsd: Math.min(previous, normal), rule: "job_fallback", fresh: false, todayUsd: null };
   if (input.alreadyReviewing) return { capUsd: normal, rule: "normal", fresh: false, todayUsd: null };

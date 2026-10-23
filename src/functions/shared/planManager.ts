@@ -31,7 +31,7 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type Conta
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
-import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit";
+import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit"; import { capacityRefusalAr, LARGE_PLAN_FROM_POINTS, PlanRefusalError } from "../../lib/capacityRefusal";
 import { multiProviderEnabled } from "../../lib/multiProvider/flag";
 import { isChainSlug } from "../../lib/multiProvider/routes";
 import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
@@ -801,6 +801,11 @@ export async function createAndSaveManagedQuote(
     : await checkPlanProviderCapacity(1, totalEstimatedUsd, tables, { userRemainingUsd });
 
   if (capacityCheck.downscaled && capacityCheck.safeBudgetUsd < totalEstimatedUsd) {
+    // A LARGE plan (a reserve above the old per-job cap, after the live cap has cut it) that today's provider budget cannot hold is refused honestly, with what the capacity does hold,
+    // never clipped: nothing is written and nothing is held. The budget is the admin's daily limit, the provider's real balance and the customer's own limit.
+    if (Math.min(totalQuotedPoints, pointsCap) > LARGE_PLAN_FROM_POINTS) {
+      throw new PlanRefusalError(capacityRefusalAr(plan.items, totalEstimatedUsd > 0 ? capacityCheck.safeBudgetUsd / totalEstimatedUsd : 0));
+    }
     capacityConstrained = true;
     const scale = totalEstimatedUsd > 0 ? capacityCheck.safeBudgetUsd / totalEstimatedUsd : 1;
     for (const it of plan.items) {
