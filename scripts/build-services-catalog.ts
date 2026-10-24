@@ -10,7 +10,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AVAILABLE_NOW_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, hasCodeExecutor, isAvailableNow } from "../src/lib/servicesAvailability";
+import { PROVEN_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, hasCodeExecutor, isProven } from "../src/lib/servicesAvailability";
 
 type Cls = "read" | "core" | "write" | "own" | "private" | "helper";
 interface Row { idx: number; sector: string; platform: string; key: string; en: string; cls: Cls; group: string; nameAr: string }
@@ -19,6 +19,8 @@ interface PlatformsFile { sectors: Record<string, { nameAr: string; descAr: stri
 const root = join(__dirname, "..");
 const rows: Row[] = JSON.parse(readFileSync(join(root, "scripts/catalog/classification.json"), "utf8"));
 const meta: PlatformsFile = JSON.parse(readFileSync(join(root, "scripts/catalog/platforms.json"), "utf8"));
+/** One plain-Arabic sentence per shown service, keyed by `platform|nameAr` (scripts/catalog/explanations.json). A shown service without one fails the build. */
+const explanations: Record<string, string> = JSON.parse(readFileSync(join(root, "scripts/catalog/explanations.json"), "utf8"));
 
 /** The order groups are shown in inside a platform. */
 const GROUP_ORDER = [
@@ -32,7 +34,7 @@ for (const row of rows) if (!(row.sector in SECTOR_IDS)) { sectorOrder.push(row.
 
 const slugOf = (row: Row) => `${createHash("sha1").update(`${row.platform}|${row.key}|${row.idx}`).digest("hex").slice(0, 7)}`;
 
-interface OutService { slug: string; nameAr: string; group: string; core?: true }
+interface OutService { slug: string; nameAr: string; explainAr: string; group: string; core?: true }
 interface OutPlatform { slug: string; nameAr: string; descAr: string; services: OutService[] }
 interface OutSector { id: string; nameAr: string; descAr: string; platforms: OutPlatform[] }
 
@@ -52,7 +54,9 @@ for (const sectorKey of sectorOrder) {
     for (const row of included) {
       const existing = byName.get(row.nameAr);
       if (existing) { if (row.cls === "core") existing.core = true; continue; }
-      byName.set(row.nameAr, { slug: slugOf(row), nameAr: row.nameAr, group: row.group, ...(row.cls === "core" ? { core: true as const } : {}) });
+      const explainAr = explanations[`${platformKey}|${row.nameAr}`];
+      if (!explainAr) throw new Error(`no explanation for ${platformKey} | ${row.nameAr}`);
+      byName.set(row.nameAr, { slug: slugOf(row), nameAr: row.nameAr, explainAr, group: row.group, ...(row.cls === "core" ? { core: true as const } : {}) });
     }
     const services = [...byName.values()].sort((a, b) => GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group));
     platforms.push({ slug: platformKey, nameAr: platformMeta.nameAr, descAr: platformMeta.descAr, services });
@@ -72,6 +76,8 @@ export interface CatalogService {
   /** Opaque and stable; never shown. */
   slug: string;
   nameAr: string;
+  /** One plain-Arabic sentence: what the service does and what it helps the customer do. No promise, number or status. */
+  explainAr: string;
   group: string;
   /** Core B2B: decision makers and professional contact data. */
   core?: true;
@@ -84,7 +90,7 @@ for (const sector of sectors) {
   lines.push(`  {`, `    id: ${q(sector.id)}, nameAr: ${q(sector.nameAr)}, descAr: ${q(sector.descAr)},`, `    platforms: [`);
   for (const platform of sector.platforms) {
     lines.push(`      {`, `        slug: ${q(platform.slug)}, nameAr: ${q(platform.nameAr)}, descAr: ${q(platform.descAr)},`, `        services: [`);
-    for (const service of platform.services) lines.push(`          { slug: ${q(service.slug)}, nameAr: ${q(service.nameAr)}, group: ${q(service.group)}${service.core ? ", core: true" : ""} },`);
+    for (const service of platform.services) lines.push(`          { slug: ${q(service.slug)}, nameAr: ${q(service.nameAr)}, explainAr: ${q(service.explainAr)}, group: ${q(service.group)}${service.core ? ", core: true" : ""} },`);
     lines.push(`        ],`, `      },`);
   }
   lines.push(`    ],`, `  },`);
@@ -189,17 +195,17 @@ const KIND_NOTE: Record<string, { title: string; risk: string }> = {
 const shownRows = rows.filter((row) => row.cls === "read" || row.cls === "core");
 const uniqueShown = new Map<string, Row>();
 for (const row of shownRows) if (!uniqueShown.has(`${row.platform}|${row.nameAr}`)) uniqueShown.set(`${row.platform}|${row.nameAr}`, row);
-const uniqueSoon = [...uniqueShown.values()].filter((row) => !isAvailableNow(row.platform, row.nameAr));
-const uniqueAvailable = [...uniqueShown.values()].filter((row) => isAvailableNow(row.platform, row.nameAr));
+const uniqueSoon = [...uniqueShown.values()].filter((row) => !isProven(row.platform, row.nameAr));
+const uniqueAvailable = [...uniqueShown.values()].filter((row) => isProven(row.platform, row.nameAr));
 const execSoon = uniqueSoon.filter((row) => hasCodeExecutor(row.platform, row.nameAr));
 
 const doc: string[] = [];
 doc.push("# Future services («قريبًا»)", "",
-  "INTERNAL. Generated by `scripts/build-services-catalog.ts` from the same data as the public catalog page; do not edit by hand. English labels are the source's and are never shown on the site.", "",
-  "The status of every service comes from ONE constant: `AVAILABLE_NOW_REGISTRY_SLUGS` in `src/lib/servicesAvailability.ts`. To flip a service to «متاح الآن» after a live test, add its registry slug there (one line).", "");
+  "INTERNAL, not shown to customers. Generated by `scripts/build-services-catalog.ts` from the same data as the public catalog page; do not edit by hand. English labels are the source's and are never shown on the site. The public page shows NO per-service status; this document is the owner's list of what is proven and what is next.", "",
+  "The status of every service comes from ONE constant: `PROVEN_REGISTRY_SLUGS` in `src/lib/servicesAvailability.ts`. To flip a service to «متاح الآن» after a live test, add its registry slug there (one line).", "");
 doc.push("## Counts (computed from the data)", "", "| status | services |", "|---|---|",
   `| متاح الآن | ${uniqueAvailable.length} |`, `| قريبًا | ${uniqueSoon.length} |`, `| of which have a code executor that was NOT proven live | ${execSoon.length} |`, `| total shown | ${uniqueShown.size} |`, "");
-doc.push("«متاح الآن» today (registry slugs: " + AVAILABLE_NOW_REGISTRY_SLUGS.map((slug) => "`" + slug + "`").join(", ") + "):", "");
+doc.push("«متاح الآن» today (registry slugs: " + PROVEN_REGISTRY_SLUGS.map((slug) => "`" + slug + "`").join(", ") + "):", "");
 for (const row of uniqueAvailable) doc.push(`- ${row.platform}: ${row.en} [${row.cls}]`);
 doc.push("", "## Prerequisites (from the read-only report of 2026-10-24; every item marked UNKNOWN was not read)", "",
   "A service needs ALL of these before it can be flipped. Today the generic path exists in outline (live catalog search, plan, quote, generic worker call, generic row reader, gate, settlement) but was never shown on a live service.", "",

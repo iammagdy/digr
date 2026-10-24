@@ -84,7 +84,9 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
   });
 
   it("6. UNVERIFIED_PLATFORM_MESSAGE_AR is a natural Arabic sentence without banned phrases", () => {
-    expect(UNVERIFIED_PLATFORM_MESSAGE_AR).toBe("هجهز خطة مطابقة للموضوع والمنصة اللي طلبتهم");
+    expect(UNVERIFIED_PLATFORM_MESSAGE_AR).toBe("لم نجد طريقة تنفيذ مباشرة لهذا الطلب بعد. أخبرنا بتفاصيل أكثر وسنرى ما يمكن تنفيذه، ولم يُحجز أي رصيد.");
+    expect(UNVERIFIED_PLATFORM_MESSAGE_AR).not.toMatch(/[A-Za-z]/);
+    expect(UNVERIFIED_PLATFORM_MESSAGE_AR).toContain("ولم يُحجز أي رصيد");
     expect(UNVERIFIED_PLATFORM_MESSAGE_AR).not.toContain("قيد التجهيز");
     expect(UNVERIFIED_PLATFORM_MESSAGE_AR).not.toContain("الكتالوج");
   });
@@ -131,7 +133,8 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
       userBalance: 100,
     });
 
-    expect(result.contentAr).toContain("هجهز خطة مطابقة للموضوع والمنصة اللي طلبتهم");
+    expect(result.contentAr).toContain("لم نجد طريقة تنفيذ مباشرة لهذا الطلب بعد. أخبرنا بتفاصيل أكثر وسنرى ما يمكن تنفيذه، ولم يُحجز أي رصيد.");
+    expect(result.contentAr).not.toContain("هجهز خطة");
     expect(result.contentAr).not.toContain("قيد التجهيز");
     expect(result.contentAr).not.toContain("الكتالوج");
     expect(result.contentAr).not.toContain("طلب تفعيل");
