@@ -223,7 +223,7 @@ export function evaluateResearchRowRelevance(
   // stays for feeds with no topic filter (an account, a channel, a link), for videos (the title IS the deliverable) and for the
   // basketball/football separation.
   // Facebook keyword service only: a comment made of nothing but good wishes, thanks and a title («بالتوفيق والنجاح الدائم») says nothing about the topic and is not a delivered (charged) comment.
-  if (commentRow && isFacebookKeywordService(capabilitySlug) && isPureWellWish(rawTextOf(row, COMMENT_OWN_KEYS))) return { decision: "no_match", reasonAr: WELL_WISH_REASON_AR };
+  if (commentRow && isFacebookKeywordService(capabilitySlug) && isPureWellWish(rawTextOf(row, COMMENT_OWN_KEYS), { topic })) return { decision: "no_match", reasonAr: WELL_WISH_REASON_AR };
   if (/^social-(?:x-posts|tiktok-comments|youtube-comments|facebook-keyword-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow, requestedRegion);
   // Basketball comments found by the source's own topic search (TikTok, YouTube): a short comment under a basketball video is a real comment
   // even when it never says «كرة السلة» (the same rule as every other topic). What stays strict: a comment or a video that is plainly about

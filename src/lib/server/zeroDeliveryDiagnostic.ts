@@ -18,7 +18,7 @@ export interface JobDiagnostic {
   posts: { judged: number; adopted: number; excluded: number; held: number; unreviewed: number };
   rows: { received: number; outsideWindow: number; accepted: number; excluded: number; held: number; unreviewed: number; byReason: Partial<Record<RejectedReasonCode, number>> };
   /** Facebook keyword service: the posts whose comments were asked for and how many gave fewer than asked (see `ProviderAdapterCallOutput.postReads`). */
-  postReads: { read: number; sourceShort: number; filteredShort: number; asked: number };
+  postReads: { read: number; sourceShort: number; sourceMissing: number; filteredShort: number; asked: number };
   samples: { posts: DiagnosticSample[]; rows: DiagnosticSample[] };
 }
 
@@ -26,7 +26,7 @@ export const emptyDiagnostic = (): JobDiagnostic => ({
   v: 1,
   posts: { judged: 0, adopted: 0, excluded: 0, held: 0, unreviewed: 0 },
   rows: { received: 0, outsideWindow: 0, accepted: 0, excluded: 0, held: 0, unreviewed: 0, byReason: {} },
-  postReads: { read: 0, sourceShort: 0, filteredShort: 0, asked: 0 },
+  postReads: { read: 0, sourceShort: 0, sourceMissing: 0, filteredShort: 0, asked: 0 },
   samples: { posts: [], rows: [] },
 });
 
@@ -81,6 +81,7 @@ export function mergeDiagnostic(a: JobDiagnostic | null | undefined, b: JobDiagn
     for (const key of ["received", "outsideWindow", "accepted", "excluded", "held", "unreviewed"] as const) out.rows[key] += count(source.rows?.[key]);
     out.postReads.read += count(source.postReads?.read);
     out.postReads.sourceShort += count(source.postReads?.sourceShort);
+    out.postReads.sourceMissing += count(source.postReads?.sourceMissing);
     out.postReads.filteredShort += count(source.postReads?.filteredShort);
     out.postReads.asked = Math.max(out.postReads.asked, count(source.postReads?.asked));
     for (const [code, n] of Object.entries(source.rows?.byReason ?? {})) out.rows.byReason[code as RejectedReasonCode] = (out.rows.byReason[code as RejectedReasonCode] ?? 0) + count(n);
@@ -91,10 +92,11 @@ export function mergeDiagnostic(a: JobDiagnostic | null | undefined, b: JobDiagn
 }
 
 /** Adds what the adapter counted while it read the posts of this chunk. */
-export function recordPostReads(d: JobDiagnostic, reads: { read: number; sourceShort: number; filteredShort: number; asked: number } | null | undefined): JobDiagnostic {
+export function recordPostReads(d: JobDiagnostic, reads: { read: number; sourceShort: number; sourceMissing?: number; filteredShort: number; asked: number } | null | undefined): JobDiagnostic {
   if (!reads) return d;
   d.postReads.read += count(reads.read);
   d.postReads.sourceShort += count(reads.sourceShort);
+  d.postReads.sourceMissing += count(reads.sourceMissing);
   d.postReads.filteredShort += count(reads.filteredShort);
   d.postReads.asked = Math.max(d.postReads.asked, count(reads.asked));
   return d;
@@ -111,8 +113,8 @@ const REASON_LABEL_AR: Record<RejectedReasonCode, string> = {
   other_mismatch: "لأسباب أخرى",
 };
 
-const recordsAr = (n: number): string => (n === 1 ? "سجل واحد" : n === 2 ? "سجلان" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} سجلات` : `${toArabicDigits(n)} سجلًا`);
-const postsAr = (n: number): string => (n === 1 ? "منشور واحد" : n === 2 ? "منشوران" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} منشورات` : `${toArabicDigits(n)} منشورًا`);
+const recordsAr = (n: number): string => (n === 1 ? "سجل واحد" : n === 2 ? "سجلين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} سجلات` : `${toArabicDigits(n)} سجلًا`);
+const postsAr = (n: number): string => (n === 1 ? "منشور واحد" : n === 2 ? "منشورين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} منشورات` : `${toArabicDigits(n)} منشورًا`);
 
 /**
  * The one customer line of a job that ended with zero accepted records: what was judged and why each part was turned away or held. Counts only,
@@ -147,20 +149,26 @@ export function zeroDeliveryEventAr(d: JobDiagnostic): string | null {
   return `لم يُسلَّم شيء، وهذا ما حدث: ${parts.join(". ثم ")}.`;
 }
 
-const commentsAr = (n: number): string => (n === 1 ? "تعليق واحد" : n === 2 ? "تعليقان" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} تعليقات` : `${toArabicDigits(n)} تعليقًا`);
+const commentsAr = (n: number): string => (n === 1 ? "تعليق واحد" : n === 2 ? "تعليقين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} تعليقات` : `${toArabicDigits(n)} تعليقًا`);
 
 /**
  * Why a Facebook keyword job delivered fewer comments than asked, in ONE sentence made only of what was counted: the posts whose comments were read, how many of them
  * returned fewer comments than asked, how many returned enough but fewer were worth keeping, and how many well-wishes were left out. Arabic-Indic digits, no source name,
  * no amount. Null when nothing was counted (the caller then keeps its own sentence).
  */
-export function keywordShortfallReasonAr(d: JobDiagnostic): string | null {
+export function keywordShortfallReasonAr(d: JobDiagnostic, options: { postsRequested?: number; postsDelivered?: number } = {}): string | null {
   const reads = d.postReads;
   if (reads.read <= 0) return null;
   const asked = reads.asked > 0 ? reads.asked : null;
-  const parts: string[] = [`قرأنا تعليقات ${postsAr(reads.read)}`];
+  const parts: string[] = [];
+  // the posts the review approved are not all read: a job reads the number of posts the customer asked for
+  if (d.posts.adopted > 0) parts.push(`اعتمدنا ${postsAr(d.posts.adopted)}`);
+  parts.push(`قرأنا تعليقات ${postsAr(reads.read)}`);
+  if (d.posts.adopted > reads.read && options.postsRequested && options.postsRequested > 0) parts.push(`ولم تُقرأ تعليقات بقية المنشورات المعتمدة لأنك طلبت ${postsAr(options.postsRequested)}`);
   if (reads.sourceShort > 0) parts.push(`${toArabicDigits(reads.sourceShort)} منها أعاد المصدر لها تعليقات أقل من المطلوب${asked ? ` (${toArabicDigits(asked)} لكل منشور)` : ""}`);
+  if (reads.sourceMissing > 0) parts.push(`ونقص ما أعاده المصدر ${commentsAr(reads.sourceMissing)} عن المطلوب`);
   if (reads.filteredShort > 0) parts.push(`${toArabicDigits(reads.filteredShort)} منها لم يكن فيها العدد المطلوب من التعليقات الصالحة بعد استبعاد الروابط وردود الفعل والدعوات`);
+  if (options.postsDelivered !== undefined && reads.read > options.postsDelivered) parts.push(`ولم يُسلَّم أي تعليق من ${postsAr(reads.read - options.postsDelivered)} منها`);
   const wishes = d.rows.byReason.well_wish ?? 0;
   const otherExcluded = Math.max(0, d.rows.excluded - wishes);
   if (wishes > 0) parts.push(`واستُبعد ${commentsAr(wishes)} من الدعاء والمجاملة بلا مضمون`);

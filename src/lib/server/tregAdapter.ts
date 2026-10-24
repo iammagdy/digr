@@ -638,10 +638,10 @@ export interface ProviderAdapterCallOutput {
   discoveryWindow?: "recency_applied" | "recency_unsupported";
   /**
    * Facebook keyword search only: what this chunk's reading of POSTS found, counted from the answers themselves. `read` posts had their comments asked for,
-   * `sourceShort` of them returned fewer comments than were asked (none included), and `filteredShort` returned enough but fewer than asked were worth keeping
-   * (links, bare reactions, pure well-wishes). `asked` is the number of comments wanted from each post.
+   * `sourceShort` of them returned fewer comments than were asked (none included), and `sourceMissing` is how many comments those answers were short of the number asked (in all), and `filteredShort` returned enough but fewer than asked were worth keeping
+   * (links, bare reactions, pleasantries). `asked` is the number of comments wanted from each post.
    */
-  postReads?: { read: number; sourceShort: number; filteredShort: number; asked: number };
+  postReads?: { read: number; sourceShort: number; sourceMissing: number; filteredShort: number; asked: number };
 }
 
 export type ProviderAdapterFn = (

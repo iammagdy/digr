@@ -2316,7 +2316,11 @@ export async function POST(req: NextRequest) {
           const dateSentence = dateDropShortfallSentenceAr(receivedTotal > 0 ? receivedTotal : null, dateExcludedTotal);
           // The Facebook keyword service says WHY from what was counted (posts read, posts that gave fewer comments than asked, well-wishes left out).
           const keywordShortfall = isFacebookKeywordService(spec.capabilitySlug) && !providerFailedAfterDelivery
-            ? keywordShortfallReasonAr(totalDiagnostic(await readDiagnosticFile(adminClient.storage.from("partials"), jobId)))
+            ? keywordShortfallReasonAr(totalDiagnostic(await readDiagnosticFile(adminClient.storage.from("partials"), jobId)), {
+              postsRequested: Number(spec.params?.videoCount) > 0 ? Math.floor(Number(spec.params.videoCount)) : undefined,
+              // the posts that gave at least one delivered comment (a post is told apart by its link, else its text)
+              postsDelivered: new Set(finalRows.map((row: any) => String(row?.video_url || row?.video_title || ""))).size,
+            })
             : null;
           const reason = keywordShortfall
             ? `${keywordShortfall}${callCapReason && callCapReason !== "source_repeats" ? ` ${stopNoteAr(callCapReason)}` : ""}`
