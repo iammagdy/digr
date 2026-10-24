@@ -1,6 +1,6 @@
 import { formatAr, normalizeDigits, toArabicDigits } from "./arabicDigits";
 import { extractNumberFromText } from "./arabicNumbers";
-import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, type SocialPlatformId } from "./socialTasks";
+import { detectSocialIntent, perItemCommentCount, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, stripPerItemPhrases, type SocialPlatformId } from "./socialTasks";
 import { proposedDefaultWindow, resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
 import { extractRequestIntent, missingInputsForIntent, type RequestIntent } from "./requestIntent";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
@@ -120,7 +120,6 @@ const CAP_ANSWER_RE = new RegExp(`${CLARIFICATION_ANSWER_LABELS.volume_cap_requi
 
 const CONTAINER_NOUNS = "(?:فيديوهات|فيديو|مقاطع|مقطع|بوستات|بوست|منشورات|منشور|ريلز|ريل|شورتس)";
 const CONTAINER_COUNT_RE = new RegExp(`(?:^|[^\\d])(\\d{1,4})\\s*${CONTAINER_NOUNS}`, "u");
-const PER_VIDEO_RE = /(\d{1,5})\s*(?:تعليق\S*|كومنت\S*)\s*(?:لكل|من كل|في كل|على كل)\s*(?:فيديو|مقطع|منشور|بوست)/u;
 
 /** What a skipped channel question leaves in the text a routing decision reads (a word that is never a subject). */
 export const CHANNELS_SKIPPED_VALUE = "تخطي";
@@ -196,9 +195,8 @@ export function understandMission(rawText: string, options: { today?: Date } = {
 
   const commentsFlow = social.wantsComments || allComments;
   // In a comments request «٣ فيديوهات» counts the videos; «٥٠ تعليق لكل فيديو» counts comments per video. Neither is the comment cap.
-  const perVideoMatch = commentsFlow ? lastMatch(PER_VIDEO_RE, text) : null;
-  const commentsPerVideo = perVideoMatch ? Number(perVideoMatch[1]) : null;
-  const containerMatch = commentsFlow && top === null ? lastMatch(CONTAINER_COUNT_RE, text.replace(new RegExp(PER_VIDEO_RE.source, "gu"), " ")) : null;
+  const commentsPerVideo = commentsFlow ? perItemCommentCount(text) : null;
+  const containerMatch = commentsFlow && top === null ? lastMatch(CONTAINER_COUNT_RE, stripPerItemPhrases(text)) : null;
   const videos = containerMatch ? Number(containerMatch[1]) : null;
   const videosNoun: "videos" | "posts" = containerMatch && /بوست|منشور/u.test(containerMatch[0]) ? "posts" : "videos";
 
@@ -220,7 +218,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   if (!isDirectory) {
     let stripped = text;
     if (commentsFlow) {
-      stripped = stripped.replace(new RegExp(PER_VIDEO_RE.source, "gu"), " ");
+      stripped = stripPerItemPhrases(stripped);
       if (videos !== null) stripped = stripped.replace(new RegExp(CONTAINER_COUNT_RE.source, "gu"), " ");
     }
     if (channels.count) stripped = stripped.replace(new RegExp(`${COUNT}\\s*${CHANNEL_WORD}`), " ");

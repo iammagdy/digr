@@ -7,6 +7,7 @@ import { useAdmin } from "@/components/admin/AdminShell";
 import { EGP, tint } from "@/components/admin/format";
 import { dayLabel } from "@/lib/dayLabel";
 import { RoutingTracePanel } from "@/components/admin/RoutingTracePanel";
+import { JobDiagnosticPanel } from "@/components/admin/JobDiagnosticPanel";
 
 interface JobRow { id: string; title: string; platform: string; createdAt: string; user: string; requested: number | null; delivered: number; held: number; charged: number; costEgp: number | null; chain?: boolean; status: "done" | "running" | "failed" | "refunded" }
 interface Resp { jobs: JobRow[]; stats: { last30: number; runningNow: number; successRate: number | null; refundedPoints: number } }
@@ -77,6 +78,7 @@ export default function AdminJobsPage() {
               <span>{j.status === "refunded" || j.costEgp == null ? "—" : EGP(j.costEgp)}</span>
               <span><span className="whitespace-nowrap rounded-full px-2.5 py-[3px] text-[11px] font-semibold" style={{ background: tint(color === "var(--goldT)" ? "var(--gold)" : color, 14), color }}>{label}</span></span>
               {j.chain && <RoutingTracePanel jobId={j.id} />}
+              {(j.status === "refunded" || j.status === "failed") && <JobDiagnosticPanel jobId={j.id} />}
             </div>
           );
         })}

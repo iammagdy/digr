@@ -6,7 +6,8 @@ import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
-import { groupRowsByVideo, judgeVideos, videoSelectionEventAr, VIDEO_UNREVIEWED_REASON_AR, type VideoEntry } from "../../../../lib/server/videoRelevance";
+import { emptyDiagnostic, hasDiagnosticSignal, recordPostJudgements, recordRowGate, saveStepDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
+import { groupRowsByVideo, judgeVideos, selectionKindFor, unreviewedReasonFor, videoSelectionEventAr, type SelectionUnit, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
 import { regionNameAr } from "../../../../lib/regionNames";
@@ -626,6 +627,10 @@ export async function POST(req: NextRequest) {
     const earlySocialCap = getSocialCapability(spec.capabilitySlug);
     // (TikTok, YouTube and, for a topic search, Facebook: see postLevelReview.ts)
     const postLevelJob = usesPostLevelReview(spec.capabilitySlug, spec.params);
+    // What the list holds that is selected before its comments are read: the Facebook keyword search lists POSTS (own prompt and wording), the others videos.
+    const selectionUnit: SelectionUnit = getSocialCapability(spec.capabilitySlug)?.pagedDiscovery ? "post" : "video";
+    // What this chunk's selection and gate did, added up for a job that ends with nothing accepted (see zeroDeliveryDiagnostic).
+    const chunkDiagnostic = emptyDiagnostic();
     const selectsVideosFirst = Boolean(earlySocialCap) && postLevelJob && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
     // The owner's internal rows about review calls that failed, were cut at the output limit or left rows without a verdict (never customer text).
     const logReviewFailures = async (attempts: Array<ReviewCallFacts & { replySample?: { head: string; startsWithJson: boolean; reasonKeys: number } | null; thinkingMode?: string | null; thinkingFallback?: { code: string; detail: string | null } | null }>) => {
@@ -726,7 +731,8 @@ export async function POST(req: NextRequest) {
           const outcome = await judgeVideos({
             advisor: getRowAdvisor(),
             customerRequest: reviewCustomerRequestFor(spec.params),
-            kind: `${String(spec.capabilitySlug || "")}-video-list`,
+            kind: selectionKindFor(spec.capabilitySlug, selectionUnit),
+            unit: selectionUnit,
             videos,
             request: { query: typeof spec.params?.query === "string" ? spec.params.query : "", region: typeof spec.params?.region === "string" ? spec.params.region : "" },
             budgetUsd: Math.max(0, reviewCapUsd - reviewUsdBeforeThisChunk - videoSelectionUsd),
@@ -735,6 +741,10 @@ export async function POST(req: NextRequest) {
           });
           videoSelectionUsd += outcome.costUsd;
           videoSelectionCalls += outcome.attempts.length;
+          recordPostJudgements(chunkDiagnostic, judgeable.flatMap(({ ref, i }) => {
+            const judgement = outcome.judgements.get(`v${i}`);
+            return judgement ? [{ text: ref.title || "", decision: judgement.decision, by: judgement.by, reasonAr: judgement.reasonAr }] : [];
+          }));
           await logReviewFailures(outcome.attempts);
           videoSelectionUnreviewed = videoSelectionUnreviewed || [...outcome.judgements.values()].some((judgement) => judgement.by === "unreviewed");
           videoSelectionReviewed += outcome.judgements.size;
@@ -758,7 +768,7 @@ export async function POST(req: NextRequest) {
             }
           }
           try {
-            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values(), { carried: true }), units: effectiveDelivered, event_type: "info" });
+            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values(), { carried: true, unit: selectionUnit }), units: effectiveDelivered, event_type: "info" });
           } catch (evtErr: any) {
             console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
           }
@@ -1186,7 +1196,8 @@ export async function POST(req: NextRequest) {
           const outcome = await judgeVideos({
             advisor: getRowAdvisor(),
             customerRequest: reviewCustomerRequest,
-            kind: `${String(spec.capabilitySlug || "")}-video-list`,
+            kind: selectionKindFor(spec.capabilitySlug, selectionUnit),
+            unit: selectionUnit,
             videos,
             request: { query: typeof spec.params?.query === "string" ? spec.params.query : "", region: typeof spec.params?.region === "string" ? spec.params.region : "" },
             budgetUsd: Math.max(0, reviewCapUsd - priorReviewUsd - videoSelectionUsd),
@@ -1223,9 +1234,9 @@ export async function POST(req: NextRequest) {
           const judgementOfRow = new Map<number, { decision: "match" | "no_match" | "uncertain"; reasonAr: string; budget?: boolean }>();
           for (const video of videos) {
             const judgement = outcome.judgements.get(video.key);
-            for (const index of video.rowIndexes) judgementOfRow.set(index, judgement ?? { decision: "uncertain", reasonAr: VIDEO_UNREVIEWED_REASON_AR });
+            for (const index of video.rowIndexes) judgementOfRow.set(index, judgement ?? { decision: "uncertain", reasonAr: unreviewedReasonFor(selectionUnit) });
           }
-          for (const index of withoutVideo) judgementOfRow.set(index, { decision: "uncertain", reasonAr: VIDEO_UNREVIEWED_REASON_AR });
+          for (const index of withoutVideo) judgementOfRow.set(index, { decision: "uncertain", reasonAr: unreviewedReasonFor(selectionUnit) });
           const judgedReviews = reviews.map((rev) => {
             if (rev.decision !== "match") return rev;
             const judgement = judgementOfRow.get(rev.index);
@@ -1240,7 +1251,7 @@ export async function POST(req: NextRequest) {
           reviews = judgedReviews;
           const deliverableWithoutReview = reviews.filter((rev) => rev.decision === "match").length;
           try {
-            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values()), units: effectiveDelivered, event_type: "info" });
+            await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: videoSelectionEventAr(outcome.judgements.values(), { unit: selectionUnit }), units: effectiveDelivered, event_type: "info" });
           } catch (evtErr: any) {
             console.warn("[worker:job_events_insert_warning]", evtErr?.message || "");
           }
@@ -1253,7 +1264,7 @@ export async function POST(req: NextRequest) {
                 user_id: userId,
                 message: heldByBudget > 0
                   ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} تعليق في ورقة «غير مراجَع» ولم يُحتسب.`
-                  : `وُضع ${toArabicDigits(heldRows)} تعليق في ورقة المراجعة ولم يُحتسب لعدم التأكد من موضوع فيديوهاتها.`,
+                  : `وُضع ${toArabicDigits(heldRows)} تعليق في ورقة المراجعة ولم يُحتسب لعدم التأكد من موضوع ${selectionUnit === "post" ? "منشوراتها" : "فيديوهاتها"}.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });
@@ -1412,6 +1423,7 @@ export async function POST(req: NextRequest) {
       });
       relevanceExcludedCount = excludedRows.length;
       relevanceSkipReasons = [...new Set(excludedRows.map((row) => String(row._relevance_reason || "غير مطابق")))].slice(0, 2);
+      recordRowGate(chunkDiagnostic, { received: providerRows.length, outsideWindow: dateFiltered.excludedCount, accepted: matchedRows.length, excluded: excludedRows, held: uncertainRows.length, unreviewed: unreviewedRows.length });
 
       filteredRows = matchedRows;
 
@@ -1590,6 +1602,17 @@ export async function POST(req: NextRequest) {
       } catch (evtErr: any) {
         console.warn("[worker:page_summary_event_warning]", evtErr?.message || "");
       }
+      // Why nothing was delivered: ONE customer line with the counts per reason, and the owner's sample (private storage, read from the admin route only).
+      // Best effort: it never changes the release, the charge or the answer.
+      if (jobId) {
+        try {
+          const total = await saveStepDiagnostic(adminClient.storage.from("partials"), jobId, currentStep, chunkDiagnostic);
+          const line = zeroDeliveryEventAr(total);
+          if (line) await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: line, units: 0, event_type: "info" });
+        } catch (diagErr: any) {
+          console.warn("[worker:zero_delivery_diagnostic_warning]", diagErr?.message || "");
+        }
+      }
       const rel = await executeReleaseConfirmation(adminClient, jobId, emptyErrorAr);
       if (!rel.confirmed) {
         return buildReleaseFailedResponse(jobId, rel.diagnostic);
@@ -1607,6 +1630,15 @@ export async function POST(req: NextRequest) {
         },
         { status: 422 }
       );
+    }
+
+    // The job has delivered nothing so far: keep what its selection and gate did, so a later chunk that ends it empty can say why.
+    if (jobId && newDeliveredUnits === 0 && hasDiagnosticSignal(chunkDiagnostic)) {
+      try {
+        await saveStepDiagnostic(adminClient.storage.from("partials"), jobId, currentStep, chunkDiagnostic);
+      } catch {
+        // best effort
+      }
     }
 
     // 10. Save fetched rows to partials/<jobId>/step_<n>.json (a failed storage write MUST fail the chunk)

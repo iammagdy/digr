@@ -7,7 +7,7 @@ import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestS
 import { summarizeActivityCounts } from "@/lib/activityCounts";
 import { settleTimelineEvents, timelineWaitingText } from "@/lib/honestDisplay";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
-import { liveEventsForDisplay, PREVIEW_TITLE_AR, PREVIEW_WAITING_AR, previewCountsLineAr, type LivePreviewSample } from "@/lib/liveJobView";
+import { liveEventsForDisplay, PREVIEW_TITLE_AR, PREVIEW_WAITING_AR, postSelectionFromEvents, previewCountsLineAr, type LivePreviewSample } from "@/lib/liveJobView";
 import RunningIndicator from "./RunningIndicator";
 
 const FORMAT_LABEL_AR: Record<ResultFormat, string> = { xlsx: "إكسل", pdf: "بي دي إف", csv: "سي إس في" };
@@ -262,7 +262,7 @@ export default function ActivityTerminal({
               <p className="m-0 text-[11px] leading-4 text-mut" data-testid="live-preview-waiting">{PREVIEW_WAITING_AR}</p>
             )}
             <p className="m-0 mt-1 text-[11px] leading-4 text-mut" data-testid="live-preview-counts">
-              {previewCountsLineAr({ accepted: rowsCollected, requested: requestedRows, received: counts.received, underReview: counts.underReview })}
+              {previewCountsLineAr({ accepted: rowsCollected, requested: requestedRows, received: counts.received, underReview: counts.underReview, posts: postSelectionFromEvents(events) })}
             </p>
           </section>
         )}

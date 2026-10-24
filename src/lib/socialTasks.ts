@@ -7,7 +7,8 @@
  * every turn and can be tested.
  */
 import { periodWordFlags } from "./timeWindow";
-import { isNumberWord } from "./arabicNumbers";
+import { extractNumberFromText, isNumberWord } from "./arabicNumbers";
+import { normalizeDigits } from "./arabicDigits";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
 
 
@@ -302,6 +303,8 @@ export function hasRegionHint(text: string): boolean {
 const TOPIC_NOISE = new Set([
   "عايز", "عايزه", "عايزة", "عاوز", "عاوزه", "اريد", "أريد", "محتاج", "محتاجة", "ابغى", "أبغى", "هات", "هاتلي", "اسحب", "سحب", "استخرج", "جمع", "اجمع", "ابحث", "لي", "لى", "ليا", "لنا",
   // request verbs with a hamza, «talk about» verbs of a dialect sentence («بيتكلموا عن الدهب») and the «لآخر» of «لآخر شهر»: never the topic (they went into the search text of a keyword job)
+  // «ومعاه / وكل» of a phrase that says what each item carries («وكل بوست معاه ٥ تعليقات»): a connector, never the topic
+  "معاه", "معاها", "معاهم", "ومعاه", "ومعاها", "ومعاهم", "وكل", "وبكل", "بكل",
   "أجمع", "أسحب", "أستخرج", "اجمعلي", "اسحبلي", "بيتكلموا", "بيتكلم", "بتتكلم", "بتتكلموا", "يتكلموا", "يتكلم", "لآخر", "لاخر", "للآخر",
   "من", "على", "علي", "في", "فى", "داخل", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
   // Labels of stored card answers and placeholder words: never a topic.
@@ -324,6 +327,44 @@ const TOPIC_NOISE = new Set([
 
 /** «بالتعليقات», «وتعليقاتها», «بالكومنتات»: a task word with a clitic («مع/و/ب/ل/ف») or a pronoun ending is still the task, never the topic. */
 const TASK_WORD_FORM_RE = /^[بولفك]?(?:ال)?(?:تعليق|تعليقات|كومنت|كومنتات|كومنتس|منشور|منشورات|بوست|بوستات|فيديو|فيديوهات|مقطع|مقاطع|تغريدة|تغريدات)(?:ها|هم|ه|ك)?$/u;
+
+const PER_ITEM_NOUN = "(?:فيديو|مقطع|منشور|بوست|تغريدة|واحد|وحدة)\\S*";
+const PER_ITEM_NUMBER = "(?:\\d{1,5}|[\\p{L}]{2,12})";
+const PER_ITEM_COMMENT = "(?:تعليق\\S*|كومنت\\S*)";
+/**
+ * What each post carries, in every word order a customer writes it: «٥ تعليقات لكل بوست», «بخمس تعليقات لكل منشور», «وكل بوست معاه ٥ تعليقات»,
+ * «كل منشور فيه ٥ تعليقات», «٥ لكل بوست». Group 1 is the number (digits or a number word). One list, read by the topic (which cuts the phrase out)
+ * and by the mission (which reads the count), so the two can never disagree.
+ */
+const PER_ITEM_COMMENTS_RES: RegExp[] = [
+  new RegExp(`(?<![\\p{L}\\d])[بو]?(${PER_ITEM_NUMBER})\\s*${PER_ITEM_COMMENT}\\s*(?:لكل|من كل|في كل|على كل|ل?كل)\\s*${PER_ITEM_NOUN}`, "gu"),
+  new RegExp(`(?<![\\p{L}\\d])[وب]?(?:لكل|كل)\\s*${PER_ITEM_NOUN}\\s*(?:(?:يكون|تكون|يبقى|بيبقى|ليكون)\\s*)?(?:معاه\\S*|فيه\\S*|عليه\\S*|ليه\\S*|عنده\\S*|معه\\S*|به)?\\s*[بو]?(${PER_ITEM_NUMBER})\\s*${PER_ITEM_COMMENT}`, "gu"),
+];
+
+function perItemCountOf(token: string): number | null {
+  const digits = /^\d+$/.test(token) ? Number(token) : isNumberWord(token) ? extractNumberFromText(token) ?? null : null;
+  return digits && digits > 0 ? digits : null;
+}
+
+/** The comments a customer wants under EACH post («وكل بوست معاه ٥ تعليقات» → 5); the last such phrase wins; null when none is written. */
+export function perItemCommentCount(rawText: string): number | null {
+  const text = normalizeDigits(String(rawText || ""));
+  let found: { index: number; count: number } | null = null;
+  for (const re of PER_ITEM_COMMENTS_RES) {
+    for (const m of text.matchAll(new RegExp(re.source, re.flags))) {
+      const count = perItemCountOf(m[1] ?? "");
+      if (count !== null && (!found || m.index >= found.index)) found = { index: m.index ?? 0, count };
+    }
+  }
+  return found ? found.count : null;
+}
+
+/** The text with every per-post phrase (see `PER_ITEM_COMMENTS_RES`) taken out: it is a quantity, never part of a topic or of the post count. */
+export function stripPerItemPhrases(rawText: string): string {
+  let text = normalizeDigits(String(rawText || ""));
+  for (const re of PER_ITEM_COMMENTS_RES) text = text.replace(new RegExp(re.source, re.flags), (m, n: string) => (perItemCountOf(n ?? "") === null ? m : " "));
+  return text;
+}
 
 /** Words that make the country after them a LOCATION («في مصر», «من مصر», «داخل مصر», «بمصر»), not part of the topic. */
 const LOCATION_PREPOSITIONS = new Set(["في", "فى", "من", "داخل"]);
@@ -513,7 +554,7 @@ function cleanSubjectTokens(text: string): string[] {
 
 /** The subject words of a request (a keyword or name), for a search the customer did not spell out as a query. */
 export function socialSubjectText(text: string): string {
-  const source = subjectSource(text);
+  const source = subjectSource(stripPerItemPhrases(text));
   const hashtag = /(?:^|\s)#([\p{L}\p{N}_]{2,})/u.exec(source)?.[1];
   if (hashtag) return hashtag.replace(/_/g, " ");
   const tokens = cleanSubjectTokens(source);
