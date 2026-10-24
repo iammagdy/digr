@@ -8,6 +8,7 @@ import { useUser } from "@/hooks/useUser";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { UserSheet } from "@/components/admin/UserSheet";
 import { ProviderAlertBanner } from "@/components/admin/ProviderAlertBanner";
+import { VisitorsSummaryCard } from "@/components/admin/VisitorsSummaryCard";
 import { ADMIN_IC, AIcon } from "@/components/admin/icons";
 import { EGP, initials, tint } from "@/components/admin/format";
 
@@ -111,6 +112,8 @@ export default function AdminOverview() {
           </button>
         )}
       </div>
+
+      <VisitorsSummaryCard />
 
       <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(auto-fill,minmax(min(100%,${isMobile ? 150 : 200}px),1fr))` }}>
         {kpis.map((k) => (

@@ -4,6 +4,7 @@ export const ADMIN_IC = {
   users: "M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1M9 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM22 19v-1a4 4 0 0 0-3-3.87M16 4.13a3 3 0 0 1 0 5.74",
   topups: "M3 6h18v12H3zM3 10h18M7 15h4",
   jobs: "M4 6h16M4 12h16M4 18h10",
+  visitors: "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   operations: "M3 12h4l3-8 4 16 3-8h4",
   conference: "M3 20h18M6 20V9M12 20V4M18 20v-8",
   export: "M12 3v12m0 0l-4-4m4 4l4-4M4 17v3h16v-3",
@@ -25,10 +26,10 @@ export const ADMIN_IC = {
   moon: "M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z",
 } as const;
 
-export type AdminPageId = "overview" | "users" | "topups" | "jobs" | "operations" | "finance" | "promo-codes" | "support" | "providers" | "calls-log" | "audit" | "settings" | "requests" | "conference" | "export";
+export type AdminPageId = "overview" | "users" | "topups" | "jobs" | "operations" | "finance" | "promo-codes" | "support" | "providers" | "calls-log" | "audit" | "settings" | "requests" | "conference" | "export" | "visitors";
 
 export const ADMIN_PAGES: Array<[AdminPageId, string]> = [
-  ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["topups", "طلبات الشحن"], ["jobs", "عمليات البحث"], ["operations", "التشغيل"],
+  ["overview", "نظرة عامة"], ["users", "المستخدمون"], ["topups", "طلبات الشحن"], ["jobs", "عمليات البحث"], ["visitors", "الزوّار"], ["operations", "التشغيل"],
   ["finance", "الإيرادات والأرباح"], ["promo-codes", "الأكواد الترويجية"], ["support", "رسائل الدعم"], ["providers", "مزودو الخدمة"], ["calls-log", "سجل الاستدعاءات"], ["audit", "سجل العمليات"], ["requests", "طلبات غير مدعومة"], ["conference", "لوحة المؤتمر"], ["settings", "الإعدادات"], ["export", "نسخة احتياطية"],
 ];
 

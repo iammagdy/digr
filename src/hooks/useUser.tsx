@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { trackAuthEvent } from "@/lib/analytics/client";
 import type { User } from "@supabase/supabase-js";
 
 export interface AppUser {
@@ -127,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
     const mapped = mapSupabaseUser(data.user);
     setUser(mapped);
+    trackAuthEvent("login");
     return mapped;
   };
 
@@ -143,6 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
     const mapped = mapSupabaseUser(data.user);
     setUser(mapped);
+    trackAuthEvent("signup");
   };
 
   const logout = async () => {

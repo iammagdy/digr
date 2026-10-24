@@ -3,7 +3,7 @@
  * keeps the session refresh and the checks of src/middleware.ts. At a conference the landing page, the QR path and the status polling take
  * most of the traffic, and a sign-in call per hit would spend the sign-in service's own limit on visitors who are only looking.
  */
-const PUBLIC_EXACT = new Set(["/", "/pricing", "/calculator", "/contact", "/services", "/join", "/robots.txt", "/sitemap.xml", "/api/busy-status", "/api/driver-status", "/api/csp-report", "/api/llm-enabled"]);
+const PUBLIC_EXACT = new Set(["/", "/pricing", "/calculator", "/contact", "/services", "/join", "/robots.txt", "/sitemap.xml", "/api/busy-status", "/api/driver-status", "/api/csp-report", "/api/llm-enabled", "/api/analytics/collect"]);
 const PUBLIC_PREFIX = ["/legal/", "/for/", "/services/", "/join/", "/brand/", "/samples/", "/api/calculator/"];
 
 export function isPublicPath(pathname: string): boolean {

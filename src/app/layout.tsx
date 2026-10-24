@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { AuthProvider } from "@/hooks/useUser";
+import { VisitBeacon } from "@/components/analytics/VisitBeacon";
 import { THEME_INIT_SCRIPT, ThemeProvider } from "@/lib/theme";
 import { SITE_NAME, SITE_URL } from "@/lib/site";
 import "./globals.css";
@@ -76,7 +77,7 @@ export default function RootLayout({
       </head>
       <body className="min-h-full flex flex-col bg-bg text-ink2 antialiased selection:bg-gold/30 selection:text-ink">
         <ThemeProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <AuthProvider><VisitBeacon />{children}</AuthProvider>
         </ThemeProvider>
       </body>
     </html>

@@ -59,7 +59,7 @@ const cellText = (value: unknown): string => {
 /** A few accepted rows in the columns the customer reads (never ids or links of a social record), or null when there is nothing to show. */
 const COMPANY_PREVIEW_ORDER = ["company_name", "industry", "website", "city", "location", "work_email", "phone", "description"];
 
-export function buildLivePreviewSample(rows: ReadonlyArray<Record<string, any>>, columns: readonly string[], isCompanyDataset: boolean): LivePreviewSample | null {
+export function buildLivePreviewSample(rows: ReadonlyArray<Record<string, any>>, columns: readonly string[], isCompanyDataset: boolean, postUnit = false): LivePreviewSample | null {
   // The same reading order as the results table: a company's name first; the plain text and the location are left out when the
   // description and the city already say it.
   let ordered = [...columns];
@@ -67,13 +67,13 @@ export function buildLivePreviewSample(rows: ReadonlyArray<Record<string, any>>,
   if (ordered.includes("city")) ordered = ordered.filter((key) => key !== "location");
   if (isCompanyDataset) ordered = [...COMPANY_PREVIEW_ORDER.filter((key) => ordered.includes(key)), ...ordered.filter((key) => !COMPANY_PREVIEW_ORDER.includes(key))];
   const shown = previewColumns(ordered, isCompanyDataset)
-    .filter((key, index, list) => list.findIndex((other) => customerResultColumnLabel(other) === customerResultColumnLabel(key)) === index)
+    .filter((key, index, list) => list.findIndex((other) => customerResultColumnLabel(other, postUnit) === customerResultColumnLabel(key, postUnit)) === index)
     .filter((key) => rows.some((row) => cellText(row?.[key]) !== ""))
     .slice(0, PREVIEW_MAX_COLUMNS);
   const picked = rows.slice(-PREVIEW_MAX_ROWS);
   if (!shown.length || !picked.length) return null;
   return {
-    columns: shown.map((key) => ({ key, titleAr: customerResultColumnLabel(key) })),
+    columns: shown.map((key) => ({ key, titleAr: customerResultColumnLabel(key, postUnit) })),
     rows: picked.map((row) => shown.map((key) => cellText(row?.[key]))),
   };
 }

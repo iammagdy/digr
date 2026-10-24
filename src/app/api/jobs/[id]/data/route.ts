@@ -128,6 +128,7 @@ export async function GET(
         profile: {
           ...(normalized.profile || {}),
           sourcePlatform: normalized.metadata.platform,
+          ...(normalized.metadata.postUnit ? { postUnit: true } : {}),
           collectedDate: jobDoc.finished_at || jobDoc.created_at || normalized.metadata.collectedAt,
           methodology: normalized.metadata.methodology,
         },

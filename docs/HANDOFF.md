@@ -4,6 +4,15 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 0000. Facebook keyword polish and visitor analytics (branch `claude/fb-polish-and-visitors`, from main `3a20c2f`)
+
+- **Facebook keyword service** (`social-facebook-keyword-comments`, identity and wording in `src/lib/facebookKeywordService.ts`): customer files say «المنشور» (not «الفيديو»), carry a post number instead of the post's text and link in every comment row, a second sheet «المنشورات», and never the platform's own comment id. Other services keep their headers.
+- **Live preview** had no moment with accepted rows on a small job (a chunk carries up to 50 rows and the step file is written at its end): the first chunk of a paged job now reads one post's share (`PAGED_FIRST_CHUNK_ROWS`). A chunk that ends inside a post no longer reads that post again (`pu` in the adapter state).
+- **Comment quality**: pure well-wishes («بالتوفيق والنجاح الدائم») are left out before the charge for this service only (`isPureWellWish`); a job that delivers fewer comments says why from counted numbers (`keywordShortfallReasonAr`).
+- **Visitor analytics**: beacon `src/lib/analytics` + `/api/analytics/collect`, admin tab `/admin/visitors`, overview card. SQL is a PROPOSAL (`docs/proposals/visitor-analytics/`, NOT APPLIED); until it is applied nothing is stored and the tab says so.
+
+---
+
 ## 000. Status after PR #211 (2026-10-23, main = `d12b831`)
 
 Written from git, the deployment API and the project's schema (read only). No secret appears here; where a setting matters only its NAME and where it lives are given.
