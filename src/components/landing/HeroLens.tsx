@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/hooks/useUser";
 import { savePendingQuestion } from "@/lib/pendingQuestion";
@@ -57,6 +58,7 @@ export function HeroLens() {
   const mobile = useIsMobile();
   const [hasText, setHasText] = useState(false);
   const [picked, setPicked] = useState<number | null>(null);
+  const [ideasOpen, setIdeasOpen] = useState(false);
 
   const heroRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -294,8 +296,8 @@ export function HeroLens() {
 
       {/* front layer: protected zone */}
       <div data-lens-shield="1" className="relative z-[2] w-full max-w-[760px] text-center will-change-transform">
-        <p className="m-0 inline-block rounded-full px-4 py-1.5 text-sm font-normal text-ink2" style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)", animation: "up 1s .1s both" }}>
-          من مصادر متاحة · منظّمة · جاهزة للتحليل
+        <p className="m-0 inline-block max-w-[560px] rounded-[22px] px-4 py-1.5 text-[15px] font-normal leading-[1.8] text-ink2 min-[760px]:text-[17px]" style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)", animation: "up 1s .1s both" }}>
+          اسأل بالعربية، واستلم بيانات منظّمة من مصادر كثيرة في ملف إكسل أو بي دي إف
         </p>
         <h1
           className="mt-[18px] mb-0 font-display text-ink"
@@ -338,7 +340,24 @@ export function HeroLens() {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" /></svg>
           </button>
         </form>
-        <div className="mx-auto mt-[22px] max-w-[680px]" style={{ animation: "up 1s .6s both" }}>
+        <div className="mx-auto mt-5 flex max-w-[680px] flex-wrap items-center justify-center gap-x-5 gap-y-2" style={{ animation: "up 1s .6s both" }}>
+          <Link href={user ? "/dashboard/chat" : "/register"} className="inline-flex min-h-12 items-center rounded-full bg-ac px-7 text-[15px] text-onac no-underline">{user ? "ابدأ طلبك" : "أنشئ حسابك وابدأ طلبك"}</Link>
+          <Link href="/services" className="inline-flex min-h-12 items-center rounded-full px-3 text-[15px] text-ink underline underline-offset-4" style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)" }}>خدماتنا</Link>
+        </div>
+        <div className="mx-auto mt-3 max-w-[680px]" style={{ animation: "up 1s .7s both" }}>
+          <button
+            type="button"
+            aria-expanded={ideasOpen}
+            aria-controls="landing-ideas"
+            onClick={() => setIdeasOpen(!ideasOpen)}
+            className="min-h-11 cursor-pointer rounded-full border-0 px-4 text-[13px] font-normal text-mut"
+            style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)" }}
+          >
+            {ideasOpen ? "إخفاء الأمثلة" : "أمثلة جاهزة للبدء"}
+          </button>
+        </div>
+        {ideasOpen && <div id="landing-ideas">
+        <div className="mx-auto mt-[14px] max-w-[680px]">
           <p className="m-0 mb-2.5 text-xs font-normal text-mut">
             <span className="inline-block rounded-full px-3 py-[3px]" style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)", WebkitBackdropFilter: "blur(12px)", backdropFilter: "blur(12px)" }}>أو ابدأ بمثال</span>
           </p>
@@ -359,7 +378,7 @@ export function HeroLens() {
             ))}
           </div>
         </div>
-        <div className="mx-auto mt-3 max-w-[680px]" style={{ animation: "up 1s .7s both" }}>
+        <div className="mx-auto mt-3 max-w-[680px]">
           <p className="m-0 mb-2.5 text-xs font-normal text-mut">
             <span className="inline-block rounded-full px-3 py-[3px]" style={{ background: "color-mix(in oklab, var(--bg) 90%, transparent)", WebkitBackdropFilter: "blur(12px)", backdropFilter: "blur(12px)" }}>أو مهمة كبيرة</span>
           </p>
@@ -377,8 +396,9 @@ export function HeroLens() {
             ))}
           </div>
         </div>
+        </div>}
         <p className="mb-0 mt-9 inline-block rounded-full px-4 py-1.5 text-xs font-normal text-mut" style={{ background: "color-mix(in oklab,var(--bg) 90%,transparent)", animation: "fade 1.2s .9s both" }}>
-          لا يبدأ أي جمع قبل موافقتك — النقطة الواحدة = ٠٫١٠ ج.م
+          لا يبدأ أي جمع ولا يُخصم أي رصيد قبل موافقتك
         </p>
       </div>
     </section>
