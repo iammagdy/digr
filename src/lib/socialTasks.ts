@@ -197,12 +197,27 @@ export function stripReportWords(text: string): string {
     .trim();
 }
 
+/** The customer's «posts only» answer (the card's second option, or the same words typed). */
+const POSTS_ONLY_ANSWER_RE = /(?:المنشورات فقط|منشورات فقط|بوستات فقط|بدون تعليقات|من غير تعليقات|دون تعليقات)/gu;
+/** The customer's «with comments» answer (the card's first option, or the same words typed). */
+const COMMENTS_YES_ANSWER_RE = /مع التعليقات/gu;
+
+/**
+ * True when the LAST comments answer of the text is «posts only». A label such as «التعليقات المطلوبة» carries the comment word itself, so the words alone
+ * never decide: the answer after the label does, and the newest answer wins (a customer may change it).
+ */
+export function commentsAnsweredNo(text: string): boolean {
+  const lastAt = (re: RegExp) => { let at = -1; for (const match of (text || "").matchAll(re)) at = match.index ?? at; return at; };
+  const no = lastAt(POSTS_ONLY_ANSWER_RE);
+  return no >= 0 && no > lastAt(COMMENTS_YES_ANSWER_RE);
+}
+
 export function detectSocialIntent(text: string): SocialIntent {
   const body = text || "";
   const urls = extractUrls(body);
   const platform = detectPlatform(body, urls);
   // On X, «posts and their replies» is one posts collection; only the other comment words make it a comments request.
-  const wantsComments = (platform === "x" ? COMMENT_WORDS_NO_REPLIES_RE : COMMENT_WORDS_RE).test(body);
+  const wantsComments = (platform === "x" ? COMMENT_WORDS_NO_REPLIES_RE : COMMENT_WORDS_RE).test(body) && !commentsAnsweredNo(body);
   // A trend word with a topic («الأكثر انتشارًا عن كرة السلة») asks for the popular videos OF that topic: a topic search. The trending feed
   // has no topic filter, so routing it there would drop the topic and read unrelated videos. Trend words alone stay the trending feed.
   const trendWithTopic = TREND_WORDS_RE.test(body) && namesTopicBesidesTrend(body);
@@ -330,6 +345,8 @@ const TOPIC_NOISE = new Set([
   "من", "على", "علي", "في", "فى", "داخل", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
   // The word for the data asked («عايز داتا عن…», «بيانات ترندات الصحة»): request wording, never the topic.
   "داتا", "داته", "داتة", "دايتا", "بيانات", "بياناتها",
+  // Words of an answer (a «posts only» answer, a limit word): never part of a topic («ترندات الصحة فقط» was the live topic).
+  "فقط", "بس", "بدون",
   // Labels of stored card answers and placeholder words: never a topic.
   "موضوع", "البحث", "المطلوب", "المطلوبه", "مصدر", "القنوات", "قنوات", "تخطي", "الحد", "الأقصى", "الاقصى", "أقصى", "اقصى", "الإجابة", "الاجابة", "إجابة", "اجابة",
   "ردود", "وردود", "ردودها", "وردودها", "ردودهم", "وردودهم", "ردوده", "replies", "reply",
@@ -430,7 +447,9 @@ function analyzeTokens(text: string): AnalyzedToken[] {
 /** What a count is a count OF: a number word right before one of these (or before a magnitude word) is a quantity, not part of the subject. */
 const COUNTED_NOUN = /^(?:تعليق|تعليقات|كومنت|كومنتات|منشور|منشورات|بوست|بوستات|تغريدة|تغريدات|تويت|تويتات|فيديو|فيديوهات|مقطع|مقاطع|سجل|سجلات|ألف|الف|آلاف|الاف|مليون|ملايين)$/u;
 
-function topicTokens(text: string): string[] {
+function topicTokens(rawText: string): string[] {
+  // A tatweel («بـ») is typing decoration, not a letter: left in, «بـ» became a topic word of its own.
+  const text = (rawText || "").replace(/\u0640/gu, "");
   const periodFlags = periodWordFlags((text || "").replace(URL_RE, " ").toLowerCase().replace(COUNT_PHRASE_RE, " ").replace(/[0-9٠-٩۰-۹]+/g, " ").replace(/[^\p{L}\p{N}#@_]+/gu, " ").split(/\s+/));
   const analyzed = analyzeTokens(text);
   return analyzed

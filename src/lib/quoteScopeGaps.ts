@@ -1,3 +1,4 @@
+import { pageChannelOfItem, pageHandleOf } from "./planMethodSteps";
 import { isSocialCapabilitySlug, validateSocialParams } from "./socialSources";
 import { planCountLineAr } from "./planCounts";
 import {
@@ -282,10 +283,16 @@ export function planScopeRows(
       // a title cut at fifty characters («… عن «كرة…») is not a topic
       (conversationTitle && !/[…]$|\.\.\.$/u.test(conversationTitle.trim()) ? socialContentTopicFromTitle(conversationTitle) : "") ||
       "الموضوع المطلوب";
-    chips.push({
-      label: "موضوع المحتوى:",
-      value: String(rawVal).trim(),
-    });
+    // A page plan (its channel is the page's link or handle) shows the page, never the link as a topic.
+    const pageOfPlan = pageChannelOfItem(primary);
+    if (pageOfPlan) {
+      chips.push({ label: "الصفحة:", value: pageHandleOf(pageOfPlan) });
+    } else {
+      chips.push({
+        label: "موضوع المحتوى:",
+        value: String(rawVal).trim(),
+      });
+    }
   } else {
     // Company or general
     const rawInd =

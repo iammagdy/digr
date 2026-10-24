@@ -1,7 +1,7 @@
 import { normalizeDigits } from "./arabicDigits";
 import { PLATFORM_OTHER_QUESTION_AR, understandMission } from "./consultantCopy";
 import { SOCIAL_CONTENT_WORDS_RE, ACCOUNT_LOOKUP_RE, hasSocialTopic } from "./socialDiscovery";
-import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, TREND_WORDS_RE, type SocialIntent } from "./socialTasks";
+import { commentsAnsweredNo, detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, TREND_WORDS_RE, type SocialIntent } from "./socialTasks";
 import { facebookPageUrl, isSocialCapabilitySlug } from "./socialSources";
 import { resolveTimeWindow, windowIsStatedByCustomer, WINDOW_OPTIONS_AR } from "./timeWindow";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
@@ -49,7 +49,6 @@ export interface SocialFacts {
   allComments: boolean;
 }
 
-const POSTS_ONLY_RE = /(?:المنشورات فقط|منشورات فقط|بوستات فقط|بدون تعليقات|من غير تعليقات|دون تعليقات)/u;
 
 /** «٥٠ منشور» / «١٠٠ بوست» in a request that does not ask for comments (the mission reads a count of posts only in a comments flow). */
 function postsCountIn(text: string): number | null {
@@ -62,8 +61,7 @@ export function readSocialFacts(rawText: string): SocialFacts {
   const intent = detectSocialIntent(text);
   const mission = understandMission(text);
   const window = resolveTimeWindow(text, { needsWindow: true });
-  const postsOnly = POSTS_ONLY_RE.test(text);
-  const commentsWanted = postsOnly ? false : intent.wantsComments || mission.allComments ? true : null;
+  const commentsWanted = commentsAnsweredNo(text) ? false : intent.wantsComments || mission.allComments ? true : null;
   return {
     platform: intent.platform,
     topic: hasSocialTopic(text),
@@ -238,7 +236,7 @@ export function socialDiscoveryIntroAr(rawText: string, context: DiscoveryContex
 }
 
 /** Said once when the name typed after «أخرى» is not a platform this service reads. No plan, no hold, no balance. */
-export const UNSUPPORTED_PLATFORM_AR = "عذرًا، هذه المنصة غير متاحة عندنا الآن، ولم أبدأ أي بحث ولم يُحجز أي رصيد. المنصات المتاحة: تيك توك، فيسبوك، يوتيوب، وإكس. اختر إحداها لأجهز لك الخطة.";
+export const UNSUPPORTED_PLATFORM_AR = "عذرًا، هذه المنصة غير متاحة عندنا الآن، ولم أبدأ أي بحث ولم يُحجز أي رصيد. المنصات المتاحة: تيك توك، فيسبوك، يوتيوب، ومنصة X. اختر إحداها لأجهز لك الخطة.";
 
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PLATFORM_LABEL_RE = new RegExp(`${escapeRe(CLARIFICATION_ANSWER_LABELS.social_platform_required)}\\s*:\\s*(?:أخرى|اخرى)(?![\\p{L}])`, "u");
@@ -254,4 +252,36 @@ export function platformFollowUpStateAr(rawText: string): "asked" | "answered" |
   if (detectSocialIntent(text).platform) return null;
   if (OTHER_LABEL_RE.test(text)) return "answered";
   return PLATFORM_LABEL_RE.test(text) ? "asked" : null;
+}
+
+/**
+ * «posts only» on a Facebook TOPIC request: no service of ours reads posts of a topic without their comments (the only Facebook topic search in the
+ * catalog is pending verification and not enabled), so the customer is told so, once, and nothing is quoted or held.
+ */
+export const FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR = "على فيسبوك البحث بالموضوع يعيد التعليقات فقط، ولا توجد عندنا خدمة لمنشورات بلا تعليقات بالموضوع، فاختر «نعم، مع التعليقات» أو أرسل رابط صفحة عامة لقراءة منشوراتها، ولم يُحجز أي رصيد.";
+
+/** A platform name typed as the answer to the platform question that no service of ours reads. The supported names are the four we serve. */
+const SUPPORTED_PLATFORM_ANSWER_RE = /تيك\s*توك|tiktok|فيسبوك|فيس\s*بوك|facebook|يوتيوب|youtube|منصة\s*x|\bx\b|إكس|اكس|تويتر|twitter/iu;
+
+/**
+ * True when the LAST platform name given names a platform this service does not read (typed «سناب شات», «انستجرام», …).
+ * A bare «أخرى» is not a name: it only opens the free-text field, so it never counts as the answer.
+ */
+export function unsupportedPlatformAnswerAr(rawText: string): boolean {
+  const text = normalizeDigits(rawText || "");
+  let value: string | null = null;
+  // A value runs up to the next known answer label (or «·»): a bare «أخرى:» must not swallow the word after it.
+  const nextLabel = Object.values(CLARIFICATION_ANSWER_LABELS).map(escapeForRegex).join("|");
+  for (const label of [CLARIFICATION_ANSWER_LABELS.social_platform_required, CLARIFICATION_ANSWER_LABELS.social_platform_other_required]) {
+    for (const match of text.matchAll(new RegExp(`${escapeForRegex(label)}\\s*:\\s*([^·\\n]*?)(?=\\s+(?:${nextLabel})\\s*:|\\s*·|$)`, "gu"))) {
+      const named = match[1].trim();
+      if (named && !/^(?:أخرى|اخرى)$/u.test(named)) value = named;
+    }
+  }
+  if (!value) return false;
+  return !SUPPORTED_PLATFORM_ANSWER_RE.test(value);
+}
+
+function escapeForRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
