@@ -146,7 +146,15 @@ describe("A2 + A3: the plan says honestly what fits, why, and whether the balanc
   }
 
   it("the answers make a priced plan (no model): the page, 20 posts at most per page, 20 comments from each, the period the customer wrote", async () => {
-    const r = await ownerPlan();
+    // The plan proposes «the last three months» from today's date; the dates below are the ones of 2026-10-23, so the calendar (and only the calendar) is frozen there.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-23T12:00:00Z"));
+    let r: Awaited<ReturnType<typeof ownerPlan>>;
+    try {
+      r = await ownerPlan();
+    } finally {
+      vi.useRealTimers();
+    }
     expect(r.outputType).toBe("propose_plan");
     const item = r.planQuote.items[0];
     expect(item.capabilitySlug).toBe("social-facebook-comments");
