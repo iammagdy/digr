@@ -8,7 +8,7 @@ import sitemap from "../src/app/sitemap";
 import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
 import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
 import { SERVICES_PRIMARY_CTA_AR, isProven } from "../src/lib/servicesAvailability";
-import { PLATFORM_ENTRIES, featuredServices, platformEntryBySlug, platformHref, platformInitial, remainingServices } from "../src/lib/servicesCatalogView";
+import { PLATFORM_ENTRIES, featuredServices, platformEntryBySlug, platformHref, remainingServices } from "../src/lib/servicesCatalogView";
 import { servicesCountAr } from "../src/lib/servicesCatalogText";
 import { PROVIDER_NAME_PATTERN } from "../src/lib/publicCapabilityIds";
 
@@ -90,19 +90,21 @@ describe("one static page per platform", () => {
 describe("the catalog page: platform cards", () => {
   const browser = renderToStaticMarkup(createElement(CatalogBrowser));
 
-  it("one card per platform: tile letter, name, description, number of services, and a link to its page; no other text", () => {
+  it("one card per platform: name, description, number of services, and a link to its page; no other text", () => {
     const cards = browser.split("<a ").slice(1).filter((chunk) => /href="\/services\/[a-z0-9-]+"/.test(chunk)).map((chunk) => chunk.split("</a>")[0]!);
     expect(cards).toHaveLength(catalogCounts().platforms);
     for (const { platform } of PLATFORM_ENTRIES) {
       const card = cards.find((chunk) => chunk.includes(`href="${platformHref(platform.slug)}"`));
       expect(card, platform.slug).toBeDefined();
       const words = textOf(card!).replace(/^[^>]*>/, "").trim();
-      expect(words, platform.slug).toBe(`${platformInitial(platform.nameAr)} ${platform.nameAr} ${platform.descAr} ${servicesCountAr(platform.services.length)} ←`.replace(/\s+/g, " "));
+      expect(words, platform.slug).toBe(`${platform.nameAr} ${platform.descAr} ${servicesCountAr(platform.services.length)} ←`.replace(/\s+/g, " "));
     }
   });
 
-  it("every platform has a tile letter that is Arabic, and the sector chips carry the platform counts", () => {
-    for (const { platform } of PLATFORM_ENTRIES) expect(platformInitial(platform.nameAr), platform.slug).toMatch(/^[؀-ۿ]$/u);
+  it("no letter tile: neither the cards nor a platform page carry a tile or a lone letter, and the sector chips carry the platform counts", async () => {
+    expect(browser).not.toMatch(/aria-hidden="true"[^>]*>[؀-ۿ]<\/span>/);
+    expect(await renderPlatform("tiktok")).not.toMatch(/aria-hidden="true"[^>]*>[؀-ۿ]<\/span>/);
+    for (const file of ["src/components/services/CatalogBrowser.tsx", "src/app/services/[platform]/page.tsx", "src/lib/servicesCatalogView.ts"]) expect(readFileSync(file, "utf8"), file).not.toMatch(/PlatformTile|platformInitial|sectorHue/);
     const nav = browser.split('aria-label="القطاعات"')[1]!.split("</nav>")[0]!;
     expect(nav.match(/href="#s\d+"/g)).toHaveLength(SERVICES_CATALOG.length);
   });

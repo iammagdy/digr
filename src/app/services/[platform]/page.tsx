@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { PlatformTile } from "@/components/services/PlatformTile";
 import { servicesByGroup } from "@/lib/servicesCatalog";
 import { SERVICES_PRIMARY_CTA_AR, platformsProvenFirst } from "@/lib/servicesAvailability";
 import { PLATFORM_ENTRIES, featuredServices, platformEntryBySlug, platformHref, remainingServices } from "@/lib/servicesCatalogView";
@@ -39,12 +38,9 @@ export default async function PlatformServicesPage({ params }: { params: Promise
             <Link href={`/services#${sector.id}`} className="text-mut no-underline hover:text-ink">{sector.nameAr}</Link>
           </nav>
           <div className="flex flex-wrap items-center justify-between gap-5">
-            <div className="flex items-center gap-4">
-              <PlatformTile nameAr={platform.nameAr} sectorId={sector.id} size="lg" />
-              <div className="flex flex-col gap-1">
-                <h1 className="m-0 font-display text-[34px] font-medium leading-[1.2] min-[760px]:text-[44px]">{platform.nameAr}</h1>
-                <p className="m-0 text-sm text-mut">{servicesCountAr(platform.services.length)}</p>
-              </div>
+            <div className="flex flex-col gap-1">
+              <h1 className="m-0 font-display text-[34px] font-medium leading-[1.2] min-[760px]:text-[44px]">{platform.nameAr}</h1>
+              <p className="m-0 text-sm text-mut">{servicesCountAr(platform.services.length)}</p>
             </div>
             <Link href="/register" className="inline-flex min-h-11 items-center rounded-full bg-ac px-5 text-sm text-onac no-underline">{SERVICES_PRIMARY_CTA_AR}</Link>
           </div>
