@@ -19,6 +19,7 @@ import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from
 import { planExplanationLinesAr, recordNounAr, unitPriceLineAr } from "../../lib/planExplanation";
 import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr, type RequestIntent } from "../../lib/requestIntent";
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
+import { catalogSliceForMessage, isOfferQuestion, offerAnswerAr } from "../../lib/catalogMap";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
 import { LlmClient, LlmTurnOutput, type LlmCallResult } from "./llmClient";
@@ -2031,6 +2032,37 @@ export class ChatHandler {
       };
     }
 
+    // «إيه الخدمات؟» / «بتعملوا إيه؟»: what Diger offers, answered by code from the catalog data (by sector, decision makers first, a pointer to
+    // «خدماتنا»): no model turn, no catalog search, nothing is quoted or charged. A question that names a platform goes on to the planner with that platform's slice.
+    if (!isTestSearchScenario && isOfferQuestion(message)) {
+      const offerAnswer = offerAnswerAr();
+      const tOfferWrite = Date.now();
+      if (sb) {
+        awaitsCount += 2;
+        await Promise.all([
+          sb.from("messages").update({ content_ar: offerAnswer }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: "completed" }).eq("id", userMsgId),
+        ]);
+      } else {
+        awaitsCount += 2;
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: offerAnswer, status: "ready" } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: "completed" } });
+      }
+      const offerDelta = Date.now() - tOfferWrite;
+      writesMs += offerDelta;
+      supabaseMs += offerDelta;
+      return {
+        conversationId,
+        messageId: assistantMsgId,
+        role: "assistant",
+        contentAr: offerAnswer,
+        outputType: "answer_question",
+        intent: "chat",
+        tokensUsed: { input: 0, output: 0, costUsd: 0 },
+        turnStats: currentTurnStats(),
+      };
+    }
+
     // A delivered result whose columns cannot be read right now: answered by code, nothing is guessed or charged.
     const shapingBlockedReplyAr = (!isTestSearchScenario && isFileShapingTurn && shapingColumns.length === 0)
       ? "تعذّرت قراءة أعمدة ملفك الآن، ولم يُخصم أي رصيد. افتح نتائج طلبك ثم أعد كتابة الشكل المطلوب."
@@ -2804,6 +2836,13 @@ export class ChatHandler {
           role: "system",
           content: `${formatBriefForSystemPrompt(brief)}${catalogContext}\n\n[تعليمات داخلية — مرحلة الاستيعاب (Phase 1)]: استوعب هدف البحث بدقة كخبير استشاري. إذا كانت الأدوات متوفرة أعلاه، اطرح مباشرة أسئلة توضيحية ذكية ومحددة عبر ask_clarification لاستكمال متطلبات البحث، دون استدعاء search_catalog.`,
         });
+      }
+
+      // The customer's message names a platform of the catalog: that platform's service names (a few hundred tokens at most) join the planning context, found by code.
+      // It only informs what the assistant says; no plan step, price or cap reads it.
+      if (!isGreeting && !isGeneralQuestion && !isFileShapingTurn && !isTestSearchScenario) {
+        const catalogSlice = catalogSliceForMessage(message);
+        if (catalogSlice) turnMessages.push({ role: "system", content: catalogSlice });
       }
 
       currentStep = "llm_turn";
