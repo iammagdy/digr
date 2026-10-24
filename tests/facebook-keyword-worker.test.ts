@@ -117,6 +117,7 @@ import { REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_JOB_CEILING_USD, REVIEW_PAGED_JOB
 import { POST_REVIEW_BUDGET_NOTE_AR, maxPagesForJob } from "../src/lib/server/providerCallCaps";
 import { chargeForUnits, reserveForUnits, recordUnitPricePoints } from "../src/lib/recordPricing";
 import { FIXTURE_TOPIC, facebookKeywordWorld, postNumberOf } from "./helpers/fakeFacebookKeyword";
+import { DIAGNOSTIC_SAMPLE_LIMIT, readDiagnosticFile, totalDiagnostic } from "../src/lib/server/zeroDeliveryDiagnostic";
 
 const SLUG = "social-facebook-keyword-comments";
 const UNIT = recordUnitPricePoints(SLUG)!;
@@ -218,7 +219,7 @@ describe("worker: the Facebook keyword mission", () => {
     expect(readPosts.every((n) => n % 2 === 0)).toBe(true);
     // the review model was shown posts (the title list of a page), never a comment, and only the posts the text could not settle
     expect(asked.length).toBeGreaterThan(0);
-    expect(asked.every((entry) => entry.kind === `${SLUG}-video-list`)).toBe(true);
+    expect(asked.every((entry) => entry.kind === `${SLUG}-post-list`)).toBe(true);
     expect(asked.flatMap((entry) => entry.titles).every((title) => /موضوع آخر/.test(title))).toBe(true);
     // the money: charge = ceil(delivered x unit price), never above the hold; the rest of the hold goes back
     const settle = db.rpcCalls.find((c) => c.name === "settle_job_atomic")!;
@@ -242,7 +243,6 @@ describe("worker: the Facebook keyword mission", () => {
     strict(0.003);
 
     const { json, chunks } = await runAllChunks(400);
-    require("fs").writeFileSync("/tmp/claude-0/-home-user-digr/3c709a42-0c09-5aa4-a35d-235166849e78/scratchpad/w2.json", JSON.stringify({ json, chunks, tail: db.events.slice(-14).map((e: any) => e.message), searches: world.searches().length, reads: world.reads().length }, null, 1));
 
     expect(json.done).toBe(true);
     expect(json.deliveredUnits).toBe(1500);
@@ -342,5 +342,119 @@ describe("worker: the Facebook keyword mission", () => {
     expect(String(json.error)).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
     expect(String(json.error)).not.toMatch(/[A-Za-z]/);
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
+  });
+
+  // ---- the first live run (2026-10-24): the posts were about health but never said the topic's own words, so every comment was turned away ----
+  const HEALTH_POSTS = [
+    "٥ عادات يومية تحمي القلب وتخفض ضغط الدم، جرّبها وستشعر بالفرق",
+    "نصائح لتغذية صحية للأطفال في المدارس وأثرها على التركيز",
+    "حملة التطعيم ضد الإنفلونزا الموسمية تبدأ الأسبوع القادم في المحافظات",
+    "النوم الجيد وفيتامين د: ماذا يقول الأطباء عن المناعة في الشتاء",
+    "ارتفاع السكر عند الشباب أسبابه وطرق الوقاية منه بالمشي والغذاء المتوازن",
+  ];
+  const UNRELATED_POSTS = [
+    "مباراة الأهلي والزمالك مساء الخميس والجماهير تنتظر التشكيل",
+    "تخفيضات هائلة على الهواتف المحمولة حتى نهاية الأسبوع، اطلب الآن واتساب",
+    "سعر الدولار اليوم في البنوك المصرية وأسعار الذهب عيار ٢١",
+    "حفل الفنان الجديد في دار الأوبرا وتذاكر الحفل متاحة",
+  ];
+  /** A FAKE review model standing in for the real one: it says «match» for a text with a word of the health field and «no_match» otherwise. Real model behaviour is NOT proven. */
+  const HEALTH_FIELD = /صح|قلب|ضغط|تغذية|تطعيم|إنفلونزا|مناعة|فيتامين|سكر|النوم|الأطباء|علاج|مرض/u;
+  const healthJudge = (): RowAdvisorFn => async (input) => {
+    asked.push({ kind: input.kind, titles: input.rows.map(({ row }) => String(row.title)) });
+    return { verdicts: new Map(input.rows.map(({ index, row }) => [index, { verdict: HEALTH_FIELD.test(String(row.title)) ? ("match" as const) : ("no_match" as const), reasonAr: "تقدير آلي" }])), usage: usage(0.003), failure: null };
+  };
+  const withTexts = (world: ReturnType<typeof facebookKeywordWorld>, on: string[], off: string[]): SocialCall => async (source, params, ctx) => {
+    const outcome = await world.call(source, params, ctx);
+    if (outcome.ok && /search/.test(source.endpointId)) {
+      outcome.data.rows = outcome.data.rows.map((row: any) => {
+        const n = postNumberOf(row.url);
+        return { ...row, message: n % 2 === 0 ? on[(n / 2) % on.length] : off[Math.floor(n / 2) % off.length] };
+      });
+    }
+    return outcome;
+  };
+
+  it("HEALTH POSTS THAT NEVER SAY THE TOPIC'S WORDS: their comments are delivered, the comments under unrelated posts are never read, and the review saw posts under the post list's own kind", async () => {
+    resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 20, region: "EG" }, 100);
+    const world = facebookKeywordWorld({ postsAvailable: 400 });
+    useSource(withTexts(world, HEALTH_POSTS, UNRELATED_POSTS));
+    asked.length = 0;
+    setStrictSocialReviewForTesting(true);
+    setRowAdvisorForTesting(healthJudge());
+
+    const { status, json } = await runAllChunks();
+
+    expect(status).toBe(200);
+    expect(json.done).toBe(true);
+    expect(json.deliveredUnits).toBe(100);
+    expect(json.settle.charged_credits).toBe(chargeForUnits(100, UNIT));
+    // only the health posts (even numbers) were read; the unrelated posts' comments were never asked for
+    expect(world.reads().map((entry) => postNumberOf(entry.params.url)).every((n) => n % 2 === 0)).toBe(true);
+    // the review model was asked about posts only, as a post list, never as a video list
+    expect(asked.length).toBeGreaterThan(0);
+    expect(asked.every((entry) => entry.kind === `${SLUG}-post-list`)).toBe(true);
+    expect(asked.flatMap((entry) => entry.titles).some((title) => UNRELATED_POSTS.includes(title))).toBe(true);
+    // wording: posts, never videos, in every line the customer can read
+    const selection = lines().filter((line) => line.startsWith("راجعنا"));
+    expect(selection.length).toBeGreaterThan(0);
+    for (const line of selection) { expect(line).toMatch(/^راجعنا منشورات هذه القائمة: اعتمدنا [٠-٩]+ منها/); expect(line).not.toMatch(/فيديو/); }
+    for (const line of lines()) expect(line).not.toMatch(/فيديو/);
+  });
+
+  it("A JOB THAT ENDS WITH NOTHING SAYS WHY: counts per reason in ONE Arabic line, no source name, no amount; the owner's sample holds at most five rejected posts, cut short", async () => {
+    resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 20, region: "EG" }, 100);
+    const world = facebookKeywordWorld({ postsAvailable: 400 });
+    useSource(withTexts(world, UNRELATED_POSTS, UNRELATED_POSTS));
+    asked.length = 0;
+    setStrictSocialReviewForTesting(true);
+    setRowAdvisorForTesting(healthJudge());
+
+    const { json } = await runAllChunks();
+
+    expect(json.released).toBe(true);
+    expect(json.chargedCredits).toBe(0);
+    expect(world.reads()).toHaveLength(0);
+    const why = lines().filter((line) => line.startsWith("لم يُسلَّم شيء، وهذا ما حدث"));
+    expect(why).toHaveLength(1);
+    expect(why[0]).toMatch(/راجعنا [٠-٩]+ منشورًا: اعتمدنا ٠، واستبعدنا [٠-٩]+ لأنها لا تتناول موضوعك/);
+    expect(why[0]).not.toMatch(/[A-Za-z0-9]/);
+    expect(why[0]).not.toMatch(/\$|usd|treg|justone|scrape|anyapi/i);
+    // the owner's sample: private storage, at most five posts, each cut to 140 characters
+    const file = await readDiagnosticFile({ download: async (path: string) => { const buf = db.partials.get(path); return buf ? { data: new Blob([new Uint8Array(buf)]) } : { data: null }; }, upload: async () => ({}) }, JOB);
+    const total = totalDiagnostic(file);
+    expect(total.posts.adopted).toBe(0);
+    expect(total.posts.excluded).toBeGreaterThan(5);
+    expect(total.samples.posts.length).toBe(DIAGNOSTIC_SAMPLE_LIMIT);
+    for (const sample of total.samples.posts) { expect(sample.text.length).toBeLessThanOrEqual(140); expect(UNRELATED_POSTS.some((post) => post.startsWith(sample.text.slice(0, 20)))).toBe(true); }
+    // the customer's job events never carry a rejected text
+    for (const line of lines()) expect(UNRELATED_POSTS.some((post) => line.includes(post.slice(0, 25)))).toBe(false);
+  });
+
+  it("COMMENTS TURNED AWAY BY THE GATE ARE COUNTED BY REASON: posts adopted, every comment a bare link or a reaction, nothing delivered, the line says how many and why", async () => {
+    resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 6, region: "EG" }, 30);
+    const world = facebookKeywordWorld({
+      postsAvailable: 60,
+      commentsOf: (n) => Array.from({ length: 10 }, (_, i) => ({ comment_id: `c_${n}_${i}`, text: i % 2 === 0 ? "اطلب الآن واتساب خصم خاص ٥٠٪ https://shop.example.test/x" : "٩٩٩٩٩٩" })),
+    });
+    useSource(withTexts(world, HEALTH_POSTS, UNRELATED_POSTS));
+    asked.length = 0;
+    setStrictSocialReviewForTesting(true);
+    setRowAdvisorForTesting(healthJudge());
+
+    const { json } = await runAllChunks();
+
+    expect(json.released).toBe(true);
+    const total = totalDiagnostic(await readDiagnosticFile({ download: async (path: string) => { const buf = db.partials.get(path); return buf ? { data: new Blob([new Uint8Array(buf)]) } : { data: null }; }, upload: async () => ({}) }, JOB));
+    expect(total.posts.adopted).toBeGreaterThan(0);
+    expect(total.rows.accepted).toBe(0);
+    expect(total.rows.excluded).toBeGreaterThan(0);
+    expect(Object.values(total.rows.byReason).reduce((sum, n) => sum + (n ?? 0), 0)).toBe(total.rows.excluded);
+    expect(total.samples.rows.length).toBeLessThanOrEqual(DIAGNOSTIC_SAMPLE_LIMIT);
+    for (const sample of total.samples.rows) expect(sample.text).not.toMatch(/https?:\/\/shop\.example\.test\/x/); // links are masked in the sample
+    const why = lines().filter((line) => line.startsWith("لم يُسلَّم شيء، وهذا ما حدث"));
+    expect(why).toHaveLength(1);
+    expect(why[0]).toMatch(/فحصنا .+: قُبل ٠، واستُبعد [٠-٩]+ \(/);
+    expect(why[0]).not.toMatch(/[A-Za-z0-9]/);
   });
 });

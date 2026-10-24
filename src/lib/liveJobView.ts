@@ -1,4 +1,5 @@
 import { toArabicDigits } from "./arabicDigits";
+import { normalizeEasternArabicDigits } from "./arabicNumbers";
 import { customerResultColumnLabel, previewColumns } from "./customerResultColumns";
 import { relativeDateDisplay } from "./relativeDateDisplay";
 
@@ -80,10 +81,29 @@ export function buildLivePreviewSample(rows: ReadonlyArray<Record<string, any>>,
 export const PREVIEW_TITLE_AR = "معاينة مباشرة لما جُمع";
 export const PREVIEW_WAITING_AR = "لم يُعتمد أي سجل للمعاينة بعد؛ تظهر أعلاه الأعداد فور كل دفعة، وتظهر السجلات هنا عند اعتماد أولها.";
 
-/** The counts line shown under the preview (Arabic-Indic digits). */
-export function previewCountsLineAr(input: { accepted: number; requested?: number; received?: number | null; underReview?: number | null }): string {
+/** How many of the listed posts the selection adopted and turned away, summed over the selection lines of the run; null when no such line was written. */
+export function postSelectionFromEvents(events: ReadonlyArray<{ textAr: string }> | null | undefined): { adopted: number; excluded: number } | null {
+  let found = false;
+  let adopted = 0;
+  let excluded = 0;
+  for (const event of events || []) {
+    const text = normalizeEasternArabicDigits(String(event.textAr || ""));
+    if (!/^\s*راجعنا منشورات هذه القائمة/u.test(text)) continue;
+    found = true;
+    adopted += Number(/اعتمدنا\s+(\d+)/u.exec(text)?.[1] ?? 0);
+    excluded += Number(/استبعدنا\s+(\d+)/u.exec(text)?.[1] ?? 0);
+  }
+  return found ? { adopted, excluded } : null;
+}
+
+/**
+ * The counts line shown under the preview (Arabic-Indic digits). Every count that is known is shown, a zero included: «قيد المراجعة ٠» and
+ * «المنشورات المعتمدة ٧، المستبعدة ١» are facts, and an empty preview with no numbers reads as a screen that is stuck.
+ */
+export function previewCountsLineAr(input: { accepted: number; requested?: number; received?: number | null; underReview?: number | null; posts?: { adopted: number; excluded: number } | null }): string {
   const parts = [`المقبول حتى الآن ${toArabicDigits(Math.max(0, Math.floor(input.accepted)))}${input.requested ? ` من ${toArabicDigits(Math.floor(input.requested))}` : ""}`];
+  if (input.posts) parts.push(`المنشورات المعتمدة ${toArabicDigits(input.posts.adopted)}${input.posts.excluded > 0 ? `، المستبعدة ${toArabicDigits(input.posts.excluded)}` : ""}`);
   if (typeof input.received === "number") parts.push(`استلمنا ${toArabicDigits(input.received)}`);
-  if (typeof input.underReview === "number" && input.underReview > 0) parts.push(`قيد المراجعة ${toArabicDigits(input.underReview)}`);
+  if (typeof input.underReview === "number") parts.push(`قيد المراجعة ${toArabicDigits(input.underReview)}`);
   return parts.join(" · ");
 }

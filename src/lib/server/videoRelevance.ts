@@ -87,6 +87,15 @@ export const VIDEO_ON_TOPIC_REASON_AR = "الفيديو يتناول موضوع 
 export const VIDEO_OFF_TOPIC_REASON_AR = "الفيديو لا يتناول موضوع طلبك";
 export const VIDEO_UNREVIEWED_REASON_AR = "تعذّر التحقق الآلي من ملاءمة الفيديو لموضوع الطلب؛ أُحيلت تعليقاته للمراجعة ولم تُحتسب";
 
+/** What is selected before its comments are read: a video (TikTok, YouTube) or a post (the Facebook keyword search). The same selection, worded for what it is. */
+export type SelectionUnit = "video" | "post";
+export const POST_ON_TOPIC_REASON_AR = "المنشور يتناول موضوع طلبك";
+export const POST_OFF_TOPIC_REASON_AR = "المنشور لا يتناول موضوع طلبك";
+export const POST_UNREVIEWED_REASON_AR = "تعذّر التحقق الآلي من ملاءمة المنشور لموضوع الطلب؛ أُحيلت تعليقاته للمراجعة ولم تُحتسب";
+export const unreviewedReasonFor = (unit: SelectionUnit = "video"): string => (unit === "post" ? POST_UNREVIEWED_REASON_AR : VIDEO_UNREVIEWED_REASON_AR);
+/** The kind of the selection review: «…-video-list» keeps its prompt untouched; «…-post-list» has its own (see `buildPrompt`). */
+export const selectionKindFor = (capabilitySlug: unknown, unit: SelectionUnit = "video"): string => `${String(capabilitySlug || "")}-${unit}-list`;
+
 export interface VideoJudgementOutcome {
   judgements: Map<string, VideoJudgement>;
   attempts: SocialReviewAttempt[];
@@ -108,12 +117,18 @@ export async function judgeVideos(input: {
   /** See `reviewSocialRows`: when set, the budget is a ceiling no call may cross. */
   callCostEstimateUsd?: number;
   deadlineMs?: number;
+  /** What the list holds; only the wording of the reasons depends on it (default: videos). */
+  unit?: SelectionUnit;
 }): Promise<VideoJudgementOutcome> {
+  const post = input.unit === "post";
+  const onTopicReason = post ? POST_ON_TOPIC_REASON_AR : VIDEO_ON_TOPIC_REASON_AR;
+  const offTopicReason = post ? POST_OFF_TOPIC_REASON_AR : VIDEO_OFF_TOPIC_REASON_AR;
+  const unreviewedReason = unreviewedReasonFor(input.unit);
   const judgements = new Map<string, VideoJudgement>();
   const toReview: Array<{ index: number; row: Record<string, any>; key: string }> = [];
   input.videos.forEach((video) => {
     if (videoEvidence(video.title, input.request) === "match") {
-      judgements.set(video.key, { decision: "match", reasonAr: VIDEO_ON_TOPIC_REASON_AR, by: "evidence" });
+      judgements.set(video.key, { decision: "match", reasonAr: onTopicReason, by: "evidence" });
       return;
     }
     toReview.push({
@@ -137,17 +152,17 @@ export async function judgeVideos(input: {
     const verdict = outcome.verdicts.get(entry.index);
     if (!verdict) {
       const byBudget = unreviewedByCap.has(entry.index);
-      judgements.set(entry.key, { decision: "uncertain", reasonAr: byBudget ? UNREVIEWED_BY_BUDGET_REASON_AR : VIDEO_UNREVIEWED_REASON_AR, by: "unreviewed", ...(byBudget ? { budget: true } : {}) });
+      judgements.set(entry.key, { decision: "uncertain", reasonAr: byBudget ? UNREVIEWED_BY_BUDGET_REASON_AR : unreviewedReason, by: "unreviewed", ...(byBudget ? { budget: true } : {}) });
     }
-    else if (verdict.verdict === "match") judgements.set(entry.key, { decision: "match", reasonAr: verdict.reasonAr || VIDEO_ON_TOPIC_REASON_AR, by: "review" });
-    else if (verdict.verdict === "no_match") judgements.set(entry.key, { decision: "no_match", reasonAr: verdict.reasonAr || VIDEO_OFF_TOPIC_REASON_AR, by: "review" });
-    else judgements.set(entry.key, { decision: "uncertain", reasonAr: verdict.reasonAr || VIDEO_UNREVIEWED_REASON_AR, by: "review" });
+    else if (verdict.verdict === "match") judgements.set(entry.key, { decision: "match", reasonAr: verdict.reasonAr || onTopicReason, by: "review" });
+    else if (verdict.verdict === "no_match") judgements.set(entry.key, { decision: "no_match", reasonAr: verdict.reasonAr || offTopicReason, by: "review" });
+    else judgements.set(entry.key, { decision: "uncertain", reasonAr: verdict.reasonAr || unreviewedReason, by: "review" });
   }
   return { judgements, attempts: outcome.attempts, costUsd: outcome.costUsd, stoppedBy: outcome.stoppedBy };
 }
 
-/** One line for the activity log: how many videos were selected and why the others were not. Arabic only, Arabic-Indic digits. */
-export function videoSelectionEventAr(judgements: Iterable<VideoJudgement>, options: { carried?: boolean } = {}): string {
+/** One line for the activity log: how many videos (or posts) were selected and why the others were not. Arabic only, Arabic-Indic digits. */
+export function videoSelectionEventAr(judgements: Iterable<VideoJudgement>, options: { carried?: boolean; unit?: SelectionUnit } = {}): string {
   let matched = 0, excluded = 0, held = 0;
   let firstOffReason = "";
   for (const judgement of judgements) {
@@ -155,10 +170,11 @@ export function videoSelectionEventAr(judgements: Iterable<VideoJudgement>, opti
     else if (judgement.decision === "no_match") { excluded += 1; firstOffReason ||= judgement.reasonAr; }
     else held += 1;
   }
-  const parts = [`اعتمدنا ${toArabicDigits(matched)} فيديو`];
+  const post = options.unit === "post";
+  const parts = [post ? `اعتمدنا ${toArabicDigits(matched)} منها` : `اعتمدنا ${toArabicDigits(matched)} فيديو`];
   if (excluded > 0) parts.push(`واستبعدنا ${toArabicDigits(excluded)} لأنها لا تتناول موضوعك${firstOffReason ? ` (${firstOffReason})` : ""}`);
   if (held > 0) parts.push(options.carried ? `وسنقرأ تعليقات ${toArabicDigits(held)} للتحقق من موضوعها` : `وأحلنا ${toArabicDigits(held)} إلى المراجعة لعدم التأكد من موضوعها`);
-  return `راجعنا فيديوهات هذه الصفحة: ${parts.join("، ")}.`;
+  return `${post ? "راجعنا منشورات هذه القائمة" : "راجعنا فيديوهات هذه الصفحة"}: ${parts.join("، ")}.`;
 }
 
 export type { AdvisoryUsage };

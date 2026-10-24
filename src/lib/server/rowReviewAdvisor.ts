@@ -310,7 +310,15 @@ function buildPrompt(input: RowAdvisoryInput): string {
     `Customer request (Arabic): "${stripControl(input.customerRequest).slice(0, 400)}"`,
     `Kind of rows: ${input.kind}`,
     "For each row decide: \"match\" (clearly what the customer asked for), \"no_match\" (clearly something else: another activity, another country, another topic), or \"uncertain\" (borderline or not enough information).",
-    ...(/video-list/i.test(input.kind) ? [
+    ...(/post-list/i.test(input.kind) ? [
+      "Each row is a POST found by a keyword search on Facebook (its text and its page, and a few of its comments when the post has no text). The customer wants the comments under posts ABOUT the requested topic.",
+      "\"match\" when the post is itself about the topic or about the subject area the topic names: a topic such as a general trend, a field or a phenomenon is matched by any post whose subject lies inside that field (for example, for a request about «economic news», a post about prices, wages or interest rates is a match even though it never says those two words). The post does NOT have to repeat the words of the request, and it does not need to use the word \"trend\".",
+      "\"no_match\" when the post is about another subject, even if it shares a word with the topic.",
+      SOCIAL_NOT_A_MATCH_RULE,
+      "If the request names a country, a post about another country's own news, clubs or events is \"no_match\"; a post that names no country at all is judged by its topic alone, because the search was already limited to the requested country.",
+      "Answer \"uncertain\" only when you cannot tell what the post is about. A post with no text: judge from its page and sample comments, else \"uncertain\".",
+      "Never judge a post by how its comments are worded: short comments such as thanks, laughter or a reaction are normal under an on-topic post.",
+    ] : /video-list/i.test(input.kind) ? [
       "Each row is a VIDEO found by a topic search (its title or description with hashtags, its channel, and a few of its comments). The customer wants the comments under videos ABOUT that topic.",
       "\"match\" only if the video itself is about the topic. A video about another subject that merely shares a word with the topic is \"no_match\".",
       "If the request names a country, a video about another country's clubs, league, team or events (for example a Spanish club for a request about Egypt) is \"no_match\"; a video about the requested country's football, clubs, league, team or players is a match.",

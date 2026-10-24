@@ -221,7 +221,7 @@ export function evaluateResearchRowRelevance(
   // The source filtered by the topic itself: presume the rows on topic (see presumeTopicSearchRow). The strict evidence rule below
   // stays for feeds with no topic filter (an account, a channel, a link), for videos (the title IS the deliverable) and for the
   // basketball/football separation.
-  if (/^social-(?:x-posts|tiktok-comments|youtube-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow, requestedRegion);
+  if (/^social-(?:x-posts|tiktok-comments|youtube-comments|facebook-keyword-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow, requestedRegion);
   // Basketball comments found by the source's own topic search (TikTok, YouTube): a short comment under a basketball video is a real comment
   // even when it never says «كرة السلة» (the same rule as every other topic). What stays strict: a comment or a video that is plainly about
   // FOOTBALL (the sports share the word «كرة»), a bare reaction, an ad. A video whose own text names neither sport is not rejected here: the
