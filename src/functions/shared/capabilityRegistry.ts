@@ -78,7 +78,7 @@ export function registryPointsPerUnit(
 
 export const VERIFICATION_NOTE = "to verify against the real charge of the first call";
 export const UNVERIFIED_PLATFORM_MESSAGE_AR =
-  "هجهز خطة مطابقة للموضوع والمنصة اللي طلبتهم";
+  "لم نجد طريقة تنفيذ مباشرة لهذا الطلب بعد. أخبرنا بتفاصيل أكثر وسنرى ما يمكن تنفيذه، ولم يُحجز أي رصيد.";
 
 /** Services that have been disabled after live customer testing exposed an unreliable execution path. */
 
@@ -1145,12 +1145,12 @@ export function validatePlanPlatformMatch(
   });
 
   if (hasUnverifiedPlanItem) {
-    const askedLabels = userPlatforms.map(getPlatformLabelAr).join("، ");
+    // Text only: the plan is refused exactly as before (nothing is held or charged); the sentence is the same one the chat shows.
     return {
       valid: false,
       userPlatforms,
       planPlatforms,
-      errorAr: `تعذر مطابقة الخطة مع الخدمة المطلوبة (${askedLabels || "الخدمة المطلوبة"}).`,
+      errorAr: UNVERIFIED_PLATFORM_MESSAGE_AR,
     };
   }
 

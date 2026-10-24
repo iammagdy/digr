@@ -1,33 +1,24 @@
-import type { CatalogPlatform, CatalogSector } from "./servicesCatalog";
+import type { CatalogPlatform } from "./servicesCatalog";
 
 /**
- * The status of every service of the public catalog: TWO values, derived from ONE constant list, never typed per service.
+ * INTERNAL knowledge about which catalog services are proven live. It is NEVER shown to customers: no status, chip, line or call to action per
+ * service appears anywhere. It only orders the platform cards (platforms with a proven service first) and feeds docs/FUTURE_SERVICES.md.
  *
- *  «متاح الآن»  a service proven live (its registry slug is in AVAILABLE_NOW_REGISTRY_SLUGS below)
- *  «قريبًا»     every other service, including those that have a code executor that was not proven live
- *
- * To flip a service after a live test: add its registry slug to AVAILABLE_NOW_REGISTRY_SLUGS (one line). Nothing else changes: the page, the landing
- * page and the counts read this file. A «قريبًا» service shows no call to action, no price and no promise of delivery.
+ * To mark a service proven after a live test, add its registry slug to PROVEN_REGISTRY_SLUGS (one line).
  */
 
-export const SERVICE_STATUS_AVAILABLE_AR = "متاح الآن";
-export const SERVICE_STATUS_SOON_AR = "قريبًا";
-/** The one line under a «قريبًا» service. */
-export const SERVICE_SOON_LINE_AR = "ستُضاف تدريجيًا";
-/** The call to action of a «متاح الآن» service. */
-export const SERVICE_ORDER_CTA_AR = "ابدأ طلبك";
+/** The one primary call to action of the services page (top and bottom). */
+export const SERVICES_PRIMARY_CTA_AR = "ابدأ طلبك";
 
-/** The one honest line above the decision-makers block (page and landing page). It changes no status, price or call to action. */
+/** The one honest line above the decision-makers block (page and landing page). It changes no price or call to action. */
 export const DECISION_MAKERS_LINE_AR = "بيانات صناع القرار تُسلَّم الآن بحسب الطلب، وتُعرض خطتها وسعرها قبل أي خصم.";
 
-export type ServiceStatus = "available" | "soon";
-
 /**
- * THE CONSTANT. Registry slugs (see APPROVED_CAPABILITY_CATALOG in src/functions/shared/capabilityRegistry.ts) of the services proven live:
+ * THE INTERNAL LIST. Registry slugs (see APPROVED_CAPABILITY_CATALOG in src/functions/shared/capabilityRegistry.ts) of the services proven live:
  * company search, X post search, Facebook keyword comments, Facebook page posts, Facebook post comments, TikTok video comments.
  * (People search, `professional-people-search`, is not here: it was not proven live after the latest fixes; add it back after a live test.) A slug here must exist in the registry (tests/services-availability.test.tsx proves it).
  */
-export const AVAILABLE_NOW_REGISTRY_SLUGS: readonly string[] = [
+export const PROVEN_REGISTRY_SLUGS: readonly string[] = [
   "icypeas-companies-search",
   "social-x-posts",
   "social-facebook-keyword-comments",
@@ -45,8 +36,8 @@ export interface RegistryServiceEntry {
 }
 
 /**
- * Every catalog service that has a code executor in the registry, mapped by hand from its registry slug. A service is «متاح الآن» when ANY entry that
- * maps to it has its id in AVAILABLE_NOW_REGISTRY_SLUGS. Entries not in that list are services with an executor that was NOT proven live.
+ * Every catalog service that has a code executor in the registry, mapped by hand from its registry slug. A service is proven when ANY entry that
+ * maps to it has its id in PROVEN_REGISTRY_SLUGS. Entries not in that list are services with an executor that was NOT proven live.
  */
 export const REGISTRY_SERVICE_MAP: readonly RegistryServiceEntry[] = [
   { id: "icypeas-companies-search", platform: "companies", nameAr: "البحث عن شركات بالصناعة أو الحجم أو التقنية" },
@@ -76,39 +67,24 @@ export const REGISTRY_SERVICE_MAP: readonly RegistryServiceEntry[] = [
 
 const key = (platform: string, nameAr: string) => `${platform}|${nameAr}`;
 
-const AVAILABLE_KEYS: ReadonlySet<string> = new Set(
-  REGISTRY_SERVICE_MAP.filter((entry) => AVAILABLE_NOW_REGISTRY_SLUGS.includes(entry.id)).map((entry) => key(entry.platform, entry.nameAr)),
+const PROVEN_KEYS: ReadonlySet<string> = new Set(
+  REGISTRY_SERVICE_MAP.filter((entry) => PROVEN_REGISTRY_SLUGS.includes(entry.id)).map((entry) => key(entry.platform, entry.nameAr)),
 );
 const EXECUTOR_KEYS: ReadonlySet<string> = new Set(REGISTRY_SERVICE_MAP.map((entry) => key(entry.platform, entry.nameAr)));
 
-export function serviceStatus(platformSlug: string, nameAr: string): ServiceStatus {
-  return AVAILABLE_KEYS.has(key(platformSlug, nameAr)) ? "available" : "soon";
-}
-
-export const isAvailableNow = (platformSlug: string, nameAr: string): boolean => serviceStatus(platformSlug, nameAr) === "available";
+/** True when the service is proven live (internal). */
+export const isProven = (platformSlug: string, nameAr: string): boolean => PROVEN_KEYS.has(key(platformSlug, nameAr));
 
 /** True when a code executor exists for the service (proven live or not). Internal: used by the future-services document only. */
 export const hasCodeExecutor = (platformSlug: string, nameAr: string): boolean => EXECUTOR_KEYS.has(key(platformSlug, nameAr));
 
-/** Services of a platform that are «متاح الآن». */
-export const platformAvailableCount = (platform: CatalogPlatform): number => platform.services.filter((service) => isAvailableNow(platform.slug, service.nameAr)).length;
+/** Services of a platform that are proven (internal; never shown). */
+export const platformProvenCount = (platform: CatalogPlatform): number => platform.services.filter((service) => isProven(platform.slug, service.nameAr)).length;
 
-export interface StatusCounts { available: number; soon: number; total: number }
-
-export function statusCounts(catalog: CatalogSector[]): StatusCounts {
-  let available = 0;
-  let total = 0;
-  for (const sector of catalog) for (const platform of sector.platforms) {
-    total += platform.services.length;
-    available += platformAvailableCount(platform);
-  }
-  return { available, soon: total - available, total };
-}
-
-/** Platforms with at least one «متاح الآن» service first; the catalog's own order otherwise (stable). */
-export function platformsAvailableFirst<T extends CatalogPlatform>(platforms: readonly T[]): T[] {
+/** Platforms with at least one proven service first; the catalog's own order otherwise (stable). Only the order is visible to a customer. */
+export function platformsProvenFirst<T extends CatalogPlatform>(platforms: readonly T[]): T[] {
   return [...platforms]
-    .map((platform, index) => ({ platform, index, first: platformAvailableCount(platform) > 0 ? 0 : 1 }))
+    .map((platform, index) => ({ platform, index, first: platformProvenCount(platform) > 0 ? 0 : 1 }))
     .sort((a, b) => a.first - b.first || a.index - b.index)
     .map((entry) => entry.platform);
 }

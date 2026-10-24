@@ -3,52 +3,48 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { Overview } from "../src/components/landing/Overview";
-import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
-import { SERVICES_CATALOG, coreServices } from "../src/lib/servicesCatalog";
-import { AVAILABLE_NOW_REGISTRY_SLUGS, DECISION_MAKERS_LINE_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "../src/lib/servicesAvailability";
-import { formatAr } from "../src/lib/arabicDigits";
+import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
+import { DECISION_MAKERS_LINE_AR } from "../src/lib/servicesAvailability";
+import { platformsCountAr, sectorsCountAr } from "../src/lib/servicesCatalogText";
 
 const html = renderToStaticMarkup(createElement(Overview));
 const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
+const STATUS_TEXT = ["متاح الآن", "قريبًا", "قريباً", "ستُضاف تدريجيًا", "اطلبها الآن"];
 
-describe("landing: the two statuses (from the catalog's one constant)", () => {
-  it("every available-now slug is a real registry slug, and the list is the owner's", () => {
-    const registry = new Set(APPROVED_CAPABILITY_CATALOG.map((capability) => capability.slug));
-    for (const slug of AVAILABLE_NOW_REGISTRY_SLUGS) expect(registry.has(slug), slug).toBe(true);
-    expect([...AVAILABLE_NOW_REGISTRY_SLUGS].sort()).toEqual(["icypeas-companies-search", "social-facebook-comments", "social-facebook-keyword-comments", "social-facebook-posts", "social-tiktok-comments", "social-x-posts"]);
+describe("landing: no per-service status anywhere", () => {
+  it("no status word, no status counts, no status block", () => {
+    for (const word of STATUS_TEXT) {
+      expect(text, word).not.toContain(word);
+      expect(readFileSync("src/components/landing/Overview.tsx", "utf8"), word).not.toContain(word);
+    }
+    expect(html).not.toMatch(/landing-status-counts|landing-decision-status|data-status=/);
   });
 
-  it("the counts are computed from the data", () => {
-    const counts = statusCounts(SERVICES_CATALOG);
-    expect(html).toContain('data-testid="landing-status-counts"');
-    expect(text).toContain(`${SERVICE_STATUS_AVAILABLE_AR}: ${formatAr(counts.available)}، ${SERVICE_STATUS_SOON_AR}: ${formatAr(counts.soon)}`);
+  it("the sector and platform counts are computed from the data", () => {
+    const counts = catalogCounts();
+    expect(text).toContain(`${sectorsCountAr(counts.sectors)} من ${platformsCountAr(counts.platforms)}`);
+    const chips = html.split('data-testid="landing-sectors"')[1].split("</ul>")[0].match(/<li/g) ?? [];
+    expect(chips.length).toBe(SERVICES_CATALOG.length);
+    for (const sector of SERVICES_CATALOG) expect(html).toContain(sector.nameAr);
   });
 
-  it("the decision-makers card says which core services are available now (none today) and how many are coming, with no call to action", () => {
-    const core = coreServices().map((service) => ({ service, available: isAvailableNow(service.platformSlug, service.nameAr) }));
-    const available = core.filter((entry) => entry.available);
-    // no core service is available now while people search is «قريبًا»: the card then says only how many are coming
-    expect(available.length).toBe(core.filter((entry) => isAvailableNow(entry.service.platformSlug, entry.service.nameAr)).length);
-    expect(core.length - available.length).toBeGreaterThan(0);
-    const block = /data-testid="landing-decision-status"[\s\S]*?<\/div>/.exec(html)?.[0] ?? "";
-    for (const entry of available) expect(block).toContain(entry.service.nameAr);
-    expect(block).toContain(`${formatAr(core.length - available.length)} من خدمات التواصل المهنية. ${SERVICE_SOON_LINE_AR}`);
+  it("the decision-makers card lists no service and has no call to action; the landing's own calls to action are unchanged (none added here)", () => {
+    const block = /data-testid="landing-decision-makers"[\s\S]*?<ul[\s\S]*?<\/ul>/.exec(html)?.[0] ?? "";
+    expect(block).not.toBe("");
     expect(block).not.toContain("<a");
     expect(html).not.toContain('href="/register"');
+    expect(html.match(/href="\/services"/g)?.length).toBe(1);
   });
 
-  it("one honest line above the decision-makers card, from one constant, with no CTA, price or status change", () => {
+  it("one honest line above the decision-makers card, from one constant, with no CTA, price or status", () => {
     expect(DECISION_MAKERS_LINE_AR).toBe("بيانات صناع القرار تُسلَّم الآن بحسب الطلب، وتُعرض خطتها وسعرها قبل أي خصم.");
     expect(html.split(DECISION_MAKERS_LINE_AR).length - 1).toBe(1);
     expect(html.indexOf(DECISION_MAKERS_LINE_AR)).toBeLessThan(html.indexOf('data-testid="landing-decision-makers"'));
     expect(/data-testid="landing-decision-makers-line"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(DECISION_MAKERS_LINE_AR);
     expect(readFileSync("src/components/landing/Overview.tsx", "utf8")).not.toContain("بيانات صناع القرار تُسلَّم");
-    expect(AVAILABLE_NOW_REGISTRY_SLUGS).not.toContain("professional-people-search");
   });
 
-  it("the words come only from the constants; no English, no emoji, no price", () => {
-    const source = readFileSync("src/components/landing/Overview.tsx", "utf8");
-    for (const literal of [SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, SERVICE_SOON_LINE_AR]) expect(source, literal).not.toContain(literal);
+  it("no English, no emoji, no price", () => {
     expect(text).not.toMatch(/[A-Za-z]/);
     expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
     expect(text).not.toMatch(/نقطة|ج\.م/);

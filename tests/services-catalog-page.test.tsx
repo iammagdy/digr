@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import ServicesCatalogPage from "../src/app/services/page";
 import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
 import { SERVICES_CATALOG, SERVICE_STATUS_LINE_AR, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
-import { SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR } from "../src/lib/servicesAvailability";
+import { SERVICES_PRIMARY_CTA_AR } from "../src/lib/servicesAvailability";
 import { normalizeArabicSearch, platformsCountAr, sectorsCountAr, servicesCountAr } from "../src/lib/servicesCatalogText";
 import { PROVIDER_NAME_PATTERN } from "../src/lib/publicCapabilityIds";
 
@@ -24,7 +24,7 @@ const MARKDOWN = /[*_`~#]|\]\(|\[\w/;
 const LATIN = /[A-Za-z]/;
 const textOf = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/\s+/g, " ");
 
-const everyText = () => SERVICES_CATALOG.flatMap((sector) => [sector.nameAr, sector.descAr, ...sector.platforms.flatMap((platform) => [platform.nameAr, platform.descAr, ...platform.services.flatMap((service) => [service.nameAr, service.group])])]);
+const everyText = () => SERVICES_CATALOG.flatMap((sector) => [sector.nameAr, sector.descAr, ...sector.platforms.flatMap((platform) => [platform.nameAr, platform.descAr, ...platform.services.flatMap((service) => [service.nameAr, service.explainAr, service.group])])]);
 
 describe("/services: the full catalog, from one data module", () => {
   it("no English, no emoji, no markdown symbol, no banned word in any text of the data", () => {
@@ -115,22 +115,22 @@ describe("/services: the full catalog, from one data module", () => {
     for (const service of core) expect(html).toContain(service.nameAr);
   });
 
-  it("one status line from one constant, and every listed service carries one of the two status constants", () => {
+  it("one honest line from one constant, no status of any kind, and one primary call to action from one constant", () => {
     expect(SERVICE_STATUS_LINE_AR).toBe("نعرض لك الخطة والسعر قبل أي خصم، ولا تدفع إلا على ما يُسلَّم فعلًا");
-    expect([SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, SERVICE_SOON_LINE_AR, SERVICE_ORDER_CTA_AR]).toEqual(["متاح الآن", "قريبًا", "ستُضاف تدريجيًا", "ابدأ طلبك"]);
+    expect(SERVICES_PRIMARY_CTA_AR).toBe("ابدأ طلبك");
     const html = renderToStaticMarkup(createElement(ServicesCatalogPage));
     expect(html.split(SERVICE_STATUS_LINE_AR).length - 1).toBe(1);
-    for (const forbidden of ["قريباً", "قيد التقييم", "قيد الدراسة", "سيتوفر"]) {
+    for (const forbidden of ["قريباً", "قريبًا", "متاح الآن", "ستُضاف تدريجيًا", "اطلبها الآن", "قيد التقييم", "قيد الدراسة", "سيتوفر"]) {
       expect(html).not.toContain(forbidden);
       expect(JSON.stringify(everyText())).not.toContain(forbidden);
     }
     // the page types no availability or delivery rate: the only percent sign or «٪» would be a number typed by hand
     expect(textOf(html)).not.toMatch(/[٪%]/);
-    // the label text exists only through the constant
+    // the label text exists only through the constants
     const pageSource = readFileSync("src/app/services/page.tsx", "utf8") + readFileSync("src/components/services/CatalogBrowser.tsx", "utf8");
     expect(pageSource).not.toContain("اطلبها الآن");
     expect(pageSource).not.toContain("نعرض لك الخطة");
-    for (const literal of [SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, SERVICE_SOON_LINE_AR, SERVICE_ORDER_CTA_AR]) expect(pageSource, literal).not.toContain(literal);
+    expect(pageSource).not.toContain(SERVICES_PRIMARY_CTA_AR);
   });
 
   it("the page is static and fast: force-static, no request data, and the platforms are collapsed (no service of a platform is in the first HTML)", () => {
