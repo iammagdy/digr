@@ -3,7 +3,8 @@ import { extractNumberFromText } from "./arabicNumbers";
 import { COMMENT_WORDS_RE, TREND_WORDS_RE, hasSocialSubject } from "./socialTasks";
 
 /** Social-content requests (videos, posts, comments, trends, tweets) as opposed to an account lookup. */
-const BASE_SOCIAL_CONTENT_WORDS_RE = /(?:فيديو(?:هات)?|مقطع|مقاطع|منشور(?:ات)?|بوست(?:ات)?|تعليق(?:ات)?|تغريد(?:ات|ة)?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية|tweets?)/iu;
+// «تقرير / تحليل / رصد» count as content words only in a request that names Facebook: the Facebook topic report (a report on a topic) is asked for by them; elsewhere they say nothing about social content.
+const BASE_SOCIAL_CONTENT_WORDS_RE = /(?:فيديو(?:هات)?|مقطع|مقاطع|منشور(?:ات)?|بوست(?:ات)?|تعليق(?:ات)?|تغريد(?:ات|ة)?|ترند|تريند|وسم|هاشتاج|هاشتاغ|كلمات مفتاحية|tweets?|(?=[\s\S]*(?:فيسبوك|فيس\s*بوك|facebook))(?:تقرير|تقارير|تحليل|رصد))/iu;
 export const SOCIAL_CONTENT_WORDS_RE = new RegExp(`${BASE_SOCIAL_CONTENT_WORDS_RE.source}|${COMMENT_WORDS_RE.source}|${TREND_WORDS_RE.source}`, "iu");
 
 /** Request for one public account's profile data rather than content search. */

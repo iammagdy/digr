@@ -21,7 +21,7 @@ import { FILE_SPEC_LIMITS, applySpecToRows, groupRows, sheetNames, specColumns, 
 let cachedRegularBuffer: Buffer | null = null;
 let cachedBoldBuffer: Buffer | null = null;
 
-function getRegularFontBuffer(): Buffer {
+export function getRegularFontBuffer(): Buffer {
   if (!cachedRegularBuffer) {
     try {
       const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Regular.ttf");
@@ -41,7 +41,7 @@ function getRegularFontBuffer(): Buffer {
   return cachedRegularBuffer;
 }
 
-function getBoldFontBuffer(): Buffer {
+export function getBoldFontBuffer(): Buffer {
   if (!cachedBoldBuffer) {
     try {
       const cwdPath = path.resolve(process.cwd(), "src", "assets", "fonts", "IBMPlexSansArabic-Bold.ttf");

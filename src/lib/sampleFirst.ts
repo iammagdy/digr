@@ -1,6 +1,7 @@
 import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { chargeForUnits, maxVolumeUnderCap, reserveForUnits } from "./recordPricing";
+import { FACEBOOK_REPORT_SLUG } from "./facebookReport/constants";
 
 /**
  * «عينة أولًا»: for a large job the customer can pay for a small separate sample first, then ask for the rest.
@@ -55,6 +56,8 @@ export function sampleOffer(quote: SampleQuoteLike, safetyBuffer = 0.15): Sample
   const item = quote.items?.[0];
   if (!item || quote.items!.length !== 1) return null;
   if (NAMED_LINK.test(String(item.params?.url || ""))) return null;
+  // the Facebook topic report is one analysed set (round-robin over Pages, exact window, per-publisher cap): a 65-comment "sample" would be a different, meaningless report and its remainder could not be told apart from a second report
+  if (item.capabilitySlug === FACEBOOK_REPORT_SLUG) return null;
   const estimate = fullEstimatePoints(quote);
   if (estimate < SAMPLE_MIN_ESTIMATE_POINTS) return null;
   const unit = Number(quote.unitPricePoints);

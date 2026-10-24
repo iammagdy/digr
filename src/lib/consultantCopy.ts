@@ -1,6 +1,6 @@
 import { formatAr, normalizeDigits, toArabicDigits } from "./arabicDigits";
 import { extractNumberFromText } from "./arabicNumbers";
-import { detectSocialIntent, perItemCommentCount, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, stripPerItemPhrases, type SocialPlatformId } from "./socialTasks";
+import { detectSocialIntent, perItemCommentCount, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, stripPerItemPhrases, stripReportWords, type SocialPlatformId } from "./socialTasks";
 import { proposedDefaultWindow, resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
 import { extractRequestIntent, missingInputsForIntent, type RequestIntent } from "./requestIntent";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
@@ -45,6 +45,8 @@ export interface MissionUnderstanding {
   missing: MissingInput[];
   /** The customer skipped the channels of a mission: the videos are found by a topic instead, and the plan says so. */
   channelsSkipped: boolean;
+  /** Set only for the Facebook topic REPORT. */
+  report?: true;
 }
 
 export type MissingInput =
@@ -117,6 +119,10 @@ function namedChannels(text: string): string[] {
 }
 
 const CAP_ANSWER_RE = new RegExp(`${CLARIFICATION_ANSWER_LABELS.volume_cap_required}\\s*:\\s*([\\s\\S]*?)(?=${ANSWER_END}|\\s${ANY_ANSWER_LABEL_RE}\\s*:|$)`, "u");
+
+const PERIOD_UNITS = "(?:ايام|أيام|يومين|يوم|اسابيع|أسابيع|اسبوعين|أسبوعين|اسبوع|أسبوع|شهور|اشهر|أشهر|شهرين|شهر|سنوات|سنتين|سنة|عام)";
+/** «آخر ٣ شهور», «خلال ٣٠ يوم», «آخر ثلاثة شهور»: a number of a period with its unit (the cue word and a number word are part of it). */
+const PERIOD_SPAN_RE = new RegExp(`(?:(?:آخر|اخر|لآخر|خلال|منذ|لمدة)\\s+)?(?:\\d+|\\p{L}{2,12})\\s*${PERIOD_UNITS}(?![\\p{L}])`, "gu");
 
 const CONTAINER_NOUNS = "(?:فيديوهات|فيديو|مقاطع|مقطع|بوستات|بوست|منشورات|منشور|ريلز|ريل|شورتس)";
 const CONTAINER_COUNT_RE = new RegExp(`(?:^|[^\\d])(\\d{1,4})\\s*${CONTAINER_NOUNS}`, "u");
@@ -231,9 +237,11 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     // A count written in words or with a magnitude word («ثلاثين تعليق», «٥ آلاف منشور», «5k posts») is the customer's count too: without
     // this it fell through to the default of 500 and the plan said «لأنك لم تحدد عددًا» about a number they had written.
     if (volume === null) {
-      const noun = /(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة)/iu.exec(stripped);
+      // the number of a period («آخر ٣ شهور», «آخر ثلاثة شهور») is a length of time, never a count of records: it is taken out before the words before the noun are read
+      const countable = stripped.replace(PERIOD_SPAN_RE, " ");
+      const noun = /(?:بوست|بوستات|منشور|منشورات|تغريد\S*|تعليق|تعليقات|كومنت\S*|ردود|سجل|سجلات|مشاركة)/iu.exec(countable);
       if (noun) {
-        const lead = stripped.slice(0, noun.index).split(/\s+/).filter(Boolean).slice(-4).join(" ");
+        const lead = countable.slice(0, noun.index).split(/\s+/).filter(Boolean).slice(-4).join(" ");
         const written = /[\p{L}]/u.test(lead) ? extractNumberFromText(lead) : undefined;
         if (written && written > 0) volume = written;
       }
@@ -252,7 +260,8 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   // Without channels the top videos are found by a topic: a search, which needs its period like any other.
   const asked = resolveTimeWindow(text, { needsWindow, today: options.today, rankingRequest: kind === "social_ranked_comments" && !channelsSkipped });
   // A comments request never stops to ask for a period: the plan proposes the last month (or the dates of a known event) and the customer edits it there.
-  const window = commentsFlow && asked.status === "missing" ? proposedDefaultWindow(options.today) : asked;
+  // (the Facebook topic REPORT is a report for a period the customer states: it is asked, never proposed unasked, so its understanding carries no default window)
+  const window = commentsFlow && asked.status === "missing" && !social.report ? proposedDefaultWindow(options.today) : asked;
 
   const topicAnswer = channelsSkipped ? topicAnswerFromText(text) : null;
   // A named channel is scoped by the channel itself: its subject is only what the customer said after «عن», never the words left over once
@@ -286,7 +295,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   return {
     kind,
     platform,
-    subject: subject || null,
+    subject: (social.report && subject ? stripReportWords(subject) : subject) || null,
     channels,
     topPerChannel: top,
     rankedBy,
@@ -302,6 +311,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     needsCap: allComments || allItems || (feedKind && volume === null && kind !== "social_feed"),
     missing,
     channelsSkipped,
+    ...(social.report ? { report: true as const } : {}),
   };
 }
 
@@ -404,6 +414,8 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
     }
     case "social_feed": {
       const about = u.subject ? ` عن «${u.subject}»` : "";
+      // the Facebook topic REPORT is a report, not «comments of posts»; its period is said only when the customer stated one
+      if (u.report) return `فهمت أنك تريد تقريرًا${about} على فيسبوك${windowText}.`;
       if (u.commentsFlow) {
         const container = u.videos ? videosCountAr(u.videos, u.videosNoun) : u.videosNoun === "posts" || u.platform === "facebook" ? "منشورات" : "فيديوهات";
         const cap = u.volume ? `، حتى ${formatAr(u.volume)} تعليق` : "";

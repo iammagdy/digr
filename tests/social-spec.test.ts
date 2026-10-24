@@ -9,6 +9,7 @@ vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => ({
 import { createHash } from "crypto";
 import { resolveJobExecutionSpec } from "../src/lib/server/jobExecutionSpec";
 import { SOCIAL_CAPABILITIES, SOCIAL_ROWS_PER_CHUNK, estimateSocialChunkCostUsd, getSocialCapability } from "../src/lib/socialSources";
+import { REPORT_CHUNK_COST_ESTIMATE_USD } from "../src/lib/facebookReport/constants";
 
 const jobIdFor = (quoteId: string) => `job_quote_${createHash("md5").update(quoteId).digest("hex")}`;
 
@@ -55,7 +56,8 @@ describe("a social job resolves from its quote alone", () => {
       expect(spec.capabilitySlug).toBe(cap.slug);
       expect(spec.paginationStrategy).toBe("cursor");
       expect(spec.pricingUnit).toBe("call");
-      expect(spec.unitCostUsd).toBeCloseTo(estimateSocialChunkCostUsd(getSocialCapability(cap.slug)!), 6);
+      // the Facebook topic report reserves its own, larger chunk estimate (a chunk may browse several Pages, read comments and make search calls); every other capability: the shared worst case
+      expect(spec.unitCostUsd).toBeCloseTo(cap.slug === "facebook-topic-report" ? REPORT_CHUNK_COST_ESTIMATE_USD : estimateSocialChunkCostUsd(getSocialCapability(cap.slug)!), 6);
       expect(spec.pageSize).toBe(SOCIAL_ROWS_PER_CHUNK);
       // The retry marker is an instruction to this platform, never a provider parameter.
       expect(spec.params).toEqual({ query: "قهوة" });

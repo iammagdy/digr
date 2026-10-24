@@ -6,6 +6,9 @@
 import { runSocialChunk, type SocialCall, type SocialCallOutcome } from "./socialAdapter";
 import { createBuiltInMockAdapter, type ProviderAdapterFn } from "./tregAdapter";
 import { getSocialCapability } from "../socialSources";
+import { isFacebookTopicReport } from "../facebookReport/constants";
+import { runFacebookReportChunk } from "./facebookReportAdapter";
+import { createFakeFacebookCall } from "./fakeFacebookSource";
 
 const VIDEO_ID_PREFIX = "7300000000000";
 
@@ -60,8 +63,13 @@ export function createFakeSocialCall(options: FakeSocialOptions = fakeSocialOpti
 }
 
 /** Social jobs run the REAL social chunk runner on the fake source; every other kind of job (companies, people) uses the built-in mock. */
-export function createFakeProviderAdapter(options?: FakeSocialOptions): ProviderAdapterFn {
+export function createFakeProviderAdapter(options?: FakeSocialOptions, now?: () => number): ProviderAdapterFn {
   const call = createFakeSocialCall(options);
   const other = createBuiltInMockAdapter({});
-  return (input) => (getSocialCapability(input.capabilitySlug) ? runSocialChunk(input, { call }) : other(input));
+  const facebook = createFakeFacebookCall(now);
+  return (input) => {
+    // the Facebook topic report runs its REAL collector on a fake Page source (the worker gives it its record store and the model call)
+    if (isFacebookTopicReport(input.capabilitySlug) && input.reportStore) return runFacebookReportChunk(input, { call: facebook, store: input.reportStore, axisModel: input.axisModel });
+    return getSocialCapability(input.capabilitySlug) ? runSocialChunk(input, { call }) : other(input);
+  };
 }

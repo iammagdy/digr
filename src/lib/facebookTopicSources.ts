@@ -1,4 +1,6 @@
 import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings";
+import { RECORD_COSTS } from "./recordPricing";
+import { FACEBOOK_REPORT_SLUG, REPORT_MAX_COMMENTS, REPORT_MAX_POSTS } from "./facebookReport/constants";
 import { withTopicCountryWord } from "./xSearchWindow";
 import type { SocialCapabilityDef, SocialSource } from "./socialSources";
 
@@ -49,6 +51,8 @@ export interface PostTopicTraits {
   minPerVideo?: number;
   /** A topic search keeps paging the discovery source, each page judged before any comment is read, until the posts wanted are adopted. */
   pagedDiscovery?: boolean;
+  /** The Facebook topic REPORT: the posts come from vetted Pages (see facebookReport/registry), the search is only a small supplement, and the result is a report workbook plus a methodology file. */
+  topicReport?: boolean;
 }
 
 /**
@@ -74,5 +78,32 @@ export function facebookTopicCapability(comments: SocialSource[]): SocialCapabil
     maxVideos: FACEBOOK_JOB_CEILINGS.posts,
     minPerVideo: 5,
     pagedDiscovery: true,
+  };
+}
+
+/**
+ * The Facebook topic REPORT (`facebook-topic-report`): ONE item in a quote, like the keyword service, whose unit is a delivered comment. It is NOT a paged topic search: its posts are
+ * read from the registry's Pages round-robin (the sources of `social-facebook-posts`), the keyword search above is only a small supplement, and its comments are read through the sources
+ * of `social-facebook-comments`. The collector is `facebookReportAdapter`; the price is the one `RECORD_COSTS` entry.
+ */
+export function facebookReportCapability(comments: SocialSource[], pagePosts: SocialSource[] = []): SocialCapabilityDef {
+  return {
+    slug: FACEBOOK_REPORT_SLUG,
+    platform: "facebook",
+    kind: "comments",
+    nameAr: "تقرير منشورات فيسبوك عن موضوع",
+    nameEn: "Facebook Topic Report",
+    descriptionAr: "تقرير عن موضوع على فيسبوك في دولة وفترة محددتين: منشورات من صفحات عامة موثوقة وتعليقاتها، مصنّفة على محاور، مع ملف إكسل للبيانات وملف منفصل للمنهجية والتحليل.",
+    modes: ["query"],
+    rowCostUsd: RECORD_COSTS[FACEBOOK_REPORT_SLUG].costUsdPerRecord,
+    maxRows: REPORT_MAX_COMMENTS,
+    // not measured with this collector: the figure of the keyword service (an assumption) is kept, nothing better exists
+    successRate: 0.9,
+    // the sources the collector browses a Page with (and, one read, the comments); the keyword search (FACEBOOK_TOPIC_POSTS) is its small supplement, used directly by the collector and
+    // deliberately NOT listed here: the per-chunk spend estimate is the dearest listed source times a chunk's calls, and a search call is priced for the supplement's own job-level cost ceiling.
+    discover: { channel: pagePosts },
+    comments,
+    maxVideos: REPORT_MAX_POSTS,
+    topicReport: true,
   };
 }

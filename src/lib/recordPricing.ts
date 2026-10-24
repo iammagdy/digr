@@ -55,6 +55,10 @@ export const RECORD_COSTS: Record<string, RecordCost> = {
   // taken from it are all delivered. Per adopted post: 0.02952 / (6 x 0.5) + 0.00188 = 0.01172 USD; per comment: 0.01172 / 5 = 0.002344, rounded up to 0.00235. The review model is not in this
   // figure (the table counts what the provider charges). If a call returns more posts or more of them match, the real cost is lower; if fewer, higher (see docs/COST_REPORT_FACEBOOK_TOPIC_300.md).
   "social-facebook-keyword-comments": { costUsdPerRecord: 0.00235, primaryCostUsdPerRecord: 0.00235, basis: "ASSUMED", note: "0.02952 per search call of 6 posts, half adopted, 0.00188 per post for 5 comments" },
+  // The Facebook topic REPORT (vetted Pages browsed round-robin, a small search supplement, then the comments of the kept posts): PROPOSED price, the owner decides. 0.00055 USD per delivered
+  // comment is the dearer of the owner's measured all-in run (0.9619 USD / 1,753 comments = 0.000549) and the blended expected cost at the search cap (0.000496), rounded up: 3.025 points a comment.
+  // Basis of every figure (M measured, C catalog, A assumed): src/lib/facebookReport/cost.ts and docs/proposals/facebook-topic-report/PRICING.md. No existing price is touched.
+  "facebook-topic-report": { costUsdPerRecord: 0.00055, primaryCostUsdPerRecord: 0.000496, basis: "ASSUMED", note: "owner's measured run 0.9619 USD for 1,753 comments (0.000549 all-in), 15% search share cap, 5 comments a post" },
   "social-facebook-posts": { costUsdPerRecord: 0.000627, primaryCostUsdPerRecord: 0.0002, basis: "ASSUMED", note: "worst path 0.00188 per 3 posts; first path 0.002 per 10" },
   "icypeas-companies-search": { costUsdPerRecord: 0.000576, primaryCostUsdPerRecord: null, basis: "MEASURED", note: "434 records in 44 completed requests" },
 };

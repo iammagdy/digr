@@ -25,4 +25,5 @@ export const CLARIFICATION_ANSWER_LABELS: Record<string, string> = {
   social_comments_wanted: "التعليقات المطلوبة",
   social_comments_per_post: "عدد التعليقات لكل منشور",
   topic_source_required: "المصدر المطلوب",
+  social_report_country_required: "دولة التقرير المطلوبة",
 };

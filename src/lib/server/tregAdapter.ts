@@ -9,6 +9,8 @@ import { getLiveProviderGateStatus } from "./providerGate";
 import { resolveProviderKey } from "./providerKeys";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
 import { isSocialCapabilitySlug } from "../socialSources";
+import { isFacebookTopicReport } from "../facebookReport/constants";
+import { runFacebookReportChunk } from "./facebookReportAdapter";
 import { runSocialChunk, type SocialCall, type VideoSelector } from "./socialAdapter";
 import { markContactRowsForReview } from "../../functions/shared/decisionMakerPricing";
 import {
@@ -617,6 +619,9 @@ export interface ProviderAdapterCallInput {
   quoteId?: string;
   /** Social topic searches only: judges the discovered videos before their comments are read (set by the worker). */
   videoSelector?: VideoSelector;
+  /** The Facebook topic report only (set by the worker): where the collector keeps its record between chunks, and the one model call that places the posts the rules could not. */
+  reportStore?: import("./facebookReportAdapter").ReportStateStore;
+  axisModel?: import("./facebookReportAdapter").AxisModelCall;
 }
 
 export interface ProviderAdapterCallOutput {
@@ -642,6 +647,10 @@ export interface ProviderAdapterCallOutput {
    * (links, bare reactions, pleasantries). `asked` is the number of comments wanted from each post.
    */
   postReads?: { read: number; sourceShort: number; sourceMissing: number; filteredShort: number; asked: number };
+  /** The Facebook topic report only: a chunk that delivered no row but made progress (browsing, classifying): the worker does not count it as an empty page. */
+  reportProgress?: boolean;
+  /** The Facebook topic report only: the model calls of the chunk (usage and cost), for the worker to log. */
+  reportModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
 }
 
 export type ProviderAdapterFn = (
@@ -775,6 +784,12 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       errorCode: gate.reasonCode,
       errorMessageAr: gate.messageAr,
     };
+  }
+
+  // The Facebook topic report has its own collector (vetted Pages round-robin, the exact date window, the per-publisher cap, then the comments): see facebookReportAdapter.
+  if (isFacebookTopicReport(input.capabilitySlug)) {
+    if (!input.reportStore) return { ok: false, httpStatus: 500, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode: "report_store_missing", errorMessageAr: "تعذر تجهيز التقرير؛ لم يُخصم أي رصيد." };
+    return runFacebookReportChunk(input, { call: socialCallThroughTreg(input), store: input.reportStore, axisModel: input.axisModel });
   }
 
   // Verified social services run through their own source chain (fallbacks, comments of discovered videos).

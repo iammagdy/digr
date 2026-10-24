@@ -105,6 +105,7 @@ import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/conta
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
+import { REPORT_COUNTRY_QUESTION_ID, reportGate, reportNeedsPeriod } from "../../lib/facebookReport/intent";
 import { planCountLineAr, planCountPartsAr } from "../../lib/planCounts";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { pairRoleOf } from "../../lib/planFit";
@@ -180,6 +181,10 @@ function customerAuthoredRequirementText(message: string): string {
         if ((answer?.questionId === "shape_sort_asc_required" || answer?.questionId === "shape_sort_desc_required") && typeof answer?.value === "string" && answer.value.trim()) {
           return [`رتب الملف حسب ${sanitizeClarificationText(answer.value, 80)}${answer.questionId === "shape_sort_desc_required" ? " تنازلياً" : ""}`];
         }
+        // The report's country answer is stored as «في <country>»: the location readers take a country only after a preposition.
+        if (answer?.questionId === REPORT_COUNTRY_QUESTION_ID && typeof answer?.value === "string" && answer.value.trim()) {
+          return [`${labels[answer.questionId]}: في ${sanitizeClarificationText(answer.value, 60)}`];
+        }
         // The discovery card's answers (a Facebook page, the number of posts, comments or not, comments per post) are stored as plain request words.
         if (SOCIAL_DISCOVERY_OWN_IDS.has(answer?.questionId)) {
           const raw = Array.isArray(answer?.value) ? answer.value.filter((v: unknown): v is string => typeof v === "string").join(" ") : typeof answer?.value === "string" ? answer.value : "";
@@ -236,7 +241,9 @@ const PLAIN_AFTER_SKIP_AR: Record<string, string> = {
   social_channel_required: "لتجهيز الخطة أحتاج اسم قناة واحدة على الأقل. اكتب اسم القناة أو الصق رابطها في رسالتك، أو اكتب موضوعًا وسأبحث لك عن فيديوهاته.",
   social_topic_required: "اكتب موضوعًا أو اسم قناة في رسالتك، ولو كلمة واحدة، وسأجهز لك الخطة فورًا.",
   social_x_topic_required: "اكتب موضوعًا أو كلمات البحث في رسالتك، ولو كلمة واحدة، وسأجهز لك الخطة فورًا.",
+  [REPORT_COUNTRY_QUESTION_ID]: "أحتاج أن أعرف الدولة لأجهز لك التقرير. اكتبها في رسالتك، مثل «في مصر»، وسأكمل من حيث توقفنا.",
 };
+const PLAIN_FACEBOOK_TARGET_AFTER_SKIP_AR = "لم يتبقَّ سوى مصدر التعليقات. اكتب موضوع المنشورات في رسالتك، أو الصق رابط منشور أو رابط صفحة عامة، وسأجهز لك الخطة.";
 const PLAIN_AFTER_SKIP_GENERIC_AR = "تحتاج الخطة هذه المعلومة لتكون دقيقة. اكتبها في رسالتك وسأكمل من حيث توقفنا.";
 
 /**
@@ -257,7 +264,8 @@ export function getDeterministicDiscoveryQuestion(
     if (!question || !skipped.has(question.id)) return question;
     if (PROCEED_WHEN_SKIPPED.has(question.id)) { ignore.add(question.id); continue; }
     const pageLinkSkipped = question.id === SOCIAL_DISCOVERY_IDS.page && /ما رابط صفحة/u.test(String(question.text));
-    return { plain: true, id: `skipped_${question.id}`, text: pageLinkSkipped ? FACEBOOK_PAGE_LINK_RETRY_AR : PLAIN_AFTER_SKIP_AR[question.id] ?? PLAIN_AFTER_SKIP_GENERIC_AR };
+    const facebookTargetSkipped = question.id === "social_comment_target_required" && detectSocialIntent(text).platform === "facebook";
+    return { plain: true, id: `skipped_${question.id}`, text: pageLinkSkipped ? FACEBOOK_PAGE_LINK_RETRY_AR : facebookTargetSkipped ? PLAIN_FACEBOOK_TARGET_AFTER_SKIP_AR : PLAIN_AFTER_SKIP_AR[question.id] ?? PLAIN_AFTER_SKIP_GENERIC_AR };
   }
   return null;
 }
@@ -287,6 +295,13 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
   }
   if (!isAccount && !isPeople && !isCompanies) {
     const socialTaskIntent = detectSocialIntent(normalized);
+    // A Facebook topic REPORT: the country (a Page is used only if its country matches), then the period (stated by the customer, never proposed unasked), then the size.
+    if (socialTaskIntent.report) {
+      const gate = reportGate(normalized);
+      if (gate) return gate;
+      if (!ignore.has("social_time_required") && reportNeedsPeriod(normalized)) return socialTimeWindowQuestion();
+      return socialDiscoveryGapQuestion(normalized, ignore, capabilities);
+    }
     // A mission over channels (their top videos, then the comments) is decided by its own understanding: the channels
     // and the comment cap are asked ONE at a time, and nothing else is.
     const mission = understandMission(normalized);
@@ -303,7 +318,7 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
     // Studies / articles / news: no direct source exists, so ask ONE specific question that echoes the topic and country.
     const topicGathering = !socialTaskIntent.task ? detectTopicGathering(normalized) : null;
     if (topicGathering && !hasTopicResearchService(capabilities)) return topicSourceQuestion(topicGathering);
-    if (missingSocialTask) return socialTaskQuestion(missingSocialTask);
+    if (missingSocialTask) return socialTaskQuestion(missingSocialTask, socialTaskIntent.platform);
     // A request the verified social services understand is decided entirely by their own inputs (a link, a
     // channel, a country); the generic topic question below does not apply to it.
     if (socialTaskIntent.task && socialTaskIntent.platform && SOCIAL_TASK_PLATFORMS[socialTaskIntent.task].includes(socialTaskIntent.platform)) {
@@ -340,9 +355,9 @@ function socialDiscoveryGapQuestion(text: string, ignore: ReadonlySet<string>, c
   // The customer answered the page question and the answer is still only a name: say so in one sentence, never the same card twice.
   if (trigger === "page_link" && facebookPageLinkAlreadyAsked(text)) return { plain: true, id: "facebook_page_link_retry", text: FACEBOOK_PAGE_LINK_RETRY_AR };
   const id = trigger === "page" || trigger === "page_link" ? SOCIAL_DISCOVERY_IDS.page : SOCIAL_DISCOVERY_IDS.perPost;
-  if (trigger !== "trend" && ignore.has(id)) return null;
+  if (trigger !== "trend" && trigger !== "report" && ignore.has(id)) return null;
   const cardItems = socialDiscoveryItems(text, context).filter((entry) => !ignore.has(entry.id));
-  const first = trigger === "trend" ? cardItems[0] : cardItems.find((entry) => entry.id === id);
+  const first = trigger === "trend" || trigger === "report" ? cardItems[0] : cardItems.find((entry) => entry.id === id);
   return first ? { id: first.id, text: first.text, question: first.question, type: first.type, options: first.options, allowOther: first.allowOther } : null;
 }
 
@@ -370,6 +385,8 @@ const FACEBOOK_NAMED_PAGE_RE = /(?:^|\s)(?:صفحة|صفحه|بيج)\s+(?!(?:ا�
 function shouldAskSocialTimeWindow(text: string): boolean {
   const intent = detectSocialIntent(text);
   if (!intent.platform || ACCOUNT_LOOKUP_RE.test(text)) return false;
+  // The Facebook topic REPORT is a report FOR a period: it is asked once unless the customer states one, and never proposed unasked.
+  if (intent.report) return reportNeedsPeriod(text);
   // Comments of videos or posts: the plan proposes the last month (or a known event's dates) instead of a question; one fewer step.
   if (intent.task === "comments") return false;
   if (intent.wantsTrending || intent.channelRef || intent.targetUrl || intent.discover === "channel" || intent.discover === "target") return false;
@@ -3348,6 +3365,8 @@ export class ChatHandler {
               format === "xlsx" || format === "pdf" || format === "csv",
             )
           : ["xlsx"];
+        // The Facebook topic REPORT is delivered as the workbook AND the methodology file (the PDF is the report's own methodology and analysis, see facebookReportPdf).
+        if (detectSocialIntent(conversationRequestText).report && !selectedOutputFormats.includes("pdf")) selectedOutputFormats.push("pdf");
         (output as any).outputFormats = [...selectedOutputFormats];
         const explicitCountry = detectCountryFromText(conversationRequestText);
         const explicitRequestedVolume = researchIntent.sampleSize.provenance === "EXPLICIT"
@@ -3651,7 +3670,7 @@ export class ChatHandler {
             social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
             social_time_required: { id: firstMissing, text: windowQuestion().text, question: windowQuestion().text, type: "single", options: [...WINDOW_OPTIONS_AR], allowOther: true },
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
-            social_comment_target_required: socialTaskQuestion("social_comment_target_required"),
+            social_comment_target_required: socialTaskQuestion("social_comment_target_required", socialIntent.platform),
             social_trending_region_required: socialTaskQuestion("social_trending_region_required"),
             social_trending_platform_required: socialTaskQuestion("social_trending_platform_required"),
             social_channel_required: socialTaskQuestion("social_channel_required"),
@@ -4018,7 +4037,7 @@ export class ChatHandler {
           if (coverageLines.length > 0) planQuoteData.coverageLinesAr = coverageLines;
           // Videos and comments are two quantities: the plan names both, so «٣ فيديوهات» can never read as three comments.
           if (videosStatedForPlan && managedQuote.items.length === 1) {
-            planSummaryText += `\n- ${videosStatedForPlan.noun === "posts" ? "المنشورات" : "الفيديوهات"}: ${videosCountAr(verifiedSocialDef?.pagedDiscovery ? postsForVolume({ videoCount: videosStatedForPlan.count, perVideo: managedQuote.items[0]?.params?.perVideo }, managedQuote.targetVolumeMax) || videosStatedForPlan.count : videosStatedForPlan.count, videosStatedForPlan.noun)}، والتعليقات: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} تعليق من كل ما فيها.`;
+            planSummaryText += `\n- ${videosStatedForPlan.noun === "posts" ? "المنشورات" : "الفيديوهات"}: ${videosCountAr((verifiedSocialDef?.pagedDiscovery || verifiedSocialDef?.topicReport) ? postsForVolume({ videoCount: videosStatedForPlan.count, perVideo: managedQuote.items[0]?.params?.perVideo }, managedQuote.targetVolumeMax) || videosStatedForPlan.count : videosStatedForPlan.count, videosStatedForPlan.noun)}، والتعليقات: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} تعليق من كل ما فيها.`;
           }
           // A count the customer left open is a visible default on the plan, never a hidden number.
           const defaultCapNow = defaultCapUsed && managedQuote.items.length === 1 ? defaultCapUsed : null;

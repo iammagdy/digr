@@ -1,5 +1,6 @@
 import { detectCountryFromText } from "../../lib/planParameters";
 import { detectMentionedPlatforms, type Capability } from "./capabilityRegistry";
+import { isSocialCapabilitySlug } from "../../lib/socialSources";
 
 /**
  * «اجمع ١٠ دراسات عن الطاقة الشمسية في ألمانيا»: a topic-gathering request (studies, articles, news, reports).
@@ -42,7 +43,8 @@ export function detectTopicGathering(text: string): TopicGatheringRequest | null
 }
 
 export function hasTopicResearchService(capabilities: Capability[]): boolean {
-  return (capabilities || []).some((c) => /topic|academic|scholar|serp|web[-_.]search|news/i.test(`${c.slug} ${c.platform || ""} ${c.category || ""}`));
+  // (a social service is never a topic-research service, whatever its slug says: the Facebook topic report's slug names «topic», and it reads posts, not studies)
+  return (capabilities || []).some((c) => !isSocialCapabilitySlug(c.slug) && /topic|academic|scholar|serp|web[-_.]search|news/i.test(`${c.slug} ${c.platform || ""} ${c.category || ""}`));
 }
 
 export function topicSourceQuestion(request: TopicGatheringRequest) {

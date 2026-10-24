@@ -138,11 +138,13 @@ export interface DiscoveryContext {
  * per-post number), and, for Facebook with no page and no other verified Facebook service, the page itself (Facebook posts are read from one
  * public page, not searched by topic). Null when nothing of the sort is missing.
  */
-export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "page_link" | "per_post" | "trend" | null {
+export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "page_link" | "per_post" | "trend" | "report" | null {
   const text = normalizeDigits(rawText || "");
   if (!SOCIAL_CONTENT_WORDS_RE.test(text) || ACCOUNT_LOOKUP_RE.test(text)) return null;
   const facts = readSocialFacts(text);
   if (!facts.platform) return null;
+  // A Facebook topic REPORT never asks for a page (its Pages are the registry's): only how many posts and how many comments from each, when the request leaves them open.
+  if (detectSocialIntent(text).report) return facts.postsCount === null || (facts.commentsPerPost === null && !facts.allComments) ? "report" : null;
   // A page named by its DISPLAY name («اليوم السابع»): no verified service can find a page by that name (they take a link, a username or an id), and a
   // source that finds nothing fails after the customer has approved. Ask once for the link, before any plan or hold.
   if (facebookPageNameNeedsLink(text)) return "page_link";
@@ -170,6 +172,11 @@ export function socialDiscoveryItems(rawText: string, options: { skipped?: Reado
   }
   const facts = readSocialFacts(rawText);
   const items: DiscoveryItem[] = [];
+  if (trigger === "report") {
+    if (facts.postsCount === null) items.push(item(SOCIAL_DISCOVERY_IDS.posts, "كم منشورًا تريد في التقرير؟", "single", ["٥٠", "١٠٠", "٢٠٠", "٣٠٠"]));
+    if (!facts.allComments && facts.commentsPerPost === null) items.push(item(SOCIAL_DISCOVERY_IDS.perPost, "كم تعليقًا تريد من كل منشور؟", "single", ["٥", "١٠", "٢٠"]));
+    return items.filter((entry) => !skipped.has(entry.id));
+  }
   if (!facts.source && trigger === "page") {
     items.push(item(SOCIAL_DISCOVERY_IDS.page, `${platformWordAr(facts.platform)}: ما اسم الصفحة العامة أو رابطها؟`, "free"));
   }

@@ -12,6 +12,7 @@ import { deliveredNothing } from "@/lib/producedFormats";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
+import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -288,13 +289,13 @@ export async function GET(
         let fileBuf: Buffer | null = null;
         let mimeType = "application/octet-stream";
         if (format === "xlsx") {
-          fileBuf = shapedSpec ? await generateShapedExcelReport(parsed, shapedSpec) : await generateExcelReport(parsed);
+          fileBuf = shapedSpec ? await generateShapedExcelReport(parsed, shapedSpec) : facebookReportOf(parsed) ? await buildFacebookReportExcelFrom(parsed) : await generateExcelReport(parsed);
           mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         } else if (format === "csv") {
           fileBuf = generateCsvReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
           mimeType = "text/csv";
         } else if (format === "pdf") {
-          fileBuf = await generatePdfReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
+          fileBuf = facebookReportOf(parsed) && !shapedSpec ? await buildFacebookReportPdfFrom(parsed) : await generatePdfReport(shapedSpec ? shapedPayload(parsed, shapedSpec) : parsed);
           mimeType = "application/pdf";
         }
         if (fileBuf) {
