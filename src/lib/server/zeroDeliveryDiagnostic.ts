@@ -164,7 +164,8 @@ export function keywordShortfallReasonAr(d: JobDiagnostic, options: { postsReque
   // the posts the review approved are not all read: a job reads the number of posts the customer asked for
   if (d.posts.adopted > 0) parts.push(`اعتمدنا ${postsAr(d.posts.adopted)}`);
   parts.push(`قرأنا تعليقات ${postsAr(reads.read)}`);
-  if (d.posts.adopted > reads.read && options.postsRequested && options.postsRequested > 0) parts.push(`ولم تُقرأ تعليقات بقية المنشورات المعتمدة لأنك طلبت ${postsAr(options.postsRequested)}`);
+  // Said with both numbers, so the customer sees what was asked and what was read: the job reads the posts the customer asked for, not all approved ones.
+  if (d.posts.adopted > reads.read && options.postsRequested && options.postsRequested > 0) parts.push(`ولم تُقرأ تعليقات بقية المنشورات المعتمدة؛ طلبت ${postsAr(options.postsRequested)}، وقرأنا تعليقات ${postsAr(reads.read)} منها`);
   if (reads.sourceShort > 0) parts.push(`${toArabicDigits(reads.sourceShort)} منها أعاد المصدر لها تعليقات أقل من المطلوب${asked ? ` (${toArabicDigits(asked)} لكل منشور)` : ""}`);
   if (reads.sourceMissing > 0) parts.push(`ونقص ما أعاده المصدر ${commentsAr(reads.sourceMissing)} عن المطلوب`);
   if (reads.filteredShort > 0) parts.push(`${toArabicDigits(reads.filteredShort)} منها لم يكن فيها العدد المطلوب من التعليقات الصالحة بعد استبعاد التعليقات الفارغة وتعليقات الروابط والمكرر`);

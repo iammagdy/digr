@@ -343,10 +343,22 @@ export const TOPIC_INSTEAD_OF_CHANNELS_ID = "social_topic_required";
  * The label of the stored answer a plain typed message gives, when the assistant's last message asked one of the questions below.
  * A message typed instead of tapping the card is read exactly like the card's answer.
  */
+/** The Facebook keyword service: the plan card says the comments come from the newest posts of a sample, and the amount is for what is delivered. */
+export const FACEBOOK_KEYWORD_SAMPLE_LINE_AR = "عينة من أحدث المنشورات، والحساب على المسلَّم فقط";
+export const FACEBOOK_KEYWORD_SLUG_FOR_CARD = "social-facebook-keyword-comments";
+
+/** The platform question itself (its typed answer, «أخرى» included, is labelled with the platform label). */
+export const PLATFORM_QUESTION_AR = "على أي منصة تريد البحث؟";
+
+/** The free-text follow-up asked after «أخرى» is answered on the platform question (never the same question again). */
+export const PLATFORM_OTHER_QUESTION_AR = "ما اسم المنصة التي تقصدها؟ اكتب اسمها في رسالتك.";
+
 export function typedAnswerLabelFor(assistantText: string): string | null {
   const text = String(assistantText || "");
   if (text.includes(TOPIC_INSTEAD_OF_CHANNELS_QUESTION_AR)) return CLARIFICATION_ANSWER_LABELS.social_topic_required;
   if (text.includes(CHANNEL_QUESTION_AR)) return CLARIFICATION_ANSWER_LABELS.social_channel_required;
+  if (text.includes(PLATFORM_OTHER_QUESTION_AR)) return CLARIFICATION_ANSWER_LABELS.social_platform_other_required;
+  if (text.includes(PLATFORM_QUESTION_AR)) return CLARIFICATION_ANSWER_LABELS.social_platform_required;
   return null;
 }
 

@@ -328,6 +328,8 @@ const TOPIC_NOISE = new Set([
   "معاه", "معاها", "معاهم", "ومعاه", "ومعاها", "ومعاهم", "وكل", "وبكل", "بكل",
   "أجمع", "أسحب", "أستخرج", "اجمعلي", "اسحبلي", "بيتكلموا", "بيتكلم", "بتتكلم", "بتتكلموا", "يتكلموا", "يتكلم", "لآخر", "لاخر", "للآخر",
   "من", "على", "علي", "في", "فى", "داخل", "عن", "حول", "الى", "إلى", "مع", "و", "او", "أو", "ال", "كل", "بعض", "ده", "دي", "دا", "هذا", "هذه", "اللي", "الي", "التي", "الذي",
+  // The word for the data asked («عايز داتا عن…», «بيانات ترندات الصحة»): request wording, never the topic.
+  "داتا", "داته", "داتة", "دايتا", "بيانات", "بياناتها",
   // Labels of stored card answers and placeholder words: never a topic.
   "موضوع", "البحث", "المطلوب", "المطلوبه", "مصدر", "القنوات", "قنوات", "تخطي", "الحد", "الأقصى", "الاقصى", "أقصى", "اقصى", "الإجابة", "الاجابة", "إجابة", "اجابة",
   "ردود", "وردود", "ردودها", "وردودها", "ردودهم", "وردودهم", "ردوده", "replies", "reply",
@@ -542,7 +544,7 @@ export function socialTaskQuestion(id: MissingSocialTaskInput, platform?: Social
 /** Closes a stored card answer (see consultantCopy ANSWER_END). */
 const STORED_ANSWER_END = "\u2063";
 /** The stored card answers that never carry a topic word: how many, which period, which platform, which channels. */
-const NON_TOPIC_ANSWER_LABELS = ["volume_cap_required", "social_time_required", "social_platform_required", "social_channel_required", "social_report_country_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
+const NON_TOPIC_ANSWER_LABELS = ["volume_cap_required", "social_time_required", "social_platform_required", "social_platform_other_required", "social_channel_required", "social_report_country_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
 const TOPIC_ANSWER_LABELS = ["social_topic_required", "social_x_topic_required"].map((id) => CLARIFICATION_ANSWER_LABELS[id]).filter(Boolean);
 const ANY_STORED_LABEL = Array.from(new Set(Object.values(CLARIFICATION_ANSWER_LABELS)));
 const answerSegmentRe = (labels: string[], flags: string) =>

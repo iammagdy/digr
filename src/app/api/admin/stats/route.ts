@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin, creditValueEgp, enrichTopupsWithApprovals, getTopupApprovalMap, listAll, listAllUsers, userDirectory, Query } from "../../../../lib/server/adminAuth";
 import { agoSince } from "../../../../lib/server/agoSince";
+import { finishedJobLabelAr, isFinishedJob } from "../../../../lib/server/adminJobEvents";
 import { bucketDays, DAY_MS, margin, netProfit, pctChange, refundPointsByJob, splitPeriods } from "../../../../lib/server/adminStats";
 
 export const dynamic = "force-dynamic";
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
     users.list({ queries: [Query.orderDesc("registration"), Query.limit(6)] }),
   ]);
   enrichTopupsWithApprovals(recentTopups.rows as any[], topupApprovalMap);
-  const recentJobs = [...jobs].filter((j) => j.status === "done" || j.status === "running").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
+  const recentJobs = [...jobs].filter((j) => isFinishedJob(j.status) || j.status === "running").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
   const dir = await userDirectory(users, [...top.map(([id]) => id), ...recentTopups.rows.map((t: any) => t.userId), ...recentJobs.map((j) => j.userId)]);
   const nm = (id: string) => dir.get(id)?.name || "مستخدم";
 
@@ -82,7 +83,7 @@ export async function GET(req: NextRequest) {
     events.push({ type: "pay", who: nm(t.userId), what: "أرسل طلب شحن عبر إنستاباي", at: t.createdAt, value: `+${Math.round(t.amountEgp)} ج.م`, tone: "gold" });
     if (t.status === "approved" && t.reviewedAt) events.push({ type: "check", who: "الإدارة", what: `اعتمدت شحن ${t.senderName || nm(t.userId)}`, at: t.reviewedAt, value: `+${t.credits ?? 0} نقطة`, tone: "ok" });
   }
-  for (const j of recentJobs) events.push({ type: "jobs", who: nm(j.userId), what: j.status === "done" ? `اكتمل بحثه · ${j.rowsCollected ?? 0} سجلًا` : "بدأ بحثًا جديدًا", at: j.createdAt, value: j.status === "done" ? `−${j.chargedCredits ?? 0} نقطة` : `−${j.reservedCredits ?? 0} نقطة`, tone: "ink" });
+  for (const j of recentJobs) events.push({ type: "jobs", who: nm(j.userId), what: isFinishedJob(j.status) ? finishedJobLabelAr(j) : "بدأ بحثًا جديدًا", at: j.createdAt, value: isFinishedJob(j.status) ? `−${j.chargedCredits ?? 0} نقطة` : `−${j.reservedCredits ?? 0} نقطة`, tone: "ink" });
   events.sort((a, b) => b.at.localeCompare(a.at));
 
   const pendingCount = (await tables.listRows({ databaseId: "digr", tableId: "topups", queries: [Query.equal("status", "pending"), Query.limit(1)] })).total;

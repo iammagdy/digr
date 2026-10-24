@@ -9,7 +9,7 @@ import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWin
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
-import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
+import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, platformFollowUpStateAr, UNSUPPORTED_PLATFORM_AR, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -99,7 +99,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { APPROVAL_NEEDS_BUTTON_AR, hasPendingPlan, isChatControlMessage, isRetrySamePlanMessage, isReviewPlanMessage, isTypedApprovalMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
-import { ANSWER_END, CHANNELS_SKIPPED_VALUE, capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, missionCoverageLinesAr, nextStep, questionForStep, typedAnswerLabelFor, understandMission, understoodLineAr } from "../../lib/consultantCopy";
+import { ANSWER_END, CHANNELS_SKIPPED_VALUE, capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, missionCoverageLinesAr, nextStep, questionForStep, typedAnswerLabelFor, PLATFORM_OTHER_QUESTION_AR, FACEBOOK_KEYWORD_SAMPLE_LINE_AR, FACEBOOK_KEYWORD_SLUG_FOR_CARD, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
@@ -145,6 +145,8 @@ function typedAnswerRequirementText(message: string, labelForQuestion: string | 
   // What the retry and review buttons send is a request for a quote, never part of the research request.
   if (isRetrySamePlanMessage(trimmed) || isReviewPlanMessage(trimmed)) return "";
   if (!labelForQuestion || !trimmed) return customerAuthoredRequirementText(message);
+  // The typed name after «أخرى» is always its answer, even when it names a platform (it may be one we do not read: that is said, never read as a new request).
+  if (labelForQuestion === CLARIFICATION_ANSWER_LABELS.social_platform_other_required) return `${labelForQuestion}: ${plainChannelAnswerText(trimmed)}${ANSWER_END}`;
   if (isClarificationAnswerPayload(trimmed) || isCardAnswerText(trimmed) || isStandaloneResearchRequest(trimmed)) return customerAuthoredRequirementText(message);
   return `${labelForQuestion}: ${plainChannelAnswerText(trimmed)}${ANSWER_END}`;
 }
@@ -304,6 +306,13 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
     }
     // A mission over channels (their top videos, then the comments) is decided by its own understanding: the channels
     // and the comment cap are asked ONE at a time, and nothing else is.
+    // After «أخرى» on the platform question: ONE free-text follow-up, then one honest sentence for a name this service does not read. Checked before
+    // anything else, because a name such as «سناب شات» is seen as a platform by the detector while no service of ours reads it (the turn would go to the model).
+    if (isSocialTopic) {
+      const followUp = platformFollowUpStateAr(normalized);
+      if (followUp === "answered") return { plain: true, id: "platform_unsupported", text: UNSUPPORTED_PLATFORM_AR };
+      if (followUp === "asked") return { id: "social_platform_other_required", text: PLATFORM_OTHER_QUESTION_AR, question: PLATFORM_OTHER_QUESTION_AR, type: "free", options: [], allowOther: true };
+    }
     const mission = understandMission(normalized);
     if (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") {
       const step = nextStep(mission, ignore);
@@ -4027,6 +4036,8 @@ export class ChatHandler {
             topPerChannel: managedQuote.items[0]?.params?.topPerChannel ?? null,
             maxChannels: MAX_CHANNELS_PER_JOB,
           });
+          // The Facebook keyword card: its comments come from a sample of the newest posts, and the amount is for what is delivered (one line, text only).
+          if (managedQuote.items.length === 1 && managedQuote.items[0]?.capabilitySlug === FACEBOOK_KEYWORD_SLUG_FOR_CARD) coverageLines.push(FACEBOOK_KEYWORD_SAMPLE_LINE_AR);
           // The service reads at least a few comments from each post (its price assumes it): fewer asked is said, with the posts the plan covers instead.
           if (perPostRaisedNow && verifiedSocialDef?.minPerVideo && managedQuote.items.length === 1) {
             const planned = postsForVolume({ videoCount: perPostRaisedNow.posts ?? undefined, perVideo: managedQuote.items[0]?.params?.perVideo }, managedQuote.targetVolumeMax);

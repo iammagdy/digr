@@ -1,9 +1,10 @@
 import { normalizeDigits } from "./arabicDigits";
-import { understandMission } from "./consultantCopy";
+import { PLATFORM_OTHER_QUESTION_AR, understandMission } from "./consultantCopy";
 import { SOCIAL_CONTENT_WORDS_RE, ACCOUNT_LOOKUP_RE, hasSocialTopic } from "./socialDiscovery";
 import { detectSocialIntent, SOCIAL_PLATFORM_LABEL_AR, TREND_WORDS_RE, type SocialIntent } from "./socialTasks";
 import { facebookPageUrl, isSocialCapabilitySlug } from "./socialSources";
 import { resolveTimeWindow, windowIsStatedByCustomer, WINDOW_OPTIONS_AR } from "./timeWindow";
+import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
 
 /**
  * Smart discovery for a social request: ask ONLY what the request does not already say, with tappable choices plus free text, in one
@@ -234,4 +235,23 @@ export function socialDiscoveryIntroAr(rawText: string, context: DiscoveryContex
   if (trigger === "page_link") return "فهمت طلبك على فيسبوك. أقرأ الصفحة من رابطها أو اسم مستخدمها، لا من اسمها المكتوب فقط، ولن أبدأ مهمة قد تعود فارغة.";
   if (trigger === "page") return `فهمت طلبك على فيسبوك. ${FACEBOOK_TOPIC_OR_PAGE_AR} وأسأل فقط عمّا لم تذكره:`;
   return "فهمت طلبك، وأسأل فقط عمّا لم تذكره:";
+}
+
+/** Said once when the name typed after «أخرى» is not a platform this service reads. No plan, no hold, no balance. */
+export const UNSUPPORTED_PLATFORM_AR = "عذرًا، هذه المنصة غير متاحة عندنا الآن، ولم أبدأ أي بحث ولم يُحجز أي رصيد. المنصات المتاحة: تيك توك، فيسبوك، يوتيوب، وإكس. اختر إحداها لأجهز لك الخطة.";
+
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const PLATFORM_LABEL_RE = new RegExp(`${escapeRe(CLARIFICATION_ANSWER_LABELS.social_platform_required)}\\s*:\\s*(?:أخرى|اخرى)(?![\\p{L}])`, "u");
+const OTHER_LABEL_RE = new RegExp(`${escapeRe(CLARIFICATION_ANSWER_LABELS.social_platform_other_required)}\\s*:`, "u");
+
+/**
+ * Where the platform follow-up stands in the request text: «asked» when the customer answered «أخرى» to the platform question (the follow-up is
+ * the next question), «answered» when the name after it is typed and still names no platform this service reads, null otherwise. Stateless: it reads the
+ * labelled answers the conversation already carries, so it never repeats a question and never holds anything.
+ */
+export function platformFollowUpStateAr(rawText: string): "asked" | "answered" | null {
+  const text = normalizeDigits(rawText || "");
+  if (detectSocialIntent(text).platform) return null;
+  if (OTHER_LABEL_RE.test(text)) return "answered";
+  return PLATFORM_LABEL_RE.test(text) ? "asked" : null;
 }
