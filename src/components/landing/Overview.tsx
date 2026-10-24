@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { SERVICES_CATALOG, catalogCounts } from "@/lib/servicesCatalog";
+import { SERVICES_CATALOG, catalogCounts, coreServices } from "@/lib/servicesCatalog";
+import { SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "@/lib/servicesAvailability";
 import { platformsCountAr, sectorsCountAr } from "@/lib/servicesCatalogText";
 import { CONTACT_VERIFICATION_LABELS } from "@/lib/contactVerification";
-import { toArabicDigits } from "@/lib/arabicDigits";
+import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 
 /** The three steps of a request, in the customer's words. */
 export const OVERVIEW_STEPS_AR = [
@@ -25,6 +26,10 @@ export const OVERVIEW_TRUST_AR = [
  */
 export function Overview() {
   const counts = catalogCounts();
+  const status = statusCounts(SERVICES_CATALOG);
+  const core = coreServices().map((service) => ({ service, available: isAvailableNow(service.platformSlug, service.nameAr) }));
+  const coreAvailable = core.filter((entry) => entry.available);
+  const coreSoon = core.length - coreAvailable.length;
   return (
     <section id="overview" aria-labelledby="overview-title" className="border-t border-ln px-5 py-16 min-[760px]:py-24">
       <div className="mx-auto flex max-w-[1000px] flex-col gap-14">
@@ -44,6 +49,7 @@ export function Overview() {
         <div className="flex flex-col gap-4 text-center">
           <h2 className="m-0 font-extralight text-ink" style={{ fontSize: "clamp(26px,4cqi,44px)" }}>البيانات التي نجمعها</h2>
           <p className="m-0 text-[14px] font-light leading-[1.9] text-mut">{`${sectorsCountAr(counts.sectors)} من ${platformsCountAr(counts.platforms)}، وكلها مصادر متاحة.`}</p>
+          <p data-testid="landing-status-counts" className="m-0 text-[14px] font-normal text-ink">{`${SERVICE_STATUS_AVAILABLE_AR}: ${formatAr(status.available)}، ${SERVICE_STATUS_SOON_AR}: ${formatAr(status.soon)}`}</p>
           <ul className="m-0 flex list-none flex-wrap justify-center gap-2 p-0" data-testid="landing-sectors">
             {SERVICES_CATALOG.map((sector) => (
               <li key={sector.id} className="rounded-full border border-ln bg-sf px-4 py-2 text-[13px] text-ink">{sector.nameAr}</li>
@@ -55,6 +61,10 @@ export function Overview() {
         <div data-testid="landing-decision-makers" className="flex flex-col gap-3 rounded-[24px] border border-ln2 bg-sf p-6 text-right min-[760px]:p-8">
           <h2 className="m-0 text-[24px] font-medium text-ink">صناع القرار وبيانات التواصل المهنية</h2>
           <p className="m-0 text-[15px] font-light leading-[2] text-ink2">من يقرر في الشركة، وبريد عمله وهاتف مكتبه عند توفرهما. بجانب كل بريد وكل هاتف حالة تحقق واضحة، فلا تعتمد رقمًا لم يتأكد.</p>
+          <div data-testid="landing-decision-status" className="flex flex-col gap-1 text-[14px] leading-[1.9] text-ink">
+            {coreAvailable.map(({ service }) => <p key={service.slug} className="m-0"><span className="text-goldT">{SERVICE_STATUS_AVAILABLE_AR}</span>{`: ${service.nameAr}`}</p>)}
+            {coreSoon > 0 && <p className="m-0"><span className="text-mut">{SERVICE_STATUS_SOON_AR}</span>{`: ${formatAr(coreSoon)} من خدمات التواصل المهنية. ${SERVICE_SOON_LINE_AR}`}</p>}
+          </div>
           <ul className="m-0 flex list-none flex-wrap gap-2 p-0" aria-label="حالات التحقق">
             {CONTACT_VERIFICATION_LABELS.map((label) => (
               <li key={label} className="rounded-full bg-sf2 px-3 py-1 text-[12px] text-ink">{label}</li>
