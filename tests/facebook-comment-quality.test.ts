@@ -118,7 +118,7 @@ import { POST_REVIEW_BUDGET_NOTE_AR, maxPagesForJob } from "../src/lib/server/pr
 import { chargeForUnits, reserveForUnits, recordUnitPricePoints } from "../src/lib/recordPricing";
 import { FIXTURE_TOPIC, facebookKeywordWorld, fixtureComments, postNumberOf } from "./helpers/fakeFacebookKeyword";
 import { evaluateResearchRowRelevance } from "../src/lib/server/researchRelevanceGate";
-import { WELL_WISH_REASON_AR, isGenericComment, isPureWellWish } from "../src/lib/server/commentQuality";
+import { facebookCommentDropReason, isGenericComment, isPureWellWish } from "../src/lib/server/commentQuality";
 import { FACEBOOK_KEYWORD_SLUG, PAGED_FIRST_CHUNK_ROWS } from "../src/lib/facebookKeywordService";
 import { readDiagnosticFile, totalDiagnostic } from "../src/lib/server/zeroDeliveryDiagnostic";
 
@@ -258,12 +258,19 @@ describe("worker: the Facebook keyword mission, comment quality", () => {
     for (const text of ["", "   ", "🌹🌹🌹", "ان", "يا", "و في من", "..."]) expect(isPureWellWish(text, { topic: TOPIC }), JSON.stringify(text)).toBe(false);
   });
 
-  it("the rule is for this service only: the gate rejects them with its own reason for the keyword service, and judges TikTok and YouTube exactly as before", () => {
+  it("facebookCommentDropReason: only an empty text and a bare link are dropped", () => {
+    for (const text of ["", "   ", "\n\t"]) expect(facebookCommentDropReason(text), JSON.stringify(text)).toBe("empty");
+    for (const text of ["https://example.com/x", "  www.example.com/x  ", "https://a.example/x https://b.example/y", "https://a.example/x ..."]) expect(facebookCommentDropReason(text), text).toBe("link_only");
+    for (const text of ["ok", "👍", "@أحمد", "١٢٣", "بالتوفيق", "شوفوا https://example.com/x", ...LIVE_WISHES, ...LIVE_KEPT]) expect(facebookCommentDropReason(text), text).toBeNull();
+  });
+
+  it("OWNER DECISION: the keyword service delivers the comments of an adopted post as they are (no pleasantry, reaction, supplication, short-comment or topic judgment); only an empty comment or a bare link is left out; TikTok and YouTube judge exactly as before", () => {
     const params = { query: TOPIC, region: "EG" };
     const judge = (slug: string, text: string) => evaluateResearchRowRelevance({ comment_id: "c1", text, video_title: "نصائح لتغذية صحية", video_url: "https://www.facebook.com/p/1" }, { capabilitySlug: slug, endpointId: slug, params } as any);
-    for (const text of LIVE_WISHES) expect(judge(FACEBOOK_KEYWORD_SLUG, text), text).toMatchObject({ decision: "no_match", reasonAr: WELL_WISH_REASON_AR });
-    for (const text of LIVE_KEPT) expect(judge(FACEBOOK_KEYWORD_SLUG, text).decision, text).toBe("match");
+    for (const text of [...LIVE_WISHES, ...LIVE_KEPT, "ok", "👍", "اللهم صل على محمد", "@أحمد", "https://example.com/x شوفوا ده"]) expect(judge(FACEBOOK_KEYWORD_SLUG, text), text).toMatchObject({ decision: "match" });
+    for (const text of ["", "   ", "https://example.com/x", "www.example.com", "https://example.com/x https://example.org/y"]) expect(judge(FACEBOOK_KEYWORD_SLUG, text).decision, JSON.stringify(text)).toBe("no_match");
     for (const slug of ["social-tiktok-comments", "social-youtube-comments"]) for (const text of LIVE_WISHES) expect(judge(slug, text).decision, `${slug} ${text}`).toBe("match");
+    expect(judge("social-tiktok-comments", "ok").decision).toBe("no_match"); // the short-comment rule of the other services is untouched
     expect(isGenericComment("بالتوفيق ان شاء الله يا دكتر")).toBe(false); // the shared rule of the other services is untouched
   });
 
@@ -274,7 +281,7 @@ describe("worker: the Facebook keyword mission, comment quality", () => {
     return rows.map((text, i) => ({ comment_id: `live_${post}_${i}`, text, author: `قارئ ${i}` }));
   };
 
-  it("THE LIVE EXAMPLE THROUGH THE WORKER: 11 comments read, 6 pleasantries left out BEFORE the charge, 5 delivered, charge = ceil(5 x 12.925) = 65 (it was 143 for 11), below the hold, with ONE honest sentence from the real counts", async () => {
+  it("THE LIVE EXAMPLE THROUGH THE WORKER (owner decision: all comments): 11 comments read, all 11 delivered, charge = ceil(11 x 12.925) = 143, below the hold, with ONE honest sentence from the real counts and no word about pleasantries", async () => {
     resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 5, region: "EG" }, 25);
     const world = facebookKeywordWorld({ postsAvailable: 6, commentsOf: liveComments }); // posts 0, 2 and 4 are about the topic
     useSource(world.call);
@@ -283,26 +290,27 @@ describe("worker: the Facebook keyword mission, comment quality", () => {
     const { json } = await runAllChunks();
 
     expect(json.done).toBe(true);
-    expect(json.deliveredUnits).toBe(5);
+    expect(json.deliveredUnits).toBe(11);
     expect(UNIT).toBe(12.925); // no price changed
-    expect(chargeForUnits(11, UNIT)).toBe(143); // what the live run charged for 11
-    expect(chargeForUnits(5, UNIT)).toBe(65);
-    expect(json.settle.charged_credits).toBe(65);
+    expect(chargeForUnits(11, UNIT)).toBe(143);
+    expect(json.settle.charged_credits).toBe(143);
     expect(json.settle.charged_credits).toBeLessThanOrEqual(db.reserved);
-    expect(json.settle.refunded_credits).toBe(db.reserved - 65);
+    expect(json.settle.refunded_credits).toBe(db.reserved - 143);
     const total = await diagnostic();
-    expect(total.rows.byReason.well_wish).toBe(6);
-    expect(total.rows.accepted).toBe(5);
+    expect(total.rows.byReason.well_wish ?? 0).toBe(0);
+    expect(total.rows.excluded).toBe(0);
+    expect(total.rows.accepted).toBe(11);
     expect(total.postReads).toMatchObject({ read: 3, sourceShort: 3, sourceMissing: 4, filteredShort: 0, asked: 5 });
-    const sentence = lines().find((line) => line.startsWith("المسلَّم ٥ من ٢٥ مطلوب"));
-    expect(sentence).toBe("المسلَّم ٥ من ٢٥ مطلوب. اعتمدنا ٣ منشورات؛ قرأنا تعليقات ٣ منشورات؛ ٣ منها أعاد المصدر لها تعليقات أقل من المطلوب (٥ لكل منشور)؛ ونقص ما أعاده المصدر ٤ تعليقات عن المطلوب؛ واستُبعد ٦ تعليقات من الدعاء والمجاملة بلا مضمون؛ ولم يُحتسب عليك إلا ما سُلّم.");
+    const sentence = lines().find((line) => line.startsWith("المسلَّم ١١ من ٢٥ مطلوب"));
+    expect(sentence).toBe("المسلَّم ١١ من ٢٥ مطلوب. اعتمدنا ٣ منشورات؛ قرأنا تعليقات ٣ منشورات؛ ٣ منها أعاد المصدر لها تعليقات أقل من المطلوب (٥ لكل منشور)؛ ونقص ما أعاده المصدر ٤ تعليقات عن المطلوب؛ ولم يُحتسب عليك إلا ما سُلّم.");
     expect(sentence).not.toMatch(/[A-Za-z]/);
+    expect(sentence).not.toMatch(/دعاء|مجاملة/);
   });
 
-  it("WHY APPROVED POSTS GAVE NO COMMENTS: many posts are approved but a job reads only the posts the customer asked for (5), and two of those five gave nothing but pleasantries; the sentence says both, from counts", async () => {
+  it("WHY APPROVED POSTS GAVE NO COMMENTS: many posts are approved but a job reads only the posts the customer asked for (5), and two of those five gave nothing but empty or link-only comments; the sentence says both, from counts", async () => {
     resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 5, region: "EG" }, 25);
-    // on-topic posts are the even ones, read in the order 0, 2, 4, 6, 8: the posts 6 and 8 return only pleasantries
-    const commentsOf = (post: number) => (post === 6 || post === 8 ? Array.from({ length: 10 }, (_, i) => ({ comment_id: `w_${post}_${i}`, text: LIVE_WISHES[i % LIVE_WISHES.length], author: `قارئ ${i}` })) : fixtureComments(post, 10));
+    // on-topic posts are the even ones, read in the order 0, 2, 4, 6, 8: the posts 6 and 8 return only empty and link-only comments
+    const commentsOf = (post: number) => (post === 6 || post === 8 ? Array.from({ length: 10 }, (_, i) => ({ comment_id: `w_${post}_${i}`, text: i % 2 === 0 ? "   " : `https://example.com/p${post}/${i}`, author: `قارئ ${i}` })) : fixtureComments(post, 10));
     const world = facebookKeywordWorld({ postsAvailable: 40, commentsOf });
     useSource(world.call);
     strict(0.003);
@@ -320,7 +328,7 @@ describe("worker: the Facebook keyword mission, comment quality", () => {
     expect(sentence).toContain("قرأنا تعليقات ٥ منشورات");
     expect(sentence).toContain("ولم تُقرأ تعليقات بقية المنشورات المعتمدة لأنك طلبت ٥ منشورات");
     expect(sentence).toContain("ولم يُسلَّم أي تعليق من منشورين منها");
-    expect(sentence).toContain("واستُبعد ٢٠ تعليقًا من الدعاء والمجاملة بلا مضمون");
+    expect(sentence).toContain("واستُبعد ٢٠ تعليقًا (فارغ أو رابط فقط)");
     expect(sentence).toContain("ولم يُحتسب عليك إلا ما سُلّم");
     expect(sentence).not.toMatch(/[A-Za-z]/);
     expect(json.settle.charged_credits).toBe(chargeForUnits(15, UNIT));

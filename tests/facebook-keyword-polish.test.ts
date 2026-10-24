@@ -268,11 +268,11 @@ describe("worker: the Facebook keyword mission", () => {
     expect(world2.reads()).toHaveLength(20);
   });
 
-  // ---- item 4: well-wishes are not delivered and not charged ----
+  // ---- item 4 (owner decision, final): the comments of an adopted post are delivered as they are, well-wishes included ----
   const REAL_WISHES = ["بالتوفيق والنجاح الدائم", "بالتوفيق والسداد والنجاح", "بالتوفيق معالي الوزير دكتور"];
   const REAL_KEPT = ["علاج السكر غير موجود تأمين صحي طنطا عيادة علي", "ياريت لو امكن ذيادة تعاقد الاطباء والفنيين فوق السن يومية"];
 
-  it("ITEM 4 (the rule): the three real well-wishes are recognised, the two real comments are kept, and a wish that says something is kept", () => {
+  it("ITEM 4 (the rule, kept for other code): the three real well-wishes are recognised, the two real comments are kept, and a wish that says something is kept", () => {
     for (const text of REAL_WISHES) expect(isPureWellWish(text), text).toBe(true);
     for (const text of REAL_KEPT) expect(isPureWellWish(text), text).toBe(false);
     expect(isPureWellWish("بالتوفيق للمنظومة الصحية في تقليل الانتظار")).toBe(false);
@@ -280,18 +280,18 @@ describe("worker: the Facebook keyword mission", () => {
     expect(isPureWellWish("")).toBe(false);
   });
 
-  it("ITEM 4 (the gate): rejected for the keyword service with its own reason, kept for the two real comments; the other services are untouched", () => {
+  it("ITEM 4 (the gate): the keyword service keeps every comment of an adopted post (well-wishes included); only an empty comment or a bare link is left out; the other services are untouched", () => {
     const params = { query: "الترندات الصحية", region: "EG" };
     const judge = (slug: string, text: string) => evaluateResearchRowRelevance({ comment_id: "c1", text, video_title: "نصائح لتغذية صحية", video_url: "https://www.facebook.com/p/1" }, { capabilitySlug: slug, endpointId: slug, params } as any);
-    for (const text of REAL_WISHES) expect(judge(FACEBOOK_KEYWORD_SLUG, text), text).toMatchObject({ decision: "no_match", reasonAr: WELL_WISH_REASON_AR });
-    for (const text of REAL_KEPT) expect(judge(FACEBOOK_KEYWORD_SLUG, text).decision, text).toBe("match");
+    for (const text of [...REAL_WISHES, ...REAL_KEPT]) expect(judge(FACEBOOK_KEYWORD_SLUG, text).decision, text).toBe("match");
+    for (const text of ["", "  ", "https://www.facebook.com/p/2"]) expect(judge(FACEBOOK_KEYWORD_SLUG, text).decision, JSON.stringify(text)).toBe("no_match");
     // TikTok and YouTube topic searches keep their rule (a short comment under an on-topic video is presumed on topic)
     for (const slug of ["social-tiktok-comments", "social-youtube-comments"]) expect(judge(slug, REAL_WISHES[0]).decision, slug).toBe("match");
   });
 
-  it("ITEM 4 (the job): comments that are pure well-wishes are left out BEFORE the charge; only kept rows are delivered and charged at the unchanged unit price; the shortfall sentence says how many were left out", async () => {
+  it("ITEM 4 (the job): every comment of the adopted posts is delivered, well-wishes included, and charged at the unchanged unit price", async () => {
     resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 6, region: "EG" }, 30);
-    // every post: three well-wishes first, then the two real comments, then six more ordinary comments (the source gives 10 a call)
+    // every post: three well-wishes first, then the two real comments (5 comments, the post's share)
     const comments = (post: number) => [
       ...REAL_WISHES.map((text, i) => ({ comment_id: `w_${post}_${i}`, text, author: `قارئ ${i}` })),
       ...REAL_KEPT.map((text, i) => ({ comment_id: `k_${post}_${i}`, text: `${text} ${post}`, author: `كاتب ${i}` })),
@@ -303,28 +303,25 @@ describe("worker: the Facebook keyword mission", () => {
     const { json } = await runAllChunks();
 
     expect(json.done).toBe(true);
-    // 6 posts x the 2 real comments each: the wishes are never counted, whatever the post's share
-    expect(json.deliveredUnits).toBe(12);
-    expect(json.settle.charged_credits).toBe(chargeForUnits(12, UNIT));
+    // 6 posts x 5 comments: nothing is left out, whatever the comment says
+    expect(json.deliveredUnits).toBe(30);
+    expect(json.settle.charged_credits).toBe(chargeForUnits(30, UNIT));
     expect(UNIT).toBe(12.925); // no price changed
     const total = await diagnosticTotal();
-    expect(total.rows.byReason.well_wish).toBe(18);
-    expect(total.rows.accepted).toBe(12);
-    const shortfall = lines().find((line) => line.startsWith("المسلَّم ١٢ من ٣٠ مطلوب"));
-    expect(shortfall).toBeDefined();
-    expect(shortfall).toContain("واستُبعد ١٨ تعليقًا من الدعاء والمجاملة بلا مضمون");
-    expect(shortfall).toContain("ولم يُحتسب عليك إلا ما سُلّم");
-    expect(shortfall).not.toMatch(/[A-Za-z0-9]/);
+    expect(total.rows.byReason.well_wish ?? 0).toBe(0);
+    expect(total.rows.excluded).toBe(0);
+    expect(total.rows.accepted).toBe(30);
+    expect(lines().some((line) => /^المسلَّم .* من .* مطلوب/.test(line))).toBe(false);
   });
 
   // ---- item 2: why fewer arrived ----
   it("ITEM 2 (the sentence): approved posts, only some delivered: ONE Arabic sentence from the real counts (posts read, posts the source gave too few comments for, posts with too few worth keeping)", async () => {
     resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 8, region: "EG" }, 40);
-    // 8 on-topic posts (even numbers 0..14): posts 0,2,4 give 10 good comments; 6,8,10 give only 2 (the source's answer is short); 12,14 give 10 pure well-wishes
+    // 8 on-topic posts (even numbers 0..14): posts 0,2,4 give 10 good comments; 6,8,10 give only 2 (the source's answer is short); 12,14 give 10 empty or link-only comments
     const commentsOf = (post: number) =>
       post <= 4 ? fixtureComments(post, 10)
       : post <= 10 ? fixtureComments(post, 2)
-      : Array.from({ length: 10 }, (_, i) => ({ comment_id: `w_${post}_${i}`, text: REAL_WISHES[i % 3], author: `قارئ ${i}` }));
+      : Array.from({ length: 10 }, (_, i) => ({ comment_id: `w_${post}_${i}`, text: i % 2 === 0 ? "  " : `https://example.com/p${post}/${i}`, author: `قارئ ${i}` }));
     const world = facebookKeywordWorld({ postsAvailable: 16, commentsOf });
     useSource(world.call);
     arm();
@@ -339,7 +336,7 @@ describe("worker: the Facebook keyword mission", () => {
     expect(sentence).toContain("قرأنا تعليقات ٨ منشورات");
     expect(sentence).toContain("٣ منها أعاد المصدر لها تعليقات أقل من المطلوب (٥ لكل منشور)");
     expect(sentence).toContain("٢ منها لم يكن فيها العدد المطلوب من التعليقات الصالحة");
-    expect(sentence).toContain("واستُبعد ٢٠ تعليقًا من الدعاء والمجاملة بلا مضمون");
+    expect(sentence).toContain("واستُبعد ٢٠ تعليقًا (فارغ أو رابط فقط)");
     expect(sentence).toContain("ولم يُحتسب عليك إلا ما سُلّم");
     expect(sentence).not.toMatch(/[A-Za-z]/);
     // every number in it is one the job counted
