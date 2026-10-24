@@ -1,5 +1,6 @@
 import { cleanCompanyRecord } from "../companyRowHygiene";
 import crypto from "crypto";
+import { INTERNAL_ID_KEYS, POST_COLUMN_TITLES_AR, POST_NUMBER_DESC_AR, POST_NUMBER_KEY, POST_NUMBER_TITLE_AR, isFacebookKeywordService } from "../facebookKeywordService";
 import { SOCIAL_COLUMN_ORDER, inferSocialRowKind, normalizeSocialRow, toIsoDate, type SocialRowKind } from "./socialRows";
 import { toArabicDigits } from "../arabicDigits";
 import { localizeCityFromAddress } from "./addressParser";
@@ -37,6 +38,8 @@ export interface NormalizedDataset {
     reportContext?: Record<string, any>;
     /** Set for comment and video results of the verified social services (fixed Arabic schema). */
     socialKind?: SocialRowKind;
+    /** Set for the Facebook keyword service: what a comment sits under is a post (own column titles, a post number, no internal source id). */
+    postUnit?: boolean;
   };
   profile: Record<string, any> | null;
   rows: Array<Record<string, any>>;
@@ -528,6 +531,27 @@ export function generateDynamicCodebook(columns: string[], sampleRows: Array<Rec
   });
 }
 
+/** The key of the post a comment sits under: its link, else its text (the same way the review reads it). */
+function postKeyOf(row: Record<string, any>): string | null {
+  const url = typeof row.video_url === "string" ? row.video_url.trim() : "";
+  if (url) return url;
+  const title = typeof row.video_title === "string" ? row.video_title.replace(/\s+/g, " ").trim() : "";
+  return title ? `title:${title.slice(0, 160)}` : null;
+}
+
+/** Gives each comment the number of its post (in order of first appearance, from 1) and removes the platform's own comment id from the row. */
+function numberPostsAndDropInternalIds(rows: Array<Record<string, any>>): void {
+  const numbers = new Map<string, number>();
+  for (const row of rows) {
+    const key = postKeyOf(row);
+    if (key) {
+      if (!numbers.has(key)) numbers.set(key, numbers.size + 1);
+      row[POST_NUMBER_KEY] = numbers.get(key);
+    }
+    for (const id of INTERNAL_ID_KEYS) delete row[id];
+  }
+}
+
 /**
  * Unified Normalization Pipeline:
  * Validates, deduplicates, sanitizes, and enriches research datasets.
@@ -599,6 +623,10 @@ export function normalizeDataset(
   // 3. Deduplicate and organize relational comment hierarchy
   const { uniqueRows: dedupedRows, duplicatesCount } = deduplicateRecords(mappedRows);
   const uniqueRows = organizeCommentHierarchy(dedupedRows);
+  // The Facebook keyword service speaks of POSTS: every comment gets the number of its post (the posts sheet holds the post once), and the platform's own
+  // comment id (an internal base64 identifier) never reaches a customer file. The ids stay in the stored data, not in these rows.
+  const postUnit = socialKind === "comments" && isFacebookKeywordService(meta.template);
+  if (postUnit) numberPostsAndDropInternalIds(uniqueRows);
 
   // 4. Determine Active Columns
   const columnSet = new Set<string>();
@@ -636,11 +664,23 @@ export function normalizeDataset(
       columnSet.add(k);
     }
   }
-  const columns = Array.from(columnSet);
+  if (postUnit) for (const key of INTERNAL_ID_KEYS) columnSet.delete(key);
+  let columns = Array.from(columnSet);
+  if (postUnit && columns.includes(POST_NUMBER_KEY)) {
+    columns = columns.filter((key) => key !== POST_NUMBER_KEY);
+    columns.splice(columns.includes("id") ? columns.indexOf("id") + 1 : 0, 0, POST_NUMBER_KEY);
+  }
 
   // 5. Compute KPIs & Codebook
   const kpis = computeKpis(uniqueRows, duplicatesCount);
-  const codebook = generateDynamicCodebook(columns, uniqueRows.slice(0, 20));
+  const baseCodebook = generateDynamicCodebook(columns, uniqueRows.slice(0, 20));
+  const codebook = postUnit
+    ? baseCodebook.map((entry) => {
+        if (entry.field === POST_NUMBER_KEY) return { ...entry, titleAr: POST_NUMBER_TITLE_AR, descriptionAr: POST_NUMBER_DESC_AR, dataType: "رقم صحيح (Integer)" };
+        const post = POST_COLUMN_TITLES_AR[entry.field];
+        return post ? { ...entry, titleAr: post.titleAr, descriptionAr: post.descAr } : entry;
+      })
+    : baseCodebook;
 
   // 6. Determine Entity Type
   let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" | "people" = "tabular";
@@ -697,6 +737,7 @@ export function normalizeDataset(
       targetRequested: options?.targetRequested !== undefined ? options.targetRequested : (meta.targetRequested !== undefined ? meta.targetRequested : null),
       reportContext: meta.reportContext && typeof meta.reportContext === "object" ? meta.reportContext : undefined,
       ...(socialKind ? { socialKind } : {}),
+      ...(postUnit ? { postUnit: true } : {}),
     },
     profile: cleanProfile,
     rows: uniqueRows,

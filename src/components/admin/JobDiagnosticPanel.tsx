@@ -10,7 +10,7 @@ import type { JobDiagnostic } from "@/lib/server/zeroDeliveryDiagnostic";
  * rejected posts and five rejected rows (cut short). Loaded on demand from an admin route; no customer route carries these texts.
  */
 const REASON_AR: Record<string, string> = {
-  topic_not_in_text: "لا تذكر موضوع البحث", out_of_region: "خارج الدولة المطلوبة", no_text: "بلا نص", industry_mismatch: "مجال مختلف", other_mismatch: "أسباب أخرى",
+  topic_not_in_text: "لا تذكر موضوع البحث", out_of_region: "خارج الدولة المطلوبة", no_text: "بلا نص", well_wish: "دعاء أو مجاملة", industry_mismatch: "مجال مختلف", other_mismatch: "أسباب أخرى",
 };
 
 export function JobDiagnosticPanel({ jobId }: { jobId: string }) {

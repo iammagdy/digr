@@ -4,6 +4,7 @@ import { authenticateUser } from "@/lib/server/userAuth";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildLivePreviewSample, PREVIEW_MAX_ROWS } from "@/lib/liveJobView";
+import { isFacebookKeywordService } from "@/lib/facebookKeywordService";
 
 export const dynamic = "force-dynamic";
 
@@ -68,7 +69,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       },
     );
     const isCompanyDataset = normalized.metadata.entityType === "companies" || normalized.metadata.entityType === "people";
-    const sample = buildLivePreviewSample(normalized.rows, normalized.columns, isCompanyDataset);
+    const sample = buildLivePreviewSample(normalized.rows, normalized.columns, isCompanyDataset, isFacebookKeywordService(job.endpoint_id));
     return NextResponse.json({ success: true, status: job.status, delivered: Number(job.delivered_units) || 0, sample });
   } catch (err: any) {
     console.warn("[jobs:preview_failed]", String(err?.message || "").slice(0, 120));

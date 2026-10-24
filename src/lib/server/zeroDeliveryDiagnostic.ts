@@ -17,6 +17,8 @@ export interface JobDiagnostic {
   v: 1;
   posts: { judged: number; adopted: number; excluded: number; held: number; unreviewed: number };
   rows: { received: number; outsideWindow: number; accepted: number; excluded: number; held: number; unreviewed: number; byReason: Partial<Record<RejectedReasonCode, number>> };
+  /** Facebook keyword service: the posts whose comments were asked for and how many gave fewer than asked (see `ProviderAdapterCallOutput.postReads`). */
+  postReads: { read: number; sourceShort: number; filteredShort: number; asked: number };
   samples: { posts: DiagnosticSample[]; rows: DiagnosticSample[] };
 }
 
@@ -24,6 +26,7 @@ export const emptyDiagnostic = (): JobDiagnostic => ({
   v: 1,
   posts: { judged: 0, adopted: 0, excluded: 0, held: 0, unreviewed: 0 },
   rows: { received: 0, outsideWindow: 0, accepted: 0, excluded: 0, held: 0, unreviewed: 0, byReason: {} },
+  postReads: { read: 0, sourceShort: 0, filteredShort: 0, asked: 0 },
   samples: { posts: [], rows: [] },
 });
 
@@ -76,6 +79,10 @@ export function mergeDiagnostic(a: JobDiagnostic | null | undefined, b: JobDiagn
     if (!source || source.v !== 1) continue;
     for (const key of Object.keys(out.posts) as Array<keyof JobDiagnostic["posts"]>) out.posts[key] += count(source.posts?.[key]);
     for (const key of ["received", "outsideWindow", "accepted", "excluded", "held", "unreviewed"] as const) out.rows[key] += count(source.rows?.[key]);
+    out.postReads.read += count(source.postReads?.read);
+    out.postReads.sourceShort += count(source.postReads?.sourceShort);
+    out.postReads.filteredShort += count(source.postReads?.filteredShort);
+    out.postReads.asked = Math.max(out.postReads.asked, count(source.postReads?.asked));
     for (const [code, n] of Object.entries(source.rows?.byReason ?? {})) out.rows.byReason[code as RejectedReasonCode] = (out.rows.byReason[code as RejectedReasonCode] ?? 0) + count(n);
     for (const sample of source.samples?.posts ?? []) addSample(out.samples.posts, sample.text, sample.reasonAr);
     for (const sample of source.samples?.rows ?? []) addSample(out.samples.rows, sample.text, sample.reasonAr);
@@ -83,12 +90,23 @@ export function mergeDiagnostic(a: JobDiagnostic | null | undefined, b: JobDiagn
   return out;
 }
 
-export const hasDiagnosticSignal = (d: JobDiagnostic): boolean => d.posts.judged > 0 || d.rows.received > 0 || d.rows.excluded > 0 || d.rows.held > 0 || d.rows.unreviewed > 0;
+/** Adds what the adapter counted while it read the posts of this chunk. */
+export function recordPostReads(d: JobDiagnostic, reads: { read: number; sourceShort: number; filteredShort: number; asked: number } | null | undefined): JobDiagnostic {
+  if (!reads) return d;
+  d.postReads.read += count(reads.read);
+  d.postReads.sourceShort += count(reads.sourceShort);
+  d.postReads.filteredShort += count(reads.filteredShort);
+  d.postReads.asked = Math.max(d.postReads.asked, count(reads.asked));
+  return d;
+}
+
+export const hasDiagnosticSignal = (d: JobDiagnostic): boolean => d.postReads.read > 0 || d.posts.judged > 0 || d.rows.received > 0 || d.rows.excluded > 0 || d.rows.held > 0 || d.rows.unreviewed > 0;
 
 const REASON_LABEL_AR: Record<RejectedReasonCode, string> = {
   topic_not_in_text: "لا تذكر موضوع بحثك",
   out_of_region: "خارج الدولة المطلوبة",
   no_text: "بلا نص يمكن قراءته",
+  well_wish: "دعاء أو مجاملة بلا مضمون",
   industry_mismatch: "من مجال مختلف",
   other_mismatch: "لأسباب أخرى",
 };
@@ -127,6 +145,27 @@ export function zeroDeliveryEventAr(d: JobDiagnostic): string | null {
   }
   if (parts.length === 0) return null;
   return `لم يُسلَّم شيء، وهذا ما حدث: ${parts.join(". ثم ")}.`;
+}
+
+const commentsAr = (n: number): string => (n === 1 ? "تعليق واحد" : n === 2 ? "تعليقان" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} تعليقات` : `${toArabicDigits(n)} تعليقًا`);
+
+/**
+ * Why a Facebook keyword job delivered fewer comments than asked, in ONE sentence made only of what was counted: the posts whose comments were read, how many of them
+ * returned fewer comments than asked, how many returned enough but fewer were worth keeping, and how many well-wishes were left out. Arabic-Indic digits, no source name,
+ * no amount. Null when nothing was counted (the caller then keeps its own sentence).
+ */
+export function keywordShortfallReasonAr(d: JobDiagnostic): string | null {
+  const reads = d.postReads;
+  if (reads.read <= 0) return null;
+  const asked = reads.asked > 0 ? reads.asked : null;
+  const parts: string[] = [`قرأنا تعليقات ${postsAr(reads.read)}`];
+  if (reads.sourceShort > 0) parts.push(`${toArabicDigits(reads.sourceShort)} منها أعاد المصدر لها تعليقات أقل من المطلوب${asked ? ` (${toArabicDigits(asked)} لكل منشور)` : ""}`);
+  if (reads.filteredShort > 0) parts.push(`${toArabicDigits(reads.filteredShort)} منها لم يكن فيها العدد المطلوب من التعليقات الصالحة بعد استبعاد الروابط وردود الفعل والدعوات`);
+  const wishes = d.rows.byReason.well_wish ?? 0;
+  const otherExcluded = Math.max(0, d.rows.excluded - wishes);
+  if (wishes > 0) parts.push(`واستُبعد ${commentsAr(wishes)} من الدعاء والمجاملة بلا مضمون`);
+  if (otherExcluded > 0) parts.push(`واستُبعد ${commentsAr(otherExcluded)} لا يتناول موضوعك`);
+  return `${parts.join("؛ ")}؛ ولم يُحتسب عليك إلا ما سُلّم.`;
 }
 
 // Storage (best effort: the diagnostic is for reading later and must never change what a job delivers or charges).

@@ -33,7 +33,7 @@ import { timeNeededForAnotherCallMs } from "./chunkSizing";
 import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { youtubeRecencyFor } from "../youtubeRecency";
 import { videoEvidence } from "./videoRelevance";
-import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, isGenericComment, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
+import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, isGenericComment, isPureWellWish, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
 import { maxPagesForJob } from "./providerCallCaps";
 import { VIDEO_ADOPTED_KEY } from "./videoAdoption";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
@@ -145,6 +145,8 @@ interface SocialState {
   po?: number;
   /** Comments read from each adopted video (topic search): sized from the videos adopted so the first ones can fill the job. */
   pv?: number;
+  /** Paged topic search: usable comments already kept from the post being read when a chunk ended inside it (its share is `pv`, never more across chunks). */
+  pu?: number;
   /** How many of the first `refs` were adopted before their comments were read; the comments of the rest are judged by the worker. */
   ad?: number;
   /** Non-Arabic comments kept aside for an Arabic request: delivered only if the volume cannot be filled otherwise. */
@@ -662,10 +664,16 @@ async function runCommentsChunk(
   // would end the job after one old video that was entirely outside the window.
   // A topic search also counts only comments that say something: the others still travel to the worker (which rejects them with its
   // own reason) but never fill the volume.
-  const countsAsComment = (row: Record<string, any>) => isUsableComment(row) && !isGenericComment(commentTextOf(row));
+  // A paged topic search (the Facebook keyword service) also leaves out pure well-wishes («بالتوفيق والنجاح»): they never fill the volume or a post's share, and the gate rejects them.
+  const countsAsComment = (row: Record<string, any>) => isUsableComment(row) && !isGenericComment(commentTextOf(row)) && !(pagedTopic && isPureWellWish(commentTextOf(row)));
+  const postReads = { read: 0, sourceShort: 0, filteredShort: 0, asked: askedPerVideo };
   const credited = (list: Record<string, any>[]) => countInsideOf(topicSearch ? list.filter(countsAsComment) : list, params);
   const countedRows = () => credited(rows);
-  const withHint = (out: ProviderAdapterCallOutput): ProviderAdapterCallOutput => (windowHint ? { ...out, discoveryWindow: windowHint } : out);
+  const withHint = (out: ProviderAdapterCallOutput): ProviderAdapterCallOutput => ({
+    ...out,
+    ...(windowHint ? { discoveryWindow: windowHint } : {}),
+    ...(pagedTopic && postReads.read > 0 ? { postReads } : {}),
+  });
 
   while (countedRows() < wanted && clock.canCallAgain()) {
     if (state.ph === "d") {
@@ -857,6 +865,11 @@ async function runCommentsChunk(
 
     commentsAnswered = true;
     // A topic search walks the answer position by position (the offset is a position in the answer); the other modes drop repeats first.
+    if (pagedTopic && startAt === 0) {
+      postReads.read += 1;
+      if (chain.rows.length < readPerVideo) postReads.sourceShort += 1;
+      else if (chain.rows.filter(countsAsComment).length < readPerVideo) postReads.filteredShort += 1;
+    }
     const listed = topicSearch ? chain.rows.slice(startAt) : chain.rows;
     const fresh = topicSearch ? listed : dedupe(listed, seen);
     const taking = topicSearch ? fresh : fresh.slice(0, Math.max(0, Math.min(need, wanted - countedRows())));
@@ -865,12 +878,13 @@ async function runCommentsChunk(
     let consumed = 0;
     let uniqueConsumed = 0;
     // A paged topic search takes at most `readPerVideo` usable comments from a post (the price is built on that many) and reads a post with ONE call.
-    let postUsable = 0;
+    let postUsable: number = pagedTopic && startAt > 0 ? (state.pu ?? 0) : 0;
     let postQuotaReached = false;
     for (const row of dated) {
+      // The post's own share is checked first: a chunk that ends exactly when the share is complete moves on to the next post (it never reads the same post again).
+      if (pagedTopic && postUsable >= readPerVideo) { postQuotaReached = true; break; }
       // A topic search stops at the chunk's share: the rest of the list stays for the next chunk (read again from where this one stopped).
       if (topicSearch && countedRows() + credited(pageRows) >= wanted) break;
-      if (pagedTopic && postUsable >= readPerVideo) { postQuotaReached = true; break; }
       consumed += 1;
       if (!topicSearch) { pageRows.push(row); continue; }
       const identity = rowKey(row);
@@ -898,10 +912,10 @@ async function runCommentsChunk(
     const pageOutsideWindow: boolean = windowed && pageRows.length > 0 && insideWindowCount(pageRows, params) === 0;
     const moreOnThisVideo: boolean = !pagedTopic && Boolean(chain.nextCursor) && taken < readPerVideo && dated.length > 0 && !pageOutsideWindow;
     state = stoppedEarly
-      ? { ...state, cc: state.cc ?? null, n: taken, po: startAt + consumed, si: chain.sourceIndex }
+      ? { ...state, cc: state.cc ?? null, n: taken, po: startAt + consumed, si: chain.sourceIndex, ...(pagedTopic ? { pu: postUsable } : {}) }
       : moreOnThisVideo
         ? { ...state, cc: chain.nextCursor, n: taken, po: 0, si: chain.sourceIndex }
-        : { ...state, i: index + 1, cc: null, n: 0, po: 0, si: null };
+        : { ...state, i: index + 1, cc: null, n: 0, po: 0, si: null, pu: 0 };
   }
 
   const moreToDiscover = pagedTopic && Boolean(state.dc) && (state.pp ?? 0) < postAllowance;

@@ -224,10 +224,10 @@ export default function ResultsCanvas({
   }
 
   const tableColumns = ensurePostLinkColumn(previewColumns(orderedColumns, isCompanyDataset), orderedColumns, profile?.sourcePlatform).filter((key, index, shown) => {
-    const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key);
+    const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key, profile?.postUnit === true);
     return (
       shown.findIndex(
-        (candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate)) === label
+        (candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate, profile?.postUnit === true)) === label
       ) === index
     );
   });
@@ -425,7 +425,7 @@ export default function ResultsCanvas({
                     <thead>
                       <tr className="border-b border-sand-200 bg-sand-100/80">
                         {tableColumns.map((column) => (
-                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{LEGACY_COLUMN_LABELS[column] || customerResultColumnLabel(column)}</th>
+                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{LEGACY_COLUMN_LABELS[column] || customerResultColumnLabel(column, profile?.postUnit === true)}</th>
                         ))}
                       </tr>
                     </thead>

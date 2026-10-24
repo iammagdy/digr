@@ -1,3 +1,4 @@
+import { POST_COLUMN_TITLES_AR } from "./facebookKeywordService";
 /** Arabic labels for source-native result fields that can reach the live results table. */
 const RESULT_COLUMN_LABELS: Record<string, string> = {
   id: "معرّف السجل",
@@ -20,6 +21,7 @@ const RESULT_COLUMN_LABELS: Record<string, string> = {
   channel_name: "اسم القناة أو الحساب",
   video_url: "رابط الفيديو",
   video_published_at: "تاريخ نشر الفيديو",
+  post_number: "رقم المنشور",
   comment_language: "لغة التعليق",
   url: "الرابط المباشر",
   published_at: "تاريخ النشر",
@@ -93,7 +95,9 @@ const RESULT_COLUMN_LABELS: Record<string, string> = {
 /** Shown for a field with no known Arabic title: the customer never sees a technical field name. */
 export const UNKNOWN_COLUMN_LABEL_AR = "بيانات إضافية";
 
-export function customerResultColumnLabel(key: string): string {
+export function customerResultColumnLabel(key: string, postUnit = false): string {
+  // The Facebook keyword service speaks of posts: its comment tables say «المنشور» where other services say «الفيديو».
+  if (postUnit && POST_COLUMN_TITLES_AR[key]) return POST_COLUMN_TITLES_AR[key].titleAr;
   const known = RESULT_COLUMN_LABELS[key];
   if (known) return known;
   // A title already in Arabic stays; anything with Latin letters or underscores is a technical name.

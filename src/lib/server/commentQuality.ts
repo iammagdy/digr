@@ -127,3 +127,46 @@ export const isGenericComment = (text: string): boolean => genericCommentKind(te
 
 /** Said in the gate's reason column and in the plan notes: no provider word, no number. */
 export const GENERIC_COMMENT_REASON_AR = "تعليق دعاء أو عبارة عامة لا يتناول موضوع البحث";
+
+/* ------------------------------------------------------------------ pure well-wishes (the Facebook keyword service only) */
+
+/**
+ * «بالتوفيق والنجاح الدائم», «بالتوفيق والسداد والنجاح», «بالتوفيق معالي الوزير دكتور»: a comment made ONLY of good wishes, thanks and a form of address says
+ * nothing about the subject of the post, and a customer who asked for what people say about a topic does not want to pay for it. The rule is narrow on
+ * purpose: EVERY word of the comment (at most ten) must be a wish word, a thanks word, a title or a connective, and at least one must be a wish or thanks
+ * word. One other word («تأمين», «علاج», a number, a name that is not a title) keeps the comment. Used by the Facebook keyword service only: the other services keep
+ * their own rule (`isGenericComment`) and no relevance is loosened anywhere.
+ */
+const WELL_WISH_WORDS = new Set([
+  // wishes of success and guidance
+  "توفيق", "التوفيق", "موفق", "موفقه", "موفقين", "نجاح", "النجاح", "ناجح", "ناجحه", "سداد", "السداد", "تسديد", "بالتوفيق", "بالنجاح", "بالسداد", "التفوق", "تفوق", "بالتفوق", "الفلاح", "فلاح",
+  // congratulations and greetings
+  "مبروك", "مبارك", "تهنئه", "تهانينا", "تهاني", "تحياتي", "تحيه", "تحيات", "احترامي", "تقديري", "تقدير",
+  // thanks and blessings
+  "شكرا", "شكر", "الشكر", "نشكركم", "نشكرك", "اشكركم", "اشكرك", "ممتن", "ممتنين", "متشكر", "متشكرين", "تسلم", "ايدك", "ايديك", "ايدكم", "ماشاء", "ماشاءالله", "بارك", "جزاك", "جزاكم", "يوفقك", "يوفقكم", "يحفظك", "يحفظكم", "يكرمك", "يارب", "امين", "بخير",
+]);
+/** Words that only dress a wish («كل عام وانتم بخير», «الدائم», «معالي الوزير دكتور»): they never make a comment a wish on their own. */
+const WISH_FILLER_WORDS = new Set([
+  "دائم", "الدائم", "دايم", "دايما", "دائما", "دوما", "مستمر", "المستمر", "مستمره", "الدائمه", "دائمين", "وانتم", "وانت", "بكل", "لكم", "لك", "كل", "عام", "الف", "عيد", "رمضان", "كريم", "سعيد", "خير", "الخير", "خيرا",
+  "صباح", "مساء", "سلام", "السلام", "عليكم", "ورحمه", "وبركاته", "جزيل", "الله", "لله", "ربنا", "رب", "يا", "ما", "شاء", "فيك", "فيكم", "ان", "انشاء", "باذن", "اذن", "والله", "ال",
+  // titles and words of address: a wish addressed to «معالي الوزير دكتور» is still only a wish
+  "معالي", "معاليه", "سعاده", "سياده", "فضيله", "الوزير", "وزير", "الوزيره", "الدكتور", "دكتور", "الدكتوره", "دكتوره", "د", "دكتورنا", "الاستاذ", "استاذ", "الاستاذه", "استاذه", "المهندس", "مهندس", "المهندسه",
+  "الشيخ", "شيخ", "الحاج", "حاج", "السيد", "سيد", "السيده", "الاخ", "اخي", "اخ", "الاخت", "اختي", "رئيس", "الرئيس", "المحافظ", "محافظ", "النائب", "نائب", "الفريق", "فريق", "اللواء", "لواء", "العميد", "عميد",
+  "المدير", "مدير", "المديره", "مديره", "الاداره", "فريقنا", "سيدي", "سيدتي", "حضرتك", "حضرتكم", "سيادتك", "سيادتكم", "سعادتك", "سعادتكم", "معاليك",
+]);
+const MAX_WELL_WISH_WORDS = 10;
+
+export function isPureWellWish(text: string): boolean {
+  const norm = normalizeGenericText(text);
+  if (!norm) return false;
+  const words = norm.split(" ");
+  if (words.length > MAX_WELL_WISH_WORDS) return false;
+  const bare = (word: string) => word.replace(/^و(?=\p{L}{3,})/u, "");
+  const strong = (word: string) => WELL_WISH_WORDS.has(word) || WELL_WISH_WORDS.has(bare(word));
+  const known = (word: string) => strong(word) || WISH_FILLER_WORDS.has(word) || WISH_FILLER_WORDS.has(bare(word));
+  return words.every(known) && words.some(strong);
+}
+
+/** Said in the gate's reason column and in the stop sentence: no provider word. */
+export const WELL_WISH_REASON_AR = "تعليق دعاء أو مجاملة بلا مضمون يتناول موضوع البحث";
+

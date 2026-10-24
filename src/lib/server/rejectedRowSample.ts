@@ -9,6 +9,7 @@ export type RejectedReasonCode =
   | "out_of_region"
   | "industry_mismatch"
   | "no_text"
+  | "well_wish"
   | "topic_not_in_text"
   | "other_mismatch";
 
@@ -22,6 +23,7 @@ export interface RejectedRowSampleEntry {
 export function rejectionReasonCode(reasonAr: string): RejectedReasonCode {
   const reason = String(reasonAr || "");
   if (/النطاق الجغرافي/.test(reason)) return "out_of_region";
+  if (/دعاء أو مجاملة/.test(reason)) return "well_wish";
   if (/لا يتضمن السجل نصا|لا يتضمن السجل نصاً/.test(reason)) return "no_text";
   if (/لا يتضمن نص السجل كلمات/.test(reason)) return "topic_not_in_text";
   if (/ليس شركة|مجالاً مختلفاً|غير مرتبط|غير مطابق|وصف النشاط|النشاط/.test(reason)) return "industry_mismatch";

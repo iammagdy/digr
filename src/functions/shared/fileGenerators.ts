@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
+import { POSTS_SHEET_NAME_AR, POST_COMMENTS_DELIVERED_TITLE_AR, POST_DETAIL_KEYS, POST_NUMBER_KEY, POST_NUMBER_TITLE_AR, POST_COLUMN_TITLES_AR } from "../../lib/facebookKeywordService";
 import { PassThrough } from "node:stream";
 import * as path from "path";
 import * as fs from "fs";
@@ -273,8 +274,8 @@ export async function generateExcelReport(
 }
 
 /** The cells of one social record, in column order (the same in the in-memory workbook and in the streamed one). */
-function socialRowValues(norm: NormalizedDataset, record: Record<string, any>, index: number): ExcelJS.CellValue[] {
-  return norm.columns.map((key) => {
+function socialRowValues(norm: NormalizedDataset, record: Record<string, any>, index: number, columns: readonly string[] = norm.columns): ExcelJS.CellValue[] {
+  return columns.map((key) => {
     const value = record[key];
     if (value === null || value === undefined) return "";
     if (key === "id") return plainRecordId(value, index);
@@ -287,10 +288,46 @@ function socialRowValues(norm: NormalizedDataset, record: Record<string, any>, i
 const socialSheetName = (norm: NormalizedDataset) =>
   norm.metadata.socialKind === "comments" ? "التعليقات" : norm.metadata.socialKind === "videos" ? "الفيديوهات والمنشورات" : "المنشورات";
 
-const socialColumnWidths = (norm: NormalizedDataset) =>
-  norm.columns.map((key) => ({
+const socialColumnWidths = (norm: NormalizedDataset, columns: readonly string[] = norm.columns) =>
+  columns.map((key) => ({
     width: /comment_text|video_caption|video_title/.test(key) ? 48 : /url/.test(key) ? 32 : /hashtags|author_name|channel_name/.test(key) ? 24 : 16,
   }));
+
+/** The columns of the comments sheet: for the Facebook keyword service the post's own columns are not repeated in every comment row (the posts sheet holds them once). */
+const socialSheetColumns = (norm: NormalizedDataset): string[] =>
+  norm.metadata.postUnit ? norm.columns.filter((key) => !(POST_DETAIL_KEYS as readonly string[]).includes(key)) : norm.columns;
+
+/** Rows of the comments that the review sheets list: the platform's own comment id never stands in for a record number. */
+const reviewRowsOf = (norm: NormalizedDataset, list: any[]): any[] =>
+  (Array.isArray(list) ? list : []).map((raw) => {
+    const row: Record<string, any> = { ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason };
+    if (norm.metadata.postUnit) delete row.source_id;
+    return row;
+  });
+
+/** The posts sheet of the Facebook keyword service: one row per post (number, text, link, date) and the comments delivered under it. */
+function postsSheetTable(norm: NormalizedDataset): { headers: string[]; widths: number[]; rows: ExcelJS.CellValue[][] } {
+  const byPost = new Map<number, { text: string; url: string; date: string; delivered: number }>();
+  for (const record of norm.rows) {
+    const number = Number(record[POST_NUMBER_KEY]);
+    if (!Number.isFinite(number) || number <= 0) continue;
+    const entry = byPost.get(number) ?? { text: "", url: "", date: "", delivered: 0 };
+    entry.text ||= String(record.video_title ?? "");
+    entry.url ||= String(record.video_url ?? "");
+    entry.date ||= String(record.video_published_at ?? "");
+    entry.delivered += 1;
+    byPost.set(number, entry);
+  }
+  const headers = [POST_NUMBER_TITLE_AR, "نص المنشور", POST_COLUMN_TITLES_AR.video_url.titleAr, POST_COLUMN_TITLES_AR.video_published_at.titleAr, POST_COMMENTS_DELIVERED_TITLE_AR];
+  const rows = [...byPost.entries()].sort((a, b) => a[0] - b[0]).map(([number, post]) => [
+    number,
+    escapeFormula(post.text),
+    /^https?:\/\//i.test(post.url) ? workbookHyperlink(post.url) : "",
+    escapeFormula(post.date),
+    post.delivered,
+  ] as ExcelJS.CellValue[]);
+  return { headers, widths: [14, 60, 32, 18, 18], rows };
+}
 
 /**
  * A large result of comments or posts, written row by row to a stream instead of built in memory: memory stays flat whatever the number
@@ -306,14 +343,15 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
   const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: out, useStyles: true, useSharedStrings: false });
   wb.creator = "Diger";
   const labels = new Map(norm.codebook.map((entry) => [entry.field, entry.titleAr]));
-  const headers = norm.columns.map((key) => labels.get(key) || key);
+  const columns = socialSheetColumns(norm);
+  const headers = columns.map((key) => labels.get(key) || key);
   const perSheet = scaleValue("rowsPerSheet");
   const sheetCount = Math.max(1, Math.ceil(norm.rows.length / perSheet));
   for (let part = 0; part < sheetCount; part += 1) {
     const sheet = wb.addWorksheet(sheetCount === 1 ? socialSheetName(norm) : `${socialSheetName(norm)} ${toArabicDigits(part + 1)}`, {
       views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
     });
-    sheet.columns = socialColumnWidths(norm);
+    sheet.columns = socialColumnWidths(norm, columns);
     const header = sheet.addRow(headers);
     header.eachCell((cell) => {
       cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
@@ -325,7 +363,7 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
     const from = part * perSheet;
     const to = Math.min(norm.rows.length, from + perSheet);
     for (let index = from; index < to; index += 1) {
-      const row = sheet.addRow(socialRowValues(norm, norm.rows[index], index));
+      const row = sheet.addRow(socialRowValues(norm, norm.rows[index], index, columns));
       row.height = 22;
       row.alignment = { vertical: "middle", wrapText: true };
       row.eachCell((cell) => {
@@ -339,8 +377,35 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
     sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
     sheet.commit();
   }
+  if (norm.metadata.postUnit) {
+    const table = postsSheetTable(norm);
+    if (table.rows.length > 0) {
+      const posts = wb.addWorksheet(POSTS_SHEET_NAME_AR, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
+      posts.columns = table.widths.map((width) => ({ width }));
+      const head = posts.addRow(table.headers);
+      head.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      });
+      head.height = 30;
+      head.commit();
+      table.rows.forEach((values, i) => {
+        const row = posts.addRow(values);
+        row.alignment = { vertical: "top", wrapText: true };
+        row.eachCell((cell) => {
+          cell.border = borderThin;
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: i % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+          if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+        });
+        row.commit();
+      });
+      posts.autoFilter = { from: { row: 1, column: 1 }, to: { row: table.rows.length + 1, column: table.headers.length } };
+      posts.commit();
+    }
+  }
   const addApartSheet = (rowsOf: any[], kind: ReviewSheetKind) => {
-    const review = (Array.isArray(rowsOf) ? rowsOf : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason }));
+    const review = reviewRowsOf(norm, rowsOf);
     if (review.length === 0) return;
     const sheet = wb.addWorksheet(kind.name, { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
     sheet.columns = [22, 60, 36, 56].map((width) => ({ width }));
@@ -396,7 +461,8 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
   });
   const labels = new Map(norm.codebook.map((entry) => [entry.field, entry.titleAr]));
-  const headers = norm.columns.map((key) => labels.get(key) || key);
+  const columns = socialSheetColumns(norm);
+  const headers = columns.map((key) => labels.get(key) || key);
   const header = sheet.addRow(headers);
   header.eachCell((cell) => {
     cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
@@ -405,7 +471,7 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
   });
   header.height = 30;
   norm.rows.forEach((record, index) => {
-    const row = sheet.addRow(socialRowValues(norm, record, index));
+    const row = sheet.addRow(socialRowValues(norm, record, index, columns));
     row.height = 22;
     row.alignment = { vertical: "middle", wrapText: true };
     row.eachCell((cell) => {
@@ -414,16 +480,41 @@ async function generateSocialDataWorkbook(norm: NormalizedDataset, uncertainRows
       if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
     });
   });
-  sheet.columns = socialColumnWidths(norm);
+  sheet.columns = socialColumnWidths(norm, columns);
   sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, norm.rows.length + 1), column: Math.max(1, headers.length) } };
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+  if (norm.metadata.postUnit) {
+    const table = postsSheetTable(norm);
+    if (table.rows.length > 0) {
+      const posts = wb.addWorksheet(POSTS_SHEET_NAME_AR, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
+      const head = posts.addRow(table.headers);
+      head.eachCell((cell) => {
+        cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      });
+      head.height = 30;
+      table.rows.forEach((values, i) => {
+        const row = posts.addRow(values);
+        row.alignment = { vertical: "top", wrapText: true };
+        row.eachCell((cell) => {
+          cell.border = borderThin;
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: i % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+          if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
+        });
+      });
+      posts.columns = table.widths.map((width) => ({ width }));
+      posts.autoFilter = { from: { row: 1, column: 1 }, to: { row: table.rows.length + 1, column: table.headers.length } };
+      posts.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+    }
+  }
   // Rows the gate could not decide are normalised like delivered rows and listed apart, never charged.
-  addGenericReviewSheet(wb, (Array.isArray(uncertainRows) ? uncertainRows : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason })), {
+  addGenericReviewSheet(wb, reviewRowsOf(norm, uncertainRows), {
     text: (row) => row.comment_text || row.text || row.video_caption || row.video_title || "",
     link: (row) => row.url || row.video_url || "",
   });
   // Rows the review budget did not reach: a sheet of their own, never charged, never in the delivered data.
-  addGenericReviewSheet(wb, (Array.isArray(unreviewedRows) ? unreviewedRows : []).map((raw) => ({ ...(norm.metadata.socialKind ? normalizeSocialRow(norm.metadata.socialKind as any, raw) : raw), _relevance_reason: raw?._relevance_reason })), {
+  addGenericReviewSheet(wb, reviewRowsOf(norm, unreviewedRows), {
     text: (row) => row.comment_text || row.text || row.video_caption || row.video_title || "",
     link: (row) => row.url || row.video_url || "",
   }, UNREVIEWED_SHEET);

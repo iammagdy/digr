@@ -6,7 +6,8 @@ import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
-import { emptyDiagnostic, hasDiagnosticSignal, recordPostJudgements, recordRowGate, saveStepDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
+import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
+import { PAGED_FIRST_CHUNK_ROWS, isFacebookKeywordService } from "../../../../lib/facebookKeywordService";
 import { groupRowsByVideo, judgeVideos, selectionKindFor, unreviewedReasonFor, videoSelectionEventAr, type SelectionUnit, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
@@ -798,7 +799,9 @@ export async function POST(req: NextRequest) {
           ? "cursor"
           : spec.paginationStrategy,
       cursor: currentCursor && currentCursor !== "completed" ? String(currentCursor) : null,
-      pageSize: effectivePageSize,
+      // The first chunk of a paged job (the Facebook keyword service) reads one post's comments only, so the customer sees accepted rows while the rest runs;
+      // the later chunks take the usual size. Everything the worker decides about pages below still uses the usual size.
+      pageSize: currentStep === 0 && selectionUnit === "post" && targetMax > PAGED_FIRST_CHUNK_ROWS ? Math.min(effectivePageSize, PAGED_FIRST_CHUNK_ROWS) : effectivePageSize,
       remainingNeeded: remainingUnits,
       targetVolumeMax: targetMax,
       deliveredSoFar: effectiveDelivered,
@@ -813,6 +816,8 @@ export async function POST(req: NextRequest) {
     // Nothing was delivered yet -> unchanged: the error below releases the whole reserve with zero charge.
     const providerFailedAfterDelivery = !rawAdapterResult.ok && effectiveDelivered > 0 && needsProvider && !providerBudgetStopped;
     const adapterResult = providerFailedAfterDelivery ? noProviderCall : rawAdapterResult;
+    // What the reading of the posts of this chunk found (Facebook keyword service): kept for the one sentence that says why fewer comments arrived.
+    recordPostReads(chunkDiagnostic, rawAdapterResult.postReads);
     if (providerFailedAfterDelivery) {
       console.warn(`[worker:provider_failed_after_delivery] jobId=${jobId} delivered=${effectiveDelivered}`);
     }
@@ -1633,7 +1638,7 @@ export async function POST(req: NextRequest) {
     }
 
     // The job has delivered nothing so far: keep what its selection and gate did, so a later chunk that ends it empty can say why.
-    if (jobId && newDeliveredUnits === 0 && hasDiagnosticSignal(chunkDiagnostic)) {
+    if (jobId && (newDeliveredUnits === 0 || selectionUnit === "post") && hasDiagnosticSignal(chunkDiagnostic)) {
       try {
         await saveStepDiagnostic(adminClient.storage.from("partials"), jobId, currentStep, chunkDiagnostic);
       } catch {
@@ -2309,7 +2314,13 @@ export async function POST(req: NextRequest) {
           const excluded = relevanceExcludedCount + baselineExcludedCount;
           // Rows removed by the date window are counted apart (they never reach the relevance gate): said first, with the job's totals.
           const dateSentence = dateDropShortfallSentenceAr(receivedTotal > 0 ? receivedTotal : null, dateExcludedTotal);
-          const reason = providerFailedAfterDelivery
+          // The Facebook keyword service says WHY from what was counted (posts read, posts that gave fewer comments than asked, well-wishes left out).
+          const keywordShortfall = isFacebookKeywordService(spec.capabilitySlug) && !providerFailedAfterDelivery
+            ? keywordShortfallReasonAr(totalDiagnostic(await readDiagnosticFile(adminClient.storage.from("partials"), jobId)))
+            : null;
+          const reason = keywordShortfall
+            ? `${keywordShortfall}${callCapReason && callCapReason !== "source_repeats" ? ` ${stopNoteAr(callCapReason)}` : ""}`
+            : providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."
             : callCapReason === "source_repeats"
             ? CALL_CAP_NOTE_AR.source_repeats

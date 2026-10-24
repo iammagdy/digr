@@ -636,6 +636,12 @@ export interface ProviderAdapterCallOutput {
   emptyReason?: "no_videos" | "no_relevant_videos";
   /** YouTube comments by topic with a window: whether the search was told to prefer recent uploads (the worker words an empty result by it). */
   discoveryWindow?: "recency_applied" | "recency_unsupported";
+  /**
+   * Facebook keyword search only: what this chunk's reading of POSTS found, counted from the answers themselves. `read` posts had their comments asked for,
+   * `sourceShort` of them returned fewer comments than were asked (none included), and `filteredShort` returned enough but fewer than asked were worth keeping
+   * (links, bare reactions, pure well-wishes). `asked` is the number of comments wanted from each post.
+   */
+  postReads?: { read: number; sourceShort: number; filteredShort: number; asked: number };
 }
 
 export type ProviderAdapterFn = (
