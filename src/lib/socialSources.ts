@@ -9,11 +9,11 @@
  *
  * This module is pure data and pure functions (no network), so it can be tested exhaustively.
  */
-import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings"; import { facebookTopicCapability, type PostTopicTraits } from "./facebookTopicSources";
+import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings"; import { facebookReportCapability, facebookTopicCapability, type PostTopicTraits } from "./facebookTopicSources"; import { FACEBOOK_REPORT_SLUG, PER_PUBLISHER_MAX_SHARE } from "./facebookReport/constants"; import { formatDateAr } from "./timeWindow"; import { FACEBOOK_REPORT_ENABLED } from "./facebookReport/registry";
 
 import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
-import { extractUrls, socialLocationText, socialSubjectText, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
+import { extractUrls, socialLocationText, socialSubjectText, stripReportWords, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 import { withTopicCountryWord, withXCountryTerms, withXDateOperators } from "./xSearchWindow";
 import { regionNameAr } from "./regionNames";
@@ -613,7 +613,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     successRate: 0.995,
     discover: { channel: FACEBOOK_PAGE_POSTS },
   },
-  facebookTopicCapability(FACEBOOK_COMMENTS)];
+  facebookTopicCapability(FACEBOOK_COMMENTS), ...(FACEBOOK_REPORT_ENABLED ? [facebookReportCapability(FACEBOOK_COMMENTS, FACEBOOK_PAGE_POSTS)] : [])]; // the report comes AFTER the keyword service: a plain Facebook topic request still finds the keyword service first; the report is chosen by its own intent (socialCapabilityForIntent)
 
 // The row ceiling of each service follows the scale configuration (the defaults above unless the owner raised them).
 for (const cap of SOCIAL_CAPABILITIES) cap.maxRows = effectiveSocialMaxRows(cap.maxRows, cap.kind);
@@ -779,6 +779,8 @@ export function socialResultTitleAr(cap: SocialCapabilityDef): string {
 /** The verified capability that serves what the customer asked for, or undefined when none does. */
 export function socialCapabilityForIntent(intent: SocialIntent): SocialCapabilityDef | undefined {
   if (!intent.task || !intent.platform) return undefined;
+  // A report on a Facebook topic is served by the report, not by the keyword service.
+  if (intent.report && intent.platform === "facebook") return SOCIAL_CAPABILITIES.find((cap) => cap.slug === FACEBOOK_REPORT_SLUG);
   const kind: SocialKind = intent.task === "comments" ? "comments" : intent.task === "x_posts" ? "posts" : "videos";
   // A Facebook page named by its name is a page request (its latest posts), not a keyword search.
   const mode: SocialMode | null = intent.pageName
@@ -832,7 +834,9 @@ export function canonicalSocialParams(
     // The subject the customer named wins; a model-written query is only the fallback.
     const subject = hints.subject?.trim() || socialSubjectText(requestText);
     const query = subject || (typeof model.query === "string" ? model.query.trim() : "");
-    if (query) params.query = query;
+    // the report words («تقرير», «تحليل», «رصد») ask for the deliverable: they are never part of the topic the Pages are chosen by
+    const topic = cap.topicReport ? stripReportWords(query) : query;
+    if (topic) params.query = topic;
   }
   if (hints.dateFrom) params.dateFrom = hints.dateFrom;
   if (hints.dateTo) params.dateTo = hints.dateTo;
@@ -925,6 +929,15 @@ export function socialPlanSummaryAr(
     const channelsText = missionChannels.length > 1 ? channelsCountAr(missionChannels.length) : onPage ? "الصفحة المحددة" : "القناة المحددة";
     const topic = typeof params.topic === "string" && params.topic.trim() ? ` عن «${params.topic.trim()}»` : "";
     return `سحب تعليقات ${ranking} من ${channelsText} على ${platform}${topic}، حتى ${formatNumber(volume)} تعليقاً إجمالاً`;
+  }
+  // The Facebook topic REPORT: the topic, the country, the period and the size said once, and what the customer receives.
+  if (cap.topicReport && mode === "query") {
+    const country = regionNameAr(params.region);
+    const period = typeof params.dateFrom === "string" && typeof params.dateTo === "string" ? ` للفترة من ${formatDateAr(params.dateFrom)} إلى ${formatDateAr(params.dateTo)}` : "";
+    const posts = postsForVolume(params, volume) || (Number(params.videoCount) > 0 ? Math.floor(Number(params.videoCount)) : 0);
+    const perPost = Number(params.perVideo) > 0 ? Math.floor(Number(params.perVideo)) : 0;
+    const comments = (n: number) => (n === 1 ? "تعليق واحد" : n === 2 ? "تعليقان" : `${formatNumber(n)} ${n <= 10 ? "تعليقات" : "تعليقًا"}`);
+    return `إعداد تقرير عن «${String(params.query || "").trim()}» على فيسبوك${country ? ` في ${country}` : ""}${period}: منشورات من صفحات عامة موثوقة لا يزيد ما يخص أي ناشر منها عن ${formatNumber(Math.round(PER_PUBLISHER_MAX_SHARE * 100))}٪ من المنشورات${posts ? `، حتى ${videosCountAr(posts, "posts")}` : ""}، وحتى ${comments(volume)} إجمالًا${perPost ? ` (حتى ${comments(Math.min(perPost, volume))} لكل منشور)` : ""}، مع ملف إكسل للبيانات وملف منفصل للمنهجية والتحليل`;
   }
   switch (mode) {
     case "url":

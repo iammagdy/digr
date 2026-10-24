@@ -1,6 +1,7 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, facebookCommentDropReason, isGenericComment, meaningfulChars } from "./commentQuality";
 import { isFacebookKeywordService } from "../facebookKeywordService";
+import { isFacebookTopicReport } from "../facebookReport/constants";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { BASKETBALL_TOPIC_RE, FOOTBALL_TOPIC_RE, countPattern, hasRegionEvidence, hasTopicEvidence, isBasketballTopic, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
 import { isCompanyDirectoryJob } from "./directoryCapability";
@@ -212,7 +213,8 @@ export function evaluateResearchRowRelevance(
 
   // Facebook keyword service: the post was judged (adopted) before its comments were read, so its comments are delivered as they are. Only an empty
   // comment or a link on its own is not a delivered unit; no comment-content judgment (pleasantry, length, reaction, topic words) applies here.
-  if (/comment/i.test(kindText) && isFacebookKeywordService(capabilitySlug)) {
+  // The Facebook topic report takes the comments of its kept posts the same way: nothing is judged, only an empty comment or a bare link is left out.
+  if (/comment/i.test(kindText) && (isFacebookKeywordService(capabilitySlug) || isFacebookTopicReport(capabilitySlug))) {
     const dropped = facebookCommentDropReason(rawTextOf(row, COMMENT_OWN_KEYS));
     if (dropped === "empty") return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
     if (dropped === "link_only") return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً سوى رابط" };

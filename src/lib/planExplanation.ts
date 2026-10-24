@@ -7,6 +7,8 @@ import { toArabicDigits } from "./arabicDigits";
  * matches what will run and what will be charged.
  */
 const NOUNS: Array<{ test: RegExp; one: string; many: string }> = [
+  // the Facebook topic report counts delivered COMMENTS (its slug names neither «comment» nor «post» first)
+  { test: /^facebook-topic-report$/, one: "تعليق", many: "تعليق" },
   { test: /compan/i, one: "شركة", many: "شركة" },
   { test: /people|person|decision/i, one: "شخص", many: "شخص" },
   { test: /comment/i, one: "تعليق", many: "تعليق" },
@@ -45,7 +47,12 @@ export interface PlanExplanationInput {
 export function planExplanationLinesAr(input: PlanExplanationInput): string[] {
   const noun = recordNounAr(input.capabilitySlug);
   const lines: string[] = [];
-  lines.push(`ما ستستلمه: ملف ${formatsAr(input.outputFormats)} فيه حتى ${n(input.targetVolumeMax)} ${noun} مطابق لطلبك بأعمدة عربية. ما لا نتأكد من مطابقته يُوضع في ورقة مراجعة منفصلة ولا يُحتسب عليك.`);
+  if (input.capabilitySlug === "facebook-topic-report") {
+    // The report: a workbook of data and a separate methodology file; comments are never judged, only the empty, repeated and link-only ones are left out (and not charged).
+    lines.push(`ما ستستلمه: ملف إكسل للبيانات (موجز إحصائي ومنشورات وتعليقات وورقة لكل محور) وملف بي دي إف منفصل للمنهجية والتحليل، فيهما حتى ${n(input.targetVolumeMax)} تعليق على منشورات الفترة التي حددتها. لا تُنتقى التعليقات؛ يُحذف منها الفارغ والمكرر وما كان رابطًا فقط، ولا يُحتسب عليك.`);
+  } else {
+    lines.push(`ما ستستلمه: ملف ${formatsAr(input.outputFormats)} فيه حتى ${n(input.targetVolumeMax)} ${noun} مطابق لطلبك بأعمدة عربية. ما لا نتأكد من مطابقته يُوضع في ورقة مراجعة منفصلة ولا يُحتسب عليك.`);
+  }
   lines.push(`نطاق التكلفة: من ${formatPointsAr(input.unitPricePoints)} نقطة (${noun} واحد مطابق) إلى ${pointsAr(input.expectedPoints, n)} إن سُلّم العدد كاملًا، ويُحجز ${pointsAr(input.quotedPoints, n)} مؤقتًا كحد أقصى. لا يُخصم إلا ما يُسلَّم فعلًا، ويُحرَّر الباقي من الحجز المؤقت.`);
   if (!input.countStated) {
     lines.push(`لم تحدد عددًا، فاقترحت عينة من ${n(input.targetVolumeMax)} ${noun}. غيّر العدد من بطاقة الخطة قبل الموافقة إن أردت أكثر.`);

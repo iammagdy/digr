@@ -4,6 +4,13 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 000000. Facebook topic report (branch `claude/intelligent-volta-hgqmy5`, from main `6832fa9`)
+
+- New capability `facebook-topic-report` (one item per quote, unit = delivered comment, 3.025 points proposed; the owner decides): vetted public Pages browsed round-robin with a 20% per-publisher cap and an exact date window, comments never judged, posts placed on health axes by rules plus one model call per 50 ambiguous posts, an Excel (data only) and a separate Arabic methodology PDF. Design, tests and NOT PROVEN list: `docs/FACEBOOK_REPORT.md`; Pages the owner must review: `docs/FACEBOOK_REPORT_PAGES.md`; price arithmetic: `docs/proposals/facebook-topic-report/PRICING.md`. No SQL, no price/cap/ceiling changed. **Gated off** until a registry Page has `ownerReviewed: true` (`FACEBOOK_REPORT_ENABLED`).
+- Period fix: «آخر ٣ شهور» was replaced by «آخر شهر» (shared per-item-phrase reader, number words) and a period's number could become the record count (`understandMission`); both fixed, with tests.
+
+---
+
 ## 00000. Facebook keyword comment quality (branch `claude/fb-comment-quality`, from main `7d0e54b`)
 
 - The pleasantry rule of the Facebook keyword service (`isPureWellWish(text, { topic })` in `src/lib/server/commentQuality.ts`) is now a RATIO rule: normalised text (emoji, tatweel, spellings, stretched letters, glued formulas, repeated phrases), connecting words neutral, at least one strong marker, at least 75% of the other words pleasantry words and at most three others; any number, question, request, complaint/duty/opinion word or word of the topic keeps the comment. It replaced «every word on a list», which missed one extra word, a typo («دكتر»), «شاءالله» and a repeated phrase. Other services are untouched.

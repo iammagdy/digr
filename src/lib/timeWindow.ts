@@ -111,13 +111,15 @@ const PERIOD_THIS_WORDS = new Set(["هذا", "هذه", "هاذا", "هاذه"]);
 
 export function periodWordFlags(tokens: string[]): boolean[] {
   const flags: boolean[] = [];
-  let afterLead = false;
+  let afterLead: boolean = false;
   for (const token of tokens) {
     const norm = normalizeWindowText(token).trim();
     const isLead = PERIOD_LEAD_WORDS.has(norm);
-    const flagged = isMonthWord(token) || isLead || (afterLead && PERIOD_UNIT_WORDS.has(norm));
+    // «آخر ثلاثة شهور»: a count written in words right after the lead word is part of the period, and the unit after it is too
+    const isCountWord: boolean = afterLead && WORD_COUNT_VALUE.has(norm);
+    const flagged = isMonthWord(token) || isLead || isCountWord || (afterLead && PERIOD_UNIT_WORDS.has(norm));
     flags.push(flagged);
-    afterLead = isLead;
+    afterLead = isLead || isCountWord;
   }
   // «الشهر الماضي», «هذا الشهر», «الشهر اللي فات»: the unit with «ال» and the word that makes it a period are the period too, only when they come together.
   const norms = tokens.map((token) => normalizeWindowText(token).trim());
@@ -249,7 +251,29 @@ export function parseStatedDates(text: string, today: Date = new Date()): { from
 
 /* ---------------------------------------------------------------- relative windows */
 
-const RELATIVE_RE = /(?:اخر|خلال|اخر\s*فتره)\s*(\d+)?\s*(شهرين|اسبوعين|يومين|سنتين|عامين|شهور|اشهر|شهر|سنوات|سنين|سنه|سنة|اعوام|عام|اسابيع|اسبوع|ايام|يوم)(?!\s*(?:19|20)\d{2})/;
+/**
+ * A count written in words («آخر ثلاث شهور», «تلات شهور»), in the spellings customers use, after `normalizeWindowText`. Before this a period written in
+ * words was not read at all: the request fell through to the proposed last month with «لم تحدد فترة», although the customer HAD stated a period.
+ */
+const WORD_COUNTS: Array<[string, number]> = [
+  ["ثلاثه", 3], ["ثلاثة", 3], ["ثلاث", 3], ["تلاته", 3], ["تلاتة", 3], ["تلات", 3], ["ثلات", 3],
+  ["اربعه", 4], ["اربعة", 4], ["اربع", 4],
+  ["خمسه", 5], ["خمسة", 5], ["خمس", 5],
+  ["سته", 6], ["ستة", 6], ["ست", 6],
+  ["سبعه", 7], ["سبعة", 7], ["سبع", 7],
+  ["ثمانيه", 8], ["ثمانية", 8], ["ثماني", 8], ["ثمان", 8], ["تمانيه", 8], ["تمانية", 8], ["تمن", 8],
+  ["تسعه", 9], ["تسعة", 9], ["تسع", 9],
+  ["عشره", 10], ["عشرة", 10], ["عشر", 10],
+];
+const WORD_COUNT_ALT = WORD_COUNTS.map(([w]) => w).sort((a, b) => b.length - a.length).join("|");
+const WORD_COUNT_VALUE = new Map<string, number>(WORD_COUNTS);
+const PERIOD_UNITS_RE = "شهرين|اسبوعين|يومين|سنتين|عامين|شهور|اشهر|شهر|سنوات|سنين|سنه|سنة|اعوام|عام|اسابيع|اسبوع|ايام|يوم";
+const RELATIVE_RE = new RegExp(`(?:اخر|خلال|اخر\\s*فتره)\\s*(\\d+|${WORD_COUNT_ALT})?\\s*(${PERIOD_UNITS_RE})(?!\\s*(?:19|20)\\d{2})`);
+/** «٣ شهور الماضية», «ثلاث شهور أخيرة», «منذ ٣ شهور», «من ٣ شهور»: a count and a unit with the word that makes it the period behind us. */
+const RELATIVE_BACK_RE = new RegExp(`(?:(?:منذ|مند|من)\\s*(\\d+|${WORD_COUNT_ALT})\\s*(${PERIOD_UNITS_RE})|(\\d+|${WORD_COUNT_ALT})\\s*(${PERIOD_UNITS_RE})\\s*(?:ال)?(?:ماضي\\S*|اخير\\S*|فات\\S*|سابق\\S*))(?![\\p{L}\\d])(?!\\s*(?:19|20)\\d{2})`, "u");
+/** The count words as a pattern for TEXT THAT IS NOT NORMALISED yet (hamza, taa marbuta and alef maqsura in any spelling): for the readers that look at a customer's raw sentence. */
+export const RELATIVE_COUNT_WORDS_ALT = [...WORD_COUNTS].sort((a, b) => b[0].length - a[0].length).map(([w]) => w.replace(/ا/g, "[اأإ]").replace(/[هة]/g, "[هة]").replace(/ي/g, "[يى]")).join("|");
+const countOf = (raw: string | undefined): number => (raw === undefined || raw === "" ? 1 : /^\d+$/.test(raw) ? Number(raw) : WORD_COUNT_VALUE.get(raw) ?? 1);
 
 function addMonthsClamped(date: Date, months: number): Date {
   const y = date.getUTCFullYear();
@@ -287,7 +311,8 @@ function currentPeriodWindow(kind: "month" | "week" | "year", today: Date): { fr
 
 export function parseRelativeWindow(text: string, today: Date = new Date()): { from: string; to: string; labelAr: string } | null {
   const norm = normalizeWindowText(text);
-  const m = RELATIVE_RE.exec(norm);
+  const back = RELATIVE_RE.test(norm) ? null : RELATIVE_BACK_RE.exec(norm);
+  const m = back ? ([back[0], back[1] ?? back[3], back[2] ?? back[4]] as unknown as RegExpExecArray) : RELATIVE_RE.exec(norm);
   if (!m) {
     const past = PAST_PERIOD_RE.exec(norm);
     if (past) return parseRelativeWindow(PAST_AS_RELATIVE[PERIOD_UNIT_KIND[past[1]]], today);
@@ -297,7 +322,7 @@ export function parseRelativeWindow(text: string, today: Date = new Date()): { f
   }
   const unit = m[2];
   const dual = /^(?:شهرين|اسبوعين|يومين|سنتين|عامين)$/.test(unit);
-  const count = dual ? 2 : Number(m[1]) || 1;
+  const count = dual ? 2 : countOf(m[1]);
   if (count < 1 || count > 120) return null;
   const end = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
   let start: Date;

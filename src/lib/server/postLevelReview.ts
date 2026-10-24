@@ -14,5 +14,7 @@ export const POST_LEVEL_REVIEW_PLATFORMS: readonly string[] = ["tiktok", "youtub
 
 export function usesPostLevelReview(capabilitySlug: string | undefined | null, params: Record<string, any> | undefined | null): boolean {
   const capability = getSocialCapability(capabilitySlug);
+  // the Facebook topic report judges its posts by AXIS (rules, then one model call per 50 posts), never by topic relevance, and never its comments
+  if (capability?.topicReport) return false;
   return capability?.kind === "comments" && POST_LEVEL_REVIEW_PLATFORMS.includes(String(capability.platform)) && isTopicSearchRequest(params || {});
 }

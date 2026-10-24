@@ -19,6 +19,11 @@ const REQUEST_VERB = /(?:^|\s)(?:جيب|جيبلي|تجيبلي|تجبلي|لا�
 const REQUEST_OBJECT = /(?:تعليق|تعليقات|كومنت|كومنتس|كومنتات|تغريد|تويت|بوست|منشور|فيديو|فيديوهات|شرك|مدير|مديري|دراس|بحث|أبحاث|ابحاث|مقال|حساب|متابع|ايميل|إيميل|رقم|صناع|مصنع|مستشف|مطعم|مكتب|مورد|عملاء|جامع|دكتور|أطباء|اطباء|محامي)/;
 const SHAPING_VERB_START = /^(?:رتّ?ب|فلتر|قسّ?م|وزّ?ع|سيب|خلي)(?:ها|ه|لي|لنا)?(?=\s)/u;
 const TOPIC_MARKER = /(?:^|\s)(?:عن|حول|بخصوص|في|من|لدى|داخل)\s/;
+/**
+ * «من كل منشور», «لكل فيديو», «في كل بوست»: how many per item, never a subject. The «من» of «٢٠ تعليق من كل منشور» is NOT the topic marker of a new request: the answer to
+ * «كم تعليقًا من كل منشور؟» was read as a brand-new request, which dropped the earlier message with its platform, topic and PERIOD (a customer's «آخر ٣ شهور» became «آخر شهر»).
+ */
+const PER_ITEM_PHRASE = /(?:^|\s)(?:لكل|(?:من|في|على)\s+كل)\s+(?:منشور|بوست|فيديو|مقطع|تغريدة|تويتة|صفحة|قناة|حساب|ريل|ريلز)(?![\p{L}])/gu;
 const PLAN_REFERENCE = /(?:الخطة|الخطه|العرض|السعر|عرض السعر|النقاط|الرصيد|الملف|الشيت|الاكسل|الإكسل|اللي فات|السابق)/;
 const ANSWER_LABEL_ALTERNATION = Array.from(new Set([...Object.values(CLARIFICATION_ANSWER_LABELS), "إجابة هدف التواصل"]))
   .map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
@@ -43,7 +48,7 @@ export function isStandaloneResearchRequest(text: string): boolean {
   if (PLAN_REFERENCE.test(t) && platforms.length === 0) return false;
   if (platforms.length > 0) return true;
   const words = t.split(/\s+/).filter(Boolean).length;
-  if (words < 4 || !REQUEST_OBJECT.test(t) || !TOPIC_MARKER.test(t)) return false;
+  if (words < 4 || !REQUEST_OBJECT.test(t) || !TOPIC_MARKER.test(t.replace(PER_ITEM_PHRASE, " "))) return false;
   // A task needs a request verb ("اجمع ١٠ دراسات عن ...") or a leading quantity of the thing wanted ("٣ مديرين في ...").
   // A bare number inside a sentence is not enough: "آخر ٣ شهور، ملف لكل منصة" is an answer to a question.
   return REQUEST_VERB.test(t) || LEADING_COUNT_OBJECT.test(t);

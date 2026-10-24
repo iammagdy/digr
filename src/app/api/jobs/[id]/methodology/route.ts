@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { generateMethodologyText, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
+import { buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -138,10 +139,13 @@ export async function POST(
     const methodologyBucket = adminClient.storage.from("results");
     let methodologyPdf: Buffer;
     try {
-      methodologyPdf = await generatePdfReport({
-        ...reportPayload,
-        metadata: { ...(reportPayload.metadata || {}), methodology: methodologyStatement },
-      });
+      // The Facebook topic report has its own methodology and analysis file (the same file its job delivers); every other job keeps the generic one.
+      methodologyPdf = facebookReportOf(reportPayload)
+        ? await buildFacebookReportPdfFrom(reportPayload)
+        : await generatePdfReport({
+            ...reportPayload,
+            metadata: { ...(reportPayload.metadata || {}), methodology: methodologyStatement },
+          });
     } catch {
       return NextResponse.json({ success: false, error: "تعذر تجهيز ملف المنهجية؛ لم يتم خصم أي نقاط." }, { status: 503 });
     }

@@ -1,13 +1,20 @@
 import { pointsAr } from "@/lib/pointsFormat";
 import { JOB_MAX_POINTS_CAP } from "../../../../lib/jobPointsCap";
 import { usesPostLevelReview } from "../../../../lib/server/postLevelReview";
-import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, POST_REVIEW_BUDGET_NOTE_AR, type CallCapReason } from "../../../../lib/server/providerCallCaps";
+import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, maxPagesForJob, POST_REVIEW_BUDGET_NOTE_AR, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
 import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
 import { PAGED_FIRST_CHUNK_ROWS, isFacebookKeywordService } from "../../../../lib/facebookKeywordService";
+import { isFacebookTopicReport } from "../../../../lib/facebookReport/constants";
+import { reportStatePath, type ReportState, type ReportStateStore } from "../../../../lib/server/facebookReportAdapter";
+import { getAxisModel } from "../../../../lib/server/facebookReportAxisModel";
+import { payloadFromState } from "../../../../lib/facebookReport/payload";
+import { shortfallSentenceAr } from "../../../../lib/facebookReport/shortfall";
+import { generateFacebookReportExcel } from "../../../../functions/shared/facebookReportExcel";
+import { generateFacebookReportPdf } from "../../../../functions/shared/facebookReportPdf";
 import { groupRowsByVideo, judgeVideos, selectionKindFor, unreviewedReasonFor, videoSelectionEventAr, type SelectionUnit, type VideoEntry } from "../../../../lib/server/videoRelevance";
 import { VIDEO_ADOPTED_KEY } from "../../../../lib/server/videoAdoption";
 import type { VideoSelector } from "../../../../lib/server/socialAdapter";
@@ -470,7 +477,8 @@ export async function POST(req: NextRequest) {
     // Retry reuse: rows the failed run already collected count as delivered by this
     // job (they are in the delivered file and are charged like any delivered row),
     // and the provider is asked only for the deficit.
-    const retrySeedResult = spec.retryOfJobId
+    // (a report job is never seeded from an earlier run's rows: its posts, axes and counts live in its own record, which a reused row could not match)
+    const retrySeedResult = spec.retryOfJobId && !isFacebookTopicReport(spec.capabilitySlug)
       ? await ensureRetrySeed(adminClient, {
           newJobId: jobId,
           userId,
@@ -782,6 +790,28 @@ export async function POST(req: NextRequest) {
         }
       : undefined;
 
+    // The report's record between chunks: one stored file per chunk (a restarted chunk reads the record of the chunk before it), never the chunk cursor.
+    const reportStore: ReportStateStore | undefined = isFacebookTopicReport(spec.capabilitySlug) && jobId
+      ? {
+          load: async (step) => {
+            const key = reportStatePath(jobId, step);
+            const bucket = adminClient.storage.from("partials");
+            let parsed: any = inMemoryPartialStepFallback.get(key) ?? null;
+            if (typeof bucket?.download === "function") {
+              const { data: blob, error } = await bucket.download(key);
+              if (!error && blob) { try { parsed = JSON.parse(typeof blob.text === "function" ? await blob.text() : String(blob)); } catch { /* keep the in-memory copy */ } }
+            }
+            return parsed && parsed.v === 1 ? (parsed as ReportState) : null;
+          },
+          save: async (step, state) => {
+            const key = reportStatePath(jobId, step);
+            inMemoryPartialStepFallback.set(key, state as any);
+            const res = await adminClient.storage.from("partials").upload(key, Buffer.from(JSON.stringify(state), "utf-8"), { contentType: "application/json", upsert: true });
+            if (res?.error) throw new Error(`فشل حفظ حالة التقرير (${step}): ${res.error.message || "storage_write_failed"}`);
+          },
+        }
+      : undefined;
+
     const noProviderCall: Awaited<ReturnType<typeof activeAdapter>> = {
       ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "",
     };
@@ -807,6 +837,7 @@ export async function POST(req: NextRequest) {
       deliveredSoFar: effectiveDelivered,
       deadlineMs,
       ...(videoSelector ? { videoSelector } : {}),
+      ...(reportStore ? { reportStore, axisModel: getAxisModel() } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
       ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
     });
@@ -822,12 +853,34 @@ export async function POST(req: NextRequest) {
       console.warn(`[worker:provider_failed_after_delivery] jobId=${jobId} delivered=${effectiveDelivered}`);
     }
 
+    // The model calls that placed the report's posts on axes: one usage row each (the same table the review calls write), never row text.
+    if (userId && Array.isArray(rawAdapterResult.reportModelUsage)) {
+      for (const usage of rawAdapterResult.reportModelUsage) {
+        try {
+          await adminClient.from("llm_usage").insert({
+            user_id: userId,
+            tokens_in: usage.inputTokens,
+            tokens_out: usage.outputTokens,
+            model: usage.model || (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
+            latency_ms: usage.latencyMs,
+            reason: usage.failure ? `report_axis_failed:${usage.failure}` : "report_axis",
+            cost_usd: Number((usage.costUsd ?? 0).toFixed(6)),
+            created_at: new Date().toISOString(),
+          });
+        } catch (usageErr: any) {
+          console.warn("[worker:report_axis_usage_log_failed]", usageErr?.message || "");
+        }
+      }
+    }
+
     const providerCallDurationMs = Math.max(0, Date.now() - providerCallStartedAt);
     // The provider's real cost is committed whatever the outcome of the page.
     const actualCostUsd = Math.max(0, Number(rawAdapterResult.costUsd) || 0);
     const providerRows = adapterResult.ok ? (adapterResult.rows || []) : [];
-    const requestedDateFrom = typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
-    const requestedDateTo = typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
+    // The Facebook topic report applies its window to the POSTS inside the collector (exact whole days, counted per Page); its comments are never filtered by date.
+    const isReportJob = isFacebookTopicReport(spec.capabilitySlug);
+    const requestedDateFrom = !isReportJob && typeof spec.params?.dateFrom === "string" ? spec.params.dateFrom : undefined;
+    const requestedDateTo = !isReportJob && typeof spec.params?.dateTo === "string" ? spec.params.dateTo : undefined;
     // People and companies are directories with no publication date: an explicit window never removes a row that has none.
     const directoryJob = isPeopleJob || isCompanyDirectoryJob(spec.capabilitySlug, spec.endpointId, spec.params);
     const dateFiltered = filterRowsByDateRange(providerRows, requestedDateFrom, requestedDateTo, { keepUndated: directoryJob });
@@ -1538,16 +1591,21 @@ export async function POST(req: NextRequest) {
     // Directory searches (companies) and feeds (comments, posts, videos) both stop on the same rule: keep going within the
     // documented caps until the MATCHING count is reached, then deliver honestly as partial and charge only matching rows.
     // EVERY kind of job is capped, a source the code does not recognise included: it gets the directory rules, the strictest ones.
-    const pageCapReason = evaluateProviderCallCap({
-      pagesDone: currentStep + 1,
-      acceptedThisPage: acceptedRows.length,
-      priorBatchUnits,
-      targetMax,
-      pageSize: effectivePageSize,
-      kind: socialCapability ? "feed" : "directory",
-      deliveredTotal: newDeliveredUnits,
-      pageRepeatedOnly: trackRunningSet && currentStep > 0 && rowsBeforeDedupe > 0 && duplicateExcludedCount >= rowsBeforeDedupe,
-    });
+    // A report chunk that browsed or classified (no comment row yet) made progress: the «empty pages» and «no progress» rules, which are about pages that bring nothing, do not apply to it;
+    // the page ceiling still does, and the collector's own limits (calls, cost, stall) end the job.
+    const reportChunkProgress = isReportJob && rawAdapterResult.reportProgress === true && acceptedRows.length === 0;
+    const pageCapReason = reportChunkProgress
+      ? (currentStep + 1 >= maxPagesForJob(targetMax, effectivePageSize, "feed") ? "page_cap" as const : null)
+      : evaluateProviderCallCap({
+          pagesDone: currentStep + 1,
+          acceptedThisPage: acceptedRows.length,
+          priorBatchUnits,
+          targetMax,
+          pageSize: effectivePageSize,
+          kind: socialCapability ? "feed" : "directory",
+          deliveredTotal: newDeliveredUnits,
+          pageRepeatedOnly: trackRunningSet && currentStep > 0 && rowsBeforeDedupe > 0 && duplicateExcludedCount >= rowsBeforeDedupe,
+        });
     // A review that could not run stops paging at once: no more provider rows are bought for rows nobody can check.
     const callCapReason: CallCapReason | null = reviewUnavailable ? "review_unavailable" : reviewStoppedForLowYield ? "review_low_yield" : reviewBudgetUsedUp ? "review_budget" : pageCapReason;
     const hasMorePages =
@@ -1946,6 +2004,17 @@ export async function POST(req: NextRequest) {
 
       const finalRows = collectedRows;
 
+      // The Facebook topic report: its posts, axes and counts are the record the LAST chunk saved. Without it the report cannot be built, and nothing is charged.
+      const reportRecord: ReportState | null = isReportJob && reportStore ? await reportStore.load(currentStep) : null;
+      if (isReportJob && !reportRecord) {
+        const reportLostMsg = "تعذر تجهيز التقرير لفقد بيانات الجمع؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.";
+        console.error("[worker:assembly_failed] reason=report_record_missing");
+        const rel = await executeReleaseConfirmation(adminClient, jobId, reportLostMsg);
+        if (!rel.confirmed) return buildReleaseFailedResponse(jobId, rel.diagnostic);
+        return NextResponse.json({ success: false, released: true, chargedCredits: 0, deliveredUnits: 0, jobId, error: reportLostMsg, release: rel.data }, { status: 500 });
+      }
+      const reportPayload = reportRecord ? payloadFromState(reportRecord) : null;
+
       const completedAtIso = new Date().toISOString();
       const dateStr = completedAtIso.split("T")[0];
       const isProfileResearch =
@@ -2019,7 +2088,9 @@ export async function POST(req: NextRequest) {
         },
       };
 
-      const cleanTitle = isCompanyResearch
+      const cleanTitle = reportPayload
+        ? `تقرير فيسبوك: ${reportPayload.request.topic}`
+        : isCompanyResearch
         ? `شركات ${detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? detectedIndustry.arabicLabel : "وأعمال"} في ${detectedCountry || "النطاق المطلوب"}`
         : socialCapability
         ? socialResultTitleAr(socialCapability)
@@ -2041,6 +2112,7 @@ export async function POST(req: NextRequest) {
           exclusionApplied: Boolean(spec.params?.exclusionRules),
           methodology: methodologySummary,
           reportContext,
+          ...(reportPayload ? { facebookReport: reportPayload } : {}),
         },
         profile: firstRawProfile || finalRows[0] || null,
         rows: finalRows,
@@ -2121,7 +2193,7 @@ export async function POST(req: NextRequest) {
 
         // 2. Excel (.xlsx) Report
         if (spec.outputFormats.includes("xlsx")) try {
-          const xlsxBuf = await generateExcelReport(finalPayload);
+          const xlsxBuf = reportPayload ? await generateFacebookReportExcel(reportPayload, finalRows) : await generateExcelReport(finalPayload);
           const xlsxUp = await resultsBucket.upload(xlsxPath, xlsxBuf, {
             contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             upsert: true,
@@ -2139,7 +2211,7 @@ export async function POST(req: NextRequest) {
 
         // 3. PDF Report
         if (spec.outputFormats.includes("pdf")) try {
-          const pdfBuf = await generatePdfReport(finalPayload);
+          const pdfBuf = reportPayload ? await generateFacebookReportPdf(reportPayload) : await generatePdfReport(finalPayload);
           const pdfUp = await resultsBucket.upload(pdfPath, pdfBuf, {
             contentType: "application/pdf",
             upsert: true,
@@ -2288,6 +2360,8 @@ export async function POST(req: NextRequest) {
           return k;
         });
         partialPaths.push(runningSetKey(jobId, currentStep), runningSetKey(jobId, currentStep - 1));
+        // the report's records of every chunk (the data it built is already saved in data.json)
+        if (isReportJob) for (let step = 0; step <= currentStep; step++) partialPaths.push(reportStatePath(jobId, step));
         if (
           partialPaths.length > 0 &&
           typeof adminClient.storage.from("partials").remove === "function"
@@ -2322,7 +2396,24 @@ export async function POST(req: NextRequest) {
               postsDelivered: new Set(finalRows.map((row: any) => String(row?.video_url || row?.video_title || ""))).size,
             })
             : null;
-          const reason = keywordShortfall
+          // The Facebook topic report says it in ONE sentence from its own counts (Pages browsed and skipped, posts found and outside the window, comments the source did not return).
+          const reportShortfall = reportPayload
+            ? shortfallSentenceAr({
+                pagesBrowsed: reportPayload.collection.pagesBrowsed,
+                pagesSkipped: reportPayload.collection.pagesSkipped,
+                postsFound: reportPayload.collection.postsFound,
+                postsOutsideWindow: reportPayload.collection.postsOutsideWindow,
+                postsUndated: reportPayload.collection.postsUndated,
+                postsRequested: reportPayload.request.postsTarget,
+                postsDelivered: reportPayload.posts.length,
+                commentsRequested: reportPayload.request.commentsTarget,
+                commentsDelivered: finalRows.length,
+                commentsNotReturned: reportPayload.collection.commentsNotReturned,
+              })
+            : null;
+          const reason = reportShortfall
+            ? reportShortfall
+            : keywordShortfall
             ? `${keywordShortfall}${callCapReason && callCapReason !== "source_repeats" ? ` ${stopNoteAr(callCapReason)}` : ""}`
             : providerFailedAfterDelivery
             ? "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم."

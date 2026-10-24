@@ -79,7 +79,7 @@ export interface SocialAdapterDeps {
   videoSelector?: VideoSelector;
 }
 
-type ResolvedDeps = { call: SocialCall; now: () => number; videoSelector?: VideoSelector };
+export type ResolvedDeps = { call: SocialCall; now: () => number; videoSelector?: VideoSelector };
 
 /** The worker is cut off at 60 s; a chunk stops starting new calls well before that. */
 export const SOCIAL_CHUNK_BUDGET_MS = 40_000;
@@ -184,7 +184,7 @@ function rowKey(row: Record<string, any>): string | null {
   return null;
 }
 
-interface ChainResult {
+export interface ChainResult {
   ok: boolean;
   rows: Record<string, any>[];
   nextCursor: string | null;
@@ -197,7 +197,15 @@ interface ChainResult {
   errorMessageAr?: string;
 }
 
-class ChunkClock {
+/** What `runChain` needs of a clock: the call counter, the slowest call seen, the time left and whether another call may start. */
+export interface CallClock {
+  nextCall(): number;
+  noteCallMs(ms: number): void;
+  remainingMs(): number;
+  canCallAgain(): boolean;
+}
+
+export class ChunkClock implements CallClock {
   private calls = 0;
   private slowestCallMs = 0;
   readonly startedAt: number;
@@ -228,12 +236,12 @@ class ChunkClock {
  * An empty first page is checked with the next source unless `fallThroughOnEmpty` is off (a video among
  * many that simply has no comments is skipped, not re-asked).
  */
-async function runChain(
+export async function runChain(
   sources: SocialSource[],
   request: SocialSourceRequest,
   stickyIndex: number | null,
   deps: ResolvedDeps,
-  clock: ChunkClock,
+  clock: CallClock,
   keyPrefix: string,
   fallThroughOnEmpty = true,
 ): Promise<ChainResult> {
