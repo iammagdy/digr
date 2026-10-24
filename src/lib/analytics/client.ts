@@ -90,6 +90,11 @@ export function trackView(path: string): { leave: () => void; resume: () => void
 
 /** After a successful sign-in or sign-up: the server checks the account itself, the page only says that it happened. */
 export function trackAuthEvent(kind: "login" | "signup"): void {
-  if (!trackingAllowed()) return;
-  send({ k: kind, s: sessionId() });
+  // Never throws: a sign-in or sign-up must not fail or change its result because of analytics.
+  try {
+    if (!trackingAllowed()) return;
+    send({ k: kind, s: sessionId() });
+  } catch {
+    // ignore
+  }
 }

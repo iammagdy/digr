@@ -15,19 +15,35 @@ export function VisitBeacon() {
   const isAdmin = user?.app_metadata?.role === "admin";
 
   useEffect(() => {
-    if (loading || isAdmin || !pathname) return;
-    let tracker: ReturnType<typeof trackView> = null;
-    try { tracker = trackView(pathname); } catch { tracker = null; }
-    if (!tracker) return;
-    const current = tracker;
-    const onVisibility = () => { if (document.visibilityState === "hidden") current.leave(); else current.resume(); };
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pagehide", current.leave);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pagehide", current.leave);
-      current.leave();
-    };
+    // Everything this effect does (listeners, storage, sendBeacon, fetch) is inside one try/catch, and so is its cleanup: nothing it does can throw into React.
+    try {
+      if (loading || isAdmin || !pathname) return;
+      let tracker: ReturnType<typeof trackView> = null;
+      try { tracker = trackView(pathname); } catch { tracker = null; }
+      if (!tracker) return;
+      const current = tracker;
+      const onVisibility = () => { try { if (document.visibilityState === "hidden") current.leave(); else current.resume(); } catch { /* the page never depends on the beacon */ } };
+      const onPageHide = () => { try { current.leave(); } catch { /* same */ } };
+      let listening = false;
+      try {
+        document.addEventListener("visibilitychange", onVisibility);
+        window.addEventListener("pagehide", onPageHide);
+        listening = true;
+      } catch {
+        // no listeners: the view was already sent, the leave beacon is sent by the cleanup below
+      }
+      return () => {
+        try {
+          if (listening) {
+            document.removeEventListener("visibilitychange", onVisibility);
+            window.removeEventListener("pagehide", onPageHide);
+          }
+        } catch { /* ignore */ }
+        try { current.leave(); } catch { /* ignore */ }
+      };
+    } catch {
+      return undefined;
+    }
   }, [pathname, loading, isAdmin]);
 
   return null;

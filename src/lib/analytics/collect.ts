@@ -20,7 +20,7 @@ export interface VisitRow {
   user_id: string | null;
 }
 
-export type CollectIgnored = "do_not_track" | "bot" | "excluded_path" | "admin" | "invalid" | "rate_limited";
+export type CollectIgnored = "do_not_track" | "bot" | "excluded_path" | "admin" | "unverified" | "invalid" | "rate_limited";
 export interface CollectDecision {
   /** 204: nothing to say (stored or ignored); 400: the beacon is malformed; 429: too many from one visitor. */
   status: 204 | 400 | 429;
@@ -83,6 +83,8 @@ export function decideCollect(input: CollectInput, limiters: { perVisitor: RateL
   const path = isAuthKind ? (kind === "login" ? "/login" : "/register") : sanitizePath(body.p);
   if (!isAuthKind && isExcludedPath(String(body.p ?? "/"))) return { status: 204, ignored: "excluded_path" };
   if (input.verifiedIsAdmin) return { status: 204, ignored: "admin" };
+  // A sign-in or sign-up beacon counts only for an account the SERVER verified: an unauthenticated caller (or a forged beacon) writes nothing.
+  if (isAuthKind && !input.verifiedUserId) return { status: 204, ignored: "unverified" };
   const duration = kind === "leave" ? clampDuration(body.d) : null;
   if (kind === "leave" && duration === null) return { status: 400, ignored: "invalid" };
 

@@ -181,7 +181,7 @@ describe("what a beacon stores", () => {
   it("a sign-in carries the account the SERVER verified; a sign-up never carries one; the page's own claim is ignored", () => {
     const login = decide({ k: "login", s: SID, user_id: "00000000-0000-0000-0000-000000000001" }, { cookieVisitorId: VID, verifiedUserId: "11111111-1111-4111-8111-111111111111" });
     expect(login.row).toMatchObject({ kind: "login", path: "/login", user_id: "11111111-1111-4111-8111-111111111111" });
-    expect(decide({ k: "login", s: SID }, { cookieVisitorId: VID }).row!.user_id).toBeNull();
+    expect(decide({ k: "login", s: SID }, { cookieVisitorId: VID })).toEqual({ status: 204, ignored: "unverified" }); // no verified account: nothing is stored
     expect(decide({ k: "signup", s: SID }, { cookieVisitorId: VID, verifiedUserId: "11111111-1111-4111-8111-111111111111" }).row).toMatchObject({ kind: "signup", path: "/register", user_id: null });
     expect(decide({ k: "view", s: SID, p: "/", user_id: "x" }, { cookieVisitorId: VID, verifiedUserId: "11111111-1111-4111-8111-111111111111" }).row!.user_id).toBeNull();
   });

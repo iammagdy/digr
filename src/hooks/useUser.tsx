@@ -128,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
     const mapped = mapSupabaseUser(data.user);
     setUser(mapped);
-    trackAuthEvent("login");
+    try { trackAuthEvent("login"); } catch { /* analytics never changes a sign-in */ }
     return mapped;
   };
 
@@ -145,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
     const mapped = mapSupabaseUser(data.user);
     setUser(mapped);
-    trackAuthEvent("signup");
+    try { trackAuthEvent("signup"); } catch { /* analytics never changes a sign-up */ }
   };
 
   const logout = async () => {
