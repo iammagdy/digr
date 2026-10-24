@@ -1,3 +1,4 @@
+import { catalogMapPromptText } from "../../lib/catalogMap";
 import { getPersonaConfig, sanitizePersonaContextText } from "./personaConfigs";
 import { toArabicDigits } from "../../lib/arabicDigits";
 import { platformGuidePromptText } from "./platformGuide";
@@ -246,7 +247,9 @@ BREVITY (cost control; never drop a required field): each text field (summaryAr,
   const staticTextWithGuide = `${staticText}
 
 FULL DIGER PLATFORM GUIDE (complete capability list; fixed/cacheable product knowledge; each service's inputs, filters and examples are in the capability cards that follow):
-${platformGuidePromptText()}`;
+${platformGuidePromptText()}
+
+${catalogMapPromptText()}`;
 
   const profileText = `CURRENT USER PROFILE & PERSONA
 - User Name: ${displayName}
