@@ -665,8 +665,8 @@ async function runCommentsChunk(
   // A topic search also counts only comments that say something: the others still travel to the worker (which rejects them with its
   // own reason) but never fill the volume.
   // A paged topic search (the Facebook keyword service) also leaves out pure well-wishes («بالتوفيق والنجاح»): they never fill the volume or a post's share, and the gate rejects them.
-  const countsAsComment = (row: Record<string, any>) => isUsableComment(row) && !isGenericComment(commentTextOf(row)) && !(pagedTopic && isPureWellWish(commentTextOf(row)));
-  const postReads = { read: 0, sourceShort: 0, filteredShort: 0, asked: askedPerVideo };
+  const countsAsComment = (row: Record<string, any>) => isUsableComment(row) && !isGenericComment(commentTextOf(row)) && !(pagedTopic && isPureWellWish(commentTextOf(row), { topic: typeof params.query === "string" ? params.query : "" }));
+  const postReads = { read: 0, sourceShort: 0, sourceMissing: 0, filteredShort: 0, asked: askedPerVideo };
   const credited = (list: Record<string, any>[]) => countInsideOf(topicSearch ? list.filter(countsAsComment) : list, params);
   const countedRows = () => credited(rows);
   const withHint = (out: ProviderAdapterCallOutput): ProviderAdapterCallOutput => ({
@@ -867,7 +867,7 @@ async function runCommentsChunk(
     // A topic search walks the answer position by position (the offset is a position in the answer); the other modes drop repeats first.
     if (pagedTopic && startAt === 0) {
       postReads.read += 1;
-      if (chain.rows.length < readPerVideo) postReads.sourceShort += 1;
+      if (chain.rows.length < readPerVideo) { postReads.sourceShort += 1; postReads.sourceMissing += readPerVideo - chain.rows.length; }
       else if (chain.rows.filter(countsAsComment).length < readPerVideo) postReads.filteredShort += 1;
     }
     const listed = topicSearch ? chain.rows.slice(startAt) : chain.rows;

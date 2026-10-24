@@ -4,6 +4,14 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 00000. Facebook keyword comment quality (branch `claude/fb-comment-quality`, from main `7d0e54b`)
+
+- The pleasantry rule of the Facebook keyword service (`isPureWellWish(text, { topic })` in `src/lib/server/commentQuality.ts`) is now a RATIO rule: normalised text (emoji, tatweel, spellings, stretched letters, glued formulas, repeated phrases), connecting words neutral, at least one strong marker, at least 75% of the other words pleasantry words and at most three others; any number, question, request, complaint/duty/opinion word or word of the topic keeps the comment. It replaced «every word on a list», which missed one extra word, a typo («دكتر»), «شاءالله» and a repeated phrase. Other services are untouched.
+- The «why fewer rows» sentence now also says how many posts were approved, that a job reads only the posts the customer asked for, how many posts gave no delivered comment, and how many comments the source did not return (`keywordShortfallReasonAr`).
+- No price, cap or money rule changed; fewer delivered rows means a smaller charge (`ceil(delivered x 12.925)`).
+
+---
+
 ## 0000. Facebook keyword polish and visitor analytics (branch `claude/fb-polish-and-visitors`, from main `3a20c2f`)
 
 - **Facebook keyword service** (`social-facebook-keyword-comments`, identity and wording in `src/lib/facebookKeywordService.ts`): customer files say «المنشور» (not «الفيديو»), carry a post number instead of the post's text and link in every comment row, a second sheet «المنشورات», and never the platform's own comment id. Other services keep their headers.
