@@ -79,14 +79,12 @@ describe("A1: ask only what the request does not already say", () => {
     expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 
-  it("with no other Facebook service registered the same request also needs a page (Facebook is not searched by topic), said once and plainly", () => {
+  it("with a topic the same request never asks for a page: the keyword service searches the topic, so only the comments per post are open", () => {
     const items = socialDiscoveryItems(OWNER_REQUEST, { otherFacebookService: false });
-    expect(items.map((q) => q.id)).toEqual(["social_page_required", "social_comments_per_post"]);
-    expect(items[0]).toMatchObject({ type: "free", options: [] });
-    expect(socialDiscoveryIntroAr(OWNER_REQUEST, { otherFacebookService: false })).toContain("فيسبوك لا يتيح البحث بالموضوع");
-    expect(socialDiscoveryIntroAr(OWNER_REQUEST, { otherFacebookService: true })).not.toContain("فيسبوك لا يتيح");
+    expect(items.map((q) => q.id)).toEqual(["social_comments_per_post"]);
+    expect(socialDiscoveryIntroAr(OWNER_REQUEST, { otherFacebookService: false })).not.toContain("لا يتيح");
     const question = getDeterministicDiscoveryQuestion(OWNER_REQUEST, { platforms: [], topics: [], notes: "" } as any, [], {});
-    expect(question).toMatchObject({ id: "social_page_required", type: "free" });
+    expect(question).toMatchObject({ id: "social_comments_per_post", type: "single" });
   });
 
   it("when more is missing the same card carries it, and only it: how many posts, comments or not, comments per post", () => {
@@ -236,12 +234,11 @@ describe("A2 + A3: the plan says honestly what fits, why, and whether the balanc
 
 describe("skipping a question", () => {
   const brief = { platforms: [], topics: [], notes: "" } as any;
-  it("a skipped page gets one plain sentence that says how to go on, never the same card again", () => {
-    const skipped = getDeterministicDiscoveryQuestion(OWNER_REQUEST, brief, [], { skipped: new Set(["social_page_required"]) });
-    expect(skipped).toMatchObject({ plain: true, id: "skipped_social_page_required" });
-    expect(skipped.text).toContain("فيسبوك لا يتيح البحث بالموضوع");
-    expect(skipped.text).toContain("اكتب اسم الصفحة");
-    expect(skipped.text).not.toMatch(PROVIDER_WORDS);
+  it("for a request with a topic a skipped page never comes back: the next open question is asked, never a plain sentence about a page", () => {
+    const next = getDeterministicDiscoveryQuestion(OWNER_REQUEST, brief, [], { skipped: new Set(["social_page_required"]) });
+    expect(next).toMatchObject({ id: "social_comments_per_post" });
+    expect(next.plain).toBeUndefined();
+    expect(JSON.stringify(next)).not.toContain("لا يتيح البحث بالموضوع");
   });
 
   it("a skipped comments-per-post is never asked again: the older cap question takes over, and nothing is asked a second time", async () => {
