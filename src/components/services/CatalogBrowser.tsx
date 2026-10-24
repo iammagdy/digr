@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { SERVICES_CATALOG, servicesByGroup, type CatalogPlatform, type CatalogService } from "@/lib/servicesCatalog";
+import { SERVICES_CATALOG, type CatalogPlatform, type CatalogService } from "@/lib/servicesCatalog";
 import { platformsProvenFirst } from "@/lib/servicesAvailability";
+import { platformHref } from "@/lib/servicesCatalogView";
+import { PlatformTile } from "@/components/services/PlatformTile";
+import { formatAr } from "@/lib/arabicDigits";
 import { normalizeArabicSearch, platformsCountAr, servicesCountAr } from "@/lib/servicesCatalogText";
-
-/** The platforms are collapsed: a platform's services are rendered only once it is opened (or when a search narrows the list to a few). */
-const AUTO_OPEN_AT_MOST = 6;
 
 /** Every word of the query must be found (as part of a word) in the text: «بريد مهني» finds «البريد المهني». */
 const hasAllWords = (text: string, words: string[]): boolean => words.every((word) => text.includes(word));
@@ -18,41 +19,30 @@ function searchable(platform: CatalogPlatform) {
 // Within a sector, platforms with at least one proven service come first (internal list; nothing about it is shown).
 const INDEX = SERVICES_CATALOG.map((sector) => ({ sector, platforms: platformsProvenFirst(sector.platforms).map((platform) => ({ platform, text: searchable(platform) })) }));
 
-function PlatformCard({ platform, services, forceOpen, searching }: { platform: CatalogPlatform; services: CatalogService[]; forceOpen: boolean; searching: boolean }) {
-  const [open, setOpen] = useState(false);
-  const shown = forceOpen || open;
-  const panelId = `p-${platform.slug}`;
-  const groups = servicesByGroup({ ...platform, services });
+/** A platform's card: tile, name, one-line description, how many services it holds. While searching it also names up to two matching services. */
+function PlatformCard({ platform, sectorId, matched, searching }: { platform: CatalogPlatform; sectorId: string; matched: CatalogService[]; searching: boolean }) {
   return (
-    <article className="rounded-[20px] border border-ln bg-sf">
-      <button type="button" aria-expanded={shown} aria-controls={panelId} onClick={() => setOpen(!open)} className="flex min-h-[64px] w-full items-start justify-between gap-3 rounded-[20px] bg-transparent p-4 text-right text-ink">
-        <span className="flex flex-col gap-1">
-          <span className="text-base font-semibold">{platform.nameAr}</span>
+    <Link
+      href={platformHref(platform.slug)}
+      className="group flex min-h-[132px] flex-col gap-3 rounded-[20px] border border-ln bg-sf p-4 text-ink no-underline transition-colors hover:border-ln2 hover:bg-sf2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ac"
+    >
+      <span className="flex items-start gap-3">
+        <PlatformTile nameAr={platform.nameAr} sectorId={sectorId} />
+        <span className="flex min-w-0 flex-col gap-1">
+          <span className="text-base font-semibold leading-6">{platform.nameAr}</span>
           <span className="text-[13px] font-light leading-6 text-mut">{platform.descAr}</span>
         </span>
-        <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-mut">
-          <span>{servicesCountAr(searching ? services.length : platform.services.length)}</span>
-          <span aria-hidden="true" className="text-lg leading-none">{shown ? "−" : "+"}</span>
+      </span>
+      {searching && matched.length > 0 && matched.length < platform.services.length && (
+        <span className="flex flex-col gap-0.5 border-t border-ln pt-2 text-[13px] leading-6 text-ink2">
+          {matched.slice(0, 2).map((service) => <span key={service.slug}>{service.nameAr}</span>)}
         </span>
-      </button>
-      {shown && (
-        <div id={panelId} className="flex flex-col gap-4 border-t border-ln px-4 pb-4 pt-3">
-          {groups.map(({ group, services: items }) => (
-            <section key={group} className="flex flex-col gap-1.5">
-              <h4 className="m-0 text-[13px] font-semibold text-ink2">{group}</h4>
-              <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                {items.map((service) => (
-                  <li key={service.slug} className="flex flex-col gap-0.5 text-sm leading-7 text-ink">
-                    <span className="font-medium">{service.nameAr}</span>
-                    <span className="text-[13px] font-light leading-6 text-mut">{service.explainAr}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
       )}
-    </article>
+      <span className="mt-auto flex items-center justify-between text-xs text-mut">
+        <span>{searching && matched.length !== platform.services.length ? `${servicesCountAr(matched.length)} مطابقة` : servicesCountAr(platform.services.length)}</span>
+        <span aria-hidden="true" className="text-base leading-none text-ink2 transition-transform group-hover:-translate-x-0.5">←</span>
+      </span>
+    </Link>
   );
 }
 
@@ -74,8 +64,7 @@ export function CatalogBrowser() {
     }).filter((entry) => entry.matches.length > 0);
   }, [q]);
   const platformTotal = result.reduce((sum, entry) => sum + entry.matches.length, 0);
-  const autoOpen = q !== "" && platformTotal <= AUTO_OPEN_AT_MOST;
-
+  
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-3">
@@ -91,20 +80,28 @@ export function CatalogBrowser() {
         />
         {q !== "" && <p role="status" className="m-0 text-sm text-mut">{platformTotal === 0 ? "لا توجد نتيجة مطابقة. جرّب كلمة أخرى." : `${platformsCountAr(platformTotal)} تحتوي ما بحثت عنه`}</p>}
       </div>
-      <nav aria-label="القطاعات" className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-        {result.map(({ sector }) => (
-          <a key={sector.id} href={`#${sector.id}`} className="flex min-h-11 shrink-0 items-center rounded-full border border-ln bg-sf px-4 text-sm text-ink no-underline">{sector.nameAr}</a>
-        ))}
+      <nav aria-label="القطاعات" className="sticky top-0 z-10 -mx-4 overflow-x-auto bg-bg/90 px-4 py-2 backdrop-blur min-[760px]:-mx-5 min-[760px]:px-5">
+        <div className="flex gap-2">
+          {result.map(({ sector, matches }) => (
+            <a key={sector.id} href={`#${sector.id}`} className="flex min-h-11 shrink-0 items-center gap-2 rounded-full border border-ln bg-sf px-4 text-sm text-ink no-underline hover:border-ln2">
+              {sector.nameAr}
+              <span className="text-xs text-mut">{formatAr(matches.length)}</span>
+            </a>
+          ))}
+        </div>
       </nav>
       {result.map(({ sector, matches }) => (
-        <section key={sector.id} id={sector.id} aria-labelledby={`h-${sector.id}`} className="flex scroll-mt-24 flex-col gap-3">
+        <section key={sector.id} id={sector.id} aria-labelledby={`h-${sector.id}`} className="flex scroll-mt-20 flex-col gap-4">
           <div>
-            <h3 id={`h-${sector.id}`} className="m-0 font-display text-[22px] font-medium text-ink">{sector.nameAr}</h3>
+            <h3 id={`h-${sector.id}`} className="m-0 flex items-baseline gap-2 font-display text-[26px] font-medium text-ink">
+              {sector.nameAr}
+              <span className="font-sans text-sm font-normal text-mut">{platformsCountAr(matches.length)}</span>
+            </h3>
             <p className="m-0 mt-1 text-sm font-light leading-7 text-mut">{sector.descAr}</p>
           </div>
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {matches.map(({ platform, services }) => (
-              <PlatformCard key={platform.slug} platform={platform} services={services} forceOpen={autoOpen} searching={q !== ""} />
+              <PlatformCard key={platform.slug} platform={platform} sectorId={sector.id} matched={services} searching={q !== ""} />
             ))}
           </div>
         </section>

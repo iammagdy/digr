@@ -18,7 +18,8 @@ describe("item 8: Arabic-only public pages", () => {
     expect(text).not.toMatch(/@example/i);
     expect(text).not.toMatch(/@\w/);
     const page = readFileSync("src/app/services/page.tsx", "utf8");
-    expect(page).toContain("cleanArText(service.exampleAr)");
+    // the catalog page shows no priced cards any more (prices live on /pricing and /calculator): none of the guide's example texts is rendered there
+    expect(page).not.toMatch(/exampleAr|examplePlanAr|computePublicCalculatorQuote|unitPriceLabelAr/);
     expect(JSON.stringify(PLATFORM_GUIDE)).not.toMatch(/@example/i);
   });
 
