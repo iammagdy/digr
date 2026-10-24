@@ -4,11 +4,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import ServicesCatalogPage from "../src/app/services/page";
 import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
-import { buildPlatformGuideServices } from "../src/functions/shared/platformGuide";
-import { cleanArText, computePublicCalculatorQuote, getPublicCalculatorOptions } from "../src/lib/calculatorPricing";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
-import { unitPriceLabelAr } from "../src/lib/pointsFormat";
 import { SERVICES_CATALOG, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
+import { FEATURED_CORE_NAMES } from "../src/lib/servicesCatalogView";
+import { formatAr } from "../src/lib/arabicDigits";
 import {
   PROVEN_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, SERVICES_PRIMARY_CTA_AR, DECISION_MAKERS_LINE_AR, isProven, platformProvenCount, platformsProvenFirst,
 } from "../src/lib/servicesAvailability";
@@ -88,23 +87,31 @@ describe("the public page shows no status, no per-service call to action", () =>
     expect(links).toHaveLength(2);
     for (const link of links) expect(link).toContain(SERVICES_PRIMARY_CTA_AR);
     expect(html.indexOf(links[0]!)).toBeLessThan(html.indexOf('data-testid="core-b2b"'));
-    expect(html.indexOf(links[1]!)).toBeGreaterThan(html.lastIndexOf("</article>"));
+    expect(html.indexOf(links[1]!)).toBeGreaterThan(html.indexOf('data-testid="services-bottom-cta"') - 1);
+    expect(html.indexOf('data-testid="services-bottom-cta"')).toBeGreaterThan(html.indexOf('id="browse-title"'));
     for (const li of html.split("<li").slice(1).map((chunk) => chunk.split("</li>")[0])) {
       expect(li).not.toContain("<a");
       expect(li).not.toContain("href=");
       expect(li).not.toContain(SERVICES_PRIMARY_CTA_AR);
     }
-    expect(readFileSync("src/components/services/CatalogBrowser.tsx", "utf8")).not.toMatch(/SERVICES_PRIMARY_CTA_AR|\/register|next\/link/);
+    expect(readFileSync("src/components/services/CatalogBrowser.tsx", "utf8")).not.toMatch(/SERVICES_PRIMARY_CTA_AR|\/register/);
   });
 
-  it("the core list shows every decision-makers / contact service with its explanation, and nothing else per row", () => {
+  it("the decision-makers block: the six chosen services as cards, every other core service behind «عرض باقي»; each row is its name and its explanation, nothing else", () => {
     const core = coreServices();
-    const items = html.split('<ul class="m-0 grid list-none').slice(1).map((chunk) => chunk.split("</ul>")[0])[0].split("<li").slice(1);
-    expect(items).toHaveLength(core.length);
-    core.forEach((service, index) => {
-      const row = textOf(items[index]).replace(/^[^>]*>/, "").trim();
-      expect(row, service.nameAr).toBe(`${service.nameAr} ${service.explainAr}`);
+    for (const name of FEATURED_CORE_NAMES) expect(core.some((service) => service.nameAr === name), name).toBe(true);
+    const block = html.split('data-testid="core-b2b"')[1].split('data-testid="services-bottom-cta"')[0];
+    const featured = block.split('data-testid="core-featured"')[1].split("</ul>")[0].split("<li").slice(1);
+    const rest = block.split('data-testid="core-all"')[1].split("<li").slice(1);
+    expect(featured).toHaveLength(FEATURED_CORE_NAMES.length);
+    expect(rest).toHaveLength(core.length - FEATURED_CORE_NAMES.length);
+    FEATURED_CORE_NAMES.forEach((name, index) => {
+      const service = core.find((entry) => entry.nameAr === name)!;
+      expect(textOf(featured[index]!).replace(/^[^>]*>/, "").trim(), name).toBe(`${service.nameAr} ${service.explainAr}`);
     });
+    const others = core.filter((service) => !FEATURED_CORE_NAMES.includes(service.nameAr));
+    others.forEach((service, index) => expect(textOf(rest[index]!.split("</li>")[0]!).replace(/^[^>]*>/, "").trim(), service.nameAr).toBe(`${service.nameAr} ${service.explainAr}`));
+    expect(html).toContain(`عرض باقي خدمات صناع القرار (${formatAr(others.length)})`);
   });
 
   it("counts equal the data, with nothing about status", () => {
@@ -114,25 +121,16 @@ describe("the public page shows no status, no per-service call to action", () =>
     expect(counts.sectors).toBe(SERVICES_CATALOG.length);
   });
 
-  it("prices only through the shared pricing function, for the options that already have one; the page types no price of its own", () => {
-    const source = readFileSync("src/app/services/page.tsx", "utf8");
-    expect(source).toContain("computePublicCalculatorQuote");
-    expect(source).toContain("getPublicCalculatorOptions");
-    expect(source).not.toContain("PROVEN_REGISTRY_SLUGS");
-    expect(source).not.toMatch(/\d+\s*(نقطة|ج\.م|جنيه)/);
-    const optionSlugs = new Set(getPublicCalculatorOptions().map((option) => option.slug));
-    const priced = buildPlatformGuideServices().filter((service) => optionSlugs.has(service.slug));
-    const cards = html.split("<article").slice(1).filter((chunk) => chunk.includes("السعر:"));
-    expect(cards.length).toBe(priced.length);
-    for (const service of priced) {
-      const card = cards.find((chunk) => chunk.includes(`>${cleanArText(service.nameAr)}<`));
-      expect(card, service.slug).toBeDefined();
-      const quote = computePublicCalculatorQuote(service.slug, 1, 1);
-      if (quote && service.slug !== "professional-people-search") expect(card).toContain(unitPriceLabelAr(quote.unitPricePoints, getPublicCalculatorOptions().find((option) => option.slug === service.slug)?.unitLabelAr || "سجل"));
+  it("no price anywhere on the catalog page, a platform page or the browser, and no pricing code is imported by them", () => {
+    for (const file of ["src/app/services/page.tsx", "src/app/services/[platform]/page.tsx", "src/components/services/CatalogBrowser.tsx"]) {
+      const source = readFileSync(file, "utf8");
+      expect(source, file).not.toMatch(/calculatorPricing|pointsFormat|decisionMakerPricing|computePublicCalculatorQuote|unitPriceLabelAr|buildPlatformGuideServices/);
     }
-    // a catalog service row never carries a price
-    const browser = renderToStaticMarkup(createElement(CatalogBrowser));
-    expect(browser).not.toContain("السعر");
+    const pages = [html, renderToStaticMarkup(createElement(CatalogBrowser))];
+    for (const page of pages) {
+      expect(page).not.toContain("السعر:");
+      expect(textOf(page)).not.toMatch(/نقطة|نقاط|ج\.م|جنيه|دولار|\$/);
+    }
   });
 
   it("no English, no emoji, no provider word in the rendered text of the page", () => {

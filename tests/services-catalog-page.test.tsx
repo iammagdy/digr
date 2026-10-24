@@ -133,13 +133,16 @@ describe("/services: the full catalog, from one data module", () => {
     expect(pageSource).not.toContain(SERVICES_PRIMARY_CTA_AR);
   });
 
-  it("the page is static and fast: force-static, no request data, and the platforms are collapsed (no service of a platform is in the first HTML)", () => {
+  it("the page is static and fast: force-static, no request data, one card per platform, and no service of a platform is in the first HTML of the browser", () => {
     const source = readFileSync("src/app/services/page.tsx", "utf8");
     expect(source).toContain('export const dynamic = "force-static"');
     expect(source).not.toMatch(/cookies\(|headers\(|searchParams|noStore|revalidate/);
     const browser = renderToStaticMarkup(createElement(CatalogBrowser));
-    expect(browser.match(/aria-expanded="false"/g)?.length).toBe(catalogCounts().platforms);
+    const cards = browser.match(/<a [^>]*href="\/services\/[a-z0-9-]+"/g) ?? [];
+    expect(cards.length).toBe(catalogCounts().platforms);
+    expect(new Set(cards).size).toBe(catalogCounts().platforms);
     expect(browser).not.toContain("<li");
+    for (const sector of SERVICES_CATALOG) for (const platform of sector.platforms) for (const service of platform.services.slice(0, 3)) expect(browser, `${platform.slug}: ${service.explainAr}`).not.toContain(service.explainAr);
     // the whole page stays small: far fewer elements than services
     const elements = renderToStaticMarkup(createElement(ServicesCatalogPage)).match(/<[a-z][^>]*>/g)?.length ?? 0;
     expect(elements).toBeLessThan(catalogCounts().services + 400);
