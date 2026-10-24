@@ -12,8 +12,9 @@ import { resolveTimeWindow, windowIsStatedByCustomer, WINDOW_OPTIONS_AR } from "
  *
  * It is consulted AFTER the older single questions (the period of a feed search, the cap of an open request), so nothing they already ask
  * changes. It starts a card only when something the plan cannot decide alone is missing:
- *  - a Facebook request that names no page and no post link (Facebook cannot be searched by topic: its posts are read from one public page);
- *  - a Facebook request for the comments of a page's posts that does not say how many comments per post.
+ *  - a Facebook request with NO topic and no page: the topic or the page is needed (a topic is searched by the keyword service, so a request
+ *    with a topic never asks for a page);
+ *  - a Facebook request for the comments of posts that does not say how many comments per post.
  * The other questions (how many posts, comments or not, the period) ride along in the same card only when they too are missing.
  */
 export const SOCIAL_DISCOVERY_IDS = {
@@ -87,8 +88,8 @@ const item = (id: string, text: string, type: "free" | "single", options: string
 
 const platformWordAr = (platform: SocialFacts["platform"]) => (platform ? SOCIAL_PLATFORM_LABEL_AR[platform] : "المنصة");
 
-/** What a Facebook request without a page needs, said once and plainly. */
-export const FACEBOOK_NO_TOPIC_SEARCH_AR = "فيسبوك لا يتيح البحث بالموضوع؛ أقرأ منشورات صفحة عامة محددة. أحتاج اسم الصفحة أو رابطها.";
+/** What a Facebook request with neither a topic nor a page needs, said once and plainly. */
+export const FACEBOOK_TOPIC_OR_PAGE_AR = "أحتاج موضوع المنشورات أو اسم الصفحة العامة أو رابطها.";
 
 /**
  * True when an enabled, VERIFIED Facebook service OTHER than the verified page services is registered (a live-catalog hashtag or topic search):
@@ -135,8 +136,8 @@ export interface DiscoveryContext {
 
 /**
  * What a request still needs before the plan can be honest about its size: how many comments from each post (stated posts, comments wanted, no
- * per-post number), and, for Facebook with no page and no other verified Facebook service, the page itself (Facebook posts are read from one
- * public page, not searched by topic). Null when nothing of the sort is missing.
+ * per-post number), and, for Facebook with NEITHER a topic NOR a page, the topic or the page. A Facebook request with a topic and no page is
+ * served by the keyword service (it searches posts by the topic), so it never asks for a page. Null when nothing of the sort is missing.
  */
 export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContext = {}): "page" | "page_link" | "per_post" | "trend" | "report" | null {
   const text = normalizeDigits(rawText || "");
@@ -150,7 +151,7 @@ export function socialDiscoveryTrigger(rawText: string, context: DiscoveryContex
   if (facebookPageNameNeedsLink(text)) return "page_link";
   // Only the shape the verified services cannot read by topic («N منشور بالتعليقات» with no page) is stopped for a page. A plain Facebook topic
   // request goes the way it always did, and so does any Facebook request while another verified Facebook service is registered.
-  if (facts.platform === "facebook" && !facts.source && !context.otherFacebookService && facts.postsCount !== null && facts.commentsWanted === true) return "page";
+  if (facts.platform === "facebook" && !facts.source && !facts.topic && !context.otherFacebookService && facts.postsCount !== null && facts.commentsWanted === true) return "page";
   if (facts.platform === "facebook" && facts.commentsWanted === true && !facts.allComments && facts.postsCount !== null && facts.commentsPerPost === null) return "per_post";
   // A Facebook TREND request on a topic with no page («الترندات الصحية في مصر من فيسبوك»): how many posts, comments or not and how many per post are
   // the customer's to say, not defaults the plan picks behind their back. (The period has its own older question, asked first.)
@@ -178,7 +179,7 @@ export function socialDiscoveryItems(rawText: string, options: { skipped?: Reado
     return items.filter((entry) => !skipped.has(entry.id));
   }
   if (!facts.source && trigger === "page") {
-    items.push(item(SOCIAL_DISCOVERY_IDS.page, `${platformWordAr(facts.platform)}: ما اسم الصفحة العامة أو رابطها؟`, "free"));
+    items.push(item(SOCIAL_DISCOVERY_IDS.page, "فيسبوك: ما موضوع المنشورات التي تريد تعليقاتها، أو اسم الصفحة العامة أو رابطها؟", "free"));
   }
   if (facts.postsCount === null && facts.commentsWanted !== true) {
     items.push(item(SOCIAL_DISCOVERY_IDS.posts, "كم منشورًا تريد؟", "single", ["٢٠", "٥٠", "١٠٠", "٢٠٠"]));
@@ -231,6 +232,6 @@ export function withLinkScheme(value: string): string {
 export function socialDiscoveryIntroAr(rawText: string, context: DiscoveryContext = {}): string {
   const trigger = socialDiscoveryTrigger(rawText, context);
   if (trigger === "page_link") return "فهمت طلبك على فيسبوك. أقرأ الصفحة من رابطها أو اسم مستخدمها، لا من اسمها المكتوب فقط، ولن أبدأ مهمة قد تعود فارغة.";
-  if (trigger === "page") return `فهمت طلبك على فيسبوك. ${FACEBOOK_NO_TOPIC_SEARCH_AR} وأسأل فقط عمّا لم تذكره:`;
+  if (trigger === "page") return `فهمت طلبك على فيسبوك. ${FACEBOOK_TOPIC_OR_PAGE_AR} وأسأل فقط عمّا لم تذكره:`;
   return "فهمت طلبك، وأسأل فقط عمّا لم تذكره:";
 }

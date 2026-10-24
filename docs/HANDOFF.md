@@ -4,6 +4,13 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 0000000. Facebook topic request: no Page question, keyword plan (branch `claude/fb-topic-keyword-routing`, from main `b252666`)
+
+- Evidence: the owner's tester (production, 24 Oct 2026) answered platform, comments, posts and comments per post, then was asked «فيسبوك: ما اسم الصفحة العامة أو رابطها؟» with the sentence «فيسبوك لا يتيح البحث بالموضوع». The explicit sentence went straight to the keyword card.
+- Cause: `socialDiscoveryTrigger` (`src/lib/socialDiscoveryCard.ts`) asked for a page when no other verified Facebook service was in the list it was given. The fast plan path (`buildDeterministicPlanFromIntent`, fed the full catalog, which holds the verified `facebook-post-search`) and the discovery path (fed the enabled list, which in production lacks it) disagreed, so one request got the page question and the other did not.
+- Fix: a Facebook request WITH a topic never asks for a page (the keyword service searches the topic). Only a request with NO topic asks for «الموضوع أو اسم الصفحة أو رابطها». The platform options now include «فيسبوك» (`src/lib/clarification.ts`, `src/lib/consultantCopy.ts`, `src/functions/shared/chatHandler.ts`). The outdated sentence is removed.
+- Tests: `tests/facebook-topic-keyword-route.test.ts` (production-like enabled list), and the two phase5 assertions that pinned the page question for a topic request.
+
 ## 000000. Facebook topic report (branch `claude/intelligent-volta-hgqmy5`, from main `6832fa9`)
 
 - New capability `facebook-topic-report` (one item per quote, unit = delivered comment, 3.025 points proposed; the owner decides): vetted public Pages browsed round-robin with a 20% per-publisher cap and an exact date window, comments never judged, posts placed on health axes by rules plus one model call per 50 ambiguous posts, an Excel (data only) and a separate Arabic methodology PDF. Design, tests and NOT PROVEN list: `docs/FACEBOOK_REPORT.md`; Pages the owner must review: `docs/FACEBOOK_REPORT_PAGES.md`; price arithmetic: `docs/proposals/facebook-topic-report/PRICING.md`. No SQL, no price/cap/ceiling changed. **Gated off** until a registry Page has `ownerReviewed: true` (`FACEBOOK_REPORT_ENABLED`).

@@ -9,7 +9,7 @@ import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWin
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
-import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_NO_TOPIC_SEARCH_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
+import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -235,7 +235,7 @@ const PROCEED_WHEN_SKIPPED = new Set(["social_time_required", "volume_cap_requir
 
 /** What to say, in one plain sentence and without a card, when a question that cannot be inferred was skipped. */
 const PLAIN_AFTER_SKIP_AR: Record<string, string> = {
-  [SOCIAL_DISCOVERY_IDS.page]: `${FACEBOOK_NO_TOPIC_SEARCH_AR} اكتب اسم الصفحة في رسالتك، أو غيّر المنصة إلى تيك توك أو يوتيوب أو إكس لأبحث لك بالموضوع.`,
+  [SOCIAL_DISCOVERY_IDS.page]: `${FACEBOOK_TOPIC_OR_PAGE_AR} اكتب الموضوع أو اسم الصفحة أو رابطها في رسالتك، وسأكمل من حيث توقفنا.`,
   social_platform_required: "أحتاج أن أعرف المنصة لأجهز لك الخطة. اكتب اسمها في رسالتك، مثل «يوتيوب» أو «تيك توك» أو «إكس»، وسأكمل من حيث توقفنا.",
   social_comment_target_required: "لم يتبقَّ سوى مصدر التعليقات. اكتب موضوع الفيديوهات أو اسم القناة في رسالتك، أو الصق رابط فيديو، وسأجهز لك الخطة.",
   social_channel_required: "لتجهيز الخطة أحتاج اسم قناة واحدة على الأقل. اكتب اسم القناة أو الصق رابطها في رسالتك، أو اكتب موضوعًا وسأبحث لك عن فيديوهاته.",
@@ -338,7 +338,7 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
       if (gap) return gap;
     }
     if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
-    if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
+    if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "فيسبوك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
     if (!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
   }
   return null;
@@ -3667,7 +3667,7 @@ export class ChatHandler {
             people_roles_required: { id: firstMissing, text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true },
             people_count_required: { id: firstMissing, text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true },
             social_account_required: { id: firstMissing, text: "ما اسم الحساب أو رابطه على تيك توك؟", question: "ما اسم الحساب أو رابطه على تيك توك؟", type: "free", options: [], allowOther: true },
-            social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
+            social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "فيسبوك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
             social_time_required: { id: firstMissing, text: windowQuestion().text, question: windowQuestion().text, type: "single", options: [...WINDOW_OPTIONS_AR], allowOther: true },
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
             social_comment_target_required: socialTaskQuestion("social_comment_target_required", socialIntent.platform),

@@ -203,6 +203,7 @@ function enabledPlatformOptions(context: ClarificationOptionContext): string[] {
   );
   const labels: Array<[string, string]> = [
     ["tiktok", "تيك توك"],
+    ["facebook", "فيسبوك"],
     ["x", "منصة X"],
     ["youtube", "يوتيوب"],
     ["web", "الويب العام"],

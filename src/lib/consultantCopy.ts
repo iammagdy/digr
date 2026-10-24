@@ -322,7 +322,7 @@ export type NextStep =
   | { type: "ask_one"; id: string; textAr: string; options?: string[] };
 
 const QUESTION_BY_MISSING: Record<MissingInput, { id: string; textAr: string; options?: string[] }> = {
-  platform: { id: "social_platform_required", textAr: "على أي منصة تريد البحث؟", options: ["تيك توك", "يوتيوب", "إنستغرام", "أخرى"] },
+  platform: { id: "social_platform_required", textAr: "على أي منصة تريد البحث؟", options: ["تيك توك", "فيسبوك", "يوتيوب", "إنستغرام", "أخرى"] },
   subject: { id: "social_topic_required", textAr: "ما الموضوع أو الكلمات التي تريد البحث عنها؟" },
   channels: { id: "social_channel_required", textAr: "ما أسماء القنوات أو روابطها؟" },
   window: { id: "social_time_required", textAr: windowQuestion().text, options: [...windowQuestion().options] },
