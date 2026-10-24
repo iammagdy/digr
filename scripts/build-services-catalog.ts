@@ -144,7 +144,7 @@ report.push("| class | meaning | lines |", "|---|---|---|");
 const meaning: Record<string, string> = { read: "data collection or analysis (shown)", core: "core B2B: decision makers and professional contacts (shown, featured)", write: "publishing, deleting, messaging, scheduling, monitors, managing own assets (not shown)", own: "reads that only work on the customer's own account or property (not shown; a sub-kind of write)", private: "personal contact data, identifier resolution, profiling (not shown)", helper: "lookup tables, job status, internal helpers; not a customer-facing service (not shown)" };
 for (const cls of ["read", "core", "write", "own", "private", "helper"]) report.push(`| ${cls} | ${meaning[cls]} | ${(byCls[cls] || []).length} |`);
 report.push("", `Total lines: ${rows.length}. Shown after merging lines that carry the same Arabic name inside one platform: see /services.`, "");
-for (const cls of ["core", "private", "helper", "write", "own"]) {
+for (const cls of ["core", "private", "helper", "write", "own", "read"]) {
   report.push(`## ${cls} (${(byCls[cls] || []).length})`, "");
   for (const row of byCls[cls] || []) report.push(`- ${row.platform}: ${row.en}`);
   report.push("");

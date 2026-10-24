@@ -406,3 +406,953 @@ Total lines: 1326. Shown after merging lines that carry the same Arabic name ins
 - slack: Read a thread's replies
 - slack: Get a member's profile
 - slack: List your workspace's members
+
+## read (947)
+
+- web: List the anchor texts used
+- web: Answer a question from live web research, with cited sources
+- web: Research a question across multiple web sources
+- web: Find domains with overlapping backlinks
+- web: Find link gaps across several targets
+- web: List individual backlinks to a target
+- web: Check if specific sites link to a target
+- web: Backlink profile of a domain or URL
+- web: Crawl a website and extract its pages
+- web: Is a domain disposable or a free webmail host
+- web: Extract clean content from web pages
+- web: Fetch rendered web content with browser controls
+- web: Scrape a bounded list of web pages
+- web: Extract typed JSON from one web page
+- web: Any RSS or Atom feed
+- web: Most-linked domains on the web (index-wide)
+- web: Most-linked pages on the web (index-wide)
+- web: List the referring domains
+- web: Discover the URLs on a website
+- web: Run an on-page audit of a URL
+- web: Search and synthesize web research for a question
+- web: Scrape a URL into structured records
+- web: Capture a rendered web page image
+- web: Capture a web screenshot with browser controls
+- web: Search the open web by meaning or keyword
+- web: Search the open web through generated subqueries for multiple angles of one question
+- web: Deep multi-query web search with reasoning
+- web: Search recent news articles by topic
+- web: Search research papers and publications
+- web: Find pages similar to a URL
+- web: A site's highest-authority pages
+- web: Read current developer trends
+- web: Fetch a page behind bot protection
+- web: Authority metrics for a URL or domain
+- google: Ads an advertiser is running right now
+- google: Ads a domain has run over time
+- google: Find a domain's keyword competitors
+- google: A domain's traffic, keywords & ad spend
+- google: Keywords a domain bids on, with CPC
+- google: Keywords a domain already ranks for
+- google: Get related keyword ideas
+- google: Keyword popularity over time (Google Trends or a trends index)
+- google: Keyword volume, CPC & competition
+- google: List the reviews written by a Google Maps contributor
+- google: Get place and contributor details for a Google Maps photo
+- google: Check how busy a Google Maps place is now
+- google: Read public posts from a Google Maps business
+- google: List the Google Maps reviews of a place
+- google: Find sponsored ads on a Google results page
+- google: Get Google AI Mode results for a keyword
+- google: Get the AI Overview panel Google shows above a search result
+- google: Get Google query autocomplete suggestions
+- google: Get Google Images results for a keyword
+- google: Run a Google Lens reverse-image search from a public image URL
+- google: Get Google Local Finder (local pack) results for a keyword
+- google: Get Google Maps results for a keyword and location
+- google: Get Google News results for a keyword
+- google: Get organic search results for a keyword
+- google: Get Google Patents results for a query
+- google: Get Google place reviews by Google place identifier
+- google: Get Google Scholar publications for a query
+- google: Get Google Shopping results for a keyword
+- google: Get Google Videos results for a keyword
+- google: Get merchant offers and details for a Google Shopping product
+- google-business: Look up a franchise chain
+- google-business: Find matching Google-listed locations
+- ai-search: Get Brave's AI answer
+- ai-search: Get a ChatGPT answer
+- ai-search: Scrape a live ChatGPT answer page for a keyword
+- ai-search: Get a Claude answer
+- ai-search: Scrape a live Microsoft Copilot answer page for a keyword
+- ai-search: Get a Doubao answer
+- ai-search: Get a Gemini answer
+- ai-search: Scrape a live Gemini answer page for a keyword
+- ai-search: Get AI-tool search volume for keywords
+- ai-search: Get monthly history of brand mentions
+- ai-search: Compare mention metrics across targets
+- ai-search: Search individual AI answer mentions
+- ai-search: Aggregate mention metrics for a target
+- ai-search: Get mention change between two dates
+- ai-search: List new and lost mentions over time
+- ai-search: List top mentioned brand categories
+- ai-search: List top mentioned brands
+- ai-search: List top mentioned domains
+- ai-search: List top mentioned pages
+- ai-search: Get a answer
+- bing: Estimate ad campaign audience size
+- bing: Get keyword ideas for a domain
+- bing: Get related keyword ideas
+- bing: Get keyword ad performance stats
+- bing: Get keyword search volume & CPC
+- bing: Get historical keyword search volume
+- bing: Search Bing Maps businesses or resolve one listing
+- bing: Get image search results for a keyword
+- bing: Get news results for a keyword
+- bing: Get organic search results for a keyword
+- bing: Get shopping results for a keyword
+- bing: Get video search results for a keyword
+- duckduckgo: Search DuckDuckGo Maps places in a viewport
+- duckduckgo: Get news results for a keyword
+- duckduckgo: Get organic search results for a keyword
+- duckduckgo: DuckDuckGo Maps results for a query and location
+- yahoo: Get image search results for a keyword
+- yahoo: Get organic search results for a keyword
+- yahoo: Get video search results for a keyword
+- baidu: Get news results for a keyword
+- baidu: Get organic search results for a keyword
+- naver: Get organic search results for a keyword
+- naver: Naver AI overview panel for a query
+- yandex: Search images by keyword
+- yandex: Get organic search results for a keyword
+- yandex: Search videos by keyword
+- seznam: Get organic search results
+- douyin: Get brand hot-search rankings
+- douyin: Get the trending challenge board
+- douyin: Get the trending hot-search board
+- douyin: Get the trending hot-spot board
+- douyin: Get the trending music chart
+- douyin: Get the trending props chart
+- douyin: Get the trending topic board
+- douyin: Get trending video rankings
+- douyin: List replies to a comment
+- douyin: List official creator campaign activities
+- douyin: List creator training courses
+- douyin: Browse trending creative materials
+- douyin: List paid creator missions
+- douyin: Browse a themed channel feed
+- douyin: Browse the recommended home feed
+- douyin: Get a hashtag's stats
+- douyin: List videos under a hashtag
+- douyin: List a live room's top gifters
+- douyin: Get a live room's stream info
+- douyin: Get a video collection's details
+- douyin: List videos in a collection
+- douyin: Get a track's details & stats
+- douyin: List videos using a track
+- douyin: Run a combined keyword search
+- douyin: Search hashtags & challenges
+- douyin: Search image posts by keyword
+- douyin: Search live rooms by keyword
+- douyin: Search music tracks by keyword
+- douyin: Get keyword search suggestions
+- douyin: Search users by keyword
+- douyin: Search videos by keyword
+- douyin: Get a drama series' details
+- douyin: List episodes in a series
+- douyin: List trending search keywords
+- douyin: Track a keyword's popularity over time
+- douyin: List a user's followers
+- douyin: List accounts a user follows
+- douyin: List videos a user has liked
+- douyin: Get a user's public profile
+- douyin: List a user's video series
+- douyin: List a user's recent videos
+- douyin: List a video's comments
+- douyin: List a video's danmaku comments
+- douyin: Get a video's metadata & stats
+- douyin: Get a video's highest-quality play URL
+- douyin: List videos related to a video
+- douyin: Get a video's play & engagement counts
+- tiktok: List replies to a comment
+- tiktok: Browse explore-feed videos
+- tiktok: Get the For feed
+- tiktok: Get a hashtag's stats
+- tiktok: List videos under a hashtag
+- tiktok: Read a live room's chat messages
+- tiktok: Get a live room's info & stats
+- tiktok: List a live room's gifts
+- tiktok: Browse top & trending live rooms
+- tiktok: Check if a live room is online
+- tiktok: Browse trending music charts
+- tiktok: Get a song's detail & stats
+- tiktok: List videos using a song
+- tiktok: Search everything by keyword
+- tiktok: Search hashtags by keyword
+- tiktok: See what people search on
+- tiktok: Search live streams by keyword
+- tiktok: Search music by keyword
+- tiktok: Search photo posts by keyword
+- tiktok: Search places and locations
+- tiktok: Get search keyword suggestions
+- tiktok: Search users by keyword
+- tiktok: Search videos by keyword
+- tiktok: List trending hashtags right now
+- tiktok: List daily trending search terms
+- tiktok: Look up an account's country
+- tiktok: List a user's followers
+- tiktok: List accounts a user follows
+- tiktok: List videos a user liked
+- tiktok: List a user's sounds
+- tiktok: List a user's playlists
+- tiktok: Get a user's public profile
+- tiktok: List a user's reposted videos
+- tiktok: Find similar creators
+- tiktok: List a user's recent videos
+- tiktok: Get a video's captions or transcript
+- tiktok: Analyze a video's comment keywords
+- tiktok: List a video's comments
+- tiktok: Get a video's metadata & stats
+- tiktok: Detect fake views on a video
+- instagram: List replies to a comment
+- instagram: Translate a post's comments
+- instagram: Browse the Explore feed
+- instagram: List posts under a hashtag
+- instagram: Get stories inside a highlight
+- instagram: Get a location page's info
+- instagram: List posts tagged at a location
+- instagram: List posts using an audio track
+- instagram: List a post's comments
+- instagram: Get a post's content & stats
+- instagram: List users who liked a post
+- instagram: Get recommended trending reels
+- instagram: Search users, hashtags & places
+- instagram: Search hashtags by keyword
+- instagram: Find locations by name, city or coordinates
+- instagram: Search audio tracks by keyword
+- instagram: Search reels by keyword
+- instagram: Search users by keyword
+- instagram: Get an account's transparency details
+- instagram: List a user's followers
+- instagram: List accounts a user follows
+- instagram: List a user's story highlights
+- instagram: List a user's recent posts
+- instagram: Get a user's public profile
+- instagram: List a user's reels
+- instagram: List posts a user has reposted
+- instagram: Find accounts similar to a user
+- instagram: Get a user's current stories
+- instagram: List posts a user is tagged in
+- youtube: List a channel's community posts
+- youtube: A channel's profile & lifetime stats
+- youtube: List a channel's Shorts
+- youtube: List a channel's videos
+- youtube: List replies to a comment
+- youtube: List a community post's comments
+- youtube: Get a community post's content & stats
+- youtube: Search channels by keyword
+- youtube: Search Shorts by keyword
+- youtube: Get keyword search suggestions
+- youtube: Search videos by keyword
+- youtube: List trending videos
+- youtube: Get a video's captions
+- youtube: List a video's comments
+- youtube: Get a video's metadata & stats
+- youtube: List videos related to a video
+- youtube: Get a video's playable stream URLs
+- x: Get a community's details
+- x: List a community's posts
+- x: Search communities by keyword
+- x: Get a list's details
+- x: List a list's followers
+- x: List a list's members
+- x: List a list's posts
+- x: Get a news story's details
+- x: List a post's comments
+- x: Count posts matching a search query
+- x: Get a post's content & stats
+- x: List who liked a post
+- x: List a post's quote posts
+- x: List who reposted a post
+- x: Get a video post's transcript
+- x: Search news stories by keyword
+- x: Search posts by keyword
+- x: Search Spaces by keyword
+- x: Search users by keyword
+- x: List a creator's Spaces
+- x: Get a Space's details
+- x: List posts shared in a Space
+- x: List trending topics
+- x: List a user's affiliated accounts
+- x: List lists a user follows
+- x: List a user's followers
+- x: List accounts a user follows
+- x: List posts a user has liked
+- x: List the lists a user belongs to
+- x: List a user's media posts
+- x: List posts mentioning a user
+- x: List lists a user owns
+- x: List a user's pinned lists
+- x: List a user's recent posts
+- x: Get a user's public profile
+- x: List a user's replies to others
+- linkedin: Get an ad's creative & targeting
+- linkedin: Get reactions to a comment
+- linkedin: Get replies to a comment
+- linkedin: List a company page's followers
+- linkedin: Find a company's page from its domain
+- linkedin: Get a cached company profile picture.
+- linkedin: List a company's recent posts
+- linkedin: Get a company's public profile
+- linkedin: Get a group
+- linkedin: Get a job posting's details
+- linkedin: Get a job profile by URL.
+- linkedin: Search job postings using company and role filters.
+- linkedin: List a post's comments
+- linkedin: Get a post's content & stats
+- linkedin: List a post's comments and reactions together
+- linkedin: List a post's reactions
+- linkedin: Get a school profile.
+- linkedin: Search publicly running ads
+- linkedin: Search companies
+- linkedin: Search groups
+- linkedin: Search job postings by keyword
+- linkedin: Find location IDs
+- linkedin: Search posts by keyword
+- linkedin: Search service providers
+- linkedin: List comments a member has made
+- linkedin: List a member's recent posts
+- linkedin: Get a member's profile
+- linkedin: List posts a member reacted to
+- facebook: List a comment's replies
+- facebook: Get event details
+- facebook: List events in a city
+- facebook: Get public group info
+- facebook: List group posts
+- facebook: Get a marketplace listing
+- facebook: Search marketplace locations
+- facebook: Search marketplace listings
+- facebook: List a post's comments
+- facebook: Get post details
+- facebook: List a post's likes
+- facebook: Get post reaction breakdown
+- facebook: List posts sharing a post
+- facebook: Get video post transcript
+- facebook: Search events by name
+- facebook: Search public posts by keyword
+- facebook: List a profile's public posts
+- facebook: Get public profile details
+- weibo: List replies to a comment
+- weibo: Browse a curated channel feed
+- weibo: Browse the recommended home feed
+- weibo: List a post's comments
+- weibo: Get a post's content & stats
+- weibo: List who liked a post
+- weibo: List a post's reposts
+- weibo: Ask Weibo's AI search a question
+- weibo: Search image posts by keyword
+- weibo: Search posts by keyword
+- weibo: Get related search suggestions
+- weibo: Search topics by keyword
+- weibo: Search users by keyword
+- weibo: Search videos by keyword
+- weibo: Get the hot-search ranking board
+- weibo: List posts under a hot topic
+- weibo: Get category trending leaderboards
+- weibo: List a user's long-form articles
+- weibo: List a user's followers
+- weibo: List accounts a user follows
+- weibo: List a user's photo posts
+- weibo: List a user's recent posts
+- weibo: Search within a user's posts
+- weibo: Get a user's public profile
+- weibo: List super topics a user follows
+- weibo: Browse a user's video collections
+- weibo: List a user's videos
+- weibo: Get a video's metadata & stats
+- zhihu: List an answer's comments
+- zhihu: Get an article's content & stats
+- zhihu: List a column's articles
+- zhihu: List a comment's replies
+- zhihu: List a question's answers
+- zhihu: Search content by keyword
+- zhihu: Get trending search suggestions
+- zhihu: Get the trending hot list
+- zhihu: List a user's published articles
+- zhihu: List collections a user follows
+- zhihu: List columns a user follows
+- zhihu: List questions a user follows
+- zhihu: List topics a user follows
+- zhihu: List a user's followers
+- zhihu: List accounts a user follows
+- zhihu: Get a user's public profile
+- zhihu: List the recommended video feed
+- reddit: List a comment's replies
+- reddit: Browse the games feed
+- reddit: Browse the news feed
+- reddit: Browse the popular front-page feed
+- reddit: List a post's comments
+- reddit: Get a post's content & stats
+- reddit: Search posts by keyword
+- reddit: Search subreddits by name
+- reddit: Get trending search topics
+- reddit: Get a subreddit's profile & stats
+- reddit: List a subreddit's posts
+- reddit: List a user's recent comments
+- reddit: List a user's recent posts
+- reddit: Get a user's public profile
+- bilibili: List replies to a comment
+- bilibili: Get a dynamic post's detail
+- bilibili: List videos in a favorite folder
+- bilibili: List trending popular videos
+- bilibili: Get the recommended home feed
+- bilibili: List live streaming categories
+- bilibili: Get a live room's details
+- bilibili: Get a live stream's playback URLs
+- bilibili: Search videos, users & more by keyword
+- bilibili: Get trending search keywords
+- bilibili: Search videos by keyword
+- bilibili: List a user's dynamic posts
+- bilibili: List a user's favorite folders
+- bilibili: Get a user's public profile
+- bilibili: Get a user's follower & following counts
+- bilibili: Get a creator's total views & likes
+- bilibili: List a user's published videos
+- bilibili: List a video's comments
+- bilibili: Get a video's danmaku bullet comments
+- bilibili: Get a video's metadata & stats
+- bilibili: Get a video's playable stream URLs
+- bilibili: Get a video's subtitles
+- kuaishou: List replies to a comment
+- kuaishou: Browse the featured video feed
+- kuaishou: List videos under a hashtag
+- kuaishou: List the trending board categories
+- kuaishou: List trending brands right now
+- kuaishou: List trending creators right now
+- kuaishou: Get the hot-search trending list
+- kuaishou: List top live streams right now
+- kuaishou: List trending music tracks
+- kuaishou: List trending shopping products
+- kuaishou: Search everything by keyword
+- kuaishou: Search photo posts by keyword
+- kuaishou: Search live streams by keyword
+- kuaishou: Search music by keyword
+- kuaishou: Search hashtags by keyword
+- kuaishou: Search users by keyword
+- kuaishou: Search videos by keyword
+- kuaishou: List videos a user collected
+- kuaishou: List a user's hot videos
+- kuaishou: Check a user's live status
+- kuaishou: List a user's live replays
+- kuaishou: Get a user's public profile
+- kuaishou: List a video's comments
+- kuaishou: Get a video's metadata & stats
+- xiaohongshu: List replies to a comment
+- xiaohongshu: Browse trending content ideas for creators
+- xiaohongshu: Browse the recommended home feed
+- xiaohongshu: List a note's comments
+- xiaohongshu: Get a note's content & stats
+- xiaohongshu: Get a product's listing & price
+- xiaohongshu: Get related product recommendations
+- xiaohongshu: List a product's reviews & ratings
+- xiaohongshu: Search group chats by keyword
+- xiaohongshu: Search notes by keyword
+- xiaohongshu: Search products by keyword
+- xiaohongshu: Get search keyword suggestions
+- xiaohongshu: Search users by keyword
+- xiaohongshu: Get a topic's stats
+- xiaohongshu: List notes under a topic
+- xiaohongshu: Get the trending hot-search list
+- xiaohongshu: Find trending notes by keyword
+- xiaohongshu: List notes a user has collected
+- xiaohongshu: List a user's recent notes
+- xiaohongshu: Get a user's public profile
+- wechat-mp: List an account's published articles
+- wechat-mp: Get an official account's profile
+- wechat-mp: List ads shown inside an article
+- wechat-mp: List an article's comments
+- wechat-mp: Get an article's full content
+- wechat-mp: Find articles related to an article
+- wechat-mp: Get an article's read & like counts
+- wechat-mp: List replies under a comment
+- wechat-mp: Search official accounts by keyword
+- wechat-mp: Search articles by keyword
+- wechat-channels: List videos in a collection
+- wechat-channels: List replies under a comment
+- wechat-channels: Get a live stream's details
+- wechat-channels: List a user's past live streams
+- wechat-channels: Search accounts by keyword
+- wechat-channels: Search videos by keyword
+- wechat-channels: List a user's video collections
+- wechat-channels: Get a user's public profile
+- wechat-channels: List a user's recent videos
+- wechat-channels: List a video's comments
+- wechat-channels: Get a video's metadata & stats
+- wechat-channels: Get a video's download URL
+- threads: List a post's comments
+- threads: Get a post's content & stats
+- threads: Search posts by keyword
+- threads: Search user profiles by keyword
+- threads: List a user's recent posts
+- threads: Get a user's public profile
+- threads: List a user's replies
+- threads: List a user's reposts
+- pipixia: Browse the recommended home feed
+- pipixia: Browse the short-drama feed
+- pipixia: Get a hashtag's stats
+- pipixia: List posts under a hashtag
+- pipixia: List a post's comments
+- pipixia: Get a post's content & stats
+- pipixia: Search posts by keyword
+- pipixia: Get a hot board's ranked entries
+- pipixia: List the hot-search boards
+- pipixia: List current hot search terms
+- pipixia: List a user's followers
+- pipixia: List accounts a user follows
+- pipixia: List a user's recent posts
+- pipixia: Get a user's public profile
+- lemon8: Browse the discover feed
+- lemon8: Get a hashtag's stats
+- lemon8: List posts under a hashtag
+- lemon8: List a post's comments
+- lemon8: Get a post's content & stats
+- lemon8: Search posts by keyword
+- lemon8: List trending search keywords
+- lemon8: List a user's followers
+- lemon8: List accounts a user follows
+- lemon8: Get a user's public profile
+- toutiao: Get an article's content & stats
+- toutiao: List a post's comments
+- toutiao: Search articles by keyword
+- toutiao: Get a user's public profile
+- toutiao: Get a video's metadata & stats
+- toutiao: Toutiao article details by article id
+- toutiao: Toutiao user profile by user id
+- toutiao: Toutiao: get user id (app)
+- xigua: Search videos by keyword
+- xigua: Get a user's public profile
+- xigua: List a user's recent videos
+- xigua: List a video's comments
+- xigua: Get a video's metadata & stats
+- xigua: Get a video's playback URL
+- xigua: Xigua video details by video id
+- spotify: Get album details
+- spotify: Get artist details
+- spotify: Get podcast details
+- spotify: List podcast episodes
+- spotify: Search tracks, artists, albums, podcasts, episodes and audiobooks
+- spotify: Get track details
+- linkinbio: Komi link-in-bio page by URL — profile, social links
+- linkinbio: Linkbio (lnk.bio) link-in-bio page by URL
+- linkinbio: Linkme link-in-bio profile by URL — links, contacts
+- linkinbio: Linktree link-in-bio page by URL — profile, links
+- linkinbio: Pillar link-in-bio page by URL — links, products
+- pinterest: List pins on a board
+- pinterest: Get a pin's details
+- pinterest: Search pins by keyword
+- pinterest: List a user's boards
+- pinterest: Pinterest pins made from a list of URLs
+- rumble: List a channel's videos
+- rumble: Search videos by keyword
+- rumble: List a video's comments
+- rumble: Get a video's metadata & stats
+- rumble: Get a video's transcript
+- apple-music: Apple Music album by id or URL — tracks, release info
+- apple-music: Apple Music artist by id or URL — top songs, albums
+- apple-music: Search Apple Music by keyword — songs, artists, albums
+- apple-music: Apple Music track by id or URL — song details
+- twitch: Get a clip's metadata & video URL
+- twitch: Get a user's public profile
+- twitch: List a user's scheduled events
+- twitch: List a user's videos
+- wechat-search: Track a keyword's WeChat Index
+- wechat-search: Search Mini Programs by keyword
+- wechat-search: Search all content types by keyword
+- wechat-search: Get search suggestions for a keyword
+- bluesky: Get a post's content & stats
+- bluesky: List a user's recent posts
+- bluesky: Get a user's public profile
+- snapchat: Snapchat profile by username — stories, spotlight
+- snapchat: Snapchat Spotlight video by URL
+- snapchat: Snapchat Spotlight comments by URL
+- soundcloud: SoundCloud artist profile by username or URL
+- soundcloud: SoundCloud artist tracks by username or URL
+- soundcloud: SoundCloud track by URL — song details
+- truthsocial: Truth Social post by URL — text, engagement counts
+- truthsocial: Truth Social profile by username — bio, followers
+- truthsocial: Truth Social user posts by username
+- youku: Search videos by keyword
+- youku: Get a user's public profile
+- youku: Get a video's metadata & stats
+- kick: Kick clip by URL — video, channel info
+- douyin-xingtu: Browse IP marketing activities
+- douyin-xingtu: Get a creator's audience & follower demographics
+- douyin-xingtu: Get a creator's per-channel stats
+- douyin-xingtu: List a creator's top comment keywords
+- douyin-xingtu: Get a creator's commerce-seeding baseline
+- douyin-xingtu: Get a creator's commerce spread metrics
+- douyin-xingtu: List a creator's top content keywords
+- douyin-xingtu: Get a creator's contract baseline stats
+- douyin-xingtu: Get a creator's conversion analysis
+- douyin-xingtu: List a creator's converting videos & products
+- douyin-xingtu: Get a creator's cost-performance metrics
+- douyin-xingtu: Get a creator's daily follower trend
+- douyin-xingtu: Get a creator's marketing-funnel metrics
+- douyin-xingtu: Get a creator's hot content & comment keywords
+- douyin-xingtu: Get a creator's live watch distribution
+- douyin-xingtu: Get a creator's live-stream statistics
+- douyin-xingtu: Get a creator's order-experience record
+- douyin-xingtu: Get a creator's ad rates
+- douyin-xingtu: Get a creator's marketplace profile
+- douyin-xingtu: Get a creator's content spread metrics
+- douyin-xingtu: Get a creator's content tags
+- douyin-xingtu: Get audience touchpoint distribution
+- douyin-xingtu: Get a creator's video content mix
+- douyin-xingtu: List a creator's videos
+- douyin-xingtu: Browse creator ranking boards
+- douyin-xingtu: Search creators by keyword & filters
+- douyin-xingtu: Get content trend guidance
+- douyin-xingtu: Get a sponsored video's performance report
+- meta-ads: Ads a specific Page is running now
+- meta-ads: EU reach, audience & declared targeting
+- meta-ads: Political ads, who paid & spend range
+- meta-ads: Search publicly running ads
+- meta-ads: A company's Meta (/) ads by domain
+- xiaohongshu-pugongying: Get a creator's audience demographics
+- xiaohongshu-pugongying: Get a creator's cost-effectiveness analysis
+- xiaohongshu-pugongying: Get a creator's follower growth history
+- xiaohongshu-pugongying: Get a creator's fan growth rate & engagement summary
+- xiaohongshu-pugongying: List a creator's notes
+- xiaohongshu-pugongying: Get a creator's note performance metrics
+- xiaohongshu-pugongying: Get a creator's profile & pricing
+- xiaohongshu-pugongying: Find creators similar to one
+- xiaohongshu-pugongying: List a creator's content & feature tags
+- xiaohongshu-pugongying: Get a note's marketplace stats
+- xiaohongshu-pugongying: Search creators with marketplace filters
+- xiaohongshu-pugongying: Search marketplace notes by keyword
+- tiktok-ads: Get engagement analytics for a public ad
+- tiktok-ads: Get a public ad's full detail
+- tiktok-ads: Search publicly running ads by advertiser
+- tiktok-ads: Browse top-performing public ads
+- tiktok-ads: Get query suggestions
+- tiktok-ads: trending hashtag details
+- tiktok-ads: trending hashtags list
+- qq-huxuan: Get a Video Account creator's profile
+- qq-huxuan: Search Video Account creators
+- qq-huxuan: List a Video Account creator's videos
+- qq-huxuan: List an Official Account creator's articles
+- qq-huxuan: Get an Official Account creator's profile
+- qq-huxuan: Search Official Account creators
+- companies: List acquisitions made by a company
+- companies: Browse recent company acquisition announcements
+- companies: Logos, brand colors and imagery for a company domain
+- companies: Detect the fonts a company's website uses
+- companies: Extract a site's design system — colors, type scale, spacing, components
+- companies: Search physical business locations.
+- companies: Partners, customers, vendors and investors a company is linked to
+- companies: Find a company's website domain from its name
+- companies: Get employee counts for a company.
+- companies: Count a company's employees by country or department
+- companies: Enrich a company from its domain or name
+- companies: Queue a bulk company-enrichment job
+- companies: Check a bulk company-enrichment job
+- companies: Queue a large company-search export
+- companies: Check a company-search export job
+- companies: A company's funding rounds & financing events
+- companies: Browse the latest funding rounds across all companies
+- companies: List a company's funding rounds
+- companies: Headcount growth over time & by department
+- companies: Identify companies associated with an IP address
+- companies: Retrieve an account intelligence brief
+- companies: List investments received by a company
+- companies: Browse portfolio companies listed by VCs, accelerators and incubators
+- companies: A company's open job postings
+- companies: Get one job posting by ID
+- companies: Search indexed job listings across companies
+- companies: Latest startup-platform launch and hiring posts
+- companies: Resolve a company's website domain to its page
+- companies: Recent news & signals about a company
+- companies: Get one company news event by ID
+- companies: Browse the latest company news events across all companies
+- companies: List investments made by a company
+- companies: List the products and services a company sells
+- companies: Get one company product by ID
+- companies: Browse the latest products across all companies
+- companies: Find a company's professional profile URL from its name or domain
+- companies: Public code repositories a company publishes
+- companies: Read employee reviews of a company
+- companies: Search companies by industry, size or tech — account lists for lead generation
+- companies: Count the companies a search would return, before paying for rows
+- companies: A company's SEC filings
+- companies: Get one SEC filing by ID
+- companies: Read a finished segmentation's segments
+- companies: Cluster a list of companies into ICP segments
+- companies: Buying and intent signals detected for companies
+- companies: Find companies similar to a seed company or domain
+- companies: Find and enrich teams within organizations
+- companies: Get the technologies a company uses
+- companies: Get the full evidence for one technology detection
+- companies: Find companies that use a given technology
+- companies: Get one tracked technology by ID or name
+- companies: Browse the catalog of tracked technologies
+- companies: Identify the company behind a card or bank transaction descriptor
+- companies: Extract named, caller-defined datapoints from a company's website
+- companies: Capture a screenshot of a company's website
+- companies: Pages appearing on and disappearing from a company's website
+- creators: Get a creator's performance analytics and audience
+- creators: Compare audience overlap between creators
+- creators: Find creators similar to a reference creator
+- creators: Get one post's data, comments or transcript
+- creators: List a creator's recent posts with engagement
+- creators: Find influencers & creators by niche, country, followers & engagement on , ,
+- crunchbase: One company on
+- tiktok-shop: List product categories
+- tiktok-shop: List products in a category
+- tiktok-shop: Get a product's full detail
+- tiktok-shop: List a product's reviews
+- tiktok-shop: Search products by keyword
+- tiktok-shop: List a shop's products
+- tiktok-shop: Shop Categories
+- tiktok-shop: Shop Creator
+- tiktok-shop: Shop Product
+- tiktok-shop: Shop Product Reviews
+- tiktok-shop: Shop Search
+- tiktok-shop: Shop Search Suggestions
+- tiktok-shop: Shop Store Products
+- tiktok-shop: Shop User Showcase
+- tiktok-shop: Shop product details by URL
+- amazon: List best sellers in a category
+- amazon: Get a product's detail by ASIN
+- amazon: Reviews of an Amazon product
+- amazon: List the sellers offering a product by ASIN
+- amazon: List every ASIN variation of a product
+- amazon: Search products by keyword
+- amazon: Amazon Reviews
+- amazon: Amazon sellers info
+- amazon: Amazon search volume for up to 1000 keywords
+- amazon: Amazon products competing with an ASIN in search
+- amazon: Amazon keywords where several ASINs rank together
+- amazon: Amazon organic and paid rank for products by ASIN
+- amazon: Amazon keywords a product ranks for, by ASIN
+- amazon: Amazon related-search keywords for a seed keyword
+- amazon: Amazon product search results for a keyword, live
+- taobao: Get a product's details & prices
+- taobao: List a product's social feed
+- taobao: Search products by keyword
+- taobao: List a shop's products
+- taobao: Taobao and Tmall product reviews by item id
+- taobao: Taobao product 30-day sales count by item id
+- taobao: Taobao and Tmall shop products by seller id
+- jd: List a product's customer reviews
+- jd: Get a product's details & stats
+- jd: Get a product's current price
+- jd: Search products by keyword
+- jd: JD.com product details by item id (async task)
+- jd: JD.com product details by item id
+- jd: JD.com shop products by shop id
+- walmart: Get a product's detail by ID
+- walmart: List a product's reviews
+- walmart: Search products by keyword
+- walmart: One Walmart Marketplace seller
+- douyin-shop: List a product's customer comments
+- douyin-shop: Get a product's details & sales stats
+- douyin-shop: List a product's SKUs & prices
+- douyin-shop: Search products by keyword
+- douyin-shop: List a shop's products
+- ebay: Get a product's detail by product ID
+- ebay: Search products by keyword
+- beike: List residential communities
+- beike: Get a resale listing's detail
+- beike: List resale housing listings
+- 1688: Get a wholesale listing's detail
+- 1688: Search wholesale listings by keyword
+- xianyu: Get a second-hand listing's detail
+- xianyu: Search second-hand listings by keyword
+- dewu: Search products by keyword
+- etsy: Etsy search results
+- home-depot: Search Home Depot products by keyword
+- lazada: Search Lazada products by keyword across Southeast Asia (SG, MY, VN, TH, PH, ID)
+- shopify: Products of a Shopify store
+- steam: A Steam game's price, reviews and facts
+- zillow: One Zillow home
+- imdb: Get the Top 250 charts
+- imdb: List entertainment news by category
+- imdb: List curated streaming picks
+- imdb: Gauge anticipation for an upcoming title
+- imdb: Get a title's awards summary
+- imdb: Get a title's box-office figures
+- imdb: Get a title's top cast & crew
+- imdb: Get a title's critic-review summary
+- imdb: Get a title's details & ratings
+- imdb: Get a title's plot summaries
+- imdb: Find titles similar to one
+- imdb: Get a title's trivia & fun facts
+- imdb: Get a title's user-review summary
+- app-store: One app on Apple's App Store
+- app-store: Get details of an App Store product
+- app-store: List reviews for an App Store product
+- app-store: Search apps by keyword
+- app-store: Apple App Store
+- app-store: Apple App Store reviews
+- app-store: App Store app details by app id (async task)
+- app-store: App Store top chart apps by collection (async task)
+- app-store: Search App Store apps — rating, reviews count, price
+- app-store: App Store reviews for an app by app id (async task)
+- app-store: App Store apps ranking for a keyword (async task)
+- app-store: App Store apps competing with an app, by app id
+- app-store: Keywords several App Store apps rank for together
+- app-store: Ranking metrics for up to 1000 App Store apps
+- app-store: Keywords an App Store app ranks for, by app id
+- google-play: One app on Google Play
+- google-play: Get details of a Google Play product
+- google-play: List reviews for a Google Play product
+- google-play: Search apps by keyword
+- google-play: Search or browse Google Play books
+- google-play: Search or browse Google Play games
+- google-play: Search or browse Google Play movies
+- google-play: Google Play Store
+- google-play: Google Play Store reviews
+- google-play: Google Play app details by app id (async task)
+- google-play: Google Play top chart apps by collection (async task)
+- google-play: Search Google Play apps — rating, reviews count, price
+- google-play: Google Play reviews for an app by app id (async task)
+- google-play: Google Play apps ranking for a keyword (async task)
+- tripadvisor: List a business's reviews
+- tripadvisor: Get a hotel's listing details
+- tripadvisor: Get one Tripadvisor place's details
+- tripadvisor: Search business listings by keyword
+- tripadvisor: Search places, hotels, restaurants & forums by keyword
+- yelp: Get a business's profile
+- yelp: List a business's reviews
+- yelp: Search businesses by keyword and location
+- douban: Get a full review by id
+- douban: List a title's short comments
+- douban: Get a title's rating & details
+- douban: List a title's long-form reviews
+- douban: List currently trending movies
+- douban: List currently trending TV shows
+- trustpilot: List a business's reviews
+- trustpilot: Search business profiles by keyword
+- apple-maps: Get public Apple Maps place details by MUID
+- apple-maps: Read Apple Maps place ratings and reviews
+- glassdoor: Reviews of a company on Glassdoor
+- glassdoor: Jobs on Glassdoor for a search
+- airbnb: One Airbnb listing
+- booking: One Booking.com hotel
+- telegram: Get a channel's profile & stats
+- telegram: List a channel's recent posts
+- telegram: Search a channel's posts by keyword
+- telegram: Find channels similar to a given channel
+- telegram: List a post's comments
+- telegram: Get a post's content & stats
+- hackernews: Hacker News: who is hiring, by keyword
+- hackernews: Search Hacker News
+- hackernews: Hacker News: front page stories
+- producthunt: Product Hunt: today's launches
+- producthunt: Product Hunt: today's launches, enriched from each product page
+- producthunt: Product Hunt: one product
+- indeed: Indeed job search results
+- remoteok: Remote jobs from Remote OK
+- weworkremotely: Remote jobs from We Work Remotely
+- video-gen: Generate an H3 (Hailuo 3) video from text, optionally with first/last frame images
+- video-gen: Animate an image into a Hailuo video
+- video-gen: Generate a Hailuo video from a text prompt
+- video-gen: Generate a Seedance 1 Lite video from text or an image
+- video-gen: Seedance 2.5
+- video-gen: Generate a Veo 3.1 Fast video from text, optionally from a starting image
+- video-gen: Animate an image into a Wan 3.0 video
+- video-gen: Generate a Wan 3.0 video from a text prompt
+- video-gen: Alibaba: HappyHorse 1.0
+- video-gen: Alibaba: HappyHorse 1.1
+- video-gen: Alibaba: Wan 2.6
+- video-gen: Alibaba: Wan 2.7
+- video-gen: Alibaba: Wan 3.0 Prime
+- video-gen: Black Forest Labs: FLUX.3 Video
+- image-gen: Generate images with FLUX Schnell
+- image-gen: Gemini 3.1 Flash Image (Nano Banana 2)
+- image-gen: Gemini 3.1 Flash Lite Image (Nano Banana 2 Lite)
+- image-gen: Gemini 3 Pro Image
+- image-gen: GPT Image 2.5
+- image-gen: GPT Image 2
+- image-gen: Generate images with image-01
+- image-gen: black-forest-labs/flux-1.1-pro-ultra
+- image-gen: black-forest-labs/flux-2-flex
+- image-gen: black-forest-labs/flux-2-klein-4b
+- image-gen: black-forest-labs/flux-2-max
+- image-gen: black-forest-labs/flux-2-pro
+- image-gen: black-forest-labs/flux-dev-lora
+- image-gen: black-forest-labs/flux-dev
+- image-gen: black-forest-labs/flux-kontext-max
+- voice-gen: Generate speech with Fish Audio S2.1 Pro
+- voice-gen: Gemini 3.8 Flash-Lite TTS
+- voice-gen: Gemini 3.8 Flash TTS
+- voice-gen: Speech 2.8 HD
+- voice-gen: Speech 2.8 Turbo
+- music-gen: Lyria 3.5 (full song)
+- music-gen: Lyria 3 Clip (30-second clip)
+- ai-judge: Judge evidence: a label with probabilities, a rubric score, or a yes/no probability
+- github: Files of a GitHub repository
+- github: Issues of a GitHub repository
+- github: Get a repository's public metadata
+- github: List trending developers
+- github: List trending repositories
+- github: Get a user's contribution activity
+- github: Get a user's contribution graph
+- github: List a user's followers
+- github: List accounts a user follows
+- github: Get a user's public profile
+- github: Search a user's pull requests
+- github: List a user's public repositories
+- packages: Facts about a package (npm, PyPI, crates.io)
+- stackoverflow: Stack Overflow questions by tag
+- stocks: Dividend history
+- stocks: Stock split history
+- stocks: News for a specific company
+- stocks: Company profile behind a ticker
+- stocks: List company earnings
+- stocks: End-of-day price history for a ticker
+- stocks: Latest end-of-day prices
+- stocks: Stock exchange directory
+- stocks: List SEC filings
+- stocks: Search SEC filings
+- stocks: Get standardized company financial statements
+- stocks: Get company balance sheets
+- stocks: Get company cash-flow statements
+- stocks: Get company income statements
+- stocks: Get company financial-statement segments
+- stocks: Fundamental metrics and ratios for a ticker
+- stocks: Get ETF and index-fund holdings and weights
+- stocks: List insider trades
+- stocks: Search insider transactions
+- stocks: List institutional holdings
+- stocks: Intraday prices for a ticker
+- stocks: List IPO and registration filings
+- stocks: Get company KPI guidance
+- stocks: Get company operating KPIs
+- stocks: Get company non-GAAP metrics
+- stocks: Get major central-bank interest rates
+- stocks: Is the market open right now
+- stocks: Current quote for a ticker (live or delayed per plan)
+- stocks: Research a financial question with cited sources
+- stocks: Screen US public companies by financial filters
+- stocks: Search stock-price data
+- stocks: Find tickers and the exchanges they trade on
+- crypto: Full profile and market stats for one coin
+- crypto: Crypto exchanges with volume and trust score
+- crypto: Global crypto market statistics
+- crypto: Top coins by market cap, with market data
+- crypto: Coins trending right now
+- crypto: Quote currencies can price against
+- crypto: Live crypto prices in any currency
+- crypto: Historical prices and volumes for a coin
+- crypto: OHLC candles for a coin
+- crypto: Search coins, exchanges and categories
+- markets: Search foreign-exchange data
+- markets: Search commodities and market movers
+- markets: Search prediction-market events
+- research: Run cited asynchronous research
+- research: Search scholarly publications and preprints
+- research: Search arXiv papers
+- health: Search medicine labels and global health data
+- health: Search clinical studies
+- wikipedia: A Wikipedia article's summary and sections
+- wikipedia: Wikipedia articles matching a query
+- economics: Search official economic indicators
+- medium: Posts of a Medium tag, author or publication
+- substack: A Substack publication's latest posts
+- weather: Daily weather forecast for a place
