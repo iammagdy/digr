@@ -41,6 +41,24 @@ export function commentDropReason(text: string): CommentDrop | null {
   return letters === 0 && /(?:https?:\/\/|www\.)\S+/iu.test(raw) ? "link_only" : "too_short";
 }
 
+/**
+ * The Facebook keyword service delivers the comments of an adopted post as they are: judgment applies to the PARENT post only (the post-level topic
+ * review). The only comments left out are an empty one and one that is nothing but a link (exact repeats under one post are dropped by `repeatKey`).
+ * A short comment, a reaction, a supplication, a pleasantry or a comment that never names the topic is kept and counts as a delivered unit.
+ */
+export type FacebookCommentDrop = "empty" | "link_only";
+
+export function facebookCommentDropReason(text: string): FacebookCommentDrop | null {
+  const raw = String(text || "").trim();
+  if (!raw) return "empty";
+  if (URL_RE.test(raw)) {
+    URL_RE.lastIndex = 0;
+    if (!raw.replace(URL_RE, " ").replace(/[\s\p{P}\p{S}]+/gu, "")) return "link_only";
+  }
+  URL_RE.lastIndex = 0;
+  return null;
+}
+
 export const isUsableComment = (row: Record<string, any>): boolean => commentDropReason(commentTextOf(row)) === null;
 
 export type CommentLanguage = "ar" | "en" | "other";

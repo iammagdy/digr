@@ -1,5 +1,5 @@
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
-import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, WELL_WISH_REASON_AR, isGenericComment, isPureWellWish, meaningfulChars } from "./commentQuality";
+import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, facebookCommentDropReason, isGenericComment, meaningfulChars } from "./commentQuality";
 import { isFacebookKeywordService } from "../facebookKeywordService";
 import { evaluateDeterministicRelevance, type RelevanceDecision } from "./relevanceValidationLayer";
 import { BASKETBALL_TOPIC_RE, FOOTBALL_TOPIC_RE, countPattern, hasRegionEvidence, hasTopicEvidence, isBasketballTopic, matchTopic, normalizeText as topicNormalize, topicStems } from "./topicMatch";
@@ -210,6 +210,15 @@ export function evaluateResearchRowRelevance(
   }
   if (peopleCapability) return { decision: "match", reasonAr: "سجل مهني ضمن النطاق المطلوب" };
 
+  // Facebook keyword service: the post was judged (adopted) before its comments were read, so its comments are delivered as they are. Only an empty
+  // comment or a link on its own is not a delivered unit; no comment-content judgment (pleasantry, length, reaction, topic words) applies here.
+  if (/comment/i.test(kindText) && isFacebookKeywordService(capabilitySlug)) {
+    const dropped = facebookCommentDropReason(rawTextOf(row, COMMENT_OWN_KEYS));
+    if (dropped === "empty") return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً يمكن مطابقته مع موضوع البحث" };
+    if (dropped === "link_only") return { decision: "no_match", reasonAr: "لا يتضمن السجل نصاً سوى رابط" };
+    return { decision: "match", reasonAr: "تعليق على منشور معتمد" };
+  }
+
   // Trending-video recency: a region-scoped trending feed is itself the evidence of current trend status. Upload age is not
   // trend age (resurfacing videos can be old), so age never rejects a row here; an explicit customer date window is
   // enforced separately by filterRowsByDateRange before this gate.
@@ -222,8 +231,6 @@ export function evaluateResearchRowRelevance(
   // The source filtered by the topic itself: presume the rows on topic (see presumeTopicSearchRow). The strict evidence rule below
   // stays for feeds with no topic filter (an account, a channel, a link), for videos (the title IS the deliverable) and for the
   // basketball/football separation.
-  // Facebook keyword service only: a comment made of nothing but good wishes, thanks and a title («بالتوفيق والنجاح الدائم») says nothing about the topic and is not a delivered (charged) comment.
-  if (commentRow && isFacebookKeywordService(capabilitySlug) && isPureWellWish(rawTextOf(row, COMMENT_OWN_KEYS), { topic })) return { decision: "no_match", reasonAr: WELL_WISH_REASON_AR };
   if (/^social-(?:x-posts|tiktok-comments|youtube-comments|facebook-keyword-comments)$/i.test(capabilitySlug) && !basketball && isTopicSearchRequest(params)) return presumeTopicSearchRow(row, stems, commentRow, requestedRegion);
   // Basketball comments found by the source's own topic search (TikTok, YouTube): a short comment under a basketball video is a real comment
   // even when it never says «كرة السلة» (the same rule as every other topic). What stays strict: a comment or a video that is plainly about
