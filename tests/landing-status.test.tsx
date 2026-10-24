@@ -15,7 +15,7 @@ describe("landing: the two statuses (from the catalog's one constant)", () => {
   it("every available-now slug is a real registry slug, and the list is the owner's", () => {
     const registry = new Set(APPROVED_CAPABILITY_CATALOG.map((capability) => capability.slug));
     for (const slug of AVAILABLE_NOW_REGISTRY_SLUGS) expect(registry.has(slug), slug).toBe(true);
-    expect([...AVAILABLE_NOW_REGISTRY_SLUGS].sort()).toEqual(["icypeas-companies-search", "professional-people-search", "social-facebook-comments", "social-facebook-keyword-comments", "social-facebook-posts", "social-tiktok-comments", "social-x-posts"]);
+    expect([...AVAILABLE_NOW_REGISTRY_SLUGS].sort()).toEqual(["icypeas-companies-search", "social-facebook-comments", "social-facebook-keyword-comments", "social-facebook-posts", "social-tiktok-comments", "social-x-posts"]);
   });
 
   it("the counts are computed from the data", () => {
@@ -24,10 +24,12 @@ describe("landing: the two statuses (from the catalog's one constant)", () => {
     expect(text).toContain(`${SERVICE_STATUS_AVAILABLE_AR}: ${formatAr(counts.available)}، ${SERVICE_STATUS_SOON_AR}: ${formatAr(counts.soon)}`);
   });
 
-  it("the decision-makers card says which core service is available now and how many are coming, with no call to action", () => {
+  it("the decision-makers card says which core services are available now (none today) and how many are coming, with no call to action", () => {
     const core = coreServices().map((service) => ({ service, available: isAvailableNow(service.platformSlug, service.nameAr) }));
     const available = core.filter((entry) => entry.available);
-    expect(available.length).toBeGreaterThan(0);
+    // no core service is available now while people search is «قريبًا»: the card then says only how many are coming
+    expect(available.length).toBe(core.filter((entry) => isAvailableNow(entry.service.platformSlug, entry.service.nameAr)).length);
+    expect(core.length - available.length).toBeGreaterThan(0);
     const block = /data-testid="landing-decision-status"[\s\S]*?<\/div>/.exec(html)?.[0] ?? "";
     for (const entry of available) expect(block).toContain(entry.service.nameAr);
     expect(block).toContain(`${formatAr(core.length - available.length)} من خدمات التواصل المهنية. ${SERVICE_SOON_LINE_AR}`);
