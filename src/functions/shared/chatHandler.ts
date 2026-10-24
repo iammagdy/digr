@@ -9,7 +9,7 @@ import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWin
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
-import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, platformFollowUpStateAr, UNSUPPORTED_PLATFORM_AR, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
+import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR, platformFollowUpStateAr, readSocialFacts, unsupportedPlatformAnswerAr, UNSUPPORTED_PLATFORM_AR, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -304,15 +304,18 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
       if (!ignore.has("social_time_required") && reportNeedsPeriod(normalized)) return socialTimeWindowQuestion();
       return socialDiscoveryGapQuestion(normalized, ignore, capabilities);
     }
+    if (isSocialTopic) {
+      // Checked before any plan or mission reading: the customer's answers decide, not the words of their labels.
+      const facts = readSocialFacts(normalized);
+      // «posts only» on a Facebook topic: no service reads it, said once, nothing quoted or held.
+      if (facts.platform === "facebook" && facts.topic && !facts.source && facts.commentsWanted === false) return { plain: true, id: "facebook_posts_only_unavailable", text: FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR };
+      // After «أخرى» on the platform question: ONE free-text follow-up. A typed name this service does not read (a name the detector sees as a platform, such as «سناب شات», too) gets one honest sentence.
+      const followUp = platformFollowUpStateAr(normalized);
+      if (followUp === "asked") return { id: "social_platform_other_required", text: PLATFORM_OTHER_QUESTION_AR, question: PLATFORM_OTHER_QUESTION_AR, type: "free", options: [], allowOther: true };
+      if (followUp === "answered" || unsupportedPlatformAnswerAr(normalized)) return { plain: true, id: "platform_unsupported", text: UNSUPPORTED_PLATFORM_AR };
+    }
     // A mission over channels (their top videos, then the comments) is decided by its own understanding: the channels
     // and the comment cap are asked ONE at a time, and nothing else is.
-    // After «أخرى» on the platform question: ONE free-text follow-up, then one honest sentence for a name this service does not read. Checked before
-    // anything else, because a name such as «سناب شات» is seen as a platform by the detector while no service of ours reads it (the turn would go to the model).
-    if (isSocialTopic) {
-      const followUp = platformFollowUpStateAr(normalized);
-      if (followUp === "answered") return { plain: true, id: "platform_unsupported", text: UNSUPPORTED_PLATFORM_AR };
-      if (followUp === "asked") return { id: "social_platform_other_required", text: PLATFORM_OTHER_QUESTION_AR, question: PLATFORM_OTHER_QUESTION_AR, type: "free", options: [], allowOther: true };
-    }
     const mission = understandMission(normalized);
     if (mission.kind === "social_ranked_comments" || mission.kind === "social_channel_topic") {
       const step = nextStep(mission, ignore);

@@ -37,3 +37,17 @@ export function pageChannelOfItem(item: { capabilitySlug?: string; params?: Reco
   const first = Array.isArray(params.channels) ? params.channels[0] : undefined;
   return typeof first === "string" && first.trim() ? first.trim() : null;
 }
+
+/**
+ * The identifier of a Facebook page as the card shows it: the handle («youm7») from a link («https://www.facebook.com/youm7/», «facebook.com/youm7»), or the
+ * name as typed when it is already a handle («@youm7»). Never a URL scheme, a host or a path after the handle.
+ */
+export function pageHandleOf(channel: string): string {
+  const cleaned = channel.trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/^(?:www\.|m\.)/i, "")
+    .replace(/^facebook\.com\//i, "")
+    .replace(/^@/, "");
+  const handle = cleaned.split(/[/?#]/)[0].trim();
+  return handle || channel.trim();
+}

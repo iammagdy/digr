@@ -4,6 +4,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 000000000. Live-check fixes, batch 2 (branch `claude/live-fixes-batch-2`, from main `f10aacd`)
+
+- «المنشورات فقط» on a Facebook topic: no comments plan, no default of 500, one honest sentence, nothing quoted or held (`FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR`, `commentsAnsweredNo` in `src/lib/socialTasks.ts` and `src/lib/socialDiscoveryCard.ts`). The cause was the label «التعليقات المطلوبة» carrying the comment word; the intent now reads the answer, not the label.
+- A tatweel («بـ») is stripped before topic tokens are read (`topicTokens`, `src/lib/socialTasks.ts`); «فقط»، «بس»، «بدون» are answer words, never topic.
+- «أخرى» then a typed name: a served name continues; an unserved one gets `UNSUPPORTED_PLATFORM_AR` naming تيك توك، فيسبوك، يوتيوب، ومنصة X. A bare «أخرى» is not a name (`unsupportedPlatformAnswerAr`, `src/lib/socialDiscoveryCard.ts`).
+- A Facebook page plan shows «الصفحة:» with the handle only (`pageHandleOf`, `src/lib/planMethodSteps.ts`; `planScopeRows`, `src/lib/quoteScopeGaps.ts`). Numbers unchanged.
+- `normalizePhone` in `src/lib/multiProvider/policy.ts` drops the bracketed trunk zero («+20 (0)22…» → `+20225087419`). The other eleven forms match origin/main output.
+- Tests: `tests/posts-only-answer.test.ts`, `tests/platform-other-typed.test.ts`, `tests/facebook-page-chip.test.ts`, `tests/phone-trunk-zero.test.ts`; changed `tests/platform-follow-up.test.ts` and `tests/phone-digits-kept.test.ts`.
+
+---
+
 ## 00000000. Live-check fixes, batch 1 (branch `claude/live-fixes-batch-1`, from main `c4b5088`)
 
 - «أخرى» on the platform question asks ONE free-text follow-up (`social_platform_other_required`); a name this service does not read gets one honest sentence (`UNSUPPORTED_PLATFORM_AR`), no plan, no hold. Snapchat is named by the platform detector but no service reads it, so the check runs before the platform-missing branch (`src/functions/shared/chatHandler.ts`, `src/lib/socialDiscoveryCard.ts`, `src/lib/consultantCopy.ts`).

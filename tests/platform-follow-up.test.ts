@@ -73,8 +73,8 @@ describe("«أخرى» moves the flow on: one free-text follow-up, never the sam
     expect(r.contentAr).toContain("تيك توك");
     expect(r.contentAr).toContain("فيسبوك");
     expect(r.contentAr).toContain("يوتيوب");
-    expect(r.contentAr).toContain("إكس");
-    expect(r.contentAr).not.toMatch(/[A-Za-z]/);
+    expect(r.contentAr).toContain("منصة X");
+    expect(r.contentAr.replace("منصة X", "")).not.toMatch(/[A-Za-z]/); // X is the brand name the owner asked for
     expect(r.contentAr).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 
