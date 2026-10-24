@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { SERVICES_CATALOG, SERVICE_ORDER_LABEL_AR, servicesByGroup, type CatalogPlatform, type CatalogService } from "@/lib/servicesCatalog";
+import { SERVICES_CATALOG, servicesByGroup, type CatalogPlatform, type CatalogService } from "@/lib/servicesCatalog";
+import { SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, platformAvailableCount, platformsAvailableFirst } from "@/lib/servicesAvailability";
+import { formatAr } from "@/lib/arabicDigits";
 import { normalizeArabicSearch, platformsCountAr, servicesCountAr } from "@/lib/servicesCatalogText";
 
 /** The platforms are collapsed: a platform's services are rendered only once it is opened (or when a search narrows the list to a few). */
@@ -15,13 +17,19 @@ function searchable(platform: CatalogPlatform) {
   return { head: normalizeArabicSearch(`${platform.nameAr} ${platform.descAr}`), services: platform.services.map((service) => normalizeArabicSearch(`${service.nameAr} ${service.group}`)) };
 }
 
-const INDEX = SERVICES_CATALOG.map((sector) => ({ sector, platforms: sector.platforms.map((platform) => ({ platform, text: searchable(platform) })) }));
+// Within a sector, platforms with at least one available-now service come first.
+const INDEX = SERVICES_CATALOG.map((sector) => ({ sector, platforms: platformsAvailableFirst(sector.platforms).map((platform) => ({ platform, text: searchable(platform) })) }));
 
 function PlatformCard({ platform, services, forceOpen, searching }: { platform: CatalogPlatform; services: CatalogService[]; forceOpen: boolean; searching: boolean }) {
   const [open, setOpen] = useState(false);
   const shown = forceOpen || open;
   const panelId = `p-${platform.slug}`;
-  const view: CatalogPlatform = services === platform.services ? platform : { ...platform, services };
+  const availableCount = platformAvailableCount(platform);
+  // Inside a group the available-now services come first.
+  const groups = servicesByGroup({ ...platform, services }).map(({ group, services: items }) => ({
+    group,
+    services: [...items].sort((a, b) => Number(isAvailableNow(platform.slug, b.nameAr)) - Number(isAvailableNow(platform.slug, a.nameAr))),
+  }));
   return (
     <article className="rounded-[20px] border border-ln bg-sf">
       <button type="button" aria-expanded={shown} aria-controls={panelId} onClick={() => setOpen(!open)} className="flex min-h-[64px] w-full items-start justify-between gap-3 rounded-[20px] bg-transparent p-4 text-right text-ink">
@@ -31,25 +39,35 @@ function PlatformCard({ platform, services, forceOpen, searching }: { platform: 
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-mut">
           <span>{servicesCountAr(searching ? services.length : platform.services.length)}</span>
+          {availableCount > 0
+            ? <span data-testid="platform-available" className="rounded-full bg-sf2 px-2 py-0.5 text-goldT">{`${SERVICE_STATUS_AVAILABLE_AR}: ${formatAr(availableCount)} من ${formatAr(platform.services.length)}`}</span>
+            : <span data-testid="platform-soon" className="rounded-full bg-sf2 px-2 py-0.5">{SERVICE_STATUS_SOON_AR}</span>}
           <span aria-hidden="true" className="text-lg leading-none">{shown ? "−" : "+"}</span>
         </span>
       </button>
       {shown && (
         <div id={panelId} className="flex flex-col gap-4 border-t border-ln px-4 pb-4 pt-3">
-          {servicesByGroup(view).map(({ group, services: items }) => (
+          {groups.map(({ group, services: items }) => (
             <section key={group} className="flex flex-col gap-1.5">
               <h4 className="m-0 text-[13px] font-semibold text-ink2">{group}</h4>
               <ul className="m-0 flex list-none flex-col gap-1 p-0">
-                {items.map((service) => (
-                  <li key={service.slug} className="flex items-baseline justify-between gap-3 text-sm leading-7 text-ink">
-                    <span>{service.nameAr}</span>
-                    <span className="shrink-0 text-xs text-goldT">{SERVICE_ORDER_LABEL_AR}</span>
-                  </li>
-                ))}
+                {items.map((service) => {
+                  const available = isAvailableNow(platform.slug, service.nameAr);
+                  return (
+                    <li key={service.slug} data-status={available ? "available" : "soon"} className="flex flex-col gap-0.5 text-sm leading-7 text-ink">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span>{service.nameAr}</span>
+                        <span className={`shrink-0 text-xs ${available ? "text-goldT" : "text-mut"}`}>{available ? SERVICE_STATUS_AVAILABLE_AR : SERVICE_STATUS_SOON_AR}</span>
+                      </div>
+                      {available
+                        ? <Link href="/register" className="inline-flex min-h-11 w-fit items-center rounded-full bg-ac px-4 text-[13px] text-onac no-underline">{SERVICE_ORDER_CTA_AR}</Link>
+                        : <p className="m-0 text-xs text-mut">{SERVICE_SOON_LINE_AR}</p>}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ))}
-          <Link href="/register" className="inline-flex min-h-11 w-fit items-center rounded-full bg-ac px-5 text-sm text-onac no-underline">ابدأ طلبك</Link>
         </div>
       )}
     </article>

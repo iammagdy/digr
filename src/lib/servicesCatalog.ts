@@ -1559,8 +1559,7 @@ export const SERVICES_CATALOG: CatalogSector[] = [
 
 /** The one honest line shown wherever a service is offered. */
 export const SERVICE_STATUS_LINE_AR = "نعرض لك الخطة والسعر قبل أي خصم، ولا تدفع إلا على ما يُسلَّم فعلًا";
-/** The status every listed service carries. */
-export const SERVICE_ORDER_LABEL_AR = "اطلبها الآن";
+// The two statuses and the list that decides them live in src/lib/servicesAvailability.ts.
 
 export interface CatalogCounts { sectors: number; platforms: number; services: number; coreServices: number }
 
@@ -1579,13 +1578,13 @@ export function catalogCounts(catalog: CatalogSector[] = SERVICES_CATALOG): Cata
 export const platformServiceCount = (platform: CatalogPlatform): number => platform.services.length;
 
 /** The core B2B services of the whole catalog, de-duplicated by name, in catalog order. */
-export function coreServices(catalog: CatalogSector[] = SERVICES_CATALOG): Array<CatalogService & { platformAr: string }> {
+export function coreServices(catalog: CatalogSector[] = SERVICES_CATALOG): Array<CatalogService & { platformAr: string; platformSlug: string }> {
   const seen = new Set<string>();
-  const result: Array<CatalogService & { platformAr: string }> = [];
+  const result: Array<CatalogService & { platformAr: string; platformSlug: string }> = [];
   for (const sector of catalog) for (const platform of sector.platforms) for (const service of platform.services) {
     if (!service.core || seen.has(service.nameAr)) continue;
     seen.add(service.nameAr);
-    result.push({ ...service, platformAr: platform.nameAr });
+    result.push({ ...service, platformAr: platform.nameAr, platformSlug: platform.slug });
   }
   return result;
 }

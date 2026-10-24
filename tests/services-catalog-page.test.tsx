@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import ServicesCatalogPage from "../src/app/services/page";
 import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
-import { SERVICES_CATALOG, SERVICE_ORDER_LABEL_AR, SERVICE_STATUS_LINE_AR, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
+import { SERVICES_CATALOG, SERVICE_STATUS_LINE_AR, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
+import { SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR } from "../src/lib/servicesAvailability";
 import { normalizeArabicSearch, platformsCountAr, sectorsCountAr, servicesCountAr } from "../src/lib/servicesCatalogText";
 import { PROVIDER_NAME_PATTERN } from "../src/lib/publicCapabilityIds";
 
@@ -114,12 +115,12 @@ describe("/services: the full catalog, from one data module", () => {
     for (const service of core) expect(html).toContain(service.nameAr);
   });
 
-  it("one status line from one constant, and every listed service carries the same order label", () => {
+  it("one status line from one constant, and every listed service carries one of the two status constants", () => {
     expect(SERVICE_STATUS_LINE_AR).toBe("نعرض لك الخطة والسعر قبل أي خصم، ولا تدفع إلا على ما يُسلَّم فعلًا");
-    expect(SERVICE_ORDER_LABEL_AR).toBe("اطلبها الآن");
+    expect([SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, SERVICE_SOON_LINE_AR, SERVICE_ORDER_CTA_AR]).toEqual(["متاح الآن", "قريبًا", "ستُضاف تدريجيًا", "ابدأ طلبك"]);
     const html = renderToStaticMarkup(createElement(ServicesCatalogPage));
     expect(html.split(SERVICE_STATUS_LINE_AR).length - 1).toBe(1);
-    for (const forbidden of ["قريبًا", "قريباً", "قيد التقييم", "قيد الدراسة", "سيتوفر"]) {
+    for (const forbidden of ["قريباً", "قيد التقييم", "قيد الدراسة", "سيتوفر"]) {
       expect(html).not.toContain(forbidden);
       expect(JSON.stringify(everyText())).not.toContain(forbidden);
     }
@@ -129,6 +130,7 @@ describe("/services: the full catalog, from one data module", () => {
     const pageSource = readFileSync("src/app/services/page.tsx", "utf8") + readFileSync("src/components/services/CatalogBrowser.tsx", "utf8");
     expect(pageSource).not.toContain("اطلبها الآن");
     expect(pageSource).not.toContain("نعرض لك الخطة");
+    for (const literal of [SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, SERVICE_SOON_LINE_AR, SERVICE_ORDER_CTA_AR]) expect(pageSource, literal).not.toContain(literal);
   });
 
   it("the page is static and fast: force-static, no request data, and the platforms are collapsed (no service of a platform is in the first HTML)", () => {

@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { AVAILABLE_NOW_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, hasCodeExecutor, isAvailableNow } from "../src/lib/servicesAvailability";
 
 type Cls = "read" | "core" | "write" | "own" | "private" | "helper";
 interface Row { idx: number; sector: string; platform: string; key: string; en: string; cls: Cls; group: string; nameAr: string }
@@ -92,8 +93,7 @@ lines.push(`];
 
 /** The one honest line shown wherever a service is offered. */
 export const SERVICE_STATUS_LINE_AR = "نعرض لك الخطة والسعر قبل أي خصم، ولا تدفع إلا على ما يُسلَّم فعلًا";
-/** The status every listed service carries. */
-export const SERVICE_ORDER_LABEL_AR = "اطلبها الآن";
+// The two statuses and the list that decides them live in src/lib/servicesAvailability.ts.
 
 export interface CatalogCounts { sectors: number; platforms: number; services: number; coreServices: number }
 
@@ -112,13 +112,13 @@ export function catalogCounts(catalog: CatalogSector[] = SERVICES_CATALOG): Cata
 export const platformServiceCount = (platform: CatalogPlatform): number => platform.services.length;
 
 /** The core B2B services of the whole catalog, de-duplicated by name, in catalog order. */
-export function coreServices(catalog: CatalogSector[] = SERVICES_CATALOG): Array<CatalogService & { platformAr: string }> {
+export function coreServices(catalog: CatalogSector[] = SERVICES_CATALOG): Array<CatalogService & { platformAr: string; platformSlug: string }> {
   const seen = new Set<string>();
-  const result: Array<CatalogService & { platformAr: string }> = [];
+  const result: Array<CatalogService & { platformAr: string; platformSlug: string }> = [];
   for (const sector of catalog) for (const platform of sector.platforms) for (const service of platform.services) {
     if (!service.core || seen.has(service.nameAr)) continue;
     seen.add(service.nameAr);
-    result.push({ ...service, platformAr: platform.nameAr });
+    result.push({ ...service, platformAr: platform.nameAr, platformSlug: platform.slug });
   }
   return result;
 }
@@ -150,4 +150,104 @@ for (const cls of ["core", "private", "helper", "write", "own", "read"]) {
   report.push("");
 }
 writeFileSync(join(root, "docs/services-catalog-classes.md"), report.join("\n"));
+
+// ---------------------------------------------------------------------------------------------------------------- docs/FUTURE_SERVICES.md
+/** What kind of service a group is, for the prerequisites table (the kind decides which step is the risky one). */
+const GROUP_KIND: Record<string, string> = {
+  "البحث والاستكشاف": "keyword-search",
+  "الكلمات المفتاحية ونتائج البحث": "keyword-search",
+  "الترندات والأكثر رواجًا": "feed",
+  "التعليقات والردود": "children-of-known",
+  "المتابعون والتفاعل": "children-of-known",
+  "المنشورات والمحتوى": "children-of-known",
+  "الفيديوهات والبث": "children-of-known",
+  "الحسابات والملفات الشخصية": "lookup-one",
+  "الشركات": "b2b",
+  "الأشخاص وصناع القرار": "b2b",
+  "بيانات التواصل المهنية": "b2b-contact",
+  "المنتجات والأسعار": "lookup-one",
+  "التقييمات والمراجعات": "children-of-known",
+  "الأماكن والأنشطة التجارية": "lookup-one",
+  "المواقع وتحليل الويب": "lookup-one",
+  "الأسواق والأسعار المالية": "lookup-one",
+  "الأبحاث والمعرفة": "lookup-one",
+  "المطورون والأكواد": "lookup-one",
+  "الإعلانات والحملات": "feed",
+  "توليد الوسائط": "generation",
+  "الإدارة والإعدادات": "lookup-one",
+};
+const KIND_NOTE: Record<string, { title: string; risk: string }> = {
+  "keyword-search": { title: "search by keyword or topic", risk: "the row gate matches the query words against text keys (text, title, description, ...): rows without such keys are rejected, so a search on a non-text endpoint delivers nothing (hold released). UNKNOWN which endpoints return text-bearing rows." },
+  feed: { title: "trending, feed, ranking, ad library", risk: "usually needs only a country or nothing; rows have no topic, so every row passes the gate. UNKNOWN: pagination support and rows per call." },
+  "children-of-known": { title: "list of children of a known object (comments, followers, posts, reviews)", risk: "needs a link or id the chat cannot extract today for non-social platforms (input mapping). UNKNOWN: rows per call, ceiling per object." },
+  "lookup-one": { title: "one object by id, url or name (profile, details, stats)", risk: "single-object answers are read only when they sit under data, user or profile; otherwise the job fails and the hold is released. One row is one unit. UNKNOWN: answer shape per endpoint." },
+  b2b: { title: "companies and decision makers", risk: "company and people search already have executors; the other lines are different endpoints with their own inputs. UNKNOWN: inputs and cost per line." },
+  "b2b-contact": { title: "professional contact data (work e-mail, work phone, verification)", risk: "priced per contact field; the multi-provider chain and the decision-maker phone have executors that were not proven live. UNKNOWN: yield and cost per delivered contact." },
+  generation: { title: "AI media generation", risk: "not data collection: no delivered record to count; the unit and price basis are UNKNOWN. Candidate to leave off the page." },
+};
+
+const shownRows = rows.filter((row) => row.cls === "read" || row.cls === "core");
+const uniqueShown = new Map<string, Row>();
+for (const row of shownRows) if (!uniqueShown.has(`${row.platform}|${row.nameAr}`)) uniqueShown.set(`${row.platform}|${row.nameAr}`, row);
+const uniqueSoon = [...uniqueShown.values()].filter((row) => !isAvailableNow(row.platform, row.nameAr));
+const uniqueAvailable = [...uniqueShown.values()].filter((row) => isAvailableNow(row.platform, row.nameAr));
+const execSoon = uniqueSoon.filter((row) => hasCodeExecutor(row.platform, row.nameAr));
+
+const doc: string[] = [];
+doc.push("# Future services («قريبًا»)", "",
+  "INTERNAL. Generated by `scripts/build-services-catalog.ts` from the same data as the public catalog page; do not edit by hand. English labels are the source's and are never shown on the site.", "",
+  "The status of every service comes from ONE constant: `AVAILABLE_NOW_REGISTRY_SLUGS` in `src/lib/servicesAvailability.ts`. To flip a service to «متاح الآن» after a live test, add its registry slug there (one line).", "");
+doc.push("## Counts (computed from the data)", "", "| status | services |", "|---|---|",
+  `| متاح الآن | ${uniqueAvailable.length} |`, `| قريبًا | ${uniqueSoon.length} |`, `| of which have a code executor that was NOT proven live | ${execSoon.length} |`, `| total shown | ${uniqueShown.size} |`, "");
+doc.push("«متاح الآن» today (registry slugs: " + AVAILABLE_NOW_REGISTRY_SLUGS.map((slug) => "`" + slug + "`").join(", ") + "):", "");
+for (const row of uniqueAvailable) doc.push(`- ${row.platform}: ${row.en} [${row.cls}]`);
+doc.push("", "## Prerequisites (from the read-only report of 2026-10-24; every item marked UNKNOWN was not read)", "",
+  "A service needs ALL of these before it can be flipped. Today the generic path exists in outline (live catalog search, plan, quote, generic worker call, generic row reader, gate, settlement) but was never shown on a live service.", "",
+  "| step | state today | what is missing |", "|---|---|---|",
+  "| 1 discovery | partial | the Arabic-to-English catalog query knows 7 platform words, so most platforms are found only if the model issues its own English search; the join from these services to catalog endpoints is UNKNOWN |",
+  "| 2 entry persistence | missing | the live catalog entry is cached 5 minutes in one server instance's memory; plan edit and re-quote cannot see it. The entry (inputs, unit, price, pagination) must be stored in the quote item |",
+  "| 3 input mapping | partial | only the presence of required inputs is checked; no type or enum check; no deterministic extraction of an id, a username or a link outside social platforms; no card that asks for a missing input |",
+  "| 4 row reading | partial | a list of objects is read from common envelopes; a single object only under data, user or profile; unknown fields reach the file as «بيانات إضافية»; answer shape per endpoint UNKNOWN |",
+  "| 5 unit counting | partial | the unit is an accepted row; the gate needs text keys for keyword searches; a date window drops rows with no date; the meaning of one unit per service is UNKNOWN |",
+  "| 6 price basis | wrong scale | the catalog cost is per call but the quote prices per row (overcharges when a call returns many rows); only 8 services have a cost per delivered record; rows per call UNKNOWN |",
+  "| 7 safety | missing | no allow-list or kill switch for live endpoints, no per-endpoint failure tracking, no fake-provider test per input class |", "");
+doc.push("### Risk by kind of service", "", "| kind | groups | main risk |", "|---|---|---|");
+const kindGroups = new Map<string, string[]>();
+for (const [group, kind] of Object.entries(GROUP_KIND)) (kindGroups.get(kind) ?? kindGroups.set(kind, []).get(kind)!).push(group);
+for (const [kind, note] of Object.entries(KIND_NOTE)) doc.push(`| ${note.title} | ${(kindGroups.get(kind) || []).join(", ")} | ${note.risk} |`);
+doc.push("");
+doc.push("## Proposed rollout order", "",
+  "One small live test per service BEFORE it is flipped (owner-approved, a few rows, the cost per delivered record written down; fake provider in every automated test). Nothing below is scheduled.", "",
+  "0. Services with a code executor that was not proven live (listed below as «executor»): one live test each, then flip. No new executor work.",
+  "1. Keyword-search services on text-bearing endpoints: the gate already fits them. Needs steps 1, 2, 3 (query only), 6.",
+  "2. Trending, feeds, rankings and ad libraries with a country or no input: steps 1, 2, 6.",
+  "3. Lists of children of a link (comments, replies, followers, reviews): adds the link and id extraction of step 3.",
+  "4. Lookups of one object by id, url or username: adds the single-object reader of step 4.",
+  "5. Details, statistics and other single objects; professional contact lines beyond the executors above: per-endpoint answer shapes.",
+  "6. AI media generation: decide first whether it belongs on a data platform at all.", "");
+doc.push("## ما يجب قياسه", "",
+  "Before any service is flipped, measure per service (all UNKNOWN today unless stated):", "",
+  "- cost per DELIVERED record in USD: the catalog call price divided by the rows a call really returns, worst source path (only 8 services have this figure today);",
+  "- rows returned per call and the real page ceiling;",
+  "- the share of rows the gate accepts (text-bearing or not);",
+  "- the input classes the customer must supply and how often the chat extracts them correctly;",
+  "- success rate over a handful of calls, and the time per chunk;",
+  "- whether the answer shape is a list, a single object or nested.", "");
+doc.push("## «قريبًا» services by sector and platform", "", `Total: ${uniqueSoon.length}. «executor» = a code executor exists in the registry (not proven live).`, "");
+for (const sectorKey of sectorOrder) {
+  const sectorRows = uniqueSoon.filter((row) => row.sector === sectorKey);
+  if (sectorRows.length === 0) continue;
+  doc.push(`### ${meta.sectors[sectorKey].nameAr} (${sectorRows.length})`, "");
+  const platformsInSector = [...new Set(sectorRows.map((row) => row.platform))];
+  for (const platformKey of platformsInSector) {
+    const list = sectorRows.filter((row) => row.platform === platformKey);
+    doc.push(`#### ${meta.platforms[platformKey].nameAr} (${platformKey}) - ${list.length}`, "");
+    for (const row of list) doc.push(`- ${row.en} [${row.cls}] kind: ${GROUP_KIND[row.group] || "UNKNOWN"}${hasCodeExecutor(row.platform, row.nameAr) ? " - executor" : ""}`);
+    doc.push("");
+  }
+}
+writeFileSync(join(root, "docs/FUTURE_SERVICES.md"), doc.join("\n"));
+// the registry map must only name services that exist in the catalog
+for (const entry of REGISTRY_SERVICE_MAP) if (!uniqueShown.has(`${entry.platform}|${entry.nameAr}`)) throw new Error(`registry map names a service that is not in the catalog: ${entry.id}`);
+
 console.log(JSON.stringify({ sectors: sectors.length, platforms: sectors.reduce((s, x) => s + x.platforms.length, 0), services: sectors.reduce((s, x) => s + x.platforms.reduce((t, p) => t + p.services.length, 0), 0) }));
