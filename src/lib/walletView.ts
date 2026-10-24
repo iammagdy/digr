@@ -66,10 +66,31 @@ export interface WalletMonthStats {
   releasedJobs: number;
 }
 
+/** The business clock of the month: Cairo. A release made at 01:00 on the 1st in Cairo is in that month, whatever the server's own zone is. */
+const BUSINESS_TIME_ZONE = "Africa/Cairo";
+
+/**
+ * The instant the Cairo calendar month of `now` starts (00:00 Cairo time). Read through Intl, so the Cairo offset of that very date (summer or winter)
+ * is used, never a fixed one. The server's own zone (UTC on the hosting) must not decide the boundary: that was the off-by-one of the wallet counter.
+ */
+export function cairoMonthStartMs(now: Date): number {
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: BUSINESS_TIME_ZONE, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" });
+  const wallMs = (ms: number) => {
+    const p: Record<string, string> = {};
+    for (const part of fmt.formatToParts(new Date(ms))) p[part.type] = part.value;
+    return Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+  };
+  const offsetAt = (ms: number) => wallMs(ms) - ms;
+  const cairoNow = new Date(wallMs(now.getTime()));
+  const wallStart = Date.UTC(cairoNow.getUTCFullYear(), cairoNow.getUTCMonth(), 1);
+  const guess = wallStart - offsetAt(now.getTime());
+  return wallStart - offsetAt(guess);
+}
+
 /** Month figures from the ledger. `now` is injected so the month boundary can be tested. */
 export function walletMonthStats(rows: WalletLedgerRow[], now: Date = new Date()): WalletMonthStats {
-  const start = new Date(now); start.setDate(1); start.setHours(0, 0, 0, 0);
-  const inMonth = (r: WalletLedgerRow) => new Date(r.createdAt) >= start;
+  const startMs = cairoMonthStartMs(now);
+  const inMonth = (r: WalletLedgerRow) => new Date(r.createdAt).getTime() >= startMs;
   const byJob = new Map<string, { reserve: number; release: number; charge: number; releaseInMonth: boolean }>();
   for (const r of rows) {
     if (!r.jobId) continue;

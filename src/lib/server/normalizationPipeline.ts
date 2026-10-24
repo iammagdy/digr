@@ -540,6 +540,12 @@ function postKeyOf(row: Record<string, any>): string | null {
 }
 
 /** Gives each comment the number of its post (in order of first appearance, from 1) and removes the platform's own comment id from the row. */
+/** TikTok and X services: their customer files leave the source id column out (see the column set below). */
+export function sourceIdHiddenFor(template: unknown): boolean {
+  const text = String(template ?? "").toLowerCase();
+  return /tiktok/.test(text) || /(?:^|[-_.])x(?:[-_.]|$)|twitter|tweets/.test(text);
+}
+
 function numberPostsAndDropInternalIds(rows: Array<Record<string, any>>): void {
   const numbers = new Map<string, number>();
   for (const row of rows) {
@@ -665,6 +671,8 @@ export function normalizeDataset(
     }
   }
   if (postUnit) for (const key of INTERNAL_ID_KEYS) columnSet.delete(key);
+  // The TikTok and X customer files carry no column of the platform's own source id (a number nobody can use); the stored rows keep it.
+  if (socialKind && sourceIdHiddenFor(meta.template)) columnSet.delete("source_id");
   let columns = Array.from(columnSet);
   if (postUnit && columns.includes(POST_NUMBER_KEY)) {
     columns = columns.filter((key) => key !== POST_NUMBER_KEY);

@@ -835,7 +835,7 @@ async function generateCompanyDataWorkbook(
     const review = wb.addWorksheet("سجلات تحتاج مراجعة", {
       views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
     });
-    const reviewHeaders = ["معرّف السجل", "اسم الشركة", "مجال النشاط كما ورد", "الموقع كما ورد", "سبب المراجعة"];
+    const reviewHeaders = ["معرّف السجل", "اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"];
     // Plain statement first: these rows are outside the delivered data and outside the bill.
     review.mergeCells(1, 1, 1, reviewHeaders.length);
     const notice = review.getCell(1, 1);

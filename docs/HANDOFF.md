@@ -4,6 +4,21 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 00000000. Live-check fixes, batch 1 (branch `claude/live-fixes-batch-1`, from main `c4b5088`)
+
+- «أخرى» on the platform question asks ONE free-text follow-up (`social_platform_other_required`); a name this service does not read gets one honest sentence (`UNSUPPORTED_PLATFORM_AR`), no plan, no hold. Snapchat is named by the platform detector but no service reads it, so the check runs before the platform-missing branch (`src/functions/shared/chatHandler.ts`, `src/lib/socialDiscoveryCard.ts`, `src/lib/consultantCopy.ts`).
+- The data word «داتا» and «بيانات» are request wording, dropped from the topic (`TOPIC_NOISE`, `src/lib/socialTasks.ts`).
+- A page plan's methodology says the posts are read from the page (`src/lib/planMethodSteps.ts`, used by `PlanQuoteCard.tsx`).
+- The review sheet column is «العنوان كما ورد» (it holds addresses).
+- The Facebook keyword card carries one sample line (text only).
+- The admin stats read «completed» and `deliveredUnits` (`src/lib/server/adminJobEvents.ts`).
+- TikTok and X customer files drop the source id column (`sourceIdHiddenFor`, `src/lib/server/normalizationPipeline.ts`).
+- The shortfall sentence states the posts requested and read (`src/lib/server/zeroDeliveryDiagnostic.ts`).
+- The wallet's «this month» starts at Cairo midnight, not the server's (`cairoMonthStartMs`, `src/lib/walletView.ts`).
+- Findings not changed: company review rubric (`src/lib/server/companyRelevanceReview.ts`) and phone normalisers (no digit dropped; `policy.ts` adds a zero to «+20 (0)22…»).
+
+---
+
 ## 0000000. Facebook topic request: no Page question, keyword plan (branch `claude/fb-topic-keyword-routing`, from main `b252666`)
 
 - Evidence: the owner's tester (production, 24 Oct 2026) answered platform, comments, posts and comments per post, then was asked «فيسبوك: ما اسم الصفحة العامة أو رابطها؟» with the sentence «فيسبوك لا يتيح البحث بالموضوع». The explicit sentence went straight to the keyword card.

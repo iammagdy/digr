@@ -326,7 +326,7 @@ describe("worker: the Facebook keyword mission, comment quality", () => {
     expect(sentence).toBeDefined();
     expect(sentence).toContain(`اعتمدنا ${ar(total.posts.adopted)} ${total.posts.adopted > 10 ? "منشورًا" : "منشورات"}`);
     expect(sentence).toContain("قرأنا تعليقات ٥ منشورات");
-    expect(sentence).toContain("ولم تُقرأ تعليقات بقية المنشورات المعتمدة لأنك طلبت ٥ منشورات");
+    expect(sentence).toContain("ولم تُقرأ تعليقات بقية المنشورات المعتمدة؛ طلبت ٥ منشورات، وقرأنا تعليقات ٥ منشورات منها");
     expect(sentence).toContain("ولم يُسلَّم أي تعليق من منشورين منها");
     expect(sentence).toContain("واستُبعد ٢٠ تعليقًا (فارغ أو رابط فقط)");
     expect(sentence).toContain("ولم يُحتسب عليك إلا ما سُلّم");

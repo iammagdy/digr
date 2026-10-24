@@ -14,6 +14,7 @@ export const CLARIFICATION_ANSWER_LABELS: Record<string, string> = {
   social_account_required: "اسم الحساب المطلوب",
   social_topic_required: "موضوع البحث المطلوب",
   social_platform_required: "منصة البحث المطلوبة",
+  social_platform_other_required: "المنصة التي تقصدها",
   social_time_required: "الفترة المطلوبة",
   social_comment_target_required: "مصدر الفيديوهات المطلوب",
   social_channel_required: "القنوات المطلوبة",

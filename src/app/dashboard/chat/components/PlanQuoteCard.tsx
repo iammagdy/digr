@@ -1,5 +1,6 @@
 "use client";
 
+import { pageChannelOfItem, socialFilterStepAr, socialSearchStepAr } from "@/lib/planMethodSteps";
 import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
@@ -172,6 +173,8 @@ export default function PlanQuoteCard({
   const isPeoplePlan = capabilitySlug.includes("people");
   const isCompanyPlan = /compan|b2b/.test(capabilitySlug);
   const isVideoPlan = /video|videos|tiktok|youtube|reels/.test(capabilitySlug);
+  // A plan read from a page (its link or name is the channel): the sentences say the posts come from that page, never a topic search.
+  const pageChannelOfPlan = pageChannelOfItem(primaryItem);
   const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
@@ -437,9 +440,7 @@ export default function PlanQuoteCard({
             <span>{isPeoplePlan
               ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.`
               : isSocialContentPlan
-                ? primaryItem?.params?.trending === true
-                  ? `البحث عن ${displayIndustry} على المنصة المحددة ضمن النطاق ${interpreted.countryAr}.`
-                  : `البحث عن ${isVideoPlan ? "الفيديوهات" : "المحتوى"} المنشور حول «${displayIndustry}» على المنصة المحددة.`
+                ? socialSearchStepAr({ isVideoPlan, trending: primaryItem?.params?.trending === true, displayIndustry, countryAr: interpreted.countryAr, pageChannel: pageChannelOfPlan })
                 : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
           </li>
           <li className="flex items-start gap-2">
@@ -447,7 +448,7 @@ export default function PlanQuoteCard({
             <span>{isPeoplePlan
               ? "تنظيم الأسماء والمسميات الوظيفية والبريد الإلكتروني المهني والهاتف المكتبي عند توافر كل حقل."
               : isSocialContentPlan
-                ? `فرز النتائج حسب صلتها بموضوع «${displayIndustry}» والفترة الزمنية المطلوبة.`
+                ? socialFilterStepAr({ pageChannel: pageChannelOfPlan, displayIndustry })
                 : isCompanyPlan
                   ? "تدقيق الملاءمة ومراجعة الشركات واستبعاد الأنشطة غير المطابقة."
                   : "مراجعة النتائج واستبعاد السجلات غير المرتبطة بموضوع البحث."}</span>
