@@ -431,11 +431,11 @@ describe("worker: the Facebook keyword mission", () => {
     for (const line of lines()) expect(UNRELATED_POSTS.some((post) => line.includes(post.slice(0, 25)))).toBe(false);
   });
 
-  it("COMMENTS TURNED AWAY BY THE GATE ARE COUNTED BY REASON: posts adopted, every comment a bare link or a reaction, nothing delivered, the line says how many and why", async () => {
+  it("COMMENTS TURNED AWAY BY THE GATE ARE COUNTED BY REASON: posts adopted, every comment empty or a bare link, nothing delivered, the line says how many and why", async () => {
     resetDb({ query: FIXTURE_TOPIC, perVideo: 5, videoCount: 6, region: "EG" }, 30);
     const world = facebookKeywordWorld({
       postsAvailable: 60,
-      commentsOf: (n) => Array.from({ length: 10 }, (_, i) => ({ comment_id: `c_${n}_${i}`, text: i % 2 === 0 ? "اطلب الآن واتساب خصم خاص ٥٠٪ https://shop.example.test/x" : "٩٩٩٩٩٩" })),
+      commentsOf: (n) => Array.from({ length: 10 }, (_, i) => ({ comment_id: `c_${n}_${i}`, text: i % 2 === 0 ? "https://shop.example.test/x" : "   " })),
     });
     useSource(withTexts(world, HEALTH_POSTS, UNRELATED_POSTS));
     asked.length = 0;

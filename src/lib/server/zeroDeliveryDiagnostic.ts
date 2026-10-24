@@ -153,7 +153,7 @@ const commentsAr = (n: number): string => (n === 1 ? "تعليق واحد" : n =
 
 /**
  * Why a Facebook keyword job delivered fewer comments than asked, in ONE sentence made only of what was counted: the posts whose comments were read, how many of them
- * returned fewer comments than asked, how many returned enough but fewer were worth keeping, and how many well-wishes were left out. Arabic-Indic digits, no source name,
+ * returned fewer comments than asked, how many returned enough but fewer were kept (empty or link-only comments are the only ones left out). Arabic-Indic digits, no source name,
  * no amount. Null when nothing was counted (the caller then keeps its own sentence).
  */
 export function keywordShortfallReasonAr(d: JobDiagnostic, options: { postsRequested?: number; postsDelivered?: number } = {}): string | null {
@@ -167,12 +167,10 @@ export function keywordShortfallReasonAr(d: JobDiagnostic, options: { postsReque
   if (d.posts.adopted > reads.read && options.postsRequested && options.postsRequested > 0) parts.push(`ولم تُقرأ تعليقات بقية المنشورات المعتمدة لأنك طلبت ${postsAr(options.postsRequested)}`);
   if (reads.sourceShort > 0) parts.push(`${toArabicDigits(reads.sourceShort)} منها أعاد المصدر لها تعليقات أقل من المطلوب${asked ? ` (${toArabicDigits(asked)} لكل منشور)` : ""}`);
   if (reads.sourceMissing > 0) parts.push(`ونقص ما أعاده المصدر ${commentsAr(reads.sourceMissing)} عن المطلوب`);
-  if (reads.filteredShort > 0) parts.push(`${toArabicDigits(reads.filteredShort)} منها لم يكن فيها العدد المطلوب من التعليقات الصالحة بعد استبعاد الروابط وردود الفعل والدعوات`);
+  if (reads.filteredShort > 0) parts.push(`${toArabicDigits(reads.filteredShort)} منها لم يكن فيها العدد المطلوب من التعليقات الصالحة بعد استبعاد التعليقات الفارغة وتعليقات الروابط والمكرر`);
   if (options.postsDelivered !== undefined && reads.read > options.postsDelivered) parts.push(`ولم يُسلَّم أي تعليق من ${postsAr(reads.read - options.postsDelivered)} منها`);
-  const wishes = d.rows.byReason.well_wish ?? 0;
-  const otherExcluded = Math.max(0, d.rows.excluded - wishes);
-  if (wishes > 0) parts.push(`واستُبعد ${commentsAr(wishes)} من الدعاء والمجاملة بلا مضمون`);
-  if (otherExcluded > 0) parts.push(`واستُبعد ${commentsAr(otherExcluded)} لا يتناول موضوعك`);
+  // Comments are delivered as they are: only an empty comment or a link on its own is left out.
+  if (d.rows.excluded > 0) parts.push(`واستُبعد ${commentsAr(d.rows.excluded)} (فارغ أو رابط فقط)`);
   return `${parts.join("؛ ")}؛ ولم يُحتسب عليك إلا ما سُلّم.`;
 }
 

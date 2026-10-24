@@ -33,7 +33,7 @@ import { timeNeededForAnotherCallMs } from "./chunkSizing";
 import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { youtubeRecencyFor } from "../youtubeRecency";
 import { videoEvidence } from "./videoRelevance";
-import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, isGenericComment, isPureWellWish, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
+import { COMMENT_LANGUAGE_LABEL_AR, commentLanguageOf, commentTextOf, facebookCommentDropReason, isGenericComment, isUsableComment, repeatKey, requestWantsArabicComments } from "./commentQuality";
 import { maxPagesForJob } from "./providerCallCaps";
 import { VIDEO_ADOPTED_KEY } from "./videoAdoption";
 import { findProviderNextCursor, hasRecognizedProviderResultShape } from "./providerRows";
@@ -664,8 +664,8 @@ async function runCommentsChunk(
   // would end the job after one old video that was entirely outside the window.
   // A topic search also counts only comments that say something: the others still travel to the worker (which rejects them with its
   // own reason) but never fill the volume.
-  // A paged topic search (the Facebook keyword service) also leaves out pure well-wishes («بالتوفيق والنجاح»): they never fill the volume or a post's share, and the gate rejects them.
-  const countsAsComment = (row: Record<string, any>) => isUsableComment(row) && !isGenericComment(commentTextOf(row)) && !(pagedTopic && isPureWellWish(commentTextOf(row), { topic: typeof params.query === "string" ? params.query : "" }));
+  // The Facebook keyword service (paged) delivers the comments of an adopted post as they are: only an empty comment or a link on its own is left out (the judgment is on the post).
+  const countsAsComment = (row: Record<string, any>) => (pagedTopic ? facebookCommentDropReason(commentTextOf(row)) === null : isUsableComment(row) && !isGenericComment(commentTextOf(row)));
   const postReads = { read: 0, sourceShort: 0, sourceMissing: 0, filteredShort: 0, asked: askedPerVideo };
   const credited = (list: Record<string, any>[]) => countInsideOf(topicSearch ? list.filter(countsAsComment) : list, params);
   const countedRows = () => credited(rows);

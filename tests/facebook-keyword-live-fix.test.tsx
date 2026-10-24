@@ -111,12 +111,12 @@ describe("C: how the relevance gate judges the comments of a Facebook keyword jo
     }
   });
 
-  it("what is not content stays out: an ad, a bare link, a supplication, a two-letter reaction, an empty text", () => {
+  it("OWNER DECISION: only an empty comment and a bare link stay out; an ad text, a supplication and a two-letter reaction are comments and are kept", () => {
     const slug = "social-facebook-keyword-comments";
-    expect(gate(slug, under(HEALTH_POST, "اطلب الآن واتساب خصم خاص ٥٠٪ https://shop.example.test/x")).decision).toBe("no_match");
+    expect(gate(slug, under(HEALTH_POST, "اطلب الآن واتساب خصم خاص ٥٠٪ https://shop.example.test/x")).decision).toBe("match");
     expect(gate(slug, under(HEALTH_POST, "https://shop.example.test/x")).decision).toBe("no_match");
-    expect(gate(slug, under(HEALTH_POST, "اللهم ارحمنا وارحم موتانا")).decision).toBe("no_match");
-    expect(gate(slug, under(HEALTH_POST, "ok")).decision).toBe("no_match");
+    expect(gate(slug, under(HEALTH_POST, "اللهم ارحمنا وارحم موتانا")).decision).toBe("match");
+    expect(gate(slug, under(HEALTH_POST, "ok")).decision).toBe("match");
     expect(gate(slug, under(HEALTH_POST, "")).decision).toBe("no_match");
   });
 
