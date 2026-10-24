@@ -4,7 +4,8 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { getProviderBalanceStatus } from "@/functions/shared/providerSpend";
 import { readRealProviderBalance } from "@/lib/server/realProviderBalance";
 import { getCachedConference, setCachedConference } from "@/lib/server/conferenceCache";
-import { buildConferenceSnapshot, cairoStartOf, MINUTE_MS, MODEL_MAX_PAGES, MODEL_PAGE_SIZE, parseMonthlyBudgetUsd, TOP_SPENDERS_LIMIT, WINDOW_MINUTES, type ConferenceInput, type ConferenceSnapshot } from "@/lib/server/conferenceDashboard";
+import { buildConferenceSnapshot, cairoStartOf, MINUTE_MS, MODEL_MAX_PAGES, MODEL_PAGE_SIZE, parseMonthlyBudgetUsd, TOP_SPENDERS_LIMIT, WINDOW_MINUTES, withoutTestAccounts, type ConferenceInput } from "@/lib/server/conferenceDashboard";
+import { hidesTestAccounts, testAccountIds } from "@/lib/server/adminTestAccounts";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,11 @@ const JOB_ROWS = 500;
 const LEDGER_ROWS = 5000;
 const TOPUP_ROWS = 1000;
 const UNSERVED_ROWS = 500;
+const PROFILE_PAGE = 1000;
+const PROFILE_MAX_ROWS = 20000;
+
+/** The raw reads, before the test-account toggle is applied (so the toggle needs no new read). */
+interface ConferenceRaw { input: ConferenceInput; testIds: Set<string> }
 
 /** One read answer; an error answer is a failed read. */
 function ok<T>(result: { data: T | null; error: unknown; count?: number | null }): { data: T; count: number | null } {
@@ -21,7 +27,7 @@ function ok<T>(result: { data: T | null; error: unknown; count?: number | null }
   return { data: (result.data ?? []) as T, count: result.count ?? null };
 }
 
-async function collect(admin: ReturnType<typeof createAdminClient>, now: number): Promise<ConferenceSnapshot> {
+async function collect(admin: ReturnType<typeof createAdminClient>, now: number): Promise<ConferenceRaw> {
   const notes: string[] = [];
   /** A failing read (an error answer or a throw) turns that section into null with a plain note; the others carry on. */
   const safe = async <T,>(noteAr: string, read: () => Promise<T>): Promise<T | null> => {
@@ -34,9 +40,9 @@ async function collect(admin: ReturnType<typeof createAdminClient>, now: number)
   const monthStart = iso(cairoStartOf(now, "month"));
   const db: any = admin;
 
-  const [signups, messages, jobs, provider, ledger, modelUsage, topups, unserved] = await Promise.all([
+  const [signups, messages, jobs, provider, ledger, modelUsage, topups, unserved, profileRows] = await Promise.all([
     safe("تعذّر قراءة التسجيلات الآن.", async () => {
-      const { data, count } = ok<any[]>(await db.from("profiles").select("created_at", { count: "exact" }).gte("created_at", since24h).order("created_at", { ascending: false }).limit(SIGNUP_ROWS));
+      const { data, count } = ok<any[]>(await db.from("profiles").select("id, created_at", { count: "exact" }).gte("created_at", since24h).order("created_at", { ascending: false }).limit(SIGNUP_ROWS));
       return { rows: data, total24h: count };
     }),
     safe("تعذّر قراءة نشاط المحادثات الآن.", async () =>
@@ -77,15 +83,25 @@ async function collect(admin: ReturnType<typeof createAdminClient>, now: number)
       return { rows, truncated };
     }),
     safe("تعذّر قراءة طلبات الشحن المعلقة الآن.", async () => {
-      const { data, count } = ok<any[]>(await db.from("topups").select("amount_egp", { count: "exact" }).eq("status", "pending").limit(TOPUP_ROWS));
+      const { data, count } = ok<any[]>(await db.from("topups").select("amount_egp, user_id", { count: "exact" }).eq("status", "pending").limit(TOPUP_ROWS));
       return { rows: data, count };
     }),
     safe("تعذّر قراءة الطلبات غير المخدومة الآن.", async () =>
       ok<any[]>(await db.from("capability_requests").select("id, user_id, query, created_at").gte("created_at", since24h).order("created_at", { ascending: false }).limit(UNSERVED_ROWS)).data),
+    // The test accounts are found by e-mail (id and e-mail only), a page at a time.
+    safe("تعذّر قراءة حسابات الاختبار الآن؛ قد تظهر في الأرقام.", async () => {
+      const rows: any[] = [];
+      for (let from = 0; from < PROFILE_MAX_ROWS; from += PROFILE_PAGE) {
+        const { data } = ok<any[]>(await db.from("profiles").select("id, email").range(from, from + PROFILE_PAGE - 1));
+        rows.push(...data);
+        if (data.length < PROFILE_PAGE) break;
+      }
+      return rows;
+    }),
   ]);
 
   const input: ConferenceInput = { now, signups, messages, jobs, provider, ledger, modelUsage, monthlyBudgetUsd: parseMonthlyBudgetUsd(process.env.MODEL_MONTHLY_BUDGET_USD), topups, unserved, notes };
-  return buildConferenceSnapshot(input);
+  return { input, testIds: testAccountIds(profileRows ?? []) };
 }
 
 /** Admin only, read only: the conference dashboard. SELECT only; no write, no model call, no paid provider call. */
@@ -93,13 +109,15 @@ export async function GET(req: NextRequest) {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
   const now = Date.now();
-  let current = getCachedConference(now);
+  let current = getCachedConference<ConferenceRaw>(now);
   if (!current) {
     current = collect(createAdminClient(), now);
     setCachedConference(now, current);
   }
+  const hideTest = hidesTestAccounts(req.nextUrl?.searchParams.get("hideTest"));
   try {
-    return NextResponse.json(await current);
+    const raw = await current;
+    return NextResponse.json(buildConferenceSnapshot(hideTest ? withoutTestAccounts(raw.input, raw.testIds) : raw.input));
   } catch {
     return NextResponse.json({ error: "تعذّر تحميل لوحة المؤتمر الآن." }, { status: 500 });
   }

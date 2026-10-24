@@ -107,7 +107,7 @@ function mapDataToSupabase(data: Record<string, any>, tableId?: string): Record<
   return out;
 }
 
-function createSupabaseTablesAdapter(adminClient: any): any {
+export function createSupabaseTablesAdapter(adminClient: any): any {
   return {
     async listRows({ tableId, queries = [] }: { databaseId?: string; tableId: string; queries?: string[] }) {
       let qb = adminClient.from(tableId).select("*", { count: "exact" });
@@ -125,8 +125,11 @@ function createSupabaseTablesAdapter(adminClient: any): any {
           }
           const vals = Array.isArray(q.values) ? q.values : [];
           if (q.method === "equal" && col) {
-            if (vals.length === 1) qb = qb.eq(col, vals[0]);
-            else if (vals.length > 1) qb = qb.in(col, vals);
+            // `Query.equal(attr, list)` wraps the list in one more array: flatten it, then `eq` for one value and `in` for many.
+            // Without this the list reached `eq` as one value and matched no row (empty costs, zero released points).
+            const flat = vals.flat();
+            if (flat.length === 1) qb = qb.eq(col, flat[0]);
+            else if (flat.length > 1) qb = qb.in(col, flat);
           } else if (q.method === "greaterThanEqual" && col && vals.length) {
             qb = qb.gte(col, vals[0]);
           } else if (q.method === "lessThanEqual" && col && vals.length) {

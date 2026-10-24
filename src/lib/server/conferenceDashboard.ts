@@ -4,7 +4,7 @@
  * for that the platform does not sell. Pure functions over rows the admin route reads (SELECT only): no I/O, no write, no provider call.
  */
 import { formatAr } from "../arabicDigits";
-import { buildOperationsSnapshot, QUEUE_BACKLOG_ALERT, type AlertLine, type JobRowLite } from "./adminOperations";
+import { classifyJob, QUEUE_BACKLOG_ALERT, QUEUED_STUCK_AFTER_MS, type AlertLine, type JobRowLite } from "./adminOperations";
 import { summarizeUnserved, type UnservedRow } from "./unservedRequests";
 
 /** Documented default alert thresholds. The page shows them in its «حدود التنبيه» block. */
@@ -63,9 +63,9 @@ export function cairoStartOf(now: number, unit: "day" | "month"): number {
 export interface ConferenceInput {
   now: number;
   /** Newest signups first is not required; `total24h` is the exact count when the read gave one. */
-  signups: { rows: Array<{ created_at: string | null }>; total24h?: number | null } | null;
+  signups: { rows: Array<{ id?: string | null; created_at: string | null }>; total24h?: number | null } | null;
   messages: Array<{ user_id: string | null; role?: string | null; created_at: string | null }> | null;
-  jobs: JobRowLite[] | null;
+  jobs: Array<JobRowLite & { user_id?: string | null }> | null;
   provider: {
     real: { usd: number; at: number; source: "live" | "last_reading" } | null;
     status: { todaySpendUsd: number; todayCapUsd: number; availableBalanceUsd: number } | null;
@@ -73,7 +73,7 @@ export interface ConferenceInput {
   ledger: { rows: Array<{ user_id: string | null; delta: number | string | null; type?: string | null }>; truncated: boolean; profiles: Array<{ id: string; email?: string | null; sender_name?: string | null }> } | null;
   modelUsage: { rows: Array<{ cost_usd: number | string | null; created_at: string | null }>; truncated: boolean } | null;
   monthlyBudgetUsd: number | null;
-  topups: { rows: Array<{ amount_egp: number | string | null }>; count?: number | null } | null;
+  topups: { rows: Array<{ amount_egp: number | string | null; user_id?: string | null }>; count?: number | null } | null;
   unserved: UnservedRow[] | null;
   notes?: string[];
 }
@@ -83,6 +83,8 @@ export interface ConferenceSnapshot {
   signups: { perMinute: number[]; lastMinute: number; perMinuteAvg10: number; total24h: number } | null;
   activeChats: { users: number; messagesLastMinute: number } | null;
   jobs: { running: number; queued: number; stalled: number } | null;
+  /** The jobs behind the counts above and the «عالقة في الانتظار» count: id, and minutes idle (running, stalled) or waiting (queued). */
+  jobList: { running: JobListItem[]; queued: JobListItem[]; queuedStuck: JobListItem[]; stalled: JobListItem[] } | null;
   provider: {
     real: { usd: number; ageSeconds: number; source: "live" | "last_reading" } | null;
     realLabelAr: string;
@@ -123,6 +125,40 @@ const num = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+export interface JobListItem { id: string; minutes: number }
+
+const dropTestRows = <T extends { user_id?: string | null }>(rows: T[], testIds: ReadonlySet<string>): T[] =>
+  rows.filter((row) => !(row.user_id && testIds.has(row.user_id)));
+
+/**
+ * The same input without the test accounts (the page's «إخفاء حسابات الاختبار» toggle). Pure: it removes rows from what the
+ * builder counts and changes nothing stored. Provider and model spend are not per user and stay as read.
+ */
+export function withoutTestAccounts(input: ConferenceInput, testIds: ReadonlySet<string>): ConferenceInput {
+  if (testIds.size === 0) return input;
+  let signups = input.signups;
+  if (signups) {
+    const rows = signups.rows.filter((row) => !(row.id && testIds.has(row.id)));
+    const removed = signups.rows.length - rows.length;
+    signups = { rows, total24h: signups.total24h == null ? null : Math.max(0, signups.total24h - removed) };
+  }
+  let topups = input.topups;
+  if (topups) {
+    const rows = dropTestRows(topups.rows, testIds);
+    const removed = topups.rows.length - rows.length;
+    topups = { rows, count: topups.count == null ? null : Math.max(0, topups.count - removed) };
+  }
+  return {
+    ...input,
+    signups,
+    messages: input.messages ? dropTestRows(input.messages, testIds) : null,
+    jobs: input.jobs ? dropTestRows(input.jobs, testIds) : null,
+    ledger: input.ledger ? { ...input.ledger, rows: dropTestRows(input.ledger.rows, testIds), profiles: input.ledger.profiles.filter((p) => !testIds.has(p.id)) } : null,
+    topups,
+    unserved: input.unserved ? dropTestRows(input.unserved, testIds) : null,
+  };
+}
+
 export function buildConferenceSnapshot(input: ConferenceInput): ConferenceSnapshot {
   const { now } = input;
   const alerts: AlertLine[] = [];
@@ -154,10 +190,23 @@ export function buildConferenceSnapshot(input: ConferenceInput): ConferenceSnaps
   }
 
   let jobs: ConferenceSnapshot["jobs"] = null;
+  let jobList: ConferenceSnapshot["jobList"] = null;
   if (input.jobs) {
-    const ops = buildOperationsSnapshot({ jobs: input.jobs, now, provider: { todaySpendUsd: 0, todayCapUsd: 1, availableBalanceUsd: 1, creditUsd: 1, warnPercent: PROVIDER_CAP_WARN_PERCENT } });
-    jobs = { running: ops.counts.running, queued: ops.counts.queued, stalled: ops.counts.stalled };
+    // The same rules as the admin jobs list (classifyJob): a queued job waiting long is «عالقة», not running or stalled.
+    const lists: NonNullable<ConferenceSnapshot["jobList"]> = { running: [], queued: [], queuedStuck: [], stalled: [] };
+    for (const job of input.jobs) {
+      const kind = classifyJob(job, now);
+      const idle = Math.max(0, Math.floor((now - (ms(job.updated_at) || ms(job.created_at))) / MINUTE_MS));
+      const waiting = Math.max(0, Math.floor((now - ms(job.created_at)) / MINUTE_MS));
+      if (kind === "running") lists.running.push({ id: job.id, minutes: idle });
+      else if (kind === "stalled") lists.stalled.push({ id: job.id, minutes: idle });
+      else if (kind === "queued") lists.queued.push({ id: job.id, minutes: waiting });
+      else if (kind === "queued_stuck") lists.queuedStuck.push({ id: job.id, minutes: waiting });
+    }
+    jobList = lists;
+    jobs = { running: lists.running.length, queued: lists.queued.length, stalled: lists.stalled.length };
     if (jobs.stalled > 0) alerts.push({ level: "bad", textAr: `${fmt(jobs.stalled)} طلب متوقف دون تقدم؛ افتح صفحة «التشغيل» لترى أيها، وسيُرجع النظام نقاطه تلقائيًا إن بقي متوقفًا.` });
+    if (lists.queuedStuck.length > 0) alerts.push({ level: "warn", textAr: `${fmt(lists.queuedStuck.length)} طلب عالق في الانتظار منذ أكثر من ${fmt(QUEUED_STUCK_AFTER_MS / MINUTE_MS)} دقيقة؛ لم يبدأ ولا يُخصم منه شيء، وتظهر قائمته في لوحة المؤتمر.` });
     if (jobs.queued >= QUEUED_JOBS_WARN) alerts.push({ level: "warn", textAr: `${fmt(jobs.queued)} طلب في الانتظار؛ راقب الطابور، وإن لم ينقص خلال دقائق فتحقق من صفحة «التشغيل».` });
   }
 
@@ -240,5 +289,5 @@ export function buildConferenceSnapshot(input: ConferenceInput): ConferenceSnaps
   const order = { bad: 0, warn: 1, info: 2 } as const;
   alerts.sort((a, b) => order[a.level] - order[b.level]);
 
-  return { checkedAt: new Date(now).toISOString(), signups, activeChats, jobs, provider, topSpenders, modelSpend, pendingTopups, unserved, alerts, notes: input.notes ?? [], thresholds: CONFERENCE_THRESHOLDS };
+  return { checkedAt: new Date(now).toISOString(), signups, activeChats, jobs, jobList, provider, topSpenders, modelSpend, pendingTopups, unserved, alerts, notes: input.notes ?? [], thresholds: CONFERENCE_THRESHOLDS };
 }
