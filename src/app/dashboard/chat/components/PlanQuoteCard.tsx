@@ -341,13 +341,10 @@ export default function PlanQuoteCard({
         {priceVsHoldLineAr({ targetVolumeMax: quote.targetVolumeMax, unitPricePoints: quote.unitPricePoints, expectedPoints, quotedPoints: quote.quotedPoints, severalServices: (quote.items?.length ?? 1) > 1 })}
       </p>
 
-      <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-cap-line">
-        سقف هذا الطلب: حتى {pointsAr(quote.quotedPoints)}، ولا يُخصم أكثر منه، ويُخصم فقط مقابل ما يُسلَّم. {locked ? "" : "تقدر تخفضه من «تعديل الخطة»."}
-      </p>
-
-      <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-hold-line">
-        الحجز المؤقت: {pointsAr(quote.quotedPoints)} تُحجز من رصيدك عند الموافقة، ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي كاملًا{quote.expectedPoints !== undefined ? ` (المتوقع حتى ${pointsAr(quote.expectedPoints)}، ويشمل الحجز احتياطي ١٥٪ على الحجز وحده)` : ""}.
-      </p>
+      {/* The price, the hold and «only what is delivered is charged» are said ONCE (the sentence above); this line only says where the cap can be lowered. */}
+      {!locked ? (
+        <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-edit-hint">تقدر تخفض الحد الأقصى للنقاط من «تعديل الخطة».</p>
+      ) : null}
 
       {(quote.items?.length ?? 1) > 1 && quote.items?.some((item) => Number(item.unitPricePoints) > 0) ? (
         <p className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut" data-testid="plan-unit-price">
@@ -420,7 +417,8 @@ export default function PlanQuoteCard({
       )}
 
       <p data-testid="plan-balance-verdict" className="mb-0 mt-2 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2">
-        {balanceVerdictAr({ balance, quotedPoints: quote.quotedPoints, expectedPoints, targetVolumeMax: quote.targetVolumeMax, downscaledOffer: quote.downscaledOffer })}
+        {/* Enough balance: one short verdict (the hold and the charge are in the sentence above); not enough: the full verdict with the largest size that fits. */}
+        {balance >= quote.quotedPoints ? `يكفي رصيدك (${pointsAr(balance)}).` : balanceVerdictAr({ balance, quotedPoints: quote.quotedPoints, expectedPoints, targetVolumeMax: quote.targetVolumeMax, downscaledOffer: quote.downscaledOffer })}
       </p>
 
       {quote.duration && (
@@ -516,15 +514,14 @@ export default function PlanQuoteCard({
 
       <p data-testid="plan-pdf-line" className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut">{planPdfLineAr(quote.outputFormats)}</p>
 
-      {/* Financial Guarantee & Accounting Clarity Box */}
-      <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
-        <p className="m-0 font-medium text-ink">التكلفة المتوقعة تشمل السجلات المطلوبة. بعد التسليم، يُخصم فقط مقابل السجلات المطابقة التي وصلت إليك.</p>
-        {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("صناع") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول") || quote.summaryAr?.includes("مدير")) && (
-          <p className="m-0 mt-1.5 text-ink2 border-t border-ln pt-1.5">
+      {/* The decision-makers notice (the deduct-on-delivered sentence is not repeated here: it is said once, above). */}
+      {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("صناع") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول") || quote.summaryAr?.includes("مدير")) && (
+        <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
+          <p className="m-0 text-ink2">
             تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع توضيح ما إذا كان كل حقل موجودًا أو غير موجود في السجل. وجود البريد لا يعني التحقق من صحته. لا يُحاسب العميل على أي حقل غير متوفر.
           </p>
-        )}
-      </div>
+        </div>
+      )}
 
       <p className="mb-0 mt-[14px] border-t border-ln pt-3 text-[13px] font-light leading-[1.9] text-ink2">
         المنهجية: {getCustomerMethodologyNote(isPeoplePlan, isCompanyPlan)}
@@ -731,7 +728,7 @@ export default function PlanQuoteCard({
           {quote.exploration && (
             <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">هذه عينة استكشافية من خطتك الأكبر ({formatAr(quote.exploration.fullVolume)} سجل). بعد اكتمالها نقدّر لك الحجم الكامل من أرقامها.</p>
           )}
-          <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">بعد الموافقة يبدأ البحث، ويُخصم فقط مقابل السجلات المطابقة التي تم تسليمها.</p>
+          <p className="mb-0 mt-3 text-xs font-light leading-[1.8] text-fnt">عند الموافقة يُحجز المبلغ المؤقت المذكور أعلاه ويبدأ البحث.</p>
         </>
       )}
     </div>

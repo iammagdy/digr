@@ -208,3 +208,23 @@ export function parseEstimateText(text: string, today: Date = new Date()): Parse
     missingAr,
   };
 }
+
+/** The biggest volume the public estimate accepts (the same bound the estimate route enforces). */
+export const ESTIMATE_MAX_VOLUME = 1_000_000;
+
+/**
+ * What is wrong with the structured form, in plain Arabic, or null when it can be calculated. A volume the route would refuse (it used to come back as
+ * «اكتب عدد السجلات» to someone who had written one) and a missing platform are said before anything is sent.
+ */
+export function estimateFormProblemAr(input: { kind: EstimateKind; platform?: string | null; volume: number; budget: number }): string | null {
+  const social = input.kind === "comments" || input.kind === "posts" || input.kind === "videos";
+  if (social && !input.platform) return "اختر المنصة لنحسب لك التكلفة.";
+  if (input.volume > ESTIMATE_MAX_VOLUME) return `الحد الأقصى للحساب هنا ${toArabicDigits(ESTIMATE_MAX_VOLUME)} سجل؛ اكتب عددًا أقل، أو قسّم طلبك على أكثر من طلب.`;
+  if (!input.volume && !input.budget) return "اكتب العدد المطلوب أو ميزانيتك بالنقاط لنحسب السعر.";
+  return null;
+}
+
+/** The detailed calculator's service for a kind and platform chosen in the estimate form, or null when that pair has no service. */
+export function calculatorSlugForEstimate(kind: EstimateKind, platform?: SocialPlatformId | null): string | null {
+  return estimateSlug(kind, platform ?? null);
+}

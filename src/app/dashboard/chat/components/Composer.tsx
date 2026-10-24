@@ -12,6 +12,9 @@ export interface AttachedFile {
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 
+/** Why the paperclip and the send button rest while a reply is on its way (they were dimmed with no word). */
+export const ATTACH_WAIT_AR = "الإرفاق والإرسال يعودان عند اكتمال الرد الحالي.";
+
 /** 
  * Mobile-friendly research composer with spreadsheet attachment control.
  * Supports XLSX & CSV exclusion lists with client-side validation and removal.
@@ -187,7 +190,8 @@ export default function Composer({
             onClick={() => fileInputRef.current?.click()}
             className="flex h-[46px] w-[46px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-mut hover:text-ac hover:bg-sf2 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
             aria-label="إرفاق ملف استبعاد بصيغة إكسل أو سي إس في"
-            title="إرفاق ملف استبعاد بصيغة إكسل أو سي إس في"
+            aria-describedby={disabled ? "chat-attach-wait" : undefined}
+            title={disabled ? ATTACH_WAIT_AR : "إرفاق ملف استبعاد بصيغة إكسل أو سي إس في"}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -221,6 +225,9 @@ export default function Composer({
             </svg>
           </button>
         </form>
+        {disabled && (
+          <p id="chat-attach-wait" role="status" data-testid="attach-wait" className="m-0 text-center text-[11px] font-light text-mut">{ATTACH_WAIT_AR}</p>
+        )}
         <p className="m-0 mt-1 text-center text-[11px] font-light text-mut">
           يدعم إرفاق ملفات الاستبعاد بصيغتي إكسل وسي إس في حتى ٥ ميجابايت. ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا.
         </p>

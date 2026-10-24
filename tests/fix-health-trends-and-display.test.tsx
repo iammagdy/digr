@@ -36,7 +36,7 @@ describe("1. one count everywhere: the posts and comments of a plan are never su
     expect(countAr(2, "comments")).toBe("تعليقين");
     expect(countAr(4, "posts")).toBe("٤ منشورات");
     expect(countAr(40, "comments")).toBe("٤٠ تعليقًا");
-    expect(planCountLineAr([{ capabilitySlug: "icypeas-companies-search", targetVolumeMax: 5 }])).toBe("حتى ٥ سجل");
+    expect(planCountLineAr([{ capabilitySlug: "icypeas-companies-search", targetVolumeMax: 5 }])).toBe("حتى ٥ سجلات");
     expect(planCountLineAr([{ capabilitySlug: "facebook-post-search", targetVolumeMax: 4 }, { capabilitySlug: "facebook-post-comments", targetVolumeMax: 40 }])).toBe("حتى ٤ منشورات و٤٠ تعليقًا");
     // the comments come last whatever the order the plan was written in
     expect(planCountPartsAr([{ capabilitySlug: "facebook-post-comments", targetVolumeMax: 40 }, { capabilitySlug: "facebook-post-search", targetVolumeMax: 4 }])).toBe("٤ منشورات و٤٠ تعليقًا");
@@ -180,7 +180,9 @@ describe("the quote of the health-trends plan: one size, priced by the one share
     expect(html).not.toMatch(/حتى ٤ سجل/);
     expect(html).toContain("طلبت ٥٠ منشورًا و٥٠٠ تعليقًا");
     expect(html).toContain("وليس رصيدك");
-    expect(html).toContain("الحجز المؤقت: ٥٤٣ نقطة");
+    // the hold is said ONCE, inside the one price-and-hold sentence (the separate «الحجز المؤقت: …» line is gone)
+    expect(html).toContain("والحجز المؤقت ٥٤٣ نقطة هو هذا السعر مع احتياطي ١٥٪ على الحجز وحده");
+    expect(html.split("٥٤٣ نقطة").length - 1).toBe(1);
   });
 });
 
@@ -198,7 +200,7 @@ describe("9. the companies card: the price and the hold are two numbers, said ap
     expect(line).not.toMatch(/[A-Za-z0-9]/);
   });
 
-  it("the card prints that line before the cap and hold lines", () => {
+  it("the card prints that line before the unit price and the balance verdict (the cap and hold lines are merged into it)", () => {
     const html = renderToStaticMarkup(createElement(PlanQuoteCard, {
       quote: {
         quoteId: "q_c5", summaryAr: "٥ شركات", items: [{ capabilitySlug: "icypeas-companies-search", params: { query: { location: { include: ["Egypt"] }, industry: { include: ["Construction"] } } }, targetVolumeMin: 1, targetVolumeMax: 5 }],
@@ -210,7 +212,10 @@ describe("9. the companies card: the price and the hold are two numbers, said ap
     expect(html).toContain('data-testid="plan-price-vs-hold"');
     expect(html).toContain("السعر التقديري ١٦ نقطة");
     expect(html).toContain("والحجز المؤقت ١٩ نقطة هو هذا السعر مع احتياطي ١٥٪ على الحجز وحده");
-    expect(html.indexOf("plan-price-vs-hold")).toBeLessThan(html.indexOf("plan-cap-line"));
+    expect(html.indexOf("plan-price-vs-hold")).toBeLessThan(html.indexOf("plan-unit-price"));
+    expect(html.indexOf("plan-price-vs-hold")).toBeLessThan(html.indexOf("plan-balance-verdict"));
+    expect(html).not.toContain("plan-cap-line");
+    expect(html).not.toContain("plan-hold-line");
   });
 });
 

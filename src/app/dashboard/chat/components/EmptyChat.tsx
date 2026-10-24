@@ -3,38 +3,41 @@
 import { pointsAr } from "@/lib/pointsFormat";
 import Link from "next/link";
 import { MISSION_TEMPLATES } from "@/lib/missionTemplates";
-import { formatAr } from "@/lib/arabicDigits";
 
-interface StarterItem {
+/**
+ * The «أمثلة سريعة» of the empty chat. A click FILLS the input with one of these; it sends nothing. Each one is a COMPLETE request the customer can send
+ * as it is or edit (no square-bracket slots, so nothing half-written can be sent): a sector and a country, an official public account, a public tag.
+ */
+export interface StarterExample {
   label: string;
   prompt: string;
   iconPath: string;
 }
 
-const STARTERS: StarterItem[] = [
+export const STARTER_EXAMPLES: readonly StarterExample[] = [
   {
     label: "شركات ومؤسسات (إكسل)",
-    prompt: "ابحث لي عن ٥ شركات [المقاولات/نوع النشاط] في [مصر/الدولة] في ملف إكسل",
+    prompt: "ابحث لي عن ٥ شركات مقاولات في مصر في ملف إكسل",
     iconPath: "M3 21h18M3 7v14M21 7v14M6 11h4M6 15h4M14 11h4M14 15h4M9 3h6v4H9z",
   },
   {
     label: "حساب عام على تيك توك",
-    prompt: "بيانات حساب [@اسم_الحساب] على تيك توك مع الإحصائيات العامة",
+    prompt: "بيانات حساب @tiktok على تيك توك مع الإحصائيات العامة",
     iconPath: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5",
   },
   {
     label: "منشورات آخر ٣ أشهر",
-    prompt: "منشورات حساب [@اسم_الحساب] خلال آخر [٣ أشهر]",
+    prompt: "منشورات حساب @tiktok خلال آخر ٣ أشهر",
     iconPath: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   },
   {
     label: "وسم أو هاشتاج",
-    prompt: "المنشورات العامة على وسم [#الوسم] خلال آخر شهر",
+    prompt: "المنشورات العامة على وسم #القهوة خلال آخر شهر",
     iconPath: "M9 3L7 21M17 3l-2 18M4 8.5h16M3 15.5h16",
   },
 ];
 
-/** Design «مستخدم جديد»: welcome, four starters with editable placeholders, and the zero-balance note. */
+/** Design «مستخدم جديد»: welcome, four complete editable examples, and the zero-balance note. */
 export default function EmptyChat({
   firstName,
   zeroBalance,
@@ -89,7 +92,7 @@ export default function EmptyChat({
       <div>
         <p className="m-0 mb-2 text-xs font-medium text-mut">أمثلة سريعة</p>
       <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,150px),1fr))" }}>
-        {STARTERS.map((s) => (
+        {STARTER_EXAMPLES.map((s) => (
           <button
             key={s.label}
             type="button"

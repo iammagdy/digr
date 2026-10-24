@@ -5,7 +5,7 @@ import { useState } from "react";
 import { useUser } from "@/hooks/useUser";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { SAMPLE_FILES, SAMPLE_LABEL_AR, samplePreview, type OutputKind } from "@/lib/outputStandard";
-import { computePublicCalculatorQuote } from "@/lib/calculatorPricing";
+import { homePricingExample } from "@/lib/pricingPage";
 import { FAQS, SHEETS, STATEMENTS } from "./data";
 import { Reveal } from "./Reveal";
 import { DEMO_LABEL_AR, PRODUCT_LINES, TEN_SECOND_STORY_AR, buildLandingDemos } from "@/lib/landingDemos";
@@ -115,7 +115,8 @@ export function SampleFile() {
 /** Uses the same catalog unit price and settlement calculation as the quote flow. */
 export function Calculator() {
   const [vol, setVol] = useState(1000);
-  const pts = computePublicCalculatorQuote("icypeas-companies-search", vol, vol).chargedPoints;
+  const example = homePricingExample(vol);
+  const pts = example?.points ?? 0;
   return (
     <section className={`${BORDER_TOP} px-5 py-[110px]`}>
       <div className="mx-auto max-w-[760px] text-center">
@@ -123,12 +124,12 @@ export function Calculator() {
         <Reveal as="p" kind="scale" delay={120} className="mb-0 mt-6 font-extralight leading-none text-ink" style={{ fontSize: "clamp(64px,13cqi,150px)" }}>
           {formatAr(pts)}<span className="text-xl text-mut" style={{ marginInlineStart: 10 }}>نقطة</span>
         </Reveal>
-        <p className="mb-0 mt-3 text-[15px] font-light text-mut">≈ {formatAr(Number((pts * 0.1).toFixed(2)))} ج.م مقابل {formatAr(vol)} سجل</p>
+        <p className="mb-0 mt-3 text-[15px] font-light text-mut">{example ? <>≈ {formatAr(example.egp, 2)} ج.م مقابل {formatAr(vol)} شركة</> : "اختر عددًا لنحسب لك السعر."}</p>
         <input
           className="r6 mt-9"
           type="range" min={100} max={1000} step={50} value={vol}
           onChange={(e) => setVol(Number(e.target.value))}
-          aria-label="عدد السجلات" style={{ direction: "rtl" }}
+          aria-label="عدد الشركات" style={{ direction: "rtl" }}
         />
         <p className="mx-auto mb-0 mt-6 max-w-[480px] text-sm font-light leading-[2] text-mut">
           هذه هي التكلفة المتوقعة للعدد المحدد. يُخصم فقط مقابل السجلات المطابقة التي يتم تسليمها.

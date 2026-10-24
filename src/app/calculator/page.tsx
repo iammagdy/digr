@@ -10,6 +10,7 @@ import {
 } from "@/lib/calculatorPricing";
 
 import MissionEstimator from "@/components/calculator/MissionEstimator";
+import { calculatorSlugForEstimate } from "@/lib/missionEstimate";
 import { decisionMakersPerRequestLineAr, recordsInOneJob } from "@/lib/jobSizing";
 import { capabilitySlugFromPublicId, publicCapabilityId } from "@/lib/publicCapabilityIds";
 import { unitPriceEgpLabelAr, unitPriceLabelAr } from "@/lib/pointsFormat";
@@ -106,7 +107,7 @@ export default function PublicCalculatorPage() {
           </p>
         </section>
 
-        <MissionEstimator />
+        <MissionEstimator onSelectionChange={(kind, platform) => { const slug = calculatorSlugForEstimate(kind, platform); if (slug && options.some((option) => option.slug === slug)) handleSelectCapability(slug); }} />
 
         <h2 className="m-0 mt-2 font-display text-[24px] font-medium text-ink">حاسبة تفصيلية لكل خدمة</h2>
 

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { startNotificationPolling } from "@/lib/notificationPolling";
 import { getSlowFactor } from "@/lib/degradedClient";
+import { actionableUnreadCount } from "@/lib/notificationBadge";
 
 export type NotificationKind = "topup_approved" | "topup_rejected" | "job_done" | "refund" | "welcome";
 
@@ -102,6 +103,8 @@ export function useNotifications(userId: string | undefined) {
   }, [userId, load, checkNewer]);
 
   const unread = items.filter((n) => !n.read).length;
+  /** What the bell's number shows: only unread items that need the customer (see notificationBadge). */
+  const actionableUnread = actionableUnreadCount(items);
 
   const markAllRead = useCallback(async () => {
     if (!userId) return;
@@ -131,5 +134,5 @@ export function useNotifications(userId: string | undefined) {
     }
   }, []);
 
-  return { items, unread, markAllRead, markRead, reload: load };
+  return { items, unread, actionableUnread, markAllRead, markRead, reload: load };
 }

@@ -75,7 +75,7 @@ describe("the panel", () => {
     expect(page).toContain("lg:w-[460px]");
   });
 
-  it("opens by itself for a new plan, never for a plan already in a restored conversation", () => {
+  it("opens by itself for a new plan, and for a plan already in a restored conversation only while that plan still waits for approval (audit point 19)", () => {
     expect(page).toContain("announcedPlanId");
     const effect = page.slice(page.indexOf("const announcedPlanId"), page.indexOf("// Sync canvasOpen and activeJob"));
     expect(effect).toContain("announcedPlanId.current = latestPlanId;");

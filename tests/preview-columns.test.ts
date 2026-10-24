@@ -50,10 +50,11 @@ describe("Task 8: Preview Columns and Landing Copy", () => {
     expect(thMatches).not.toContain("المدينة / المحافظة");
     expect(thMatches).toContain("المدينة");
 
-    // Preferred company order: company_name first, then industry, city, address, website, etc.
-    expect(thMatches[0]).toBe("اسم الشركة / المؤسسة");
-    expect(thMatches[1]).toBe("النشاط / التخصص");
-    expect(thMatches[2]).toBe("المدينة");
+    // The ONE company column list (shared with the workbook): the name first, then the activity, the website, the LinkedIn page, the city.
+    expect(thMatches[0]).toBe("اسم الشركة");
+    expect(thMatches[1]).toBe("مجال النشاط");
+    expect(thMatches[2]).toBe("الموقع الإلكتروني");
+    expect(thMatches[4]).toBe("المدينة");
   });
 
   it("landing page copy has no Latin Excel/PDF/CSV words in SHEETS or STATEMENTS and excludes 'مع دليل المنهجية'", () => {

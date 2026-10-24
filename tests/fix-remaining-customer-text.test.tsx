@@ -86,13 +86,16 @@ describe("D4: the plan card labels the hold", () => {
     locked: false, onStart: () => {}, onSaveEdit: async () => {}, isStarting: false, available: 5000, creditValue: 0.1, onTopupShort: () => {}, onRefresh: async () => {},
   } as any));
 
-  it("«الحجز المؤقت: …» with the hold, what is charged at most and that the rest is released; the cap line is unchanged", () => {
+  it("the hold, what is charged and that only a delivered record is charged are said ONCE (one price, one hold figure, one deduct sentence)", () => {
     const html = card();
-    expect(html).toContain('data-testid="plan-hold-line"');
-    expect(html).toContain("الحجز المؤقت: ٣٤٥ نقطة");
-    expect(html).toContain("ولا يُخصم منها إلا ثمن ما يُسلَّم فعلًا، ويُحرَّر الباقي كاملًا");
-    expect(html).toContain("المتوقع حتى ٣٠٠ نقطة");
-    expect(html).toContain('data-testid="plan-cap-line"');
+    expect(html).toContain('data-testid="plan-price-vs-hold"');
+    expect(html).toContain("السعر التقديري ٣٠٠ نقطة");
+    expect(html).toContain("ويُخصم منه فقط ما يُسلَّم فعلًا");
+    expect(html).toContain("والحجز المؤقت ٣٤٥ نقطة هو هذا السعر مع احتياطي ١٥٪ على الحجز وحده");
+    expect(html.split("٣٤٥ نقطة").length - 1).toBe(1);
+    expect(html.split("يُخصم فقط مقابل").length - 1).toBe(0);
+    expect(html).not.toContain('data-testid="plan-hold-line"');
+    expect(html).not.toContain('data-testid="plan-cap-line"');
     expect(html).not.toMatch(/استرداد|استرجاع/);
   });
 });
