@@ -10,7 +10,7 @@ import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityR
 import { SERVICES_CATALOG, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
 import {
   AVAILABLE_NOW_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR,
-  isAvailableNow, platformAvailableCount, platformsAvailableFirst, serviceStatus, statusCounts,
+  DECISION_MAKERS_LINE_AR, isAvailableNow, platformAvailableCount, platformsAvailableFirst, serviceStatus, statusCounts,
 } from "../src/lib/servicesAvailability";
 import { formatAr } from "../src/lib/arabicDigits";
 
@@ -160,6 +160,21 @@ describe("what a service shows", () => {
     const header = readFileSync("src/components/landing/GlassHeader.tsx", "utf8");
     expect(header).toContain('href="/services"');
     expect(header).toContain("min-[520px]:flex min-[760px]:px-3.5");
+  });
+});
+
+describe("the honest line above the decision-makers block", () => {
+  it("is one constant, shown once, above the block, with no status, price or call to action of its own", () => {
+    expect(DECISION_MAKERS_LINE_AR).toBe("بيانات صناع القرار تُسلَّم الآن بحسب الطلب، وتُعرض خطتها وسعرها قبل أي خصم.");
+    const html = renderToStaticMarkup(createElement(ServicesCatalogPage));
+    expect(html.split(DECISION_MAKERS_LINE_AR).length - 1).toBe(1);
+    expect(html.indexOf(DECISION_MAKERS_LINE_AR)).toBeLessThan(html.indexOf('data-testid="core-b2b"'));
+    const line = /data-testid="decision-makers-line"[^>]*>([^<]*)</.exec(html)?.[1] ?? "";
+    expect(line).toBe(DECISION_MAKERS_LINE_AR);
+    expect(readFileSync("src/app/services/page.tsx", "utf8")).not.toContain("بيانات صناع القرار تُسلَّم");
+    // people search stays «قريبًا»
+    expect(isAvailableNow("people", "البحث عن أشخاص بالدور أو الشركة أو الموقع")).toBe(false);
+    expect(AVAILABLE_NOW_REGISTRY_SLUGS).not.toContain("professional-people-search");
   });
 });
 

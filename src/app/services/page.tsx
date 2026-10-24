@@ -6,7 +6,7 @@ import { publicCapabilityId } from "@/lib/publicCapabilityIds";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "@/functions/shared/decisionMakerPricing";
 import { unitPriceLabelAr } from "@/lib/pointsFormat";
 import { SERVICE_STATUS_LINE_AR, SERVICES_CATALOG, catalogCounts, coreServices } from "@/lib/servicesCatalog";
-import { AVAILABLE_NOW_REGISTRY_SLUGS, SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "@/lib/servicesAvailability";
+import { AVAILABLE_NOW_REGISTRY_SLUGS, DECISION_MAKERS_LINE_AR, SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "@/lib/servicesAvailability";
 import { formatAr } from "@/lib/arabicDigits";
 import { platformsCountAr, sectorsCountAr, servicesCountAr } from "@/lib/servicesCatalogText";
 import { CatalogBrowser } from "@/components/services/CatalogBrowser";
@@ -43,6 +43,8 @@ export default function ServicesCatalogPage() {
           </div>
           <Link href="/register" className="inline-flex min-h-11 items-center rounded-full bg-ac px-5 text-sm text-onac no-underline">{SERVICE_ORDER_CTA_AR}</Link>
         </header>
+
+        <p data-testid="decision-makers-line" className="m-0 -mb-4 text-sm font-semibold leading-7 text-ink">{DECISION_MAKERS_LINE_AR}</p>
 
         <section data-testid="core-b2b" aria-labelledby="core-title" className="flex flex-col gap-4 rounded-[24px] border border-ln2 bg-sf p-5 min-[760px]:p-7">
           <div>

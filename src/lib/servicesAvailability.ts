@@ -17,6 +17,9 @@ export const SERVICE_SOON_LINE_AR = "ستُضاف تدريجيًا";
 /** The call to action of a «متاح الآن» service. */
 export const SERVICE_ORDER_CTA_AR = "ابدأ طلبك";
 
+/** The one honest line above the decision-makers block (page and landing page). It changes no status, price or call to action. */
+export const DECISION_MAKERS_LINE_AR = "بيانات صناع القرار تُسلَّم الآن بحسب الطلب، وتُعرض خطتها وسعرها قبل أي خصم.";
+
 export type ServiceStatus = "available" | "soon";
 
 /**
