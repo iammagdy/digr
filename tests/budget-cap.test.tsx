@@ -77,18 +77,21 @@ describe("the cap on the plan", () => {
   };
   const render = (locked = false) => renderToStaticMarkup(createElement(PlanQuoteCard, { quote, locked, onStart: () => {}, onSaveEdit: async () => {}, isStarting: false, available: 5000, creditValue: 0.1, onTopupShort: () => {}, onRefresh: async () => {} } as any));
 
-  it("states the plan's cap, from the quote's own reserve, and that only what is delivered is charged", () => {
+  it("states the plan's hold (its cap), from the quote's own reserve, and that only what is delivered is charged; the way to lower it is in the editor", () => {
     const html = render();
-    expect(html).toContain('data-testid="plan-cap-line"');
-    expect(html).toContain("سقف هذا الطلب: حتى ٥٩٠ نقطة");
-    expect(html).toContain("ويُخصم فقط مقابل ما يُسلَّم");
+    expect(html).toContain('data-testid="plan-price-vs-hold"');
+    expect(html).toContain("والحجز المؤقت ٥٩٠ نقطة هو هذا السعر مع احتياطي ١٥٪ على الحجز وحده");
+    expect(html).toContain("ويُخصم منه فقط ما يُسلَّم فعلًا");
+    expect(html).toContain('data-testid="plan-edit-hint"');
+    expect(html).toContain("تقدر تخفض الحد الأقصى للنقاط من «تعديل الخطة»");
     expect(html).toContain("تعديل الخطة");
   });
 
-  it("an approved plan states its cap and offers no change", () => {
+  it("an approved plan states its hold and offers no change", () => {
     const html = render(true);
-    expect(html).toContain("سقف هذا الطلب: حتى ٥٩٠ نقطة");
-    expect(html).not.toContain("تقدر تخفضه");
+    expect(html).toContain("والحجز المؤقت ٥٩٠ نقطة هو هذا السعر");
+    expect(html).not.toContain("تقدر تخفض");
+    expect(html).not.toContain('data-testid="plan-edit-hint"');
   });
 
   it("the edit form has the optional cap field, sent with the edit", () => {

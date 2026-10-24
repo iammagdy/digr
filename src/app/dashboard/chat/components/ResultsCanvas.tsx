@@ -9,7 +9,10 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { relativeDateDisplay } from "@/lib/relativeDateDisplay";
 import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import type { LivePreviewSample } from "@/lib/liveJobView";
-import { customerResultColumnLabel, ensurePostLinkColumn, previewColumns } from "@/lib/customerResultColumns";
+import { customerResultColumnLabel, emptyPromisedFieldTitles, ensurePostLinkColumn, orderPreviewColumns, previewColumns, splitEmptyColumns } from "@/lib/customerResultColumns";
+import { COMPANY_SCREEN_ORDER, companyColumnTitleAr } from "@/lib/companyColumns";
+import { formatPhoneDisplay } from "@/lib/phoneDisplay";
+import { industryLabelForCell } from "@/lib/industryLabels";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
 
@@ -44,6 +47,8 @@ interface ResultsCanvasProps {
   methodologyPurchased?: boolean;
   /** The approved plan, read-only: the «الخطة» tab. */
   planNode?: React.ReactNode;
+  /** The contact fields the approved plan promised (e.g. work_email, phone): the table says so when one came back empty in every row. */
+  promisedContactFields?: string[];
   onCloseMobile: () => void;
   onClose?: () => void;
   review?: ResultReview | null;
@@ -149,6 +154,7 @@ export default function ResultsCanvas({
   artifactEditing,
   onArtifactEdit,
   onUndoVersion,
+  promisedContactFields = [],
 }: ResultsCanvasProps) {
   const [tab, setTab] = useState<"terminal" | "table" | "pdf" | "notes" | "files" | "plan">(
     jobStatus === "running" || jobStatus === "queued" || records.length === 0 ? "terminal" : "table"
@@ -171,16 +177,8 @@ export default function ResultsCanvas({
     Object.values(record).some((value) => String(value ?? "").toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()))
   );
   const isCompanyDataset = records.some((record) => record.company_name);
-  const COMPANY_PREFERRED = [
-    "company_name",
-    "industry",
-    "city",
-    "address",
-    "website",
-    "linkedin_url",
-    "phone",
-    "work_email",
-  ];
+  // The same order the workbook uses (the one shared company column list).
+  const COMPANY_PREFERRED = COMPANY_SCREEN_ORDER;
 
   const hasDescription = records.some(
     (record) => record.description !== undefined && record.description !== null && record.description !== ""
@@ -223,14 +221,17 @@ export default function ResultsCanvas({
     orderedColumns = candidateColumns;
   }
 
+  // One title per column: a company column reads the shared company list (the workbook's own titles), any other the screen's labels.
+  const columnTitle = (key: string) => (isCompanyDataset ? companyColumnTitleAr(key) : undefined) || LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key, profile?.postUnit === true);
   const tableColumns = ensurePostLinkColumn(previewColumns(orderedColumns, isCompanyDataset), orderedColumns, profile?.sourcePlatform).filter((key, index, shown) => {
-    const label = LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key, profile?.postUnit === true);
-    return (
-      shown.findIndex(
-        (candidate) => (LEGACY_COLUMN_LABELS[candidate] || customerResultColumnLabel(candidate, profile?.postUnit === true)) === label
-      ) === index
-    );
+    const label = columnTitle(key);
+    return shown.findIndex((candidate) => columnTitle(candidate) === label) === index;
   });
+  // Useful columns first, availability columns last, and the columns that are empty in every row hidden (with a line that says which, and a switch).
+  const [showEmptyColumns, setShowEmptyColumns] = useState(false);
+  const { shown: nonEmptyColumns, empty: emptyColumns } = splitEmptyColumns(records, orderPreviewColumns(tableColumns));
+  const visibleColumns = showEmptyColumns ? orderPreviewColumns(tableColumns) : nonEmptyColumns;
+  const missingPromised = emptyPromisedFieldTitles(records, promisedContactFields);
   // A request that ended with no delivered record has no file to offer (failed, cancelled, or finished with nothing): zero files, said once.
   const deliveredCount = records.length > 0 ? records.length : rowsCollected ?? 0;
   const finishedEmpty = (jobStatus === "cancelled" || (jobStatus === "done" && (records.length > 0 || rowsCollected !== undefined))) && deliveredCount === 0;
@@ -414,6 +415,12 @@ export default function ResultsCanvas({
               aria-label="بحث داخل السجلات"
             />
 
+            {missingPromised.length > 0 && (
+              <p data-testid="promised-empty-notice" role="status" className="m-0 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs leading-6 text-amber-950">
+                الحقول التي طلبتها ولم يرجع منها شيء في أي سجل: {missingPromised.join("، ")}. لا يُحتسب عليك سعر حقل لم يُرجعه المصدر.
+              </p>
+            )}
+
             {records.length === 0 ? (
               <EmptyState
                 title={jobId ? "تفاصيل السجلات غير متاحة هنا" : "لا توجد بيانات بعد"}
@@ -421,22 +428,24 @@ export default function ResultsCanvas({
               />
             ) : (
               <div className="overflow-hidden rounded-[20px] border border-sand-200">
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="جدول البيانات: مرّر أفقيًا لرؤية باقي الأعمدة">
                   <table className="w-full text-right text-xs">
                     <thead>
                       <tr className="border-b border-sand-200 bg-sand-100/80">
-                        {tableColumns.map((column) => (
-                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{LEGACY_COLUMN_LABELS[column] || customerResultColumnLabel(column, profile?.postUnit === true)}</th>
+                        {visibleColumns.map((column) => (
+                          <th key={column} scope="col" className="whitespace-nowrap px-3 py-2.5 font-bold text-sand-700">{columnTitle(column)}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-sand-100 bg-sf">
                       {filteredRecords.map((r, idx) => (
                         <tr key={String(r.id ?? idx)} className="transition-colors hover:bg-sand-50/70">
-                          {tableColumns.map((column) => {
-                            const value = column === "headcount" && Number(r[column]) === 0 ? "غير متاح" : r[column];
+                          {visibleColumns.map((column) => {
+                            const raw = column === "headcount" && Number(r[column]) === 0 ? "غير متاح" : r[column];
+                            // A classification is read in Arabic and a phone is written one way (the workbook's way), left to right.
+                            const value = isCompanyDataset && column === "industry" && raw ? industryLabelForCell(raw) : column === "phone" && raw ? formatPhoneDisplay(raw) : raw;
                             return (
-                              <td key={column} dir={column === "username" ? "ltr" : undefined} className={`min-w-28 max-w-64 whitespace-normal break-words px-3 py-2.5 align-top leading-6 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
+                              <td key={column} dir={column === "username" || column === "phone" ? "ltr" : undefined} className={`min-w-28 max-w-64 whitespace-normal break-words px-3 py-2.5 align-top leading-6 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
                                 {formatCell(value)}
                               </td>
                             );
@@ -446,6 +455,13 @@ export default function ResultsCanvas({
                     </tbody>
                   </table>
                 </div>
+                {visibleColumns.length > 4 && <p data-testid="table-scroll-hint" className="m-0 border-t border-sand-100 bg-sand-50/60 px-3 py-1.5 text-[11px] text-sand-500">مرّر الجدول جانبًا لرؤية باقي الأعمدة.</p>}
+                {emptyColumns.length > 0 && (
+                  <p data-testid="empty-columns-line" className="m-0 flex flex-wrap items-center justify-between gap-2 border-t border-sand-100 bg-sand-50/60 px-3 py-2 text-[11px] text-sand-600">
+                    <span>{showEmptyColumns ? "الأعمدة الفارغة ظاهرة" : `أعمدة فارغة في كل السجلات ومخفية: ${emptyColumns.map(columnTitle).join("، ")}`}</span>
+                    <button type="button" onClick={() => setShowEmptyColumns((value) => !value)} className="min-h-11 cursor-pointer border-0 bg-transparent px-2 text-[11px] font-semibold text-goldT">{showEmptyColumns ? "إخفاء الأعمدة الفارغة" : "إظهار الأعمدة الفارغة"}</button>
+                  </p>
+                )}
                 <p className="tnum border-t border-sand-100 bg-sand-50/60 px-3 py-2 text-xs text-sand-500">
                   عرض {formatNumber(filteredRecords.length)} من أصل {formatNumber(records.length)} سجل
                 </p>

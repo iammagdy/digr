@@ -152,7 +152,7 @@ export default function SettingsPage() {
   return (
     <div data-screen-label="Settings" className="flex-1">
       <div className="mx-auto flex max-w-[720px] flex-col gap-3.5 px-[18px] pb-16 pt-[22px]">
-        <h2 className="m-0 mb-1 font-display text-[40px] font-medium leading-[1.1] text-ink">الإعدادات</h2>
+        <h1 className="m-0 mb-1 font-display text-[40px] font-medium leading-[1.1] text-ink">الإعدادات</h1>
 
         <section className={SECTION}>
           <h3 className="m-0 text-[15px] font-semibold text-ink">الملف الشخصي</h3>

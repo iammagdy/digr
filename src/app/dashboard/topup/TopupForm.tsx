@@ -8,6 +8,7 @@ import { formatAr } from "@/lib/arabicDigits";
 import { compressReceipt } from "@/lib/receiptImage";
 import { TOPUP_PRESETS_EGP } from "@/lib/pricing";
 import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
+import { topupReviewSentenceAr } from "@/lib/topupConfig";
 import type { TopupRecord } from "./types";
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
@@ -24,6 +25,8 @@ export default function TopupForm({
   onSubmitted,
   pendingCount,
   maxPending,
+  reviewTimeAr,
+  paymentLabelAr,
 }: {
   amount: number;
   onAmount: (n: number) => void;
@@ -34,6 +37,10 @@ export default function TopupForm({
   onSubmitted: (t: TopupRecord) => void;
   pendingCount: number;
   maxPending: number;
+  /** The review time from the public settings, when the owner set one. */
+  reviewTimeAr?: string | null;
+  /** The label above the payment address, when the owner set one in the public settings. */
+  paymentLabelAr?: string | null;
   existingRefs?: string[];
 }) {
   const { user } = useUser();
@@ -171,7 +178,7 @@ export default function TopupForm({
 
       <div className="flex items-center justify-between gap-2.5 rounded-[20px] bg-sf2 px-[18px] py-3.5">
         <div className="min-w-0">
-          <p className="m-0 text-[11px] font-light text-fnt">عنوان الدفع اللحظي · منصة ديجر</p>
+          <p className="m-0 text-[11px] font-light text-fnt">{paymentLabelAr || "عنوان الدفع اللحظي · منصة ديجر"}</p>
           {loadingIpa ? (
             <p className="mb-0 mt-1 animate-pulse text-sm text-mut">جاري تحميل بيانات الدفع...</p>
           ) : ipa ? (
@@ -236,8 +243,8 @@ export default function TopupForm({
       >
         {sending ? "جارٍ الإرسال…" : `إرسال طلب شحن ${pointsAr(points)}`}
       </button>
-      <p className="m-0 text-center text-xs font-light text-fnt">
-        بعد التحويل، يراجع فريق الإدارة صورة الإيصال ويعتمد الرصيد في محفظتك فور التحقق.
+      <p data-testid="topup-review-time" className="m-0 text-center text-xs font-light text-fnt">
+        {topupReviewSentenceAr(reviewTimeAr)}
       </p>
     </div>
   );

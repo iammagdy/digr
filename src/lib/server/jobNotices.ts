@@ -2,6 +2,7 @@ import { pointsAr } from "../pointsFormat";
 import { toArabicDigits } from "../arabicDigits";
 import type { DriverMode } from "../driverMode";
 import { STALLED_LINE_AR } from "../jobStall";
+import { PARTIAL_SENTENCE_AR, deliveredOfRequestedAr } from "../jobs/requestStatus";
 import { getRecipient, sendPlatformEmail } from "./sendPlatformEmail";
 
 /**
@@ -100,15 +101,15 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
     const body = `تم استخراج ${arCount(facts.delivered)} عنصر بنجاح. يمكنك الآن مراجعة وتحميل النتائج.`;
     return { kind: "completed", title: "اكتمل طلب استخراج البيانات بنجاح", body, link: "/dashboard/jobs", email: null };
   }
-  const lead = `اكتمل طلبك جزئيًا: وصلك ${arCount(facts.delivered)} من ${arCount(facts.requested)} مطلوب، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.`;
+  const lead = `${PARTIAL_SENTENCE_AR}: ${deliveredOfRequestedAr(facts.delivered, facts.requested)}، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.`;
   const detail1 = `خُصم ${pointsAr(facts.chargedPoints, arCount)} مقابل ما سُلّم فقط.`;
   const detail2 = facts.refundedPoints > 0 ? `وعادت ${pointsAr(facts.refundedPoints, arCount)} إلى رصيدك.` : "";
   return {
     kind: "partial",
-    title: "اكتمل طلبك جزئيًا",
+    title: PARTIAL_SENTENCE_AR,
     body: `${lead} ${detail1}${detail2 ? ` ${detail2}` : ""}`,
     link: "/dashboard/jobs",
-    email: { subject: "اكتمل طلبك جزئيًا", heading: "اكتمل طلبك جزئيًا", lead, detail1, detail2, buttonLabel: "تحميل الملفات" },
+    email: { subject: PARTIAL_SENTENCE_AR, heading: PARTIAL_SENTENCE_AR, lead, detail1, detail2, buttonLabel: "تحميل الملفات" },
   };
 }
 

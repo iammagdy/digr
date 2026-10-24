@@ -63,5 +63,6 @@ export function planCountLineAr(items: ReadonlyArray<CountedPlanItem> | undefine
   if (list.length > 1) return `حتى ${planCountPartsAr(list)}`;
   const only = list[0];
   const total = Number(only?.targetVolumeMax) || Number(fallbackTotal) || 1;
-  return `حتى ${toArabicDigits(total)} سجل`;
+  // «سجل» after a number takes its right form: «سجل واحد», «سجلين», «٥ سجلات»; from eleven on it stays «سجل» («١٠٠ سجل»).
+  return `حتى ${total >= 11 ? `${toArabicDigits(total)} سجل` : countAr(total, "records")}`;
 }

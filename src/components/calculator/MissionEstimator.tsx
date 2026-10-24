@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { FAILURE_STATE_AR } from "@/lib/publicCopy";
 import { decisionMakersPerRequestLineAr } from "@/lib/jobSizing";
-import type { EstimateKind, EstimateResult } from "@/lib/missionEstimate";
+import { estimateFormProblemAr, type EstimateKind, type EstimateResult } from "@/lib/missionEstimate";
+import type { SocialPlatformId } from "@/lib/socialTasks";
 import { unitPriceLabelAr } from "@/lib/pointsFormat";
 
 /**
@@ -39,7 +40,7 @@ type Answer = {
 
 const field = "min-h-12 rounded-[14px] border border-ln2 bg-bg px-3.5 text-sm text-ink outline-none";
 
-export default function MissionEstimator() {
+export default function MissionEstimator({ onSelectionChange }: { /** Called when the customer picks a kind or a platform, so the detailed calculator below follows it. */ onSelectionChange?: (kind: EstimateKind, platform: SocialPlatformId | null) => void } = {}) {
   const [text, setText] = useState("");
   const [kind, setKind] = useState<EstimateKind>("comments");
   const [platform, setPlatform] = useState("youtube");
@@ -50,6 +51,7 @@ export default function MissionEstimator() {
   const [busy, setBusy] = useState(false);
 
   const social = kind === "comments" || kind === "posts" || kind === "videos";
+  const [touched, setTouched] = useState(false);
 
   async function submit(body: Record<string, unknown>) {
     setBusy(true);
@@ -73,6 +75,20 @@ export default function MissionEstimator() {
 
   const toNumber = (value: string) => Number(value.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[^\d]/g, "")) || 0;
   const result = answer?.result ?? null;
+  const formProblem = estimateFormProblemAr({ kind, platform: social ? platform : "n/a", volume: toNumber(volume), budget: toNumber(budget) });
+
+  // The form always answers: after a change (a pause of a third of a second) it shows the price, or says in words what is missing. Nothing is deducted by it.
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
+  useEffect(() => {
+    if (!touched) return;
+    if (formProblem) { setAnswer(null); setError(null); return; }
+    const timer = setTimeout(() => {
+      void submitRef.current({ kind, platform: social ? platform : undefined, volume: toNumber(volume) || undefined, budgetPoints: toNumber(budget) || undefined, openEnded: false });
+    }, 350);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [touched, kind, platform, volume, budget, formProblem]);
 
   return (
     <section data-testid="mission-estimator" className="flex flex-col gap-5 rounded-[22px] border border-ln bg-sf p-6">
@@ -102,35 +118,43 @@ export default function MissionEstimator() {
         className="grid grid-cols-1 gap-3 border-t border-ln pt-5 min-[720px]:grid-cols-2"
         onSubmit={(event) => {
           event.preventDefault();
-          void submit({ kind, platform: social ? platform : undefined, volume: toNumber(volume) || undefined, budgetPoints: toNumber(budget) || undefined, openEnded: !toNumber(volume) && !toNumber(budget) });
+          setTouched(true);
+          if (formProblem) { setAnswer(null); setError(formProblem); return; }
+          void submit({ kind, platform: social ? platform : undefined, volume: toNumber(volume) || undefined, budgetPoints: toNumber(budget) || undefined, openEnded: false });
         }}
       >
         <div className="flex flex-col gap-2">
           <label htmlFor="estimate-kind" className="text-sm font-medium text-ink">نوع البيانات</label>
-          <select id="estimate-kind" value={kind} onChange={(event) => setKind(event.target.value as EstimateKind)} className={field}>
+          <select id="estimate-kind" value={kind} onChange={(event) => { const next = event.target.value as EstimateKind; setKind(next); setTouched(true); onSelectionChange?.(next, next === "comments" || next === "posts" || next === "videos" ? (platform as SocialPlatformId) : null); }} className={field}>
             {KINDS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
         </div>
-        {social ? (
-          <div className="flex flex-col gap-2">
-            <label htmlFor="estimate-platform" className="text-sm font-medium text-ink">المنصة</label>
-            <select id="estimate-platform" value={platform} onChange={(event) => setPlatform(event.target.value)} className={field}>
-              {PLATFORMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-            </select>
-          </div>
-        ) : null}
+        {/* The platform field is always there: for companies and decision makers it rests (it does not apply) instead of disappearing. */}
+        <div className="flex flex-col gap-2" data-testid="estimate-platform-field">
+          <label htmlFor="estimate-platform" className="text-sm font-medium text-ink">المنصة</label>
+          <select
+            id="estimate-platform" value={social ? platform : ""} disabled={!social}
+            onChange={(event) => { setPlatform(event.target.value); setTouched(true); onSelectionChange?.(kind, event.target.value as SocialPlatformId); }}
+            className={`${field} disabled:opacity-60`}
+          >
+            {!social && <option value="">لا تنطبق على هذا النوع</option>}
+            {PLATFORMS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+          </select>
+        </div>
         <div className="flex flex-col gap-2">
           <label htmlFor="estimate-volume" className="text-sm font-medium text-ink">العدد المطلوب</label>
-          <input id="estimate-volume" inputMode="numeric" value={volume} onChange={(event) => setVolume(event.target.value)} placeholder="مثال: ٥٠٠" className={field} />
+          <input id="estimate-volume" inputMode="numeric" value={volume} onChange={(event) => { setVolume(event.target.value); setTouched(true); }} placeholder="مثال: ٥٠٠" className={field} />
         </div>
         <div className="flex flex-col gap-2">
           <label htmlFor="estimate-budget" className="text-sm font-medium text-ink">أو ميزانيتك بالنقاط (اختياري)</label>
-          <input id="estimate-budget" inputMode="numeric" value={budget} onChange={(event) => setBudget(event.target.value)} placeholder="مثال: ٤٠٠" className={field} />
+          <input id="estimate-budget" inputMode="numeric" value={budget} onChange={(event) => { setBudget(event.target.value); setTouched(true); }} placeholder="مثال: ٤٠٠" className={field} />
         </div>
         <div className="min-[720px]:col-span-2">
           <button type="submit" disabled={busy} className="min-h-11 rounded-full border border-ln2 bg-bg px-5 text-sm text-ink disabled:opacity-50">احسب من الخيارات</button>
         </div>
       </form>
+
+      {touched && formProblem && !error && !answer ? <p role="status" data-testid="estimate-problem" className="m-0 rounded-[14px] border border-ln bg-bg p-4 text-sm text-ink">{formProblem}</p> : null}
 
       {error ? <p role="alert" className="m-0 rounded-[14px] border border-ln bg-bg p-4 text-sm text-ink">{error}</p> : null}
 

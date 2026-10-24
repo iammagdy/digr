@@ -57,6 +57,8 @@ export default function WalletPage() {
   const [loadingIpa, setLoadingIpa] = useState(!isIpaAvailable(ipaFromEnv));
   const [ipaLoadFailed, setIpaLoadFailed] = useState(false);
   const [maxPending, setMaxPending] = useState(3);
+  const [reviewTimeAr, setReviewTimeAr] = useState<string | null>(null);
+  const [paymentLabelAr, setPaymentLabelAr] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
   const returnTo = useRef("/dashboard/chat");
 
@@ -85,9 +87,11 @@ export default function WalletPage() {
         .then(({ data }) => {
           if (!active) return;
           setIpaLoadFailed(false);
-          const d = (data?.value || {}) as { ipa?: string; maxPendingTopups?: number };
+          const d = (data?.value || {}) as { ipa?: string; maxPendingTopups?: number; reviewTimeAr?: string; paymentLabelAr?: string };
           if (isIpaAvailable(d.ipa)) setIpa(d.ipa!.trim());
           if (Number.isInteger(d.maxPendingTopups) && d.maxPendingTopups! > 0) setMaxPending(d.maxPendingTopups!);
+          if (typeof d.reviewTimeAr === "string" && d.reviewTimeAr.trim()) setReviewTimeAr(d.reviewTimeAr.trim());
+          if (typeof d.paymentLabelAr === "string" && d.paymentLabelAr.trim()) setPaymentLabelAr(d.paymentLabelAr.trim().slice(0, 80));
         })
         .catch(() => { if (active) setIpaLoadFailed(true); })
         .finally(() => {
@@ -256,7 +260,7 @@ export default function WalletPage() {
       <div className="mx-auto max-w-[720px] px-5 pb-16 pt-6">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="m-0 font-display text-4xl font-medium leading-[1.1] text-ink">المحفظة</h2>
+            <h1 className="m-0 font-display text-4xl font-medium leading-[1.1] text-ink">المحفظة</h1>
             <p className="mb-0 mt-1 text-[13px] font-light text-mut">النقطة الواحدة = {formatAr(creditValue, 2)} ج.م · تدفع على السجلات المسلَّمة فقط</p>
           </div>
           <button type="button" onClick={scrollToForm} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-4 text-[13px] text-onac">+ شحن الرصيد</button>
@@ -326,6 +330,8 @@ export default function WalletPage() {
             ipaLoadFailed={ipaLoadFailed}
             pendingCount={pendingCount}
             maxPending={maxPending}
+            reviewTimeAr={reviewTimeAr}
+            paymentLabelAr={paymentLabelAr}
             onSubmitted={(t) => { setSubmitted(t); setTopups((prev) => [t, ...prev.filter((x) => x.$id !== t.$id)]); setTimeout(() => document.querySelector("[data-topup-card]")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}
           />
         ) : (

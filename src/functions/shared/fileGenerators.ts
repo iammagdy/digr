@@ -1,4 +1,6 @@
 import PDFDocument from "pdfkit";
+import { COMPANY_COLUMNS } from "../../lib/companyColumns";
+import { formatPhoneDisplay } from "../../lib/phoneDisplay";
 import ExcelJS from "exceljs";
 import { POSTS_SHEET_NAME_AR, POST_COMMENTS_DELIVERED_TITLE_AR, POST_DETAIL_KEYS, POST_NUMBER_KEY, POST_NUMBER_TITLE_AR, POST_COLUMN_TITLES_AR } from "../../lib/facebookKeywordService";
 import { PassThrough } from "node:stream";
@@ -723,11 +725,8 @@ async function generateCompanyDataWorkbook(
   const ws = wb.addWorksheet("بيانات الشركات", {
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
   });
-  const headers = [
-    "معرّف السجل", "اسم الشركة", "مجال النشاط", "الموقع الإلكتروني",
-    "صفحة لينكد إن", "المدينة", "العنوان", "الهاتف التجاري", "البريد المهني",
-    "حالة تحقق الهاتف", "حالة تحقق البريد المهني",
-  ];
+  // The titles, the order and the widths come from the ONE company column list the results screen reads too.
+  const headers = COMPANY_COLUMNS.map((column) => column.titleAr);
   const header = ws.addRow(headers);
   header.font = { name: "Calibri", size: 11, bold: true, color: { argb: COLOR_WHITE } };
   header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
@@ -756,7 +755,7 @@ async function generateCompanyDataWorkbook(
       /^https?:\/\//i.test(String(linkedin)) ? workbookHyperlink(linkedin) : "غير متاح",
       city,
       localizeAddressAr(rawAddress),
-      cleanCellText(r.phone || r.phone_number || r.business_phone),
+      (() => { const phone = cleanCellText(r.phone || r.phone_number || r.business_phone); return phone === "غير متاح" ? phone : formatPhoneDisplay(phone); })(),
       cleanCellText(r.work_email || r.workEmail || r.email),
       arabicVerificationStatus(
         r.phone_verification_status,
@@ -780,11 +779,7 @@ async function generateCompanyDataWorkbook(
     });
   });
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rows.length + 1), column: headers.length } };
-  ws.columns = [
-    { width: 22 }, { width: 36 }, { width: 32 }, { width: 38 },
-    { width: 38 }, { width: 22 }, { width: 44 }, { width: 24 }, { width: 36 },
-    { width: 24 }, { width: 28 },
-  ];
+  ws.columns = COMPANY_COLUMNS.map((column) => ({ width: column.width }));
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
 
   // Source-provided branches stay linked to their company by record id.

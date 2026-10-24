@@ -436,7 +436,8 @@ export function phraseDuration(input: DurationPhrasingInput): DurationPhrasing {
     labelAr: DURATION_LABEL_AR,
     driversAr: driversLineAr(input),
     promiseAr: DURATION_PROMISE_AR,
-    ...(day ? { longNoteAr: "هذه مهمة طويلة قد تستغرق أكثر من يوم؛ تُنفَّذ على دفعات، ويمكنك متابعة تقدمها من صفحة الطلبات." } : {}),
+    // With the page as the driver («tab») the ONE instruction is «أبقِ الصفحة مفتوحة حتى تكتمل المهمة» (closePageAr): this note says nothing that suggests leaving.
+    ...(day ? { longNoteAr: input.driver === "cron" ? "هذه مهمة طويلة قد تستغرق أكثر من يوم؛ تُنفَّذ على دفعات، ويمكنك متابعة تقدمها من صفحة الطلبات." : "هذه مهمة طويلة قد تستغرق أكثر من يوم؛ تُنفَّذ على دفعات." } : {}),
   };
 }
 
