@@ -5,7 +5,6 @@ import { useMemo, useState } from "react";
 import { SERVICES_CATALOG, type CatalogPlatform, type CatalogService } from "@/lib/servicesCatalog";
 import { platformsProvenFirst } from "@/lib/servicesAvailability";
 import { platformHref } from "@/lib/servicesCatalogView";
-import { PlatformTile } from "@/components/services/PlatformTile";
 import { formatAr } from "@/lib/arabicDigits";
 import { normalizeArabicSearch, platformsCountAr, servicesCountAr } from "@/lib/servicesCatalogText";
 
@@ -19,19 +18,16 @@ function searchable(platform: CatalogPlatform) {
 // Within a sector, platforms with at least one proven service come first (internal list; nothing about it is shown).
 const INDEX = SERVICES_CATALOG.map((sector) => ({ sector, platforms: platformsProvenFirst(sector.platforms).map((platform) => ({ platform, text: searchable(platform) })) }));
 
-/** A platform's card: tile, name, one-line description, how many services it holds. While searching it also names up to two matching services. */
-function PlatformCard({ platform, sectorId, matched, searching }: { platform: CatalogPlatform; sectorId: string; matched: CatalogService[]; searching: boolean }) {
+/** A platform's card: name, one-line description, how many services it holds. While searching it also names up to two matching services. */
+function PlatformCard({ platform, matched, searching }: { platform: CatalogPlatform; matched: CatalogService[]; searching: boolean }) {
   return (
     <Link
       href={platformHref(platform.slug)}
       className="group flex min-h-[132px] flex-col gap-3 rounded-[20px] border border-ln bg-sf p-4 text-ink no-underline transition-colors hover:border-ln2 hover:bg-sf2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ac"
     >
-      <span className="flex items-start gap-3">
-        <PlatformTile nameAr={platform.nameAr} sectorId={sectorId} />
-        <span className="flex min-w-0 flex-col gap-1">
-          <span className="text-base font-semibold leading-6">{platform.nameAr}</span>
-          <span className="text-[13px] font-light leading-6 text-mut">{platform.descAr}</span>
-        </span>
+      <span className="flex min-w-0 flex-col gap-1">
+        <span className="text-base font-semibold leading-6">{platform.nameAr}</span>
+        <span className="text-[13px] font-light leading-6 text-mut">{platform.descAr}</span>
       </span>
       {searching && matched.length > 0 && matched.length < platform.services.length && (
         <span className="flex flex-col gap-0.5 border-t border-ln pt-2 text-[13px] leading-6 text-ink2">
@@ -101,7 +97,7 @@ export function CatalogBrowser() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {matches.map(({ platform, services }) => (
-              <PlatformCard key={platform.slug} platform={platform} sectorId={sector.id} matched={services} searching={q !== ""} />
+              <PlatformCard key={platform.slug} platform={platform} matched={services} searching={q !== ""} />
             ))}
           </div>
         </section>

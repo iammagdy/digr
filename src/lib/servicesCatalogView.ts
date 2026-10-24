@@ -12,15 +12,6 @@ export const platformEntryBySlug = (slug: string): PlatformEntry | undefined => 
 /** The path of a platform's own page. The slug is only part of the address, never shown as text. */
 export const platformHref = (slug: string): string => `/services/${slug}`;
 
-/** The letter on a platform's tile: its first Arabic letter, without the article. */
-export function platformInitial(nameAr: string): string {
-  const bare = nameAr.trim().replace(/^ال(?=\S{2})/u, "");
-  return Array.from(bare)[0] ?? "؟";
-}
-
-/** A fixed hue per sector (the tiles of one sector share a colour). */
-export const sectorHue = (sectorId: string): number => (Number(sectorId.replace(/\D/g, "")) * 47 + 160) % 360;
-
 /** The first services of a platform, ordered by the internal proven list (never shown) and then by the catalog's own order. */
 export function featuredServices(platform: CatalogPlatform, count: number): CatalogService[] {
   return platform.services
