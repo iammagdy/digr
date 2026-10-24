@@ -21,12 +21,11 @@ export type ServiceStatus = "available" | "soon";
 
 /**
  * THE CONSTANT. Registry slugs (see APPROVED_CAPABILITY_CATALOG in src/functions/shared/capabilityRegistry.ts) of the services proven live:
- * company search, people search (decision makers), X post search, Facebook keyword comments, Facebook page posts, Facebook post comments,
- * TikTok video comments. A slug here must exist in the registry (tests/services-availability.test.tsx proves it).
+ * company search, X post search, Facebook keyword comments, Facebook page posts, Facebook post comments, TikTok video comments.
+ * (People search, `professional-people-search`, is not here: it was not proven live after the latest fixes; add it back after a live test.) A slug here must exist in the registry (tests/services-availability.test.tsx proves it).
  */
 export const AVAILABLE_NOW_REGISTRY_SLUGS: readonly string[] = [
   "icypeas-companies-search",
-  "professional-people-search",
   "social-x-posts",
   "social-facebook-keyword-comments",
   "social-facebook-posts",

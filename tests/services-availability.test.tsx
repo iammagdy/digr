@@ -7,19 +7,19 @@ import { CatalogBrowser } from "../src/components/services/CatalogBrowser";
 import { buildPlatformGuideServices } from "../src/functions/shared/platformGuide";
 import { cleanArText, getPublicCalculatorOptions } from "../src/lib/calculatorPricing";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
-import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
+import { SERVICES_CATALOG, catalogCounts, coreServices } from "../src/lib/servicesCatalog";
 import {
   AVAILABLE_NOW_REGISTRY_SLUGS, REGISTRY_SERVICE_MAP, SERVICE_ORDER_CTA_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR,
   isAvailableNow, platformAvailableCount, platformsAvailableFirst, serviceStatus, statusCounts,
 } from "../src/lib/servicesAvailability";
 import { formatAr } from "../src/lib/arabicDigits";
 
-const OWNER_LIST = ["icypeas-companies-search", "professional-people-search", "social-x-posts", "social-facebook-keyword-comments", "social-facebook-posts", "social-facebook-comments", "social-tiktok-comments"];
+const OWNER_LIST = ["icypeas-companies-search", "social-x-posts", "social-facebook-keyword-comments", "social-facebook-posts", "social-facebook-comments", "social-tiktok-comments"];
 const allServices = SERVICES_CATALOG.flatMap((sector) => sector.platforms.flatMap((platform) => platform.services.map((service) => ({ platform: platform.slug, ...service }))));
 const textOf = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ");
 
 describe("service status: two values from one constant", () => {
-  it("starts with exactly the owner's list, and every one of its slugs is a real registry slug", () => {
+  it("starts with exactly the owner's list (people search left out until it is proven live again), and every one of its slugs is a real registry slug", () => {
     expect([...AVAILABLE_NOW_REGISTRY_SLUGS].sort()).toEqual([...OWNER_LIST].sort());
     const registry = new Set(APPROVED_CAPABILITY_CATALOG.map((capability) => capability.slug));
     for (const slug of AVAILABLE_NOW_REGISTRY_SLUGS) expect(registry.has(slug), slug).toBe(true);
@@ -36,11 +36,11 @@ describe("service status: two values from one constant", () => {
     for (const slug of AVAILABLE_NOW_REGISTRY_SLUGS) expect(REGISTRY_SERVICE_MAP.some((entry) => entry.id === slug), slug).toBe(true);
     const actual = new Set(allServices.filter((service) => isAvailableNow(service.platform, service.nameAr)).map((service) => `${service.platform}|${service.nameAr}`));
     expect(actual).toEqual(expected);
-    expect(actual.size).toBe(7);
+    expect(actual.size).toBe(6);
   });
 
   it("services that have an executor but were not proven live stay «قريبًا»", () => {
-    for (const [platform, nameAr] of [["instagram", "بيانات ملف مستخدم عام"], ["instagram", "التعليقات على منشور"], ["youtube", "التعليقات على فيديو"], ["youtube", "البحث عن فيديوهات بكلمة مفتاحية"], ["reddit", "التعليقات على منشور"], ["linkedin", "ملف عضو"], ["tiktok", "بيانات ملف مستخدم عام"], ["tiktok", "البحث عن فيديوهات بكلمة مفتاحية"], ["people", "البريد المهني لشخص من الاسم أو نطاق الشركة أو الملف"], ["people", "رقم هاتف العمل لشخص"]]) {
+    for (const [platform, nameAr] of [["instagram", "بيانات ملف مستخدم عام"], ["instagram", "التعليقات على منشور"], ["youtube", "التعليقات على فيديو"], ["youtube", "البحث عن فيديوهات بكلمة مفتاحية"], ["reddit", "التعليقات على منشور"], ["linkedin", "ملف عضو"], ["tiktok", "بيانات ملف مستخدم عام"], ["tiktok", "البحث عن فيديوهات بكلمة مفتاحية"], ["people", "البريد المهني لشخص من الاسم أو نطاق الشركة أو الملف"], ["people", "رقم هاتف العمل لشخص"], ["people", "البحث عن أشخاص بالدور أو الشركة أو الموقع"]]) {
       expect(serviceStatus(platform, nameAr), `${platform} ${nameAr}`).toBe("soon");
     }
   });
@@ -101,8 +101,10 @@ describe("what a service shows", () => {
     const items = html.split('<li data-status="').slice(1).map((chunk) => chunk.split("</li>")[0]);
     const available = items.filter((item) => item.startsWith("available"));
     const soon = items.filter((item) => item.startsWith("soon"));
-    expect(available.length).toBeGreaterThan(0);
-    expect(soon.length).toBeGreaterThan(0);
+    // the list on the page is the core list: its available items are exactly the core services that are available now (none while people search is «قريبًا»)
+    expect(available.length).toBe(coreServices().filter((service) => isAvailableNow(service.platformSlug, service.nameAr)).length);
+    expect(soon.length).toBe(coreServices().length - available.length);
+    expect(readFileSync("src/components/services/CatalogBrowser.tsx", "utf8")).toContain("SERVICE_ORDER_CTA_AR");
     for (const item of available) { expect(item).toContain(SERVICE_STATUS_AVAILABLE_AR); expect(item).toContain(SERVICE_ORDER_CTA_AR); expect(item).toContain('href="/register"'); }
     for (const item of soon) {
       const text = textOf(item);

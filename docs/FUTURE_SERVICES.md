@@ -8,19 +8,18 @@ The status of every service comes from ONE constant: `AVAILABLE_NOW_REGISTRY_SLU
 
 | status | services |
 |---|---|
-| متاح الآن | 7 |
-| قريبًا | 952 |
-| of which have a code executor that was NOT proven live | 10 |
+| متاح الآن | 6 |
+| قريبًا | 953 |
+| of which have a code executor that was NOT proven live | 11 |
 | total shown | 959 |
 
-«متاح الآن» today (registry slugs: `icypeas-companies-search`, `professional-people-search`, `social-x-posts`, `social-facebook-keyword-comments`, `social-facebook-posts`, `social-facebook-comments`, `social-tiktok-comments`):
+«متاح الآن» today (registry slugs: `icypeas-companies-search`, `social-x-posts`, `social-facebook-keyword-comments`, `social-facebook-posts`, `social-facebook-comments`, `social-tiktok-comments`):
 
 - tiktok: List a video's comments [read]
 - x: Search posts by keyword [read]
 - facebook: List a post's comments [read]
 - facebook: Search public posts by keyword [read]
 - facebook: List a profile's public posts [read]
-- people: Find people by role, company or location — lead lists and prospects (sales leads) [core]
 - companies: Search companies by industry, size or tech — account lists for lead generation [read]
 
 ## Prerequisites (from the read-only report of 2026-10-24; every item marked UNKNOWN was not read)
@@ -74,7 +73,7 @@ Before any service is flipped, measure per service (all UNKNOWN today unless sta
 
 ## «قريبًا» services by sector and platform
 
-Total: 952. «executor» = a code executor exists in the registry (not proven live).
+Total: 953. «executor» = a code executor exists in the registry (not proven live).
 
 ### محركات البحث وتحليل المواقع (106)
 
@@ -849,9 +848,9 @@ Total: 952. «executor» = a code executor exists in the registry (not proven li
 - Get an Official Account creator's profile [read] kind: lookup-one
 - Search Official Account creators [read] kind: keyword-search
 
-### بيانات الشركات وصناع القرار (99)
+### بيانات الشركات وصناع القرار (100)
 
-#### صناع القرار وبيانات التواصل المهنية (people) - 29
+#### صناع القرار وبيانات التواصل المهنية (people) - 30
 
 - Get a person's contact information [core] kind: b2b-contact
 - Verify that supplied contact details are consistent and reachable [core] kind: b2b-contact
@@ -879,6 +878,7 @@ Total: 952. «executor» = a code executor exists in the registry (not proven li
 - Find a person's professional profile URL from their name and company [core] kind: b2b-contact
 - Evaluate a lead against qualification criteria [core] kind: b2b
 - Find a person in a role at a company. [core] kind: b2b
+- Find people by role, company or location — lead lists and prospects (sales leads) [core] kind: b2b - executor
 - Count the people a search would return, before paying for rows [core] kind: b2b
 - Search people or companies from a natural-language sentence [core] kind: b2b
 - Track job changes & promotions [core] kind: b2b
