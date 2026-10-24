@@ -54,13 +54,17 @@ export interface CapacityLine {
   records: number;
 }
 
-/** How many records of each kind an amount can reserve, under that amount. */
-export function capacityForAmount(amountEgp: number): CapacityLine[] {
-  const points = pointsForAmountEgp(amountEgp);
+/** How many records of each kind a number of points can reserve, under it (the hold includes the buffer). */
+export function capacityForPoints(points: number): CapacityLine[] {
   const lines: CapacityLine[] = buildPriceRows().map((row) => ({ id: row.id, labelAr: row.labelAr, unitLabelAr: row.unitLabelAr, records: volumeForPointsCap(points, row.unitPricePoints, DEFAULT_PRICING_SETTINGS.safetyBuffer) }));
   const person = PEOPLE_PRICE_POINTS.basePerson + PEOPLE_PRICE_POINTS.workEmail + PEOPLE_PRICE_POINTS.phone;
   lines.push({ id: "people", labelAr: "صنّاع قرار مع البريد والهاتف", unitLabelAr: "شخص", records: volumeForPointsCap(points, person, DEFAULT_PRICING_SETTINGS.safetyBuffer) });
   return lines;
+}
+
+/** How many records of each kind an amount can reserve, under that amount. */
+export function capacityForAmount(amountEgp: number): CapacityLine[] {
+  return capacityForPoints(pointsForAmountEgp(amountEgp));
 }
 
 export function capacityLineAr(line: CapacityLine): string {

@@ -11,7 +11,8 @@ import { Icon, UI } from "@/components/app/icons";
 import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
-import { ILLUSTRATIVE_SEARCH_PRICES } from "@/lib/pricing";
+import { capacityForPoints, capacityLineAr } from "@/lib/pricingPage";
+import { Skeleton } from "@/components/ui";
 import { startNotificationPolling } from "@/lib/notificationPolling";
 import { getSlowFactor } from "@/lib/degradedClient";
 import SubmittedCard from "./SubmittedCard";
@@ -48,7 +49,7 @@ export default function WalletPage() {
   const [ledgerFailed, setLedgerFailed] = useState(false);
   const [ledgerLoaded, setLedgerLoaded] = useState(false);
   const [topups, setTopups] = useState<TopupRecord[]>([]);
-  const [monthRows, setMonthRows] = useState(0);
+  const [monthRows, setMonthRows] = useState<number | null>(null);
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
   const [amount, setAmount] = useState(100);
   const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
@@ -232,6 +233,8 @@ export default function WalletPage() {
 
   /* month figures + held points from the ledger */
   const stats = useMemo(() => walletMonthStats(ledger), [ledger]);
+  // The month figures wait for the ledger: «٠» is never shown for numbers that have not arrived (a failed load says so elsewhere).
+  const monthReady = ledgerLoaded;
 
   const available = balance.status === "ready" ? balance.value! : null;
   const total = (available ?? 0) + stats.held;
@@ -279,28 +282,35 @@ export default function WalletPage() {
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm" style={{ background: "var(--gold)" }} />محجوز في بحث جارٍ · {pointsAr(stats.held)}</span>
             </div>
           </div>
-          <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
+          <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4" data-testid="wallet-released-month">
             <p className="m-0 text-xs text-mut">محجوز ومُحرَّر هذا الشهر</p>
-            <p className="m-0 text-2xl font-medium text-ink">{formatAr(stats.releasedHold)}</p>
-            <p className="m-0 text-[11px] text-fnt">حجز مؤقت رُفع ولم يُخصم، من {searchesAr(stats.releasedJobs)}</p>
+            {monthReady ? <p className="m-0 text-2xl font-medium text-ink">{formatAr(stats.releasedHold)}</p> : ledgerFailed ? <p className="m-0 text-2xl font-medium text-ink">—</p> : <Skeleton className="h-8 w-20" />}
+            <p className="m-0 text-[11px] text-fnt">{monthReady ? `حجز مؤقت رُفع ولم يُخصم، من ${searchesAr(stats.releasedJobs)}` : ledgerFailed ? "تعذّر تحميل الأرقام" : "جاري تحميل الأرقام"}</p>
           </div>
           <div className="flex flex-col justify-between gap-2 rounded-[20px] border border-ln bg-sf p-4">
             <p className="m-0 text-xs text-mut">خُصم هذا الشهر</p>
-            <p className="m-0 text-2xl font-medium text-ink">{formatAr(stats.charged)}</p>
-            <p className="m-0 text-[11px] text-fnt">على {formatAr(monthRows)} سجلًا مسلَّمًا</p>
+            {monthReady ? <p className="m-0 text-2xl font-medium text-ink">{formatAr(stats.charged)}</p> : ledgerFailed ? <p className="m-0 text-2xl font-medium text-ink">—</p> : <Skeleton className="h-8 w-20" />}
+            <p className="m-0 text-[11px] text-fnt">{monthReady && monthRows !== null ? `على ${formatAr(monthRows)} سجلًا مسلَّمًا` : "جاري تحميل الأرقام"}</p>
           </div>
         </div>
+        {monthReady && stats.releasedGross > 0 ? (
+          <p data-testid="wallet-released-explainer" className="mb-0 mt-2 text-[11px] font-light leading-[1.8] text-mut">
+            في سجل الحركات يظهر الحجز المُحرَّر كاملًا قبل الخصم ({formatAr(stats.releasedGross)} نقطة هذا الشهر)، ثم يظهر الخصم في سطر مستقل. الرقم أعلاه هو الباقي بعد خصم ثمن ما سُلِّم، أي ما رُفع ولم يُخصم ({formatAr(stats.releasedHold)} نقطة).
+          </p>
+        ) : null}
 
-        <div className="mt-2.5 flex flex-col gap-2.5 rounded-[20px] bg-sf2 px-4 py-3.5">
+        <div className="mt-2.5 flex flex-col gap-2.5 rounded-[20px] bg-sf2 px-4 py-3.5" data-testid="wallet-capacity">
           <p className="m-0 text-xs font-semibold text-ink2">رصيدك يكفي تقريبًا لـ</p>
           <div className="grid grid-cols-3 gap-2">
-            {ILLUSTRATIVE_SEARCH_PRICES.map((p) => (
-              <div key={p.records} className="rounded-[14px] bg-sf px-3 py-2.5">
-                <p className="m-0 text-xl font-semibold text-ink">{available === null ? "—" : formatAr(Math.floor(available / p.points))}</p>
-                <p className="mb-0 mt-0.5 text-[11px] leading-[1.5] text-mut">{p.label}</p>
+            {(available === null ? [] : capacityForPoints(available).filter((line) => ["companies", "x-posts", "youtube-comments"].includes(line.id))).map((line) => (
+              <div key={line.id} className="rounded-[14px] bg-sf px-3 py-2.5">
+                <p className="m-0 text-base font-semibold leading-[1.5] text-ink">{capacityLineAr(line)}</p>
+                <p className="mb-0 mt-0.5 text-[11px] leading-[1.5] text-mut">{line.labelAr}</p>
               </div>
             ))}
+            {available === null && [0, 1, 2].map((slot) => <Skeleton key={slot} className="h-[72px]" />)}
           </div>
+          <p className="m-0 text-[11px] font-light leading-[1.7] text-mut">الأرقام من أسعار النقاط الحالية نفسها؛ وسعر خطتك الدقيق يظهر قبل أن توافق.</p>
         </div>
 
         <PromoCodeBox onRedeemed={() => { void refreshBalance(); void loadLedger(); }} />

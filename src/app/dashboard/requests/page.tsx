@@ -1,6 +1,7 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
+import { normalizeReleaseWording } from "@/lib/releaseWording";
 import { openJobHref } from "@/lib/requestLinks";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -12,7 +13,7 @@ import { dayLabel } from "@/lib/dayLabel";
 import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
-import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
+import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, deliveredNothing, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
@@ -26,6 +27,8 @@ interface JobDoc {
   reservedCredits: number;
   chargedCredits?: number;
   rowsCollected?: number;
+  /** True when the job row carried a delivered count (an absent count is unknown, never zero). */
+  deliveredKnown?: boolean;
   targetVolumeMax?: number;
   errorAr?: string;
   createdAt: string;
@@ -64,10 +67,11 @@ function targetOf(params?: string): string {
   return "طلب بحث";
 }
 
+/** What a request card says about a request that did not run: always «حجز مؤقت مُحرَّر», never «أُعيد / استرداد / إرجاع». */
 function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
-  const refund = `${pointsAr(reservedCredits)} كاملة`;
+  const released = `حجز مؤقت مُحرَّر: ${pointsAr(reservedCredits)} كاملة، ولم يُخصم منك شيء.`;
   if (!rawError) {
-    return `لم تتوفر سجلات كافية — أُعيد ${refund} إلى رصيدك.`;
+    return `لم تتوفر سجلات كافية — ${released}`;
   }
   let cleaned = rawError
     .replace(/مراقب\s*المهام\s*\(?Watchdog\)?/gi, "")
@@ -76,7 +80,7 @@ function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
     .trim();
 
   if (/cannot settle|chunk lease|job_quote_|settle_job|provider|endpoint|\bUSD\b|supabase|stack trace|internal error/i.test(cleaned)) {
-    return `تعذر إكمال البحث — أُعيد ${refund} إلى رصيدك.`;
+    return `تعذر إكمال البحث — ${released}`;
   }
 
   if (
@@ -84,21 +88,13 @@ function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
     cleaned.includes("لتأخر التنفيذ") ||
     cleaned.includes("تلقائياً")
   ) {
-    cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم تحرير حجزك المؤقت كاملًا ولم يُخصم منك شيء.";
+    cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
   }
 
-  if (
-    cleaned.includes("رجعت") ||
-    cleaned.includes("استرجاع") ||
-    cleaned.includes("إرجاع") ||
-    cleaned.includes("استرداد") ||
-    cleaned.includes("تحرير") ||
-    cleaned.includes("حُرّر")
-  ) {
-    return cleaned;
-  }
+  cleaned = normalizeReleaseWording(cleaned);
+  if (cleaned.includes("حجز مؤقت مُحرَّر")) return cleaned;
 
-  return `${cleaned} — حُرّر حجز مؤقت بقيمة ${pointsAr(reservedCredits)} كاملًا ولم يُخصم منك شيء.`;
+  return `${cleaned} — ${released}`;
 }
 
 const DL_ICON = "M12 4v11M7 10l5 5 5-5M5 20h14";
@@ -176,6 +172,7 @@ export default function RequestsPage() {
         reservedCredits: Number(r.reserved_credits ?? r.reservedCredits ?? 0),
         chargedCredits: r.charged_credits !== undefined && r.charged_credits !== null ? Number(r.charged_credits) : undefined,
         rowsCollected: r.delivered_units ?? r.rows_collected ?? r.rowsCollected ?? 0,
+        deliveredKnown: typeof (r.delivered_units ?? r.rows_collected ?? r.rowsCollected) === "number",
         targetVolumeMax: typeof r.target_volume_max === "number" ? r.target_volume_max : undefined,
         errorAr: r.error_message ?? r.error_ar ?? r.errorAr ?? undefined,
         createdAt: r.created_at || r.createdAt || new Date().toISOString(),
@@ -383,12 +380,15 @@ export default function RequestsPage() {
           const title = (q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`;
           const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
+          // A finished request that delivered no record has no data file to offer: zero files, said once (the same rule as the results panel).
+          const nothingDelivered = deliveredNothing({ kind: k, delivered: rows, deliveredKnown: j.deliveredKnown });
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
           const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
             : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
+            : nothingDelivered ? "لم يصل أي سجل، لذلك لا توجد ملفات بيانات لهذا الطلب، ولم يُخصم منك أي رصيد."
             : k === "partial" ? partialDeliveryText(rows, requested || rows) : "";
-          const availableFormats = (["xlsx", "pdf", "csv"] as const).filter(
+          const availableFormats = nothingDelivered ? [] : (["xlsx", "pdf", "csv"] as const).filter(
             (ext) => Boolean(j.fileIds[ext]),
           );
           const hasFiles = availableFormats.length > 0;

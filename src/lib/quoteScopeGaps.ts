@@ -2,9 +2,10 @@ import { pageChannelOfItem, pageHandleOf } from "./planMethodSteps";
 import { isSocialCapabilitySlug, validateSocialParams } from "./socialSources";
 import { planCountLineAr } from "./planCounts";
 import {
+  COUNTRY_REQUIRED_AR,
   detectCountryFromText,
-  detectIndustryFromText,
-  industryDisplayLabelAr,
+  INDUSTRY_REQUIRED_AR,
+  planActivityLabelAr,
   socialContentTopicFromTitle,
 } from "./planParameters";
 
@@ -36,7 +37,7 @@ const countryNamesAr = new Intl.DisplayNames(["ar"], { type: "region" });
 
 function resolveCountryAr(val: unknown): string {
   const text = String(val ?? "").trim();
-  if (isMissingText(text)) return "يلزم تحديد الدولة";
+  if (isMissingText(text)) return COUNTRY_REQUIRED_AR;
   const detected = detectCountryFromText(text);
   if (detected?.arabicLabel) return detected.arabicLabel;
   if (/^[A-Z]{2}$/i.test(text)) {
@@ -102,8 +103,11 @@ export function scrubQuoteTexts<T extends { summaryAr?: string; methodologyNotes
 
 /** A string that says something: not empty, not a missing-value word, not a «يلزم تحديد» placeholder. */
 function usableText(val: unknown): boolean {
-  return typeof val === "string" && !isMissingText(val) && !/يلزم تحديد/.test(val);
+  return typeof val === "string" && !isMissingText(val) && !/يلزم تحديد/.test(val) && !BROKEN_FIELD.test(val);
 }
+
+/** A value made only of the leftovers of a card label («ال المطلوب مطلوب»): a stranded article, or «المطلوب» next to «مطلوب». */
+const BROKEN_FIELD = /(?:^|\s)ال(?=\s|$)|المطلوب[ةه]?\s+مطلوب/u;
 
 function hasPlaceholderText(val: unknown): boolean {
   if (typeof val === "string") {
@@ -294,19 +298,10 @@ export function planScopeRows(
       });
     }
   } else {
-    // Company or general
-    const rawInd =
-      query.industry?.include?.[0] ||
-      params.industry ||
-      query.keyword?.include?.[0] ||
-      params.keyword ||
-      params.search ||
-      "النشاط المطلوب";
-    const detectedInd = detectIndustryFromText(String(rawInd));
-    const indVal = industryDisplayLabelAr(detectedInd?.arabicLabel || String(rawInd));
+    // Company or general: the activity name comes from the one shared reader, the very one the card's field and steps use.
     chips.push({
       label: "النشاط / التخصص:",
-      value: indVal,
+      value: planActivityLabelAr(params) || INDUSTRY_REQUIRED_AR,
     });
   }
 

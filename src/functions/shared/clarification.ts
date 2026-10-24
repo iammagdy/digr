@@ -441,6 +441,32 @@ export function skippedQuestionIdsFromHistory(rawUserMessages: string[]): Set<st
   return skipped;
 }
 
+/**
+ * How many times each question was skipped in a row (an answer with a value clears the count). The first skip of the country or the sector
+ * question gets a typed follow-up; a second one gets a plain sentence with an example, never the same card again.
+ */
+export function skipCountsFromHistory(rawUserMessages: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const raw of rawUserMessages) {
+    const trimmed = String(raw || "").trim();
+    if (!trimmed.startsWith("{") || !trimmed.includes("clarification_answers")) continue;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed?.type !== "clarification_answers" || !Array.isArray(parsed.answers)) continue;
+      for (const answer of parsed.answers) {
+        const id = typeof answer?.questionId === "string" ? answer.questionId : "";
+        if (!id) continue;
+        const hasValue = typeof answer?.value === "string" ? answer.value.trim().length > 0 : Array.isArray(answer?.value) && answer.value.length > 0;
+        if (hasValue) counts.delete(id);
+        else if (answer?.skipped === true || answer?.needsUserChoice === true) counts.set(id, (counts.get(id) ?? 0) + 1);
+      }
+    } catch {
+      /* a malformed stored answer skips nothing */
+    }
+  }
+  return counts;
+}
+
 /** Convert a stored answer payload into clear customer-authored text before
  * it is sent back to the model. Keeping internal question IDs out of the model
  * prompt prevents them from being copied into a search keyword or quote. */

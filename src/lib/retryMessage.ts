@@ -64,3 +64,14 @@ export function hasPendingPlan(history: Array<{ role: string; requestStatus?: st
   }
   return false;
 }
+
+/** What the customer reads in their own chat for each of those fixed messages: one short line, never the instruction the server reads. */
+export const RETRY_SAME_PLAN_DISPLAY_AR = "أعد المحاولة بنفس الخطة";
+export const REVIEW_PLAN_DISPLAY_AR = "عايز أراجع الخطة وأعدّلها";
+
+/** A stored or sent customer message as the chat shows it: the fixed button messages become their one clean line, anything else is unchanged. */
+export function customerFacingMessageText(content: string): string {
+  if (isRetrySamePlanMessage(content)) return RETRY_SAME_PLAN_DISPLAY_AR;
+  if (isReviewPlanMessage(content)) return REVIEW_PLAN_DISPLAY_AR;
+  return content;
+}

@@ -9,6 +9,8 @@ interface DetailsBlanksProps {
   intro?: string;
   completedAnswers?: DiscoveryAnswer[];
   disabled?: boolean;
+  /** A plan was made after these answers: a question that was skipped is no longer a gap, so its row («تُرك هذا الاختيار») is not listed. */
+  planExists?: boolean;
   onComplete: (answers: DiscoveryAnswer[]) => void;
 }
 
@@ -19,7 +21,7 @@ function answerLabel(answer: DiscoveryAnswer | undefined): string {
 }
 
 /** Adaptive, one-question-at-a-time Arabic clarification flow embedded in chat. */
-export default function DetailsBlanks({ questions, intro, completedAnswers, disabled = false, onComplete }: DetailsBlanksProps) {
+export default function DetailsBlanks({ questions, intro, completedAnswers, disabled = false, planExists = false, onComplete }: DetailsBlanksProps) {
   const qs = useMemo(() => normalizeDiscoveryQuestions(questions), [questions]);
   const [answers, setAnswers] = useState<Record<string, DiscoveryAnswer>>({});
   const [step, setStep] = useState(0);
@@ -97,11 +99,14 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
   }
 
   if (locked) {
+    // With a plan on screen the summary lists only what was answered: a skipped row would say «تُرك هذا الاختيار» about a question the plan already settled.
+    const rows = qs.filter((q) => !(planExists && completedAnswers!.find((entry) => entry.questionId === q.id)?.skipped));
+    if (rows.length === 0) return null;
     return (
       <section className="mt-3.5 rounded-2xl border border-ln bg-sf p-4" aria-label="ملخص التوضيحات" dir="rtl">
         <h3 className="m-0 text-sm font-semibold text-ink">ملخص طلبك</h3>
         <dl className="mb-0 mt-3 space-y-2">
-          {qs.map((q) => {
+          {rows.map((q) => {
             const item = completedAnswers!.find((entry) => entry.questionId === q.id);
             return <div key={q.id} className="grid grid-cols-1 gap-1 text-[13px] sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]"><dt className="text-mut">{q.text}</dt><dd className="m-0 text-ink">{answerLabel(item) || "—"}</dd></div>;
           })}

@@ -72,6 +72,7 @@ import {
   sanitizeClarificationText,
   formatClarificationMessageForAssistant,
   skippedQuestionIdsFromHistory,
+  skipCountsFromHistory,
   type NormalizedClarificationQuestion,
   INTERNAL_DISCOVERY_KEYS,
 } from "./clarification";
@@ -107,6 +108,8 @@ import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissi
 import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
 import { REPORT_COUNTRY_QUESTION_ID, reportGate, reportNeedsPeriod } from "../../lib/facebookReport/intent";
 import { planCountLineAr, planCountPartsAr } from "../../lib/planCounts";
+import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote";
+import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { pairRoleOf } from "../../lib/planFit";
 import { videosCountAr } from "../../lib/channelNames";
@@ -246,6 +249,17 @@ const PLAIN_AFTER_SKIP_AR: Record<string, string> = {
   [REPORT_COUNTRY_QUESTION_ID]: "أحتاج أن أعرف الدولة لأجهز لك التقرير. اكتبها في رسالتك، مثل «في مصر»، وسأكمل من حيث توقفنا.",
 };
 const PLAIN_FACEBOOK_TARGET_AFTER_SKIP_AR = "لم يتبقَّ سوى مصدر التعليقات. اكتب موضوع المنشورات في رسالتك، أو الصق رابط منشور أو رابط صفحة عامة، وسأجهز لك الخطة.";
+/** The country and the sector decide what is searched and what it costs: a plan is never priced without them, so a skip is answered with the next step, never silence. */
+const TYPED_FOLLOW_UP_AFTER_SKIP: Record<string, string> = {
+  company_country_required: "اكتب اسم الدولة بكلماتك، مثل: مصر أو السعودية أو ألمانيا.",
+  company_industry_required: "اكتب القطاع بكلماتك، مثل: الكهرباء أو الاتصالات أو التأمين.",
+  people_country_required: "اكتب اسم الدولة بكلماتك، مثل: مصر أو السعودية أو ألمانيا.",
+};
+const PLAIN_AFTER_SECOND_SKIP_AR: Record<string, string> = {
+  company_country_required: "لا أستطيع تسعير الطلب قبل معرفة الدولة. اكتبها في رسالتك مع طلبك، مثل «١٠ شركات كهرباء في مصر»، وأجهز لك الخطة والسعر.",
+  company_industry_required: "لا أستطيع تسعير الطلب قبل معرفة القطاع. اكتبه في رسالتك مع طلبك، مثل «١٠ شركات كهرباء في مصر»، وأجهز لك الخطة والسعر.",
+  people_country_required: "لا أستطيع تسعير الطلب قبل معرفة الدولة. اكتبها في رسالتك مع طلبك، مثل «٣ مديرين في شركات الطاقة في السعودية»، وأجهز لك الخطة والسعر.",
+};
 const PLAIN_AFTER_SKIP_GENERIC_AR = "تحتاج الخطة هذه المعلومة لتكون دقيقة. اكتبها في رسالتك وسأكمل من حيث توقفنا.";
 
 /**
@@ -256,7 +270,7 @@ export function getDeterministicDiscoveryQuestion(
   text: string,
   brief: ResearchBrief,
   capabilities: Capability[] = [],
-  options: { skipped?: ReadonlySet<string> } = {},
+  options: { skipped?: ReadonlySet<string>; skipCounts?: ReadonlyMap<string, number> } = {},
 ): any | null {
   const skipped = options.skipped;
   if (!skipped || skipped.size === 0) return discoveryQuestionFor(text, brief, capabilities, new Set());
@@ -265,6 +279,12 @@ export function getDeterministicDiscoveryQuestion(
     const question = discoveryQuestionFor(text, brief, capabilities, ignore);
     if (!question || !skipped.has(question.id)) return question;
     if (PROCEED_WHEN_SKIPPED.has(question.id)) { ignore.add(question.id); continue; }
+    // First skip of the country or the sector: ONE typed follow-up under the same id (its answer is read exactly like the card's). A second skip: the next step in a sentence.
+    const typedFollowUp = TYPED_FOLLOW_UP_AFTER_SKIP[question.id];
+    if (typedFollowUp) {
+      if ((options.skipCounts?.get(question.id) ?? 1) <= 1) return { id: question.id, text: typedFollowUp, question: typedFollowUp, type: "free", options: [], allowOther: true };
+      return { plain: true, id: `skipped_${question.id}`, text: PLAIN_AFTER_SECOND_SKIP_AR[question.id] };
+    }
     const pageLinkSkipped = question.id === SOCIAL_DISCOVERY_IDS.page && /ما رابط صفحة/u.test(String(question.text));
     const facebookTargetSkipped = question.id === "social_comment_target_required" && detectSocialIntent(text).platform === "facebook";
     return { plain: true, id: `skipped_${question.id}`, text: pageLinkSkipped ? FACEBOOK_PAGE_LINK_RETRY_AR : facebookTargetSkipped ? PLAIN_FACEBOOK_TARGET_AFTER_SKIP_AR : PLAIN_AFTER_SKIP_AR[question.id] ?? PLAIN_AFTER_SKIP_GENERIC_AR };
@@ -2669,7 +2689,7 @@ export class ChatHandler {
       }
 
       const skippedQuestionIds = skippedQuestionIdsFromHistory(rawUserHistoryTexts);
-      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities, { skipped: skippedQuestionIds });
+      const requiredDiscoveryQuestion = getDeterministicDiscoveryQuestion(conversationRequestText, brief, allCapabilities, { skipped: skippedQuestionIds, skipCounts: skipCountsFromHistory(rawUserHistoryTexts) });
       // A question the customer skipped and that cannot be inferred: one plain sentence, no card, the composer stays open.
       if (requiredDiscoveryQuestion?.plain && !isFileShapingTurn) {
         const plainAr = String(requiredDiscoveryQuestion.text);
@@ -3954,6 +3974,17 @@ export class ChatHandler {
               ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_BILLING_NOTE_AR}`.trim()
               : planOutput.methodologyNotes,
           };
+
+          // The retry button asks for a NEW offer of the same plan: the card says so (and how many collected records it starts from).
+          if (isRetrySamePlanMessage(message)) planQuoteData.retryOffer = { reusedRows: reusedRowsForRetry };
+          // The same plan as a recent completed request of this customer: said before the approve button, with the way to the old result. Read only.
+          if (sb) {
+            const duplicate = await findRecentDuplicateRequest(sb, { userId, planHash: managedQuote.planHash, excludeQuoteId: managedQuote.quoteId });
+            if (duplicate) planQuoteData.duplicateOf = duplicate;
+          }
+          // Why the price or the title differs from the plan this conversation priced just before (one sentence, from code, before the approve button).
+          const changeNote = planChangeNoteAr(previousPlanQuoteOf(messagesContext), planQuoteData);
+          if (changeNote) planQuoteData.changeNoteAr = changeNote;
 
           // What the assistant understood and the window the plan applies: shown at the top of the plan in the panel.
           const planMission = understandMission(conversationRequestText);

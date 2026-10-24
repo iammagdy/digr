@@ -9,7 +9,7 @@ export interface SocialSearchStepInput {
   trending: boolean;
   /** The topic as the card shows it (already Arabic). */
   displayIndustry: string;
-  /** The requested country, as the card shows it. */
+  /** The requested country, as the card shows it. Empty when none was given: the sentence then leaves the place out. */
   countryAr: string;
   /** The page the posts are read from (a link or a username), or null for a topic plan. Never printed: the sentence says «الصفحة التي حددتها». */
   pageChannel: string | null;
@@ -17,7 +17,7 @@ export interface SocialSearchStepInput {
 
 export function socialSearchStepAr(input: SocialSearchStepInput): string {
   if (input.pageChannel) return `قراءة ${input.isVideoPlan ? "الفيديوهات" : "المنشورات"} مباشرة من الصفحة التي حددتها على المنصة، ضمن الفترة المطلوبة.`;
-  if (input.trending) return `البحث عن ${input.displayIndustry} على المنصة المحددة ضمن النطاق ${input.countryAr}.`;
+  if (input.trending) return `البحث عن ${input.displayIndustry} على المنصة المحددة${input.countryAr ? ` ضمن النطاق ${input.countryAr}` : ""}.`;
   return `البحث عن ${input.isVideoPlan ? "الفيديوهات" : "المحتوى"} المنشور حول «${input.displayIndustry}» على المنصة المحددة.`;
 }
 

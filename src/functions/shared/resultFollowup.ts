@@ -36,8 +36,18 @@ function hasPriorPlanOrDelivery(messages: PriorConversationMessage[]): boolean {
   });
 }
 
+/**
+ * A complaint or a question about a delivered result. The short Arabic words («ليه» = why, «ازاي», «غلط») are matched as WHOLE words: as bare substrings
+ * «ليه» sat inside «خليها» and read «لا، خليها ٣ شركات بس» (a count change on a plan not yet approved) as feedback on a result.
+ */
+const FEEDBACK_WORDS_AR = ["غلط", "خطأ", "ليه", "لماذا", "ازاي", "إزاي", "مشكلة", "مشاكل", "ناقص", "مفقود", "مفيش", "ما\\s*فيش", "مش\\s*(?:موجود|متاح|صح|مظبوط|مطابق)"];
+const RESULT_FEEDBACK_RE = new RegExp(
+  `(?:email|e-mail|mail|إيميل|ايميل|إيميلات|ايميلات|البريد|wrong|missing|why|(?<![\\p{L}])[وف]?(?:${FEEDBACK_WORDS_AR.join("|")})(?![\\p{L}]))`,
+  "iu",
+);
+
 function isResultFeedback(text: string): boolean {
-  return /(?:email|e-mail|mail|إيميل|ايميل|إيميلات|ايميلات|البريد|غلط|خطأ|مش\s*(?:موجود|متاح|صح|مظبوط|مطابق)|ما\s*فيش|مفيش|ناقص|مفقود|ليه|لماذا|ازاي|إزاي|مشكلة|مشاكل|wrong|missing|why)/i.test(text);
+  return RESULT_FEEDBACK_RE.test(text);
 }
 
 function isEmailFeedback(text: string): boolean {

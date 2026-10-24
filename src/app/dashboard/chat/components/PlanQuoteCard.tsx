@@ -20,6 +20,7 @@ import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPr
 import { priceVsHoldLineAr, unitPriceLineAr } from "@/lib/planExplanation";
 import { planCountLineAr, planCountPartsAr } from "@/lib/planCounts";
 import { customerFacingCapabilityLabel } from "@/lib/customerFacingRequestLabels";
+import { planPdfLineAr } from "@/lib/methodologyOffer";
 
 export interface PlanItem {
   capabilitySlug: string;
@@ -86,6 +87,12 @@ export interface PlanQuoteData {
   /** Loaded from plans_quotes when a saved conversation is restored. */
   status?: string;
   methodologyNotes?: string;
+  /** This plan answers the retry button: a NEW offer of the failed request's plan (set by the server), with the records it starts from. */
+  retryOffer?: { reusedRows: number };
+  /** The same plan as a recent completed request of this customer (set by the server): the card warns and offers the old result. */
+  duplicateOf?: { jobId: string; conversationId: string | null; deliveredUnits: number; completedAt: string | null };
+  /** One sentence (built by code): why the price per record or the title differs from the plan priced just before this one. */
+  changeNoteAr?: string;
   /** One sentence: what the assistant understood from the request (built by code). */
   understoodAr?: string;
   /** The period a feed plan applies, why (a known event) and any date that was corrected. */
@@ -121,6 +128,10 @@ interface PlanQuoteCardProps {
   locked?: boolean;
   /** «استكشاف أولًا»: replace this quote by a small priced sample of the same plan. */
   onExplore?: (quote: PlanQuoteData) => Promise<void> | void;
+  /** The editor is open on first render (a plan reopened for editing, and the card tests). */
+  initiallyEditing?: boolean;
+  /** «افتح النتيجة القديمة»: open the earlier result of the same request instead of paying for it again. */
+  onOpenPrevious?: (previous: { jobId: string; conversationId: string | null }) => void;
 }
 
 export function formatExpiry(expiresAt: string): string {
@@ -147,7 +158,7 @@ const SECONDARY_BTN =
 const EDIT_PLAN_BTN_LABEL = "تعديل الخطة";
 export const _LEGACY_EDIT_BTN_LABEL = "تعديل";
 
-import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr, socialContentTopicFromTitle } from "@/lib/planParameters";
+import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr, planActivityLabelAr, planEditScopeError, scopePartsAr, socialContentTopicFromTitle, valueOrEmpty } from "@/lib/planParameters";
 export { extractParamDisplayString, extractInterpretedParameters };
 
 /** Design «الخطة والسعر». The price, balance check and expiry all come from the server quote; nothing is computed here beyond display. */
@@ -164,9 +175,11 @@ export default function PlanQuoteCard({
   onRefresh,
   locked = false,
   onExplore,
+  onOpenPrevious,
+  initiallyEditing = false,
 }: PlanQuoteCardProps) {
   const quote = useMemo(() => scrubQuoteTexts(storedQuote), [storedQuote]);
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing, setIsEditing] = useState(initiallyEditing);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
   const capabilitySlug = (primaryItem?.capabilitySlug || "").toLowerCase();
@@ -182,14 +195,16 @@ export default function PlanQuoteCard({
   const titleTopic = isSocialContentPlan
     ? socialTopicForDisplay({ params: primaryItem?.params, conversationTitle, trending: primaryItem?.params?.trending === true })
     : socialContentTopicFromTitle(conversationTitle);
+  // The country and the activity as sentences and fields use them: a missing one is empty (never the validation sentence «يلزم تحديد …»).
+  const countryShown = valueOrEmpty(interpreted.countryAr);
   const displayIndustry = isPeoplePlan
     ? interpreted.industryAr
     : isSocialContentPlan
       ? (titleTopic || initialParam || "الموضوع المطلوب")
-      : industryDisplayLabelAr(interpreted.industryAr);
+      : planActivityLabelAr(primaryItem?.params) || valueOrEmpty(industryDisplayLabelAr(interpreted.industryAr));
   const scopeLabel = isPeoplePlan ? "نوع البحث:" : isSocialContentPlan ? "موضوع المحتوى:" : "النشاط / التخصص:";
   const [editParamVal, setEditParamVal] = useState(isSocialContentPlan ? displayIndustry : initialParam);
-  const [editCountry, setEditCountry] = useState(interpreted.countryAr);
+  const [editCountry, setEditCountry] = useState(countryShown);
   const [editIndustry, setEditIndustry] = useState(displayIndustry);
   const [editFormats, setEditFormats] = useState<string[]>(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   // The customer's own budget cap in points (optional): empty keeps the plan as quoted.
@@ -199,15 +214,21 @@ export default function PlanQuoteCard({
   const [editError, setEditError] = useState("");
   const [now, setNow] = useState(() => Date.now());
 
-  useEffect(() => {
+  /** The editor's starting values, read from the saved plan: a missing country or activity starts empty, never as the validation sentence. */
+  function loadEditorValues() {
     const pItem = quote.items?.[0];
     const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
     const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
     setEditParamVal(isSocialContentPlan ? displayIndustry : extractParamDisplayString(pItem?.params, quote.summaryAr, people));
-    setEditCountry(inter.countryAr);
-    setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
+    setEditCountry(valueOrEmpty(inter.countryAr));
+    setEditIndustry(people ? inter.industryAr : displayIndustry);
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
+  }
+
+  useEffect(() => {
+    loadEditorValues();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quote]);
 
   useEffect(() => {
@@ -229,6 +250,8 @@ export default function PlanQuoteCard({
         ...(quote.serviceCeilingUnits && !quote.capacityConstrained ? { reason: "service" as const } : {}),
       })
     : null;
+  // A country is part of the plan only for companies and decision makers, or for a social plan that carries a region.
+  const hasCountryField = isCompanyPlan || isPeoplePlan || Boolean(primaryItem?.params?.region);
   const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
   const approvalState = { ...baseApprovalState, canApprove: baseApprovalState.canApprove && planComplete };
   const expired = !approvalState.canApprove;
@@ -248,21 +271,25 @@ export default function PlanQuoteCard({
   }
 
   function handleOpenEdit() {
-    const pItem = quote.items?.[0];
-    const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
-    const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
-    setEditParamVal(isSocialContentPlan ? displayIndustry : extractParamDisplayString(pItem?.params, quote.summaryAr, people));
-    setEditCountry(inter.countryAr);
-    setEditIndustry(people ? inter.industryAr : industryDisplayLabelAr(inter.industryAr));
-    setEditLimit(quote.targetVolumeMax || 1);
-    setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
+    loadEditorValues();
     setEditError("");
     setIsEditing((v) => !v);
   }
 
   async function handleSave() {
-    setSavingEdit(true);
     setEditError("");
+    // A country no rule reads, or an empty required field, is said before saving (the edit used to be dropped without a word).
+    const scopeError = planEditScopeError({
+      country: editCountry,
+      industry: editIndustry,
+      needsCountry: (isCompanyPlan || isPeoplePlan) && !isSocialContentPlan,
+      needsIndustry: isCompanyPlan && !isSocialContentPlan,
+    });
+    if (scopeError) {
+      setEditError(scopeError);
+      return;
+    }
+    setSavingEdit(true);
     try {
       const capValue = Number(toLatinDigits(editCap));
       await onSaveEdit(quote, editLimit, editParamVal, editFormats, editCountry, editIndustry, editCap.trim() && Number.isFinite(capValue) && capValue > 0 ? Math.floor(capValue) : undefined);
@@ -438,10 +465,13 @@ export default function PlanQuoteCard({
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">١.</span>
             <span>{isPeoplePlan
-              ? `البحث عن صناع القرار والمهنيين في ${interpreted.countryAr} ضمن المصادر المتاحة.`
+              ? `البحث عن صناع القرار والمهنيين${countryShown ? ` في ${countryShown}` : ""} ضمن المصادر المتاحة.`
               : isSocialContentPlan
-                ? socialSearchStepAr({ isVideoPlan, trending: primaryItem?.params?.trending === true, displayIndustry, countryAr: interpreted.countryAr, pageChannel: pageChannelOfPlan })
-                : `استخراج السجلات الأولية من المصادر المتاحة للنطاق المحدد (${interpreted.countryAr} · ${displayIndustry}).`}</span>
+                ? socialSearchStepAr({ isVideoPlan, trending: primaryItem?.params?.trending === true, displayIndustry, countryAr: countryShown, pageChannel: pageChannelOfPlan })
+                : (() => {
+                    const scope = scopePartsAr(countryShown, displayIndustry);
+                    return `استخراج السجلات الأولية من المصادر المتاحة${scope ? ` للنطاق المحدد (${scope})` : ""}.`;
+                  })()}</span>
           </li>
           <li className="flex items-start gap-2">
             <span className="text-ac font-bold">٢.</span>
@@ -484,6 +514,8 @@ export default function PlanQuoteCard({
         ))}
       </div>
 
+      <p data-testid="plan-pdf-line" className="mb-0 mt-2 text-[12px] font-light leading-[1.9] text-mut">{planPdfLineAr(quote.outputFormats)}</p>
+
       {/* Financial Guarantee & Accounting Clarity Box */}
       <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
         <p className="m-0 font-medium text-ink">التكلفة المتوقعة تشمل السجلات المطلوبة. بعد التسليم، يُخصم فقط مقابل السجلات المطابقة التي وصلت إليك.</p>
@@ -501,17 +533,17 @@ export default function PlanQuoteCard({
       {isEditing && !locked && (
         <div className="mt-4 space-y-3 rounded-[18px] bg-sf2 p-3.5 text-xs">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <div>
+            {hasCountryField && <div>
               <label htmlFor={`pq-country-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الدولة / النطاق الجغرافي</label>
               <input
-                id={`pq-country-${quote.quoteId}`} type="text" value={editCountry} onChange={(e) => setEditCountry(e.target.value)} dir="auto"
+                id={`pq-country-${quote.quoteId}`} type="text" value={editCountry} onChange={(e) => setEditCountry(e.target.value)} dir="auto" placeholder="مثل: مصر"
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
               />
-            </div>
+            </div>}
             {!isSocialContentPlan && <div>
               <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "نوع البحث" : "النشاط / التخصص الرئيسي"}</label>
               <input
-                id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto"
+                id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto" placeholder={isPeoplePlan ? "" : "مثل: الكهرباء"}
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
               />
             </div>}
@@ -590,20 +622,39 @@ export default function PlanQuoteCard({
                 البدء بـ {formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط
               </button>
             )}
-            <button
-              type="button"
-              data-testid="edit-plan-btn"
-              id={`edit-plan-btn-${quote.quoteId}`}
-              aria-label={isEditing ? "إلغاء التعديل" : "تعديل خطة البحث"}
-              onClick={handleOpenEdit}
-              disabled={quote.isDependent}
-              className={`${SECONDARY_BTN} min-h-11`}
-            >
-              {isEditing ? "إلغاء التعديل" : EDIT_PLAN_BTN_LABEL}
-            </button>
+            {!isEditing && (
+              <button
+                type="button"
+                data-testid="edit-plan-btn"
+                id={`edit-plan-btn-${quote.quoteId}`}
+                aria-label="تعديل خطة البحث"
+                onClick={handleOpenEdit}
+                disabled={quote.isDependent}
+                className={`${SECONDARY_BTN} min-h-11`}
+              >
+                {EDIT_PLAN_BTN_LABEL}
+              </button>
+            )}
           </div>
         </div>
       )}
+
+      {!locked && quote.retryOffer ? (
+        <p data-testid="plan-retry-offer" className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2">
+          عرض جديد لإعادة المحاولة بنفس خطتك السابقة{quote.retryOffer.reusedRows > 0 ? `، وسيبدأ مما جُمع سابقًا (${formatAr(quote.retryOffer.reusedRows)} سجل)` : ""}. لا يبدأ شيء ولا يُحجز رصيد قبل موافقتك.
+        </p>
+      ) : null}
+
+      {!locked && quote.duplicateOf && onOpenPrevious ? (
+        <div data-testid="plan-duplicate-warning" role="status" className="mb-0 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.9] text-amber-950">
+          <p className="m-0"><strong>عندك نفس الطلب ده.</strong> وصلتك نتيجته قبل كده ({formatAr(quote.duplicateOf.deliveredUnits)} سجل)، وفتحها لا يكلّفك شيئًا.</p>
+          <button type="button" data-testid="plan-duplicate-open" onClick={() => onOpenPrevious({ jobId: quote.duplicateOf!.jobId, conversationId: quote.duplicateOf!.conversationId })} className={`${SECONDARY_BTN} min-h-11`}>افتح النتيجة القديمة</button>
+        </div>
+      ) : null}
+
+      {!locked && quote.changeNoteAr ? (
+        <p data-testid="plan-change-note" className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2">{quote.changeNoteAr}</p>
+      ) : null}
 
       {!locked && approvalState.inactiveStatus && (
         <div role="status" className="mt-[18px] flex items-center rounded-[18px] bg-sf2 px-4 py-3.5">
@@ -635,7 +686,8 @@ export default function PlanQuoteCard({
         </div>
       )}
 
-      {!locked && !low && approvalState.canApprove && (
+      {/* While the editor is open it carries the only «إلغاء» and the only way on («حفظ التعديل»): approving the unsaved old plan from underneath it is not offered. */}
+      {!locked && !low && approvalState.canApprove && !isEditing && (
         <>
           <div className="mt-[18px] flex flex-wrap gap-2">
             <button
@@ -657,12 +709,12 @@ export default function PlanQuoteCard({
               type="button"
               data-testid="edit-plan-btn"
               id={`edit-plan-btn-${quote.quoteId}`}
-              aria-label={isEditing ? "إلغاء التعديل" : "تعديل خطة البحث"}
+              aria-label="تعديل خطة البحث"
               onClick={handleOpenEdit}
               disabled={quote.isDependent}
               className={`${SECONDARY_BTN} min-h-11`}
             >
-              {isEditing ? "إلغاء التعديل" : EDIT_PLAN_BTN_LABEL}
+              {EDIT_PLAN_BTN_LABEL}
             </button>
             {quote.explorationOffer && onExplore && !quote.exploration && (
               <button

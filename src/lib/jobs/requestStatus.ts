@@ -43,3 +43,11 @@ export function partialDeliveryText(delivered: number, requested: number): strin
 export function collectedBeforeStopText(collected: number, requested: number): string {
   return `جُمع ${toArabicDigits(collected)} من ${toArabicDigits(requested)} سجلاً قبل التوقف ولم يُخصم أي رصيد؛ تُستكمل عند إعادة المحاولة.`;
 }
+
+/**
+ * A request that finished (fully or partly) with ZERO delivered records has no data file to offer: its card shows zero files and says so (the
+ * results panel follows the same rule). An absent delivered count is unknown, never zero.
+ */
+export function deliveredNothing(input: { kind: RequestKind; delivered?: number | null; deliveredKnown?: boolean }): boolean {
+  return (input.kind === "done" || input.kind === "partial") && input.deliveredKnown === true && (Number(input.delivered) || 0) === 0;
+}
