@@ -4,6 +4,10 @@ One capability, one item per quote, unit = **delivered comment**. A customer ask
 
 Basis labels used below: **M** measured (the owner's own run of 24 Oct 2026: 406 calls, 305 posts, 1,753 comments, 0.9619 USD), **C** catalog price, **A** assumed, **T** proven by an automated test with FAKE sources. Nothing here was run against a live provider.
 
+## The gate: unavailable until the owner reviews a Page
+
+The capability is **off** until at least one registry Page is `ownerReviewed: true` with `status: "ok"` (`FACEBOOK_REPORT_ENABLED` in `src/lib/facebookReport/registry.ts`; all entries are false today, so it ships off). With the gate off the capability does not exist for the rest of the platform: it is not in `SOCIAL_CAPABILITIES` (so not in the calculator, the catalog seeds, the plans or the worker), «تقرير / تحليل / رصد» are not a report request and not content words, and every request behaves as it did before this work (checked against main's own answers for seven requests; test: `tests/facebook-report-gate.test.ts`). Turning it on is **one line**: set `ownerReviewed: true` on a usable Page. Note for the owner: once on, every `ok` Page is browsed, reviewed or not; review all of them before flipping (a single reviewed Page would make that Page the whole report, and the report would say so).
+
 ## How a request becomes a job
 
 1. **Routing.** The word «تقرير» (or «تحليل», «رصد») with Facebook and a topic is a report; the same request without it stays the existing keyword service (`social-facebook-keyword-comments`, untouched). (T)

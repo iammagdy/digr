@@ -95,6 +95,9 @@ vi.mock("../src/lib/supabase/server", () => ({
   })),
 }));
 
+// The capability is gated on the owner's review of at least one Page (see FACEBOOK_REPORT_ENABLED). These tests exercise the report itself, so they switch the gate on; tests/facebook-report-gate.test.ts proves what happens with it off.
+vi.mock("../src/lib/facebookReport/registry", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/lib/facebookReport/registry")>()), FACEBOOK_REPORT_ENABLED: true }));
+
 vi.mock("../src/lib/server/sendPlatformEmail", () => ({
   sendPlatformEmail: vi.fn(async () => undefined),
   getRecipient: vi.fn(async () => null),

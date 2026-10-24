@@ -5,7 +5,7 @@ import { customerFacingCapabilityLabel } from "../../lib/customerFacingRequestLa
 import { getBusyState } from "../../lib/server/busyState";
 import { assessCoverage, familyById, notSupportedReplyAr, partlyNoteAr } from "../../lib/requestCoverage";
 import { youtubeRecencyFor, YOUTUBE_OLD_WINDOW_NOTE_AR, YOUTUBE_RECENT_SUPPLY_FROM_VOLUME, YOUTUBE_RECENT_SUPPLY_NOTE_AR } from "../../lib/youtubeRecency";
-import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowIsStatedByCustomer, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr } from "../../lib/timeWindow";
+import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWindow, windowIsStatedByCustomer, windowOrProposedDefault, windowQuestion, WINDOW_OPTIONS_AR, formatDateAr, RELATIVE_COUNT_WORDS_ALT } from "../../lib/timeWindow";
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
@@ -998,7 +998,7 @@ export function buildAutoPlanProposal(
 }
 
 /** «آخر ٣ شهور», «خلال شهرين», «آخر أسبوعين»: the relative window words of a request, singular, plural and dual. A unit followed by a year («خلال سنة 2024») is that year, not a relative window. */
-const RELATIVE_WINDOW_RE = /(?:آخر|اخر|خلال)\s*(\d+|[٠-٩]+)?\s*(شهرين|أسبوعين|اسبوعين|يومين|سنتين|عامين|شهور|أشهر|اشهر|شهر|سنوات|سنين|سنة|أعوام|اعوام|عام|أسابيع|اسابيع|أسبوع|اسبوع|أيام|ايام|يوم)(?!\s*(?:19|20)\d{2})/i;
+const RELATIVE_WINDOW_RE = new RegExp(`(?:آخر|اخر|خلال)\\s*(\\d+|[٠-٩]+|${RELATIVE_COUNT_WORDS_ALT})?\\s*(شهرين|أسبوعين|اسبوعين|يومين|سنتين|عامين|شهور|أشهر|اشهر|شهر|سنوات|سنين|سنة|أعوام|اعوام|عام|أسابيع|اسابيع|أسبوع|اسبوع|أيام|ايام|يوم)(?!\\s*(?:19|20)\\d{2})`, "i");
 
 export function dateFiltersFromHint(hint: string, now = new Date()): { from?: string; to?: string } {
   const stated = parseStatedDates(hint, now);

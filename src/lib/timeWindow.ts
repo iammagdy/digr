@@ -111,13 +111,15 @@ const PERIOD_THIS_WORDS = new Set(["هذا", "هذه", "هاذا", "هاذه"]);
 
 export function periodWordFlags(tokens: string[]): boolean[] {
   const flags: boolean[] = [];
-  let afterLead = false;
+  let afterLead: boolean = false;
   for (const token of tokens) {
     const norm = normalizeWindowText(token).trim();
     const isLead = PERIOD_LEAD_WORDS.has(norm);
-    const flagged = isMonthWord(token) || isLead || (afterLead && PERIOD_UNIT_WORDS.has(norm));
+    // «آخر ثلاثة شهور»: a count written in words right after the lead word is part of the period, and the unit after it is too
+    const isCountWord: boolean = afterLead && WORD_COUNT_VALUE.has(norm);
+    const flagged = isMonthWord(token) || isLead || isCountWord || (afterLead && PERIOD_UNIT_WORDS.has(norm));
     flags.push(flagged);
-    afterLead = isLead;
+    afterLead = isLead || isCountWord;
   }
   // «الشهر الماضي», «هذا الشهر», «الشهر اللي فات»: the unit with «ال» and the word that makes it a period are the period too, only when they come together.
   const norms = tokens.map((token) => normalizeWindowText(token).trim());
@@ -269,6 +271,8 @@ const PERIOD_UNITS_RE = "شهرين|اسبوعين|يومين|سنتين|عام�
 const RELATIVE_RE = new RegExp(`(?:اخر|خلال|اخر\\s*فتره)\\s*(\\d+|${WORD_COUNT_ALT})?\\s*(${PERIOD_UNITS_RE})(?!\\s*(?:19|20)\\d{2})`);
 /** «٣ شهور الماضية», «ثلاث شهور أخيرة», «منذ ٣ شهور», «من ٣ شهور»: a count and a unit with the word that makes it the period behind us. */
 const RELATIVE_BACK_RE = new RegExp(`(?:(?:منذ|مند|من)\\s*(\\d+|${WORD_COUNT_ALT})\\s*(${PERIOD_UNITS_RE})|(\\d+|${WORD_COUNT_ALT})\\s*(${PERIOD_UNITS_RE})\\s*(?:ال)?(?:ماضي\\S*|اخير\\S*|فات\\S*|سابق\\S*))(?![\\p{L}\\d])(?!\\s*(?:19|20)\\d{2})`, "u");
+/** The count words as a pattern for TEXT THAT IS NOT NORMALISED yet (hamza, taa marbuta and alef maqsura in any spelling): for the readers that look at a customer's raw sentence. */
+export const RELATIVE_COUNT_WORDS_ALT = [...WORD_COUNTS].sort((a, b) => b[0].length - a[0].length).map(([w]) => w.replace(/ا/g, "[اأإ]").replace(/[هة]/g, "[هة]").replace(/ي/g, "[يى]")).join("|");
 const countOf = (raw: string | undefined): number => (raw === undefined || raw === "" ? 1 : /^\d+$/.test(raw) ? Number(raw) : WORD_COUNT_VALUE.get(raw) ?? 1);
 
 function addMonthsClamped(date: Date, months: number): Date {

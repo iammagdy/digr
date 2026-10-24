@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// The capability is gated on the owner's review of at least one Page (see FACEBOOK_REPORT_ENABLED). These tests exercise the report itself, so they switch the gate on; tests/facebook-report-gate.test.ts proves what happens with it off.
+vi.mock("../src/lib/facebookReport/registry", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/lib/facebookReport/registry")>()), FACEBOOK_REPORT_ENABLED: true }));
+
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { clearBriefCacheForTesting } from "../src/functions/shared/briefManager";
 import { resetProviderBalanceCacheForTesting, setProviderBalanceForTesting } from "../src/functions/shared/providerSpend";
@@ -213,6 +216,28 @@ describe("the capacity gate and the hold, with the report's own cost basis (0.00
     const r = await send(FULL);
     expect(r.outputType).toBe("propose_plan");
     expect(r.planQuote.quotedPoints).toBe(5219);
+  });
+  it("the exact thresholds: 20 posts × 5 comments (100 comments, 0.055 USD) is delivered whole from an effective provider balance of 0.0611 USD and cut (never refused: it is under 600 points) below it; 100 × 20 cut to 75 posts (1,500 comments, 0.825 USD) is refused below 0.9167 USD", async () => {
+    const small = "عايز تقرير عن الترندات الصحية على فيسبوك في مصر آخر ٣ شهور ٢٠ منشور بـ ٥ تعليقات لكل منشور";
+    const wide = "عايز تقرير عن الترندات الصحية على فيسبوك في مصر آخر ٣ شهور ١٠٠ منشور بـ ٢٠ تعليق لكل منشور";
+    const run = async (message: string, balance: number) => { setProviderBalanceForTesting(balance); const { send } = await session(); return send(message); };
+    // small: a balance under 0.0611 USD cuts the volume to what its safe budget holds (0.9 x 0.06 / 0.00055 = 98 comments); at 0.062 USD it is whole
+    const cut = await run(small, 0.06);
+    expect(cut.outputType).toBe("propose_plan");
+    expect(cut.planQuote.items[0].targetVolumeMax).toBe(98);
+    expect(cut.planQuote.capacityConstrained).toBe(true);
+    const whole = await run(small, 0.062);
+    expect(whole.planQuote.items[0].targetVolumeMax).toBe(100);
+    expect(whole.planQuote.capacityConstrained).toBeFalsy();
+    // wide: over 600 points, so below the threshold the plan is REFUSED in one sentence, and from it on the plan is whole
+    const refused = await run(wide, 0.91);
+    expect(refused.planQuote).toBeUndefined();
+    expect(refused.contentAr).toContain("ولم يُحجز أي رصيد");
+    const passes = await run(wide, 0.92);
+    expect(passes.outputType).toBe("propose_plan");
+    expect(passes.planQuote.items[0].targetVolumeMax).toBe(1500);
+    expect(100 * 0.00055 / 0.9).toBeCloseTo(0.0611, 4);
+    expect(1500 * 0.00055 / 0.9).toBeCloseTo(0.9167, 4);
   });
   it("the customer's own balance decides affordability: a balance under the hold is stated, never silently reduced", async () => {
     setProviderBalanceForTesting(50);

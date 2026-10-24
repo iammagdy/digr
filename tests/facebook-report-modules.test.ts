@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FACEBOOK_PAGE_REGISTRY, normalizeAr, publisherOf, registryProblems, reportCoverage, selectPages, topicAreasOf, type FacebookPageEntry,
+  FACEBOOK_PAGE_REGISTRY, FACEBOOK_REPORT_ENABLED, normalizeAr, publisherOf, registryProblems, reportCoverage, selectPages, topicAreasOf, type FacebookPageEntry,
 } from "../src/lib/facebookReport/registry";
 import { coveredPeriod, emptyWindowStats, filterPostsByWindow, postVerdict, windowBoundsMs } from "../src/lib/facebookReport/window";
 import { applyPublisherCap, balancedSelection, checkPublisherShare, concentrationOf, effectiveShare, publisherCap } from "../src/lib/facebookReport/publishers";
@@ -26,13 +26,15 @@ describe("the page registry", () => {
     expect(registryProblems([{ ...FACEBOOK_PAGE_REGISTRY[0], url: "https://www.facebook.com/profile.php?id=1" }])).not.toEqual([]);
     expect(registryProblems([{ ...FACEBOOK_PAGE_REGISTRY[0], url: "https://www.facebook.com/groups/abc" }])).not.toEqual([]);
   });
-  it("seeds the owner's audit: five usable Egyptian health Pages and the Ministry flagged invalid, every entry still waiting for the owner's review", () => {
+  it("seeds the owner's audit: five usable Egyptian health Pages and the Ministry flagged invalid, the gate follows the owner's review flags", () => {
     expect(FACEBOOK_PAGE_REGISTRY.map((entry) => entry.id)).toEqual([
       "eg_health_el_consolto", "eg_health_drug_authority", "eg_health_medical_syndicate", "eg_health_cairo24", "eg_health_masrawy", "eg_health_mohp",
     ]);
     expect(FACEBOOK_PAGE_REGISTRY.filter((entry) => entry.status === "ok")).toHaveLength(5);
     expect(FACEBOOK_PAGE_REGISTRY.find((entry) => entry.id === "eg_health_mohp")?.status).toBe("invalid");
-    expect(FACEBOOK_PAGE_REGISTRY.every((entry) => entry.ownerReviewed === false)).toBe(true);
+    // the review flag is the owner's to set (one line per Page); the gate is exactly «some usable Page is reviewed» (see facebook-report-gate.test.ts)
+    expect(FACEBOOK_PAGE_REGISTRY.every((entry) => typeof entry.ownerReviewed === "boolean")).toBe(true);
+    expect(FACEBOOK_REPORT_ENABLED).toBe(FACEBOOK_PAGE_REGISTRY.some((entry) => entry.ownerReviewed && entry.status === "ok"));
     expect(FACEBOOK_PAGE_REGISTRY.every((entry) => entry.country === "EG")).toBe(true);
     // the two doctors of the audit were personal profiles: none of the listed addresses is a person
     expect(FACEBOOK_PAGE_REGISTRY.some((entry) => /profile\.php|\/people\//.test(entry.url))).toBe(false);

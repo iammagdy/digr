@@ -1,3 +1,4 @@
+import { FACEBOOK_REPORT_ENABLED } from "../../lib/facebookReport/registry";
 /**
  * One compact, structured card per capability: what it does, the inputs and filters it accepts (and in what language or
  * format), what it returns, what it is good and not good for, and request-to-parameter examples. The model reads these
@@ -120,7 +121,7 @@ export const CAPABILITY_CARDS: CapabilityCard[] = [
     notFor: "منشورات صفحة بعينها أو رابط منشور (استخدم خدمة تعليقات فيسبوك)، أو منشورات بلا تعليقاتها",
     examples: [{ ask: "٣٠٠ منشور فيسبوك عن الترندات الصحية بخمسة تعليقات لكل منشور", params: { query: "الترندات الصحية" } }],
   },
-  {
+  ...(FACEBOOK_REPORT_ENABLED ? [{
     slug: "facebook-topic-report",
     what: "تقرير عن موضوع على فيسبوك في دولة وفترة محددتين: منشورات من صفحات عامة موثوقة تخص الدولة وتعليقاتها، مصنّفة على محاور، مع ملف إكسل للبيانات وملف بي دي إف منفصل للمنهجية والتحليل",
     inputs: ["query=الموضوع كما كتبه العميل بلا كلمة «تقرير»", "region=رمز ISO للدولة (إلزامي: لا تُستخدم إلا صفحات الدولة نفسها)"],
@@ -129,7 +130,7 @@ export const CAPABILITY_CARDS: CapabilityCard[] = [
     goodFor: "طلب «تقرير» أو «رصد» أو «تحليل» عن موضوع على فيسبوك، مثل «تقرير عن الترندات الصحية في مصر آخر ٣ شهور»",
     notFor: "تعليقات منشورات عن موضوع بلا تقرير (استخدم تعليقات فيسبوك عن موضوع)، أو منشورات صفحة بعينها أو رابط منشور، أو موضوع لا صفحات موثّقة له",
     examples: [{ ask: "تقرير عن الترندات الصحية على فيسبوك في مصر آخر ٣ شهور", params: { query: "الترندات الصحية", region: "EG" } }],
-  },
+  }] : []),
   {
     slug: "social-tiktok-videos",
     what: "فيديوهات تيك توك: بحث بكلمة، أو فيديوهات قناة، أو الرائج في دولة",

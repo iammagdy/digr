@@ -70,6 +70,15 @@ export const FACEBOOK_PAGE_REGISTRY: readonly FacebookPageEntry[] = [
   { id: "eg_health_mohp", nameAr: "وزارة الصحة والسكان المصرية", aliases: ["egyptian mohp", "وزاره الصحه والسكان"], url: "https://www.facebook.com/EgyptianMOHP", country: "EG", topics: ["health", "official"], status: "invalid", ownerReviewed: false, note: "URL invalid, needs the correct Page URL: the audit's address answered «not_found» (it was not a valid Page id for the source)." },
 ];
 
+/**
+ * THE GATE of the capability. The report is offered, planned and priced to customers only when the owner has reviewed at least one usable Page (`ownerReviewed: true` on an
+ * entry whose status is `ok`). With none, the capability does not exist for the rest of the platform: it is not in the service list (calculator, catalog, plans), the report
+ * words are not a report request, and every request behaves exactly as it did before the report was added. Turning it on is ONE line: set `ownerReviewed: true` on a Page above.
+ * Read once when the module loads (the registry is data in the code, so the answer is the same for the whole life of a deployment).
+ */
+export const reportEnabledFor = (registry: readonly FacebookPageEntry[]): boolean => registry.some((entry) => entry.ownerReviewed === true && entry.status === "ok");
+export const FACEBOOK_REPORT_ENABLED: boolean = reportEnabledFor(FACEBOOK_PAGE_REGISTRY);
+
 export interface PageSelection {
   /** Pages to browse, in registry order. */
   usable: FacebookPageEntry[];

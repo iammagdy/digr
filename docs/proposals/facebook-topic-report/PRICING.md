@@ -38,6 +38,10 @@ The charge never exceeds the reserve for any delivered count up to the volume (p
 
 `checkPlanProviderCapacity` estimates volume x 0.00055 USD against a safe budget of 0.9 x min(real balance, remaining daily cap, user cap). 1,500 comments: estimate 0.825 USD, needs about 0.917 USD of effective balance. Below that the plan is refused in one Arabic sentence (the capacity it does hold is stated) and nothing is quoted or held.
 
+Thresholds (tested): **20 posts x 5 comments** (100 comments, estimate 0.055 USD) needs an effective provider balance (the lowest of the real balance, the remaining daily cap and the user cap) of **0.0611 USD**, i.e. a safe budget of 0.055 USD; below it the plan, being under 600 points, is cut to what the budget holds (0.06 USD gives 98 comments), never refused. **100 posts x 20 comments, cut to 75 posts** (1,500 comments, estimate 0.825 USD) needs **0.9167 USD** (safe budget 0.825 USD); below it the plan is refused (0.91 USD refuses, 0.92 USD passes).
+
+The capability is also **gated**: it is not offered until the owner has reviewed at least one registry Page (one line in the registry), so this price is not shown to anyone yet.
+
 ## Model cost (not in the table above)
 
 The axis model (claude-haiku-5-5, unchanged) runs one call per 50 ambiguous posts inside 20% of the job's revenue (about 1.65 USD for the 1,500-comment job; at most 6 calls for 300 posts); beyond the budget a post is «general» and flagged. The provider table above does not count it; at the measured review-call cost (about 0.0083 USD) six calls are about 0.05 USD.

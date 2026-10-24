@@ -363,7 +363,9 @@ describe("the public calculator and the quote writer price a social service iden
     const options = getPublicCalculatorOptions().filter((o) => o.slug.startsWith("social-"));
     // (every service slugged «social-»; the Facebook topic report is slugged «facebook-topic-report» and is checked right below)
     expect(options).toHaveLength(SOCIAL_CAPABILITIES.filter((cap) => cap.slug.startsWith("social-")).length);
-    expect(getPublicCalculatorOptions().some((o) => o.slug === "facebook-topic-report" && !/[A-Za-z]/.test(o.nameAr + o.descriptionAr))).toBe(true);
+    // (the report is listed only while it is offered, see FACEBOOK_REPORT_ENABLED; when it is, it is Arabic-only like the rest)
+    const report = getPublicCalculatorOptions().find((o) => o.slug === "facebook-topic-report");
+    if (report) expect(/[A-Za-z]/.test(report.nameAr + report.descriptionAr)).toBe(false);
     for (const option of options) {
       expect(option.nameAr).not.toMatch(/[A-Za-z]/);
       expect(option.descriptionAr).not.toMatch(/[A-Za-z]/);

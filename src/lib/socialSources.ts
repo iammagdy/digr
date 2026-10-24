@@ -9,7 +9,7 @@
  *
  * This module is pure data and pure functions (no network), so it can be tested exhaustively.
  */
-import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings"; import { facebookReportCapability, facebookTopicCapability, type PostTopicTraits } from "./facebookTopicSources"; import { FACEBOOK_REPORT_SLUG, PER_PUBLISHER_MAX_SHARE } from "./facebookReport/constants"; import { formatDateAr } from "./timeWindow";
+import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FACEBOOK_JOB_CEILINGS } from "./facebookCeilings"; import { facebookReportCapability, facebookTopicCapability, type PostTopicTraits } from "./facebookTopicSources"; import { FACEBOOK_REPORT_SLUG, PER_PUBLISHER_MAX_SHARE } from "./facebookReport/constants"; import { formatDateAr } from "./timeWindow"; import { FACEBOOK_REPORT_ENABLED } from "./facebookReport/registry";
 
 import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
@@ -613,7 +613,7 @@ export const SOCIAL_CAPABILITIES: SocialCapabilityDef[] = [
     successRate: 0.995,
     discover: { channel: FACEBOOK_PAGE_POSTS },
   },
-  facebookTopicCapability(FACEBOOK_COMMENTS), facebookReportCapability(FACEBOOK_COMMENTS, FACEBOOK_PAGE_POSTS)]; // the report comes AFTER the keyword service: a plain Facebook topic request still finds the keyword service first; the report is chosen by its own intent (socialCapabilityForIntent)
+  facebookTopicCapability(FACEBOOK_COMMENTS), ...(FACEBOOK_REPORT_ENABLED ? [facebookReportCapability(FACEBOOK_COMMENTS, FACEBOOK_PAGE_POSTS)] : [])]; // the report comes AFTER the keyword service: a plain Facebook topic request still finds the keyword service first; the report is chosen by its own intent (socialCapabilityForIntent)
 
 // The row ceiling of each service follows the scale configuration (the defaults above unless the owner raised them).
 for (const cap of SOCIAL_CAPABILITIES) cap.maxRows = effectiveSocialMaxRows(cap.maxRows, cap.kind);

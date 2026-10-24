@@ -7,6 +7,7 @@
  * every turn and can be tested.
  */
 import { periodWordFlags } from "./timeWindow";
+import { FACEBOOK_REPORT_ENABLED } from "./facebookReport/registry";
 import { extractNumberFromText, isNumberWord } from "./arabicNumbers";
 import { normalizeDigits } from "./arabicDigits";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
@@ -262,7 +263,7 @@ export function detectSocialIntent(text: string): SocialIntent {
 
   // A REPORT on a topic on Facebook (a topic, no link, no page): one deliverable, the posts of vetted Pages with their comments, a statistical summary and a methodology file.
   // Only the report words make it one: every other Facebook request keeps its own route untouched.
-  if (platform === "facebook" && !targetUrl && !channelRef && !facebookPageNameIn(body) && REPORT_WORDS_RE.test(body) && hasSocialSubject(stripReportWords(body))) {
+  if (FACEBOOK_REPORT_ENABLED && platform === "facebook" && !targetUrl && !channelRef && !facebookPageNameIn(body) && REPORT_WORDS_RE.test(body) && hasSocialSubject(stripReportWords(body))) {
     return { platform, wantsComments: true, wantsTrending: false, targetUrl: null, channelRef: null, pageName: null, task: "comments", discover: "keyword", videosWithComments: true, report: true };
   }
 
