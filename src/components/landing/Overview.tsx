@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { SERVICES_CATALOG, catalogCounts, coreServices } from "@/lib/servicesCatalog";
-import { SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "@/lib/servicesAvailability";
+import { DECISION_MAKERS_LINE_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "@/lib/servicesAvailability";
 import { platformsCountAr, sectorsCountAr } from "@/lib/servicesCatalogText";
 import { CONTACT_VERIFICATION_LABELS } from "@/lib/contactVerification";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
@@ -58,6 +58,8 @@ export function Overview() {
           <Link href="/services" className="mx-auto inline-flex min-h-11 items-center text-[15px] text-ink underline underline-offset-4">تصفّح خدماتنا</Link>
         </div>
 
+        <div className="flex flex-col gap-4">
+        <p data-testid="landing-decision-makers-line" className="m-0 text-center text-[15px] font-normal leading-[1.9] text-ink">{DECISION_MAKERS_LINE_AR}</p>
         <div data-testid="landing-decision-makers" className="flex flex-col gap-3 rounded-[24px] border border-ln2 bg-sf p-6 text-right min-[760px]:p-8">
           <h2 className="m-0 text-[24px] font-medium text-ink">صناع القرار وبيانات التواصل المهنية</h2>
           <p className="m-0 text-[15px] font-light leading-[2] text-ink2">من يقرر في الشركة، وبريد عمله وهاتف مكتبه عند توفرهما. بجانب كل بريد وكل هاتف حالة تحقق واضحة، فلا تعتمد رقمًا لم يتأكد.</p>
@@ -70,6 +72,7 @@ export function Overview() {
               <li key={label} className="rounded-full bg-sf2 px-3 py-1 text-[12px] text-ink">{label}</li>
             ))}
           </ul>
+        </div>
         </div>
 
         <ul className="m-0 grid list-none grid-cols-1 gap-3 p-0 min-[760px]:grid-cols-3" data-testid="landing-trust">

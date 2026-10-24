@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { Overview } from "../src/components/landing/Overview";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
 import { SERVICES_CATALOG, coreServices } from "../src/lib/servicesCatalog";
-import { AVAILABLE_NOW_REGISTRY_SLUGS, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "../src/lib/servicesAvailability";
+import { AVAILABLE_NOW_REGISTRY_SLUGS, DECISION_MAKERS_LINE_AR, SERVICE_SOON_LINE_AR, SERVICE_STATUS_AVAILABLE_AR, SERVICE_STATUS_SOON_AR, isAvailableNow, statusCounts } from "../src/lib/servicesAvailability";
 import { formatAr } from "../src/lib/arabicDigits";
 
 const html = renderToStaticMarkup(createElement(Overview));
@@ -35,6 +35,15 @@ describe("landing: the two statuses (from the catalog's one constant)", () => {
     expect(block).toContain(`${formatAr(core.length - available.length)} من خدمات التواصل المهنية. ${SERVICE_SOON_LINE_AR}`);
     expect(block).not.toContain("<a");
     expect(html).not.toContain('href="/register"');
+  });
+
+  it("one honest line above the decision-makers card, from one constant, with no CTA, price or status change", () => {
+    expect(DECISION_MAKERS_LINE_AR).toBe("بيانات صناع القرار تُسلَّم الآن بحسب الطلب، وتُعرض خطتها وسعرها قبل أي خصم.");
+    expect(html.split(DECISION_MAKERS_LINE_AR).length - 1).toBe(1);
+    expect(html.indexOf(DECISION_MAKERS_LINE_AR)).toBeLessThan(html.indexOf('data-testid="landing-decision-makers"'));
+    expect(/data-testid="landing-decision-makers-line"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(DECISION_MAKERS_LINE_AR);
+    expect(readFileSync("src/components/landing/Overview.tsx", "utf8")).not.toContain("بيانات صناع القرار تُسلَّم");
+    expect(AVAILABLE_NOW_REGISTRY_SLUGS).not.toContain("professional-people-search");
   });
 
   it("the words come only from the constants; no English, no emoji, no price", () => {
