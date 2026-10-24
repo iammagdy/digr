@@ -231,9 +231,10 @@ export default function ResultsCanvas({
       ) === index
     );
   });
-  // A failed request that delivered no record has no file to offer.
+  // A request that ended with no delivered record has no file to offer (failed, cancelled, or finished with nothing): zero files, said once.
   const deliveredCount = records.length > 0 ? records.length : rowsCollected ?? 0;
-  const nothingDelivered = jobStatus === "failed" && deliveredCount === 0;
+  const finishedEmpty = (jobStatus === "cancelled" || (jobStatus === "done" && (records.length > 0 || rowsCollected !== undefined))) && deliveredCount === 0;
+  const nothingDelivered = jobStatus === "failed" && deliveredCount === 0 || finishedEmpty;
   const editDisabled = artifactEditing || artifactHistoryAvailable === false;
   const visibleSuggestions = (review?.suggestions ?? []).filter((suggestion) => !RETIRED_SUGGESTION_TYPES.has(suggestion.type));
 

@@ -12,6 +12,8 @@ import { getEnabledCapabilitiesWithCoreServices, getCatalogCapabilities } from "
 import { getEndpointDetails, sanitizeCustomerErrorMessage } from "@/functions/shared/catalogClient";
 import { calculateBalance } from "@/lib/supabase/ledger";
 import { applyCustomerCap } from "@/lib/pointsCap";
+import { editedPlanSummaryAr } from "@/lib/planParameters";
+import { toArabicDigits } from "@/lib/arabicDigits";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
@@ -169,12 +171,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Update summaryAr on updatedPlan if parameters were edited
+    // Update summaryAr on updatedPlan if parameters were edited (a missing country or activity is left out of the sentence, never written into it)
     const primaryItem = updatedPlan.items[0];
     if (primaryItem) {
-      const { extractInterpretedParameters } = await import("@/lib/planParameters");
-      const interp = extractInterpretedParameters(primaryItem.params, updatedPlan.summaryAr);
-      updatedPlan.summaryAr = `خطة حصر حتى ${primaryItem.targetVolumeMax || 50} سجل: ${interp.industryAr} في ${interp.countryAr}`;
+      updatedPlan.summaryAr = editedPlanSummaryAr(primaryItem, updatedPlan.summaryAr, toArabicDigits);
     }
 
     // 6. Generate NEW quote (supersedes old quote and recalculates price)

@@ -45,3 +45,15 @@ export function methodologyChargeId(jobId: string): string {
 export function methodologyPurchasedAr(): string {
   return "اشتريت ملف المنهجية لهذا الطلب من قبل؛ ستجد زر «تحميل المنهجية» في تبويب «الملفات» بلوحة النتائج، ولن يُخصم شيء مرة أخرى.";
 }
+
+/**
+ * What a plan card says about the PDF, in one sentence: whether it is part of this plan's files at no extra charge, or not part of it, and in both
+ * cases that the full official methodology document is a separate, optional purchase after delivery (the same price the results panel shows).
+ */
+export function planPdfLineAr(outputFormats: string[] | undefined | null): string {
+  const points = toArabicDigits(METHODOLOGY_POINTS);
+  const hasPdf = !outputFormats || outputFormats.length === 0 || outputFormats.includes("pdf");
+  return hasPdf
+    ? `ملف بي دي إف مشمول في سعر هذه الخطة بلا رسوم إضافية؛ أما المنهجية الرسمية المفصّلة فاختيارية بعد التسليم مقابل ${points} نقاط.`
+    : `هذه الخطة بلا ملف بي دي إف؛ ويمكنك بعد التسليم طلب المنهجية الرسمية بي دي إف مقابل ${points} نقاط.`;
+}

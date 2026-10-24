@@ -1,4 +1,5 @@
 import { industryLabelAr } from "./industryLabels";
+import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
 import { stripConstraintPhrases } from "./requestConstraints";
 const GREETING_WORDS = new Set([
   "ازيك",
@@ -77,7 +78,8 @@ export function detectCountryFromText(text: string): CountryMapping | null {
     t.includes("المملكة العربية السعودية") ||
     t.includes("saudi") ||
     t.includes("ksa") ||
-    t.includes("الرياض") ||
+    // «الرياض» is the city; «الرياضة» (sports) is not it.
+    /الرياض(?![ةيه])/u.test(t) ||
     t.includes("جدة") ||
     t.includes("الدمام")
   ) {
@@ -166,6 +168,21 @@ export function detectCountryFromText(text: string): CountryMapping | null {
 
 /** The label of a sector the customer wrote in English that no rule knows. */
 export const CUSTOM_SECTOR_LABEL_AR = "النشاط الذي ذكرته";
+
+/** The placeholders a plan card holds while a value is missing. They are asked for, never shown as a value in a field or a step. */
+export const COUNTRY_REQUIRED_AR = "يلزم تحديد الدولة";
+export const INDUSTRY_REQUIRED_AR = "يلزم تحديد النشاط";
+
+/** A field value for an input box or a sentence: the placeholder becomes an empty string. */
+export function valueOrEmpty(value: string | null | undefined): string {
+  const text = String(value ?? "").trim();
+  return /يلزم تحديد/.test(text) ? "" : text;
+}
+
+/** «المجال · الدولة» for a step sentence, with every missing part left out (never the placeholder). */
+export function scopePartsAr(...parts: Array<string | null | undefined>): string {
+  return parts.map(valueOrEmpty).filter(Boolean).join(" · ");
+}
 
 interface MoreSector { words: Array<{ text: string; latin?: boolean }>; englishKeywords: string[]; arabicLabel: string; exactTaxonomy: string[] }
 const w = (text: string) => ({ text });
@@ -284,7 +301,8 @@ export function detectIndustryFromText(text: string): IndustryMapping {
       exactTaxonomy: ["Construction", "Mechanical or Industrial Engineering", "Electrical/Electronic Manufacturing"],
     };
   }
-  if (t.includes("كهرباء") || t.includes("كهربائية") || t.includes("electrical") || t.includes("electricity")) {
+  // «كهربا» (the everyday spelling) is the stem of «كهرباء» and «كهربائية», so one test reads all three.
+  if (t.includes("كهربا") || t.includes("كهربه") || t.includes("electrical") || t.includes("electricity")) {
     return {
       englishKeywords: ["electrical", "electricity", "electrical engineering"],
       arabicLabel: "الكهرباء والطاقة الكهربائية",
@@ -409,20 +427,171 @@ export function detectIndustryFromText(text: string): IndustryMapping {
     }
   }
 
-  const cleaned = t
-    .replace(/[^\w\s\u0600-\u06FF]/g, " ")
-    .replace(/[٠-٩0-9]/g, " ")
-    .replace(/\b(عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
-    .replace(/عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|خطة|استخراج|ملف|في|داخل|بـ/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const cleaned = residualSectorText(lowered);
 
   if (cleaned.length > 0) {
+    // A typo of a sector word («كهربا», «تصنيه», «مقاولت») is read as that sector: one edit away from a word the rules know.
+    // Only a short residue is repaired (a sector is a word or two); a long sentence is never matched word by word against the sector words.
+    const corrected = cleaned.split(" ").length <= 3 ? fuzzySectorCorrection(cleaned) : null;
+    if (corrected && corrected !== cleaned) return detectIndustryFromText(corrected);
     // A sector written in English that no rule knows is searched by its words, but its label is Arabic: the customer never reads an English sector name.
     return { englishKeywords: [cleaned], arabicLabel: /[؀-ۿ]/u.test(cleaned) ? cleaned : CUSTOM_SECTOR_LABEL_AR };
   }
 
-  return { englishKeywords: [], arabicLabel: "يلزم تحديد النشاط" };
+  return { englishKeywords: [], arabicLabel: INDUSTRY_REQUIRED_AR };
+}
+
+/** The words that name a country in the rules above (cities included): they say WHERE, so they are never part of the sector. */
+const COUNTRY_ALIAS_WORDS = [
+  "ليختنشتاين", "liechtenstein", "ألمانيا", "المانيا", "germany", "deutschland", "برلين", "ميونخ", "النمسا", "austria", "österreich", "فيينا",
+  "المملكة العربية السعودية", "السعودية", "saudi arabia", "saudi", "ksa", "الرياض", "جدة", "الدمام", "الإمارات", "الامارات", "دبي", "أبوظبي", "ابوظبي", "united arab emirates", "uae", "emirates", "الشارقة",
+  "مصر", "القاهرة", "الإسكندرية", "الاسكندرية", "الجيزة", "egypt", "cairo", "alexandria", "الكويت", "kuwait", "قطر", "qatar", "الدوحة", "البحرين", "bahrain", "المنامة",
+  "سلطنة عمان", "oman", "مسقط", "الأردن", "الاردن", "jordan", "المملكة المتحدة", "بريطانيا", "إنجلترا", "united kingdom", "لندن", "الولايات المتحدة", "أمريكا", "امريكا", "united states", "نيويورك",
+  "فرنسا", "france", "باريس", "إيطاليا", "ايطاليا", "italy", "روما", "إسبانيا", "اسبانيا", "spain", "مدريد", "سويسرا", "switzerland", "جنيف", "زيورخ", "هولندا", "netherlands", "holland", "أمستردام", "تركيا", "turkey", "türkiye", "إسطنبول",
+].sort((a, b) => b.length - a.length);
+
+const COUNTRY_ALIAS_REGEXES = COUNTRY_ALIAS_WORDS.map(
+  (alias) => new RegExp(`(?<![\\p{L}])[وبلف]?${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}])`, "giu"),
+);
+
+/** The words of a stored card label («الدولة المطلوبة», «المجال المطلوب»…) and the filler around them: never a sector. */
+const LABEL_PHRASES = Object.values(CLARIFICATION_ANSWER_LABELS).sort((a, b) => b.length - a.length);
+const LABEL_NOISE_WORDS = /(?<![\p{L}\p{N}])(?:المطلوب[ةه]?|مطلوب[ةه]?|الدولة|دولة|المجال|القطاع|النشاط|العدد|عدد|الحد|الأقصى|الاقصى|أخرى|اخرى|أخري|اخري|other|others)(?![\p{L}\p{N}])/giu;
+/** «مش عارف», «أي حاجة», «مش مهم»: a reply that says nothing about the sector, so it is no sector. */
+const NON_ANSWER_WORDS = /(?<![\p{L}\p{N}])(?:مش|عارف[ةه]?|معرفش|لا|اعرف|أعرف|اي|أي|اى|أى|حاجه|حاجة|شيء|شئ|مهم|يهم|فارق[ةه]?|مفيش|تمام)(?![\p{L}\p{N}])/giu;
+
+/**
+ * What is left of a request once the count, the places, the card labels and the filler are taken away: the customer's own words for the sector,
+ * or nothing. «عايز ١٠ شركات المجال المطلوب:» leaves nothing (it used to leave «ال المطلوب مطلوب», a broken field shown as the sector), and
+ * «شركات كهربا في مصر» leaves «كهربا» (it used to leave «كهربا مصر»).
+ */
+function residualSectorText(lowered: string): string {
+  let text = lowered;
+  for (const phrase of LABEL_PHRASES) text = text.split(phrase).join(" ");
+  // Whole words only (with the one-letter prefixes «في/ب/ل/و»): «الرياض» is a city, «الرياضة» is a sector.
+  for (const alias of COUNTRY_ALIAS_REGEXES) text = text.replace(alias, " ");
+  const country = detectCountryFromText(text);
+  if (country) text = text.split(country.arabicLabel.toLowerCase()).join(" ").split(country.canonicalEnglish.toLowerCase()).join(" ");
+  const cleaned = text
+    .replace(/[^\w\s\u0600-\u06FF]/g, " ")
+    .replace(/[٠-٩0-9]/g, " ")
+    .replace(/\b(عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|ملف|في|داخل|بـ|in|companies|company|need|want|find)\b/gi, "")
+    .replace(/عايز|عاوز|محتاج|اريد|أريد|شركات|شركة|مؤسسات|مؤسسة|مجال|نشاط|خطة|استخراج|ملف|في|داخل|بـ/gi, " ")
+    .replace(LABEL_NOISE_WORDS, " ")
+    .replace(NON_ANSWER_WORDS, " ")
+    .replace(/(?<![\p{L}\p{N}])ال(?![\p{L}\p{N}])/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // The same word twice in a row («رياضة رياضة», the card repeats an answer) is one word.
+  return cleaned.split(" ").filter((word, index, all) => index === 0 || word !== all[index - 1]).join(" ");
+}
+
+/** The sector words the rules read (the spellings the rules test for), used to repair a typo. */
+const FUZZY_SECTOR_WORDS = [
+  "كهرباء", "كهروميكانيك", "طاقة", "بترول", "أغذية", "مطاعم", "تقنية", "تكنولوجيا", "برمجيات", "برمجة", "مقاولات", "تشييد", "عقارات", "أثاث", "أدوية", "صيدلة",
+  "سيارات", "تعليم", "مدارس", "سياحة", "فنادق", "لوجستيات", "تصنيع", "مصانع", "صناعة", "اتصالات", "تأمين", "بنوك", "مصارف", "استثمار", "عيادات", "تجزئة", "تجارة",
+  "متاجر", "زراعة", "مزارع", "إعلام", "إعلان", "تسويق", "محاماة", "استشارات", "كيماويات", "بلاستيك", "منسوجات", "ملابس", "أزياء", "تعدين", "معادن", "توظيف", "طباعة", "تغليف", "صحة",
+];
+
+/** One spelling per letter family: hamza forms, ي/ى, ة/ه, and the hamza itself dropped («كهرباء» = «كهربا»). */
+function foldArabicSpelling(word: string): string {
+  return word
+    .toLowerCase()
+    .replace(/[ً-ٰٟـ]/g, "")
+    .replace(/[أإآٱ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و")
+    .replace(/[ئ]/g, "ي")
+    .replace(/ء/g, "");
+}
+
+/** Edit distance, stopping early once it is above `limit`. */
+function editDistanceWithin(a: string, b: string, limit: number): number {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      const value = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      row.push(value);
+      if (value < best) best = value;
+    }
+    if (best > limit) return limit + 1;
+    previous = row;
+  }
+  return previous[b.length];
+}
+
+/**
+ * The text with each word that is one edit away from a sector word replaced by that word, or null when no word is. Words shorter than four
+ * letters are left alone, and so is a word two or more edits away, so a real custom sector («رياضة») is never rewritten into another one.
+ */
+function fuzzySectorCorrection(text: string): string | null {
+  const folded = FUZZY_SECTOR_WORDS.map((word) => ({ word, key: foldArabicSpelling(word) }));
+  let changed = false;
+  const words = text.split(" ").map((token) => {
+    if (!/^[؀-ۿ]{4,}$/u.test(token)) return token;
+    const key = foldArabicSpelling(token.replace(/^(?:وال|بال|لل|ال)(?=[؀-ۿ]{4})/u, ""));
+    if (key.length < 4) return token;
+    // A four-letter word one edit away is too often another word («صناع» is makers, not «صناعة» industry): it must match after folding.
+    const limit = key.length >= 8 ? 2 : key.length >= 5 ? 1 : 0;
+    // The nearest word wins; among equals, the one that shares the longest beginning with the typed word («تصنيه» is «تصنيع», not «تقنية»).
+    let best: { word: string; distance: number; prefix: number } | null = null;
+    for (const entry of folded) {
+      const distance = editDistanceWithin(key, entry.key, limit);
+      if (distance > limit) continue;
+      let prefix = 0;
+      while (prefix < key.length && prefix < entry.key.length && key[prefix] === entry.key[prefix]) prefix++;
+      if (!best || distance < best.distance || (distance === best.distance && prefix > best.prefix)) best = { word: entry.word, distance, prefix };
+    }
+    if (!best) return token;
+    changed = true;
+    return best.word;
+  });
+  return changed ? words.join(" ") : null;
+}
+
+/**
+ * THE activity name of a plan, in Arabic: the plan summary, the chip, the editor field and the method steps all read it from here, so one request
+ * never shows two names for the same sector. The stored Arabic label wins, then the source's taxonomy, then the keywords. Empty when there is none.
+ */
+export function planActivityLabelAr(params: Record<string, any> | undefined | null): string {
+  const p = params || {};
+  const query = p.query && typeof p.query === "object" ? p.query : {};
+  const first = (value: any): string | undefined => (typeof value === "string" ? value : Array.isArray(value?.include) && typeof value.include[0] === "string" ? value.include[0] : undefined);
+  for (const candidate of [p.industry, first(query.industry), first(query.keyword), p.keyword, p.search, typeof p.query === "string" ? p.query : undefined]) {
+    if (typeof candidate !== "string" || !candidate.trim() || /يلزم تحديد/.test(candidate)) continue;
+    const label = detectIndustryFromText(candidate).arabicLabel;
+    if (label !== INDUSTRY_REQUIRED_AR) return industryDisplayLabelAr(label);
+  }
+  return "";
+}
+
+/**
+ * The goal line of a plan after an edit. A missing country or activity is left out of the sentence («… في يلزم تحديد الدولة» used to be saved as
+ * the summary), and the count is written with Arabic-Indic digits like every other customer text.
+ */
+export function editedPlanSummaryAr(item: { capabilitySlug?: string; params?: Record<string, any>; targetVolumeMax?: number } | undefined, summaryAr: string | undefined, toDigits: (value: number | string) => string): string {
+  const people = String(item?.capabilitySlug || "").toLowerCase().includes("people");
+  const interpreted = extractInterpretedParameters(item?.params, summaryAr, people);
+  const activity = people ? interpreted.industryAr : planActivityLabelAr(item?.params) || valueOrEmpty(industryDisplayLabelAr(interpreted.industryAr));
+  const country = valueOrEmpty(interpreted.countryAr);
+  const volume = toDigits(item?.targetVolumeMax || 50);
+  return `خطة حصر حتى ${volume} سجل${activity ? `: ${activity}` : ""}${country ? ` في ${country}` : ""}`;
+}
+
+/**
+ * What stops a plan edit from being saved: a country that no rule reads (it used to be dropped without a word, so the edit looked saved and
+ * was not) and an empty required field. Null when the edit can be saved.
+ */
+export function planEditScopeError(input: { country: string; industry: string; needsCountry: boolean; needsIndustry: boolean }): string | null {
+  const country = valueOrEmpty(input.country);
+  if (input.needsCountry && !country) return "اكتب الدولة قبل حفظ التعديل.";
+  if (country && !detectCountryFromText(country) && !/^[A-Za-z]{2}$/.test(country)) return "لم أتعرف على هذه الدولة. اكتبها باسمها، مثل: مصر أو السعودية أو ألمانيا.";
+  if (input.needsIndustry && !valueOrEmpty(input.industry)) return "اكتب النشاط قبل حفظ التعديل.";
+  return null;
 }
 
 /** Customer-facing industry label for recognized English taxonomy names. */
@@ -712,7 +881,7 @@ export function extractInterpretedParameters(
   }
 
   return {
-    countryAr: "يلزم تحديد الدولة",
+    countryAr: COUNTRY_REQUIRED_AR,
     countryCanonical: "",
     industryAr: industry.arabicLabel,
     isDefaultCountry: true,
@@ -748,7 +917,9 @@ export function getMissingCompanyResearchRequirements(text: string): CompanyRese
   // the answer to the industry field or explicitly introduced as a sector.
   // The answer is read wherever it sits in the text (the card answers are joined with a space as well as with « | »; before this it was only
   // found at the start or after « | », so every sector outside the known taxonomy was asked for again, for ever). The chip «أخرى» alone is no answer.
-  const hasExplicitIndustryAnswer = industryAnswerFromText(text || "") !== null;
+  // An answer that names no sector («مش عارف») is not one: the sector is asked for again.
+  const industryAnswer = industryAnswerFromText(text || "");
+  const hasExplicitIndustryAnswer = industryAnswer !== null && detectIndustryFromText(industryAnswer).arabicLabel !== INDUSTRY_REQUIRED_AR;
   const hasExplicitIndustryPhrase = /(?:في\s+(?:مجال|قطاع|نشاط)|\b(?:industry|sector)\s*:)\s*[\p{L}\p{N}]/iu.test(text || "");
   const hasRecognizedIndustry = Boolean(industry.exactTaxonomy?.length) || industry.arabicLabel === "صيد الحيتان";
   return [
@@ -795,8 +966,8 @@ export function getAmbiguousCompanyReference(text: string): string | null {
  * The sector chips of the company question: the common sectors, each one a phrase the sector rules read back as that sector (so tapping one
  * always produces a plan). «أخرى» is added last and opens the custom-answer field.
  */
-export const COMPANY_SECTOR_CHIPS = ["تقنية وبرمجيات", "اتصالات", "التقنية المالية", "بنوك وتأمين", "تصنيع", "مقاولات وعقارات", "أغذية ومطاعم", "صحة وأدوية", "تجارة وتجزئة", "نقل وشحن"];
-const COMPANY_SECTOR_CHIPS_OUTREACH = ["تقنية وبرمجيات", "اتصالات", "التقنية المالية", "بنوك وتأمين", "أغذية ومطاعم", "صحة وأدوية", "تجارة وتجزئة", "نقل وشحن"];
+export const COMPANY_SECTOR_CHIPS = ["تقنية وبرمجيات", "اتصالات", "التقنية المالية", "بنوك وتأمين", "تصنيع", "مقاولات وعقارات", "كهرباء وطاقة", "أغذية ومطاعم", "صحة وأدوية", "تجارة وتجزئة", "نقل وشحن"];
+const COMPANY_SECTOR_CHIPS_OUTREACH = ["تقنية وبرمجيات", "اتصالات", "التقنية المالية", "بنوك وتأمين", "كهرباء وطاقة", "أغذية ومطاعم", "صحة وأدوية", "تجارة وتجزئة", "نقل وشحن"];
 
 /** Compact, adaptive answer chips for the company-search details UI. The final
  * chip always opens the custom-answer field, so suggestions never constrain

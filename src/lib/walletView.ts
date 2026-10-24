@@ -64,6 +64,11 @@ export interface WalletMonthStats {
    */
   releasedHold: number;
   releasedJobs: number;
+  /**
+   * The same releases as the ledger lines show them: each release row lifts the WHOLE hold of a search (release first), and the charge for what was
+   * delivered is a separate line after it. `releasedHold` is this figure minus those charges.
+   */
+  releasedGross: number;
 }
 
 /** The business clock of the month: Cairo. A release made at 01:00 on the 1st in Cairo is in that month, whatever the server's own zone is. */
@@ -100,14 +105,14 @@ export function walletMonthStats(rows: WalletLedgerRow[], now: Date = new Date()
     if (r.type === "charge") j.charge += Math.abs(r.delta);
     byJob.set(r.jobId, j);
   }
-  let held = 0, releasedHold = 0, releasedJobs = 0;
+  let held = 0, releasedHold = 0, releasedJobs = 0, releasedGross = 0;
   for (const j of byJob.values()) {
     if (j.reserve > 0 && j.release === 0) held += j.reserve;
     if (j.releaseInMonth) {
       const lifted = Math.max(0, j.release - j.charge);
-      if (lifted > 0) { releasedHold += lifted; releasedJobs += 1; }
+      if (lifted > 0) { releasedHold += lifted; releasedJobs += 1; releasedGross += j.release; }
     }
   }
   const charged = rows.filter((r) => r.type === "charge" && inMonth(r)).reduce((a, r) => a + Math.abs(r.delta), 0);
-  return { held, charged, releasedHold, releasedJobs };
+  return { held, charged, releasedHold, releasedJobs, releasedGross };
 }

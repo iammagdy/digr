@@ -20,7 +20,8 @@ import { useCreditValue } from "@/hooks/useCreditValue";
 import { useLlmEnabled } from "@/hooks/useLlmEnabled";
 import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs";
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
-import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE } from "@/lib/retryMessage";
+import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE, customerFacingMessageText } from "@/lib/retryMessage";
+import { openJobHref } from "@/lib/requestLinks";
 import { postApprovalMessageAr } from "@/lib/postApproval";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
@@ -41,7 +42,7 @@ import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import { PLAN_READY_DESKTOP_AR, PLAN_READY_MOBILE_AR } from "@/lib/consultantCopy";
-import { buildCompanyPlanEditOperations } from "@/lib/companyPlanEdits";
+import { buildCompanyPlanEditOperations, buildPeoplePlanEditOperations, buildSocialRegionEditOperations } from "@/lib/companyPlanEdits";
 import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
@@ -1081,7 +1082,12 @@ export default function ChatWorkspacePage() {
         country: typeof params.country === "string" ? params.country : typeof params.location === "string" ? params.location : "",
         industry: typeof params.industry === "string" ? params.industry : "",
       }));
+    } else if (slug.includes("people")) {
+      // Decision makers: the country (ISO code) and the job title, each under the parameter the service reads.
+      operations.push(...buildPeoplePlanEditOperations(slug, cleanVal, newCountry || ""));
     } else if (cleanVal && cleanVal !== "[object Object]") {
+      // A social plan that carries a region: the edited country replaces it.
+      if (primaryItem.params && "region" in primaryItem.params) operations.push(...buildSocialRegionEditOperations(slug, newCountry || ""));
       const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
 
       if (isProfile) {
@@ -1747,7 +1753,7 @@ export default function ChatWorkspacePage() {
         <div key={m.id} className="mb-0 mt-3 flex w-fit max-w-full flex-col gap-1.5" style={{ animation: "up .3s both" }}>
           {m.content && (
             <p className="mb-0 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink">
-              {m.content}
+              {customerFacingMessageText(m.content)}
             </p>
           )}
           {m.attachment && (
@@ -1767,6 +1773,7 @@ export default function ChatWorkspacePage() {
             questions={m.clarificationItems || m.clarificationQuestions || []}
             intro={m.clarificationIntro ? customerFacingAssistantCopy(m.clarificationIntro) : undefined}
             completedAnswers={m.completedClarificationAnswers}
+            planExists={messages.slice(messages.findIndex((entry) => entry.id === m.id) + 1).some((entry) => Boolean(entry.planQuote))}
             disabled={loading}
             onComplete={(answers) => handleSubmitClarification(m.id, answers)}
           />
@@ -1853,6 +1860,7 @@ export default function ChatWorkspacePage() {
       creditValue={creditValue}
       onTopupShort={handleTopupShort}
       onExplore={handleExplore}
+      onOpenPrevious={({ jobId, conversationId: previousConversationId }) => (previousConversationId ? void handleOpenConversation(previousConversationId, jobId) : window.location.assign(openJobHref({ jobId })))}
       onRefresh={handleRefreshQuote}
       locked={locked}
     />

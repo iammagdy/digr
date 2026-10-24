@@ -1,4 +1,4 @@
-import { detectCountryFromText, detectIndustryFromText } from "./planParameters";
+import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "./planParameters";
 
 export type CompanyPlanEditOperation =
   | { action: "set_param"; capabilitySlug: string; key: string; value: unknown };
@@ -46,4 +46,28 @@ export function buildCompanyPlanEditOperations(
     operations.push({ action: "set_param", capabilitySlug, key: "query", value: query });
   }
   return operations;
+}
+
+/** The generic phrase a decision-makers card shows in the «نوع البحث» field when no job title was given: never a title to send. */
+const PEOPLE_GENERIC_SCOPE = "صناع القرار والمهنيون";
+
+/**
+ * Edits of a decision-makers plan. The country is stored as the ISO code its parameters use (it used to be dropped on save, so the plan still
+ * showed the old country after reopening), and the job-title field changes the title (it used to write a «query» the service does not read).
+ */
+export function buildPeoplePlanEditOperations(capabilitySlug: string, title: string, country: string): CompanyPlanEditOperation[] {
+  const operations: CompanyPlanEditOperation[] = [];
+  const countryInfo = detectCountryFromText(country);
+  const iso = countryInfo ? isoCountryCodeFromName(countryInfo.canonicalEnglish) : /^[A-Za-z]{2}$/.test(country.trim()) ? country.trim().toUpperCase() : undefined;
+  if (iso) operations.push({ action: "set_param", capabilitySlug, key: "country", value: iso });
+  const cleanTitle = title.trim();
+  if (cleanTitle && cleanTitle !== PEOPLE_GENERIC_SCOPE && cleanTitle !== "[object Object]") operations.push({ action: "set_param", capabilitySlug, key: "title", value: cleanTitle });
+  return operations;
+}
+
+/** A social plan that carries a region (its country filter): the edited country replaces it. */
+export function buildSocialRegionEditOperations(capabilitySlug: string, country: string): CompanyPlanEditOperation[] {
+  const countryInfo = detectCountryFromText(country);
+  const iso = countryInfo ? isoCountryCodeFromName(countryInfo.canonicalEnglish) : undefined;
+  return iso ? [{ action: "set_param", capabilitySlug, key: "region", value: iso }] : [];
 }

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { deriveLiveActivitySnapshot, sanitizeActivityError, sanitizeActivityText } from "@/functions/shared/liveActivityFeed";
+import { normalizeReleaseWording } from "@/lib/releaseWording";
 import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestStatus";
 import { summarizeActivityCounts } from "@/lib/activityCounts";
 import { settleTimelineEvents, timelineWaitingText } from "@/lib/honestDisplay";
@@ -303,7 +304,7 @@ export default function ActivityTerminal({
                 </time>
                 <span className={`mt-2 h-1.5 w-1.5 shrink-0 rounded-full ${dotColor}`} />
                 <span className={`min-w-0 flex-1 break-words ${isError ? "font-medium text-bad" : "text-ink"}`} data-testid="activity-text">
-                  {toArabicDigits(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr))}
+                  {toArabicDigits(normalizeReleaseWording(evt.kind === "error" ? sanitizeActivityError(evt.textAr) : sanitizeActivityText(evt.textAr)))}
                 </span>
               </li>
             );
@@ -314,7 +315,7 @@ export default function ActivityTerminal({
 
         {status === "failed" && errorAr && !displayEvents.some((e) => e.kind === "error" || (errorAr && (e.textAr.includes(errorAr) || errorAr.includes(e.textAr)))) && (
           <div className="mt-2 rounded-xl border border-bad/30 bg-bad/5 p-2.5 text-xs text-bad leading-5">
-            {sanitizeActivityError(errorAr)}
+            {normalizeReleaseWording(sanitizeActivityError(errorAr))}
           </div>
         )}
 
