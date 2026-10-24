@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin, listAll, userDirectory, Query } from "@/lib/server/adminAuth";
-import { DAY_MS, refundPointsByJob } from "@/lib/server/adminStats";
+import { DAY_MS } from "@/lib/server/adminStats";
+import { ADMIN_JOB_STATE_LABEL_AR, ADMIN_JOB_TAB_STATES, adminJobState, releasedPoints, successRate, type AdminJobState } from "@/lib/server/adminJobState";
+import { hidesTestAccounts, testAccountIds } from "@/lib/server/adminTestAccounts";
 
 export const dynamic = "force-dynamic";
-
-type UiStatus = "done" | "running" | "failed" | "refunded";
-function uiStatus(j: any): UiStatus {
-  if (j.status === "failed") return "failed";
-  if (j.status === "cancelled") return "refunded";
-  if (j.status === "done") return (j.rowsCollected ?? 0) === 0 && (j.chargedCredits ?? 0) === 0 ? "refunded" : "done";
-  return "running";
-}
 
 function platformOf(slug: string): string {
   const s = (slug || "").toLowerCase();
@@ -25,64 +19,88 @@ function platformOf(slug: string): string {
   return "الإنترنت العام";
 }
 
-/** Research jobs with the user, records requested/delivered, points held/charged and the TREG cost. */
+/**
+ * Research jobs with the user, records requested/delivered, points held/charged and the provider's cost (USD, read only).
+ * Read only: SELECT only. `hideTest` (default on) leaves out the test accounts from every card, count and row; it changes no data.
+ */
 export async function GET(req: NextRequest) {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
   const { tables, users } = auth.ctx;
   const now = Date.now();
   const monthAgo = new Date(now - 30 * DAY_MS).toISOString();
+  const hideTest = hidesTestAccounts(req.nextUrl.searchParams.get("hideTest"));
 
   // A link from a call log opens ONE job (read only): `?job=<id>`. Without it, the 100 newest jobs as before.
   const oneJob = (req.nextUrl.searchParams.get("job") || "").trim();
   const oneJobId = /^[A-Za-z0-9_.:-]{1,120}$/.test(oneJob) ? oneJob : "";
-  const jobs = (await tables.listRows({ databaseId: "digr", tableId: "jobs", queries: oneJobId ? [Query.equal("$id", oneJobId), Query.limit(1)] : [Query.orderDesc("createdAt"), Query.limit(100)] })).rows as any[];
-  const ids = jobs.map((j) => j.$id);
-
-  const [quotes, costs, convs, monthJobs, ledger] = await Promise.all([
-    ids.length ? tables.listRows({ databaseId: "digr", tableId: "plans_quotes", queries: [Query.equal("jobId", ids), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]).catch(() => []) : [],
-    ids.length ? tables.listRows({ databaseId: "digr", tableId: "provider_costs", queries: [Query.equal("jobId", ids), Query.equal("provider", "treg"), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]).catch(() => []) : [],
-    tables.listRows({ databaseId: "digr", tableId: "conversations", queries: [Query.orderDesc("updatedAt"), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]).catch(() => []),
+  const [page, monthJobs, release, openJobs, profiles]: any[][] = await Promise.all([
+    tables.listRows({ databaseId: "digr", tableId: "jobs", queries: oneJobId ? [Query.equal("$id", oneJobId), Query.limit(1)] : [Query.orderDesc("createdAt"), Query.limit(100)] }).then((r: any) => (r.rows || []) as any[]),
     listAll(tables, "jobs", [Query.greaterThanEqual("createdAt", monthAgo)], 20000),
-    listAll(tables, "credit_ledger", [Query.greaterThanEqual("createdAt", monthAgo), Query.equal("type", ["release", "charge"])], 20000),
+    listAll(tables, "credit_ledger", [Query.greaterThanEqual("createdAt", monthAgo), Query.equal("type", "release")], 20000),
+    listAll(tables, "jobs", [Query.equal("status", ["queued", "running"])], 5000),
+    listAll(tables, "profiles", [], 20000),
   ]);
-  const quoteByJob = new Map((quotes as any[]).map((q: any) => [q.jobId, q]));
-  const convTitle = new Map((convs as any[]).map((c: any) => [c.$id, c.title]));
-  const costByJob = new Map<string, number>();
-  for (const c of (costs as any[])) costByJob.set(c.jobId, (costByJob.get(c.jobId) ?? 0) + (c.costEgp || 0));
-  const dir = await userDirectory(users, jobs.map((j) => j.userId));
 
+  const testIds = testAccountIds(profiles as any[]);
+  const visible = (row: any) => !hideTest || !testIds.has(row.userId);
+  const stateOf = (j: any): AdminJobState => adminJobState({
+    id: j.$id, status: j.status, lease_until: j.leaseUntil ?? null, updated_at: j.updatedAt ?? null, created_at: j.createdAt ?? null,
+    delivered_units: j.deliveredUnits, charged_credits: j.chargedCredits,
+  }, now);
+
+  // Provider cost per job: every TREG cost row of the listed jobs (paged, so no job is cut at 100 rows).
+  const ids = page.map((j) => j.$id);
+  const costs = ids.length ? await listAll(tables, "provider_costs", [Query.equal("jobId", ids), Query.equal("provider", "treg")], 20000) : [];
+  const costByJob = new Map<string, number>();
+  for (const c of costs as any[]) costByJob.set(c.jobId, (costByJob.get(c.jobId) ?? 0) + (Number(c.costUsd) || 0));
+
+  const dir = await userDirectory(users, page.map((j) => j.userId));
   const statusFilter = req.nextUrl.searchParams.get("status") || "all";
-  const rows = jobs.map((j) => {
-    const q: any = quoteByJob.get(j.$id);
+  const tab = ADMIN_JOB_TAB_STATES[statusFilter] ?? "all";
+  const rows = page.filter(visible).map((j) => {
     let target = "";
     try { const p = JSON.parse(j.params || "{}"); target = p.username ? `بيانات حساب @${String(p.username).replace(/^@/, "")}` : p.query || ""; } catch { /* ignore */ }
     return {
       id: j.$id,
-      title: (q && convTitle.get(q.conversationId)) || q?.summaryAr || target || "طلب بحث",
+      title: target || "طلب بحث",
       platform: platformOf(j.templateSlug || j.endpointId || j.capabilitySlug),
       createdAt: j.createdAt,
       user: dir.get(j.userId)?.name || dir.get(j.userId)?.email || "—",
-      requested: q?.targetVolumeMax ?? null,
-      delivered: j.rowsCollected ?? 0,
-      held: j.reservedCredits ?? 0,
-      charged: j.chargedCredits ?? 0,
-      costEgp: costByJob.get(j.$id) ?? null,
+      requested: typeof j.targetVolumeMax === "number" ? j.targetVolumeMax : null,
+      delivered: Number(j.deliveredUnits) || 0,
+      held: Number(j.reservedCredits) || 0,
+      charged: Number(j.chargedCredits) || 0,
+      costUsd: costByJob.get(j.$id) ?? null,
       chain: [j.templateSlug, j.endpointId, j.capabilitySlug].some((v) => v === "mp-business-contacts"),
-      status: uiStatus(j),
+      status: stateOf(j),
     };
-  }).filter((r: any) => statusFilter === "all" || r.status === statusFilter);
+  }).filter((r) => tab === "all" || tab.includes(r.status));
 
-  const finished = monthJobs.filter((j) => j.status === "done" || j.status === "failed");
-  const refunds = [...refundPointsByJob(ledger as any).values()].reduce((a, r) => a + r.refund, 0);
+  const period = monthJobs.filter((j) => j.status !== "cancelled" && visible(j));
+  const open = openJobs.filter(visible).map((j) => {
+    const state = stateOf(j);
+    return {
+      id: j.$id,
+      status: state,
+      label: ADMIN_JOB_STATE_LABEL_AR[state],
+      ageMinutes: Math.max(0, Math.floor((now - new Date(j.createdAt).getTime()) / 60000)),
+      idleMinutes: Math.max(0, Math.floor((now - new Date(j.updatedAt ?? j.createdAt).getTime()) / 60000)),
+    };
+  });
+  const countOpen = (...states: AdminJobState[]) => open.filter((o) => states.includes(o.status)).length;
 
   return NextResponse.json({
+    hideTest,
     jobs: rows,
+    open,
     stats: {
-      last30: monthJobs.filter((j) => j.status !== "cancelled").length,
-      runningNow: jobs.filter((j) => j.status === "running" || j.status === "queued").length,
-      successRate: finished.length ? (finished.filter((j) => j.status === "done").length / finished.length) * 100 : null,
-      refundedPoints: refunds,
+      last30: period.length,
+      runningNow: countOpen("running", "queued"),
+      stalled: countOpen("stalled"),
+      queuedStuck: countOpen("queued_stuck"),
+      success: successRate(period.map((j) => ({ state: stateOf(j), delivered: Number(j.deliveredUnits) || 0 }))),
+      released: releasedPoints(release.filter(visible)),
     },
   });
 }

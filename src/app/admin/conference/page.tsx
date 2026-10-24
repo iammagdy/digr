@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
-import type { ConferenceSnapshot } from "@/lib/server/conferenceDashboard";
+import type { ConferenceSnapshot, JobListItem } from "@/lib/server/conferenceDashboard";
+import { HIDE_TEST_ACCOUNTS_LABEL_AR } from "@/lib/server/adminTestAccounts";
 
 const LEVEL_COLOR = { info: "var(--info)", warn: "var(--goldT)", bad: "var(--bad)" } as const;
 const POLL_MS = 10_000;
@@ -30,10 +31,12 @@ const Unavailable = () => <p className="m-0 text-[13px] text-mut">تعذّرت �
 export default function AdminConferencePage() {
   const [data, setData] = useState<ConferenceSnapshot | null>(null);
   const [error, setError] = useState("");
+  // «إخفاء حسابات الاختبار» is on by default. It only changes what is counted on this page; nothing stored changes.
+  const [hideTest, setHideTest] = useState(true);
 
   const load = useCallback(() => {
-    adminFetch<ConferenceSnapshot>("/api/admin/conference").then((r) => { setData(r); setError(""); }).catch((e) => setError(e.message));
-  }, []);
+    adminFetch<ConferenceSnapshot>(`/api/admin/conference?hideTest=${hideTest ? 1 : 0}`).then((r) => { setData(r); setError(""); }).catch((e) => setError(e.message));
+  }, [hideTest]);
 
   // Polls every 10 s plus a random 0-2 s so several tabs do not land together; nothing runs while the tab is hidden.
   useEffect(() => {
@@ -52,12 +55,19 @@ export default function AdminConferencePage() {
     return () => { if (timer) clearTimeout(timer); document.removeEventListener("visibilitychange", onVisibility); };
   }, [load]);
 
-  const tiles: Array<{ k: string; v: number | null; c: string }> = [
+  const jobItem = (item: JobListItem, detail: string) => (
+    <li key={item.id} className="flex flex-wrap items-center gap-2">
+      <span dir="ltr" className="font-mono text-[11px] text-fnt">{item.id}</span>
+      <span className="text-fnt">{detail} {formatAr(item.minutes)} د</span>
+    </li>
+  );
+  const tiles: Array<{ k: string; v: number | null; c: string; list?: JobListItem[]; detail?: string }> = [
     { k: "تسجيلات آخر دقيقة", v: data ? data.signups?.lastMinute ?? null : null, c: data?.signups && data.signups.lastMinute > data.thresholds.signupsPerMinuteWarn ? "var(--goldT)" : "var(--ink)" },
     { k: "محادثون نشطون (١٠ دقائق)", v: data ? data.activeChats?.users ?? null : null, c: "var(--info)" },
-    { k: "طلبات قيد التنفيذ", v: data ? data.jobs?.running ?? null : null, c: "var(--info)" },
-    { k: "طلبات في الانتظار", v: data ? data.jobs?.queued ?? null : null, c: "var(--ink)" },
-    { k: "طلبات متوقفة", v: data ? data.jobs?.stalled ?? null : null, c: data?.jobs?.stalled ? "var(--bad)" : "var(--ink)" },
+    { k: "طلبات قيد التنفيذ", v: data ? data.jobs?.running ?? null : null, c: "var(--info)", list: data?.jobList?.running, detail: "بلا تقدم منذ" },
+    { k: "طلبات في الانتظار", v: data ? data.jobs?.queued ?? null : null, c: "var(--ink)", list: data?.jobList?.queued, detail: "منتظر منذ" },
+    { k: "عالقة في الانتظار", v: data?.jobList ? data.jobList.queuedStuck.length : null, c: data?.jobList?.queuedStuck.length ? "var(--goldT)" : "var(--ink)", list: data?.jobList?.queuedStuck, detail: "منتظر منذ" },
+    { k: "طلبات متوقفة", v: data ? data.jobs?.stalled ?? null : null, c: data?.jobs?.stalled ? "var(--bad)" : "var(--ink)", list: data?.jobList?.stalled, detail: "بلا تقدم منذ" },
   ];
   const t = data?.thresholds;
   const maxBucket = Math.max(1, ...(data?.signups?.perMinute ?? [1]));
@@ -67,11 +77,21 @@ export default function AdminConferencePage() {
   return (
     <div data-screen-label="Conference" className="flex flex-col gap-3.5">
       {error && <p role="alert" className="m-0 text-[13px] text-bad">{error}</p>}
+      <label className="flex min-h-11 cursor-pointer items-center gap-2 self-start text-[13px] text-ink2">
+        <input type="checkbox" checked={hideTest} onChange={(e) => setHideTest(e.target.checked)} className="h-4 w-4" />
+        <span>{HIDE_TEST_ACCOUNTS_LABEL_AR}</span>
+      </label>
       <div className="grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fill,minmax(min(100%,160px),1fr))" }}>
         {tiles.map((tile) => (
           <div key={tile.k} data-testid="conf-tile" className="rounded-[18px] border border-ln bg-sf p-3.5">
             <p className="m-0 text-xs text-mut">{tile.k}</p>
             <p className="mb-0 mt-1.5 font-display text-[30px] leading-none" style={{ color: tile.c }}>{tile.v === null ? "…" : formatAr(tile.v)}</p>
+            {tile.list && tile.list.length > 0 && tile.detail && (
+              <details className="mt-2 text-[12px] text-ink2">
+                <summary className="cursor-pointer">عرض الطلبات ({formatAr(tile.list.length)})</summary>
+                <ul className="m-0 mt-1.5 flex list-none flex-col gap-1 p-0">{tile.list.map((item) => jobItem(item, tile.detail!))}</ul>
+              </details>
+            )}
           </div>
         ))}
       </div>

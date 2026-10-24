@@ -360,7 +360,7 @@ describe("the page and the menu", () => {
   it("renders its Arabic sections", () => {
     const html = renderToStaticMarkup(createElement(AdminConferencePage));
     for (const text of ["تنبيهات", "التسجيل في آخر ١٠ دقائق", "المحادثات النشطة", "المزود والحد اليومي", "أكثر المستخدمين استهلاكًا للنقاط اليوم", "إنفاق النموذج", "طلبات الشحن المعلقة", "طلبات لا نبيعها", "حدود التنبيه"]) expect(html).toContain(text);
-    expect((html.match(/data-testid="conf-tile"/g) || []).length).toBe(5);
+    expect((html.match(/data-testid="conf-tile"/g) || []).length).toBe(6);
     expect(html).not.toMatch(/treg/i);
   });
 
