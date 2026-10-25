@@ -4,6 +4,85 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## 0000000000. UI/UX audit of diger.tech, phases 1 to 4 (2026-10-24 and 2026-10-25, main = `65c3c1d`)
+
+One session, one branch and one draft PR per phase, each merged with a MERGE COMMIT after the owner's go. Written from git and the deployment API (read only). No SQL was written or run: nothing in this audit touched the database, and no price, cap or pricing-function value changed.
+
+### The four phases (PR, head SHA, merge commit, production deployment)
+
+| Phase | PR | Head SHA | Merge commit | Production deployment | What |
+|---|---|---|---|---|---|
+| 1 | #231 | `a5cbbb5979641834aa62b396ceee8a3123223e69` | `fcedf71d8be07a40886d9e471bd0bcd33f7904cd` | `dpl_CzcvaBcJt3FUamqYyyjeJfktoKMi` READY | Money and trust: plan edit and its saved summary, sector typos, skip handling, retry line, wallet, released-hold wording, requested/duplicate notes (audit points 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 18, 28 and the edit-mode buttons) |
+| 2 | #232 | `42fb0f96ec6319dce4f35896ef4f0df2a5649868` | `511d65cde256bc3bfe1a3b8047825c3fd2dea85f` | `dpl_6c8ApVfn6T94vqwY5bmdZss1SvJ3` READY | Flow clarity: points 1, 8, 9, 15, 16, 17, 19 to 27, 29, 30 (cost form, company columns and phone, status vocabulary, plan card money lines, question card, starters, titles, redirects, bell badge, top-up texts, one closing instruction) |
+| 3 | #233 | `a415edf656956f889565014019f7d3fe67c45ede` | `90157dd743b2009bc1e4247fe37987c01ab7d13e` | `dpl_5M8j8Fc6KLwBoavzFLWXKnnhYbWu` READY | Landing page rebuilt (one sentence, one box, one action, computed price strip, two merged sections, labelled sample, 4-question FAQ, one closing action) plus every refund-style sentence replaced by «حجز مؤقت مُحرَّر» |
+| 4 | #234 | `96dd305a23408fc3462b6c927903fa699dd23df3` | `65c3c1da64d9d01c0b0b3c74c0f5c76dd6985587` | `dpl_4eR1UWwWNDAnJqDdf4T4qEgpuny9`: **BUILDING** at the only check made; confirm READY in the Vercel dashboard | Mobile audit without a browser (390 x 844), «حجز مؤقت مُحرَّر» as the ONLY customer-facing form, one phone format in the decision-makers workbook |
+
+Rollback of any phase: `git revert -m 1 <merge commit>` (newest first if more than one).
+
+Suite on the merge parents (skipped is always 57): after phase 2 418 files / 4513 passed; after phase 3 420 / 4539; after phase 4 422 / 4564. `npx tsc --noEmit -p .`, `npm run build` and the client-bundle secret scan were clean on every phase head.
+
+### Rules the audit worked under (keep them)
+
+- Customer text: Arabic only, Arabic-Indic digits, no emoji, no markdown symbols, no provider or model names, no USD, no internal ids.
+- A released hold is ONLY «حجز مؤقت مُحرَّر». Banned in customer text: the verb «حُرّر الحجز المؤقت», «تحرير الحجز المؤقت», «ويُحرَّر الباقي», «استرداد», «إرجاع», «أُعيدت», «أعدنا», «وعادت … إلى رصيدك», «يُرد». The list is `BANNED_RELEASE_FORMS_AR` in `src/lib/walletText.ts`; old stored rows are read through `normalizeReleaseWording` (`src/lib/releaseWording.ts`) and `walletDisplayText`; `tests/audit-phase4-release-form.test.ts` scans `src` and the e-mail function for the verb forms. Exceptions the owner kept: `src/lib/legalText.ts`, the admin pages, the top-up wording, the account-deletion line.
+- Money: append-only ledger, release first, idempotent, nothing spent before approval, charge = ceil(delivered unique matching units x unit price) never above the reserve, one shared pricing function (`estimateMission`), the model never states money.
+- The approval sentence «لا يبدأ أي جمع ولا يُخصم أي رصيد قبل موافقتك» appears ONCE on the landing page (the hero); a test counts it.
+- Two copies of the e-mail templates exist (`src/functions/shared/emailTemplates.ts` and `supabase/functions/send-email/templates.ts`); change both.
+
+### NOT PROVEN (nothing here was seen in a real browser or on real data)
+
+Phase 1 (what the tests do and do not cover):
+- Every flow was driven through `ChatHandler.handleUserMessage` and component renders with an in-memory database and `renderToStaticMarkup`. None of it was seen in a browser.
+- The duplicate-request lookup and the plan-change note read earlier quotes and jobs; they ran only against the in-memory test database, not Supabase.
+- The retry flow was checked server side (period kept, no repeated question) in four phrasings guarded by tests; the real customer wording of a retry on the live site was not tried.
+
+Phase 2:
+- Everything that needs a real browser: layout, scroll, focus, the canvas opening on reopen, the RTL table.
+- The real shape of delivered company rows. The shared company column list was built from code, not from live rows; the workbook keeps its fixed 11 columns, and fields the screen can show (description, headcount, founding year, presence statuses) are not in the workbook.
+- The conversation title update and the duplicate lookup against live Supabase.
+- `/terms` and `/privacy` redirects were checked in `next.config.mjs` only, not served live.
+
+Phase 3:
+- How the landing page looks in a browser (hero, price strip, FAQ, contrast).
+- How the stored-notice normalizer reads real old rows (tested on the sentence shapes known from the code only).
+- Pages other than the landing page were not re-audited for wording beyond a grep.
+
+Phase 4:
+- Everything in the real-device checklist below.
+- The landing header cutoff («خدماتنا» hidden below 480px) is a width ESTIMATE, not a measurement.
+
+### Real-device checklist (390 x 844 or a real phone)
+
+1. iPhone Safari: with the keyboard open in the chat, whether the composer stays visible (`visualViewport` offset), whether the page jumps on focus, and whether the shell height settles after the keyboard closes.
+2. iPhone with a notch or home indicator: the composer, the results sheet buttons and the bottom of the settings, top-up and requests pages against the safe areas, in portrait and landscape.
+3. Android Chrome: the same keyboard test (`resizes-content`), and whether Escape or the back gesture closes the drawer.
+4. The landing header at 360, 390 and 430px: no overflow, and sign-up and login both reachable.
+5. The landing price strip, the hero form (box above the button, then side by side from 560px) and the single-column FAQ.
+6. RTL reading in the real chat: the user bubble with a pasted long link, the plan card (price block, count line, edit and approve rows) and the revision card.
+7. The results table on a phone: horizontal swipe, the hint, long company names, the left-to-right phone cell, and the live-preview table scroll in the activity panel.
+8. The pricing and calculator tables, and the sample table on the landing page, with horizontal swipe.
+9. The sidebar drawer: opening from the right, overlay tap, the account menu at the bottom, the notification panel width, scroll lock behind the drawer.
+10. Touch targets by thumb: the buttons raised to 44px, the attachment-remove button (hit area only) and the terminal close button.
+11. The wallet capacity cards (stacked below 480px) and the three-column stat rows on the requests page.
+12. The terminal's 10 to 11px text for legibility, and the contrast of muted text in light and dark modes.
+13. Arabic text rendering: font loading, line breaks in long Arabic sentences, and mixed Arabic and Latin cells (phone, handle).
+14. Any admin page on a phone (not audited).
+
+### Open owner decisions
+
+1. **Top-up review time.** `TOPUP_REVIEW_TIME_AR` in `src/lib/topupConfig.ts` is `null` on purpose, so the top-up screen promises no duration. Set it to a time you can keep («خلال ساعة في أيام العمل»), or set `reviewTimeAr` in the public settings row `pricing` (it wins over the constant).
+2. **Payment label and address.** The label above the address is `TOPUP_PAYMENT_LABEL_AR` («عنوان الدفع اللحظي · منصة ديجر»; override with `paymentLabelAr` in the same settings row). The ADDRESS under it is the value saved in the admin settings (`ipa`); if it is a personal handle, replace it there. The code cannot know.
+3. **The refund sentence in the terms.** `src/lib/legalText.ts` (section «٣. النقاط واحتساب التكلفة») still says «بعد التسليم لا يُعاد الرصيد عن سجل تم تسليمه». It was left unchanged on purpose: it is legal text, so wording and any refund policy are the owner's call.
+
+Smaller choices left open:
+- The landing sample files carry no link, e-mail or domain: the comments sample has no link column, and the website and e-mail cells of the companies and decision-makers samples say «غير متاح». The alternative is a visibly fake address; the decision-makers sample no longer shows an example e-mail.
+- The sidebar drawer and the chat history panel have no focus trap or `aria-modal`.
+- Admin pages still use the verb form («تحرير حجز» in `AdminShell`, the admin recover route) and were not audited on mobile.
+- Landing components no longer on the page (`Statements`, `Sheets`, `ProductLines`, `DemoConversations`) stay in `src/components/landing/Sections.tsx` only because existing tests render them.
+- The mission templates (bracketed) stay in the dashboard's empty chat; the landing hero offers none.
+
+---
+
 ## 000000000. Live-check fixes, batch 2 (branch `claude/live-fixes-batch-2`, from main `f10aacd`)
 
 - «المنشورات فقط» on a Facebook topic: no comments plan, no default of 500, one honest sentence, nothing quoted or held (`FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR`, `commentsAnsweredNo` in `src/lib/socialTasks.ts` and `src/lib/socialDiscoveryCard.ts`). The cause was the label «التعليقات المطلوبة» carrying the comment word; the intent now reads the answer, not the label.
