@@ -28,13 +28,15 @@ export function topupReviewSentenceAr(configured?: string | null): string {
 
 /**
  * The InstaPay shortcuts under the payment address: the owner's InstaPay link and the QR image (public/instapay-qr.jpeg, the owner's file, never redrawn).
- * They belong to ONE account, so the screen shows them only while the saved payment address is that account (TOPUP_INSTAPAY_ADDRESS): if the owner
+ * They belong to ONE account, so the screen shows them only while the saved payment address is that account (TOPUP_INSTAPAY_ACCEPTED_ADDRESSES: «iammagdy@instapay» or the bare «iammagdy»): if the owner
  * changes the address in the admin settings, the old QR and link disappear instead of sending money to the wrong place, until this config is updated too.
  */
 export const TOPUP_INSTAPAY_URL = "https://ipn.eg/S/iammagdy/instapay/2dNSeG";
 export const TOPUP_INSTAPAY_ADDRESS = "iammagdy@instapay";
+/** The two ways the owner's address is saved in the admin settings: the full address and the bare handle. Nothing else matches. */
+export const TOPUP_INSTAPAY_ACCEPTED_ADDRESSES: readonly string[] = [TOPUP_INSTAPAY_ADDRESS, "iammagdy"];
 export const TOPUP_INSTAPAY_QR_SRC = "/instapay-qr.jpeg";
 
 export function showsInstapayShortcuts(savedAddress: string | null | undefined): boolean {
-  return String(savedAddress ?? "").trim().toLowerCase() === TOPUP_INSTAPAY_ADDRESS;
+  return TOPUP_INSTAPAY_ACCEPTED_ADDRESSES.includes(String(savedAddress ?? "").trim().toLowerCase());
 }
