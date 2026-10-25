@@ -47,6 +47,8 @@ key never goes to the client.
 | `job-update` | A long job started, stalled temporarily, or completed partially | `Name`, `Subject`, `Heading`, `Lead`, `DetailOne`, `DetailTwo`, `ButtonLabel`, `JobURL` (all plain Arabic, written by the app from real numbers) |
 | `admin-topup-alert` | A new top-up request, to the owner's address (`ADMIN_ALERT_EMAIL` on the app) | `CustomerName`, `CustomerEmail`, `Points`, `AmountEgp`, `RequestTime`, `AdminURL` (right-to-left; no receipt image, receipt id or token) |
 
+All eight templates are built by ONE base layout (`layout()` in `templates.ts`): right-to-left and right-aligned on the wrapper table and on every cell, the brand mark on a small light rounded background (visible in dark-mode clients), a card (status chip, heading, short body, boxed reason, label/value table, one primary button, note) and a footer (the preferences footer for customers, the admin footer only for `admin-topup-alert`). Inline CSS only; no external fonts or scripts; `color-scheme` is light only. A template's variables never change name; new ones may only be added as optional.
+
 Missing vars render as `""` — no raw `{{ .Var }}` token ever reaches a customer.
 Values are HTML-escaped in the body; the subject is plain text.
 
