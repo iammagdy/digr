@@ -17,3 +17,11 @@ export function arabicVerificationStatus(value: unknown, hasValue: boolean): str
   if (/invalid|undeliverable|false|fail|disposable/i.test(status)) return "غير صالح";
   return "لم يتوفر تأكيد";
 }
+
+/**
+ * True when the SOURCE marked a present field invalid («غير صالح», «invalid», «undeliverable», «disposable»…). A field with no report, one still to
+ * review («يحتاج مراجعة», accept-all) and one not yet verified are NOT invalid: only a value known to be wrong is withheld from a delivered file.
+ */
+export function markedInvalid(statusValue: unknown, hasValue: boolean): boolean {
+  return hasValue && arabicVerificationStatus(statusValue, hasValue) === "غير صالح";
+}
