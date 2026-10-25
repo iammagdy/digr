@@ -18,7 +18,7 @@ import { calculatorSlugForEstimate, estimateFormProblemAr, estimateMission } fro
 import { actionableUnreadCount } from "../src/lib/notificationBadge";
 import { formatPhoneDisplay } from "../src/lib/phoneDisplay";
 import { planCountLineAr } from "../src/lib/planCounts";
-import { homePricingExample, buildPriceRows } from "../src/lib/pricingPage";
+import { buildPriceRows, homePriceStrip } from "../src/lib/pricingPage";
 import { topupReviewSentenceAr } from "../src/lib/topupConfig";
 
 const src = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -321,27 +321,24 @@ describe("audit phase 2: numbers and words (point 22)", () => {
   });
 });
 
-describe("audit phase 2: one computed pricing example on the home page (point 29)", () => {
-  it("is priced by the same public estimate as the pricing page", () => {
-    const unit = buildPriceRows().find((row) => row.id === "companies")!.unitPricePoints;
-    const example = homePricingExample(100)!;
-    expect(example.points).toBe(estimateMission({ kind: "companies", volume: 100 }).status === "ok"
-      ? (estimateMission({ kind: "companies", volume: 100 }) as { expectedPoints: number }).expectedPoints
-      : -1);
-    expect(Math.abs(example.points - Math.ceil(100 * unit))).toBeLessThanOrEqual(1);
+describe("audit phase 2/3: the home page price example is computed by the shared estimate (point 29)", () => {
+  it("each strip item equals the public estimate for the same request", () => {
+    const strip = homePriceStrip();
+    expect(strip.map((item) => item.id)).toEqual(["companies", "x-posts"]);
+    const companies = estimateMission({ kind: "companies", volume: 5 });
+    const posts = estimateMission({ kind: "posts", platform: "x", volume: 100 });
+    expect(companies.status === "ok" && strip[0].points === companies.expectedPoints).toBe(true);
+    expect(posts.status === "ok" && strip[1].points === posts.expectedPoints).toBe(true);
   });
-  it("1000 companies are 1000 times the unit price, not the one-job ceiling", () => {
+  it("the companies item agrees with the pricing page's unit price", () => {
     const unit = buildPriceRows().find((row) => row.id === "companies")!.unitPricePoints;
-    const example = homePricingExample(1000)!;
-    expect(example.points).toBe(Math.ceil(1000 * unit));
-    expect(example.jobs).toBeGreaterThanOrEqual(2);
-    expect(example.egp).toBeCloseTo(example.points * 0.1, 1);
+    expect(homePriceStrip()[0].points).toBe(Math.ceil(5 * unit));
   });
-  it("the home calculator reads the shared example, not its own arithmetic", () => {
-    const sections = src("src/components/landing/Sections.tsx");
-    expect(sections).toContain("homePricingExample");
-    expect(sections).not.toContain("computePublicCalculatorQuote");
-    expect(sections).not.toContain("pts * 0.1");
+  it("the strip is rendered on the home page from the shared function, not typed by hand", () => {
+    expect(src("src/app/page.tsx")).toContain("<PriceStrip />");
+    expect(src("src/components/landing/Overview.tsx")).toContain("homePriceStrip()");
+    expect(src("src/components/landing/Sections.tsx")).not.toContain("computePublicCalculatorQuote");
+    expect(src("src/components/landing/Sections.tsx")).not.toContain("pts * 0.1");
   });
 });
 

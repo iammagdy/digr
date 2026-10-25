@@ -74,11 +74,9 @@ describe("a template only fills the input", () => {
     expect(handler).not.toMatch(/handleSendMessage|fetch\(|handleStartExecution/);
   });
 
-  it("on the landing page a template fills the box and sends nothing; sending goes to sign-up", () => {
-    const fill = hero.slice(hero.indexOf("const useTemplate"), hero.indexOf("const useExample"));
-    expect(fill).toContain("el.value = prompt;");
-    expect(fill).not.toMatch(/submit|router\.push|savePendingQuestion/);
+  it("the landing hero offers no templates (audit phase 3: one box, one action); sending goes to sign-up", () => {
+    expect(hero).not.toContain("landing-mission-templates");
+    expect(hero).not.toContain("useTemplate");
     expect(hero).toContain('router.push(user ? "/dashboard/chat" : "/register")');
-    expect(hero).toContain('data-testid="landing-mission-templates"');
   });
 });

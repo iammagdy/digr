@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { FAQS } from "../src/components/landing/data";
-import { OVERVIEW_TRUST_AR } from "../src/components/landing/Overview";
+import { FAQS } from "../src/components/landing/landingFaq";
+import { OVERVIEW_PAYMENT_AR } from "../src/components/landing/Overview";
 import { completionNoticeFull, jobStalledNotice, releasedNoticeFull, jobStartedNotice } from "../src/lib/server/jobNotices";
 import { normalizeReleaseWording } from "../src/lib/releaseWording";
 import { PRICING_FAQ_AR } from "../src/lib/pricingPage";
@@ -58,10 +58,11 @@ describe("audit phase 3: a released hold is «حجز مؤقت مُحرَّر», 
     expect(FAILURE_STATE_AR).toContain(RELEASED);
     expect(WORKER_START_FINAL_REASON_AR).toContain(RELEASED);
     for (const [, answer] of PRICING_FAQ_AR) expect(answer).not.toMatch(REFUND_STYLE);
-    const cost = FAQS.find(([question]) => question === "كيف تُحسب التكلفة؟")!;
-    expect(cost[1]).toContain("وأي فائض هو حجز مؤقت مُحرَّر فورًا.");
-    expect(cost[1]).not.toContain("يُرد");
-    expect(OVERVIEW_TRUST_AR[2]).toBe("ما لا يُستخدم من النقاط المحجوزة هو حجز مؤقت مُحرَّر");
+    expect(readFileSync("src/components/landing/data.ts", "utf8")).not.toContain("يُرد");
+    for (const [, answer] of FAQS) expect(answer).not.toMatch(REFUND_STYLE);
+    expect(FAQS[0][1]).toBe(PRICING_FAQ_AR[0][1]);
+    expect(FAQS[2][1]).toBe(PRICING_FAQ_AR[1][1]);
+    expect(OVERVIEW_PAYMENT_AR).toContain("حجز مؤقت مُحرَّر");
   });
 
   it("notices stored BEFORE this rule are read through the normalizer, so an old bell row shows the new wording", () => {
