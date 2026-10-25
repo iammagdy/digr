@@ -9,7 +9,7 @@ vi.mock("../src/lib/supabase/client", () => ({ createClient: () => ({}) }));
 
 import TopupForm from "../src/app/dashboard/topup/TopupForm";
 import { InstapayShortcuts } from "../src/app/dashboard/topup/InstapayShortcuts";
-import { showsInstapayShortcuts, TOPUP_INSTAPAY_ADDRESS, TOPUP_INSTAPAY_QR_SRC, TOPUP_INSTAPAY_URL } from "../src/lib/topupConfig";
+import { showsInstapayShortcuts, TOPUP_INSTAPAY_ACCEPTED_ADDRESSES, TOPUP_INSTAPAY_ADDRESS, TOPUP_INSTAPAY_QR_SRC, TOPUP_INSTAPAY_URL } from "../src/lib/topupConfig";
 
 const src = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const form = (ipa: string | null, extra: Record<string, unknown> = {}) =>
@@ -86,5 +86,37 @@ describe("the InstaPay link and QR on the top-up page", () => {
     expect(form).toContain("compressReceipt");
     expect(form).toContain("TOPUP_ERROR_MESSAGES");
     expect(form).not.toMatch(/instapay-qr|ipn\.eg/);
+  });
+});
+
+describe("the saved address may be the bare handle or the full address", () => {
+  it("both «iammagdy» and «iammagdy@instapay» (any case, spaces around) show the link and the QR; the address on the page is shown as saved", () => {
+    for (const saved of ["iammagdy", "iammagdy@instapay", "  IAMMAGDY  ", "IamMagdy@InstaPay "]) {
+      expect(showsInstapayShortcuts(saved), saved).toBe(true);
+      const html = form(saved);
+      expect(html, saved).toContain('data-testid="instapay-link"');
+      expect(html, saved).toContain('data-testid="instapay-qr"');
+      expect(html, saved).toContain(saved.trim() === "" ? "" : saved.trim().replace(/\s+$/, ""));
+    }
+    // the displayed address is untouched: the bare handle stays «iammagdy», it is not rewritten to the full address
+    const bare = form("iammagdy");
+    expect(bare).toMatch(/dir="ltr">iammagdy<\/p>/);
+    expect(bare).not.toContain("iammagdy@instapay");
+  });
+
+  it("any other saved address still hides both", () => {
+    for (const other of ["someone_else", "someone.else@instapay", "iammagdy2", "iammagdy@instapay.evil", "iammagdy@evil", "xiammagdy", "iam magdy", "iammagdy@", "@instapay", "", "   ", null, undefined]) {
+      expect(showsInstapayShortcuts(other as never), String(other)).toBe(false);
+      const html = form(other as never);
+      expect(html, String(other)).not.toContain("instapay-link");
+      expect(html, String(other)).not.toContain("instapay-qr");
+    }
+  });
+
+  it("the accepted list is exactly those two forms, and the link, image and address text are the same as before", () => {
+    expect([...TOPUP_INSTAPAY_ACCEPTED_ADDRESSES]).toEqual(["iammagdy@instapay", "iammagdy"]);
+    expect(TOPUP_INSTAPAY_URL).toBe("https://ipn.eg/S/iammagdy/instapay/2dNSeG");
+    expect(TOPUP_INSTAPAY_QR_SRC).toBe("/instapay-qr.jpeg");
+    expect(TOPUP_INSTAPAY_ADDRESS).toBe("iammagdy@instapay");
   });
 });
