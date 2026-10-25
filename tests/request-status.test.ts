@@ -13,7 +13,7 @@ describe("one status source of truth", () => {
   });
 
   it("describes a finished short run with requested versus delivered in Arabic-Indic digits", () => {
-    expect(REQUEST_STATUS_LABEL_AR.partial).toBe("مكتمل جزئياً");
+    expect(REQUEST_STATUS_LABEL_AR.partial).toBe("مكتمل جزئيًا");
     expect(partialDeliveryText(4, 5)).toBe("تم تسليم ٤ من ٥ سجلاً؛ الخصم يقتصر على السجلات المسلّمة المطابقة.");
   });
 

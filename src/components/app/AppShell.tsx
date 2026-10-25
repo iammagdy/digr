@@ -27,12 +27,11 @@ interface ShellContextValue {
 const ShellContext = createContext<ShellContextValue>({ setTitle: () => {}, newQuestion: () => {} });
 export const useShell = () => useContext(ShellContext);
 
-const PAGE_TITLES: Record<string, string> = {
-  "/dashboard/topup": "الرصيد والشحن",
-  "/dashboard/requests": "طلباتي",
-  "/dashboard/settings": "الإعدادات",
-  "/services": "كتالوج الخدمات",
-};
+/**
+ * The header names the page only where the page has no heading of its own (the chat shows the conversation's title). Every other page opens with
+ * its own heading, and a second copy of it in the header («طلباتي» twice, «الرصيد والشحن» above «المحفظة») was a duplicate title.
+ */
+const PAGE_TITLES: Record<string, string> = {};
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -189,10 +188,9 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
   ];
 
+  // The account menu lists only what the sidebar does not: «الإعدادات» is a sidebar entry and «الشروط والخصوصية» is a help link.
   const menu: Array<{ label: string; icon: string; meta?: string; danger?: boolean; href?: string; onClick?: () => void }> = [
-    { label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings" },
     { label: theme === "dark" ? "المظهر الفاتح" : "المظهر الداكن", icon: UI.moon, onClick: () => { toggleTheme(); setAcctOpen(false); } },
-    { label: "الشروط والخصوصية", icon: UI.doc, href: "/legal/terms" },
     ...(isAdmin ? [{ label: "لوحة الإدارة", icon: UI.shield, meta: "مسؤول", href: "/admin" }] : []),
     { label: "تسجيل الخروج", icon: UI.logout, danger: true, onClick: handleLogout },
   ];
@@ -359,17 +357,19 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <span className="h-[1.5px] w-[18px] bg-current" /><span className="h-[1.5px] w-[18px] bg-current" />
                 </button>
               )}
-              <h1 className="m-0 truncate text-[15px] font-medium text-ink">{pageTitle}</h1>
+              {pageTitle ? (isChat
+                ? <h1 data-testid="shell-title" className="m-0 truncate text-[15px] font-medium text-ink">{pageTitle}</h1>
+                : <p data-testid="shell-title" className="m-0 truncate text-[15px] font-medium text-ink">{pageTitle}</p>) : null}
             </div>
             {user ? (
               <div className="flex items-center gap-1.5">
                 <button
-                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label="الإشعارات" aria-expanded={notifsOpen}
+                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${toArabicDigits(notifs.actionableUnread)} تحتاج انتباهك` : "الإشعارات"} aria-expanded={notifsOpen}
                   className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-0 text-ink hover:bg-sf2 ${notifsOpen ? "bg-sf2" : "bg-transparent"}`}
                 >
                   <Icon d={UI.bell} size={19} />
-                  {notifs.unread > 0 && (
-                    <span className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{toArabicDigits(notifs.unread)}</span>
+                  {notifs.actionableUnread > 0 && (
+                    <span data-testid="bell-badge" className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{toArabicDigits(notifs.actionableUnread)}</span>
                   )}
                 </button>
                 <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">

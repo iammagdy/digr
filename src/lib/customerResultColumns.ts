@@ -1,4 +1,5 @@
 import { POST_COLUMN_TITLES_AR } from "./facebookKeywordService";
+import { COMPANY_SCREEN_ORDER } from "./companyColumns";
 /** Arabic labels for source-native result fields that can reach the live results table. */
 const RESULT_COLUMN_LABELS: Record<string, string> = {
   id: "معرّف السجل",
@@ -129,4 +130,43 @@ export function previewColumns(columns: string[], isCompanyDataset: boolean): st
   // A comment is read with the video it sits under: the video's title and link stay in the preview of a comments table.
   const isComments = columns.includes("comment_text");
   return columns.filter((key) => !PREVIEW_HIDDEN_SOCIAL_COLUMNS.has(key) || (isComments && key === "video_url"));
+}
+
+/** The columns that say whether a field was found (present or not, verified or not): useful to audit, never the first thing a customer reads. */
+export function isAvailabilityColumn(key: string): boolean {
+  return /(?:_presence_status|_verification_status)$/.test(key);
+}
+
+/** What a reader looks at first, in order. A column not listed keeps its place after these, and the availability columns come last of all. */
+const USEFUL_FIRST = [
+  // the company columns follow the ONE shared company list (workbook and screen), a person's name and title come first
+  "contact_name", "job_title", ...COMPANY_SCREEN_ORDER.filter((key) => !/_verification_status$/.test(key)), "location",
+  "comment_text", "text", "video_title", "video_caption", "author_name", "authorName", "username", "published_at", "video_published_at", "created_at", "createdUtc",
+  "likes", "likes_count", "replies_count", "views_count", "followers", "followers_count", "description",
+];
+
+/** Useful columns first, availability columns last; the order inside each group is the data's own (stable). */
+export function orderPreviewColumns(columns: readonly string[]): string[] {
+  const rank = (key: string) => (isAvailabilityColumn(key) ? 2000 : USEFUL_FIRST.indexOf(key) >= 0 ? USEFUL_FIRST.indexOf(key) : 1000);
+  return columns.map((key, index) => ({ key, index })).sort((a, b) => rank(a.key) - rank(b.key) || a.index - b.index).map((entry) => entry.key);
+}
+
+const isEmptyCell = (value: unknown) => value === undefined || value === null || (typeof value === "string" && value.trim() === "");
+
+/**
+ * The columns with a value in at least one row, and the columns that are empty in EVERY row (hidden by default: an empty availability column is noise).
+ * An empty column is reported, never dropped silently, so the screen can say which promised field came back empty.
+ */
+export function splitEmptyColumns(records: ReadonlyArray<Record<string, unknown>>, columns: readonly string[]): { shown: string[]; empty: string[] } {
+  const shown: string[] = [];
+  const empty: string[] = [];
+  for (const key of columns) (records.some((record) => !isEmptyCell(record[key])) ? shown : empty).push(key);
+  return { shown, empty };
+}
+
+/** The promised contact fields that came back empty in EVERY delivered row (a field the plan promised and the source never returned), as Arabic titles. */
+export function emptyPromisedFieldTitles(records: ReadonlyArray<Record<string, unknown>>, promised: readonly string[]): string[] {
+  if (records.length === 0) return [];
+  const titles: Record<string, string> = { work_email: "البريد المهني", phone: "الهاتف التجاري" };
+  return promised.filter((key) => titles[key] && records.every((record) => isEmptyCell(record[key]))).map((key) => titles[key]);
 }

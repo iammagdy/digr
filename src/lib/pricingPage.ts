@@ -83,3 +83,13 @@ export const PRICING_FAQ_AR: Array<[string, string]> = [
 export function peoplePerRequestLineAr(dailyCapPoints?: number): string {
   return decisionMakersPerRequestLine({ dailyCapPoints });
 }
+
+/**
+ * The ONE pricing example of the home page: a number of companies priced by the same public estimate as the pricing page and the calculator (so 1000
+ * companies are 1000 × the unit price, not the one-job ceiling). Null when the estimate gives no price; the page then shows nothing instead of a guess.
+ */
+export function homePricingExample(volume: number): { volume: number; points: number; egp: number; jobs: number } | null {
+  const result = estimateMission({ kind: "companies", volume });
+  if (result.status !== "ok") return null;
+  return { volume: result.volume, points: result.expectedPoints, egp: result.expectedEgp, jobs: result.jobsNeeded };
+}

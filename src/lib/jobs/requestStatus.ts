@@ -9,9 +9,21 @@ import { toArabicDigits } from "../arabicDigits";
  */
 export type RequestKind = "done" | "partial" | "running" | "refunded";
 
+/**
+ * THE words for a request that finished with fewer records than asked, used on «طلباتي», in the chat, in the notices and in the e-mails:
+ * the status is «مكتمل جزئيًا», the sentence about it is «اكتمل طلبك جزئيًا», and the count is «تم تسليم X من Y سجلاً».
+ */
+export const PARTIAL_STATUS_AR = "مكتمل جزئيًا";
+export const PARTIAL_SENTENCE_AR = "اكتمل طلبك جزئيًا";
+
+/** «تم تسليم ٤ من ٥ سجلاً»: the delivered count against the asked count, the same everywhere. */
+export function deliveredOfRequestedAr(delivered: number, requested: number, noun = "سجلاً"): string {
+  return `تم تسليم ${toArabicDigits(delivered)} من ${toArabicDigits(requested)} ${noun}`;
+}
+
 export const REQUEST_STATUS_LABEL_AR: Record<RequestKind, string> = {
   done: "مكتمل",
-  partial: "مكتمل جزئياً",
+  partial: PARTIAL_STATUS_AR,
   running: "قيد التنفيذ",
   refunded: "تعذر التنفيذ · حجز مؤقت مُحرَّر",
 };
@@ -36,7 +48,7 @@ export function resolveRequestKind(input: {
 
 /** "تم تسليم ٤ من ٥ سجلات" for a partial run. */
 export function partialDeliveryText(delivered: number, requested: number): string {
-  return `تم تسليم ${toArabicDigits(delivered)} من ${toArabicDigits(requested)} سجلاً؛ الخصم يقتصر على السجلات المسلّمة المطابقة.`;
+  return `${deliveredOfRequestedAr(delivered, requested)}؛ الخصم يقتصر على السجلات المسلّمة المطابقة.`;
 }
 
 /** For a refunded run that did collect rows: they are kept for a retry that fetches only the rest. */

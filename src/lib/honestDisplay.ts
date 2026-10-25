@@ -1,4 +1,5 @@
 import { pointsAr } from "./pointsFormat";
+import { PARTIAL_STATUS_AR } from "./jobs/requestStatus";
 /**
  * Honest display rules for the Diger redesign.
  *
@@ -167,7 +168,7 @@ export function formatJobStatus(status: string | undefined | null): string {
   if (s === "completed") return JOB_STATUS_LABEL_MAP.done;
   if (s === "pending") return JOB_STATUS_LABEL_MAP.queued;
   if (s === "canceled") return JOB_STATUS_LABEL_MAP.cancelled;
-  if (s === "partial") return "مكتمل جزئيًا";
+  if (s === "partial") return PARTIAL_STATUS_AR;
   return "غير معروف";
 }
 

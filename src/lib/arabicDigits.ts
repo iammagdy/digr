@@ -46,3 +46,11 @@ export function normalizePhone(input: string): string {
   return normalizeDigits(input).replace(/[\s-]/g, "");
 }
 export const EG_MOBILE_RE = /^01[0125]\d{8}$/;
+
+/**
+ * Arabic-Indic digits for the numbers of a sentence shown to the customer. A digit run touching a Latin letter, «@», «#», «_» or a dot/slash path
+ * (a handle like «user123», a tag, «2026.xlsx», a link) is left exactly as written, so nothing the customer must type or copy is changed.
+ */
+export function proseDigitsAr(input: string): string {
+  return input.replace(/(?<![A-Za-z@#_/.\-\d])\d+(?:[.,]\d+)?(?![A-Za-z_/@\d])/g, (run) => toArabicDigits(run));
+}

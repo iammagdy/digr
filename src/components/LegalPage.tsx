@@ -22,8 +22,8 @@ export default function LegalPage({ tab, title, sections }: { tab: "terms" | "pr
           <div className="flex items-center gap-1"><Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Logo height={26} /></Link></div>
         </div>
         <nav className="grid grid-cols-2 gap-1 rounded-full bg-sf2 p-1" aria-label="الوثائق القانونية">
-          <Link href="/legal/terms" aria-current={tab === "terms" ? "page" : undefined} className={tabCls(tab === "terms")}>الشروط والأحكام</Link>
-          <Link href="/legal/privacy" aria-current={tab === "privacy" ? "page" : undefined} className={tabCls(tab === "privacy")}>سياسة الخصوصية</Link>
+          <Link href="/legal/terms" aria-current={tab === "terms" ? "page" : undefined} className={tabCls(tab === "terms")}>الشروط</Link>
+          <Link href="/legal/privacy" aria-current={tab === "privacy" ? "page" : undefined} className={tabCls(tab === "privacy")}>الخصوصية</Link>
         </nav>
         <div>
           <h1 className="m-0 font-display font-medium leading-[1.15] text-ink" style={{ fontSize: "clamp(36px,6cqi,52px)" }}>{title}</h1>

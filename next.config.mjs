@@ -25,6 +25,9 @@ const nextConfig = {
     // www.diger.tech → diger.tech (keeps one canonical host for cookies, e-mailed links and SEO).
     return [
       { source: "/:path*", has: [{ type: "host", value: "www.diger.tech" }], destination: "https://diger.tech/:path*", permanent: true },
+      // The legal pages live under /legal; the short addresses people type or paste land on them instead of a 404.
+      { source: "/terms", destination: "/legal/terms", permanent: true },
+      { source: "/privacy", destination: "/legal/privacy", permanent: true },
     ];
   },
   async headers() {

@@ -18,6 +18,8 @@ import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
 import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
+import { closePageLineAr } from "@/lib/driverMode";
+import { useDriverMode } from "@/hooks/useDriverMode";
 
 interface JobDoc {
   $id: string;
@@ -102,6 +104,7 @@ const DL_ICON = "M12 4v11M7 10l5 5 5-5M5 20h14";
 export default function RequestsPage() {
   const { user } = useUser();
   const router = useRouter();
+  const driverMode = useDriverMode();
   const [jobs, setJobs] = useState<JobDoc[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteInfo>>({});
   const [titles, setTitles] = useState<Record<string, string>>({});
@@ -347,7 +350,7 @@ export default function RequestsPage() {
       <div className="mx-auto flex max-w-[820px] flex-col gap-4 px-[18px] pb-16 pt-[22px]">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h2 className="m-0 font-display text-[40px] font-medium leading-[1.1] text-ink">طلباتي</h2>
+            <h1 className="m-0 font-display text-[40px] font-medium leading-[1.1] text-ink">طلباتي</h1>
             <p className="mb-0 mt-1.5 text-sm font-light text-mut">كل أبحاثك وملفاتها في مكان واحد — التحميل متاح لمدة ٩٠ يومًا.</p>
           </div>
           <button type="button" onClick={() => startNewResearch(() => router.push("/dashboard/chat"))} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac">+ سؤال بحثي جديد</button>
@@ -384,7 +387,7 @@ export default function RequestsPage() {
           const nothingDelivered = deliveredNothing({ kind: k, delivered: rows, deliveredKnown: j.deliveredKnown });
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
-          const note = k === "running" ? "جارٍ الجمع — ستصلك رسالة عند الاكتمال."
+          const note = k === "running" ? `جارٍ الجمع — ${closePageLineAr(driverMode)}`
             : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
             : nothingDelivered ? "لم يصل أي سجل، لذلك لا توجد ملفات بيانات لهذا الطلب، ولم يُخصم منك أي رصيد."
             : k === "partial" ? partialDeliveryText(rows, requested || rows) : "";

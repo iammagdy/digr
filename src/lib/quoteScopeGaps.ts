@@ -310,7 +310,7 @@ export function planScopeRows(
   // Several services (posts and their comments): every service's own count, the very string the card's title shows.
   chips.push({
     label: "العدد المطلوب:",
-    value: items.length > 1 ? planCountLineAr(items) : `حتى ${toArabicDigits(vol)} سجل`,
+    value: planCountLineAr(items, Number(vol) || undefined),
   });
 
   // A chip never shows a value that was not found («undefined», «null», «NaN», blank): it asks for it instead.

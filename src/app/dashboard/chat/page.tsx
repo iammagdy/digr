@@ -22,6 +22,8 @@ import { getPersonaConfig, PersonaType } from "@/functions/shared/personaConfigs
 import { chronological, EVENT_HISTORY_LIMIT, formatNumber, methodologyMessageText } from "@/lib/honestDisplay";
 import { RETRY_SAME_PLAN_MESSAGE, REVIEW_PLAN_MESSAGE, customerFacingMessageText } from "@/lib/retryMessage";
 import { openJobHref } from "@/lib/requestLinks";
+import { PARTIAL_SENTENCE_AR } from "@/lib/jobs/requestStatus";
+import { isUntitledConversation, titleFromFirstRequest } from "@/lib/conversationTitleFromRequest";
 import { postApprovalMessageAr } from "@/lib/postApproval";
 import { closePageLineAr } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
@@ -54,7 +56,7 @@ import EmptyChat from "./components/EmptyChat";
 import { FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
 import { getJobIdForQuote } from "@/lib/md5";
-import { shouldShowPlanPanel } from "@/lib/quoteApprovalState";
+import { getQuoteApprovalState, shouldShowPlanPanel } from "@/lib/quoteApprovalState";
 import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { isCustomerVisibleJobEvent } from "@/lib/reviewCostEvent";
@@ -265,6 +267,15 @@ export default function ChatWorkspacePage() {
     }
     if (announcedPlanId.current === undefined) {
       announcedPlanId.current = latestPlanId;
+      // Coming back to a conversation whose newest plan still waits for approval (and can still be approved): its panel opens by itself. A plan that was
+      // approved, expired or replaced does not (the «افتح الخطة» button is still under it).
+      const waiting = [...messages].reverse().find((m) => m.planQuote)?.planQuote;
+      if (waiting && getQuoteApprovalState(waiting.status, waiting.expiresAt, Date.now()).canApprove && shouldShowPlanPanel({
+        latestQuote: { quoteId: waiting.quoteId, status: waiting.status, expiresAt: waiting.expiresAt },
+        activeJob: activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null,
+        restPlanQuoteId: null,
+        jobIdForQuote: getJobIdForQuote,
+      })) setCanvasOpen(true);
       return;
     }
     if (latestPlanId && latestPlanId !== announcedPlanId.current && !activeJob) setCanvasOpen(true);
@@ -862,7 +873,8 @@ export default function ChatWorkspacePage() {
     syncConversationUrl(id, targetJobId);
     setConversationLoadError(false);
     setConversationId(id);
-    setConversationTitle(conversationsList.find((item) => item.$id === id)?.title ?? "");
+    let openedTitle = conversationsList.find((item) => item.$id === id)?.title ?? "";
+    setConversationTitle(openedTitle);
     setMessages([]);
     setInputText("");
     setActiveJob(null);
@@ -880,6 +892,7 @@ export default function ChatWorkspacePage() {
           .eq("id", id)
           .single();
         if (convErr || !doc || doc.user_id !== user.id) throw new Error("forbidden");
+        openedTitle = doc.title || "";
         if (sequence === conversationLoadSequence.current) setConversationTitle(doc.title || "");
       }
       const documents: any[] = [];
@@ -955,6 +968,17 @@ export default function ChatWorkspacePage() {
         }
       }
       setMessages(restoredMessages);
+
+      // An old conversation that never got a title (its first message was a greeting or a card answer) is named after its first real request.
+      if (isUntitledConversation(openedTitle)) {
+        const derivedTitle = titleFromFirstRequest(restoredMessages);
+        if (derivedTitle) {
+          setConversationTitle(derivedTitle);
+          setConversationsList((previous) => previous.map((item) => (item.$id === id ? { ...item, title: derivedTitle } : item)));
+          // Saved best effort so the history list shows it next time; a refusal changes nothing the customer sees.
+          void Promise.resolve(createClient().from("conversations").update({ title: derivedTitle }).eq("id", id).eq("user_id", user.id)).catch(() => undefined);
+        }
+      }
 
       // Restore only jobs referenced by this conversation. A user can have
       // several chats running at once, so a global "latest job" fallback can
@@ -1865,6 +1889,13 @@ export default function ChatWorkspacePage() {
       locked={locked}
     />
   );
+  // The contact fields the plan of the open request promised (its quote is the one whose job is the open one).
+  const promisedContactFieldsOfJob: string[] = (() => {
+    if (!activeJob) return [];
+    const quote = messages.map((m) => m.planQuote).find((q) => q && getJobIdForQuote(q.quoteId) === activeJob.jobId);
+    const fields = quote?.items?.[0]?.params?.requiredContactFields;
+    return Array.isArray(fields) ? fields.filter((f: unknown): f is string => typeof f === "string") : [];
+  })();
   const panelShowsPlan = shouldShowPlanPanel({
     latestQuote: latestPlanQuote ? { quoteId: latestPlanQuote.quoteId, status: latestPlanQuote.status, expiresAt: latestPlanQuote.expiresAt } : null,
     activeJob: activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null,
@@ -1897,7 +1928,7 @@ export default function ChatWorkspacePage() {
             // one in-progress sign on the screen: while the activity panel is open it carries its own, so the chat shows none
             canvasOpen ? null : <RunningIndicator />
           ) : (
-            <p role="status" className="m-0 text-xs font-medium text-ink2">{activeJob.status === "done" ? "اكتمل طلبك" : "توقف طلبك"}</p>
+            <p role="status" className="m-0 text-xs font-medium text-ink2">{activeJob.status === "done" ? (activeJob.requestedRows && activeJob.rowsCollected < activeJob.requestedRows ? PARTIAL_SENTENCE_AR : "اكتمل طلبك") : "توقف طلبك"}</p>
           )}
         </div>
         {progress && (
@@ -2139,6 +2170,7 @@ export default function ChatWorkspacePage() {
               onArtifactEdit={(operation) => void submitArtifactAction({ operation })}
               onUndoVersion={(targetVersionId) => void submitArtifactAction({ undoToVersionId: targetVersionId })}
               planNode={latestPlanQuote ? planCard(latestPlanQuote, true) : undefined}
+              promisedContactFields={promisedContactFieldsOfJob}
             />
             )}
           </div>

@@ -2,6 +2,7 @@
 
 import { pointsAr } from "@/lib/pointsFormat";
 import { formatAr } from "@/lib/arabicDigits";
+import { PARTIAL_SENTENCE_AR, deliveredOfRequestedAr } from "@/lib/jobs/requestStatus";
 import { sanitizeActivityError } from "@/functions/shared/liveActivityFeed";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
 
@@ -31,7 +32,9 @@ export function FilesSection({
   return (
     <div style={{ animation: "up .6s both" }}>
       <p className="mb-0 mt-3 text-sm font-light leading-[1.9] text-ink">
-        سُلّم {formatAr(rows)} سجلًا{requested ? ` من ${formatAr(requested)}` : ""}
+        {requested && rows < requested
+          ? <>{PARTIAL_SENTENCE_AR}: {deliveredOfRequestedAr(rows, requested)}</>
+          : <>سُلّم {formatAr(rows)} سجلًا{requested ? ` من ${formatAr(requested)}` : ""}</>}
         {typeof charged === "number" && <> — تم خصم {pointsAr(charged)}.</>}
       </p>
       <div className="mt-4 grid gap-2.5" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,180px),1fr))" }}>
@@ -52,7 +55,7 @@ export function FilesSection({
         type="button" onClick={onOpenCanvas} aria-expanded={canvasOpen} aria-controls="results-canvas"
         className="mt-3 min-h-11 min-w-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink"
       >
-        لوحة النتائج
+        {canvasOpen ? "إخفاء اللوحة" : "افتح لوحة النتائج"}
       </button>
     </div>
   );

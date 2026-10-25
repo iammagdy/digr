@@ -224,7 +224,7 @@ describe("the notices of a job", () => {
     const notice = completionNoticeFull({ delivered: 40, requested: 100, chargedPoints: 360, refundedPoints: 540 });
     expect(notice.kind).toBe("partial");
     expect(notice.title).toBe("اكتمل طلبك جزئيًا");
-    expect(notice.body).toContain("وصلك ٤٠ من ١٠٠ مطلوب");
+    expect(notice.body).toContain("تم تسليم ٤٠ من ١٠٠ سجلاً");
     expect(notice.body).toContain("خُصم ٣٦٠ نقطة مقابل ما سُلّم فقط");
     expect(notice.body).toContain("وعادت ٥٤٠ نقطة إلى رصيدك");
     expect(notice.email?.subject).toBe("اكتمل طلبك جزئيًا");
