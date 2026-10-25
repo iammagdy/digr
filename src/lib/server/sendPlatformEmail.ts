@@ -180,7 +180,7 @@ export async function sendPlatformEmail(
   try {
     if (!to || !to.includes("@")) return fail("invalid_recipient");
     const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
     if (!base || !key) return fail("missing_config");
     const res = await fetch(`${base}/functions/v1/send-email`, {
       method: "POST",
