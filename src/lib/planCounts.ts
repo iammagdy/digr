@@ -1,4 +1,4 @@
-import { toArabicDigits } from "./arabicDigits";
+import { normalizeDigits, toArabicDigits } from "./arabicDigits";
 
 /**
  * The count of a plan, written ONCE. A plan of several services (posts, then their comments) has one count per service, and every place that
@@ -94,4 +94,23 @@ export function planCountLineAr(items: ReadonlyArray<CountedPlanItem> | undefine
   const total = Number(only?.targetVolumeMax) || Number(fallbackTotal) || 1;
   // «سجل» after a number takes its right form: «سجل واحد», «سجلين», «٥ سجلات»; from eleven on it stays «سجل» («١٠٠ سجل»).
   return `حتى ${countPlainAr(total, "records")}`;
+}
+
+const STORED_COUNT_NOUNS: Array<[pattern: string, kind: CountKind]> = [
+  ["سجل", "records"], ["شركة", "companies"], ["منشور", "posts"], ["تغريدة", "tweets"], ["تعليق", "comments"], ["فيديو", "videos"], ["شخص", "people"],
+];
+const STORED_COUNT = new RegExp(`([0-9٠-٩][0-9٠-٩٬,]*)\\s*(${STORED_COUNT_NOUNS.map(([noun]) => noun).join("|")})(?![\\u0621-\\u065F])`, "gu");
+
+/**
+ * Display-time only (a stored row is never rewritten): a title or note stored before the plural rule says «٥ سجل» or «(٤سجل)». Every
+ * «number + noun» in it is read again through countPlainAr, so it shows «٥ سجلات» and «(٤ سجلات)», and the number and noun always have one space.
+ */
+export function pluralizeStoredCountsAr(text: string): string {
+  if (!text) return text;
+  return text.replace(STORED_COUNT, (whole, digits: string, noun: string) => {
+    const kind = STORED_COUNT_NOUNS.find(([word]) => word === noun)?.[1];
+    const n = Number(normalizeDigits(digits).replace(/[٬,]/g, ""));
+    if (!kind || !Number.isFinite(n)) return whole;
+    return n >= 11 || n === 0 ? `${toArabicDigits(digits)} ${noun}` : countPlainAr(n, kind);
+  });
 }

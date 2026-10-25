@@ -73,10 +73,10 @@ describe("audit phase 2: the bell counts only what needs the customer (point 25)
 });
 
 describe("audit phase 2: top-up texts promise nothing the code cannot keep (point 26)", () => {
-  it("without a configured time the sentence names no duration", () => {
+  it("without a configured time the sentence is the owner-approved one, in Arabic-Indic digits only", () => {
     const sentence = topupReviewSentenceAr(null);
-    expect(sentence).toContain("يراجع فريق الإدارة صورة الإيصال يدويًا");
-    expect(sentence).not.toMatch(/\d|[٠-٩]|ساعة|ساعات|دقيقة|دقائق|يوم/);
+    expect(sentence).toBe("غالبًا يتم الاعتماد خلال ١٥ دقيقة، وبحد أقصى ٢٤ ساعة، وتصلك رسالة عند إضافة النقاط.");
+    expect(sentence).not.toMatch(/\d/);
   });
   it("with a configured time the sentence states exactly that time", () => {
     expect(topupReviewSentenceAr("خلال ساعة في أيام العمل")).toContain("ومدة المراجعة المتوقعة خلال ساعة في أيام العمل");

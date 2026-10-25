@@ -25,3 +25,28 @@ export function arabicVerificationStatus(value: unknown, hasValue: boolean): str
 export function markedInvalid(statusValue: unknown, hasValue: boolean): boolean {
   return hasValue && arabicVerificationStatus(statusValue, hasValue) === "غير صالح";
 }
+
+/** The contact columns whose empty or invalid value reads «غير متاح» on the screen (like the Excel), and the status columns that can mark each one invalid. */
+const CONTACT_CELL_STATUS_KEYS: Record<string, readonly string[]> = {
+  phone: ["phone_verification_status"],
+  work_email: ["work_email_verification_status", "email_verification_status"],
+  email: ["email_verification_status"],
+  contact_name: [],
+  job_title: ["title_verification_status"],
+};
+
+const NO_VALUE_TEXT = /^(?:[-–—]+|n\/?a|null|undefined|غير متاح)$/i;
+
+/**
+ * True when a contact cell of the results screen has nothing to show: the value is missing («—», blank), or the source marked it invalid (the
+ * same `markedInvalid` rule the company workbook uses). The caller writes «غير متاح» there; other columns (the availability columns, the
+ * description, the website) keep their own wording.
+ */
+export function contactCellUnavailable(column: string, row: Record<string, unknown>): boolean {
+  const statusKeys = CONTACT_CELL_STATUS_KEYS[column];
+  if (!statusKeys) return false;
+  const text = String(row[column] ?? "").replace(/^'+/, "").trim();
+  if (!text || NO_VALUE_TEXT.test(text)) return true;
+  const statusKey = statusKeys.find((key) => row[key] != null && row[key] !== "");
+  return statusKey ? markedInvalid(row[statusKey], true) : false;
+}
