@@ -11,7 +11,7 @@ const QR_CAPTION_AR = "امسح الرمز من تطبيق إنستاباي";
  */
 export function InstapayShortcuts() {
   return (
-    <div data-testid="instapay-shortcuts" className="flex flex-col items-center gap-4 rounded-[20px] bg-sf2 px-[18px] py-4 min-[520px]:flex-row min-[520px]:justify-between">
+    <div data-testid="instapay-shortcuts" className="flex h-full flex-col items-center justify-center gap-4 rounded-[18px] border border-ln px-[18px] py-5 text-center">
       <figure className="m-0 flex flex-col items-center gap-2">
         <div className="rounded-xl bg-white p-2" style={{ colorScheme: "light" }}>
           <Image src={TOPUP_INSTAPAY_QR_SRC} alt={QR_ALT_AR} width={200} height={200} unoptimized data-testid="instapay-qr" className="block h-[200px] w-[200px] bg-white object-contain" />
@@ -23,7 +23,7 @@ export function InstapayShortcuts() {
         target="_blank"
         rel="noopener noreferrer"
         data-testid="instapay-link"
-        className="flex min-h-12 items-center justify-center rounded-full bg-ac px-6 text-sm text-onac no-underline"
+        className="flex min-h-11 items-center justify-center rounded-full border border-ln2 bg-sf px-5 text-[13px] font-semibold text-ink no-underline"
       >
         افتح إنستاباي للدفع
       </a>

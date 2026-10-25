@@ -135,15 +135,17 @@ describe("2. the month card no longer calls lifted holds a refund", () => {
 
   it("the card is worded «محجوز ومُحرَّر» with no refund wording, no plus sign, Arabic only and no emoji", () => {
     const page = readFileSync("src/app/dashboard/topup/page.tsx", "utf8");
-    expect(page).toContain("محجوز ومُحرَّر هذا الشهر");
+    expect(page).toContain("محجوز ومُحرَّر</p>"); // the panel heading «هذا الشهر» and its rows now carry the old card's words
+    expect(page).toContain("هذا الشهر</p>");
     expect(page).toContain("حجز مؤقت رُفع ولم يُخصم");
     expect(page).not.toContain("رجع لرصيدك");
     expect(page).not.toContain("فرق الحجز");
     expect(page).not.toContain("stats.refunded");
-    const card = page.slice(page.indexOf("محجوز ومُحرَّر هذا الشهر") - 200, page.indexOf("خُصم هذا الشهر"));
+    const card = page.slice(page.indexOf('data-testid="wallet-released-month"'), page.indexOf("/>خُصم"));
+    expect(card.length).toBeGreaterThan(400); // the slice must hold the real card
     expect(card).not.toMatch(/\+\{/);
     expect(card).not.toMatch(/\p{Extended_Pictographic}/u);
-    expect(card).not.toMatch(/[A-Za-z]{3,}.*<\/p>/);
+    expect(card).not.toMatch(/>[^<>{}?:]*[A-Za-z]{3,}[^<>{}?:]*</); // no Latin word in any visible text
   });
 
   it("the history labels a release row as a lifted hold, not a refund", () => {
