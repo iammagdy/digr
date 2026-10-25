@@ -20,7 +20,9 @@ export type PlatformEmailTemplateId =
   | "job-done"
   | "refund"
   /** A long job's status update (started, stalled temporarily, completed partially): needs the Edge Function with this template deployed. */
-  | "job-update";
+  | "job-update"
+  /** The owner's alert for a new top-up request (right-to-left, label/value table): needs the Edge Function with this template deployed. */
+  | "admin-topup-alert";
 
 const AR_MONTHS = [
   "يناير",
@@ -69,6 +71,7 @@ export const TEMPLATE_CATEGORY_MAP: Record<PlatformEmailTemplateId, Notification
   "job-done": "done",
   refund: "refund",
   "job-update": "done",
+  "admin-topup-alert": null,
 };
 
 /**

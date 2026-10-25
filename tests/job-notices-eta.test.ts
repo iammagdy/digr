@@ -176,7 +176,7 @@ describe("the watchdog tells the customer about a stalled job it released", () =
     expect(state.notifications[0]).toMatchObject({ user_id: "u1", title: "توقف طلبك: حجز مؤقت مُحرَّر", link: "/dashboard/requests" });
     expect(state.emails).toHaveLength(1);
     expect(state.emails[0]).toMatchObject({ template: "refund", to: "u1@example.com", key: "stalled-refund:job_stalled_1" });
-    expect(state.emails[0].vars).toMatchObject({ Name: "سلمى", Points: "207", Balance: "5123" });
+    expect(state.emails[0].vars).toMatchObject({ Name: "سلمى", Points: "٢٠٧", Balance: "٥١٢٣" });
     expect(Object.values(state.emails[0].vars).join(" ")).not.toMatch(/job_|endpoint|https?:/i);
   });
 
