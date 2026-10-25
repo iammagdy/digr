@@ -33,10 +33,10 @@ describe("D1: «استرداد» is gone from what a failed or empty job says; t
 
   it("the replacement sentence is the honest one, in every message that carried the old one", () => {
     const worker = SRC("src/app/api/worker/chunk/route.ts");
-    expect(worker.match(/حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد/g)!.length).toBeGreaterThanOrEqual(10);
-    expect(worker).toContain("(حُرّر الحجز المؤقت ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء)");
-    expect(SRC("src/lib/server/providerLimits.ts")).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
-    expect(SRC("src/lib/server/providerGate.ts")).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
+    expect(worker.match(/حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد/g)!.length).toBeGreaterThanOrEqual(10);
+    expect(worker).toContain("(حجز مؤقت مُحرَّر ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء)");
+    expect(SRC("src/lib/server/providerLimits.ts")).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+    expect(SRC("src/lib/server/providerGate.ts")).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
   });
 });
 

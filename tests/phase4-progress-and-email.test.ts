@@ -218,7 +218,7 @@ describe("e-mail: what the customer is sent", () => {
     const source = readFileSync("supabase/functions/send-email/templates.ts", "utf8");
     expect(source).not.toMatch(/رجعت|>استرداد</);
     const refund = renderEmailTemplate("refund", { Name: "أحمد", Points: "٢٠", JobTitle: "بحث تيك توك", Reason: "سبب", Balance: "٣٠٠" });
-    expect(refund.subject).toBe("حُرّر حجز مؤقت بقيمة ٢٠ نقطة");
+    expect(refund.subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠ نقطة");
     expect(refund.html).toContain("حجز مؤقت مُحرَّر");
     expect(refund.html).not.toContain("{{");
   });

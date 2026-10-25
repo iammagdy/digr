@@ -31,5 +31,5 @@ export function shortfallSentenceAr(facts: ShortfallFacts): string | null {
   if (dropped.length > 0) parts.push(`منها ${dropped.join(" و")}`);
   parts.push(`وسلّمنا ${postsAr(facts.postsDelivered)} من ${postsAr(facts.postsRequested)} مطلوبًا و${commentsAr(facts.commentsDelivered)} من ${commentsAr(facts.commentsRequested)} مطلوبًا`);
   if (facts.commentsNotReturned > 0) parts.push(`ولم يُعد المصدر ${commentsAr(facts.commentsNotReturned)} من منشورات تحمل تعليقات`);
-  return `${parts.join("، ")}، ولا يُحتسب عليك إلا ما سُلّم فعلًا، ويُحرَّر الباقي من الحجز المؤقت.`;
+  return `${parts.join("، ")}، ولا يُحتسب عليك إلا ما سُلّم فعلًا، والباقي حجز مؤقت مُحرَّر.`;
 }

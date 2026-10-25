@@ -339,7 +339,7 @@ describe("worker: the Facebook keyword mission", () => {
     expect(json.chargedCredits).toBe(0);
     expect(world.reads()).toHaveLength(0);
     expect(String(json.error)).toMatch(/^راجعنا [٠-٩]+ منشور عن بحثك على فيسبوك ولم نتمكن من تأكيد أيٍّ منها/);
-    expect(String(json.error)).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
+    expect(String(json.error)).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
     expect(String(json.error)).not.toMatch(/[A-Za-z]/);
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
   });

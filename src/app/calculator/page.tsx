@@ -76,7 +76,7 @@ export default function PublicCalculatorPage() {
       dir="rtl"
       lang="ar"
       data-screen-label="Calculator"
-      className="min-h-screen bg-bg px-5 py-12 font-sans text-ink"
+      className="min-h-dvh bg-bg px-5 py-12 font-sans text-ink"
     >
       <div className="mx-auto flex max-w-[820px] flex-col gap-8">
         {/* Top bar */}

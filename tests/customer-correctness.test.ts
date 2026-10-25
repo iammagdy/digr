@@ -139,10 +139,10 @@ describe("customer-visible wording", () => {
   it("the daily-limit and ceiling messages name no provider and keep the refund sentence", () => {
     const route = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(route).not.toContain("تم تجاوز الحد اليومي لاستهلاك مزود البيانات");
-    expect(route).toContain("تم الوصول إلى حد المعالجة اليومي؛ حاول مرة أخرى لاحقاً. حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.");
+    expect(route).toContain("تم الوصول إلى حد المعالجة اليومي؛ حاول مرة أخرى لاحقاً. حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
     for (const message of Object.values(CEILING_MESSAGE_AR)) {
       expect(message).not.toMatch(/مزود|المزود|provider/i);
-      expect(message).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
+      expect(message).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
     }
   });
 

@@ -9,8 +9,8 @@ export function settlementEventAr(input: { reservedPoints: number; chargedPoints
   const reserved = Math.max(0, Math.round(Number(input.reservedPoints) || 0));
   const charged = Math.max(0, Math.min(reserved, Math.round(Number(input.chargedPoints) || 0)));
   const back = reserved - charged;
-  if (charged === 0) return `حُرّر الحجز المؤقت كاملًا (${pointsAr(reserved, digits)}) ولم يُخصم أي رصيد.`;
-  return `حُرّر الحجز المؤقت كاملًا (${pointsAr(reserved, digits)})، ثم خُصم ثمن ما سُلّم فقط (${pointsAr(charged, digits)})، فيبقى في رصيدك ${pointsAr(back, digits)} من هذا الحجز.`;
+  if (charged === 0) return `حجز مؤقت مُحرَّر كاملًا (${pointsAr(reserved, digits)}) ولم يُخصم أي رصيد.`;
+  return `حجز مؤقت مُحرَّر كاملًا (${pointsAr(reserved, digits)})، ثم خُصم ثمن ما سُلّم فقط (${pointsAr(charged, digits)})، فيبقى في رصيدك ${pointsAr(back, digits)} من هذا الحجز.`;
 }
 
 /**
@@ -33,6 +33,11 @@ export function normalizeReleaseWording(text: unknown): string {
     .replace(/وعاد(?:ت)?\s+([٠-٩0-9٬,]+\s+(?:نقطة|نقاط)|نقطة واحدة|نقطتين)\s+(?:إلى|الى)\s+رصيدك(?:\s+المتاح)?/g, "وحجز مؤقت مُحرَّر $1")
     .replace(/تعود\s+نقاطك\s+(?:ال)?محجوزة(?:\s+كاملة)?/g, "فهو حجز مؤقت مُحرَّر كاملًا")
     .replace(/\s*وأعدنا\s+نقاطك(?=$|[\s.،:])/g, ": حجز مؤقت مُحرَّر")
+    // the verb forms stored before the owner's rule: «حُرّر الحجز المؤقت», «حُرّر حجز مؤقت بقيمة X», «حُرّر حجزك المؤقت», «ويُحرَّر الباقي من الحجز المؤقت», «تحرير الحجز المؤقت»
+    .replace(/حُرّر\s+(?:ال)?حجز(?:ك)?\s+(?:ال)?مؤقت/g, "حجز مؤقت مُحرَّر")
+    .replace(/(?:و)?يُحرَّر\s+الباقي\s+من\s+الحجز\s+المؤقت/g, "والباقي حجز مؤقت مُحرَّر")
+    .replace(/تحرير\s+(?:ال)?حجز\s+(?:ال)?مؤقت/g, "حجز مؤقت مُحرَّر")
+    .replace(/تعذر\s+تحرير\s+الرصيد\s+المحجوز/g, "تعذر تأكيد الحجز المؤقت المُحرَّر")
     .replace(/\s{2,}/g, " ")
     .trim();
 }

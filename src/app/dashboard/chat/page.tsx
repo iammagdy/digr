@@ -1776,7 +1776,7 @@ export default function ChatWorkspacePage() {
       return (
         <div key={m.id} className="mb-0 mt-3 flex w-fit max-w-full flex-col gap-1.5" style={{ animation: "up .3s both" }}>
           {m.content && (
-            <p className="mb-0 w-fit max-w-full rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink">
+            <p className="mb-0 w-fit max-w-full break-words rounded-[18px] bg-sf2 px-4 py-2.5 text-sm font-light leading-[1.8] text-ink">
               {customerFacingMessageText(m.content)}
             </p>
           )}
@@ -1807,7 +1807,7 @@ export default function ChatWorkspacePage() {
     return (
       <div key={m.id}>
         {m.content && (!m.progressNotice || shouldShowProgressNotice(m, activeJob, terminalJobs)) && (
-          <p className="mb-0 mt-3 whitespace-pre-wrap text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>
+          <p className="mb-0 mt-3 whitespace-pre-wrap break-words text-[15px] font-light leading-[2] text-ink" style={{ animation: "up .3s both" }}>
             {m.planQuote
               ? <><span className="lg:hidden">{PLAN_READY_MOBILE_AR}</span><span className="hidden lg:inline">{PLAN_READY_DESKTOP_AR}</span></>
               : customerFacingAssistantCopy(m.content)}
@@ -1989,7 +1989,7 @@ export default function ChatWorkspacePage() {
           <aside role="dialog" aria-label="سجل المحادثات" className="fixed inset-y-0 left-0 z-[45] flex w-[min(90vw,380px)] flex-col border-r border-ln bg-sf shadow-2xl" dir="rtl">
             <div className="flex min-h-16 items-center justify-between border-b border-ln px-4">
               <h2 className="m-0 text-base font-semibold text-ink">سجل المحادثات</h2>
-              <button type="button" aria-label="إغلاق" onClick={closeHistoryPanel} className="h-10 w-10 cursor-pointer rounded-full border-0 bg-transparent text-lg text-mut hover:bg-sf2">×</button>
+              <button type="button" aria-label="إغلاق" onClick={closeHistoryPanel} className="h-11 w-11 cursor-pointer rounded-full border-0 bg-transparent text-lg text-mut hover:bg-sf2">×</button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {conversationsLoading ? (
@@ -2118,7 +2118,7 @@ export default function ChatWorkspacePage() {
             aria-hidden="true"
             className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-xs lg:hidden"
           />
-          <div id="results-canvas" role="region" aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf shadow-2xl motion-reduce:animate-none lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
+          <div id="results-canvas" role="region" aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf pb-[env(safe-area-inset-bottom)] shadow-2xl motion-reduce:animate-none lg:pb-0 lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
             {panelShowsPlan && latestPlanQuote ? (
               <div className="flex h-full min-h-0 flex-col bg-sf" data-testid="plan-panel">
                 <div className="flex items-center justify-between border-b border-sand-200 bg-sand-50/70 px-4 py-3">

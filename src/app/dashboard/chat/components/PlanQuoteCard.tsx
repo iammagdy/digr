@@ -331,7 +331,7 @@ export default function PlanQuoteCard({
             ≈ {formatAr(Number((expectedPoints * creditValue).toFixed(2)))} ج.م {locked ? "" : `· رصيدك ${pointsAr(balance)}`}
           </p>
         </div>
-        <p className="m-0 text-left text-[13px] font-light leading-[1.9] text-mut">
+        <p className="m-0 text-start text-[13px] font-light leading-[1.9] text-mut min-[520px]:text-end">
           {planCountLineAr(quote.items, quote.targetVolumeMax)}<br />
           {!locked && !expired && expiryShort(quote.expiresAt, now) && <>{expiryShort(quote.expiresAt, now)}</>}
         </p>
@@ -565,7 +565,7 @@ export default function PlanQuoteCard({
               {["xlsx", "pdf", "csv"].map((f) => (
                 <button
                   key={f} type="button" aria-pressed={editFormats.includes(f)} onClick={() => toggleFormat(f)}
-                  className="min-h-10 cursor-pointer rounded-xl px-3.5 text-[13px] text-ink"
+                  className="min-h-11 cursor-pointer rounded-xl px-3.5 text-[13px] text-ink"
                   style={{ border: `1px solid ${editFormats.includes(f) ? "var(--gold)" : "var(--ln)"}`, background: editFormats.includes(f) ? "var(--sf)" : "transparent" }}
                 >
                   {FORMAT_LABEL[f]}

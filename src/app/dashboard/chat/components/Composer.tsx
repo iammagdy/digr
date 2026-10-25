@@ -157,7 +157,7 @@ export default function Composer({
             <button
               type="button"
               onClick={removeAttachment}
-              className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-mut/20 text-mut hover:bg-mut/40 hover:text-ink cursor-pointer text-[10px]"
+              className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-mut/20 text-mut hover:bg-mut/40 hover:text-ink cursor-pointer text-[10px] after:absolute after:-inset-[14px] after:content-['']"
               aria-label="إزالة الملف المرفق"
               title="إزالة الملف المرفق"
             >

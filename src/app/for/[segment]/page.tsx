@@ -23,7 +23,7 @@ export default async function SegmentPage({ params }: { params: Promise<{ segmen
   const example = segmentExample(segment, dailyCapPoints);
   const peopleLine = segmentPeopleLineAr(segment, dailyCapPoints);
   return (
-    <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">
+    <main dir="rtl" lang="ar" className="min-h-dvh bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[860px] flex-col gap-9">
         <header className="border-b border-ln pb-6">
           <Link href="/" className="text-sm text-mut no-underline hover:text-ink">ديجر — الصفحة الرئيسية</Link>

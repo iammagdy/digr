@@ -18,7 +18,7 @@ export default function ServicesCatalogPage() {
   const featured = FEATURED_CORE_NAMES.map((name) => core.find((service) => service.nameAr === name)).filter((service): service is NonNullable<typeof service> => Boolean(service));
   const rest = core.filter((service) => !FEATURED_CORE_NAMES.includes(service.nameAr));
   return (
-    <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-4 py-10 font-sans text-ink min-[760px]:px-5 min-[760px]:py-12">
+    <main dir="rtl" lang="ar" className="min-h-dvh bg-bg px-4 py-10 font-sans text-ink min-[760px]:px-5 min-[760px]:py-12">
       <div className="mx-auto flex max-w-[1080px] flex-col gap-10">
         <header className="flex flex-col gap-6 border-b border-ln pb-8 min-[760px]:flex-row min-[760px]:items-end min-[760px]:justify-between">
           <div className="flex max-w-2xl flex-col gap-3">

@@ -226,7 +226,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     const release = db.rpcCalls.find((call) => call.name === "release_job_atomic")!;
     expect(release.args).toMatchObject({ p_job_id: JOB, p_error_message: reason });
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
-    expect(messages().some((line) => line.includes(reason) && line.includes("حُرّر الحجز المؤقت"))).toBe(true);
+    expect(messages().some((line) => line.includes(reason) && line.includes("حجز مؤقت مُحرَّر"))).toBe(true);
   });
 
   it("valid empty answer: released with a different reason (no matching records), not a failure message", async () => {
@@ -236,7 +236,7 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
 
     expect(status).toBe(422);
     expect(json).toMatchObject({ success: false, released: true, chargedCredits: 0 });
-    expect(json.error).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.");
+    expect(json.error).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
     expect(db.rpcCalls.some((call) => call.name === "record_chunk_failure")).toBe(false);
     expect(db.rpcCalls.filter((call) => call.name === "release_job_atomic")).toHaveLength(1);
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
@@ -251,8 +251,8 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
     expect(status).toBe(422);
     expect(json.released).toBe(true);
     expect(json.error).toContain("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك");
-    expect(json.error).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
-    expect(json.error).not.toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد.");
+    expect(json.error).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+    expect(json.error).not.toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
     expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
   });
 
