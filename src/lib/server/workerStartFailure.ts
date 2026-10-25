@@ -2,7 +2,7 @@ export const MAX_WORKER_START_RETRIES = 3;
 export const MAX_WORKER_START_ATTEMPTS = MAX_WORKER_START_RETRIES + 1;
 
 export const WORKER_START_RETRY_REASON_AR = "تعذر بدء البحث الآن. ستتم إعادة المحاولة تلقائياً.";
-export const WORKER_START_FINAL_REASON_AR = "تعذر بدء البحث بعد عدة محاولات. أُعيدت النقاط المحجوزة إلى رصيدك.";
+export const WORKER_START_FINAL_REASON_AR = "تعذر بدء البحث بعد عدة محاولات. حجز مؤقت مُحرَّر كاملًا.";
 
 /**
  * Why a start did not go through, as a plain sentence plus a number the support team can read back (no technical words reach the

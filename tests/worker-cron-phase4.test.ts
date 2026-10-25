@@ -456,7 +456,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       await expect(res.json()).resolves.toMatchObject({ released: true, status: "failed" });
       expect(mockWorkerDb.releasedJobs).toEqual([{
         p_job_id: "job_zero_attempt_timeout",
-        p_error_message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب وإرجاع كامل النقاط المحجوزة.",
+        p_error_message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب: حجز مؤقت مُحرَّر كاملًا.",
       }]);
     });
   });

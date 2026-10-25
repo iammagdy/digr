@@ -49,7 +49,7 @@ describe("landing clarity (Part 3)", () => {
   });
 
   it("trust points: you approve before any spend, you pay only for what is delivered, held points are released", () => {
-    expect(OVERVIEW_TRUST_AR).toEqual(["توافق على الخطة والسعر قبل أي خصم", "لا تدفع إلا على ما يُسلَّم فعلًا", "النقاط المحجوزة التي لا تُستخدم تعود إليك"]);
+    expect(OVERVIEW_TRUST_AR).toEqual(["توافق على الخطة والسعر قبل أي خصم", "لا تدفع إلا على ما يُسلَّم فعلًا", "ما لا يُستخدم من النقاط المحجوزة هو حجز مؤقت مُحرَّر"]);
     for (const point of OVERVIEW_TRUST_AR) expect(html).toContain(point);
   });
 

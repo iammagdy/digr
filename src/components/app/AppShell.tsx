@@ -16,6 +16,7 @@ import { HELP_CENTER_URL, SUPPORT_URL } from "@/lib/constants";
 import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
 import { startNewResearch } from "@/lib/newResearchNavigation";
+import { normalizeReleaseWording } from "@/lib/releaseWording";
 import { getPersonaConfig } from "@/functions/shared/personaConfigs";
 import { Icon, UI } from "./icons";
 
@@ -427,8 +428,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                       >
                         <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${st.tint} 12%, transparent)`, color: st.color }}><Icon d={st.icon} size={16} stroke={1.8} /></span>
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5"><span className="text-[13px] font-semibold text-ink">{n.title}</span>{unread && <span className="h-[7px] w-[7px] rounded-full bg-gold" />}</span>
-                          <span className="mt-[3px] block text-xs font-light leading-[1.7] text-ink2">{n.body}</span>
+                          <span className="flex items-center gap-1.5"><span className="text-[13px] font-semibold text-ink">{normalizeReleaseWording(n.title)}</span>{unread && <span className="h-[7px] w-[7px] rounded-full bg-gold" />}</span>
+                          <span className="mt-[3px] block text-xs font-light leading-[1.7] text-ink2">{normalizeReleaseWording(n.body)}</span>
                           <span className="mt-1 block text-[11px] text-fnt">{timeAgoAr(n.createdAt)}</span>
                         </span>
                       </button>

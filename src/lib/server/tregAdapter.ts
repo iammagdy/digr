@@ -1026,7 +1026,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       providerCallCount,
       tregCallId: callResult.tregCallId || "",
       errorCode: "invalid_provider_payload",
-      errorMessageAr: "استجاب المصدر ببيانات غير متوافقة مع نوع البحث؛ تم إيقاف الطلب وإرجاع الرصيد المحجوز.",
+      errorMessageAr: "استجاب المصدر ببيانات غير متوافقة مع نوع البحث؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.",
     };
   }
 

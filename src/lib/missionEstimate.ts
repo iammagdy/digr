@@ -142,7 +142,7 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const reservePoints = fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve;
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
 
-  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا يعود إليك ما لم يُستخدم.`];
+  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا، وما لم يُستخدم منه حجز مؤقت مُحرَّر.`];
   if (!fitsInOneJob) {
     notesAr.push(maxVolumeInOneJob > 0
       ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${pointsAr(jobCapPoints, n)})`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`

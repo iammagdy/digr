@@ -72,7 +72,7 @@ describe("the notices of a long job", () => {
     expect(notice.body).toContain("حتى ١٥٠٠ سجل");
     expect(notice.body).toContain("يمكنك إغلاق الصفحة");
     expect(notice.body).toContain("سنخبرك عند اكتماله");
-    expect(notice.body).toContain("تعود نقاطك المحجوزة كاملة");
+    expect(notice.body).toContain("فهو حجز مؤقت مُحرَّر كاملًا دون خصم");
     // without the driver (the default, and anything that is not «cron») the notice is the honest one
     for (const driver of ["tab", undefined] as const) {
       const honest = jobStartedNotice({ targetVolumeMax: 1500, driver });
@@ -82,13 +82,13 @@ describe("the notices of a long job", () => {
       expect(honest.body).not.toContain("عند عودتك");
       expect(honest.body).toContain("حتى ١٥٠٠ سجل");
       expect(honest.body).not.toContain("سنخبرك عند اكتماله");
-      expect(honest.body).toContain("تعود نقاطك المحجوزة كاملة");
+      expect(honest.body).toContain("فهو حجز مؤقت مُحرَّر كاملًا دون خصم");
     }
   });
 
   it("the stall notice says the request stopped and the whole reserve came back with no charge", () => {
     const notice = jobStalledNotice();
-    expect(notice.body).toContain("أعدنا نقاطك المحجوزة كاملة");
+    expect(notice.body).toContain("حجز مؤقت مُحرَّر كاملًا دون أي خصم");
     expect(notice.body).toContain("دون أي خصم");
   });
 
@@ -173,7 +173,7 @@ describe("the watchdog tells the customer about a stalled job it released", () =
     const res = await GET(watchdogRequest());
     expect(res.status).toBe(200);
     expect(state.notifications).toHaveLength(1);
-    expect(state.notifications[0]).toMatchObject({ user_id: "u1", title: "توقف طلبك وأعدنا نقاطك", link: "/dashboard/requests" });
+    expect(state.notifications[0]).toMatchObject({ user_id: "u1", title: "توقف طلبك: حجز مؤقت مُحرَّر", link: "/dashboard/requests" });
     expect(state.emails).toHaveLength(1);
     expect(state.emails[0]).toMatchObject({ template: "refund", to: "u1@example.com", key: "stalled-refund:job_stalled_1" });
     expect(state.emails[0].vars).toMatchObject({ Name: "سلمى", Points: "207", Balance: "5123" });

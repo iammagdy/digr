@@ -67,7 +67,7 @@ export async function GET(req: NextRequest) {
     for (const job of staleJobs || []) {
       const { data: releaseData, error: relErr } = await adminClient.rpc("release_job_atomic", {
         p_job_id: job.id,
-        p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ وتم إرجاع كامل نقاطك المحجوزة لرصيدك.",
+        p_error_message: "تم إلغاء الطلب تلقائياً لتأخر التنفيذ والنقاط المحجوزة: حجز مؤقت مُحرَّر كاملًا.",
         p_force: true,
       });
 

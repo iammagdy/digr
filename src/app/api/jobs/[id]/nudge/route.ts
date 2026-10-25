@@ -137,12 +137,12 @@ export async function POST(
       const adminClient = createAdminClient();
       const { data: released, error: releaseError } = await adminClient.rpc("release_job_atomic", {
         p_job_id: job.id,
-        p_error_message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب وإرجاع كامل النقاط المحجوزة.",
+        p_error_message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب: حجز مؤقت مُحرَّر كاملًا.",
       });
       if (releaseError || released?.success !== true) {
         console.error(`[nudge:release_failed] jobId=${job.id} code=${releaseError?.code || "rpc_failed"}`);
         return NextResponse.json(
-          { success: false, error: "تعذر بدء المهمة أو تأكيد إرجاع الرصيد. سيُعاد التحقق تلقائياً." },
+          { success: false, error: "تعذر بدء المهمة أو تأكيد الحجز المؤقت المُحرَّر. سيُعاد التحقق تلقائياً." },
           { status: 503 }
         );
       }
@@ -150,7 +150,7 @@ export async function POST(
         await adminClient.from("job_events").insert({
           job_id: job.id,
           user_id: user.id,
-          message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب وإرجاع كامل النقاط المحجوزة.",
+          message: "تعذر بدء التنفيذ خلال دقيقة. تم إلغاء الطلب: حجز مؤقت مُحرَّر كاملًا.",
           units: 0,
           event_type: "error",
         });
@@ -163,7 +163,7 @@ export async function POST(
         released: true,
         status: "failed",
         releasedCredits: released.released_credits,
-        message: "تعذر بدء المهمة خلال دقيقة، وتم إرجاع النقاط المحجوزة.",
+        message: "تعذر بدء المهمة خلال دقيقة، والحجز المؤقت مُحرَّر.",
       });
     }
 
