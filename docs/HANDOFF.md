@@ -4,6 +4,78 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE. Current state (main = `2d698d3`, 2026-10-25)
+
+A fresh session can start from this section. Facts come from git, the Vercel deployment API and the owner's briefs; anything not verified in the repo or in a brief is marked **owner-reported**. No secrets or passwords are written here.
+
+### Main and production
+
+- `main` head: `2d698d3bac86266c4785797f7d6c55902c3da854` (merge of PR #251). Production deployment `dpl_81J9hF66CDRQRTdJptLKeRbScDpx`, READY on that SHA (one check, before this handoff PR).
+- Merge rule: MERGE COMMITS only (never squash, never `--admin`, never force-push). Rollback of any PR: `git revert -m 1 <merge commit>`.
+
+### Merged since the UI/UX audit (PR, merge commit)
+
+| PR | Merge | What |
+|---|---|---|
+| #236 | `b772c7d` | live-check fixes |
+| #237 | `510cf4e` | invalid contact values |
+| #238 | `f8c0a52` | small fix batch 2 |
+| #239 | `f8636f8` | send-email caller authorization |
+| #240 | `7236994` | hero effect restored |
+| #241 | `31abb74` | hero sentence |
+| #242 | `72ae38a` | sidebar polish |
+| #243 | `693739d` | admin export as ZIP |
+| #244 | `b0c7ecd` | shared test-account classifier |
+| #245 | `d440537` | InstaPay link and QR |
+| #246 | `faf99e9` | InstaPay guard for a handle |
+| #247 | `c3ce0a2` | top-up logic and owner alert e-mail |
+| #248 | `8596019` | wallet and top-up visual redesign |
+| #249 | `ac2a7d4` | e-mail fixes (send-email v3) |
+| #250 | `edd114d` | one right-to-left base layout for all 8 e-mail templates (send-email v4) |
+| #251 | `2d698d3` | rejection reason shown to the customer from their own notification `notif_<topupId>`; no SQL |
+
+#251 detail: `reject_topup_atomic` stores only the status, so the reason is read from the customer's own notification row (RLS: own rows). A durable column is only a proposal: `docs/proposals/topup-reject-reason-column.md` is **NOT APPLIED** and nothing depends on it.
+
+### Owner-applied production changes that are NOT in git
+
+All applied by the owner by hand; the repo only has proposals or code that expects them.
+- Supabase Auth rate limits back to defaults: e-mails 30/h, sign-ups and sign-ins 30 per 5 min, token verifications 30, refresh 150 (owner-reported).
+- `send-email` Edge Function deployed as **version 4**, `verify_jwt=false`, files `index.ts`, `authorize.ts`, `templates.ts`, `resendHeaders.ts`. Caller key is checked by a real admin call (`authorize.ts`). Deployed through the Supabase connector and verified by a hash read-back. Edge Function deploys happen only on the owner's explicit go.
+- Avatar SQL applied: `profiles.avatar_path` with a CHECK and a column grant; private bucket «avatars» (2 MB, jpeg/png/webp); four own-folder storage policies (owner-reported).
+- Function `create_verify_fixture` dropped (verified: 0 rows). `docs/OWNER_SQL.md` section 5 is done.
+- Manual backups through `/admin/export`, including the ZIP (owner-reported).
+- Vercel variable `ADMIN_ALERT_EMAIL` set (owner-reported). The InstaPay details are real (owner-reported).
+
+### Decisions (keep them)
+
+- **No reset of test data.** There are real customers (two accounts, owner-reported) and the ledger is append-only. Test accounts stay and are told apart by the shared classifier: `@digr.local`, `iam.magdy@outlook.com`, `iam.magdy+*@outlook.com`, known test ids. The admin account is not a test account. `iam.magdy+1` keeps its balance.
+- `docs/OWNER_SQL.md` **section 1 (reset) must NEVER be run**; section 6 (seed) is stale and must never be run.
+- Anthropic monthly limit: 50 USD (owner-reported). An InstaPay link cannot carry an amount.
+- Review sentence on the top-up page: «غالبًا يتم الاعتماد خلال ١٥ دقيقة، وبحد أقصى ٢٤ ساعة، وتصلك رسالة عند إضافة النقاط».
+
+### Standing rules
+
+- Merge commits only. A PR merges only when the preview is READY on the exact full head SHA, only the skipped Supabase Preview check is non-green, tests pass (skipped = 57) and main has not moved; a BUILDING preview waits for the owner's GO. One production status check after each merge.
+- No SQL run by agents: SQL is a proposal under `docs/proposals/` marked NOT APPLIED, and the owner applies it by hand after review. No Edge Function deploy without the owner's explicit go, verified by hash read-back. No background timers. One Vercel check per report.
+- Customer text: Arabic only, Arabic-Indic digits, «حجز مؤقت مُحرَّر» as the only released-hold form, no provider names, no USD, no internal ids.
+- Money: append-only ledger; charge = ceil(delivered x unit price), never above the reserve; the 15% buffer applies to the reserve only; the LLM never decides money. Do not touch ledger, pricing or `approve_topup_atomic` without an explicit brief.
+
+### NOT PROVEN / open
+
+- A real-device mobile check by the owner (the 14-item list below).
+- The Phase 1 to 4 NOT PROVEN lists below stay valid.
+- E-mails were not tested in Gmail, Outlook desktop or Apple Mail dark modes; the full-completion e-mail and the admin alert were not seen after the unified layout; e-mail button destinations were not clicked.
+- The welcome e-mail is sent by a database trigger and was not re-tested.
+- The avatar object is not deleted when an account is deleted.
+- Excel and screen company columns follow the screen; optional columns depend on the source.
+- The generic executor for most catalog services is unproven.
+- Large jobs need the page open (driver-mode tab).
+- The refund sentence «لا يُعاد الرصيد عن سجل تم تسليمه» in `src/lib/legalText.ts` is an owner and legal decision.
+- Older sections further down are history and may be stale: for example the `send-email` function is deployed now (version 4, see above), although an older section says it is not.
+- Phase 4 below was written while its deployment was BUILDING; later merges were all followed by a READY production deployment (the latest is named above).
+
+---
+
 ## 0000000000. UI/UX audit of diger.tech, phases 1 to 4 (2026-10-24 and 2026-10-25, main = `65c3c1d`)
 
 One session, one branch and one draft PR per phase, each merged with a MERGE COMMIT after the owner's go. Written from git and the deployment API (read only). No SQL was written or run: nothing in this audit touched the database, and no price, cap or pricing-function value changed.
