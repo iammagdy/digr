@@ -380,7 +380,7 @@ export async function executeMultiStepJob(
 
   // STRICT GUARD 1: Refuse fake/mock execution in production
   if (isProduction && !isLive) {
-    const errorAr = "تعذر بدء الطلب. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+    const errorAr = "تعذر بدء الطلب. حجز مؤقت مُحرَّر كاملًا.";
     await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء وتحرير الحجز المؤقت كاملًا: منع البيانات التجريبية في الإنتاج");
     await tables.updateRow({
       databaseId: "digr",
@@ -406,7 +406,7 @@ export async function executeMultiStepJob(
 
   // Live data guard: keep deployment configuration details out of customer-facing job state.
   if (!fetchPageFn && process.env.TREG_LIVE !== "true") {
-    const errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+    const errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
     const relRes = await releaseReservation(
       tables,
       userId,
@@ -714,7 +714,7 @@ export async function executeMultiStepJob(
         const spendCapCheck = await checkProviderDailySpendCap(0.01, tables);
         if (!spendCapCheck.allowed) {
           if (collectedRows.length === 0) {
-            const errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+            const errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
             await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت لبلوغ الحد اليومي للمزود");
             await tables.updateRow({
               databaseId: "digr",
@@ -795,17 +795,17 @@ export async function executeMultiStepJob(
           if (collectedRows.length === 0) {
             let errorAr = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
             if (callResult.isRouteMaxCost) {
-              errorAr = "الخدمة غير متاحة حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+              errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
             } else if (callResult.isPlatformBalanceLow) {
               errorAr = "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
             } else if (callResult.httpStatus === 400) {
-              errorAr = "رفض مصدر البيانات تفاصيل الطلب. تم إرجاع النقاط المحجوزة كاملة؛ راجع إعدادات البحث أو جرّب مرة أخرى.";
+              errorAr = "رفض مصدر البيانات تفاصيل الطلب. حجز مؤقت مُحرَّر كاملًا؛ راجع إعدادات البحث أو جرّب مرة أخرى.";
             } else if (callResult.httpStatus === 404) {
               errorAr = "الهدف المطلوب غير موجود أو محمي.";
             } else if (callResult.httpStatus === 422) {
               errorAr = "تعذر معالجة تفاصيل الطلب. راجع المعلومات المطلوبة وحاول مجدداً.";
             } else if (callResult.httpStatus === 429) {
-              errorAr = "تعذر إكمال البحث حالياً. تم إرجاع النقاط المحجوزة إلى رصيدك.";
+              errorAr = "تعذر إكمال البحث حالياً. حجز مؤقت مُحرَّر كاملًا.";
             }
 
             await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لفشل الاستخراج من المصدر");
@@ -1078,7 +1078,7 @@ export async function executeMultiStepJob(
   } catch {}
 
   await emitProgress(
-    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، وحُرّر ${pointsAr(Number(refundCredits), String)} من الحجز المؤقت إلى رصيدك المتاح.`,
+    `تم اكتمال جمع البيانات بنجاح (${deliveredUnits} سجل). التكلفة الفعلية: ${pointsAr(Number(chargedCredits), String)}، وحجز مؤقت مُحرَّر ${pointsAr(Number(refundCredits), String)}.`,
     deliveredUnits,
     "info"
   );

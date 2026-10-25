@@ -3,6 +3,7 @@ import { decisionMakersPerRequestLine, estimateMission, type EstimateInput } fro
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
 import { volumeForPointsCap } from "./pointsCap";
+import { countAr } from "./planCounts";
 import { FAILURE_STATE_AR } from "./publicCopy";
 
 /**
@@ -72,8 +73,8 @@ export function capacityLineAr(line: CapacityLine): string {
 }
 
 export const PRICING_FAQ_AR: Array<[string, string]> = [
-  ["متى يُخصم الرصيد؟", "لا يُخصم شيء أثناء المحادثة أو إعداد الخطة. عند موافقتك يُحجز مبلغ مؤقت، ثم يُخصم فقط مقابل السجلات المطابقة التي وصلتك فعلًا، ويعود الباقي إلى رصيدك."],
-  ["ماذا لو وصلني أقل مما طلبت؟", "تدفع مقابل ما وصلك فقط. إن لم تتوفر سجلات كافية بالمواصفات التي حددتها، يعود الفرق إلى رصيدك كاملًا."],
+  ["متى يُخصم الرصيد؟", "لا يُخصم شيء أثناء المحادثة أو إعداد الخطة. عند موافقتك يُحجز مبلغ مؤقت، ثم يُخصم فقط مقابل السجلات المطابقة التي وصلتك فعلًا، والباقي حجز مؤقت مُحرَّر."],
+  ["ماذا لو وصلني أقل مما طلبت؟", "تدفع مقابل ما وصلك فقط. إن لم تتوفر سجلات كافية بالمواصفات التي حددتها، الفرق حجز مؤقت مُحرَّر كاملًا."],
   ["ماذا لو تعذّر تنفيذ الطلب؟", FAILURE_STATE_AR],
   ["هل هناك حد لحجم الطلب الواحد؟", "نعم، لكل طلب حد أقصى للمبلغ المحجوز لحماية رصيدك. الأحجام الكبيرة تُقسَّم على أكثر من طلب، وتحسب لك الحاسبة عدد الطلبات المتوقع."],
   ["هل الأسعار ثابتة؟", "الأسعار المعروضة هنا هي أسعار النقاط الحالية، وتظهر في خطتك قبل أن توافق. أي رقم في هذه الصفحة تقريبي ويحسبه النظام، والرقم النهائي هو الذي يظهر في خطتك."],
@@ -85,11 +86,20 @@ export function peoplePerRequestLineAr(dailyCapPoints?: number): string {
 }
 
 /**
- * The ONE pricing example of the home page: a number of companies priced by the same public estimate as the pricing page and the calculator (so 1000
- * companies are 1000 × the unit price, not the one-job ceiling). Null when the estimate gives no price; the page then shows nothing instead of a guess.
+ * The price strip of the home page: two small requests priced by the same public estimate as the pricing page, the calculator and the plan card (never typed
+ * by hand). An item whose estimate gives no price is left out, so the strip never shows a guess.
  */
-export function homePricingExample(volume: number): { volume: number; points: number; egp: number; jobs: number } | null {
-  const result = estimateMission({ kind: "companies", volume });
-  if (result.status !== "ok") return null;
-  return { volume: result.volume, points: result.expectedPoints, egp: result.expectedEgp, jobs: result.jobsNeeded };
+export interface PriceStripItem { id: string; requestAr: string; points: number; egp: number }
+
+export function homePriceStrip(): PriceStripItem[] {
+  const specs: Array<{ id: string; requestAr: string; input: EstimateInput }> = [
+    { id: "companies", requestAr: countAr(5, "companies"), input: { kind: "companies", volume: 5 } },
+    { id: "x-posts", requestAr: `${countAr(100, "posts")} على إكس`, input: { kind: "posts", platform: "x", volume: 100 } },
+  ];
+  const out: PriceStripItem[] = [];
+  for (const spec of specs) {
+    const result = estimateMission(spec.input);
+    if (result.status === "ok") out.push({ id: spec.id, requestAr: spec.requestAr, points: result.expectedPoints, egp: result.expectedEgp });
+  }
+  return out;
 }

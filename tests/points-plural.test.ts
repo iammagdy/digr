@@ -38,7 +38,7 @@ describe("the places that tell the customer what was charged", () => {
   it("the worker's completion line and its failure line use the helper (charge 4, release 131: «٤ نقاط» and «١٣١ نقطة»)", () => {
     const worker = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(worker).toContain("settlementEventAr({ reservedPoints: chargedPts + refundedPts, chargedPoints: chargedPts }, toArabicDigits)");
-    expect(worker).toContain("(حُرّر الحجز المؤقت ${pointsAr(Math.round(releasedCredits), toArabicDigits)} وعاد إلى رصيدك المتاح، ولم يُخصم شيء)");
+    expect(worker).toContain("(حُرّر الحجز المؤقت ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء)");
     expect(settlementEventAr({ reservedPoints: 135, chargedPoints: 4 }, toArabicDigits)).toBe("حُرّر الحجز المؤقت كاملًا (١٣٥ نقطة)، ثم خُصم ثمن ما سُلّم فقط (٤ نقاط)، فيبقى في رصيدك ١٣١ نقطة من هذا الحجز.");
   });
 

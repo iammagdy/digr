@@ -45,7 +45,8 @@ import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityR
 import { extractRequestIntent } from "../src/lib/requestIntent";
 import { planScopeRows, roleTitleDisplayAr } from "../src/lib/quoteScopeGaps";
 import { CEILING_MESSAGE_AR } from "../src/lib/server/providerLimits";
-import { FAQS, FIELD_ITEMS, PROMPTS, DEFAULT_Q, SHEETS, STATEMENTS } from "../src/components/landing/data";
+import { DEFAULT_Q, SHEETS, STATEMENTS } from "../src/components/landing/data";
+import { FAQS } from "../src/components/landing/landingFaq";
 
 describe("a failed request that delivered nothing offers no download", () => {
   it("producedFormats does not fall back to Excel when nothing was delivered; the default is unchanged otherwise", () => {
@@ -152,7 +153,7 @@ describe("customer-visible wording", () => {
   });
 
   it("the landing page carries no Latin handle, no format label and no JSON in its text", () => {
-    const visible = [...PROMPTS, DEFAULT_Q, ...STATEMENTS.flatMap((s) => [s.big, s.small]), ...SHEETS.flatMap((s) => [s.name, s.desc]), ...FAQS.flat(), ...FIELD_ITEMS];
+    const visible = [DEFAULT_Q, ...STATEMENTS.flatMap((s) => [s.big, s.small]), ...SHEETS.flatMap((s) => [s.name, s.desc]), ...FAQS.flat()];
     for (const text of visible) {
       expect(text, text).not.toMatch(/@[A-Za-z]/);
       expect(text, text).not.toMatch(/\b(?:PDF|CSV|XLSX|JSON)\b/i);

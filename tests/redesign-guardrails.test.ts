@@ -51,7 +51,7 @@ describe("no placeholder text as research parameters", () => {
 describe("no fabricated marketing claims", () => {
   it("landing page labels the demo as illustrative", () => {
     const landing = landingSrc();
-    expect(landing).toContain("مثال توضيحي");
+    expect(landing).toContain("نموذج توضيحي");
   });
 
   it("landing page contains no invented customer counts or success rates", () => {

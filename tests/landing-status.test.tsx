@@ -36,12 +36,12 @@ describe("landing: no per-service status anywhere", () => {
     expect(html.match(/href="\/services"/g)?.length).toBe(1);
   });
 
-  it("one honest line above the decision-makers card, from one constant, with no CTA, price or status", () => {
+  it("the decision-makers line of /services (from one constant) is not repeated on the landing: the approval sentence is the hero's alone (audit phase 3)", () => {
     expect(DECISION_MAKERS_LINE_AR).toBe("بيانات صناع القرار تُسلَّم الآن بحسب الطلب، وتُعرض خطتها وسعرها قبل أي خصم.");
-    expect(html.split(DECISION_MAKERS_LINE_AR).length - 1).toBe(1);
-    expect(html.indexOf(DECISION_MAKERS_LINE_AR)).toBeLessThan(html.indexOf('data-testid="landing-decision-makers"'));
-    expect(/data-testid="landing-decision-makers-line"[^>]*>([^<]*)</.exec(html)?.[1]).toBe(DECISION_MAKERS_LINE_AR);
+    expect(html).not.toContain(DECISION_MAKERS_LINE_AR);
+    expect(html).not.toContain("landing-decision-makers-line");
     expect(readFileSync("src/components/landing/Overview.tsx", "utf8")).not.toContain("بيانات صناع القرار تُسلَّم");
+    expect(readFileSync("src/components/landing/Overview.tsx", "utf8")).not.toContain("DECISION_MAKERS_LINE_AR");
   });
 
   it("no English, no emoji, no price", () => {

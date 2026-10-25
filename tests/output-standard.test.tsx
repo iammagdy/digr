@@ -76,13 +76,14 @@ describe("the sample files are built from fake data with the real generator", ()
     }
   });
 
-  it("holds no real person, company, link, e-mail or phone: only invented, reserved or zero-numbered values", () => {
+  it("holds no real person, company, link, e-mail or phone: only invented names, no link or address at all, zero-numbered phones", () => {
     for (const kind of KINDS) {
       for (const row of SAMPLE_ROWS[kind]) {
         for (const [key, raw] of Object.entries(row)) {
           const value = String(raw);
-          if (/url|website/i.test(key)) expect(value, `${kind}.${key}`).toMatch(/^https:\/\/(?:[\w-]+\.)?example\.com/);
-          if (/email/i.test(key)) expect(value, `${kind}.${key}`).toMatch(/@(?:[\w-]+\.)?example\.com$/);
+          // audit phase 3: a sample carries NO link, e-mail address or domain at all (not even a reserved example one)
+          expect(key, `${kind}.${key}`).not.toMatch(/url|website|email|link/i);
+          expect(value, `${kind}.${key}`).not.toMatch(/example|:\/\/|@|www\./i);
           if (/phone/i.test(key)) expect(value, `${kind}.${key}`).toMatch(/^\+20 100 000 000\d$/);
         }
       }

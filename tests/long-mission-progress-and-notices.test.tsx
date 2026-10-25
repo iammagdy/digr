@@ -226,7 +226,7 @@ describe("the notices of a job", () => {
     expect(notice.title).toBe("اكتمل طلبك جزئيًا");
     expect(notice.body).toContain("تم تسليم ٤٠ من ١٠٠ سجلاً");
     expect(notice.body).toContain("خُصم ٣٦٠ نقطة مقابل ما سُلّم فقط");
-    expect(notice.body).toContain("وعادت ٥٤٠ نقطة إلى رصيدك");
+    expect(notice.body).toContain("حجز مؤقت مُحرَّر ٥٤٠ نقطة");
     expect(notice.email?.subject).toBe("اكتمل طلبك جزئيًا");
     const full = completionNoticeFull({ delivered: 100, requested: 100, chargedPoints: 900, refundedPoints: 0 });
     expect(full.kind).toBe("completed");
@@ -237,7 +237,7 @@ describe("the notices of a job", () => {
   it("a release says the whole reserve came back with no charge", () => {
     const notice = releasedNoticeFull(590);
     expect(notice.kind).toBe("released");
-    expect(notice.body).toContain("أعدنا ٥٩٠ نقطة محجوزة كاملة إلى رصيدك دون أي خصم");
+    expect(notice.body).toContain("حجز مؤقت مُحرَّر ٥٩٠ نقطة كاملًا دون أي خصم");
   });
 
   it("the start notice says «you can close the page» only with the always-on driver", () => {

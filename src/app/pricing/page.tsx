@@ -25,7 +25,7 @@ export default function PricingPage() {
 
         <section aria-labelledby="capacity-title" className="flex flex-col gap-4">
           <h2 id="capacity-title" className="m-0 font-display text-[26px] font-medium">كم يغطي مبلغك؟</h2>
-          <p className="m-0 text-sm font-light leading-[1.9] text-mut">الأرقام «حتى حوالي»: هي أقصى ما يتسع له المبلغ بعد الاحتياطي المحجوز مؤقتًا، ويعود إليك ما لا يُستخدم منه.</p>
+          <p className="m-0 text-sm font-light leading-[1.9] text-mut">الأرقام «حتى حوالي»: هي أقصى ما يتسع له المبلغ بعد الاحتياطي المحجوز مؤقتًا، وما لا يُستخدم منه حجز مؤقت مُحرَّر.</p>
           <div className="overflow-x-auto rounded-[20px] border border-ln bg-sf">
             <table data-testid="capacity-table" className="w-full min-w-[640px] border-collapse text-right text-[13px]">
               <thead>

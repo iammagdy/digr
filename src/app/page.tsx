@@ -1,7 +1,8 @@
 import { GlassHeader } from "@/components/landing/GlassHeader";
 import { HeroLens } from "@/components/landing/HeroLens";
-import { Overview } from "@/components/landing/Overview";
-import { DemoConversations, Faq, FinalCta, SampleFile } from "@/components/landing/Sections";
+import { HowItWorks, PriceStrip, WhatYouCanAsk } from "@/components/landing/Overview";
+import { Faq, FinalCta, SampleFile } from "@/components/landing/Sections";
+import { FAQS } from "@/components/landing/landingFaq";
 
 /**
  * Static: the same HTML for everyone, served from the edge cache, no function run and no call to the sign-in service per visit (the
@@ -15,10 +16,11 @@ export default function LandingPage() {
     <div className="min-h-screen bg-bg text-ink2" style={{ containerType: "inline-size" }}>
       <GlassHeader />
       <HeroLens />
-      <Overview />
-      <DemoConversations />
+      <PriceStrip />
+      <HowItWorks />
+      <WhatYouCanAsk />
       <SampleFile />
-      <Faq />
+      <Faq items={FAQS} />
       <FinalCta />
     </div>
   );

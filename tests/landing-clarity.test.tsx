@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { Overview, OVERVIEW_STEPS_AR, OVERVIEW_TRUST_AR } from "../src/components/landing/Overview";
+import { Overview, OVERVIEW_PAYMENT_AR, OVERVIEW_STEPS_AR } from "../src/components/landing/Overview";
 import { SERVICES_CATALOG, catalogCounts } from "../src/lib/servicesCatalog";
 import { platformsCountAr, sectorsCountAr } from "../src/lib/servicesCatalogText";
 import { CONTACT_VERIFICATION_LABELS } from "../src/lib/contactVerification";
@@ -14,16 +14,16 @@ const hero = readFileSync("src/components/landing/HeroLens.tsx", "utf8");
 const page = readFileSync("src/app/page.tsx", "utf8");
 
 describe("landing clarity (Part 3)", () => {
-  it("the first screen says in one Arabic sentence what Diger is, and offers one sign-up CTA and one link to «خدماتنا»", () => {
-    expect(hero).toContain("اسأل بالعربية، واستلم بيانات منظّمة من مصادر كثيرة في ملف إكسل أو بي دي إف");
-    expect(hero).toContain('href={user ? "/dashboard/chat" : "/register"}');
-    expect(hero).toContain('href="/services"');
-    expect(hero.match(/href="\/services"/g)?.length).toBe(1);
-    expect(hero.match(/أنشئ حسابك وابدأ طلبك/g)?.length).toBe(1);
-    // the ideas and the mission templates are behind a button, not in the first screen
-    expect(hero).toContain('aria-controls="landing-ideas"');
-    expect(hero).toContain("{ideasOpen && <div id=\"landing-ideas\">");
-    expect(hero).toContain('data-testid="landing-mission-templates"');
+  it("the first screen says in one Arabic sentence what Diger is, with ONE question box and ONE primary action (audit phase 3)", () => {
+    expect(hero).toContain("اسأل بالعربية، واستلم بيانات منظّمة من مصادر متاحة في ملف إكسل أو بي دي إف.");
+    expect(hero.match(/<form/g)?.length).toBe(1);
+    expect(hero.match(/type="submit"/g)?.length).toBe(1);
+    expect(hero.match(/ابدأ طلبك/g)?.length).toBe(1);
+    // no second action, no list of examples and no moving background in the first screen
+    expect(hero).not.toContain("<Link");
+    expect(hero).not.toContain("landing-ideas");
+    expect(hero).not.toContain("landing-mission-templates");
+    expect(hero).not.toMatch(/requestAnimationFrame|RecordField|data-lens|data-px/);
   });
 
   it("three steps: اطلب، راجع الخطة والسعر، استلم الملف", () => {
@@ -48,9 +48,11 @@ describe("landing clarity (Part 3)", () => {
     for (const label of CONTACT_VERIFICATION_LABELS) expect(html).toContain(`>${label}<`);
   });
 
-  it("trust points: you approve before any spend, you pay only for what is delivered, held points are released", () => {
-    expect(OVERVIEW_TRUST_AR).toEqual(["توافق على الخطة والسعر قبل أي خصم", "لا تدفع إلا على ما يُسلَّم فعلًا", "النقاط المحجوزة التي لا تُستخدم تعود إليك"]);
-    for (const point of OVERVIEW_TRUST_AR) expect(html).toContain(point);
+  it("what is paid is said once, in the merged section: only what is delivered, the rest is a released hold (the approval line is the hero's alone)", () => {
+    expect(OVERVIEW_PAYMENT_AR).toBe("تدفع مقابل ما يُسلَّم فعلًا من سجلات مطابقة فقط. يُحجز مبلغ مؤقت يشمل احتياطيًا، وما لا يُستخدم منه حجز مؤقت مُحرَّر.");
+    expect(html).toContain(OVERVIEW_PAYMENT_AR);
+    expect(text).not.toContain("قبل موافقتك");
+    expect(text).not.toContain("قبل أي خصم");
   });
 
   it("no English, no emoji, no provider word, no number typed by hand in the new section", () => {
@@ -58,12 +60,13 @@ describe("landing clarity (Part 3)", () => {
     expect(text).not.toMatch(/\p{Extended_Pictographic}/u);
     expect(html.match(PROVIDER_NAME_PATTERN)).toBeNull();
     expect(text).not.toMatch(/[0-9]/);
-    for (const line of [...OVERVIEW_STEPS_AR.flatMap((step) => [step.title, step.text]), ...OVERVIEW_TRUST_AR]) expect(line).not.toMatch(/[٠-٩0-9]/);
+    for (const line of [...OVERVIEW_STEPS_AR.flatMap((step) => [step.title, step.text]), OVERVIEW_PAYMENT_AR]) expect(line).not.toMatch(/[٠-٩0-9]/);
     expect(hero).not.toMatch(/٠٫١٠|ج\.م/);
   });
 
   it("detailed prices left the landing page (they stay on /pricing and /calculator); the page stays static", () => {
-    expect(page).toContain("<Overview />");
+    expect(page).toContain("<HowItWorks />");
+    expect(page).toContain("<WhatYouCanAsk />");
     expect(page).toContain("<SampleFile />");
     expect(page).not.toContain("<Calculator />");
     expect(page).not.toContain("<ProductLines />");

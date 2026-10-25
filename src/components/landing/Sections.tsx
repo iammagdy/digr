@@ -5,8 +5,7 @@ import { useState } from "react";
 import { useUser } from "@/hooks/useUser";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { SAMPLE_FILES, SAMPLE_LABEL_AR, samplePreview, type OutputKind } from "@/lib/outputStandard";
-import { homePricingExample } from "@/lib/pricingPage";
-import { FAQS, SHEETS, STATEMENTS } from "./data";
+import { SHEETS, STATEMENTS } from "./data";
 import { Reveal } from "./Reveal";
 import { DEMO_LABEL_AR, PRODUCT_LINES, TEN_SECOND_STORY_AR, buildLandingDemos } from "@/lib/landingDemos";
 
@@ -62,7 +61,7 @@ export function SampleFile() {
   return (
     <section className={`${BORDER_TOP} px-5 py-[100px]`} aria-labelledby="sample-file-title">
       <div className="mx-auto max-w-[900px] text-center">
-        <Reveal as="p" className="m-0 text-sm font-light text-mut">شكل الملف الذي تستلمه</Reveal>
+        <Reveal as="p" className="m-0 text-sm font-light text-mut">شكل الملف الذي تستلمه <span data-testid="sample-badge" className="ms-2 rounded-full border border-ln2 px-2.5 py-0.5 text-[11px] text-ink">نموذج توضيحي</span></Reveal>
         <Reveal as="h2" delay={120} className="mb-0 mt-3 font-extralight text-ink" style={{ fontSize: "clamp(30px,4.6cqi,52px)" }}>
           <span id="sample-file-title">جدول واحد منظم، جاهز للتحليل</span>
         </Reveal>
@@ -112,40 +111,14 @@ export function SampleFile() {
   );
 }
 
-/** Uses the same catalog unit price and settlement calculation as the quote flow. */
-export function Calculator() {
-  const [vol, setVol] = useState(1000);
-  const example = homePricingExample(vol);
-  const pts = example?.points ?? 0;
+/** The short FAQ. The questions come from the page (server side), so this client file carries no pricing code. */
+export function Faq({ items }: { items: ReadonlyArray<readonly [string, string]> }) {
+  const [open, setOpen] = useState<number | null>(null);
   return (
-    <section className={`${BORDER_TOP} px-5 py-[110px]`}>
-      <div className="mx-auto max-w-[760px] text-center">
-        <Reveal as="p" className="m-0 text-sm font-light text-mut">احسبها بنفسك</Reveal>
-        <Reveal as="p" kind="scale" delay={120} className="mb-0 mt-6 font-extralight leading-none text-ink" style={{ fontSize: "clamp(64px,13cqi,150px)" }}>
-          {formatAr(pts)}<span className="text-xl text-mut" style={{ marginInlineStart: 10 }}>نقطة</span>
-        </Reveal>
-        <p className="mb-0 mt-3 text-[15px] font-light text-mut">{example ? <>≈ {formatAr(example.egp, 2)} ج.م مقابل {formatAr(vol)} شركة</> : "اختر عددًا لنحسب لك السعر."}</p>
-        <input
-          className="r6 mt-9"
-          type="range" min={100} max={1000} step={50} value={vol}
-          onChange={(e) => setVol(Number(e.target.value))}
-          aria-label="عدد الشركات" style={{ direction: "rtl" }}
-        />
-        <p className="mx-auto mb-0 mt-6 max-w-[480px] text-sm font-light leading-[2] text-mut">
-          هذه هي التكلفة المتوقعة للعدد المحدد. يُخصم فقط مقابل السجلات المطابقة التي يتم تسليمها.
-        </p>
-        <p className="mb-0 mt-2.5 text-[11px] text-fnt">مثال توضيحي — السعر النهائي يُحسب من النظام لكل خطة.</p>
-      </div>
-    </section>
-  );
-}
-
-export function Faq() {
-  const [open, setOpen] = useState<number | null>(0);
-  return (
-    <section className={`${BORDER_TOP} px-5 py-[110px]`}>
+    <section className={`${BORDER_TOP} px-5 py-16 min-[760px]:py-24`} aria-labelledby="faq-title">
       <div className="mx-auto max-w-[760px]">
-        {FAQS.map(([q, a], i) => {
+        <h2 id="faq-title" className="m-0 mb-6 text-center font-extralight text-ink" style={{ fontSize: "clamp(28px,4.4cqi,48px)" }}>أسئلة سريعة</h2>
+        {items.map(([q, a], i) => {
           const isOpen = open === i;
           return (
             <Reveal key={q} className="border-b border-ln">

@@ -204,7 +204,7 @@ async function executeReleaseConfirmation(
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: jobRow.user_id,
-                message: `تعذر استكمال الاستخراج: ${reason} (حُرّر الحجز المؤقت ${pointsAr(Math.round(releasedCredits), toArabicDigits)} وعاد إلى رصيدك المتاح، ولم يُخصم شيء).`,
+                message: `تعذر استكمال الاستخراج: ${reason} (حُرّر الحجز المؤقت ${pointsAr(Math.round(releasedCredits), toArabicDigits)}، ولم يُخصم شيء).`,
                 units: 0,
                 event_type: "error",
               });

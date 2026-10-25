@@ -7,7 +7,9 @@ vi.mock("next/link", () => ({ default: ({ href, children, ...rest }: any) => cre
 
 import PricingPage from "../src/app/pricing/page";
 import SegmentPage from "../src/app/for/[segment]/page";
-import { Calculator, DemoConversations, Faq, ProductLines, SampleFile, Sheets, Statements } from "../src/components/landing/Sections";
+import { DemoConversations, Faq, ProductLines, SampleFile, Sheets, Statements } from "../src/components/landing/Sections";
+import { PriceStrip } from "../src/components/landing/Overview";
+import { FAQS } from "../src/components/landing/landingFaq";
 import { SEGMENTS, segmentPeopleLineAr } from "../src/lib/segments";
 import { buildLandingDemos } from "../src/lib/landingDemos";
 import { DEFAULT_JOB_POINTS_CAP } from "../src/lib/calculatorPricing";
@@ -99,7 +101,7 @@ describe("D5: where it appears", () => {
 
 describe("D6: no Latin file extension and no Latin sample handle on a public page", () => {
   it("the landing sections show Arabic file names only", () => {
-    const sections = [Statements, Sheets, SampleFile, ProductLines, DemoConversations, Calculator, Faq].map((component) => textOf(renderToStaticMarkup(createElement(component as any))));
+    const sections = [Statements, Sheets, SampleFile, ProductLines, DemoConversations, PriceStrip].map((component) => textOf(renderToStaticMarkup(createElement(component as any)))).concat(textOf(renderToStaticMarkup(createElement(Faq, { items: FAQS }))));
     for (const text of sections) {
       expect(text).not.toMatch(/\.(?:csv|pdf|xlsx|xls|docx?)\b/i);
       expect(text).not.toMatch(/\b(?:csv|xlsx|pdf)\b/i);
