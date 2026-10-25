@@ -11,7 +11,7 @@ import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
 import { localizeAddressAr, localizeCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
-import { arabicVerificationStatus } from "../../lib/contactVerification";
+import { markedInvalid } from "../../lib/contactVerification";
 import { industryLabelForCell } from "../../lib/industryLabels";
 import { cleanCompanyRecord } from "../../lib/companyRowHygiene";
 import { isoCountryCodeFromName } from "../../lib/planParameters";
@@ -749,7 +749,13 @@ async function generateCompanyDataWorkbook(
       ? localizeCityName(rawCity, String((norm.metadata as any).country || ""))
       : localizeCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || "")));
     const { website, linkedin } = resolveCompanyLinks(r);
-    const phoneText = cleanCellText(r.phone || r.phone_number || r.business_phone);
+    // A value the SOURCE marked invalid is never delivered: the cell says «غير متاح» (the status columns are not in this workbook, so nothing else could warn).
+    const phoneText = markedInvalid(r.phone_verification_status, cleanCellText(r.phone || r.phone_number || r.business_phone) !== "غير متاح")
+      ? "غير متاح"
+      : cleanCellText(r.phone || r.phone_number || r.business_phone);
+    const emailText = markedInvalid(r.work_email_verification_status ?? r.email_verification_status, cleanCellText(r.work_email || r.workEmail || r.email) !== "غير متاح")
+      ? "غير متاح"
+      : cleanCellText(r.work_email || r.workEmail || r.email);
     const cellFor = (key: string): ExcelJS.CellValue => {
       switch (key) {
         case "company_name": return companyName(r, index);
@@ -759,7 +765,7 @@ async function generateCompanyDataWorkbook(
         case "city": return city;
         case "address": return localizeAddressAr(rawAddress);
         case "phone": return phoneText === "غير متاح" ? phoneText : formatPhoneDisplay(phoneText);
-        case "work_email": return cleanCellText(r.work_email || r.workEmail || r.email);
+        case "work_email": return emailText;
         case "description": return cleanCellText(r.description || r.about || r.headline || r.slogan);
         // A count and a year are read the way the screen shows them: Arabic-Indic digits, and a zero headcount is no headcount.
         case "headcount": { const value = cleanCellText(r.headcount ?? r.numberOfEmployees ?? r.employee_count); return value === "غير متاح" || value === "0" ? "غير متاح" : toArabicDigits(value); }
