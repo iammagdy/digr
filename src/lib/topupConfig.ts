@@ -40,3 +40,13 @@ export const TOPUP_INSTAPAY_QR_SRC = "/instapay-qr.jpeg";
 export function showsInstapayShortcuts(savedAddress: string | null | undefined): boolean {
   return TOPUP_INSTAPAY_ACCEPTED_ADDRESSES.includes(String(savedAddress ?? "").trim().toLowerCase());
 }
+
+/**
+ * The amounts a customer may top up, in POINTS (1 point = the credit value, 0.10 EGP today, read from the public pricing settings, never typed here).
+ * The screen offers the presets and a free amount («أخرى»); the server re-checks the minimum, the maximum and that the amount is a whole number of
+ * points, whatever the screen sent.
+ */
+export const TOPUP_PRESET_POINTS = [1000, 2500, 5000, 10000] as const;
+export const TOPUP_DEFAULT_POINTS = 2500;
+export const TOPUP_MIN_POINTS = 1000;
+export const TOPUP_MAX_POINTS = 100_000;

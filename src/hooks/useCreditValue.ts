@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-export const DEFAULT_CREDIT_VALUE_EGP = 0.1;
+import { DEFAULT_CREDIT_VALUE_EGP } from "@/lib/creditValue";
+
+export { DEFAULT_CREDIT_VALUE_EGP };
 
 /** EGP value of one point, from settings_public/pricing (falls back to the documented default). */
 export function useCreditValue(): number {

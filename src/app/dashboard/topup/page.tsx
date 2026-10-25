@@ -1,6 +1,7 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
+import { egpToPoints } from "@/lib/topupAmount";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -51,7 +52,9 @@ export default function WalletPage() {
   const [topups, setTopups] = useState<TopupRecord[]>([]);
   const [monthRows, setMonthRows] = useState<number | null>(null);
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
-  const [amount, setAmount] = useState(100);
+  const [queryEgp, setQueryEgp] = useState<number | null>(null);
+  // the chat sends the shortfall in EGP; the form works in points, so it starts from the points that amount buys (the form keeps it inside the limits)
+  const initialPoints = queryEgp === null ? undefined : egpToPoints(queryEgp, creditValue);
   const [submitted, setSubmitted] = useState<TopupRecord | null>(null);
   const [ipa, setIpa] = useState<string | null>(isIpaAvailable(ipaFromEnv) ? ipaFromEnv! : null);
   const [loadingIpa, setLoadingIpa] = useState(!isIpaAvailable(ipaFromEnv));
@@ -66,7 +69,7 @@ export default function WalletPage() {
   useEffect(() => {
     const q = new URLSearchParams(window.location.search);
     const a = Number(q.get("amount"));
-    if (Number.isFinite(a) && a > 0) setAmount(a);
+    if (Number.isFinite(a) && a > 0) setQueryEgp(a);
     returnTo.current = safeReturn(q.get("return"));
   }, []);
 
@@ -322,8 +325,7 @@ export default function WalletPage() {
         <div ref={formRef} data-topup-form="1" />
         {!submitted ? (
           <TopupForm
-            amount={amount}
-            onAmount={setAmount}
+            initialPoints={initialPoints}
             creditValue={creditValue}
             ipa={ipa}
             loadingIpa={loadingIpa}

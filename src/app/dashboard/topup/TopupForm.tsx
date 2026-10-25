@@ -1,14 +1,14 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { formatAr } from "@/lib/arabicDigits";
 import { compressReceipt } from "@/lib/receiptImage";
-import { TOPUP_PRESETS_EGP } from "@/lib/pricing";
 import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
-import { showsInstapayShortcuts, topupReviewSentenceAr } from "@/lib/topupConfig";
+import { showsInstapayShortcuts, TOPUP_DEFAULT_POINTS, TOPUP_PRESET_POINTS, topupReviewSentenceAr } from "@/lib/topupConfig";
+import { egpClipboardText, egpDueAr, egpDisplayAr, parseTopupPointsInput, pointsToEgp, topupAmountMessageAr, topupInputText, validateTopupPoints } from "@/lib/topupAmount";
 import { InstapayShortcuts } from "./InstapayShortcuts";
 import type { TopupRecord } from "./types";
 
@@ -17,8 +17,7 @@ const ALLOWED = ["image/png", "image/jpeg", "image/jpg", "image/webp", "applicat
 
 /** Design «اشحن عبر إنستاباي». Only amount preset and receipt image upload required. */
 export default function TopupForm({
-  amount,
-  onAmount,
+  initialPoints,
   creditValue,
   ipa,
   loadingIpa = false,
@@ -29,8 +28,8 @@ export default function TopupForm({
   reviewTimeAr,
   paymentLabelAr,
 }: {
-  amount: number;
-  onAmount: (n: number) => void;
+  /** A number of points to start from (the chat's «اشحن الفرق» link): a preset selects it, any other number opens the free amount. */
+  initialPoints?: number;
   creditValue: number;
   ipa: string | null;
   loadingIpa?: boolean;
@@ -49,9 +48,35 @@ export default function TopupForm({
   const [err, setErr] = useState("");
   const [sending, setSending] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [amountCopied, setAmountCopied] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const points = Math.floor(amount / creditValue);
+  // the amount: a preset, or the free amount («أخرى») typed as digits; the points are null while the box is empty
+  const [custom, setCustom] = useState(false);
+  const [customText, setCustomText] = useState("");
+  const [presetPoints, setPresetPoints] = useState<number>(TOPUP_DEFAULT_POINTS);
+  useEffect(() => {
+    if (!initialPoints || !Number.isFinite(initialPoints) || initialPoints <= 0) return;
+    const whole = Math.round(initialPoints);
+    if ((TOPUP_PRESET_POINTS as readonly number[]).includes(whole)) { setCustom(false); setPresetPoints(whole); }
+    else { setCustom(true); setCustomText(topupInputText(whole)); }
+  }, [initialPoints]);
+  const points: number | null = custom ? parseTopupPointsInput(customText) : presetPoints;
+  const problem = validateTopupPoints(points);
+  const amountEgp = problem === null && points !== null ? pointsToEgp(points, creditValue) : null;
+  // a message only once something was typed: an empty free amount just keeps the button off
+  const amountMessage = problem && (custom ? customText !== "" : true) ? topupAmountMessageAr(problem, creditValue) : "";
+
+  const copyAmount = async () => {
+    if (amountEgp === null) return;
+    try {
+      await navigator.clipboard?.writeText(egpClipboardText(amountEgp));
+    } catch {
+      /* clipboard blocked */
+    }
+    setAmountCopied(true);
+    setTimeout(() => setAmountCopied(false), 1800);
+  };
 
   const copy = async () => {
     if (!ipa) return;
@@ -90,6 +115,9 @@ export default function TopupForm({
     if (!ipa) {
       return setErr(TOPUP_ERROR_MESSAGES.payment_details_not_configured);
     }
+    if (amountEgp === null) {
+      return setErr(amountMessage || topupAmountMessageAr("invalid", creditValue));
+    }
     if (pendingCount >= maxPending) {
       return setErr(`لديك ${formatAr(maxPending)} طلبات شحن معلقة بالفعل. يرجى انتظار معالجتها قبل تقديم طلب جديد.`);
     }
@@ -116,7 +144,7 @@ export default function TopupForm({
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
         body: JSON.stringify({
-          amountEgp: amount,
+          amountEgp,
           receiptFileId,
         }),
       });
@@ -129,7 +157,7 @@ export default function TopupForm({
       const doc: TopupRecord = {
         $id: data.topupId,
         id: data.topupId,
-        amountEgp: amount,
+        amountEgp,
         reference: data.reference || `rcpt_${data.topupId}`,
         senderName: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split("@")[0] || "عميل ديجر",
         senderPhone: user.user_metadata?.phone || "غير مسجل",
@@ -154,14 +182,14 @@ export default function TopupForm({
     <div className="mt-6 flex flex-col gap-4 rounded-[22px] border border-ln bg-sf p-[18px]">
       <h2 className="m-0 text-[15px] font-semibold text-ink">اشحن عبر إنستاباي</h2>
 
-      <div className="flex flex-wrap gap-2">
-        {TOPUP_PRESETS_EGP.map((egp) => {
-          const on = amount === egp;
+      <div className="flex flex-wrap gap-2" data-testid="topup-presets">
+        {TOPUP_PRESET_POINTS.map((preset) => {
+          const on = !custom && presetPoints === preset;
           return (
             <button
-              key={egp}
+              key={preset}
               type="button"
-              onClick={() => onAmount(egp)}
+              onClick={() => { setCustom(false); setPresetPoints(preset); }}
               aria-pressed={on}
               className="flex min-h-16 min-w-[110px] flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-[20px] transition-all duration-[250ms]"
               style={{
@@ -170,12 +198,64 @@ export default function TopupForm({
                 color: on ? "var(--onac)" : "var(--ink)",
               }}
             >
-              <span className="text-lg font-medium">{formatAr(Math.floor(egp / creditValue))}</span>
-              <span className="text-[11px] font-light opacity-75">{formatAr(egp)} ج.م</span>
+              <span className="text-lg font-medium">{formatAr(preset)}</span>
+              <span className="text-[11px] font-light opacity-75">{egpDisplayAr(pointsToEgp(preset, creditValue))} ج.م</span>
             </button>
           );
         })}
+        <button
+          type="button"
+          data-testid="topup-custom"
+          onClick={() => setCustom(true)}
+          aria-pressed={custom}
+          className="flex min-h-16 min-w-[110px] flex-1 cursor-pointer flex-col items-center justify-center gap-0.5 rounded-[20px] transition-all duration-[250ms]"
+          style={{
+            border: `1px solid ${custom ? "var(--ac)" : "var(--ln)"}`,
+            background: custom ? "var(--ac)" : "transparent",
+            color: custom ? "var(--onac)" : "var(--ink)",
+          }}
+        >
+          <span className="text-lg font-medium">أخرى</span>
+        </button>
       </div>
+
+      {custom && (
+        <label className="flex flex-col gap-1.5">
+          <span className="text-[13px] text-mut">عدد النقاط</span>
+          <input
+            data-testid="topup-custom-input"
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            dir="ltr"
+            value={customText}
+            onChange={(e) => setCustomText(topupInputText(parseTopupPointsInput(e.target.value)))}
+            aria-invalid={problem !== null && customText !== ""}
+            className="min-h-14 w-full rounded-[18px] border border-ln bg-bg px-[18px] text-right text-lg text-ink outline-none transition-colors focus:border-ln2"
+          />
+        </label>
+      )}
+
+      {amountMessage && (
+        <p data-testid="topup-amount-message" role="alert" className="-mt-1 mb-0 text-[13px] leading-[1.8] text-bad">{amountMessage}</p>
+      )}
+
+      {amountEgp !== null && (
+        <div data-testid="topup-egp-due" className="flex flex-col gap-2 rounded-[20px] bg-sf2 px-[18px] py-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <p data-testid="topup-egp-due-text" className="m-0 text-[26px] font-semibold leading-[1.4] text-ink">{egpDueAr(amountEgp)}</p>
+            <button
+              type="button"
+              data-testid="topup-copy-amount"
+              onClick={copyAmount}
+              className="min-h-11 shrink-0 cursor-pointer rounded-full border-0 bg-sf px-4 text-[13px] text-ink"
+            >
+              {amountCopied ? "تم النسخ" : "نسخ المبلغ"}
+            </button>
+          </div>
+          <p className="m-0 text-xs font-light leading-[1.8] text-mut">اكتب هذا المبلغ بنفسك عند التحويل؛ رابط إنستاباي لا يحمل المبلغ.</p>
+        </div>
+      )}
 
       <div className="flex items-center justify-between gap-2.5 rounded-[20px] bg-sf2 px-[18px] py-3.5">
         <div className="min-w-0">
@@ -241,10 +321,10 @@ export default function TopupForm({
       <button
         type="button"
         onClick={submit}
-        disabled={sending}
+        disabled={sending || problem !== null}
         className="min-h-[58px] cursor-pointer rounded-full border-0 bg-ac text-[15px] text-onac disabled:opacity-60"
       >
-        {sending ? "جارٍ الإرسال…" : `إرسال طلب شحن ${pointsAr(points)}`}
+        {sending ? "جارٍ الإرسال…" : problem === null && points !== null ? `إرسال طلب شحن ${pointsAr(points)}` : "إرسال طلب شحن"}
       </button>
       <p data-testid="topup-review-time" className="m-0 text-center text-xs font-light text-fnt">
         {topupReviewSentenceAr(reviewTimeAr)}
