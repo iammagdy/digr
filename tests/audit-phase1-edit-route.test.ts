@@ -47,7 +47,7 @@ describe("POST /api/chat/edit-plan: the edited country is saved and the summary 
     expect(saved.items[0].params.country).toBe("Egypt");
     expect(saved.items[0].params.query.location.include).toEqual(["Egypt"]);
     expect(extractInterpretedParameters(saved.items[0].params, saved.summaryAr).countryAr).toBe("مصر");
-    expect(saved.summaryAr).toBe("خطة حصر حتى ٥ سجل: الكهرباء والطاقة الكهربائية في مصر");
+    expect(saved.summaryAr).toBe("خطة حصر حتى ٥ سجلات: الكهرباء والطاقة الكهربائية في مصر");
   });
 
   it("a plan edited WITHOUT a country keeps a summary with no validation sentence and Arabic digits (it used to read «… في يلزم تحديد الدولة» with Latin digits)", async () => {

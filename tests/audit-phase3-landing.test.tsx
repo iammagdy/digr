@@ -8,6 +8,8 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: () => {} }), usePa
 
 import { GlassHeader } from "../src/components/landing/GlassHeader";
 import { HeroLens } from "../src/components/landing/HeroLens";
+import { DIM_OPACITY, HeroBackdropLayers, LENS_OPACITY } from "../src/components/landing/HeroBackdrop";
+import { buildFieldItems } from "../src/components/landing/heroField";
 import { HowItWorks, PriceStrip, WhatYouCanAsk } from "../src/components/landing/Overview";
 import { Faq, FinalCta, SampleFile } from "../src/components/landing/Sections";
 import { FAQS } from "../src/components/landing/landingFaq";
@@ -52,16 +54,79 @@ describe("audit phase 3: the hero", () => {
     expect(hero).not.toContain("<a ");
     expect(hero.match(/<h1/g)?.length).toBe(1);
   });
+  it("the hero sentence is the owner-approved one, one short sentence, with balanced wrapping; the file formats are still named elsewhere on the page", () => {
+    const sentence = text(hero.slice(hero.indexOf('data-testid="hero-sentence"')).split("</p>")[0]);
+    expect(sentence).toContain("أخبرنا بالبيانات التي تحتاجها، ونجمعها لك.");
+    expect(sentence.match(/[.،]/g)?.length).toBe(2); // one comma, one full stop: a single short sentence
+    expect(sentence).not.toMatch(/إكسل|بي دي إف|[0-9٠-٩]|\p{Extended_Pictographic}/u);
+    expect(src("src/components/landing/HeroLens.tsx")).toContain("text-balance"); // text-wrap: balance, so no word stands alone on a line
+    expect(hero).toMatch(/<p [^>]*text-balance[^>]*data-testid="hero-sentence"|<p [^>]*data-testid="hero-sentence"[^>]*text-balance/);
+    const rest = text(page.slice(1).join("\n"));
+    expect(rest).toContain("إكسل");
+    expect(rest).toContain("بي دي إف");
+    expect(rest).toContain("ملف إكسل أو بي دي إف منظّم"); // the third step
+  });
   it("says that nothing starts or is charged before approval, once, and the rest of the page does not repeat it", () => {
     expect(hero).toContain("لا يبدأ أي جمع ولا يُخصم أي رصيد قبل موافقتك");
     expect(pageText.match(/قبل موافقتك/g)?.length).toBe(1);
     expect(pageText.match(/قبل أي خصم/g)?.length ?? 0).toBe(0);
     expect(pageText.match(/لا يُخصم أي رصيد/g)?.length).toBe(1);
   });
-  it("has no faint or moving background: no blurred record field, no lens, no animation loop", () => {
+  it("has the blurred record field, the lens and the rings behind the text, loaded after the page is shown and kept out of the form's way", () => {
     const source = src("src/components/landing/HeroLens.tsx");
-    expect(source).not.toMatch(/requestAnimationFrame|RecordField|FIELD_ITEMS|data-lens|data-px|textShadow|willChange|opacity: 0\.12/);
+    // the hero itself holds no animation code and no records: the decoration is its own file, loaded in the browser only (not in the first HTML)
+    expect(source).not.toMatch(/requestAnimationFrame|RecordField|FIELD_ITEMS|data-lens(?!-shield)|data-px|willChange|opacity: 0\.12/);
+    expect(source).toContain('dynamic(() => import("./HeroBackdrop"), { ssr: false })');
+    expect(hero).not.toMatch(/data-field|hero-backdrop|data-lens-win|data-px-/);
+    // the headline and the two lines keep a soft halo so they stay easy to read over the field
+    expect(source).toContain("textShadow");
+    expect(source).toContain("WebkitTextStroke");
+    expect(source.match(/background: HALO/g)?.length).toBe(2);
+    // the records are not in the shared data file (they are built in the browser, by heroField)
     expect(src("src/components/landing/data.ts")).not.toMatch(/FIELD_ITEMS|buildFieldItems/);
+  });
+  it("the layers: field, lens, ring and rings, all hidden from readers, taking no pointer events, with no control, link or text of their own", () => {
+    const records = buildFieldItems().slice(0, 40);
+    const markup = renderToStaticMarkup(createElement(HeroBackdropLayers, { items: records, mobile: false }));
+    for (const marker of ['data-testid="hero-backdrop"', "data-px-back", "data-lens-win", "data-lens-ring", "data-px-rings", 'data-field="dim"', 'data-field="hi"']) expect(markup).toContain(marker);
+    expect(markup).toContain('aria-hidden="true"');
+    expect(markup.match(/pointer-events-none/g)!.length).toBeGreaterThanOrEqual(5);
+    expect(markup).not.toMatch(/<(?:a|button|input|textarea|select|form|img|svg)\b|href=|tabindex|onclick/i);
+    expect(markup).not.toMatch(/example\.|https?:|@/);
+    // a phone gets the smaller lens; a wide screen the larger one
+    expect(renderToStaticMarkup(createElement(HeroBackdropLayers, { items: [], mobile: true }))).toContain("width:112px");
+    expect(renderToStaticMarkup(createElement(HeroBackdropLayers, { items: [], mobile: false }))).toContain("width:170px");
+  });
+  it("is quieter than before: the field and the lens are less contrasty than the original (0.12 and 0.74), and still above zero", () => {
+    expect(DIM_OPACITY).toBeLessThan(0.12);
+    expect(DIM_OPACITY).toBeGreaterThan(0.04);
+    expect(LENS_OPACITY).toBeLessThan(0.74);
+    expect(LENS_OPACITY).toBeGreaterThan(0.4);
+  });
+  it("respects reduced motion: the loop is not started, the rings and the fade stand still, and nothing is clickable or layout-moving", () => {
+    const source = src("src/components/landing/HeroBackdrop.tsx");
+    expect(source).toContain('matchMedia("(prefers-reduced-motion: reduce)")');
+    const reducedBranch = source.indexOf("if (reduced) {\n      draw(0);");
+    const loopStart = source.lastIndexOf("raf = requestAnimationFrame(loop);");
+    expect(reducedBranch).toBeGreaterThan(0);
+    expect(loopStart).toBeGreaterThan(reducedBranch); // a reduced-motion visitor returns before the loop starts
+    expect(source.match(/motion-reduce:\[animation:none\]/g)!.length).toBeGreaterThanOrEqual(4); // the fade and the three rings
+    expect(source).toContain("cancelAnimationFrame(raf)");
+    expect(source).toContain("IntersectionObserver"); // nothing is drawn while the hero is out of view
+    expect(source).toContain("document.hidden");
+    // no control of its own, no price code, and it adds nothing to the layout (absolute layers inside the hero)
+    expect(source).not.toMatch(/<(?:a|button|input|Link)\b|pricingPage|missionEstimate|calculatorPricing/);
+    expect(src("src/components/landing/HeroLens.tsx")).toContain("overflow-hidden"); // no sideways scroll at 390px: the rings are cut at the hero's edge
+  });
+  it("the records are made-up generic lines: 300 different ones, Arabic only, no emoji, no address, no link, no real company", () => {
+    const records = buildFieldItems();
+    expect(records).toHaveLength(300);
+    expect(new Set(records).size).toBe(300);
+    expect(buildFieldItems()).toEqual(records); // seeded: the same lines every time
+    const all = records.join("\n");
+    expect(all).not.toMatch(/[A-Za-z0-9]/);
+    expect(all).not.toMatch(/\p{Extended_Pictographic}/u);
+    expect(all).not.toMatch(/https?:|www\.|\.com|@/i);
   });
   it("still sends the typed question to sign-up or the chat", () => {
     const source = src("src/components/landing/HeroLens.tsx");
@@ -81,7 +146,8 @@ describe("audit phase 3: the price strip is computed", () => {
     expect(strip[1]).toMatchObject({ points: posts.expectedPoints, egp: posts.expectedEgp });
     const markup = text(page[1]);
     expect(markup).toContain("٥ شركات");
-    expect(markup).toContain("على إكس");
+    expect(markup).toContain("١٠٠ تغريدة");
+    expect(markup).not.toContain("منشورًا على إكس");
     expect(markup).toContain(`${formatAr(companies.expectedPoints)} نقطة`);
     expect(markup).toContain(`${formatAr(posts.expectedPoints)} نقطة`);
     expect(markup).not.toMatch(/[0-9]/);

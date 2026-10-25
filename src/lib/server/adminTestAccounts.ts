@@ -1,25 +1,20 @@
+import { isTestAccount, isTestAccountEmail, TEST_ACCOUNT_DOMAIN, TEST_ACCOUNT_EMAILS } from "./testAccounts";
+
 /**
- * Test accounts that the admin dashboards hide by default («إخفاء حسابات الاختبار», on unless switched off).
- * The toggle only changes what the admin SEES: it never changes a row, a balance, a ledger entry or a job. A real guest must never
- * be listed here, and customers never see this list.
+ * The toggle «إخفاء حسابات الاختبار» of the admin Jobs and Conference pages (on unless switched off).
+ * It changes only what the admin SEES: never a row, a balance, a ledger entry or a job. WHO is a test account is decided by ONE shared classifier
+ * (testAccounts.ts), the same one the calls log uses. A real guest must never match, and customers never see this.
  */
-export const TEST_ACCOUNT_EMAILS: readonly string[] = ["iam.magdy+1@outlook.com", "magdy.saber@outlook.com"];
-export const TEST_ACCOUNT_DOMAIN = "@digr.local";
+export { TEST_ACCOUNT_DOMAIN, TEST_ACCOUNT_EMAILS, isTestAccountEmail };
 
 export const HIDE_TEST_ACCOUNTS_LABEL_AR = "إخفاء حسابات الاختبار";
-
-export function isTestAccountEmail(email: string | null | undefined): boolean {
-  const normalised = String(email || "").trim().toLowerCase();
-  if (!normalised) return false;
-  return TEST_ACCOUNT_EMAILS.includes(normalised) || normalised.endsWith(TEST_ACCOUNT_DOMAIN);
-}
 
 /** The ids of the test accounts among profile rows (`id`, `email`). Rows without a string id are skipped. */
 export function testAccountIds(profiles: Array<{ id?: unknown; email?: unknown }>): Set<string> {
   const ids = new Set<string>();
   for (const profile of profiles) {
     if (typeof profile.id !== "string") continue;
-    if (isTestAccountEmail(typeof profile.email === "string" ? profile.email : null)) ids.add(profile.id);
+    if (isTestAccount({ id: profile.id, email: typeof profile.email === "string" ? profile.email : null })) ids.add(profile.id);
   }
   return ids;
 }

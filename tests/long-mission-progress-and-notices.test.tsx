@@ -343,8 +343,8 @@ describe("the e-mail template, in isolation", () => {
     expect(subject).not.toContain("{{");
   });
 
-  it("every template of the Edge Function still renders (the six approved ones are untouched)", () => {
-    expect(Object.keys(PLATFORM_EMAIL_SUBJECTS).sort()).toEqual(["job-done", "job-update", "refund", "topup-approved", "topup-received", "topup-rejected", "welcome"]);
+  it("every template of the Edge Function still renders (the six approved ones, job-update and the admin alert)", () => {
+    expect(Object.keys(PLATFORM_EMAIL_SUBJECTS).sort()).toEqual(["admin-topup-alert", "job-done", "job-update", "refund", "topup-approved", "topup-received", "topup-rejected", "welcome"]);
     for (const id of Object.keys(PLATFORM_EMAIL_SUBJECTS) as Array<keyof typeof PLATFORM_EMAIL_SUBJECTS>) {
       const { subject, html } = renderEmailTemplate(id, { Name: "سلمى" });
       expect(subject).not.toContain("{{");

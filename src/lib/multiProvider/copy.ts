@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
+import { countPlainAr } from "../planCounts";
 
 /**
  * Every customer-facing sentence of the multi-provider feature. Arabic only, Arabic-Indic digits, no emoji, and never a provider name,
@@ -26,7 +27,7 @@ export function whatWeCollectAr(args: { count: number; withEmail: boolean; withP
     ...(args.withDecisionMaker ? ["اسم ومسمى صاحب القرار إن كان معلنًا"] : []),
   ];
   const scope = [args.industry, args.country].filter((part) => typeof part === "string" && part.trim()).join(" في ");
-  return `نجمع حتى ${n(args.count)} سجل لشركات${scope ? ` (${scope})` : ""} من ${SOURCE_WORDING_AR}، وفي كل سجل: ${fields.join("، ")}.`;
+  return `نجمع حتى ${countPlainAr(args.count, "records")} لشركات${scope ? ` (${scope})` : ""} من ${SOURCE_WORDING_AR}، وفي كل سجل: ${fields.join("، ")}.`;
 }
 
 /** Why no route is available, in customer words (no provider, no number). */
@@ -35,7 +36,7 @@ export const NO_ROUTE_AR = "هذا النوع من البحث غير متاح ح
 // ---- Activity lines (the job_events mechanism): source, found, new vs duplicate, running total ----------------------------------
 
 export function discoveryLineAr(args: { found: number; fresh: number; duplicate: number; total: number }): string {
-  return `البحث في ${SOURCE_WORDING_AR}: وُجدت ${n(args.found)} شركة، منها ${n(args.fresh)} جديدة و${n(args.duplicate)} مكررة. الإجمالي حتى الآن ${n(args.total)} شركة.`;
+  return `البحث في ${SOURCE_WORDING_AR}: وُجدت ${countPlainAr(args.found, "companies")}، منها ${n(args.fresh)} جديدة و${n(args.duplicate)} مكررة. الإجمالي حتى الآن ${countPlainAr(args.total, "companies")}.`;
 }
 
 export function discoveryEmptyLineAr(): string {
@@ -43,7 +44,7 @@ export function discoveryEmptyLineAr(): string {
 }
 
 export function enrichLineAr(args: { read: number; verified: number; unverified: number; total: number }): string {
-  return `قراءة صفحات التواصل العامة لـ ${n(args.read)} شركة: ${n(args.verified)} سجل موثّق و${n(args.unverified)} لم يكتمل التحقق منه فلم يُحتسب. الإجمالي حتى الآن ${n(args.total)} سجل.`;
+  return `قراءة صفحات التواصل العامة لـ ${countPlainAr(args.read, "companies")}: الموثّق منها ${n(args.verified)}، و${n(args.unverified)} لم يكتمل التحقق منه فلم يُحتسب. الإجمالي حتى الآن ${countPlainAr(args.total, "records")}.`;
 }
 
 export function skippedSitesLineAr(count: number): string {
@@ -56,13 +57,13 @@ export function stageFallbackLineAr(): string {
 
 export function chainFinishedLineAr(args: { delivered: number }): string {
   return args.delivered > 0
-    ? `اكتملت المعالجة: ${n(args.delivered)} سجل موثّق.`
+    ? `اكتملت المعالجة: الموثّق منها ${countPlainAr(args.delivered, "records")}.`
     : "لم نجد سجلات موثّقة تطابق طلبك، ولن يُخصم أي رصيد.";
 }
 
 export function budgetStopLineAr(delivered: number): string {
   return delivered > 0
-    ? `توقفنا عند الحد المسموح لهذه المعالجة، وسُلّم ${n(delivered)} سجل موثّق ويُحتسب هذا العدد فقط.`
+    ? `توقفنا عند الحد المسموح لهذه المعالجة، وسُلّم من الموثّق ${countPlainAr(delivered, "records")} ويُحتسب هذا العدد فقط.`
     : "توقفنا عند الحد المسموح لهذه المعالجة قبل العثور على سجلات موثّقة، ولن يُخصم أي رصيد.";
 }
 

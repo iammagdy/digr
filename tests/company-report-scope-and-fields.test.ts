@@ -61,11 +61,12 @@ describe("company workbook scope and field honesty", () => {
     });
 
     const branches = workbook.getWorksheet("فروع الشركات")!;
-    expect(branches.getRow(2).getCell(1).value).toBe("branch-1");
-    expect(branches.getRow(2).getCell(2).value).toBe("company-1");
-    expect(branches.getRow(2).getCell(3).value).toBe("Northstar");
-    expect(branches.getRow(2).getCell(5).value).toBe("برلين");
-    expect(workbook.getWorksheet("بيانات الشركات")!.getRow(2).getCell(1).value).toBe("company-1");
+    // The customer workbook carries no record id: a branch row is linked to its company by the company's name.
+    expect(branches.getRow(1).getCell(1).value).toBe("اسم الشركة");
+    expect(branches.getRow(2).getCell(1).value).toBe("Northstar");
+    expect(branches.getRow(2).getCell(2).value).toBe("Berlin Office");
+    expect(branches.getRow(2).getCell(3).value).toBe("برلين");
+    expect(workbook.getWorksheet("بيانات الشركات")!.getRow(2).getCell(1).value).toBe("Northstar");
 
     // Counters and distributions belong to the methodology PDF, not the data workbook (D4).
     const names = workbook.worksheets.map((sheet) => sheet.name);
@@ -83,10 +84,10 @@ describe("company workbook scope and field honesty", () => {
 
     const main = workbook.getWorksheet("بيانات الشركات")!;
     expect(main.rowCount).toBe(2);
-    expect(main.getRow(2).getCell(2).value).toBe("Accepted Co");
+    expect(main.getRow(2).getCell(1).value).toBe("Accepted Co");
     const review = workbook.getWorksheet("سجلات تحتاج مراجعة")!;
-    // Row 1 is the plain «not charged» notice, row 2 the headers, rows from 3 the records.
-    expect(review.getRow(3).getCell(2).value).toBe("Maybe Co");
-    expect(review.getRow(3).getCell(5).value).toBe("النشاط غير واضح");
+    // Row 1 is the plain «not charged» notice, row 2 the headers, rows from 3 the records. No record id column: the company name is the first column.
+    expect(review.getRow(3).getCell(1).value).toBe("Maybe Co");
+    expect(review.getRow(3).getCell(4).value).toBe("النشاط غير واضح");
   });
 });

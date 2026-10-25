@@ -11,7 +11,8 @@ import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import type { LivePreviewSample } from "@/lib/liveJobView";
 import { customerResultColumnLabel, emptyPromisedFieldTitles, ensurePostLinkColumn, orderPreviewColumns, previewColumns, splitEmptyColumns } from "@/lib/customerResultColumns";
 import { COMPANY_SCREEN_ORDER, companyColumnTitleAr } from "@/lib/companyColumns";
-import { formatPhoneDisplay } from "@/lib/phoneDisplay";
+import { formatPhoneDisplay, phoneMayBeIncomplete, PHONE_MAY_BE_INCOMPLETE_AR } from "@/lib/phoneDisplay";
+import { contactCellUnavailable } from "@/lib/contactVerification";
 import { industryLabelForCell } from "@/lib/industryLabels";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
@@ -443,10 +444,17 @@ export default function ResultsCanvas({
                           {visibleColumns.map((column) => {
                             const raw = column === "headcount" && Number(r[column]) === 0 ? "غير متاح" : r[column];
                             // A classification is read in Arabic and a phone is written one way (the workbook's way), left to right.
-                            const value = isCompanyDataset && column === "industry" && raw ? industryLabelForCell(raw) : column === "phone" && raw ? formatPhoneDisplay(raw) : raw;
+                            const isCountColumn = (column === "headcount" || column === "founded_year") && raw !== undefined && raw !== null && raw !== "" && raw !== "غير متاح";
+                            // A headcount and a founding year are read in Arabic-Indic digits, like every number of the screen.
+                            const value = isCompanyDataset && column === "industry" && raw ? industryLabelForCell(raw) : column === "phone" && raw ? formatPhoneDisplay(raw) : isCountColumn ? toArabicDigits(String(raw).replace(/^'+/, "")) : raw;
+                            // A missing or invalid contact value reads «غير متاح», like the Excel; the availability columns keep their own wording.
+                            const unavailable = contactCellUnavailable(column, r);
+                            // A phone whose digit count is outside the normal range for its country code gets a small neutral mark (the digits are never changed).
+                            const mayBeIncomplete = column === "phone" && !unavailable && phoneMayBeIncomplete(r.phone);
                             return (
-                              <td key={column} dir={column === "username" || column === "phone" ? "ltr" : undefined} className={`min-w-28 max-w-64 whitespace-normal break-words px-3 py-2.5 align-top leading-6 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
-                                {formatCell(value)}
+                              <td key={column} dir={column === "username" || (column === "phone" && !unavailable) ? "ltr" : undefined} className={`min-w-28 max-w-64 whitespace-normal break-words px-3 py-2.5 align-top leading-6 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
+                                {unavailable ? "غير متاح" : formatCell(value)}
+                                {mayBeIncomplete && <span data-testid="phone-maybe-incomplete" dir="rtl" className="block text-[11px] font-normal leading-5 text-sand-500">{PHONE_MAY_BE_INCOMPLETE_AR}</span>}
                               </td>
                             );
                           })}

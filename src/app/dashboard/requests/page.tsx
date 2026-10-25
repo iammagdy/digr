@@ -2,6 +2,7 @@
 
 import { pointsAr } from "@/lib/pointsFormat";
 import { normalizeReleaseWording } from "@/lib/releaseWording";
+import { pluralizeStoredCountsAr } from "@/lib/planCounts";
 import { openJobHref } from "@/lib/requestLinks";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -57,7 +58,7 @@ const TABS: Array<["all" | "done" | "running" | "refunded", string]> = [
   ["all", "الكل"],
   ["done", "مكتملة"],
   ["running", "قيد التنفيذ"],
-  ["refunded", "حجز مُحرَّر"],
+  ["refunded", "حجز مؤقت مُحرَّر"],
 ];
 
 function targetOf(params?: string): string {
@@ -380,7 +381,8 @@ export default function RequestsPage() {
           const k = kindOfJob(j);
           const st = STATUS[k];
           const q = quotes[j.$id];
-          const title = (q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`;
+          // A title stored before the plural rule says «٥ سجل»: it is read again at display time, the stored row stays as it is.
+          const title = pluralizeStoredCountsAr((q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`);
           const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           // A finished request that delivered no record has no data file to offer: zero files, said once (the same rule as the results panel).
@@ -420,7 +422,7 @@ export default function RequestsPage() {
               {k === "running" && <div className="h-1 overflow-hidden rounded bg-sf2"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>}
               {k === "running" && progressByJob[j.$id] && <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="request-progress">{progressByJob[j.$id]}</p>}
               {stalled && <p role="status" className="m-0 text-[13px] font-medium leading-[1.8] text-ink" data-testid="request-stalled">{STALLED_LINE_AR}</p>}
-              {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{note}</p>}
+              {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{pluralizeStoredCountsAr(note)}</p>}
               {(k === "refunded" || k === "partial") && <ReportProblemButton jobId={j.$id} className="self-start" />}
               <div className="flex flex-wrap gap-2">
                 {availableFormats.map((ext) => (

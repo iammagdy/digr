@@ -412,12 +412,12 @@ describe("point 10: the wallet estimate uses the real unit prices", () => {
     expect(wallet).toContain("capacityForPoints(available)");
   });
 
-  it("the companies line is exactly what the shared pricing function says the balance can reserve", () => {
+  it("the companies line is exactly what the shared pricing function says the balance DELIVERS (the real unit price, no 15% reserve)", () => {
     const company = buildPriceRows().find((row) => row.id === "companies")!;
     expect(company.unitPricePoints).toBe(3.168);
     const line = capacityForPoints(1000).find((entry) => entry.id === "companies")!;
-    expect(line.records).toBe(volumeForPointsCap(1000, company.unitPricePoints, DEFAULT_PRICING_SETTINGS.safetyBuffer));
-    expect(line.records).toBeLessThan(1000 / 3.168); // the 15% buffer is on the reserve
+    expect(line.records).toBe(volumeForPointsCap(1000, company.unitPricePoints, 0));
+    expect(line.records).toBeLessThanOrEqual(1000 / 3.168); // the 15% buffer is on the reserve only, never in this estimate
     expect(capacityForPoints(0).every((entry) => entry.records === 0)).toBe(true);
   });
 });
@@ -440,8 +440,8 @@ describe("point 11: the monthly released total and the ledger lines are explaine
     expect(wallet).toContain('data-testid="wallet-released-explainer"');
     expect(wallet).toContain("يظهر الحجز المُحرَّر كاملًا قبل الخصم");
     expect(wallet).toContain("const monthReady = ledgerLoaded;");
-    expect(wallet).toContain("{monthReady ? <p className=\"m-0 text-2xl font-medium text-ink\">{formatAr(stats.releasedHold)}</p>");
-    expect(wallet).toContain("<Skeleton className=\"h-8 w-20\" />");
+    expect(wallet).toContain("{monthReady ? <p className=\"m-0 text-xl font-bold text-wallet-amber\">{formatAr(stats.releasedHold)}</p>");
+    expect(wallet).toContain("<Skeleton className=\"h-7 w-16 !bg-none bg-white/10\" />");
     expect(wallet).toContain("useState<number | null>(null)");
   });
 });

@@ -15,15 +15,15 @@ const page = readFileSync("src/app/page.tsx", "utf8");
 
 describe("landing clarity (Part 3)", () => {
   it("the first screen says in one Arabic sentence what Diger is, with ONE question box and ONE primary action (audit phase 3)", () => {
-    expect(hero).toContain("اسأل بالعربية، واستلم بيانات منظّمة من مصادر متاحة في ملف إكسل أو بي دي إف.");
+    expect(hero).toContain("أخبرنا بالبيانات التي تحتاجها، ونجمعها لك.");
     expect(hero.match(/<form/g)?.length).toBe(1);
     expect(hero.match(/type="submit"/g)?.length).toBe(1);
     expect(hero.match(/ابدأ طلبك/g)?.length).toBe(1);
-    // no second action, no list of examples and no moving background in the first screen
+    // no second action and no list of examples in the first screen; the moving background is its own file (HeroBackdrop), the hero keeps only the shield marker
     expect(hero).not.toContain("<Link");
     expect(hero).not.toContain("landing-ideas");
     expect(hero).not.toContain("landing-mission-templates");
-    expect(hero).not.toMatch(/requestAnimationFrame|RecordField|data-lens|data-px/);
+    expect(hero).not.toMatch(/requestAnimationFrame|RecordField|data-lens(?!-shield)|data-px/);
   });
 
   it("three steps: اطلب، راجع الخطة والسعر، استلم الملف", () => {

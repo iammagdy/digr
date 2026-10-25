@@ -75,3 +75,18 @@ export function exportFileName(table: ExportTableId, now: Date = new Date(), ext
   const stamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
   return `diger-${table}-${stamp}.${ext}`;
 }
+
+/**
+ * The ZIP of all five tables is built on the server in one request, so it has a smaller ceiling than the page-by-page download (which is assembled in the
+ * browser): a table past this many rows is refused with a plain Arabic message before anything is sent, and the tables can still be downloaded one by one.
+ */
+export const EXPORT_ZIP_MAX_ROWS_PER_TABLE = 50_000;
+/** The ZIP stops (and the download fails, never a short file) when reading takes longer than this: under the function's 60 s limit. */
+export const EXPORT_ZIP_TIME_BUDGET_MS = 50_000;
+
+/** diger-backup-YYYY-MM-DD-HHmm.zip, the date and time read in Cairo. */
+export function backupZipFileName(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const at = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+  return `diger-backup-${at("year")}-${at("month")}-${at("day")}-${at("hour")}${at("minute")}.zip`;
+}

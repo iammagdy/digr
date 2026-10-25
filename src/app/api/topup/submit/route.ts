@@ -16,6 +16,10 @@ import {
 } from "@/lib/arabicDigits";
 import { RECEIPTS_BUCKET } from "@/lib/constants";
 import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
+import { egpDisplayAr, topupAmountMessageAr, validateSubmittedEgp } from "@/lib/topupAmount";
+import { topupReviewSentenceAr } from "@/lib/topupConfig";
+import { DEFAULT_CREDIT_VALUE_EGP } from "@/lib/creditValue";
+import { notifyOwnerOfTopup } from "@/lib/server/topupOwnerAlert";
 
 export const dynamic = "force-dynamic";
 
@@ -107,6 +111,20 @@ export async function POST(req: NextRequest) {
           reason: "payment_details_not_configured",
           error: TOPUP_ERROR_MESSAGES.payment_details_not_configured,
         },
+        { status: 400 }
+      );
+    }
+
+    // 2b. The amount, checked HERE whatever the screen sent: a whole number of points between the minimum and the maximum at the current credit value
+    const creditValue =
+      typeof pricingSetting?.value?.creditValueEgp === "number" && pricingSetting.value.creditValueEgp > 0
+        ? pricingSetting.value.creditValueEgp
+        : DEFAULT_CREDIT_VALUE_EGP;
+    const amountCheck = validateSubmittedEgp(validated.amountEgp, creditValue);
+    if (!amountCheck.ok) {
+      const reason = `amount_${amountCheck.problem}` as "amount_invalid" | "amount_below_min" | "amount_above_max";
+      return NextResponse.json(
+        { success: false, reason, error: topupAmountMessageAr(amountCheck.problem, creditValue) },
         { status: 400 }
       );
     }
@@ -229,21 +247,27 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 8. Email: topup-received (never blocks or fails the request)
+    // 8a. The owner alert starts now and runs beside the customer's e-mail (one per request: the key is the request id; it never throws)
+    const ownerAlert = notifyOwnerOfTopup({
+      topupId: newTopup.id,
+      customerName: resolveDisplayName(user),
+      customerEmail: user.email || "",
+      points: amountCheck.points,
+      amountEgp: validated.amountEgp,
+      createdAt: newTopup.created_at,
+    });
+
+    // 8. Email: topup-received (never blocks or fails the request). Arabic-Indic digits; the internal receipt id is never sent.
     try {
       if (user.email && isEmailPreferenceEnabled("topup-received", user.user_metadata)) {
-        const creditValueEgp =
-          typeof pricingSetting?.value?.creditValueEgp === "number" &&
-          pricingSetting.value.creditValueEgp > 0
-            ? pricingSetting.value.creditValueEgp
-            : 0.1;
-        const expectedCredits = Math.floor(validated.amountEgp / creditValueEgp);
+        const reviewTime = typeof pricingSetting?.value?.reviewTimeAr === "string" && pricingSetting.value.reviewTimeAr.trim() ? pricingSetting.value.reviewTimeAr.trim() : null;
         await sendPlatformEmail("topup-received", user.email, {
           Name: resolveDisplayName(user),
-          AmountEgp: String(validated.amountEgp),
-          Credits: String(expectedCredits),
-          Reference: reference,
-          CreatedAt: formatArabicDate(newTopup.created_at),
+          AmountEgp: egpDisplayAr(validated.amountEgp),
+          Credits: toArabicDigits(amountCheck.points),
+          // the same sentence as under the send button of the top-up page
+          ReviewNote: topupReviewSentenceAr(reviewTime),
+          CreatedAt: toArabicDigits(formatArabicDate(newTopup.created_at)),
         });
       } else if (user.email) {
         console.log(`[email:preference_disabled] template=topup-received category=topup userId=${user.id}`);
@@ -251,6 +275,8 @@ export async function POST(req: NextRequest) {
     } catch (emailErr) {
       console.error("[email:topup-received_failed]", emailErr);
     }
+
+    await ownerAlert;
 
     return NextResponse.json({
       success: true,

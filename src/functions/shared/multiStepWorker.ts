@@ -1,4 +1,6 @@
 import { pointsAr } from "../../lib/pointsFormat";
+import { toArabicDigits } from "../../lib/arabicDigits";
+import { countPlainAr } from "../../lib/planCounts";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, Role, Permission, TablesDB, Storage } from "./dbCompat";
 import { completeJobWithRelFirst, releaseCredits, releaseReservation } from "./ledger";
@@ -553,7 +555,7 @@ export async function executeMultiStepJob(
       collectedRows.push(...pageResult.items);
       totalCostMicro += pageResult.costMicro || 0;
       if (pageResult.costMicro) await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: pageResult.costMicro / 1_000_000 });
-      await emitProgress(`تم جمع ${collectedRows.length} سجل من أصل ${targetVolumeMax}...`, collectedRows.length, "progress");
+      await emitProgress(`تم جمع ${countPlainAr(collectedRows.length, "records")} من أصل ${toArabicDigits(targetVolumeMax)}...`, collectedRows.length, "progress");
 
       if (!pageResult.nextCursor) break;
       cursor = pageResult.nextCursor;
@@ -828,7 +830,7 @@ export async function executeMultiStepJob(
             };
           }
           // Failed page after collecting some rows: keep rows collected from earlier pages
-          await emitProgress(`توقف المصدر مؤقتاً عند الصفحة ${page}. تم الاحتفاظ بـ ${collectedRows.length} سجل مجمع.`, collectedRows.length, "warning");
+          await emitProgress(`توقف المصدر مؤقتاً عند الصفحة ${page}. تم الاحتفاظ بـ ${countPlainAr(collectedRows.length, "records")} مجمعة.`, collectedRows.length, "warning");
           break;
         }
 
@@ -838,7 +840,7 @@ export async function executeMultiStepJob(
         }
 
         collectedRows.push(...newRows);
-        await emitProgress(`تم جمع ${collectedRows.length} سجل حتى الآن...`, collectedRows.length, "progress");
+        await emitProgress(`تم جمع ${countPlainAr(collectedRows.length, "records")} حتى الآن...`, collectedRows.length, "progress");
 
         if (paginationStrategy === "cursor") {
           const nextCur =

@@ -1,6 +1,6 @@
 # send-email Edge Function
 
-Sends the six approved Arabic platform email templates, plus the compact `job-update` template, via the **Resend API**.
+Sends the six approved Arabic platform email templates, plus the compact `job-update` template and the owner's `admin-topup-alert`, via the **Resend API**.
 Replaces the cancelled Appwrite Messaging path. No Appwrite code is used.
 
 ## Files
@@ -39,12 +39,15 @@ key never goes to the client.
 | Template | When | Vars |
 |---|---|---|
 | `welcome` | New user confirms email (auth trigger) | `Name` |
-| `topup-received` | Top-up submitted | `Name`, `AmountEgp`, `Credits`, `Reference`, `CreatedAt` (Arabic date, e.g. `13 أكتوبر 2026` — use `formatArabicDate`) |
-| `topup-approved` | Admin approves top-up | `Name`, `Credits`, `ConfirmedAmountEgp`, `Reference`, `Balance` |
-| `topup-rejected` | Admin rejects top-up | `Name`, `AmountEgp`, `Reference`, `RejectReason` |
+| `topup-received` | Top-up submitted | `Name`, `AmountEgp`, `Credits`, `ReviewNote` (the review-time sentence of the top-up page), `CreatedAt` — all in Arabic-Indic digits; the internal receipt id is never sent |
+| `topup-approved` | Admin approves top-up | `Name`, `Credits`, `ConfirmedAmountEgp`, `Balance` |
+| `topup-rejected` | Admin rejects top-up | `Name`, `AmountEgp`, `RejectReason` |
 | `job-done` | Job completes with files | `Name`, `JobTitle` |
 | `refund` | Points refunded | `Name`, `Points`, `JobTitle`, `Reason`, `Balance` |
 | `job-update` | A long job started, stalled temporarily, or completed partially | `Name`, `Subject`, `Heading`, `Lead`, `DetailOne`, `DetailTwo`, `ButtonLabel`, `JobURL` (all plain Arabic, written by the app from real numbers) |
+| `admin-topup-alert` | A new top-up request, to the owner's address (`ADMIN_ALERT_EMAIL` on the app) | `CustomerName`, `CustomerEmail`, `Points`, `AmountEgp`, `RequestTime`, `AdminURL` (right-to-left; no receipt image, receipt id or token) |
+
+All eight templates are built by ONE base layout (`layout()` in `templates.ts`): right-to-left and right-aligned on the wrapper table and on every cell, the brand mark on a small light rounded background (visible in dark-mode clients), a card (status chip, heading, short body, boxed reason, label/value table, one primary button, note) and a footer (the preferences footer for customers, the admin footer only for `admin-topup-alert`). Inline CSS only; no external fonts or scripts; `color-scheme` is light only. A template's variables never change name; new ones may only be added as optional.
 
 Missing vars render as `""` — no raw `{{ .Var }}` token ever reaches a customer.
 Values are HTML-escaped in the body; the subject is plain text.

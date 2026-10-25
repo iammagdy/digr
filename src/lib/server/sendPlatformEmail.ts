@@ -20,7 +20,9 @@ export type PlatformEmailTemplateId =
   | "job-done"
   | "refund"
   /** A long job's status update (started, stalled temporarily, completed partially): needs the Edge Function with this template deployed. */
-  | "job-update";
+  | "job-update"
+  /** The owner's alert for a new top-up request (right-to-left, label/value table): needs the Edge Function with this template deployed. */
+  | "admin-topup-alert";
 
 const AR_MONTHS = [
   "يناير",
@@ -69,6 +71,7 @@ export const TEMPLATE_CATEGORY_MAP: Record<PlatformEmailTemplateId, Notification
   "job-done": "done",
   refund: "refund",
   "job-update": "done",
+  "admin-topup-alert": null,
 };
 
 /**
@@ -180,7 +183,7 @@ export async function sendPlatformEmail(
   try {
     if (!to || !to.includes("@")) return fail("invalid_recipient");
     const base = (process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+    const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
     if (!base || !key) return fail("missing_config");
     const res = await fetch(`${base}/functions/v1/send-email`, {
       method: "POST",

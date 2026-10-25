@@ -168,7 +168,7 @@ describe("relevance gate: Claude advises, deterministic code decides, only match
     expect(names.length).toBe(2); // data + one review sheet because there is an uncertain row
     const data = wb.getWorksheet("بيانات الشركات")!;
     expect(data.rowCount).toBe(3); // header + the two matching rows
-    const names1 = [data.getRow(2).getCell(2).value, data.getRow(3).getCell(2).value];
+    const names1 = [data.getRow(2).getCell(1).value, data.getRow(3).getCell(1).value];
     expect(names1).toEqual(expect.arrayContaining(["Alpha Electric", "Beta Power"]));
     const review = wb.worksheets[1];
     let reviewText = "";

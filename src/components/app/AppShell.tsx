@@ -5,7 +5,7 @@ import { getSlowFactor } from "@/lib/degradedClient";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Logo } from "@/components/Brand";
+import { Logo, LogoMark } from "@/components/Brand";
 import { useUser } from "@/hooks/useUser";
 import { useBalance } from "@/hooks/useBalance";
 import { useOnline } from "@/hooks/useOnline";
@@ -16,9 +16,12 @@ import { HELP_CENTER_URL, SUPPORT_URL } from "@/lib/constants";
 import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
 import { startNewResearch } from "@/lib/newResearchNavigation";
-import { normalizeReleaseWording } from "@/lib/releaseWording";
+import { notificationDisplay } from "@/lib/notificationText";
+import { bellBadgeText } from "@/lib/notificationBadge";
 import { getPersonaConfig } from "@/functions/shared/personaConfigs";
-import { Icon, UI } from "./icons";
+import { Icon, SIDEBAR_ICONS, UI } from "./icons";
+import { Avatar } from "./Avatar";
+import { useAvatar } from "@/lib/avatarClient";
 
 /* ── shell context: pages set their header title, anyone can open the drawer / start a new question ── */
 interface ShellContextValue {
@@ -68,6 +71,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const mobile = useIsMobile();
   const notifs = useNotifications(user?.$id);
+  const avatar = useAvatar(user?.id);
 
   const [drawer, setDrawer] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -176,24 +180,24 @@ export function AppShell({ children }: { children: ReactNode }) {
   if (!user && !isChat) return null;
 
   const navItems: Array<{ id: string; label: string; icon: string; href?: string; meta?: string; badge?: number; active: boolean; onClick?: () => void }> = user ? [
-    { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
+    { id: "chat", label: "المساعد البحثي", icon: SIDEBAR_ICONS.chat, active: pathname === "/dashboard/chat", onClick: () => {
       setDrawer(false);
       if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:show-history"));
       else router.push("/dashboard/chat?history=1");
     } },
-    { id: "requests", label: "طلباتي", icon: UI.folder, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
-    { id: "wallet", label: "المحفظة", icon: UI.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
-    { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
-    { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
-    { id: "settings", label: "الإعدادات", icon: UI.gear, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
+    { id: "requests", label: "طلباتي", icon: SIDEBAR_ICONS.requests, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
+    { id: "wallet", label: "المحفظة", icon: SIDEBAR_ICONS.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
+    { id: "calculator", label: "حاسبة التكلفة", icon: SIDEBAR_ICONS.calculator, href: "/calculator", active: pathname === "/calculator" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: SIDEBAR_ICONS.catalog, href: "/services", active: pathname === "/services" },
+    { id: "settings", label: "الإعدادات", icon: SIDEBAR_ICONS.settings, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
-    { id: "chat", label: "المساعد البحثي", icon: UI.chat, active: pathname === "/dashboard/chat", onClick: () => {
+    { id: "chat", label: "المساعد البحثي", icon: SIDEBAR_ICONS.chat, active: pathname === "/dashboard/chat", onClick: () => {
       setDrawer(false);
       if (pathname === "/dashboard/chat") window.dispatchEvent(new Event("diger:show-history"));
       else router.push("/dashboard/chat?history=1");
     } },
-    { id: "calculator", label: "حاسبة التكلفة", icon: UI.doc, href: "/calculator", active: pathname === "/calculator" },
-    { id: "catalog", label: "كتالوج الخدمات", icon: UI.doc, href: "/services", active: pathname === "/services" },
+    { id: "calculator", label: "حاسبة التكلفة", icon: SIDEBAR_ICONS.calculator, href: "/calculator", active: pathname === "/calculator" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: SIDEBAR_ICONS.catalog, href: "/services", active: pathname === "/services" },
   ];
 
   // The account menu lists only what the sidebar does not: «الإعدادات» is a sidebar entry and «الشروط والخصوصية» is a help link.
@@ -204,9 +208,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   ];
 
   const helpLinks = [
-    { label: "مركز المساعدة", icon: UI.help, href: HELP_CENTER_URL },
-    { label: "تواصل مع الدعم", icon: UI.chat, href: SUPPORT_URL },
-    { label: "الشروط والخصوصية", icon: UI.doc, href: "/legal/terms" },
+    { label: "مركز المساعدة", icon: SIDEBAR_ICONS.help, href: HELP_CENTER_URL },
+    { label: "تواصل مع الدعم", icon: SIDEBAR_ICONS.support, href: SUPPORT_URL },
+    { label: "الشروط والخصوصية", icon: SIDEBAR_ICONS.legal, href: "/legal/terms" },
   ];
 
   const sideVisible = !mobile || drawer;
@@ -229,9 +233,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               transition: mobile ? undefined : "width .2s ease",
             }}
           >
-            <div className="flex min-h-16 items-center justify-between gap-2 px-4">
+            <div className={compactSidebar && !mobile ? "flex min-h-16 flex-col items-center justify-center px-2 py-1" : "flex min-h-16 items-center justify-between gap-2 px-4"}>
               {compactSidebar && !mobile
-                ? <Link href="/" aria-label="ديجر" className="font-display text-lg font-semibold text-ink">D</Link>
+                ? <Link href="/" aria-label="ديجر" data-testid="sidebar-mark" className="flex h-11 w-11 items-center justify-center"><LogoMark size={32} /></Link>
                 : <Link href="/" aria-label="ديجر"><Logo height={26} /></Link>}
               {!mobile && <button
                 type="button"
@@ -247,7 +251,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 aria-label={compactSidebar ? (canvasActive ? "تثبيت القائمة مفتوحة" : "توسيع القائمة الجانبية") : "تصغير القائمة الجانبية"}
                 aria-expanded={!compactSidebar}
                 title={compactSidebar ? (canvasActive ? "تثبيت القائمة مفتوحة" : "توسيع القائمة") : "تصغير القائمة"}
-                className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-mut hover:bg-sf2 hover:text-ink"
+                className={`flex cursor-pointer items-center justify-center rounded-full border-0 bg-transparent text-mut hover:bg-sf2 hover:text-ink ${compactSidebar ? "relative h-6 w-6 after:absolute after:-inset-2" : "h-9 w-9"}`}
               >{compactSidebar ? "‹" : "›"}</button>}
               {mobile && (
                 <button type="button" onClick={() => setDrawer(false)} aria-label="إغلاق القائمة" className="h-11 w-11 cursor-pointer rounded-full border-0 bg-transparent text-xl text-mut">×</button>
@@ -259,7 +263,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 title={compactSidebar && !mobile ? "سؤال بحثي جديد" : undefined}
                 className={`flex min-h-12 w-full cursor-pointer items-center gap-2.5 rounded-[14px] border border-ln2 bg-bg px-2 text-sm font-medium text-ink transition-[border-color,box-shadow] duration-200 hover:border-gold hover:shadow-[var(--shadow)] ${compactSidebar && !mobile ? "justify-center" : ""}`}
               >
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ac text-onac"><Icon d={UI.plus} size={16} /></span>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-ac text-onac"><Icon d={SIDEBAR_ICONS.newQuestion} size={16} /></span>
                 <span className={compactSidebar && !mobile ? "sr-only" : "flex-1 text-right"}>سؤال بحثي جديد</span>
               </button>
             </div>
@@ -327,7 +331,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 title={compactSidebar && !mobile ? (user.name || user.email) : undefined}
                 className={`flex min-h-[52px] cursor-pointer items-center gap-2.5 rounded-[14px] border-0 px-1.5 text-right transition-colors hover:bg-sf2 ${compactSidebar && !mobile ? "justify-center" : ""} ${acctOpen ? "bg-sf2" : "bg-transparent"}`}
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ac text-[13px] font-semibold text-onac">{initials(user.name || user.email)}</span>
+                <Avatar letters={initials(user.name || user.email)} url={avatar.url} size={36} />
                 <span className={`min-w-0 flex-1 ${compactSidebar && !mobile ? "sr-only" : ""}`}>
                   <span className="flex items-center gap-1.5 text-[13px] font-semibold text-ink">
                     <span className="truncate">{user.name || "حسابي"}</span>
@@ -372,12 +376,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             {user ? (
               <div className="flex items-center gap-1.5">
                 <button
-                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${toArabicDigits(notifs.actionableUnread)} تحتاج انتباهك` : "الإشعارات"} aria-expanded={notifsOpen}
+                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)} تحتاج انتباهك` : "الإشعارات"} aria-expanded={notifsOpen}
                   className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-0 text-ink hover:bg-sf2 ${notifsOpen ? "bg-sf2" : "bg-transparent"}`}
                 >
                   <Icon d={UI.bell} size={19} />
                   {notifs.actionableUnread > 0 && (
-                    <span data-testid="bell-badge" className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{toArabicDigits(notifs.actionableUnread)}</span>
+                    <span data-testid="bell-badge" className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)}</span>
                   )}
                 </button>
                 <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">
@@ -435,8 +439,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                       >
                         <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${st.tint} 12%, transparent)`, color: st.color }}><Icon d={st.icon} size={16} stroke={1.8} /></span>
                         <span className="min-w-0 flex-1">
-                          <span className="flex items-center gap-1.5"><span className="text-[13px] font-semibold text-ink">{normalizeReleaseWording(n.title)}</span>{unread && <span className="h-[7px] w-[7px] rounded-full bg-gold" />}</span>
-                          <span className="mt-[3px] block text-xs font-light leading-[1.7] text-ink2">{normalizeReleaseWording(n.body)}</span>
+                          <span className="flex items-center gap-1.5"><span className="text-[13px] font-semibold text-ink">{notificationDisplay(n.title, n.body).title}</span>{unread && <span className="h-[7px] w-[7px] rounded-full bg-gold" />}</span>
+                          <span className="mt-[3px] block text-xs font-light leading-[1.7] text-ink2">{notificationDisplay(n.title, n.body).body}</span>
                           <span className="mt-1 block text-[11px] text-fnt">{timeAgoAr(n.createdAt)}</span>
                         </span>
                       </button>

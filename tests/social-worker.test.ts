@@ -391,7 +391,7 @@ describe("worker: social jobs", () => {
       const { json } = await runCommentsJob({ videoTime: "2026-10-05T10:00:00Z", comments });
       expect(json.deliveredUnits).toBe(3);
       const line = dateLines()[0];
-      expect(line).toContain("تم استبعاد ٤ سجل من هذه الصفحة بسبب التاريخ: ٤ خارج الفترة المطلوبة");
+      expect(line).toContain("تم استبعاد ٤ سجلات من هذه الصفحة بسبب التاريخ: ٤ خارج الفترة المطلوبة");
       expect(line).toContain("وبقي ٣ داخلها");
       expect(line).not.toContain("وكلها داخل");
     });
@@ -782,7 +782,7 @@ describe("worker: social jobs", () => {
       expect(calls).toBe(2);
       expect(json.released).toBe(true);
       expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
-      expect(lines().some((line) => line.includes("تعذّر التحقق الآلي من ملاءمة ١٠ سجل"))).toBe(true);
+      expect(lines().some((line) => line.includes("تعذّر التحقق الآلي من ملاءمة ١٠ سجلات"))).toBe(true);
     });
 
     it("a review that times out delivers nothing: the job never delivers a row it could not check", async () => {
@@ -842,7 +842,7 @@ describe("worker: social jobs", () => {
       expect(json.done).toBe(true);
       expect(json.deliveredUnits).toBe(25);
       expect(json.settle.charged_credits).toBe(25 * 5);
-      expect(lines().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ٥ سجل في ورقة «غير مراجَع» ولم يُحتسب"))).toBe(true);
+      expect(lines().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع في ورقة «غير مراجَع»: ٥ سجلات، ولم يُحتسب ذلك عليك"))).toBe(true);
     });
 
     it("an empty post, an emoji and an ad are dropped before anything else", async () => {
@@ -930,7 +930,7 @@ describe("worker: social jobs", () => {
         // 12 + 5 verdicts = 17 delivered; the 3 rows with none are not part of the delivered count or the charge
         expect(json.deliveredUnits).toBe(17);
         expect(json.settle.charged_credits).toBe(17 * 5);
-        expect(customerLines()).toContain("تعذّر التحقق الآلي من ملاءمة ٣ سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.");
+        expect(customerLines()).toContain("تعذّر التحقق الآلي من ملاءمة ٣ سجلات الآن؛ وُضع ما لم يُتحقق منه في ورقة المراجعة دون احتساب.");
         for (const line of customerLines()) expect(line).not.toContain("شيت");
         expect(internalFailures()).toEqual([
           "review_failure step=0 call=1 retry=0 rows=20 code=none stop=max_tokens in=3325 out=4000 max_tokens=4000 reply_chars=2840 missing=8",
@@ -952,7 +952,7 @@ describe("worker: social jobs", () => {
         expect(seen.map((call) => [call.indexes.length, call.maxTokens])).toEqual([[20, undefined], [10, 6000]]);
         expect(json.released).toBe(true);
         expect(db.rpcCalls.some((call) => call.name === "settle_job_atomic")).toBe(false);
-        expect(customerLines()).toContain("تعذّر التحقق الآلي من ملاءمة ٢٠ سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.");
+        expect(customerLines()).toContain("تعذّر التحقق الآلي من ملاءمة ٢٠ سجل الآن؛ وُضع ما لم يُتحقق منه في ورقة المراجعة دون احتساب.");
         expect(internalFailures()).toEqual([
           "review_failure step=0 call=1 retry=0 rows=20 code=bad_reply stop=max_tokens in=3325 out=4000 max_tokens=4000 reply_chars=9120 missing=20",
           "review_failure step=0 call=2 retry=1 rows=10 code=bad_reply stop=max_tokens in=3325 out=4000 max_tokens=6000 reply_chars=9120 missing=10",
@@ -1231,7 +1231,7 @@ describe("worker: social jobs", () => {
         // only the 20 rows of the reviewed page are delivered and charged; the 20 of the next page were never reviewed
         expect(json.deliveredUnits).toBe(20);
         expect(json.settle.charged_credits).toBe(20 * 5);
-        expect(customer().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ٢٠ سجل في ورقة «غير مراجَع» ولم يُحتسب"))).toBe(true);
+        expect(customer().some((line) => line.includes("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع في ورقة «غير مراجَع»: ٢٠ سجل، ولم يُحتسب ذلك عليك"))).toBe(true);
         expect(internal().some((line) => line.includes("low_yield_stop=1"))).toBe(false);
         // the files: 20 delivered rows in the main sheet and the CSV; the 20 unreviewed rows in their own sheet, with the Arabic notice
         const workbook = new ExcelJS.Workbook();

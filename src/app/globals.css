@@ -52,6 +52,27 @@
   color-scheme: dark;
 }
 
+/* Wallet balance card: a dark teal card that looks the same in both themes (the page around it follows the theme). */
+:root,
+[data-theme="light"],
+[data-theme="dark"] {
+  --wallet-card: #123e45;
+  --wallet-deep: #0e3238;
+  --wallet-line: #1e4a51;
+  --wallet-pill: #1a4a51;
+  --wallet-ondark: #d6e2e1;
+  --wallet-ondark-mut: #b9cccb;
+  --wallet-ondark-faint: #9fbab8;
+  --wallet-amber: #e8c27a;
+  --wallet-dot: #f6f4ef;
+  --wallet-promo: #f6ebd6;
+  --wallet-promo-ink: #5a3d0a;
+  --wallet-promo-sub: #6b4a12;
+  --wallet-promo-line: #e1c995;
+  --wallet-promo-ok: #1f5a3d;
+  --wallet-promo-bad: #b5452f;
+}
+
 /* Admin area uses its own surface values (design: Diger Admin). */
 [data-theme="light"] [data-area="admin"],
 [data-theme="light"][data-area="admin"] {
@@ -106,6 +127,21 @@
   --color-info: var(--info);
   --color-bar: var(--bar);
   --color-bar2: var(--bar2);
+  --color-wallet-card: var(--wallet-card);
+  --color-wallet-deep: var(--wallet-deep);
+  --color-wallet-line: var(--wallet-line);
+  --color-wallet-pill: var(--wallet-pill);
+  --color-wallet-ondark: var(--wallet-ondark);
+  --color-wallet-ondark-mut: var(--wallet-ondark-mut);
+  --color-wallet-ondark-faint: var(--wallet-ondark-faint);
+  --color-wallet-amber: var(--wallet-amber);
+  --color-wallet-dot: var(--wallet-dot);
+  --color-wallet-promo: var(--wallet-promo);
+  --color-wallet-promo-ink: var(--wallet-promo-ink);
+  --color-wallet-promo-sub: var(--wallet-promo-sub);
+  --color-wallet-promo-line: var(--wallet-promo-line);
+  --color-wallet-promo-ok: var(--wallet-promo-ok);
+  --color-wallet-promo-bad: var(--wallet-promo-bad);
 
   --shadow-card: var(--shadow);
   --shadow-lift: var(--shadow);

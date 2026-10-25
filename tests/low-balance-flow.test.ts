@@ -33,7 +33,7 @@ describe("7. low balance: the states", () => {
     expect(text).toContain("تحجز ١١ نقطة");
     expect(text).toContain("التكلفة المتوقعة ٩ نقاط");
     expect(text).toContain("ينقصك ٦ نقاط");
-    expect(text).toContain("أقلل العدد إلى ١ سجل مقابل ٤ نقاط");
+    expect(text).toContain("أقلل العدد إلى سجل واحد مقابل ٤ نقاط");
     expect(text).toContain("اشحن ٥٠ جنيهًا");
     expect(text).toContain("نفس");
     expect(text).toContain("الخطة نفسها");

@@ -17,16 +17,18 @@ const TEMPLATES = [
   "job-done",
   "refund",
   "job-update",
+  "admin-topup-alert",
 ] as const;
 
 const SAMPLE_VARS: Record<(typeof TEMPLATES)[number], Record<string, string>> = {
   "welcome": { Name: "Magdy" },
-  "topup-received": { Name: "Magdy", AmountEgp: "500", Credits: "5000", Reference: "REF-1", CreatedAt: "13 أكتوبر 2026" },
-  "topup-approved": { Name: "Magdy", Credits: "5000", ConfirmedAmountEgp: "500", Reference: "REF-1", Balance: "5200" },
-  "topup-rejected": { Name: "Magdy", AmountEgp: "500", Reference: "REF-1", RejectReason: "الإيصال غير واضح" },
+  "topup-received": { Name: "Magdy", AmountEgp: "٥٠٠", Credits: "٥٠٠٠", ReviewNote: "غالبًا يتم الاعتماد خلال ١٥ دقيقة.", CreatedAt: "١٣ أكتوبر ٢٠٢٦" },
+  "topup-approved": { Name: "Magdy", Credits: "٥٠٠٠", ConfirmedAmountEgp: "٥٠٠", Balance: "٥٢٠٠" },
+  "topup-rejected": { Name: "Magdy", AmountEgp: "٥٠٠", RejectReason: "الإيصال غير واضح" },
   "job-done": { Name: "Magdy", JobTitle: "بحث تجريبي" },
   "refund": { Name: "Magdy", Points: "200", JobTitle: "بحث تجريبي", Reason: "تغطية ناقصة", Balance: "5400" },
   "job-update": { Name: "Magdy", Subject: "اكتمل طلبك جزئيًا", Heading: "اكتمل طلبك جزئيًا", Lead: "وصلك ٤٠ من ١٠٠.", DetailOne: "خُصم ٣٦٠ نقطة.", DetailTwo: "", ButtonLabel: "افتح طلباتي", JobURL: "https://diger.tech/dashboard/requests" },
+  "admin-topup-alert": { CustomerName: "Magdy", CustomerEmail: "magdy@example.com", Points: "٢٥٠٠", AmountEgp: "٢٥٠", RequestTime: "٢٥ أكتوبر ٢٠٢٦ في ١:٠٠ م", AdminURL: "https://diger.tech/admin/topups" },
 };
 
 for (const id of TEMPLATES) {

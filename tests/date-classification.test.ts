@@ -83,7 +83,7 @@ describe("the page line says exactly what the classification found", () => {
     const summary = summarizeRowDates(mixed, FROM, TO);
     const line = dateWindowPageEventAr(summary, mixed.length);
     expect(line).not.toContain("وكلها داخل");
-    expect(line).toContain("تم استبعاد ٨ سجل من هذه الصفحة بسبب التاريخ");
+    expect(line).toContain("تم استبعاد ٨ سجلات من هذه الصفحة بسبب التاريخ");
     expect(line).toContain("٥ خارج الفترة المطلوبة");
     expect(line).toContain("٣ بلا تاريخ نشر يمكن التحقق منه");
     expect(line).toContain("وبقي ١٢ داخلها");
@@ -93,7 +93,7 @@ describe("the page line says exactly what the classification found", () => {
   it("says all are inside only when every row is inside", () => {
     const inside = Array.from({ length: 7 }, () => ({ create_time: secs("2026-10-05T10:00:00Z") }));
     const line = dateWindowPageEventAr(summarizeRowDates(inside, FROM, TO), inside.length);
-    expect(line).toBe("فحصنا تواريخ ٧ سجل من هذه الصفحة وكلها داخل الفترة المطلوبة (أقدم تاريخ نشر ٢٠٢٦-١٠-٠٥ وأحدث تاريخ ٢٠٢٦-١٠-٠٥).");
+    expect(line).toBe("فحصنا تواريخ ٧ سجلات من هذه الصفحة وكلها داخل الفترة المطلوبة (أقدم تاريخ نشر ٢٠٢٦-١٠-٠٥ وأحدث تاريخ ٢٠٢٦-١٠-٠٥).");
   });
 
   it("the old-dates case: dates from April to July against a September–October window are reported as outside", () => {

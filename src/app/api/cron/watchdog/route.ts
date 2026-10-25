@@ -5,6 +5,7 @@ import { insertJobNotice, jobStalledNotice } from "../../../../lib/server/jobNot
 import { notifyStalledJobs } from "../../../../lib/server/jobStallNotifier";
 import { getRecipient, sendPlatformEmail } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
+import { toArabicDigits } from "../../../../lib/arabicDigits";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -90,10 +91,10 @@ export async function GET(req: NextRequest) {
               const balance = await getBalance(adminClient, job.user_id);
               await sendPlatformEmail("refund", rcpt.email, {
                 Name: rcpt.name,
-                Points: String(Math.round(releasedCredits)),
+                Points: toArabicDigits(Math.round(releasedCredits)),
                 JobTitle: "طلبك الذي توقف",
                 Reason: "توقف تنفيذ الطلب عن التقدم قبل اكتماله",
-                Balance: String(balance),
+                Balance: toArabicDigits(balance),
               }, `stalled-refund:${job.id}`);
             }
           } catch (emailErr) {

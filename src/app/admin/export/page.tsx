@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { adminFetch } from "@/lib/adminApi";
+import { adminDownload, adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
 import { columnsOf, EXPORT_MAX_ROWS, EXPORT_TABLES, exportFileName, rowsToCsv, type ExportTableId } from "@/lib/adminExport";
 
@@ -79,6 +79,25 @@ export default function AdminExportPage() {
     }
   }, [exportTable]);
 
+  /** ONE ZIP with the five CSV files and a manifest, built by the server (the route only SELECTs). A cut-short download fails as a whole: no file is saved. */
+  const runZip = useCallback(async () => {
+    setError("");
+    setBusy("zip");
+    setProgress("جارٍ تجهيز الملف…");
+    try {
+      const { rows } = await adminDownload("/api/admin/export/zip", "diger-backup.zip");
+      for (const table of EXPORT_TABLES) saveStamp(table.id);
+      setStamps(readStamps());
+      setProgress(rows !== null ? `اكتمل التنزيل: ${formatAr(rows)} صفًا في ملف واحد.` : "اكتمل التنزيل.");
+    } catch (e: any) {
+      setProgress("");
+      // an answer from the server already carries an Arabic message; a connection cut short before the end carries none
+      setError(typeof e?.status === "number" && e?.message ? e.message : "انقطع تجهيز الملف قبل اكتماله، ولم يُحفظ أي ملف. أعد المحاولة، أو نزّل الجداول واحدًا واحدًا.");
+    } finally {
+      setBusy("");
+    }
+  }, []);
+
   return (
     <div data-screen-label="Backup export" className="flex flex-col gap-3.5">
       <section className="rounded-[20px] border border-ln bg-sf p-[18px]" aria-labelledby="export-intro">
@@ -108,8 +127,14 @@ export default function AdminExportPage() {
           <button type="button" disabled={Boolean(busy)} onClick={() => run(EXPORT_TABLES.map((t) => t.id), "csv")} className="rounded-xl bg-ink px-4 py-2 text-sf disabled:opacity-50" data-testid="export-all">
             {busy === "all" ? "جارٍ التنزيل…" : "تنزيل الجداول الخمسة (CSV)"}
           </button>
+          <button type="button" disabled={Boolean(busy)} onClick={runZip} className="rounded-xl bg-ink px-4 py-2 text-sf disabled:opacity-50" data-testid="export-zip">
+            {busy === "zip" ? "جارٍ تجهيز الملف…" : "تنزيل الكل (ZIP)"}
+          </button>
           {progress && <span className="text-[13px] text-mut" role="status">{progress}</span>}
         </div>
+        <p className="mb-0 mt-2.5 text-xs leading-[1.9] text-mut">
+          «تنزيل الكل (ZIP)» ملف واحد يضم الجداول الخمسة بصيغة CSV، ومعه ملف بيان المحتويات المكتوب أخيرًا بعدد صفوف كل جدول: إن غاب من الأرشيف فالتنزيل لم يكتمل.
+        </p>
         {error && <p role="alert" className="mb-0 mt-2.5 text-[13px] text-bad">{error}</p>}
       </section>
     </div>

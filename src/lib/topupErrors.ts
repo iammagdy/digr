@@ -1,3 +1,5 @@
+import { topupAmountMessageAr } from "./topupAmount";
+
 export type TopupReasonCode =
   | "payment_details_not_configured"
   | "receipt_missing"
@@ -9,6 +11,9 @@ export type TopupReasonCode =
   | "email_not_verified"
   | "invalid_file_owner"
   | "network_offline"
+  | "amount_invalid"
+  | "amount_below_min"
+  | "amount_above_max"
   | "server_error";
 
 export const TOPUP_ERROR_MESSAGES: Record<TopupReasonCode, string> = {
@@ -22,5 +27,9 @@ export const TOPUP_ERROR_MESSAGES: Record<TopupReasonCode, string> = {
   email_not_verified: "يرجى تأكيد بريدك الإلكتروني أولاً قبل شحن الرصيد.",
   invalid_file_owner: "مسار ملف الإيصال غير صالح.",
   network_offline: "أنت غير متصل بالإنترنت. يرجى التحقق من اتصالك والمحاولة مجدداً.",
+  // the amount limits are written from the top-up config; the server states them again with the live credit value (topupAmountMessageAr)
+  amount_invalid: topupAmountMessageAr("invalid", 0.1),
+  amount_below_min: topupAmountMessageAr("below_min", 0.1),
+  amount_above_max: topupAmountMessageAr("above_max", 0.1),
   server_error: "تعذر تسجيل طلب الشحن بسبب مشكلة مؤقتة. يرجى المحاولة مرة أخرى.",
 };

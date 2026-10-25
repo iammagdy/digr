@@ -19,13 +19,12 @@ describe("QA Excel fixes", () => {
     expect(resolveCompanyLinks({ website: "https://acme.com" }).website).toBe("https://acme.com");
   });
 
-  it("the record id is a plain number, the city is never the country, the phone stays text", async () => {
+  it("the workbook carries no record id, the city is never the country, the phone stays text", async () => {
     const { sheet, col } = await companySheet([
       { id: "rec_1", company_name: "Delta Power", website: "https://youtube.com/@delta", city: "Egypt", phone: 20123456789 },
       { id: "rec_2", company_name: "Nile Energy", website: "https://nile.example", location: "Cairo, Egypt" },
     ]);
-    expect(sheet.getRow(2).getCell(col("معرّف السجل")).value).toBe(1);
-    expect(sheet.getRow(3).getCell(col("معرّف السجل")).value).toBe(2);
+    expect(col("معرّف السجل")).toBe(-1); // owner decision: the record id is not in the customer workbook
     expect(sheet.getRow(2).getCell(col("المدينة")).value).toBe("غير متاح");
     expect(sheet.getRow(3).getCell(col("المدينة")).value).toBe("القاهرة");
     expect(sheet.getRow(2).getCell(col("الموقع الإلكتروني")).value).toBe("غير متاح");

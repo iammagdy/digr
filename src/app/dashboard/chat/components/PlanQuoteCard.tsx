@@ -18,7 +18,7 @@ import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
 import { balanceVerdictAr } from "@/lib/balanceVerdict";
 import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
 import { priceVsHoldLineAr, unitPriceLineAr } from "@/lib/planExplanation";
-import { planCountLineAr, planCountPartsAr } from "@/lib/planCounts";
+import { countPlainAr, planCountLineAr, planCountPartsAr } from "@/lib/planCounts";
 import { customerFacingCapabilityLabel } from "@/lib/customerFacingRequestLabels";
 import { planPdfLineAr } from "@/lib/methodologyOffer";
 
@@ -158,6 +158,7 @@ const SECONDARY_BTN =
 const EDIT_PLAN_BTN_LABEL = "تعديل الخطة";
 export const _LEGACY_EDIT_BTN_LABEL = "تعديل";
 
+import { planCountryParamKeys } from "@/lib/companyPlanEdits";
 import { extractParamDisplayString, extractInterpretedParameters, industryDisplayLabelAr, planActivityLabelAr, planEditScopeError, scopePartsAr, socialContentTopicFromTitle, valueOrEmpty } from "@/lib/planParameters";
 export { extractParamDisplayString, extractInterpretedParameters };
 
@@ -251,7 +252,8 @@ export default function PlanQuoteCard({
       })
     : null;
   // A country is part of the plan only for companies and decision makers, or for a social plan that carries a region.
-  const hasCountryField = isCompanyPlan || isPeoplePlan || Boolean(primaryItem?.params?.region);
+  // Any plan that carries a country or location parameter offers the field (a company or decision-makers search always does).
+  const hasCountryField = isCompanyPlan || isPeoplePlan || planCountryParamKeys(primaryItem?.params).length > 0;
   const planComplete = isQuotePlanComplete(quote.items) && quoteScopeGaps(quote.items).length === 0;
   const approvalState = { ...baseApprovalState, canApprove: baseApprovalState.canApprove && planComplete };
   const expired = !approvalState.canApprove;
@@ -412,7 +414,7 @@ export default function PlanQuoteCard({
 
       {quote.afterSample && (
         <p className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9] text-ink2" data-testid="plan-after-sample">
-          هذا هو الباقي من طلبك بعد العينة: {formatAr(quote.afterSample.remainingUnits)} سجل دون ما وصلك فيها ({formatAr(quote.afterSample.deliveredInSample)} سجل، خُصم عنها {pointsAr(quote.afterSample.sampleChargedPoints)}). الإجمالي التقريبي مع العينة حوالي {pointsAr(quote.afterSample.approximateTotalPoints)}.
+          هذا هو الباقي من طلبك بعد العينة: {countPlainAr(quote.afterSample.remainingUnits, "records")} دون ما وصلك فيها ({countPlainAr(quote.afterSample.deliveredInSample, "records")}، خُصم عنها {pointsAr(quote.afterSample.sampleChargedPoints)}). الإجمالي التقريبي مع العينة حوالي {pointsAr(quote.afterSample.approximateTotalPoints)}.
         </p>
       )}
 
@@ -611,12 +613,12 @@ export default function PlanQuoteCard({
                 type="button"
                 data-testid="edit-plan-downscaled-btn"
                 id={`edit-plan-downscaled-btn-${quote.quoteId}`}
-                aria-label={`البدء بـ ${formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط`}
+                aria-label={`البدء بـ ${countPlainAr(quote.downscaledOffer.maxAffordableUnits, "records")} فقط`}
                 onClick={() => onAcceptDownscaled && onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
                 disabled={quote.isDependent}
                 className={`${SECONDARY_BTN} min-h-11`}
               >
-                البدء بـ {formatAr(quote.downscaledOffer.maxAffordableUnits)} سجل فقط
+                البدء بـ {countPlainAr(quote.downscaledOffer.maxAffordableUnits, "records")} فقط
               </button>
             )}
             {!isEditing && (
@@ -644,7 +646,7 @@ export default function PlanQuoteCard({
 
       {!locked && quote.duplicateOf && onOpenPrevious ? (
         <div data-testid="plan-duplicate-warning" role="status" className="mb-0 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.9] text-amber-950">
-          <p className="m-0"><strong>عندك نفس الطلب ده.</strong> وصلتك نتيجته قبل كده ({formatAr(quote.duplicateOf.deliveredUnits)} سجل)، وفتحها لا يكلّفك شيئًا.</p>
+          <p className="m-0"><strong>عندك نفس الطلب ده.</strong> وصلتك نتيجته قبل كده ({countPlainAr(quote.duplicateOf.deliveredUnits, "records")})، وفتحها لا يكلّفك شيئًا.</p>
           <button type="button" data-testid="plan-duplicate-open" onClick={() => onOpenPrevious({ jobId: quote.duplicateOf!.jobId, conversationId: quote.duplicateOf!.conversationId })} className={`${SECONDARY_BTN} min-h-11`}>افتح النتيجة القديمة</button>
         </div>
       ) : null}
@@ -721,7 +723,7 @@ export default function PlanQuoteCard({
                 disabled={isStarting || quote.isDependent}
                 className={`${SECONDARY_BTN} min-h-11`}
               >
-                عينة أولًا: {formatAr(quote.explorationOffer.sampleUnits)} سجل بحجز {pointsAr(quote.explorationOffer.samplePoints)}
+                عينة أولًا: {countPlainAr(quote.explorationOffer.sampleUnits, "records")} بحجز {pointsAr(quote.explorationOffer.samplePoints)}
               </button>
             )}
           </div>

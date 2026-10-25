@@ -1,5 +1,6 @@
 import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
+import { countPlainAr } from "./planCounts";
 
 /**
  * The low-balance conversation. Every sentence and number comes from code (the quote and the balance), never from
@@ -51,7 +52,7 @@ export function lowBalanceMessageAr(input: LowBalanceInput): string | null {
   const topUp = `اشحن ${n(egp)} جنيهًا تقريبًا ثم ارجع إلى هذه المحادثة، وستجد الخطة نفسها بانتظار موافقتك دون أن تبدأ من جديد.`;
   if (state === "can_reduce") {
     const offer = input.downscaledOffer!;
-    return `${head} عندك خياران: أقلل العدد إلى ${n(offer.maxAffordableUnits)} سجل مقابل ${pointsAr(offer.affordableQuotedPoints, n)} تناسب رصيدك الآن، أو ${topUp}`;
+    return `${head} عندك خياران: أقلل العدد إلى ${countPlainAr(offer.maxAffordableUnits, "records")} مقابل ${pointsAr(offer.affordableQuotedPoints, n)} تناسب رصيدك الآن، أو ${topUp}`;
   }
   return `${head} لا يوجد عدد أقل يناسب رصيدك الحالي، فالخيار هو أن ${topUp}`;
 }

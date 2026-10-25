@@ -143,14 +143,16 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
   return (
     <section className="mt-3.5 rounded-2xl border border-ln bg-sf p-4" aria-label="أسئلة توضيح الطلب" dir="rtl">
       <p className="m-0 text-[14px] leading-7 text-ink">{displayIntro}</p>
-      <div className="mt-3 flex items-center justify-between gap-3">
-        <span className="text-xs text-mut" data-testid="clarification-progress">سؤال {toArabicDigits(step + 1)} من {toArabicDigits(qs.length)}</span>
-        {qs.length > 1 && (
+      {/* The server sends ONE question per panel and the next panel is a new message, so a counter on a single question would say «سؤال ١ من ١» three times in a row.
+          The counter and «السابق» exist only when this panel really holds several questions. */}
+      {qs.length > 1 && (
+        <div className="mt-3 flex items-center justify-between gap-3">
+          <span className="text-xs text-mut" data-testid="clarification-progress">سؤال {toArabicDigits(step + 1)} من {toArabicDigits(qs.length)}</span>
           <div className="flex flex-1 flex-row-reverse gap-1" aria-hidden="true">
             {qs.map((q, index) => <span key={q.id} className="h-1 flex-1 rounded-full" style={{ background: index <= step ? "var(--gold)" : "var(--ln)" }} />)}
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {qs.length > 1 && qs.some((q, index) => index !== step && (answers[q.id]?.value || answers[q.id]?.skipped)) && (
         <ul data-testid="clarification-answers" className="m-0 mt-3 flex list-none flex-col gap-1 p-0">
           {qs.map((q, index) => {

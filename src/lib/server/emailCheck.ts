@@ -49,7 +49,7 @@ export async function probeSendEmailFunction(
   fetcher: typeof fetch = fetch,
 ): Promise<FunctionProbe> {
   const base = (env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/+$/, "");
-  const key = env.SUPABASE_SERVICE_ROLE_KEY || "";
+  const key = (env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   if (!base || !key) return "unknown";
   try {
     const res = await fetcher(`${base}/functions/v1/send-email`, {
