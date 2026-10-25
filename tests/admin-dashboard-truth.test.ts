@@ -100,11 +100,11 @@ describe("success rate and released points", () => {
 });
 
 describe("test accounts", () => {
-  it("lists the two owner test accounts and the @digr.local domain", () => {
-    expect([...TEST_ACCOUNT_EMAILS].sort()).toEqual(["iam.magdy+1@outlook.com", "magdy.saber@outlook.com"]);
+  it("lists the two owner test accounts and the @digr.local domain (the owner's own account is not a test account)", () => {
+    expect([...TEST_ACCOUNT_EMAILS].sort()).toEqual(["iam.magdy+1@outlook.com", "iam.magdy@outlook.com"]);
     expect(TEST_ACCOUNT_DOMAIN).toBe("@digr.local");
     expect(isTestAccountEmail("iam.magdy+1@outlook.com")).toBe(true);
-    expect(isTestAccountEmail("MAGDY.SABER@outlook.com")).toBe(true);
+    expect(isTestAccountEmail("MAGDY.SABER@outlook.com")).toBe(false);
     expect(isTestAccountEmail("test_concurrency@digr.local")).toBe(true);
   });
   it("never lists the real guest", () => {
@@ -270,7 +270,7 @@ function seed() {
       { id: HALA, email: "hala.elalfy2026@gmail.com", name: "هالة" },
       { id: GUEST, email: "guest@example.com", name: "ضيف" },
       { id: TEST_USER, email: "test_concurrency@digr.local", name: "اختبار" },
-      { id: TEST_MAGDY, email: "magdy.saber@outlook.com", name: "مجدي" },
+      { id: TEST_MAGDY, email: "iam.magdy@outlook.com", name: "مجدي" },
     ],
   };
 }
