@@ -1,4 +1,5 @@
 import { pointsAr } from "@/lib/pointsFormat";
+import { countPlainAr, duplicateRecordsAr } from "@/lib/planCounts";
 import { JOB_MAX_POINTS_CAP } from "../../../../lib/jobPointsCap";
 import { usesPostLevelReview } from "../../../../lib/server/postLevelReview";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, maxPagesForJob, POST_REVIEW_BUDGET_NOTE_AR, type CallCapReason } from "../../../../lib/server/providerCallCaps";
@@ -498,7 +499,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `أُعيد استخدام ${toArabicDigits(retrySeedResult.seed.rows.length)} سجل جُمعت في المحاولة السابقة، وسنجلب المتبقي فقط.`,
+          message: `أُعيد استخدام ${countPlainAr(retrySeedResult.seed.rows.length, "records")} جُمعت في المحاولة السابقة، وسنجلب المتبقي فقط.`,
           units: retrySeedResult.seed.rows.length,
           event_type: "progress",
         });
@@ -909,7 +910,7 @@ export async function POST(req: NextRequest) {
           user_id: userId,
           message: dateSummary
             ? dateWindowPageEventAr(dateSummary, providerRows.length, { videoBasis: videoBasisRows, approximate: countApproximateDates(providerRows) })
-            : `تم استبعاد ${toArabicDigits(dateFiltered.excludedCount)} سجل لوقوع تاريخه خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
+            : `تم استبعاد ${countPlainAr(dateFiltered.excludedCount, "records")} لوقوع التاريخ خارج الفترة المطلوبة أو لعدم توفر تاريخ نشر يمكن التحقق منه.`,
           units: effectiveDelivered,
           event_type: "progress",
         });
@@ -1027,7 +1028,7 @@ export async function POST(req: NextRequest) {
           await adminClient.from("job_events").insert({
             job_id: jobId,
             user_id: userId,
-            message: `تم تدقيق السجلات واستبعاد ${toArabicDigits(excludedCount)} سجل مكرر.`,
+            message: `تم تدقيق السجلات واستبعاد ${duplicateRecordsAr(excludedCount)}.`,
             units: effectiveDelivered,
             event_type: "progress",
           });
@@ -1209,7 +1210,7 @@ export async function POST(req: NextRequest) {
             await adminClient.from("job_events").insert({
               job_id: jobId,
               user_id: userId,
-              message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(unreviewed)} سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.`,
+              message: `تعذّر التحقق الآلي من ملاءمة ${countPlainAr(unreviewed, "records")} الآن؛ وُضع ما لم يُتحقق منه في ورقة المراجعة دون احتساب.`,
               units: effectiveDelivered,
               event_type: "info",
             });
@@ -1321,8 +1322,8 @@ export async function POST(req: NextRequest) {
                 job_id: jobId,
                 user_id: userId,
                 message: heldByBudget > 0
-                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} تعليق في ورقة «غير مراجَع» ولم يُحتسب.`
-                  : `وُضع ${toArabicDigits(heldRows)} تعليق في ورقة المراجعة ولم يُحتسب لعدم التأكد من موضوع ${selectionUnit === "post" ? "منشوراتها" : "فيديوهاتها"}.`,
+                  ? `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع في ورقة «غير مراجَع»: ${countPlainAr(heldByBudget, "comments")}، ولم يُحتسب ذلك عليك.`
+                  : `وُضع في ورقة المراجعة: ${countPlainAr(heldRows, "comments")}، ولم يُحتسب ذلك لعدم التأكد من موضوع ${selectionUnit === "post" ? "منشوراتها" : "فيديوهاتها"}.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });
@@ -1398,7 +1399,7 @@ export async function POST(req: NextRequest) {
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: userId,
-                message: `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} سجل في ورقة «غير مراجَع» ولم يُحتسب.`,
+                message: `وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع في ورقة «غير مراجَع»: ${countPlainAr(heldByBudget, "records")}، ولم يُحتسب ذلك عليك.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });
@@ -1414,7 +1415,7 @@ export async function POST(req: NextRequest) {
               await adminClient.from("job_events").insert({
                 job_id: jobId,
                 user_id: userId,
-                message: `تعذّر التحقق الآلي من ملاءمة ${toArabicDigits(heldByFailure)} سجل الآن؛ وُضعت في ورقة المراجعة ولم تُحتسب.`,
+                message: `تعذّر التحقق الآلي من ملاءمة ${countPlainAr(heldByFailure, "records")} الآن؛ وُضع ما لم يُتحقق منه في ورقة المراجعة دون احتساب.`,
                 units: effectiveDelivered,
                 event_type: "info",
               });
@@ -1654,7 +1655,7 @@ export async function POST(req: NextRequest) {
           job_id: jobId,
           user_id: userId,
           message: [
-            `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(providerRows.length)} سجل`,
+            `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${countPlainAr(providerRows.length, "records")}`,
             currentStep > 0 && receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(receivedSoFar)}` : null,
             "الجديد ٠",
             dateFiltered.excludedCount ? `${DATE_EXCLUDED_LABEL} ${toArabicDigits(dateFiltered.excludedCount)}` : null,
@@ -1826,7 +1827,7 @@ export async function POST(req: NextRequest) {
             ? "توقف جلب صفحات إضافية بعد بلوغ الحد اليومي الآمن"
             : providerFailedAfterDelivery
               ? "توقف جلب صفحات إضافية لتعذر الوصول إلى المصدر"
-              : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${toArabicDigits(providerRows.length)} سجل`,
+              : `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${countPlainAr(providerRows.length, "records")}`,
           currentStep > 0 && receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(receivedSoFar)}` : null,
           `الجديد ${toArabicDigits(acceptedRows.length)}`,
           `الإجمالي ${toArabicDigits(recordedDeliveredUnits)}`,
@@ -2377,7 +2378,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم إكمال استخراج ${toArabicDigits(finalRows.length)} سجل بنجاح وحفظ ملفات النتائج.`,
+          message: `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,
@@ -2420,9 +2421,9 @@ export async function POST(req: NextRequest) {
             : callCapReason === "source_repeats"
             ? CALL_CAP_NOTE_AR.source_repeats
             : dateSentence
-            ? `${dateSentence}${excluded > 0 ? ` واستُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.` : ""}`
+            ? `${dateSentence}${excluded > 0 ? ` واستُبعد ${countPlainAr(excluded, "records")} بسبب عدم المطابقة أو التكرار، ولا يُحتسب عليك.` : ""}`
             : excluded > 0
-            ? `استُبعد ${toArabicDigits(excluded)} سجل لأنه لا يطابق طلبك أو مكرر، ولا يُحتسب عليك.`
+            ? `استُبعد ${countPlainAr(excluded, "records")} بسبب عدم المطابقة أو التكرار، ولا يُحتسب عليك.`
             : callCapReason
               ? stopNoteAr(callCapReason)
               : "لم يتوفر في المصدر عدد أكبر يطابق طلبك.";

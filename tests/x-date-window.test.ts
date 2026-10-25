@@ -130,6 +130,6 @@ describe("the page line and the honest sentence", () => {
 
   it("a page fully inside the window says nothing was dropped", () => {
     const summary = summarizeRowDates([{ published_at: "2026-06-20" }, { published_at: "2026-07-01" }], "2026-06-11", "2026-07-19");
-    expect(dateWindowPageEventAr(summary, 2)).toBe("فحصنا تواريخ ٢ سجل من هذه الصفحة وكلها داخل الفترة المطلوبة (أقدم تاريخ نشر ٢٠٢٦-٠٦-٢٠ وأحدث تاريخ ٢٠٢٦-٠٧-٠١).");
+    expect(dateWindowPageEventAr(summary, 2)).toBe("فحصنا تواريخ سجلين من هذه الصفحة وكلها داخل الفترة المطلوبة (أقدم تاريخ نشر ٢٠٢٦-٠٦-٢٠ وأحدث تاريخ ٢٠٢٦-٠٧-٠١).");
   });
 });

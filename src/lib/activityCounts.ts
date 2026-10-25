@@ -19,6 +19,24 @@ export interface ActivityCounts {
   excluded: number;
 }
 
+/** The records of a page line: «استلمنا ٥٠ سجل», and the words a small count is written with («سجل واحد», «سجلين»). */
+const receivedAfter = (text: string): number | null => {
+  const digits = text.match(/استلمنا\s+(\d+)/);
+  if (digits && digits[1]) return parseInt(digits[1], 10);
+  if (/استلمنا\s+سجل\s+واحد/.test(text)) return 1;
+  if (/استلمنا\s+سجلين/.test(text)) return 2;
+  return null;
+};
+
+/** The repeated records the audit line removed: «استبعاد ٤ سجل مكرر», «٣ سجلات مكررة», «سجل واحد مكرر», «سجلين مكررين». */
+const auditExcluded = (text: string): number | null => {
+  const digits = text.match(/استبعاد\s+(\d+)\s+سجل(?:ات)?\s+مكرر/);
+  if (digits && digits[1]) return parseInt(digits[1], 10);
+  if (/استبعاد\s+سجل\s+واحد\s+مكرر/.test(text)) return 1;
+  if (/استبعاد\s+سجلين\s+مكررين/.test(text)) return 2;
+  return null;
+};
+
 const numberAfter = (text: string, label: string): number | null => {
   const match = text.match(new RegExp(`${label}\\s+(\\d+)`));
   return match && match[1] ? parseInt(match[1], 10) : null;
@@ -35,7 +53,7 @@ export function summarizeActivityCounts(events: Array<{ textAr: string }> | null
   for (const event of events || []) {
     const text = normalizeEasternArabicDigits(String(event.textAr || ""));
     if (/^\s*الصفحة\s+\d+/.test(text)) {
-      const got = numberAfter(text, "استلمنا");
+      const got = receivedAfter(text);
       if (got !== null) received = (received ?? 0) + got;
       const total = numberAfter(text, RECEIVED_SO_FAR_LABEL);
       if (total !== null) runningTotal = Math.max(runningTotal ?? 0, total);
@@ -49,8 +67,8 @@ export function summarizeActivityCounts(events: Array<{ textAr: string }> | null
       const byDate = numberAfter(text, DATE_EXCLUDED_LABEL);
       if (byDate !== null) fromPages += byDate;
     }
-    const audit = text.match(/استبعاد\s+(\d+)\s+سجل\s+مكرر/);
-    if (audit && audit[1]) fromAudit += parseInt(audit[1], 10);
+    const audit = auditExcluded(text);
+    if (audit !== null) fromAudit += audit;
   }
   // Per-page lines already include every exclusion of that page, so they win over the separate audit line.
   return { received: runningTotal !== null ? Math.max(runningTotal, received ?? 0) : received, underReview, excluded: fromPages > 0 ? fromPages : fromAudit };

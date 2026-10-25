@@ -71,6 +71,6 @@ describe("audit phase 3: a released hold is «حجز مؤقت مُحرَّر», 
     expect(normalizeReleaseWording("أعدنا ٣٠ نقطة محجوزة كاملة إلى رصيدك دون أي خصم.")).toBe(`${RELEASED} ٣٠ نقطة كاملًا دون أي خصم.`);
     expect(normalizeReleaseWording("خُصم ١٠٠ نقطة. وعادت ٤٨ نقطة إلى رصيدك.")).toBe(`خُصم ١٠٠ نقطة. وحجز مؤقت مُحرَّر ٤٨ نقطة.`);
     expect(normalizeReleaseWording("وإذا تعذر استكماله تعود نقاطك المحجوزة كاملة.")).toBe(`وإذا تعذر استكماله فهو ${RELEASED} كاملًا.`);
-    expect(readFileSync("src/components/app/AppShell.tsx", "utf8")).toContain("normalizeReleaseWording(n.body)");
+    expect(readFileSync("src/components/app/AppShell.tsx", "utf8")).toContain("notificationDisplay(n.title, n.body).body");
   });
 });

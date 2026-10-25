@@ -170,10 +170,12 @@ describe("audit phase 2: the question card has one primary action (point 16)", (
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>السابق<\/button>/);
     expect(markup).toContain("تخطّي السؤال");
   });
-  it("a single question shows no previous button either", () => {
+  it("a panel with ONE question shows no counter and no previous button (the next question is a new panel, so «سؤال ١ من ١» would repeat three times)", () => {
     const single = html(createElement(DetailsBlanks, { questions: [questions[0]], onComplete: () => {} }));
-    expect(single).toContain("سؤال ١ من ١");
+    expect(single).not.toContain("سؤال ١ من ١");
+    expect(single).not.toContain('data-testid="clarification-progress"');
     expect(single).not.toContain("السابق");
+    expect(single.match(/إجابة ومتابعة/g)?.length).toBe(1);
   });
   it("answers already given come back as a list with an edit button", () => {
     const source = src("src/app/dashboard/chat/components/DetailsBlanks.tsx");
@@ -239,7 +241,7 @@ describe("audit phase 2: results table (points 8 and 23)", () => {
   });
   it("the workbook headers and widths come from the same list", () => {
     const generator = src("src/functions/shared/fileGenerators.ts");
-    expect(generator).toContain("COMPANY_COLUMNS");
+    expect(generator).toContain("workbookCompanyColumns");
     expect(generator).toContain("formatPhoneDisplay");
   });
   it("availability columns go last and useful columns first", () => {

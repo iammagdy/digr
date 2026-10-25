@@ -3,7 +3,7 @@ import { decisionMakersPerRequestLine, estimateMission, type EstimateInput } fro
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { DECISION_MAKER_UNIT_PRICES_POINTS } from "../functions/shared/decisionMakerPricing";
 import { volumeForPointsCap } from "./pointsCap";
-import { countAr } from "./planCounts";
+import { countPlainAr, countAr } from "./planCounts";
 import { FAILURE_STATE_AR } from "./publicCopy";
 
 /**
@@ -55,21 +55,29 @@ export interface CapacityLine {
   records: number;
 }
 
-/** How many records of each kind a number of points can reserve, under it (the hold includes the buffer). */
+/**
+ * How many records of each kind a number of points DELIVERS at the real price of one delivered record: ceil(records x unit price) stays within the
+ * points. The 15% buffer is NOT in it (it is held on a plan and released again, never charged), so 10,020 points is 10,020 / 3.168, about 3,162
+ * companies (3,163 would cost 10,021). One basis for every line (companies, posts, comments, people).
+ */
 export function capacityForPoints(points: number): CapacityLine[] {
-  const lines: CapacityLine[] = buildPriceRows().map((row) => ({ id: row.id, labelAr: row.labelAr, unitLabelAr: row.unitLabelAr, records: volumeForPointsCap(points, row.unitPricePoints, DEFAULT_PRICING_SETTINGS.safetyBuffer) }));
+  const lines: CapacityLine[] = buildPriceRows().map((row) => ({ id: row.id, labelAr: row.labelAr, unitLabelAr: row.unitLabelAr, records: volumeForPointsCap(points, row.unitPricePoints, 0) }));
   const person = PEOPLE_PRICE_POINTS.basePerson + PEOPLE_PRICE_POINTS.workEmail + PEOPLE_PRICE_POINTS.phone;
-  lines.push({ id: "people", labelAr: "صنّاع قرار مع البريد والهاتف", unitLabelAr: "شخص", records: volumeForPointsCap(points, person, DEFAULT_PRICING_SETTINGS.safetyBuffer) });
+  lines.push({ id: "people", labelAr: "صنّاع قرار مع البريد والهاتف", unitLabelAr: "شخص", records: volumeForPointsCap(points, person, 0) });
   return lines;
 }
 
-/** How many records of each kind an amount can reserve, under that amount. */
+/** How many records of each kind an amount delivers, at the real price of one delivered record (the same basis as `capacityForPoints`). */
 export function capacityForAmount(amountEgp: number): CapacityLine[] {
   return capacityForPoints(pointsForAmountEgp(amountEgp));
 }
 
+const UNIT_KIND: Record<string, "comments" | "posts" | "videos" | "companies" | "people"> = { تعليق: "comments", منشور: "posts", فيديو: "videos", شركة: "companies", شخص: "people" };
+
 export function capacityLineAr(line: CapacityLine): string {
-  return line.records > 0 ? `حتى حوالي ${toArabicDigits(line.records)} ${line.unitLabelAr}` : "لا يكفي لسجل واحد";
+  const kind = UNIT_KIND[line.unitLabelAr];
+  // the unit takes its right plural after a small number («٥ شركات»), never «٥ شركة»
+  return line.records > 0 ? `حتى حوالي ${kind ? countPlainAr(line.records, kind) : `${toArabicDigits(line.records)} ${line.unitLabelAr}`}` : "لا يكفي لسجل واحد";
 }
 
 export const PRICING_FAQ_AR: Array<[string, string]> = [
@@ -93,8 +101,8 @@ export interface PriceStripItem { id: string; requestAr: string; points: number;
 
 export function homePriceStrip(): PriceStripItem[] {
   const specs: Array<{ id: string; requestAr: string; input: EstimateInput }> = [
-    { id: "companies", requestAr: countAr(5, "companies"), input: { kind: "companies", volume: 5 } },
-    { id: "x-posts", requestAr: `${countAr(100, "posts")} على إكس`, input: { kind: "posts", platform: "x", volume: 100 } },
+    { id: "companies", requestAr: countPlainAr(5, "companies"), input: { kind: "companies", volume: 5 } },
+    { id: "x-posts", requestAr: countPlainAr(100, "tweets"), input: { kind: "posts", platform: "x", volume: 100 } },
   ];
   const out: PriceStripItem[] = [];
   for (const spec of specs) {

@@ -314,7 +314,7 @@ export default function WalletPage() {
             ))}
             {available === null && [0, 1, 2].map((slot) => <Skeleton key={slot} className="h-[72px]" />)}
           </div>
-          <p className="m-0 text-[11px] font-light leading-[1.7] text-mut">الأرقام من أسعار النقاط الحالية نفسها؛ وسعر خطتك الدقيق يظهر قبل أن توافق.</p>
+          <p className="m-0 text-[11px] font-light leading-[1.7] text-mut">الأرقام تقدير بسعر السجل المُسلَّم نفسه، دون احتياطي الحجز؛ وسعر خطتك الدقيق يظهر قبل أن توافق.</p>
         </div>
 
         <PromoCodeBox onRedeemed={() => { void refreshBalance(); void loadLedger(); }} />

@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
+import { countPlainAr } from "../planCounts";
 import type { RowDateSummary } from "./dateRangeFilter";
 
 /** Said when every row of a page has a date and every date is outside the window the customer set. */
@@ -42,14 +43,14 @@ export function dateWindowPageEventAr(summary: RowDateSummary, returned: number,
     ? ` ${APPROXIMATE_DATES_SENTENCE_AR} (${toArabicDigits(options.approximate)} سجل).`
     : "";
   if (dropped === 0) {
-    return `فحصنا تواريخ ${toArabicDigits(returned)} سجل من هذه الصفحة وكلها داخل الفترة المطلوبة (${range}).${basis}${approximate}`;
+    return `فحصنا تواريخ ${countPlainAr(returned, "records")} من هذه الصفحة وكلها داخل الفترة المطلوبة (${range}).${basis}${approximate}`;
   }
   const parts: string[] = [];
   if (summary.outside > 0) parts.push(`${toArabicDigits(summary.outside)} خارج الفترة المطلوبة`);
   if (summary.missing > 0) parts.push(`${toArabicDigits(summary.missing)} بلا تاريخ نشر يمكن التحقق منه`);
   const remaining = summary.inside > 0 ? `، وبقي ${toArabicDigits(summary.inside)} داخلها` : "";
   const verdict = allRowsOutsideWindow(summary, returned) ? ` ${OUTSIDE_WINDOW_SENTENCE_AR}.` : "";
-  return `تم استبعاد ${toArabicDigits(dropped)} سجل من هذه الصفحة بسبب التاريخ: ${parts.join(" و")}${remaining}. ${range}.${verdict}${basis}${approximate}`;
+  return `تم استبعاد ${countPlainAr(dropped, "records")} من هذه الصفحة بسبب التاريخ: ${parts.join(" و")}${remaining}. ${range}.${verdict}${basis}${approximate}`;
 }
 
 /**
@@ -62,7 +63,7 @@ export function dateDropShortfallSentenceAr(received: number | null, dateDropped
   if (received !== null && received >= dateDropped && dateDropped * 2 >= received) {
     return `استُبعد ${dropped} من ${toArabicDigits(received)} سجلاً وصل لأن تاريخه خارج الفترة التي حددتها أو لأنه بلا تاريخ نشر يمكن التحقق منه، ولا يُحتسب عليك؛ ولعدد أكبر وسّع الفترة.`;
   }
-  return `استُبعد ${dropped} سجل لأن تاريخه خارج الفترة التي حددتها أو لأنه بلا تاريخ نشر يمكن التحقق منه، ولا يُحتسب عليك.`;
+  return `استُبعد ${countPlainAr(Number(dropped), "records")} لأن التاريخ خارج الفترة التي حددتها أو بلا تاريخ نشر يمكن التحقق منه، ولا يُحتسب عليك.`;
 }
 
 /**

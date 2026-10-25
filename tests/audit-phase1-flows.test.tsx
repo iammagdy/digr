@@ -412,12 +412,12 @@ describe("point 10: the wallet estimate uses the real unit prices", () => {
     expect(wallet).toContain("capacityForPoints(available)");
   });
 
-  it("the companies line is exactly what the shared pricing function says the balance can reserve", () => {
+  it("the companies line is exactly what the shared pricing function says the balance DELIVERS (the real unit price, no 15% reserve)", () => {
     const company = buildPriceRows().find((row) => row.id === "companies")!;
     expect(company.unitPricePoints).toBe(3.168);
     const line = capacityForPoints(1000).find((entry) => entry.id === "companies")!;
-    expect(line.records).toBe(volumeForPointsCap(1000, company.unitPricePoints, DEFAULT_PRICING_SETTINGS.safetyBuffer));
-    expect(line.records).toBeLessThan(1000 / 3.168); // the 15% buffer is on the reserve
+    expect(line.records).toBe(volumeForPointsCap(1000, company.unitPricePoints, 0));
+    expect(line.records).toBeLessThanOrEqual(1000 / 3.168); // the 15% buffer is on the reserve only, never in this estimate
     expect(capacityForPoints(0).every((entry) => entry.records === 0)).toBe(true);
   });
 });

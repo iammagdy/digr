@@ -443,7 +443,9 @@ export default function ResultsCanvas({
                           {visibleColumns.map((column) => {
                             const raw = column === "headcount" && Number(r[column]) === 0 ? "غير متاح" : r[column];
                             // A classification is read in Arabic and a phone is written one way (the workbook's way), left to right.
-                            const value = isCompanyDataset && column === "industry" && raw ? industryLabelForCell(raw) : column === "phone" && raw ? formatPhoneDisplay(raw) : raw;
+                            const isCountColumn = (column === "headcount" || column === "founded_year") && raw !== undefined && raw !== null && raw !== "" && raw !== "غير متاح";
+                            // A headcount and a founding year are read in Arabic-Indic digits, like every number of the screen.
+                            const value = isCompanyDataset && column === "industry" && raw ? industryLabelForCell(raw) : column === "phone" && raw ? formatPhoneDisplay(raw) : isCountColumn ? toArabicDigits(String(raw).replace(/^'+/, "")) : raw;
                             return (
                               <td key={column} dir={column === "username" || column === "phone" ? "ltr" : undefined} className={`min-w-28 max-w-64 whitespace-normal break-words px-3 py-2.5 align-top leading-6 ${typeof value === "number" ? "tnum" : ""} text-sand-700`}>
                                 {formatCell(value)}

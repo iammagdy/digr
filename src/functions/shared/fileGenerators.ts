@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { COMPANY_COLUMNS } from "../../lib/companyColumns";
+import { workbookCompanyColumns } from "../../lib/companyColumns";
 import { formatPhoneDisplay } from "../../lib/phoneDisplay";
 import ExcelJS from "exceljs";
 import { POSTS_SHEET_NAME_AR, POST_COMMENTS_DELIVERED_TITLE_AR, POST_DETAIL_KEYS, POST_NUMBER_KEY, POST_NUMBER_TITLE_AR, POST_COLUMN_TITLES_AR } from "../../lib/facebookKeywordService";
@@ -725,8 +725,15 @@ async function generateCompanyDataWorkbook(
   const ws = wb.addWorksheet("بيانات الشركات", {
     views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
   });
-  // The titles, the order and the widths come from the ONE company column list the results screen reads too.
-  const headers = COMPANY_COLUMNS.map((column) => column.titleAr);
+  // The delivered rows are cleaned once more here (a name without a page title's tail or markdown, a phone whose international prefix is another
+  // country's not delivered as this company's): the same rules whatever source the row came from.
+  const requestedCountry = detectCountryFromText(String((norm.metadata as any).reportContext?.scope?.country || (norm.metadata as any).country || ""));
+  const requestedIso = requestedCountry ? isoCountryCodeFromName(requestedCountry.canonicalEnglish) : undefined;
+  const rows = norm.rows.map((row) => cleanCompanyRecord(row, { countryIso: requestedIso }));
+  // The titles, the order and the widths come from the ONE company column list the results screen reads too: the three optional columns
+  // (description, headcount, founding year) are written only when a delivered row has them, so a column empty in every row never appears.
+  const columns = workbookCompanyColumns(rows);
+  const headers = columns.map((column) => column.titleAr);
   const header = ws.addRow(headers);
   header.font = { name: "Calibri", size: 11, bold: true, color: { argb: COLOR_WHITE } };
   header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
@@ -735,11 +742,6 @@ async function generateCompanyDataWorkbook(
   const companyName = (r: any, index: number) => String(r.company_name || r.name || r.title || `شركة ${index + 1}`).trim();
   const cleanCellText = (v: unknown) => String(v ?? "").replace(/^'/, "").trim() || "غير متاح";
   const sectorLabel = (value: unknown) => industryLabelForCell(cleanCellText(value));
-  // The delivered rows are cleaned once more here (a name without a page title's tail or markdown, a phone whose international prefix is another
-  // country's not delivered as this company's): the same rules whatever source the row came from.
-  const requestedCountry = detectCountryFromText(String((norm.metadata as any).reportContext?.scope?.country || (norm.metadata as any).country || ""));
-  const requestedIso = requestedCountry ? isoCountryCodeFromName(requestedCountry.canonicalEnglish) : undefined;
-  const rows = norm.rows.map((row) => cleanCompanyRecord(row, { countryIso: requestedIso }));
   rows.forEach((r, index) => {
     const rawAddress = cleanCellText(r.address || r.full_address || r.location);
     const rawCity = cleanCellText(r.city);
@@ -747,42 +749,43 @@ async function generateCompanyDataWorkbook(
       ? localizeCityName(rawCity, String((norm.metadata as any).country || ""))
       : localizeCityFromAddress(rawAddress === "غير متاح" ? "" : rawAddress, String((norm.metadata as any).country || "")));
     const { website, linkedin } = resolveCompanyLinks(r);
-    const values: ExcelJS.CellValue[] = [
-      plainRecordId(r.company_id || r.source_id || r.id, index),
-      companyName(r, index),
-      sectorLabel(r.industry || r.activity || r.sector || r.category),
-      /^https?:\/\//i.test(String(website)) ? workbookHyperlink(website) : "غير متاح",
-      /^https?:\/\//i.test(String(linkedin)) ? workbookHyperlink(linkedin) : "غير متاح",
-      city,
-      localizeAddressAr(rawAddress),
-      (() => { const phone = cleanCellText(r.phone || r.phone_number || r.business_phone); return phone === "غير متاح" ? phone : formatPhoneDisplay(phone); })(),
-      cleanCellText(r.work_email || r.workEmail || r.email),
-      arabicVerificationStatus(
-        r.phone_verification_status,
-        cleanCellText(r.phone || r.phone_number || r.business_phone) !== "غير متاح",
-      ),
-      arabicVerificationStatus(
-        r.work_email_verification_status ?? r.email_verification_status,
-        cleanCellText(r.work_email || r.workEmail || r.email) !== "غير متاح",
-      ),
-    ];
+    const phoneText = cleanCellText(r.phone || r.phone_number || r.business_phone);
+    const cellFor = (key: string): ExcelJS.CellValue => {
+      switch (key) {
+        case "company_name": return companyName(r, index);
+        case "industry": return sectorLabel(r.industry || r.activity || r.sector || r.category);
+        case "website": return /^https?:\/\//i.test(String(website)) ? workbookHyperlink(website) : "غير متاح";
+        case "linkedin_url": return /^https?:\/\//i.test(String(linkedin)) ? workbookHyperlink(linkedin) : "غير متاح";
+        case "city": return city;
+        case "address": return localizeAddressAr(rawAddress);
+        case "phone": return phoneText === "غير متاح" ? phoneText : formatPhoneDisplay(phoneText);
+        case "work_email": return cleanCellText(r.work_email || r.workEmail || r.email);
+        case "description": return cleanCellText(r.description || r.about || r.headline || r.slogan);
+        // A count and a year are read the way the screen shows them: Arabic-Indic digits, and a zero headcount is no headcount.
+        case "headcount": { const value = cleanCellText(r.headcount ?? r.numberOfEmployees ?? r.employee_count); return value === "غير متاح" || value === "0" ? "غير متاح" : toArabicDigits(value); }
+        case "founded_year": { const value = cleanCellText(r.founded_year ?? r.foundedYear ?? r.year_founded); return value === "غير متاح" ? value : toArabicDigits(value); }
+        default: return "غير متاح";
+      }
+    };
+    const values: ExcelJS.CellValue[] = columns.map((column) => cellFor(column.key));
     const row = ws.addRow(values);
-    row.height = 24;
+    row.height = columns.some((column) => column.key === "description") ? 60 : 24;
     row.alignment = { vertical: "middle", wrapText: true };
     row.eachCell((cell, col) => {
+      const key = columns[col - 1]?.key;
       cell.border = borderThin;
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
-      if (col === 8 || col === 9) cell.numFmt = "@";
-      if ((col === 4 || col === 5) && cell.hyperlink) {
+      if (key === "phone" || key === "work_email") cell.numFmt = "@";
+      if ((key === "website" || key === "linkedin_url") && cell.hyperlink) {
         cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
       }
     });
   });
   ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: Math.max(1, rows.length + 1), column: headers.length } };
-  ws.columns = COMPANY_COLUMNS.map((column) => ({ width: column.width }));
+  ws.columns = columns.map((column) => ({ width: column.width }));
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
 
-  // Source-provided branches stay linked to their company by record id.
+  // Source-provided branches stay linked to their company by its name (the customer workbook carries no record id).
   const parseBranches = (value: unknown): Array<Record<string, any>> => {
     if (Array.isArray(value)) return value as Array<Record<string, any>>;
     if (typeof value !== "string" || !value.trim().startsWith("[")) return [];
@@ -795,13 +798,10 @@ async function generateCompanyDataWorkbook(
   };
   const branchRows: ExcelJS.CellValue[][] = [];
   rows.forEach((r, index) => {
-    const companyId = String(plainRecordId(r.company_id || r.source_id || r.id, index));
-    parseBranches(r.branches).forEach((branch, branchIndex) => {
+    parseBranches(r.branches).forEach((branch) => {
       const branchAddress = cleanCellText(branch.address || branch.full_address);
       const branchCity = cleanCellText(branch.city);
       branchRows.push([
-        cleanCellText(branch.id || `${companyId}_branch_${branchIndex + 1}`),
-        companyId,
         companyName(r, index),
         cleanCellText(branch.name || branch.title),
         branchCity !== "غير متاح"
@@ -815,12 +815,12 @@ async function generateCompanyDataWorkbook(
     const branchSheet = wb.addWorksheet("فروع الشركات", {
       views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
     });
-    const branchHeaders = ["معرّف الفرع", "معرّف السجل", "اسم الشركة", "اسم الفرع", "المدينة", "العنوان"];
+    const branchHeaders = ["اسم الشركة", "اسم الفرع", "المدينة", "العنوان"];
     const bh = branchSheet.addRow(branchHeaders);
     bh.font = header.font;
     bh.fill = header.fill;
     bh.alignment = header.alignment;
-    branchHeaders.forEach((_, i) => { branchSheet.getColumn(i + 1).width = [22, 22, 36, 32, 22, 44][i]; });
+    branchHeaders.forEach((_, i) => { branchSheet.getColumn(i + 1).width = [36, 32, 22, 44][i]; });
     branchRows.forEach((values) => branchSheet.addRow(values));
     branchSheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: branchRows.length + 1, column: branchHeaders.length } };
   }

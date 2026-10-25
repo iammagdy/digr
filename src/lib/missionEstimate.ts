@@ -166,12 +166,20 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   };
 }
 
-/** The wording of a result: «حتى حوالي X نقطة (حوالي Y ج.م)» — approximate, computed, never hand-typed. */
+/**
+ * The wording of a result: «حتى حوالي X نقطة (حوالي Y ج.م)» — approximate, computed, never hand-typed. A range always reads LOW to HIGH, in points and in
+ * pounds alike, and the pounds keep one decimal (a point is a tenth of a pound, so one decimal is exact and the two ends never collapse to the same
+ * whole number or round to «٠»).
+ */
 export function estimateSummaryAr(result: Extract<EstimateResult, { status: "ok" }>): string {
-  const same = result.expectedPoints === result.reservePoints;
-  return same
-    ? `حتى حوالي ${pointsAr(result.expectedPoints, n)} (حوالي ${toArabicDigits(Math.round(result.expectedEgp))} ج.م)`
-    : `من حوالي ${n(result.expectedPoints)} إلى ${pointsAr(result.reservePoints, n)} (حوالي ${toArabicDigits(Math.round(result.expectedEgp))} إلى ${toArabicDigits(Math.round(result.reserveEgp))} ج.م)`;
+  const egp = (value: number) => toArabicDigits(String(Number(value.toFixed(1))).replace(".", "٫"));
+  const lowPoints = Math.min(result.expectedPoints, result.reservePoints);
+  const highPoints = Math.max(result.expectedPoints, result.reservePoints);
+  const lowEgp = Math.min(result.expectedEgp, result.reserveEgp);
+  const highEgp = Math.max(result.expectedEgp, result.reserveEgp);
+  return lowPoints === highPoints
+    ? `حتى حوالي ${pointsAr(highPoints, n)} (حوالي ${egp(highEgp)} ج.م)`
+    : `من حوالي ${n(lowPoints)} إلى ${pointsAr(highPoints, n)} (حوالي ${egp(lowEgp)} إلى ${egp(highEgp)} ج.م)`;
 }
 
 /* ---------------------------------------------------------------- the free-text box (deterministic, no model) */

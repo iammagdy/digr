@@ -32,7 +32,7 @@ import { getSlowFactor } from "@/lib/degradedClient";
 import BusyBanner from "@/components/BusyBanner";
 import { usePendingPromo } from "@/hooks/usePendingPromo";
 import { formatAr } from "@/lib/arabicDigits";
-import { planCountLineAr } from "@/lib/planCounts";
+import { countPlainAr, planCountLineAr } from "@/lib/planCounts";
 import { dayLabel } from "@/lib/dayLabel";
 import { clearPendingQuestion, readPendingQuestion } from "@/lib/pendingQuestion";
 import { parsePersistedClarificationAnswers, type DiscoveryAnswer } from "./components/discoveryQuestions";
@@ -44,7 +44,7 @@ import { useShell } from "@/components/app/AppShell";
 import DetailsBlanks from "./components/DetailsBlanks";
 import PlanQuoteCard, { PlanQuoteData } from "./components/PlanQuoteCard";
 import { PLAN_READY_DESKTOP_AR, PLAN_READY_MOBILE_AR } from "@/lib/consultantCopy";
-import { buildCompanyPlanEditOperations, buildPeoplePlanEditOperations, buildSocialRegionEditOperations } from "@/lib/companyPlanEdits";
+import { buildCompanyPlanEditOperations, buildGenericCountryEditOperations, buildPeoplePlanEditOperations, planCountryParamKeys } from "@/lib/companyPlanEdits";
 import { extractParamDisplayString } from "@/lib/planParameters";
 import { customerFacingAssistantCopy } from "@/lib/customerFacingAssistantCopy";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
@@ -61,7 +61,7 @@ import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { isCustomerVisibleJobEvent } from "@/lib/reviewCostEvent";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
-import { waitProgressText } from "@/lib/waitProgress";
+import { TURN_TIMEOUT_MS, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
 import { startFailureText, type StartedJobState } from "@/lib/startFailure";
 
@@ -182,6 +182,11 @@ export default function ChatWorkspacePage() {
   const [loading, setLoading] = useState(false);
   const [loadingStatusText, setLoadingStatusText] = useState("يكتب الرد...");
   const loadingBaseText = useRef("يكتب الرد...");
+  // The request of the turn on screen: «إيقاف الانتظار» aborts it, and the failure message then carries the retry.
+  const turnAbort = useRef<AbortController | null>(null);
+  // Jobs whose final balance was read again after the settlement (one extra read per job).
+  const balanceSettledFor = useRef<Set<string>>(new Set());
+  const [canStopWaiting, setCanStopWaiting] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversationTitle, setConversationTitle] = useState("");
   const [conversationLoading, setConversationLoading] = useState(false);
@@ -211,8 +216,12 @@ export default function ChatWorkspacePage() {
   useEffect(() => {
     if (!loading) return;
     const startedAt = Date.now();
-    const timer = setInterval(() => setLoadingStatusText(waitProgressText(loadingBaseText.current, Date.now() - startedAt)), 2000);
-    return () => clearInterval(timer);
+    setCanStopWaiting(false);
+    const timer = setInterval(() => {
+      setLoadingStatusText(waitProgressText(loadingBaseText.current, Date.now() - startedAt));
+      setCanStopWaiting(Date.now() - startedAt >= WAIT_CANCEL_AFTER_MS);
+    }, 2000);
+    return () => { clearInterval(timer); setCanStopWaiting(false); };
   }, [loading]);
   useEffect(() => {
     if (!methodologyCheckJobId || !user) return;
@@ -531,9 +540,16 @@ export default function ChatWorkspacePage() {
 
         if (isTerminal) {
           void loadBalance();
+          // The ledger rows of the settlement (the release of the hold and the charge of what was delivered) can land a moment after the job row
+          // turns final, so the first read may still show the balance with the hold taken: ONE more read per job, from the final ledger state.
+          if (!balanceSettledFor.current.has(jId)) {
+            balanceSettledFor.current.add(jId);
+            setTimeout(() => { void loadBalance(); }, 3000);
+          }
         }
         if ((jobDoc.status === "completed" || jobDoc.status === "done") && !loadedResultJobs.current.has(jId)) {
           await loadJobResults(jId);
+          void loadBalance();
         }
 
         const now = Date.now();
@@ -672,7 +688,8 @@ export default function ChatWorkspacePage() {
     setLoading(true);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 55000);
+    turnAbort.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
 
     try {
       const jwtToken = await getAccessToken();
@@ -784,7 +801,8 @@ export default function ChatWorkspacePage() {
     setLoadingStatusText(loadingBaseText.current);
     setLoading(true);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 55000);
+    turnAbort.current = controller;
+    const timeoutId = setTimeout(() => controller.abort(), TURN_TIMEOUT_MS);
 
     try {
       const jwtToken = await getAccessToken();
@@ -1109,9 +1127,14 @@ export default function ChatWorkspacePage() {
     } else if (slug.includes("people")) {
       // Decision makers: the country (ISO code) and the job title, each under the parameter the service reads.
       operations.push(...buildPeoplePlanEditOperations(slug, cleanVal, newCountry || ""));
-    } else if (cleanVal && cleanVal !== "[object Object]") {
-      // A social plan that carries a region: the edited country replaces it.
-      if (primaryItem.params && "region" in primaryItem.params) operations.push(...buildSocialRegionEditOperations(slug, newCountry || ""));
+    } else {
+      // Any other plan that carries a country or location parameter (a social region filter, a service with its own location): the edited country
+      // replaces it, in the form the parameter already uses, whether or not the topic field changed.
+      if (newCountry && planCountryParamKeys(primaryItem.params as Record<string, unknown>).length > 0) {
+        operations.push(...buildGenericCountryEditOperations(slug, newCountry, primaryItem.params as Record<string, unknown>));
+      }
+    }
+    if (!isCompany && !slug.includes("people") && cleanVal && cleanVal !== "[object Object]") {
       const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
 
       if (isProfile) {
@@ -1570,7 +1593,7 @@ export default function ChatWorkspacePage() {
     else if (suggestion.type === "include_replies") request = "أعد إعداد الخطة مع طلب جمع الردود";
     else if (suggestion.type === "narrow_query") request = `ضيّق البحث حول: ${params.query}`;
     else if (suggestion.type === "language_filter") request = `صفِّ النتائج حسب اللغة: ${params.language}`;
-    else if (suggestion.type === "new_collection") request = `اعرض خطة جديدة حتى ${params.maxRows} سجل لاستكمال: ${params.query}`;
+    else if (suggestion.type === "new_collection") request = `اعرض خطة جديدة حتى ${countPlainAr(Number(params.maxRows) || 1, "records")} لاستكمال: ${params.query}`;
     else if (suggestion.type === "write_methodology") request = "أعد صياغة ملخص المنهجية في نسخة النتيجة الحالية";
     if (!request) return;
     const needsNewQuote = ["refine_window", "include_replies", "narrow_query", "language_filter", "new_collection"].includes(suggestion.type);
@@ -1878,7 +1901,7 @@ export default function ChatWorkspacePage() {
       conversationTitle={conversationTitle}
       onStart={handleStartExecution}
       onSaveEdit={(q, limit, param, formats, country, industry, cap) => handleSaveDirectEdit(q, limit, param, formats, country, industry, undefined, cap)}
-      onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${formatAr(units)} سجل تناسب رصيدي المتاح`)}
+      onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${countPlainAr(units, "records")} تناسب رصيدي المتاح`)}
       isStarting={startingQuoteId === quote.quoteId}
       available={balanceValue}
       creditValue={creditValue}
@@ -2097,9 +2120,14 @@ export default function ChatWorkspacePage() {
               )}
               {chatTimeline.map((item) => renderNote(item as MessageItem))}
               {loading && (
-                <p role="status" className="mb-0 mt-4 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>
-                  {loadingStatusText}
-                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <p role="status" className="m-0 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>
+                    {loadingStatusText}
+                  </p>
+                  {canStopWaiting && (
+                    <button type="button" data-testid="stop-waiting" onClick={() => turnAbort.current?.abort()} className="min-h-11 cursor-pointer rounded-full border border-ln bg-transparent px-4 text-[13px] text-ink">إيقاف الانتظار</button>
+                  )}
+                </div>
               )}
               {runNode}
               {filesNode}

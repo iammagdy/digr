@@ -1,5 +1,6 @@
 import { pointsAr } from "../pointsFormat";
 import { toArabicDigits } from "../arabicDigits";
+import { countPlainAr } from "../planCounts";
 import type { DriverMode } from "../driverMode";
 import { STALLED_LINE_AR } from "../jobStall";
 import { PARTIAL_SENTENCE_AR, deliveredOfRequestedAr } from "../jobs/requestStatus";
@@ -52,13 +53,13 @@ export const jobNoticeEmailKey = (kind: JobNoticeKind, jobId: string) => `job-up
  * the customer comes back.
  */
 export function jobStartedNotice(input: { targetVolumeMax: number; driver?: DriverMode }): JobNotice {
-  const count = toArabicDigits(Math.floor(input.targetVolumeMax));
+  const count = countPlainAr(Math.floor(input.targetVolumeMax), "records");
   const canClose = input.driver === "cron";
   return {
     title: "بدأ تنفيذ طلبك الكبير",
     body: canClose
-      ? `بدأ جمع حتى ${count} سجل. الطلب الكبير يعمل على دفعات في الخلفية، ويمكنك إغلاق الصفحة؛ سنخبرك عند اكتماله، وإذا تعذر استكماله فهو حجز مؤقت مُحرَّر كاملًا دون خصم.`
-      : `بدأ جمع حتى ${count} سجل. الطلب الكبير يعمل على دفعات؛ أبقِ الصفحة مفتوحة حتى تكتمل المهمة. وإذا تعذر استكماله فهو حجز مؤقت مُحرَّر كاملًا دون خصم.`,
+      ? `بدأ جمع حتى ${count}. الطلب الكبير يعمل على دفعات في الخلفية، ويمكنك إغلاق الصفحة؛ سنخبرك عند اكتماله، وإذا تعذر استكماله فهو حجز مؤقت مُحرَّر كاملًا دون خصم.`
+      : `بدأ جمع حتى ${count}. الطلب الكبير يعمل على دفعات؛ أبقِ الصفحة مفتوحة حتى تكتمل المهمة. وإذا تعذر استكماله فهو حجز مؤقت مُحرَّر كاملًا دون خصم.`,
     link: "/dashboard/requests",
   };
 }
@@ -101,7 +102,8 @@ export function completionNoticeFull(facts: CompletionFacts): JobNoticeFull {
     const body = `تم استخراج ${arCount(facts.delivered)} عنصر بنجاح. يمكنك الآن مراجعة وتحميل النتائج.`;
     return { kind: "completed", title: "اكتمل طلب استخراج البيانات بنجاح", body, link: "/dashboard/jobs", email: null };
   }
-  const lead = `${PARTIAL_SENTENCE_AR}: ${deliveredOfRequestedAr(facts.delivered, facts.requested)}، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.`;
+  // The title (and the e-mail subject and heading) already says «اكتمل طلبك جزئيًا»: the body starts with the facts, never with the title again.
+  const lead = `${deliveredOfRequestedAr(facts.delivered, facts.requested)}، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.`;
   const detail1 = `خُصم ${pointsAr(facts.chargedPoints, arCount)} مقابل ما سُلّم فقط.`;
   const detail2 = facts.refundedPoints > 0 ? `حجز مؤقت مُحرَّر ${pointsAr(facts.refundedPoints, arCount)}.` : "";
   return {

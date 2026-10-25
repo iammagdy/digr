@@ -1,4 +1,5 @@
 import { industryLabelAr } from "./industryLabels";
+import { countPlainAr } from "./planCounts";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
 import { stripConstraintPhrases } from "./requestConstraints";
 const GREETING_WORDS = new Set([
@@ -578,8 +579,9 @@ export function editedPlanSummaryAr(item: { capabilitySlug?: string; params?: Re
   const interpreted = extractInterpretedParameters(item?.params, summaryAr, people);
   const activity = people ? interpreted.industryAr : planActivityLabelAr(item?.params) || valueOrEmpty(industryDisplayLabelAr(interpreted.industryAr));
   const country = valueOrEmpty(interpreted.countryAr);
-  const volume = toDigits(item?.targetVolumeMax || 50);
-  return `خطة حصر حتى ${volume} سجل${activity ? `: ${activity}` : ""}${country ? ` في ${country}` : ""}`;
+  const volume = countPlainAr(Number(item?.targetVolumeMax) || 50, "records");
+  void toDigits;
+  return `خطة حصر حتى ${volume}${activity ? `: ${activity}` : ""}${country ? ` في ${country}` : ""}`;
 }
 
 /**

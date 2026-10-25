@@ -199,6 +199,8 @@ export async function POST(req: NextRequest) {
       ? { exploration: { fullVolume, fullQuotedPoints } }
       : {};
     const editedQuote: any = markEditedQuoteCurrent(newQuote);
+    // The «فهمت أنك تريد …» sentence belongs to the plan as first made: an edited plan never carries it (its count, title and price may have changed).
+    delete editedQuote.understoodAr;
     const currentQuote = { ...editedQuote, ...explorationFlag };
 
     // The restored chat card is hydrated from messages.quote. Persist the

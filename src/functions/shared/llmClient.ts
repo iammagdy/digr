@@ -5,6 +5,7 @@ import { buildSystemPrompt, buildSystemPromptParts, PROMPT_VERSION } from "./sys
 import { isGreetingOrGeneralQuestion, extractTargetVolume } from "./briefManager";
 import { INTERNAL_DISCOVERY_KEYS, MAX_CLARIFICATION_QUESTIONS } from "./clarification";
 import { toArabicDigits } from "../../lib/arabicDigits";
+import { countPlainAr } from "../../lib/planCounts";
 import { detectCountryFromText, detectIndustryFromText, getCompanyRequirementItems, getMissingCompanyResearchRequirements, isPeopleSearchRequest, requiredProfessionalContactFields } from "../../lib/planParameters";
 import { customerConversationAnswer } from "../../lib/customerConversationCopy";
 
@@ -1357,7 +1358,7 @@ export class LlmClient {
       const summaryAr = isPeoplePrompt
         ? `استخراج بيانات ${volume} من صناع القرار والمهنيين وفق معايير الطلب`
         : isCompanySearch
-        ? `استخراج بيانات ${volume} سجل من الشركات${fallbackScope ? ` في ${fallbackScope}` : " بعد تحديد الدولة والقطاع"}`
+        ? `استخراج بيانات ${countPlainAr(Number(volume), "records")} من الشركات${fallbackScope ? ` في ${fallbackScope}` : " بعد تحديد الدولة والقطاع"}`
         : `استخراج البيانات المطلوبة عبر خدمة ${matchedCap.nameAr || matchedCap.slug}`;
 
       return {
@@ -2149,7 +2150,7 @@ export class LlmClient {
       return {
         output: {
           type: "propose_plan",
-          summaryAr: `استخراج بيانات ${targetVolume} سجل من شركات ${industryAr} في ${countryAr}`,
+          summaryAr: `استخراج بيانات ${countPlainAr(Number(targetVolume), "records")} من شركات ${industryAr} في ${countryAr}`,
           capabilities: [
             {
               stepId: "plan_step_1",

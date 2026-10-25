@@ -16,7 +16,7 @@ describe("C. plan explanation lines", () => {
     const lines = planExplanationLinesAr(input);
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("ملف إكسل");
-    expect(lines[0]).toContain("حتى ١٠ منشور");
+    expect(lines[0]).toContain("حتى ١٠ تغريدات");
     expect(lines[0]).toContain("ورقة مراجعة منفصلة ولا يُحتسب عليك");
     expect(lines[1]).toContain("من ٦ نقطة");
     expect(lines[1]).toContain("إلى ٦٠ نقطة");

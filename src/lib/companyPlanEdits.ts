@@ -71,3 +71,34 @@ export function buildSocialRegionEditOperations(capabilitySlug: string, country:
   const iso = countryInfo ? isoCountryCodeFromName(countryInfo.canonicalEnglish) : undefined;
   return iso ? [{ action: "set_param", capabilitySlug, key: "region", value: iso }] : [];
 }
+
+/** The parameters a plan can carry its country in (a company search, a decision-makers search, a social region filter, a generic service's location). */
+const COUNTRY_PARAM_KEYS = ["country", "countryCode", "region", "regionCode", "location", "geo"] as const;
+const ISO_COUNTRY_PARAM_KEYS = new Set<string>(["countryCode", "region", "regionCode", "geo"]);
+
+/** The country parameters a plan really has (present in its parameters, even when empty): when there is one, the editor offers the country field. */
+export function planCountryParamKeys(params: Record<string, unknown> | null | undefined): string[] {
+  if (!params || typeof params !== "object") return [];
+  const keys: string[] = COUNTRY_PARAM_KEYS.filter((key) => key in params);
+  const query = params.query as { location?: unknown } | undefined;
+  if (query && typeof query === "object" && "location" in query && !keys.includes("location")) keys.push("location");
+  return keys;
+}
+
+/**
+ * Edits of the country of a plan that no other builder owns (a service with its own country or location parameter): each parameter the plan has
+ * is rewritten in the form it already uses (an ISO code for a code field, the English name for a name field). A country no rule reads changes nothing.
+ */
+export function buildGenericCountryEditOperations(capabilitySlug: string, country: string, params: Record<string, unknown> | null | undefined): CompanyPlanEditOperation[] {
+  const countryInfo = detectCountryFromText(country);
+  if (!countryInfo) return [];
+  const iso = isoCountryCodeFromName(countryInfo.canonicalEnglish);
+  const operations: CompanyPlanEditOperation[] = [];
+  for (const key of planCountryParamKeys(params)) {
+    const existing = typeof params?.[key] === "string" ? String(params?.[key]) : "";
+    const isoField = ISO_COUNTRY_PARAM_KEYS.has(key) || /^[A-Za-z]{2}$/.test(existing.trim());
+    const value = isoField ? iso : countryInfo.canonicalEnglish;
+    if (value) operations.push({ action: "set_param", capabilitySlug, key, value });
+  }
+  return operations;
+}
