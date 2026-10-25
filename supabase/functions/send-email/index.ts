@@ -18,6 +18,8 @@
  *   RESEND_API_KEY            — Resend API key (send-only).
  *   SUPABASE_SERVICE_ROLE_KEY — authorizes server-to-server callers (standard
  *                               Supabase pattern; the key never goes to clients).
+ *                               A caller whose key differs as a string (another valid key format) is
+ *                               verified against SUPABASE_URL's admin API instead (authorize.ts).
  *   SITE_URL                  — optional override for {{ .SiteURL }}.
  *
  * Sender is fixed: Diger <noreply@diger.tech> (domain verified on Resend).
@@ -30,6 +32,7 @@ import {
   renderEmailTemplate,
 } from "./templates.ts";
 import { buildResendHeaders } from "./resendHeaders.ts";
+import { isAuthorizedCaller } from "./authorize.ts";
 
 const FROM = "Diger <noreply@diger.tech>";
 const RESEND_URL = "https://api.resend.com/emails";
@@ -74,10 +77,10 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: false, error: "method_not_allowed" }, 405);
   }
 
-  // Server-to-server only: caller must present the service-role key.
+  // Server-to-server only: caller must present a service-role key of this project (exact match, else verified by a real call; see authorize.ts).
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
   const auth = req.headers.get("Authorization") ?? "";
-  if (!serviceRoleKey || auth !== `Bearer ${serviceRoleKey}`) {
+  if (!(await isAuthorizedCaller(auth, serviceRoleKey, Deno.env.get("SUPABASE_URL") ?? ""))) {
     return json({ ok: false, error: "unauthorized" }, 401);
   }
 
