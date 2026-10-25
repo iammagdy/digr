@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { countPlainAr } from "@/lib/planCounts";
 import { FAILURE_STATE_AR } from "@/lib/publicCopy";
 import { decisionMakersPerRequestLineAr } from "@/lib/jobSizing";
 import { estimateFormProblemAr, type EstimateKind, type EstimateResult } from "@/lib/missionEstimate";
@@ -164,7 +165,7 @@ export default function MissionEstimator({ onSelectionChange }: { /** Called whe
           {result?.status === "ok" ? (
             <>
               <p className="m-0 font-display text-[26px] font-medium leading-[1.4] text-ink">{answer.summaryAr}</p>
-              <p className="m-0 text-xs text-mut">لعدد {toArabicDigits(result.volume)} سجل، بسعر {unitPriceLabelAr(result.unitPricePoints)}.</p>
+              <p className="m-0 text-xs text-mut">لعدد {countPlainAr(result.volume, "records")}، بسعر {unitPriceLabelAr(result.unitPricePoints)}.</p>
             </>
           ) : null}
           {result && result.status !== "ok" ? <p className="m-0 text-sm text-ink">{result.notesAr.join(" ")}</p> : null}

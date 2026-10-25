@@ -25,14 +25,15 @@ describe("the pricing page", () => {
     expect(html).toContain("صنّاع قرار");
   });
 
-  it("a capacity is what the amount can RESERVE (with the buffer), never above the amount", () => {
+  it("a capacity is what the amount DELIVERS at the real unit price (no reserve buffer), never above the amount", () => {
     for (const amount of CAPACITY_AMOUNTS_EGP) {
       const points = pointsForAmountEgp(amount);
       expect(points).toBe(amount * 10);
       for (const row of buildPriceRows()) {
         const records = capacityForAmount(amount).find((line) => line.id === row.id)!.records;
-        expect(records).toBe(volumeForPointsCap(points, row.unitPricePoints, 0.15));
-        expect(Math.ceil(records * row.unitPricePoints * 1.15)).toBeLessThanOrEqual(points);
+        expect(records).toBe(volumeForPointsCap(points, row.unitPricePoints, 0));
+        expect(Math.ceil(records * row.unitPricePoints)).toBeLessThanOrEqual(points);
+        expect(Math.ceil((records + 1) * row.unitPricePoints)).toBeGreaterThan(points);
       }
     }
   });

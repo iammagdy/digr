@@ -16,7 +16,7 @@ const INDUSTRY_LABELS_AR: Record<string, string> = {
   "wood products": "منتجات الخشب",
   "oil & energy": "النفط والطاقة",
   "oil and gas": "النفط والغاز",
-  "utilities": "المرافق",
+  "utilities": "المرافق العامة (كهرباء ومياه وغاز)",
   "renewables & environment": "الطاقة المتجددة والبيئة",
   "electrical/electronic manufacturing": "تصنيع المعدات الكهربائية والإلكترونية",
   "machinery": "الآلات والمعدات",

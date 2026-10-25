@@ -35,7 +35,7 @@ function table(wb: ExcelJS.Workbook, headerFirstCell: string) {
   const headerIndex = rows.findIndex((r) => r[0] === headerFirstCell);
   return { headers: rows[headerIndex], data: rows.slice(headerIndex + 1) };
 }
-const HEADER_FIRST: Record<OutputKind, string> = { comments: "معرف السجل", companies: "معرّف السجل", people: "م" };
+const HEADER_FIRST: Record<OutputKind, string> = { comments: "معرف السجل", companies: "اسم الشركة", people: "م" };
 
 describe("one standard workbook per kind of data", () => {
   it("each has ONE data sheet and no summary sheet by default", async () => {

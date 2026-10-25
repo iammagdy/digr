@@ -1,5 +1,6 @@
 import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
+import { countPlainAr } from "./planCounts";
 import { fullEstimatePoints, sampleOffer, sampleOfferLineAr, type SampleQuoteLike } from "./sampleFirst";
 import { chargeForUnits, reserveForUnits } from "./recordPricing";
 
@@ -126,9 +127,9 @@ export function explorationResultMessageAr(estimate: ExplorationEstimate, fullUn
     parts.push(`المصدر أعاد أقل من المطلوب، فالمتاح فعليًا لهذا الطلب هو ${n(estimate.delivered)} ${unitLabelAr} فقط، ولا داعي لحجم أكبر.`);
   } else {
     if (estimate.commentsPerVideo !== null && estimate.distinctVideos !== null && estimate.videosNeededForFullComments !== null) {
-      parts.push(`متوسط التعليقات في العينة ${n(estimate.commentsPerVideo)} تعليقًا لكل فيديو من ${n(estimate.distinctVideos)} فيديو، فتحتاج غالبًا حوالي ${n(estimate.videosNeededForFullComments)} فيديو للوصول إلى ${n(fullUnits)} تعليق.`);
+      parts.push(`متوسط التعليقات في العينة ${n(estimate.commentsPerVideo)} تعليقًا لكل فيديو من ${countPlainAr(estimate.distinctVideos, "videos")}، فتحتاج غالبًا حوالي ${countPlainAr(estimate.videosNeededForFullComments, "videos")} للوصول إلى ${countPlainAr(fullUnits, "comments")}.`);
     } else if (estimate.commentsPerVideo !== null && estimate.commentsInFullVideos !== null) {
-      parts.push(`متوسط التعليقات في الفيديو الواحد ${n(estimate.commentsPerVideo)} تعليقًا، فمن ${n(fullUnits)} فيديو تتوقع حوالي ${n(estimate.commentsInFullVideos)} تعليق.`);
+      parts.push(`متوسط التعليقات في الفيديو الواحد ${n(estimate.commentsPerVideo)} تعليقًا، فمن ${countPlainAr(fullUnits, "videos")} تتوقع حوالي ${countPlainAr(estimate.commentsInFullVideos, "comments")}.`);
     }
     parts.push(`الحجم الكامل (${n(fullUnits)} ${unitLabelAr}) تكلفته المتوقعة ${pointsAr(estimate.fullExpectedPoints, n)} وحجزه ${pointsAr(estimate.fullReservePoints, n)}، وهذه تقديرات من العينة وليست وعدًا بالعدد.`);
   }

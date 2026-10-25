@@ -107,7 +107,7 @@ import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusable
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
 import { REPORT_COUNTRY_QUESTION_ID, reportGate, reportNeedsPeriod } from "../../lib/facebookReport/intent";
-import { planCountLineAr, planCountPartsAr } from "../../lib/planCounts";
+import { countPlainAr, planCountLineAr, planCountPartsAr, type CountKind } from "../../lib/planCounts";
 import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote";
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
@@ -1015,8 +1015,8 @@ export function buildAutoPlanProposal(
     : isAccountProfileRequest
       ? `بيانات الحساب العام ${topicLabel} على ${platformLabel}`
       : isCompanySearch
-      ? `استخراج بيانات ${toArabicDigits(volume)} سجل من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)}${countryNameAr ? ` في ${countryNameAr}` : ""}`
-      : `جمع واستخراج ${toArabicDigits(volume)} سجل حول ${topicLabel} من ${platformLabel}`;
+      ? `استخراج بيانات ${countPlainAr(volume, "records")} من شركات ${industryDisplayLabelAr(detectedIndustry.arabicLabel)}${countryNameAr ? ` في ${countryNameAr}` : ""}`
+      : `جمع واستخراج ${countPlainAr(volume, "records")} حول ${topicLabel} من ${platformLabel}`;
 
   return {
     type: "propose_plan",
@@ -3988,6 +3988,11 @@ export class ChatHandler {
 
           // What the assistant understood and the window the plan applies: shown at the top of the plan in the panel.
           const planMission = understandMission(conversationRequestText);
+          // A company or decision-makers plan says the count of THE PLAN: the request text still holds the first number («٥»), the plan holds the
+          // edited one («٣»), and the sentence must never sit next to a title and a price of another count.
+          if ((planMission.kind === "companies" || planMission.kind === "people") && managedQuote.items.length === 1 && Number(managedQuote.targetVolumeMax) > 0) {
+            planMission.volume = Math.floor(Number(managedQuote.targetVolumeMax));
+          }
           const planUnderstood = understoodLineAr(planMission);
           if (planUnderstood) planQuoteData.understoodAr = planUnderstood;
           // How long the mission will take: a range computed by code from the plan's own numbers (records, records per call, dependent
@@ -4026,8 +4031,8 @@ export class ChatHandler {
           planOutput.summaryAr = localizeSectorNamesInText(scrubPlaceholderPhrases(String(planOutput.summaryAr || "")));
           managedQuote.summaryAr = localizeSectorNamesInText(scrubPlaceholderPhrases(String(managedQuote.summaryAr || "")));
           // A social plan counts what it collects in its own words (comments, posts), not in «records».
-          const planUnitWord = verifiedSocialDef?.kind === "comments" ? "تعليق" : verifiedSocialDef?.kind === "posts" ? "منشور" : "سجل";
-          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: ${managedQuote.items.length > 1 ? planCountLineAr(managedQuote.items, managedQuote.targetVolumeMax) : `حتى ${toArabicDigits(managedQuote.targetVolumeMax)} ${planUnitWord}`}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
+          const planUnitKind: CountKind = verifiedSocialDef?.kind === "comments" ? "comments" : verifiedSocialDef?.kind === "posts" ? (/(?:^|[^a-z])x-|twitter|tweet/i.test(String(verifiedSocialDef?.slug || "")) ? "tweets" : "posts") : "records";
+          let planSummaryText = `أعددت لك خطة الاستخراج وعرض السعر بالنقاط:\n- الهدف: ${planOutput.summaryAr}\n- الحد الأقصى: ${managedQuote.items.length > 1 ? planCountLineAr(managedQuote.items, managedQuote.targetVolumeMax) : `حتى ${countPlainAr(managedQuote.targetVolumeMax, planUnitKind)}`}\n- التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           // The price of one record is on every plan: one service says it plainly, several say it for each.
           const priceLine = unitPriceLineAr(managedQuote.items, managedQuote.unitPricePoints, customerFacingCapabilityLabel);
           if (priceLine) planSummaryText += `\n- ${priceLine}`;
@@ -4133,7 +4138,7 @@ export class ChatHandler {
             planSummaryText += capStatement
               ? `\n- ${capStatement}`
               : managedQuote.targetVolumeMax < requestedUnits
-              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
+              ? `\n- تم ضبط ${managedQuote.items.length > 1 ? `الطلب إلى ${planCountPartsAr(managedQuote.items)}` : `العدد من ${toArabicDigits(requestedUnits)} إلى ${countPlainAr(managedQuote.targetVolumeMax, "records")}`} حتى يظل السعر والحجز مع احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`
               : `\n- العدد المطلوب ${toArabicDigits(managedQuote.targetVolumeMax)} أشخاص يناسب سقف السعر. تم تحديد الحجز عند ${pointsAr(managedQuote.quotedPoints, toArabicDigits)}، ويشمل احتياطي التنفيذ ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}.`;
           }
           // Large or vague social plans: offer a small priced sample first. Code prices it; the model writes nothing here.
@@ -4281,7 +4286,7 @@ export class ChatHandler {
                 expiresAt: managedQuote.expiresAt,
               };
 
-              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل\n• التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
+              finalContentAr = `تم تعديل الخطة وتحديث عرض السعر بالنقاط:\n• الهدف: ${managedQuote.summaryAr}\n• الحد الأقصى: حتى ${countPlainAr(managedQuote.targetVolumeMax, "records")}\n• التكلفة المتوقعة: ${pointsAr(managedQuote.expectedPoints, toArabicDigits)}`;
           if (managedQuote.pointsCapConstrained) {
             finalContentAr += `\n• تم ضبط العدد من ${toArabicDigits(managedQuote.requestedVolumeMax || managedQuote.targetVolumeMax)} إلى ${toArabicDigits(managedQuote.targetVolumeMax)} سجل حتى يظل السعر والحجز ضمن سقف ${pointsAr(managedQuote.pointsCap || effectiveJobPointsCap(), toArabicDigits)}. يمكنك تقليل العدد أكثر إذا أردت.`;
           }

@@ -140,7 +140,7 @@ describe("post-level review: the model sees posts, never comments, and the budge
   it("the worker's customer sentence for a used-up budget exists once per chunk and says nothing was charged", async () => {
     const fs = await import("node:fs");
     const worker = fs.readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
-    expect(worker).toContain("وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع ${toArabicDigits(heldByBudget)} تعليق في ورقة «غير مراجَع» ولم يُحتسب.");
+    expect(worker).toContain('وصل التحقق الآلي إلى الحد المسموح لهذا الطلب؛ وُضع في ورقة «غير مراجَع»: ${countPlainAr(heldByBudget, "comments")}، ولم يُحتسب ذلك عليك.');
     const caps = fs.readFileSync("src/lib/server/providerCallCaps.ts", "utf8");
     expect(caps).toContain("review_budget:");
     expect(worker).toContain("usesPostLevelReview(spec.capabilitySlug, spec.params)");

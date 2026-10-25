@@ -115,7 +115,7 @@ describe("English sector names never reach the customer", () => {
     for (const [english, arabic] of [
       ["Construction", "المقاولات والتشييد"], ["information technology", "تقنية المعلومات والخدمات التقنية"], ["Information Technology", "تقنية المعلومات والخدمات التقنية"],
       ["INFORMATION TECHNOLOGY AND SERVICES", "تقنية المعلومات والخدمات التقنية"], ["Telecommunications", "الاتصالات"], ["Insurance", "التأمين"], ["Banking", "الخدمات المصرفية"],
-      ["Construction; Real Estate", "المقاولات والتشييد، العقارات"], ["Utilities / Oil & Energy", "المرافق، النفط والطاقة"],
+      ["Construction; Real Estate", "المقاولات والتشييد، العقارات"], ["Utilities / Oil & Energy", "المرافق العامة (كهرباء ومياه وغاز)، النفط والطاقة"],
     ] as const) expect(industryLabelAr(english), english).toBe(arabic);
     expect(industryDisplayLabelAr("Construction")).toBe("المقاولات والتشييد");
     expect(industryDisplayLabelAr("FinTech")).toBe("التقنية المالية");
@@ -226,9 +226,10 @@ describe("foreign phone prefixes and data errors", () => {
     const sheet = workbook.getWorksheet("بيانات الشركات")!;
     const headers = sheet.getRow(1).values as string[];
     const phone = headers.indexOf("الهاتف التجاري");
-    const status = headers.indexOf("حالة تحقق الهاتف");
+    // The verification-status columns are not in the company workbook (owner decision): the foreign number is simply not delivered.
+    expect(headers.indexOf("حالة تحقق الهاتف")).toBe(-1);
     expect(String(sheet.getRow(2).getCell(phone).value)).toBe("غير متاح");
-    expect(String(sheet.getRow(2).getCell(status).value)).not.toBe("متحقق");
+    sheet.eachRow((row) => row.eachCell((cell) => expect(String(cell.value)).not.toBe("متحقق")));
     expect(String(sheet.getRow(3).getCell(phone).value)).toBe("+201001234567");
   });
   it("the founding year is a plausible year or nothing", () => {

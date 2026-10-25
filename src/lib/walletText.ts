@@ -1,3 +1,4 @@
+import { normalizeReleaseWording } from "./releaseWording";
 /**
  * Wallet text is Arabic only: no Latin product names and no internal id. Old ledger notes were written with both
  * («شراء صياغة المنهجية الأكاديمية للطلب job_quote_…»); the stored rows are never rewritten, they are cleaned when shown.
@@ -16,7 +17,8 @@ export const TOPUP_REQUEST_LABEL_AR = "طلب شحن عبر إنستاباي";
  */
 export const BANNED_RELEASE_FORMS_AR = ["تحرير حجز", "تحرير الحجز المؤقت", "حُرّر الحجز المؤقت", "حُرّر حجز مؤقت", "حُرّر حجزك المؤقت", "يُحرَّر الباقي", "استرداد", "إرجاع"] as const;
 export function walletDisplayText(text: unknown): string {
-  return String(text ?? "")
+  // the same normalizer as the notices, request cards and activity lines: every refund word of an old stored row reads «حجز مؤقت مُحرَّر»
+  return normalizeReleaseWording(text)
     .replace(/تحرير\s+(?:ال)?حجز\s+المؤقت|تحرير\s+حجز\s+مؤقت/g, "حجز مؤقت مُحرَّر")
     .replace(/حُرّر\s+(?:ال)?حجز(?:ك)?\s+(?:ال)?مؤقت/g, "حجز مؤقت مُحرَّر")
     .replace(/(?:و)?يُحرَّر\s+الباقي\s+من\s+الحجز\s+المؤقت/g, "والباقي حجز مؤقت مُحرَّر")

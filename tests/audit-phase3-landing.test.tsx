@@ -81,7 +81,8 @@ describe("audit phase 3: the price strip is computed", () => {
     expect(strip[1]).toMatchObject({ points: posts.expectedPoints, egp: posts.expectedEgp });
     const markup = text(page[1]);
     expect(markup).toContain("٥ شركات");
-    expect(markup).toContain("على إكس");
+    expect(markup).toContain("١٠٠ تغريدة");
+    expect(markup).not.toContain("منشورًا على إكس");
     expect(markup).toContain(`${formatAr(companies.expectedPoints)} نقطة`);
     expect(markup).toContain(`${formatAr(posts.expectedPoints)} نقطة`);
     expect(markup).not.toMatch(/[0-9]/);

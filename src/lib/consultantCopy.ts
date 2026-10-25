@@ -1,5 +1,6 @@
 import { formatAr, normalizeDigits, toArabicDigits } from "./arabicDigits";
 import { extractNumberFromText } from "./arabicNumbers";
+import { countPlainAr } from "./planCounts";
 import { detectSocialIntent, perItemCommentCount, SOCIAL_PLATFORM_LABEL_AR, socialSubjectText, stripPerItemPhrases, stripReportWords, type SocialPlatformId } from "./socialTasks";
 import { proposedDefaultWindow, resolveTimeWindow, windowQuestion, type ResolvedWindow } from "./timeWindow";
 import { extractRequestIntent, missingInputsForIntent, type RequestIntent } from "./requestIntent";
@@ -430,7 +431,7 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
       if (u.report) return `فهمت أنك تريد تقريرًا${about} على فيسبوك${windowText}.`;
       if (u.commentsFlow) {
         const container = u.videos ? videosCountAr(u.videos, u.videosNoun) : u.videosNoun === "posts" || u.platform === "facebook" ? "منشورات" : "فيديوهات";
-        const cap = u.volume ? `، حتى ${formatAr(u.volume)} تعليق` : "";
+        const cap = u.volume ? `، حتى ${countPlainAr(u.volume, "comments")}` : "";
         return `فهمت أنك تريد ${u.allComments ? "كل تعليقات" : "تعليقات"} ${container}${about}${where}${cap}${windowText}.`;
       }
       // The replies come only if the source returns them: the sentence says so, as the plan does.
@@ -442,7 +443,7 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
     case "social_comments_url":
       return `فهمت أنك تريد تعليقات الرابط الذي أرسلته${where}.`;
     case "companies":
-      return u.subject ? `فهمت أنك تريد ${u.volume ? `${num(u.volume)} شركة` : "شركات"} في مجال ${u.subject}.` : null;
+      return u.subject ? `فهمت أنك تريد ${u.volume ? countPlainAr(u.volume, "companies") : "شركات"} في مجال ${u.subject}.` : null;
     case "people":
       return `فهمت أنك تريد ${u.volume ? `${num(u.volume)} من ` : "بيانات "}صناع القرار${u.subject ? ` في مجال ${u.subject}` : ""}.`;
     default:
