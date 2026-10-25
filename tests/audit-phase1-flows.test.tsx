@@ -440,8 +440,8 @@ describe("point 11: the monthly released total and the ledger lines are explaine
     expect(wallet).toContain('data-testid="wallet-released-explainer"');
     expect(wallet).toContain("يظهر الحجز المُحرَّر كاملًا قبل الخصم");
     expect(wallet).toContain("const monthReady = ledgerLoaded;");
-    expect(wallet).toContain("{monthReady ? <p className=\"m-0 text-2xl font-medium text-ink\">{formatAr(stats.releasedHold)}</p>");
-    expect(wallet).toContain("<Skeleton className=\"h-8 w-20\" />");
+    expect(wallet).toContain("{monthReady ? <p className=\"m-0 text-xl font-bold text-wallet-amber\">{formatAr(stats.releasedHold)}</p>");
+    expect(wallet).toContain("<Skeleton className=\"h-7 w-16 !bg-none bg-white/10\" />");
     expect(wallet).toContain("useState<number | null>(null)");
   });
 });

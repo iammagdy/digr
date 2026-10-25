@@ -127,10 +127,11 @@ describe("C. the exact EGP to pay", () => {
     expect(pointsToEgp(2500, 0.15)).toBe(375); // the credit value comes from the settings, never a constant of the screen
   });
 
-  it("the default screen says «ستحوّل ٢٥٠ جنيهًا» and offers «نسخ المبلغ»; the copied text is the number only", () => {
+  it("the default screen says «ستحوّل» over «٢٥٠ جنيه» and offers «نسخ المبلغ»; the copied text is the number only", () => {
     const html = form();
     expect(html).toContain('data-testid="topup-egp-due-text"');
-    expect(/data-testid="topup-egp-due-text"[^>]*>ستحوّل ٢٥٠ جنيهًا</.test(html)).toBe(true);
+    expect(html).toContain(">ستحوّل<");
+    expect(/data-testid="topup-egp-due-text"[^>]*>٢٥٠ جنيه</.test(html)).toBe(true);
     expect(html).toContain("نسخ المبلغ");
     expect(egpDueAr(250)).toBe("ستحوّل ٢٥٠ جنيهًا");
     expect(egpDueAr(123.5)).toBe("ستحوّل ١٢٣٫٥ جنيهًا");
@@ -145,7 +146,7 @@ describe("C. the exact EGP to pay", () => {
 
   it("the page never claims the InstaPay link carries the amount", () => {
     const html = form();
-    expect(html).toContain("رابط إنستاباي لا يحمل المبلغ");
+    expect(html).toContain("الرابط لا يحمل المبلغ — اكتب المبلغ المنسوخ بنفسك في إنستاباي قبل التأكيد.");
     expect(html).not.toMatch(/المبلغ (?:مُدخل|مدرج|يُملأ) تلقائيًا|يحمل المبلغ تلقائيًا/);
     expect(src("src/app/dashboard/topup/InstapayShortcuts.tsx")).not.toMatch(/amount|\?a=/i);
   });
