@@ -62,7 +62,7 @@ import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice
 import { isCustomerVisibleJobEvent } from "@/lib/reviewCostEvent";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
 import { TURN_TIMEOUT_MS, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
-import { customerFacingFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
+import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
 import { startFailureText, type StartedJobState } from "@/lib/startFailure";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
@@ -763,7 +763,8 @@ export default function ChatWorkspacePage() {
           id: `err_${Date.now()}`,
           role: "assistant",
           content: errorContent,
-          errorRetryPrompt: textToSend,
+          // A refusal caused by the request itself is not a hiccup: no button that sends the same request again.
+          ...(isRetryableFailure(err) ? { errorRetryPrompt: textToSend } : {}),
           createdAt: new Date().toISOString(),
         },
       ]);

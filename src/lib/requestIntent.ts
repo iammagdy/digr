@@ -3,6 +3,7 @@ import {
   detectCountryFromText, detectIndustryFromText, getMissingCompanyResearchRequirements, isoCountryCodeFromName,
   isPeopleSearchRequest, requiredProfessionalContactFields,
 } from "./planParameters";
+import { withPeopleIdentity } from "./peopleSearchInput";
 import { FOUNDED_RE, REVENUE_RE, SIZE_RE, stripConstraintPhrases } from "./requestConstraints";
 import { ACCOUNT_LOOKUP_RE } from "./socialDiscovery";
 import { detectSocialIntent, hasSocialSubject, socialSubjectText, type SocialPlatformId } from "./socialTasks";
@@ -171,7 +172,8 @@ export function peopleParamsFromIntent(intent: RequestIntent, current: Record<st
   else delete out.keywords;
   if (intent.country) out.country = intent.country.iso || intent.country.english;
   if (limit && limit > 0) out.limit = limit;
-  return out;
+  // «صناع القرار» names no role, and country, keywords and limit are filters, not an identity: without a title the source rejects the call.
+  return withPeopleIdentity(out);
 }
 
 /** One honest sentence for the plan card when the customer asked for something the source cannot filter by. */

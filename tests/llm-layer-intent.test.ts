@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
+
+// The offline catalog prices the three decision-maker endpoints like the live one does (the real people branch reads them); every other endpoint is read as before.
+vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/functions/shared/catalogClient")>();
+  const prices: Record<string, number> = { "treg.people.search": 0.015, "treg.people.email.find": 0.01, "treg.people.phone.find": 0.01 };
+  return {
+    ...actual,
+    getEndpointDetails: vi.fn(async (endpointId: string, options?: any) => prices[endpointId]
+      ? ({ catalogPriceUsd: prices[endpointId] } as any)
+      : actual.getEndpointDetails(endpointId, options)),
+  };
+});
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { APPROVED_CAPABILITY_CATALOG } from "../src/functions/shared/capabilityRegistry";
 import { CAPABILITY_CARDS, LEGACY_CAPABILITY_NOTES, renderCapabilityCards } from "../src/functions/shared/capabilityCards";
 import { buildSystemPromptParts } from "../src/functions/shared/systemPrompt";
 import { extractRequestIntent, missingInputsForIntent, peopleParamsFromIntent, unsupportedConstraintsNoteAr } from "../src/lib/requestIntent";
 import { extractNumberFromText } from "../src/lib/arabicNumbers";
-import { createChatDb, runConversation } from "./helpers/chatSession";
+import { createChatDb, runConversation, withPeopleSettlement } from "./helpers/chatSession";
 
 /**
  * LLM layer: capability cards generated against the real catalog, the structured intent of a request, and the provider
@@ -128,7 +140,7 @@ describe("2. the structured intent of each request", () => {
 
 describe("9. the five requests produce the expected structured provider parameters (no model call needed)", () => {
   const noModel = () => {
-    const db = createChatDb();
+    const db = withPeopleSettlement(createChatDb());
     const handler = new ChatHandler(db as any);
     const calls = vi.fn(async () => { throw new Error("the model must not be called for a fully stated request"); });
     (handler as any).llm.executeTurn = calls;
@@ -218,7 +230,7 @@ describe("9. the five requests produce the expected structured provider paramete
 
 describe("the model path is canonicalised too", () => {
   it("a model plan that copies the sentence and writes an Arabic title is rebuilt from the intent before pricing", async () => {
-    const db = createChatDb();
+    const db = withPeopleSettlement(createChatDb());
     const handler = new ChatHandler(db as any);
     handler.deterministicPlanning = false;
     (handler as any).llm.executeTurn = vi.fn(async () => ({

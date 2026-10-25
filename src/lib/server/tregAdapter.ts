@@ -21,6 +21,16 @@ import {
 
 export { hasRecognizedProviderResultShape };
 import { arabicVerificationStatus } from "../contactVerification";
+import { withPeopleIdentity } from "../peopleSearchInput";
+import {
+  PROVIDER_BUSY_AR,
+  PROVIDER_GENERIC_FAILURE_AR,
+  PROVIDER_INCOMPATIBLE_ANSWER_AR,
+  PROVIDER_INPUT_REJECTED_AR,
+  PROVIDER_ROUTE_COST_EXCEEDED_AR,
+  PROVIDER_TARGET_NOT_FOUND_AR,
+  PROVIDER_UNAVAILABLE_AR,
+} from "../providerFailureText";
 import {
   detectCountryFromText as detectInternationalCountryFromText,
   detectIndustryFromText as detectInternationalIndustryFromText,
@@ -411,7 +421,9 @@ export function normalizeTregPeopleParams(rawParams: Record<string, any>, pageSi
   const title = raw.title || first(query.title) || first(query.jobTitle?.include) || first(query.currentJobTitle?.include);
   const location = raw.location || first(query.location?.include) || first(query.location);
   const keywords = Array.isArray(raw.keywords) ? raw.keywords : query.keyword?.include;
-  return {
+  // The source identifies a person search by q, company_domain, title or full_name; country, location, keywords and limit only filter it.
+  // A plan made before this rule (or one that names no role) still gets an identity here, so no call goes out that the source must refuse.
+  return withPeopleIdentity({
     ...(q ? { q: String(q).slice(0, 500) } : {}),
     ...(raw.company_domain || raw.domain ? { company_domain: String(raw.company_domain || raw.domain) } : {}),
     ...(raw.full_name ? { full_name: String(raw.full_name) } : {}),
@@ -420,7 +432,7 @@ export function normalizeTregPeopleParams(rawParams: Record<string, any>, pageSi
     ...(location ? { location: String(location) } : {}),
     ...(keywords?.length ? { keywords: (Array.isArray(keywords) ? keywords : [keywords]).map(String) } : {}),
     limit: Math.max(1, Math.min(50, Math.floor(Number(raw.limit) || pageSize || 10))),
-  };
+  });
 }
 
 function getTregPeopleArray(data: any): any[] {
@@ -676,6 +688,16 @@ export interface TregRetryControl {
   deadlineMs?: number;
 }
 
+/**
+ * The routed people search tries providers one after another, cheapest first, until one answers. A call cut at 12 s (the live job of
+ * 2026-10-23 ended 12.6 s after its cost row, with a title and a country in the body) fails the whole job, so the search may use the
+ * time the worker's deadline leaves, keeping 12 s for the per-person email and phone lookups; up to 30 s, never below the usual 12 s.
+ */
+export function peopleSearchTimeoutMs(deadlineMs: number | undefined, now: number = Date.now()): number {
+  if (!deadlineMs || !Number.isFinite(deadlineMs)) return 12_000;
+  return Math.max(12_000, Math.min(30_000, Math.floor(deadlineMs - now - 12_000)));
+}
+
 export async function executeTregCallWithRetry(
   options: TregCallOptions,
   maxRetries: number = 3,
@@ -724,12 +746,12 @@ export async function executeTregCallWithRetry(
 
 /** Plain Arabic reason a provider call failed, with no provider or technical wording. */
 export function providerFailureMessageAr(callResult: Pick<TregCallResult, "httpStatus" | "isRouteMaxCost" | "isPlatformBalanceLow">): string {
-  if (callResult.isRouteMaxCost) return "تجاوز الطلب سقف التكلفة المسموح به للمصدر.";
-  if (callResult.isPlatformBalanceLow) return "الخدمة غير متاحة مؤقتاً، يرجى المحاولة لاحقاً.";
-  if (callResult.httpStatus === 404) return "الهدف المطلوب غير موجود أو غير متاح للعامة.";
-  if (callResult.httpStatus === 422) return "تعذر معالجة مدخلات الطلب لدى المصدر.";
-  if (callResult.httpStatus === 429) return "المصدر مشغول حالياً بعد استنفاد محاولات الإعادة.";
-  return "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
+  if (callResult.isRouteMaxCost) return PROVIDER_ROUTE_COST_EXCEEDED_AR;
+  if (callResult.isPlatformBalanceLow) return PROVIDER_UNAVAILABLE_AR;
+  if (callResult.httpStatus === 404) return PROVIDER_TARGET_NOT_FOUND_AR;
+  if (callResult.httpStatus === 422) return PROVIDER_INPUT_REJECTED_AR;
+  if (callResult.httpStatus === 429) return PROVIDER_BUSY_AR;
+  return PROVIDER_GENERIC_FAILURE_AR;
 }
 
 /** Call made for the social sources: one retry only, because a failed source falls through to the next one. */
@@ -928,7 +950,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     stepId: `step_${input.step}${stepSuffix}`,
     page,
     routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
-    timeoutMs: 12000,
+    timeoutMs: isTregPeople ? peopleSearchTimeoutMs(input.deadlineMs) : 12000,
   });
   let callResult = await executeTregCallWithRetry(
     callOptions(pageParams, cursorFromKeywordsQuery ? "_kw" : ""),
@@ -1026,7 +1048,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
       providerCallCount,
       tregCallId: callResult.tregCallId || "",
       errorCode: "invalid_provider_payload",
-      errorMessageAr: "استجاب المصدر ببيانات غير متوافقة مع نوع البحث؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.",
+      errorMessageAr: `${PROVIDER_INCOMPATIBLE_ANSWER_AR}؛ تم إيقاف الطلب: حجز مؤقت مُحرَّر.`,
     };
   }
 

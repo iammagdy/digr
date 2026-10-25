@@ -48,6 +48,17 @@ export function createChatDb() {
   return db;
 }
 
+/**
+ * Makes the fake database answer the decision-makers settlement probe the way the installed SQL function does («Job … not found»), so a
+ * decision-makers quote is built by the real people branch offline. Every other function stays «not found», as it is without `rpc`.
+ */
+export function withPeopleSettlement<T extends object>(db: T): T {
+  (db as any).rpc = async (name: string, args: any) => name === "settle_people_job_atomic"
+    ? { data: null, error: { code: "P0001", message: `Job ${args.p_job_id} not found` } }
+    : { data: null, error: { code: "PGRST202", message: `function ${name} not found` } };
+  return db;
+}
+
 /** Sends several messages in order in one conversation and returns every response. */
 export async function runConversation(messages: string[], options: { userId?: string; balance?: number } = {}) {
   const db = createChatDb();
