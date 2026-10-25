@@ -11,13 +11,15 @@ import { useCreditValue } from "@/hooks/useCreditValue";
 import { Icon, UI } from "@/components/app/icons";
 import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
-import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
+import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, NOTIFICATIONS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
+import { notificationIdForTopup, rejectionReasonFor, topupIdFromNotificationId } from "@/lib/topupRejectReason";
 import { capacityForPoints } from "@/lib/pricingPage";
 import { Skeleton } from "@/components/ui";
 import { startNotificationPolling } from "@/lib/notificationPolling";
 import { getSlowFactor } from "@/lib/degradedClient";
 import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
+import { RejectionReasonLine } from "./RejectionReasonLine";
 import PromoCodeBox from "./PromoCodeBox";
 import { CREDIT_KIND_LABEL_AR, classifyLedgerRow } from "@/lib/creditKinds";
 import { TOPUP_REQUEST_LABEL_AR, walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
@@ -54,6 +56,8 @@ export default function WalletPage() {
   const [ledgerLoaded, setLedgerLoaded] = useState(false);
   const [topups, setTopups] = useState<TopupRecord[]>([]);
   const [monthRows, setMonthRows] = useState<number | null>(null);
+  // the notification text of each rejected request (the customer reads their own notifications): where the reason lives, see loadRejectNotes below
+  const [rejectNotes, setRejectNotes] = useState<Record<string, string>>({});
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
   const [queryEgp, setQueryEgp] = useState<number | null>(null);
   // the chat sends the shortfall in EGP; the form works in points, so it starts from the points that amount buys (the form keeps it inside the limits)
@@ -187,6 +191,30 @@ export default function WalletPage() {
 
   useEffect(() => { void loadLedger(); void loadTopups(); }, [loadLedger, loadTopups]);
 
+  /* The reason of a rejected request. The top-up row has no reason column; the reject route writes the reason into the customer's own notification
+     (id notif_<request id>, readable by them under the notifications policy), so one read-only query of those rows is all it takes. No timer: it runs
+     when the set of rejected requests changes (a pending request the admin rejects while the page polls included). */
+  const rejectedKey = topups.filter((t) => t.status === "rejected").map((t) => t.$id).join(",");
+  useEffect(() => {
+    if (!user || !rejectedKey) return;
+    let active = true;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase
+          .from(NOTIFICATIONS_COLLECTION)
+          .select("id, body")
+          .eq("user_id", user.id)
+          .in("id", rejectedKey.split(",").map(notificationIdForTopup));
+        if (!active) return;
+        const next: Record<string, string> = {};
+        for (const row of data || []) if (typeof row?.id === "string" && typeof row?.body === "string") next[topupIdFromNotificationId(row.id)] = row.body;
+        setRejectNotes(next);
+      } catch { /* no reason is shown: never a placeholder */ }
+    })();
+    return () => { active = false; };
+  }, [user, rejectedKey]);
+
   /* records delivered this month (for «خُصم هذا الشهر … على N سجلًا») */
   useEffect(() => {
     if (!user) return;
@@ -250,8 +278,10 @@ export default function WalletPage() {
   const pendingCount = topups.filter((t) => t.status === "pending").length;
   /* points an approved top-up credited, read from its ledger row (approve_topup_atomic writes it as top_<id> with no topup_id) */
   const creditsByTopup = creditedPointsByTopup(ledger);
-  const displayTopups = topups.map((topup) => ({ ...topup, credits: creditedPointsOf(topup, creditsByTopup) }));
-  const displaySubmitted = submitted ? { ...submitted, credits: creditedPointsOf(submitted, creditsByTopup) } : null;
+  /* the reason is cleaned and only ever set on a REJECTED request (approved and pending requests never carry one) */
+  const reasonOf = (topup: TopupRecord) => rejectionReasonFor({ status: topup.status, columnReason: topup.rejectReason, notificationBody: rejectNotes[topup.$id] });
+  const displayTopups = topups.map((topup) => ({ ...topup, credits: creditedPointsOf(topup, creditsByTopup), rejectReason: reasonOf(topup) }));
+  const displaySubmitted = submitted ? { ...submitted, credits: creditedPointsOf(submitted, creditsByTopup), rejectReason: reasonOf(submitted) } : null;
 
   const visibleLedger = visibleLedgerRows(ledger, ledFilter);
 
@@ -357,7 +387,7 @@ export default function WalletPage() {
                   <div className="min-w-0 flex-1">
                     <p className="m-0 text-[15px] font-semibold text-ink">{formatAr(t.amountEgp)} ج.م{pts === null ? "" : ` · ${pointsAr(pts)}`}</p>
                     <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{TOPUP_REQUEST_LABEL_AR} · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
-                    {t.status === "rejected" && t.rejectReason && <p className="mb-0 mt-1.5 text-xs leading-[1.7] text-bad">سبب الرفض: {t.rejectReason}</p>}
+                    <RejectionReasonLine reason={t.status === "rejected" ? t.rejectReason ?? null : null} />
                   </div>
                   <span className="shrink-0 rounded-full px-3 py-1 text-xs font-medium" style={{ background: b.bg, color: b.fg }}>{USER_STATUS[t.status]}</span>
                 </div>
