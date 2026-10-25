@@ -92,8 +92,8 @@ describe("item 7: company Excel quality", () => {
     expect(String(review.getRow(1).getCell(1).value)).toBe(REVIEW_SHEET_NOTICE_AR);
     expect(REVIEW_SHEET_NOTICE_AR).toContain("لم تُحتسب عليك");
     expect(REVIEW_SHEET_NOTICE_AR).toContain("لم تُخصم");
-    expect(review.getRow(2).getCell(1).value).toBe("معرّف السجل");
-    expect(review.getRow(3).getCell(4).value).toBe("القاهرة، مصر");
+    expect(review.getRow(2).getCell(1).value).toBe("اسم الشركة");
+    expect(review.getRow(3).getCell(3).value).toBe("القاهرة، مصر");
   });
 });
 

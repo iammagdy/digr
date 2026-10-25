@@ -646,7 +646,7 @@ export default function PlanQuoteCard({
 
       {!locked && quote.duplicateOf && onOpenPrevious ? (
         <div data-testid="plan-duplicate-warning" role="status" className="mb-0 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.9] text-amber-950">
-          <p className="m-0"><strong>عندك نفس الطلب ده.</strong> وصلتك نتيجته قبل كده ({formatAr(quote.duplicateOf.deliveredUnits)} سجل)، وفتحها لا يكلّفك شيئًا.</p>
+          <p className="m-0"><strong>عندك نفس الطلب ده.</strong> وصلتك نتيجته قبل كده ({countPlainAr(quote.duplicateOf.deliveredUnits, "records")})، وفتحها لا يكلّفك شيئًا.</p>
           <button type="button" data-testid="plan-duplicate-open" onClick={() => onOpenPrevious({ jobId: quote.duplicateOf!.jobId, conversationId: quote.duplicateOf!.conversationId })} className={`${SECONDARY_BTN} min-h-11`}>افتح النتيجة القديمة</button>
         </div>
       ) : null}

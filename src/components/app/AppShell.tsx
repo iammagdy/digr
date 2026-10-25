@@ -17,6 +17,7 @@ import { balanceText } from "@/lib/honestDisplay";
 import { toArabicDigits, timeAgoAr } from "@/lib/arabicDigits";
 import { startNewResearch } from "@/lib/newResearchNavigation";
 import { notificationDisplay } from "@/lib/notificationText";
+import { bellBadgeText } from "@/lib/notificationBadge";
 import { getPersonaConfig } from "@/functions/shared/personaConfigs";
 import { Icon, UI } from "./icons";
 
@@ -372,12 +373,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             {user ? (
               <div className="flex items-center gap-1.5">
                 <button
-                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${toArabicDigits(notifs.actionableUnread)} تحتاج انتباهك` : "الإشعارات"} aria-expanded={notifsOpen}
+                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)} تحتاج انتباهك` : "الإشعارات"} aria-expanded={notifsOpen}
                   className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-0 text-ink hover:bg-sf2 ${notifsOpen ? "bg-sf2" : "bg-transparent"}`}
                 >
                   <Icon d={UI.bell} size={19} />
                   {notifs.actionableUnread > 0 && (
-                    <span data-testid="bell-badge" className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{toArabicDigits(notifs.actionableUnread)}</span>
+                    <span data-testid="bell-badge" className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)}</span>
                   )}
                 </button>
                 <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">

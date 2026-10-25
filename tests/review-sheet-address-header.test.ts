@@ -17,8 +17,8 @@ describe("the review sheet names its address column by what is in it", () => {
     await wb.xlsx.load(buffer as any);
     const review = wb.getWorksheet("سجلات تحتاج مراجعة")!;
     const headers = (review.getRow(2).values as any[]).slice(1).map(String);
-    expect(headers).toEqual(["معرّف السجل", "اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"]);
+    expect(headers).toEqual(["اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"]);
     expect(headers).not.toContain("الموقع كما ورد");
-    expect(String(review.getRow(3).getCell(4).value)).toBe("القاهرة، مصر");
+    expect(String(review.getRow(3).getCell(3).value)).toBe("القاهرة، مصر");
   });
 });

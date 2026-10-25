@@ -395,8 +395,8 @@ describe("live check 12: a range reads low to high, in points and in pounds", ()
 });
 
 describe("live check 14: the top-up review time stays configurable and honest", () => {
-  it("with no configured time the sentence states none; a configured time is stated as written", () => {
-    expect(topupReviewSentenceAr(null)).toBe("يراجع فريق الإدارة صورة الإيصال يدويًا، وتُضاف النقاط إلى محفظتك فور الاعتماد وتصلك رسالة بذلك.");
+  it("with no configured time the sentence is the owner-approved one; a configured time is stated as written", () => {
+    expect(topupReviewSentenceAr(null)).toBe("غالبًا يتم الاعتماد خلال ١٥ دقيقة، وبحد أقصى ٢٤ ساعة، وتصلك رسالة عند إضافة النقاط.");
     expect(topupReviewSentenceAr("خلال ساعتين في أيام العمل")).toContain("ومدة المراجعة المتوقعة خلال ساعتين في أيام العمل");
     expect(src("src/app/dashboard/topup/page.tsx")).toContain("reviewTimeAr");
     expect(src("src/lib/topupConfig.ts")).toContain("export const TOPUP_REVIEW_TIME_AR: string | null = null;");

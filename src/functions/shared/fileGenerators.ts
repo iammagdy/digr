@@ -1,6 +1,6 @@
 import PDFDocument from "pdfkit";
 import { workbookCompanyColumns } from "../../lib/companyColumns";
-import { formatPhoneDisplay } from "../../lib/phoneDisplay";
+import { formatPhoneDisplay, phoneMayBeIncomplete, PHONE_MAY_BE_INCOMPLETE_AR } from "../../lib/phoneDisplay";
 import ExcelJS from "exceljs";
 import { POSTS_SHEET_NAME_AR, POST_COMMENTS_DELIVERED_TITLE_AR, POST_DETAIL_KEYS, POST_NUMBER_KEY, POST_NUMBER_TITLE_AR, POST_COLUMN_TITLES_AR } from "../../lib/facebookKeywordService";
 import { PassThrough } from "node:stream";
@@ -782,6 +782,8 @@ async function generateCompanyDataWorkbook(
       cell.border = borderThin;
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
       if (key === "phone" || key === "work_email") cell.numFmt = "@";
+      // A phone the source probably cut keeps its digits exactly; the remark is a cell note, so the cell value stays a plain number.
+      if (key === "phone" && phoneMayBeIncomplete(cell.value)) cell.note = PHONE_MAY_BE_INCOMPLETE_AR;
       if ((key === "website" || key === "linkedin_url") && cell.hyperlink) {
         cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
       }
@@ -836,7 +838,8 @@ async function generateCompanyDataWorkbook(
     const review = wb.addWorksheet("سجلات تحتاج مراجعة", {
       views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
     });
-    const reviewHeaders = ["معرّف السجل", "اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"];
+    // No record id: the main sheet has none either, and nothing in the workbook points at a review row (the company name is what the customer reads).
+    const reviewHeaders = ["اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"];
     // Plain statement first: these rows are outside the delivered data and outside the bill.
     review.mergeCells(1, 1, 1, reviewHeaders.length);
     const notice = review.getCell(1, 1);
@@ -850,9 +853,9 @@ async function generateCompanyDataWorkbook(
     rh.fill = header.fill;
     rh.alignment = header.alignment;
     review.views = [{ state: "frozen", ySplit: 2, rightToLeft: true }];
-    reviewHeaders.forEach((_, i) => { review.getColumn(i + 1).width = [22, 36, 32, 38, 56][i]; });
+    reviewHeaders.forEach((_, i) => { review.getColumn(i + 1).width = [36, 32, 38, 56][i]; });
     uncertain.forEach((r, i) => review.addRow([
-      plainRecordId(r.id, i), companyName(r, i),
+      companyName(r, i),
       industryLabelForCell(cleanCellText(r.industry || r.activity || r.sector)),
       localizeAddressAr(cleanCellText(r.location || r.city || r.address)),
       cleanCellText(r._relevance_reason),

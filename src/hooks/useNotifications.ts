@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { startNotificationPolling } from "@/lib/notificationPolling";
 import { getSlowFactor } from "@/lib/degradedClient";
-import { actionableUnreadCount } from "@/lib/notificationBadge";
+import { NOTIFICATION_LIST_LIMIT, NOTIFICATION_NEWER_WINDOW_MS, actionableUnreadCount, mergeNewerNotifications } from "@/lib/notificationBadge";
 
 export type NotificationKind = "topup_approved" | "topup_rejected" | "job_done" | "refund" | "welcome";
 
@@ -32,6 +32,8 @@ export const NOTIFICATION_TICK_MAX_MS = 120_000;
 export function useNotifications(userId: string | undefined) {
   const [items, setItems] = useState<AppNotification[]>([]);
   const newestRef = useRef<string | null>(null);
+  const itemsRef = useRef<AppNotification[]>([]);
+  itemsRef.current = items;
 
   const mapRow = useCallback((r: any): AppNotification => {
     return {
@@ -57,7 +59,7 @@ export function useNotifications(userId: string | undefined) {
         .select("*")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
-        .limit(30);
+        .limit(NOTIFICATION_LIST_LIMIT);
 
       if (error) {
         setItems([]);
@@ -73,17 +75,23 @@ export function useNotifications(userId: string | undefined) {
 
   useEffect(() => { void load(); }, [load]);
 
-  // The cheap check: only rows newer than the newest one already shown (an empty answer is a few hundred bytes).
+  // The cheap check: only rows from shortly before the newest one already shown (an empty answer is a few hundred bytes). It looks a little
+  // BEFORE the newest row, never strictly after it: two notices of one finished job (the result and the released hold) are written within the same
+  // second and a clock can put the second one a moment earlier, so «newer than the newest» would skip it until the page was reloaded.
   const checkNewer = useCallback(async (): Promise<boolean> => {
     if (!userId) return false;
     const supabase = createClient();
-    let query = supabase.from("notifications").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(30);
-    if (newestRef.current) query = query.gt("created_at", newestRef.current);
+    let query = supabase.from("notifications").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(NOTIFICATION_LIST_LIMIT);
+    if (newestRef.current) query = query.gt("created_at", new Date(Date.parse(newestRef.current) - NOTIFICATION_NEWER_WINDOW_MS).toISOString());
     const { data, error } = await query;
     if (error || !data || data.length === 0) return false;
-    newestRef.current = String(data[0].created_at);
-    const fresh = data.map(mapRow);
-    setItems((prev) => [...fresh, ...prev.filter((n) => !fresh.some((f) => f.id === n.id))].slice(0, 30));
+    const fetched = data.map(mapRow);
+    const merged = mergeNewerNotifications(itemsRef.current, fetched);
+    const newest = String(data[0].created_at);
+    if (!newestRef.current || Date.parse(newest) > Date.parse(newestRef.current)) newestRef.current = newest;
+    if (!merged.foundNew) return false;
+    itemsRef.current = merged.items;
+    setItems(merged.items);
     return true;
   }, [userId, mapRow]);
 
