@@ -15,7 +15,7 @@ const page = readFileSync("src/app/page.tsx", "utf8");
 
 describe("landing clarity (Part 3)", () => {
   it("the first screen says in one Arabic sentence what Diger is, with ONE question box and ONE primary action (audit phase 3)", () => {
-    expect(hero).toContain("اسأل بالعربية، واستلم بيانات منظّمة من مصادر متاحة في ملف إكسل أو بي دي إف.");
+    expect(hero).toContain("أخبرنا بالبيانات التي تحتاجها، ونجمعها لك.");
     expect(hero.match(/<form/g)?.length).toBe(1);
     expect(hero.match(/type="submit"/g)?.length).toBe(1);
     expect(hero.match(/ابدأ طلبك/g)?.length).toBe(1);
