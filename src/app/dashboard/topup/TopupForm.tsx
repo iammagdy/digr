@@ -8,7 +8,8 @@ import { formatAr } from "@/lib/arabicDigits";
 import { compressReceipt } from "@/lib/receiptImage";
 import { TOPUP_PRESETS_EGP } from "@/lib/pricing";
 import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
-import { topupReviewSentenceAr } from "@/lib/topupConfig";
+import { showsInstapayShortcuts, topupReviewSentenceAr } from "@/lib/topupConfig";
+import { InstapayShortcuts } from "./InstapayShortcuts";
 import type { TopupRecord } from "./types";
 
 const MAX_RECEIPT_BYTES = 5 * 1024 * 1024;
@@ -198,6 +199,8 @@ export default function TopupForm({
           {copied ? "تم النسخ" : "نسخ"}
         </button>
       </div>
+
+      {showsInstapayShortcuts(ipa) && <InstapayShortcuts />}
 
       <input
         ref={fileRef}

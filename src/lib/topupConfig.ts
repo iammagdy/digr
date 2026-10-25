@@ -25,3 +25,16 @@ export function topupReviewSentenceAr(configured?: string | null): string {
     ? `يراجع فريق الإدارة صورة الإيصال يدويًا، ومدة المراجعة المتوقعة ${time}، وتُضاف النقاط إلى محفظتك فور الاعتماد.`
     : TOPUP_REVIEW_DEFAULT_AR;
 }
+
+/**
+ * The InstaPay shortcuts under the payment address: the owner's InstaPay link and the QR image (public/instapay-qr.jpeg, the owner's file, never redrawn).
+ * They belong to ONE account, so the screen shows them only while the saved payment address is that account (TOPUP_INSTAPAY_ADDRESS): if the owner
+ * changes the address in the admin settings, the old QR and link disappear instead of sending money to the wrong place, until this config is updated too.
+ */
+export const TOPUP_INSTAPAY_URL = "https://ipn.eg/S/iammagdy/instapay/2dNSeG";
+export const TOPUP_INSTAPAY_ADDRESS = "iammagdy@instapay";
+export const TOPUP_INSTAPAY_QR_SRC = "/instapay-qr.jpeg";
+
+export function showsInstapayShortcuts(savedAddress: string | null | undefined): boolean {
+  return String(savedAddress ?? "").trim().toLowerCase() === TOPUP_INSTAPAY_ADDRESS;
+}
