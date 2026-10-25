@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { useTheme } from "@/lib/theme";
 import type { PersonaType } from "@/functions/shared/personaConfigs";
+import { AvatarPicker } from "./AvatarPicker";
 
 const NOTIF_PREFS: Array<[id: "topup" | "done" | "refund" | "news", label: string, sub: string]> = [
   ["topup", "اعتماد أو رفض الشحن", "بريد إلكتروني + إشعار داخل التطبيق"],
@@ -156,8 +157,8 @@ export default function SettingsPage() {
 
         <section className={SECTION}>
           <h3 className="m-0 text-[15px] font-semibold text-ink">الملف الشخصي</h3>
-          <div className="flex items-center gap-3.5">
-            <span className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-full bg-ac text-sm font-semibold text-onac" style={{ fontSize: 19 }}>{initials(user.name || user.email)}</span>
+          <div className="flex flex-col gap-3">
+            <AvatarPicker userId={user.id} letters={initials(user.name || user.email)} />
             <div className="min-w-0">
               <p dir="ltr" className="m-0 truncate text-right text-sm text-ink">{user.email}</p>
               {user.emailVerification && (

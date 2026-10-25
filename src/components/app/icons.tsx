@@ -15,6 +15,27 @@ export const UI = {
   x: "M6 6l12 12M18 6L6 18",
   help: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01",
   plus: "M12 5v14M5 12h14",
+  calculator: "M7 3h10a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM8 7h8v3H8zM8.5 14h.01M12 14h.01M15.5 14h.01M8.5 17.5h.01M12 17.5h.01M15.5 17.5h.01",
+  grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+  headset: "M4 14v-2a8 8 0 0 1 16 0v2M4 14a2 2 0 0 1 2-2h1v6H6a2 2 0 0 1-2-2zM20 14a2 2 0 0 0-2-2h-1v6h1a2 2 0 0 0 2-2zM18 18c0 2-2 3-5 3h-1",
+  legal: "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM9 12l2 2 4-4",
+} as const;
+
+/**
+ * The icon of every sidebar entry (the drawer on a phone shows the same list). One icon per entry, none shared: a test reads this map, so a new entry
+ * cannot reuse the file icon of another one.
+ */
+export const SIDEBAR_ICONS = {
+  newQuestion: UI.plus,
+  chat: UI.chat,
+  requests: UI.folder,
+  wallet: UI.wallet,
+  calculator: UI.calculator,
+  catalog: UI.grid,
+  settings: UI.gear,
+  help: UI.help,
+  support: UI.headset,
+  legal: UI.legal,
 } as const;
 
 export function Icon({ d, size = 18, stroke = 1.7 }: { d: string; size?: number; stroke?: number }) {
