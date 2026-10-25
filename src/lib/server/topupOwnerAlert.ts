@@ -1,12 +1,13 @@
 import { sendPlatformEmail } from "@/lib/server/sendPlatformEmail";
 import { SITE_URL } from "@/lib/site";
-import { egpDueAr } from "@/lib/topupAmount";
+import { egpDisplayAr, egpDueAr } from "@/lib/topupAmount";
 import { toArabicDigits } from "@/lib/arabicDigits";
 
 /**
  * The owner's alert for a new top-up request: ONE e-mail to the address in ADMIN_ALERT_EMAIL (server only; nothing is hard-coded and nothing is sent
- * while it is empty). It goes through the e-mail function that already exists, with its generic update layout, so no new template is needed. It
- * carries the customer's name and address, the points, the EGP to expect, the time and the link to the approval page: no receipt image, no secret and
+ * while it is empty). It goes through the e-mail function with the right-to-left «admin-topup-alert» template (a label/value table). While the
+ * function that is live does not know that template yet (it rejects it as an invalid request before anything is sent), the previous layout
+ * (the generic job-update one) goes out instead, so the owner's alert never stops. It carries the customer's name and address, the points, the EGP to expect, the time and the link to the approval page: no receipt image, no secret and
  * no token. It NEVER throws and never delays or fails the request: the caller only awaits it so the serverless run is not cut short.
  */
 export const OWNER_ALERT_ENV = "ADMIN_ALERT_EMAIL";
@@ -32,7 +33,19 @@ export function alertTimeAr(iso: string): string {
   return new Intl.DateTimeFormat("ar-EG-u-nu-arab", { timeZone: "Africa/Cairo", dateStyle: "long", timeStyle: "short" }).format(date);
 }
 
-/** The variables of the e-mail (the generic update layout: heading, lead, two detail lines, one button). Values are escaped by the template. */
+/** The variables of the «admin-topup-alert» template: one value per row of its table, Arabic-Indic digits. Values are escaped by the template. */
+export function buildTopupAlertTemplateVars(input: TopupAlertInput): Record<string, string> {
+  return {
+    Points: toArabicDigits(input.points),
+    AmountEgp: egpDisplayAr(input.amountEgp),
+    CustomerName: input.customerName,
+    CustomerEmail: input.customerEmail,
+    RequestTime: alertTimeAr(input.createdAt),
+    AdminURL: `${SITE_URL}/admin/topups`,
+  };
+}
+
+/** The previous layout (the generic update template: heading, lead, two detail lines, one button): used only while the live function does not know the new template. */
 export function buildTopupAlertVars(input: TopupAlertInput): Record<string, string> {
   const points = toArabicDigits(input.points);
   return {
@@ -54,7 +67,13 @@ export async function notifyOwnerOfTopup(input: TopupAlertInput, deps: { send?: 
       console.log("[topup:owner_alert_skipped] no ADMIN_ALERT_EMAIL");
       return { sent: false, reason: "no_recipient" };
     }
-    const result = await (deps.send ?? sendPlatformEmail)("job-update", to, buildTopupAlertVars(input), `topup-alert:${input.topupId}`);
+    const send = deps.send ?? sendPlatformEmail;
+    const key = `topup-alert:${input.topupId}`;
+    let result = await send("admin-topup-alert", to, buildTopupAlertTemplateVars(input), key);
+    if (result && result.ok === false && result.reason === "invalid_request") {
+      // the function that is live rejected the template before sending anything: the previous layout goes out instead (still one e-mail)
+      result = await send("job-update", to, buildTopupAlertVars(input), key);
+    }
     return result && result.ok === false ? { sent: false, reason: "failed" } : { sent: true };
   } catch {
     console.error("[topup:owner_alert_failed]");

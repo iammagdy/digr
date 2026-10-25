@@ -47,7 +47,7 @@ vi.mock("../src/hooks/useUser", () => ({ useUser: () => ({ user: { id: "u1", ema
 vi.mock("../src/lib/supabase/client", () => ({ createClient: () => ({}) }));
 
 import TopupForm from "../src/app/dashboard/topup/TopupForm";
-import { buildTopupAlertVars, notifyOwnerOfTopup, ownerAlertRecipient, OWNER_ALERT_ENV } from "../src/lib/server/topupOwnerAlert";
+import { buildTopupAlertTemplateVars, buildTopupAlertVars, notifyOwnerOfTopup, ownerAlertRecipient, OWNER_ALERT_ENV } from "../src/lib/server/topupOwnerAlert";
 import { TOPUP_DEFAULT_POINTS, TOPUP_MAX_POINTS, TOPUP_MIN_POINTS, TOPUP_PRESET_POINTS } from "../src/lib/topupConfig";
 import { egpClipboardText, egpDueAr, egpToPoints, parseTopupPointsInput, pointsToEgp, topupAmountMessageAr, validateSubmittedEgp, validateTopupPoints } from "../src/lib/topupAmount";
 import { TOPUP_ERROR_MESSAGES } from "../src/lib/topupErrors";
@@ -208,14 +208,14 @@ describe("D. the request as the screen sends it", () => {
     const alerts = mockState.sent.filter((mail) => mail.to === "owner@example.test");
     expect(alerts).toHaveLength(1);
     const [alert] = alerts;
-    expect(alert.template).toBe("job-update");
+    expect(alert.template).toBe("admin-topup-alert");
     expect(alert.key).toBe(`topup-alert:${body.topupId}`);
-    expect(alert.vars.Subject).toBe("طلب شحن جديد: ٢٥٠٠ نقطة");
-    expect(alert.vars.Lead).toContain("منى السيد");
-    expect(alert.vars.Lead).toContain("customer@example.test");
-    expect(alert.vars.DetailOne).toBe("النقاط: ٢٥٠٠. المبلغ المتوقع: ٢٥٠ جنيهًا.");
-    expect(alert.vars.DetailTwo).toMatch(/^وقت الطلب: .+\.$/);
-    expect(alert.vars.JobURL).toBe("https://diger.tech/admin/topups");
+    expect(alert.vars.Points).toBe("٢٥٠٠");
+    expect(alert.vars.CustomerName).toBe("منى السيد");
+    expect(alert.vars.CustomerEmail).toBe("customer@example.test");
+    expect(alert.vars.AmountEgp).toBe("٢٥٠");
+    expect(alert.vars.RequestTime).toMatch(/.+/);
+    expect(alert.vars.AdminURL).toBe("https://diger.tech/admin/topups");
     const everything = JSON.stringify(alert);
     expect(everything).not.toMatch(/token|secret|receipt|rcpt_|[?&=]|Bearer|service_role|\.png/i);
     // the customer's own e-mail is still sent, once
@@ -253,13 +253,13 @@ describe("E. the owner alert module", () => {
     expect(await notifyOwnerOfTopup(input, { send: send as never, env: {} })).toEqual({ sent: false, reason: "no_recipient" });
     expect(send).not.toHaveBeenCalled();
     expect(await notifyOwnerOfTopup(input, { send: send as never, env: { ADMIN_ALERT_EMAIL: "o@x.test" } })).toEqual({ sent: true });
-    expect(send).toHaveBeenCalledWith("job-update", "o@x.test", buildTopupAlertVars(input), "topup-alert:topup_abc");
+    expect(send).toHaveBeenCalledWith("admin-topup-alert", "o@x.test", buildTopupAlertTemplateVars(input), "topup-alert:topup_abc");
     const boom = vi.fn(async () => { throw new Error("x"); });
     expect(await notifyOwnerOfTopup(input, { send: boom as never, env: { ADMIN_ALERT_EMAIL: "o@x.test" } })).toEqual({ sent: false, reason: "failed" });
     // the time reads in Cairo (10:00 UTC is 1:00 pm there) with Arabic-Indic digits
     expect(buildTopupAlertVars(input).DetailTwo).toBe("وقت الطلب: ٢٥ أكتوبر ٢٠٢٦ في ١:٠٠ م.");
   });
-  it("it uses the existing generic layout: no new template key, so the e-mail function needs no redeploy", () => {
+  it("the previous generic layout (job-update) stays in the code as the fallback while the live function lacks the new template", () => {
     expect(src("src/lib/server/topupOwnerAlert.ts")).toContain('"job-update"');
     expect(src("supabase/functions/send-email/templates.ts")).toContain('"job-update"');
   });

@@ -16,7 +16,8 @@ import {
 } from "@/lib/arabicDigits";
 import { RECEIPTS_BUCKET } from "@/lib/constants";
 import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
-import { topupAmountMessageAr, validateSubmittedEgp } from "@/lib/topupAmount";
+import { egpDisplayAr, topupAmountMessageAr, validateSubmittedEgp } from "@/lib/topupAmount";
+import { topupReviewSentenceAr } from "@/lib/topupConfig";
 import { DEFAULT_CREDIT_VALUE_EGP } from "@/lib/creditValue";
 import { notifyOwnerOfTopup } from "@/lib/server/topupOwnerAlert";
 
@@ -256,21 +257,17 @@ export async function POST(req: NextRequest) {
       createdAt: newTopup.created_at,
     });
 
-    // 8. Email: topup-received (never blocks or fails the request)
+    // 8. Email: topup-received (never blocks or fails the request). Arabic-Indic digits; the internal receipt id is never sent.
     try {
       if (user.email && isEmailPreferenceEnabled("topup-received", user.user_metadata)) {
-        const creditValueEgp =
-          typeof pricingSetting?.value?.creditValueEgp === "number" &&
-          pricingSetting.value.creditValueEgp > 0
-            ? pricingSetting.value.creditValueEgp
-            : 0.1;
-        const expectedCredits = Math.floor(validated.amountEgp / creditValueEgp);
+        const reviewTime = typeof pricingSetting?.value?.reviewTimeAr === "string" && pricingSetting.value.reviewTimeAr.trim() ? pricingSetting.value.reviewTimeAr.trim() : null;
         await sendPlatformEmail("topup-received", user.email, {
           Name: resolveDisplayName(user),
-          AmountEgp: String(validated.amountEgp),
-          Credits: String(expectedCredits),
-          Reference: reference,
-          CreatedAt: formatArabicDate(newTopup.created_at),
+          AmountEgp: egpDisplayAr(validated.amountEgp),
+          Credits: toArabicDigits(amountCheck.points),
+          // the same sentence as under the send button of the top-up page
+          ReviewNote: topupReviewSentenceAr(reviewTime),
+          CreatedAt: toArabicDigits(formatArabicDate(newTopup.created_at)),
         });
       } else if (user.email) {
         console.log(`[email:preference_disabled] template=topup-received category=topup userId=${user.id}`);

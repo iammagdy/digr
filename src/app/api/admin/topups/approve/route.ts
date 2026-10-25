@@ -4,6 +4,7 @@ import { createServerSideClient, createAdminClient } from "@/lib/supabase/server
 import { applyTopup, getBalance } from "@/lib/supabase/ledger";
 import { sendPlatformEmail, getRecipient } from "@/lib/server/sendPlatformEmail";
 import { normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
+import { egpDisplayAr } from "@/lib/topupAmount";
 import { callAtomicOrFallback } from "@/functions/shared/atomicRpc";
 
 export const dynamic = "force-dynamic";
@@ -119,8 +120,7 @@ export async function POST(req: NextRequest) {
           await sendPlatformEmail("topup-approved", rcpt.email, {
             Name: rcpt.name,
             Credits: toArabicDigits(credits),
-            ConfirmedAmountEgp: toArabicDigits(confirmedAmount),
-            Reference: toArabicDigits(topup.reference),
+            ConfirmedAmountEgp: egpDisplayAr(confirmedAmount),
             Balance: toArabicDigits(balance),
           }, `topup-approved:${topupId}`);
         }
@@ -177,7 +177,7 @@ export async function POST(req: NextRequest) {
         id: `notif_${topupId}`,
         user_id: topup.user_id,
         title: "تم رفض طلب الشحن",
-        body: `تم رفض طلب الشحن (مرجع: ${topup.reference}). السبب: ${confirmedRejectReason}`,
+        body: `تم رفض طلب الشحن. السبب: ${confirmedRejectReason}`,
         link: "/dashboard/topup",
         read: false,
         created_at: now,
@@ -189,8 +189,7 @@ export async function POST(req: NextRequest) {
         if (rcpt) {
           await sendPlatformEmail("topup-rejected", rcpt.email, {
             Name: rcpt.name,
-            AmountEgp: String(topup.amount_egp),
-            Reference: topup.reference,
+            AmountEgp: egpDisplayAr(Number(topup.amount_egp)),
             RejectReason: confirmedRejectReason,
           });
         }

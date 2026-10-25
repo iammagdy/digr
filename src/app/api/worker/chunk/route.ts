@@ -223,11 +223,11 @@ async function executeReleaseConfirmation(
                 typeof jobRow.endpoint_id === "string" ? jobRow.endpoint_id : "";
               await sendPlatformEmail("refund", rcpt.email, {
                 Name: rcpt.name,
-                Points: String(Math.round(releasedCredits)),
+                Points: toArabicDigits(Math.round(releasedCredits)),
                 // Customer words only: never the internal endpoint id, never a raw upstream message.
                 JobTitle: customerEmailJobTitle(endpointId),
                 Reason: sanitizeActivityError(reason),
-                Balance: String(balance),
+                Balance: toArabicDigits(balance),
               });
             }
           }
