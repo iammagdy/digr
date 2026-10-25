@@ -381,7 +381,7 @@ export async function executeMultiStepJob(
   // STRICT GUARD 1: Refuse fake/mock execution in production
   if (isProduction && !isLive) {
     const errorAr = "تعذر بدء الطلب. حجز مؤقت مُحرَّر كاملًا.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء وتحرير الحجز المؤقت كاملًا: منع البيانات التجريبية في الإنتاج");
+    await releaseCredits(tables, userId, jobId, reservedCredits, "إلغاء الطلب وحجز مؤقت مُحرَّر كاملًا: منع البيانات التجريبية في الإنتاج");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -412,7 +412,7 @@ export async function executeMultiStepJob(
       userId,
       jobId,
       reservedCredits,
-      "تحرير الحجز المؤقت لعدم تفعيل مزود البيانات الحقيقي"
+      "حجز مؤقت مُحرَّر لعدم تفعيل مزود البيانات الحقيقي"
     );
     try {
       await tables.updateRow({
@@ -529,7 +529,7 @@ export async function executeMultiStepJob(
             }
           }
 
-          await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لفشل الاستخراج");
+          await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لفشل الاستخراج");
           await tables.updateRow({
             databaseId: "digr",
             tableId: "jobs",
@@ -688,7 +688,7 @@ export async function executeMultiStepJob(
         if (currentChargeEstimate + estPagePoints > reservedCredits || currentChargeEstimate + estPagePoints > jobPointsCap) {
           if (collectedRows.length === 0) {
             const errorAr = "الرصيد المحجوز غير كافٍ لمعالجة الدفعة الأولى من السجلات.";
-            await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لعدم كفاية الرصيد للدفعة الأولى");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لعدم كفاية الرصيد للدفعة الأولى");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -715,7 +715,7 @@ export async function executeMultiStepJob(
         if (!spendCapCheck.allowed) {
           if (collectedRows.length === 0) {
             const errorAr = "الخدمة غير متاحة حالياً. حجز مؤقت مُحرَّر كاملًا.";
-            await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت لبلوغ الحد اليومي للمزود");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر لبلوغ الحد اليومي للمزود");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -808,7 +808,7 @@ export async function executeMultiStepJob(
               errorAr = "تعذر إكمال البحث حالياً. حجز مؤقت مُحرَّر كاملًا.";
             }
 
-            await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لفشل الاستخراج من المصدر");
+            await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لفشل الاستخراج من المصدر");
             await tables.updateRow({
               databaseId: "digr",
               tableId: "jobs",
@@ -870,7 +870,7 @@ export async function executeMultiStepJob(
 
   if (collectedRows.length === 0) {
     const errorAr = "لم يُعثر على أي بيانات مطابقة من المصدر.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لعدم وجود بيانات");
+    await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لعدم وجود بيانات");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -897,8 +897,8 @@ export async function executeMultiStepJob(
   });
 
   if (hasPlaceholder) {
-    const errorAr = "تم رصد سجلات غير حقيقية أو تجريبية. تم إلغاء الطلب وتحرير الحجز المؤقت كاملًا تلقائياً.";
-    await releaseCredits(tables, userId, jobId, reservedCredits, "تحرير الحجز المؤقت كاملًا لرصد سجلات تجريبية");
+    const errorAr = "تم رصد سجلات غير حقيقية أو تجريبية. تم إلغاء الطلب: حجز مؤقت مُحرَّر كاملًا تلقائياً.";
+    await releaseCredits(tables, userId, jobId, reservedCredits, "حجز مؤقت مُحرَّر كاملًا لرصد سجلات تجريبية");
     await tables.updateRow({
       databaseId: "digr",
       tableId: "jobs",
@@ -1151,7 +1151,7 @@ export async function runJobWatchdog(
         job.userId,
         job.$id,
         job.reservedCredits,
-        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب وتحرير الحجز المؤقت كاملًا"
+        "إلغاء حجز الرصيد لتأخر تنفيذ الطلب: حجز مؤقت مُحرَّر كاملًا"
       );
 
       if (releaseRes.alreadyReleased) {

@@ -29,7 +29,7 @@ export function GlassHeader({ initialSignedIn }: { initialSignedIn?: boolean } =
           </div>
           <div className="relative flex items-center gap-1">
             <ThemeToggle className="!text-mut" />
-            <Link href="/services" className="flex h-11 items-center rounded-full px-3 text-sm text-ink transition-colors hover:bg-sf2 min-[760px]:px-3.5">خدماتنا</Link>
+            <Link href="/services" className="hidden h-11 items-center rounded-full px-3 text-sm text-ink transition-colors hover:bg-sf2 min-[480px]:flex min-[760px]:px-3.5">خدماتنا</Link>
             <Link href="/pricing" className="hidden h-11 items-center rounded-full px-2.5 text-sm text-ink transition-colors hover:bg-sf2 min-[520px]:flex min-[760px]:px-3.5">الأسعار</Link>
             <Link href="/calculator" className="hidden h-11 items-center rounded-full px-3.5 text-sm text-ink transition-colors hover:bg-sf2 min-[520px]:flex">حاسبة التكلفة</Link>
             {resolving ? null : signedIn ? (

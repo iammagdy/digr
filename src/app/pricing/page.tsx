@@ -12,7 +12,7 @@ export default function PricingPage() {
   const peopleLine = peoplePerRequestLineAr();
   const capacity = CAPACITY_AMOUNTS_EGP.map((amount) => ({ amount, points: pointsForAmountEgp(amount), lines: capacityForAmount(amount) }));
   return (
-    <main dir="rtl" lang="ar" className="min-h-screen bg-bg px-5 py-12 font-sans text-ink">
+    <main dir="rtl" lang="ar" className="min-h-dvh bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[960px] flex-col gap-10">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-ln pb-6">
           <div>

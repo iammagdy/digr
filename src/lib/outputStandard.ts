@@ -105,7 +105,7 @@ const PREVIEW_COLUMNS: Record<OutputKind, Array<{ header: string; field: string;
     { header: "اسم جهة الاتصال", field: "full_name" },
     { header: "المسمى الوظيفي", field: "job_title" },
     { header: "الشركة", field: "company_name" },
-    { header: "رقم الهاتف", field: "phone" },
+    { header: "رقم الهاتف", field: "phone", format: formatPhoneDisplay },
   ],
 };
 

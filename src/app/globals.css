@@ -176,6 +176,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overflow-wrap: break-word; /* a pasted link or a long handle wraps instead of widening the page */
 }
 
 /* Display typography — editorial Arabic headlines */

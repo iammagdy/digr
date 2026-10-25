@@ -261,7 +261,7 @@ describe("«حجز مؤقت مُحرَّر»: the leftover refund wording is gon
     const client: any = { from: () => ({ insert: async (row: any) => { sent.push({ title: row.title, body: row.body }); return { data: row, error: null }; }, select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }), maybeSingle: async () => ({ data: null, error: null }) }) }) };
     void client;
     const { subject, html } = renderEmailTemplate("refund", { Points: "٢٠", Reason: "حجز مؤقت مُحرَّر", JobTitle: "بحث", Name: "أحمد", Balance: "٣٠٠٠" });
-    expect(subject).toBe("حُرّر حجز مؤقت بقيمة ٢٠ نقطة");
+    expect(subject).toBe("حجز مؤقت مُحرَّر بقيمة ٢٠ نقطة");
     expect(`${subject} ${html}`).not.toMatch(OLD);
     expect(html).not.toContain("استرداد");
     expect(html).toContain("حجز مؤقت مُحرَّر");
@@ -284,7 +284,7 @@ describe("«حجز مؤقت مُحرَّر»: the leftover refund wording is gon
   });
 
   it("the plan's cost line says the rest of the hold is released", () => {
-    expect(read("src/lib/planExplanation.ts")).toContain("ويُحرَّر الباقي من الحجز المؤقت");
+    expect(read("src/lib/planExplanation.ts")).toContain("والباقي حجز مؤقت مُحرَّر");
   });
 
   it("no customer-facing file of the app shows these old words (admin files are checked above)", () => {

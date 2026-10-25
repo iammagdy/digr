@@ -58,7 +58,7 @@ export default function RevisionQuoteCard({
             {quote.revisionDescription || "تعديل تنسيق وإخراج ملفات البحث"}
           </h3>
         </div>
-        <div className="text-left">
+        <div className="text-start min-[520px]:text-end">
           <p className="m-0 text-[26px] font-semibold leading-none text-ink">
             {formatAr(quote.points)}
             <span className="text-xs text-mut" style={{ marginInlineStart: 6 }}>

@@ -13,7 +13,7 @@ export const dynamic = "force-static";
 
 export default function LandingPage() {
   return (
-    <div className="min-h-screen bg-bg text-ink2" style={{ containerType: "inline-size" }}>
+    <div className="min-h-dvh bg-bg text-ink2" style={{ containerType: "inline-size" }}>
       <GlassHeader />
       <HeroLens />
       <PriceStrip />

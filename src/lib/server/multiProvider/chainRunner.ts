@@ -207,7 +207,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
 
   const params = chainParamsOf(input.params);
   const route: RouteDef | undefined = params ? routeByCode(params.routeCode) : undefined;
-  if (!params || !route) return fail("تعذر تحديد مسار جمع البيانات لهذا الطلب؛ حُرّر الحجز المؤقت.", "chain_route_missing");
+  if (!params || !route) return fail("تعذر تحديد مسار جمع البيانات لهذا الطلب؛ حجز مؤقت مُحرَّر.", "chain_route_missing");
 
   // The job's final volume (the quote may have cut it to fit the cap) is what the chain works to; the plan's own count is only the first guess.
   if (Number.isFinite(input.targetVolumeMax) && input.targetVolumeMax > 0) params.count = Math.floor(input.targetVolumeMax);

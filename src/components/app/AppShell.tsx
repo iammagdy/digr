@@ -102,6 +102,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const isChat = pathname === "/dashboard/chat";
   const compactSidebar = canvasActive ? !sidebarPinnedOpen : sidebarCollapsed;
 
+  /* Escape closes the drawer, the account menu and the notifications (a hardware keyboard on a tablet, or the Android back gesture mapped to Escape) */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setDrawer(false); setAcctOpen(false); setNotifsOpen(false); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   /* close overlays on navigation */
   useEffect(() => { setDrawer(false); setAcctOpen(false); setNotifsOpen(false); }, [pathname]);
 
@@ -334,13 +341,13 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="flex flex-col gap-1.5 p-1">
                 <Link
                   href="/login"
-                  className="flex min-h-[38px] items-center justify-center rounded-xl bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-ink-800 transition-colors no-underline text-center"
+                  className="flex min-h-11 items-center justify-center rounded-xl bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-ink-800 transition-colors no-underline text-center"
                 >
                   تسجيل الدخول
                 </Link>
                 <Link
                   href="/register"
-                  className="flex min-h-[34px] items-center justify-center rounded-xl border border-ln2 bg-sf px-3 py-1 text-xs font-medium text-ink hover:bg-sf2 transition-colors no-underline text-center"
+                  className="flex min-h-11 items-center justify-center rounded-xl border border-ln2 bg-sf px-3 py-1 text-xs font-medium text-ink hover:bg-sf2 transition-colors no-underline text-center"
                 >
                   إنشاء حساب جديد
                 </Link>
@@ -382,7 +389,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <div className="flex items-center gap-2">
                 <Link
                   href="/login"
-                  className="inline-flex min-h-9 items-center justify-center rounded-full bg-ink-900 px-4 text-xs font-semibold text-white hover:bg-ink-800 transition-colors no-underline"
+                  className="inline-flex min-h-11 items-center justify-center rounded-full bg-ink-900 px-4 text-xs font-semibold text-white hover:bg-ink-800 transition-colors no-underline"
                 >
                   تسجيل الدخول
                 </Link>

@@ -173,7 +173,7 @@ export default function ActivityTerminal({
                 type="button"
                 onClick={onClose}
                 aria-label="إغلاق لوحة النشاط"
-                className="flex h-8 w-8 items-center justify-center rounded-full text-mut hover:bg-sf hover:text-ink transition-colors cursor-pointer"
+                className="relative flex h-8 w-8 items-center justify-center rounded-full text-mut after:absolute after:-inset-[6px] after:content-[''] hover:bg-sf hover:text-ink transition-colors cursor-pointer"
               >
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M18 6L6 18M6 6l12 12" />
@@ -240,7 +240,7 @@ export default function ActivityTerminal({
             <h3 className="m-0 mb-1 text-[11px] font-semibold text-ink">{PREVIEW_TITLE_AR}</h3>
             {preview && preview.rows.length > 0 ? (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-0 border-collapse text-[11px] leading-4" data-testid="live-preview-table">
+                <table className="w-full min-w-[420px] border-collapse text-[11px] leading-4" data-testid="live-preview-table">
                   <thead>
                     <tr>
                       {preview.columns.map((column) => (

@@ -677,7 +677,7 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset, uncertainRows
       })(),
       linkedin,
       email || "غير متاح",
-      phone || "غير متاح",
+      phone ? formatPhoneDisplay(phone) : "غير متاح",
       `البريد: ${email ? "موجود" : "غير موجود"} • الهاتف: ${phone ? "موجود" : "غير موجود"}`,
       record.work_email_verification_status || (email ? "لم يتوفر تأكيد" : "غير متاح"),
       record.phone_verification_status || (phone ? "لم يتوفر تأكيد" : "غير متاح"),

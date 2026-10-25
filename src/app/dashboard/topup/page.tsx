@@ -305,7 +305,7 @@ export default function WalletPage() {
 
         <div className="mt-2.5 flex flex-col gap-2.5 rounded-[20px] bg-sf2 px-4 py-3.5" data-testid="wallet-capacity">
           <p className="m-0 text-xs font-semibold text-ink2">رصيدك يكفي تقريبًا لـ</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 gap-2 min-[480px]:grid-cols-3">
             {(available === null ? [] : capacityForPoints(available).filter((line) => ["companies", "x-posts", "youtube-comments"].includes(line.id))).map((line) => (
               <div key={line.id} className="rounded-[14px] bg-sf px-3 py-2.5">
                 <p className="m-0 text-base font-semibold leading-[1.5] text-ink">{capacityLineAr(line)}</p>

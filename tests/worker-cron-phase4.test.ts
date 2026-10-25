@@ -644,13 +644,13 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
       expect(json.released).toBe(true);
       expect(json.chargedCredits).toBe(0);
       expect(json.deliveredUnits).toBe(0);
-      expect(json.error).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
+      expect(json.error).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
       expect(mockWorkerDb.deliveredUnits).toBe(0);
       expect(mockWorkerDb.settled).toBe(false);
       expect(mockWorkerDb.releasedJobs).toHaveLength(1);
       expect(mockWorkerDb.releasedJobs[0]).toEqual({
         p_job_id: "job_non_mock_safety_1",
-        p_error_message: expect.stringContaining("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد"),
+        p_error_message: expect.stringContaining("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد"),
         p_force: true,
       });
     });
@@ -879,7 +879,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(mockWorkerDb.releasedJobs).toHaveLength(1);
         expect(mockWorkerDb.releasedJobs[0]).toEqual({
           p_job_id: "job_empty_result",
-          p_error_message: expect.stringContaining("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد"),
+          p_error_message: expect.stringContaining("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد"),
           p_force: true,
         });
       } finally {
@@ -1347,7 +1347,7 @@ describe("Phase 4: Cron Auth & Hobby Design B Tests", () => {
         expect(json.released).toBe(false);
         expect(json.chargedCredits).toBe(0);
         expect(json.deliveredUnits).toBe(0);
-        expect(json.error).toBe("تعذر تحرير الرصيد المحجوز للمهمة.");
+        expect(json.error).toBe("تعذر تأكيد الحجز المؤقت المُحرَّر للمهمة.");
         expect(json.diagnostic).toBe("release_database_timeout");
         expect(mockWorkerDb.settled).toBe(false);
       } finally {

@@ -200,7 +200,7 @@ describe("worker: the date window and the generic comments, told honestly", () =
     expect(reason).toContain("خارج الفترة التي حددتها");
     expect(reason).toContain("بقي ١ داخل الفترة");
     expect(reason).not.toContain("وتواريخها داخل الفترة");
-    expect(reason).toContain("حُرّر الحجز المؤقت كاملًا ولم يُخصم أي رصيد");
+    expect(reason).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
   });
 
   it("the activity lines count the date-removed rows with the other exclusions, so the panel and the final message add up", async () => {

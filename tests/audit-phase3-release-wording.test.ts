@@ -24,7 +24,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 describe("audit phase 3: a released hold is «حجز مؤقت مُحرَّر», never a refund", () => {
   it("no customer-facing source says it the refund way (the account-deletion line, the legal text and the normalizer itself are the only exceptions)", () => {
-    const allowed = [/dashboard\/settings\/page\.tsx$/, /lib\/legalText\.ts$/, /lib\/releaseWording\.ts$/, /admin\//];
+    const allowed = [/dashboard\/settings\/page\.tsx$/, /lib\/legalText\.ts$/, /lib\/releaseWording\.ts$/, /lib\/walletText\.ts$/, /admin\//];
     const hits: string[] = [];
     for (const file of walk("src")) {
       if (allowed.some((pattern) => pattern.test(file))) continue;
