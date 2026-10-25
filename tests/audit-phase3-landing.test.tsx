@@ -54,6 +54,18 @@ describe("audit phase 3: the hero", () => {
     expect(hero).not.toContain("<a ");
     expect(hero.match(/<h1/g)?.length).toBe(1);
   });
+  it("the hero sentence is the owner-approved one, one short sentence, with balanced wrapping; the file formats are still named elsewhere on the page", () => {
+    const sentence = text(hero.slice(hero.indexOf('data-testid="hero-sentence"')).split("</p>")[0]);
+    expect(sentence).toContain("أخبرنا بالبيانات التي تحتاجها، ونجمعها لك.");
+    expect(sentence.match(/[.،]/g)?.length).toBe(2); // one comma, one full stop: a single short sentence
+    expect(sentence).not.toMatch(/إكسل|بي دي إف|[0-9٠-٩]|\p{Extended_Pictographic}/u);
+    expect(src("src/components/landing/HeroLens.tsx")).toContain("text-balance"); // text-wrap: balance, so no word stands alone on a line
+    expect(hero).toMatch(/<p [^>]*text-balance[^>]*data-testid="hero-sentence"|<p [^>]*data-testid="hero-sentence"[^>]*text-balance/);
+    const rest = text(page.slice(1).join("\n"));
+    expect(rest).toContain("إكسل");
+    expect(rest).toContain("بي دي إف");
+    expect(rest).toContain("ملف إكسل أو بي دي إف منظّم"); // the third step
+  });
   it("says that nothing starts or is charged before approval, once, and the rest of the page does not repeat it", () => {
     expect(hero).toContain("لا يبدأ أي جمع ولا يُخصم أي رصيد قبل موافقتك");
     expect(pageText.match(/قبل موافقتك/g)?.length).toBe(1);

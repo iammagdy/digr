@@ -35,8 +35,8 @@ export function HeroLens() {
     <section className="relative flex flex-col items-center justify-center overflow-hidden px-5 pb-16 pt-[120px] min-[760px]:pb-24 min-[760px]:pt-[150px]" style={{ perspective: 1400 }}>
       <HeroBackdrop />
       <div data-lens-shield="1" className="relative z-[2] w-full max-w-[760px] text-center will-change-transform">
-        <p className="m-0 inline-block max-w-[560px] rounded-[22px] px-4 py-1.5 text-[15px] font-normal leading-[1.9] text-ink2 min-[760px]:text-[17px]" style={{ background: HALO }} data-testid="hero-sentence">
-          اسأل بالعربية، واستلم بيانات منظّمة من مصادر متاحة في ملف إكسل أو بي دي إف.
+        <p className="m-0 inline-block max-w-[560px] text-balance rounded-[22px] px-4 py-1.5 text-[15px] font-normal leading-[1.9] text-ink2 min-[760px]:text-[17px]" style={{ background: HALO }} data-testid="hero-sentence">
+          أخبرنا بالبيانات التي تحتاجها، ونجمعها لك.
         </p>
         <h1 className="mb-0 mt-[18px] font-display text-ink" style={{
             fontSize: "clamp(44px,8cqi,104px)", lineHeight: 1.12, letterSpacing: 0,
