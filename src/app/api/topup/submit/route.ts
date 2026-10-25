@@ -16,6 +16,9 @@ import {
 } from "@/lib/arabicDigits";
 import { RECEIPTS_BUCKET } from "@/lib/constants";
 import { TOPUP_ERROR_MESSAGES } from "@/lib/topupErrors";
+import { topupAmountMessageAr, validateSubmittedEgp } from "@/lib/topupAmount";
+import { DEFAULT_CREDIT_VALUE_EGP } from "@/lib/creditValue";
+import { notifyOwnerOfTopup } from "@/lib/server/topupOwnerAlert";
 
 export const dynamic = "force-dynamic";
 
@@ -107,6 +110,20 @@ export async function POST(req: NextRequest) {
           reason: "payment_details_not_configured",
           error: TOPUP_ERROR_MESSAGES.payment_details_not_configured,
         },
+        { status: 400 }
+      );
+    }
+
+    // 2b. The amount, checked HERE whatever the screen sent: a whole number of points between the minimum and the maximum at the current credit value
+    const creditValue =
+      typeof pricingSetting?.value?.creditValueEgp === "number" && pricingSetting.value.creditValueEgp > 0
+        ? pricingSetting.value.creditValueEgp
+        : DEFAULT_CREDIT_VALUE_EGP;
+    const amountCheck = validateSubmittedEgp(validated.amountEgp, creditValue);
+    if (!amountCheck.ok) {
+      const reason = `amount_${amountCheck.problem}` as "amount_invalid" | "amount_below_min" | "amount_above_max";
+      return NextResponse.json(
+        { success: false, reason, error: topupAmountMessageAr(amountCheck.problem, creditValue) },
         { status: 400 }
       );
     }
@@ -229,6 +246,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // 8a. The owner alert starts now and runs beside the customer's e-mail (one per request: the key is the request id; it never throws)
+    const ownerAlert = notifyOwnerOfTopup({
+      topupId: newTopup.id,
+      customerName: resolveDisplayName(user),
+      customerEmail: user.email || "",
+      points: amountCheck.points,
+      amountEgp: validated.amountEgp,
+      createdAt: newTopup.created_at,
+    });
+
     // 8. Email: topup-received (never blocks or fails the request)
     try {
       if (user.email && isEmailPreferenceEnabled("topup-received", user.user_metadata)) {
@@ -251,6 +278,8 @@ export async function POST(req: NextRequest) {
     } catch (emailErr) {
       console.error("[email:topup-received_failed]", emailErr);
     }
+
+    await ownerAlert;
 
     return NextResponse.json({
       success: true,
