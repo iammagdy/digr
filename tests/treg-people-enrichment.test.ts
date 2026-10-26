@@ -132,14 +132,14 @@ describe("TREG people search and enrichment", () => {
     mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
       const endpointId = options?.endpointId || "";
       if (endpointId === "icypeas.people.search") return {
-        ok: true, httpStatus: 200, tregCallId: "search_budget", costMicro: 100,
+        ok: true, httpStatus: 200, tregCallId: "search_budget", costMicro: 5000,
         data: { output: { people: [1, 2, 3].map((n) => ({
           full_name: `Person ${n}`, title: "Director", company_name: `Company ${n}`,
           company_domain: `company${n}.test`, linkedin_url: `https://linkedin.test/${n}`,
         })) } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
       };
       return {
-        ok: true, httpStatus: 200, tregCallId: "email_budget", costMicro: 20,
+        ok: true, httpStatus: 200, tregCallId: "email_budget", costMicro: 5000,
         data: { output: { work_email: "person@company.test" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
       };
     });

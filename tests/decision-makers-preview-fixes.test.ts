@@ -238,9 +238,9 @@ describe("item 1: the lookups send everything known about the person", () => {
       params: PLAN_PARAMS, paginationStrategy: "none", cursor: null, pageSize: 1, remainingNeeded: 1, targetVolumeMax: 1, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.04,
     } as any);
     const email = sent.find((call) => call.endpointId === "treg.people.email.find")!;
-    expect(email.params).toEqual({ linkedin_url: "https://www.linkedin.com/in/mona-saleh-a", domain: "delta-soft.example", full_name: "Mona Saleh" });
+    expect(email.params).toEqual({ linkedin_url: "https://www.linkedin.com/in/mona-saleh-a", domain: "delta-soft.example", full_name: "Mona Saleh", first_name: "Mona", last_name: "Saleh" });
     const phone = sent.find((call) => call.endpointId === "treg.people.phone.find")!;
-    expect(phone.params).toEqual({ linkedin_url: "https://www.linkedin.com/in/mona-saleh-a", domain: "delta-soft.example", full_name: "Mona Saleh", email: "mona@delta-soft.example" });
+    expect(phone.params).toEqual({ linkedin_url: "https://www.linkedin.com/in/mona-saleh-a", domain: "delta-soft.example", full_name: "Mona Saleh", first_name: "Mona", last_name: "Saleh", email: "mona@delta-soft.example" });
     // the person's free profile text («mona.boss@…») is never a contact value
     expect(result.rows[0].work_email).toBe("mona@delta-soft.example");
   });
@@ -391,5 +391,29 @@ describe("the worker end to end (fake storage, an injected source): 3 delivered 
     expect(messages).toContain("سُلّم ٣ أشخاص (المطلوب ٥)، اثنان منهم لهم بريد مهني واثنان منهم لهم هاتف مكتبي، وحُفظت ملفات النتائج.");
     expect(messages.some((message) => message.startsWith("المسلَّم ٣ من ٥ مطلوب. وُضع في ورقة المراجعة: شخص واحد بلا بريد مهني ولا هاتف مهني، شخص واحد في شركة خارج الدولة المطلوبة"))).toBe(true);
     expect(messages.some((message) => /سُلّم ٣ من ٣|تم إكمال استخراج/.test(message))).toBe(false);
+  });
+
+  it("the lookup log of the adapter becomes ONE internal job event (its own type, JSON, no personal value); the customer's events are unchanged", async () => {
+    const route = await import("../src/app/api/worker/chunk/route");
+    const lookupLog = {
+      summary: { rows: 6, eligible: 3, noIdentity: 0, lookedUp: 3, lookupCalls: 6, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 3 },
+      entries: [{ endpoint: "treg.people.email.find", step: "people_email_0_0", person: 0, rank: 0, keys: ["domain", "first_name", "full_name", "last_name", "linkedin_url"], status: 200, latencyMs: 2300, costUsd: 0.000495, servedBy: "provider-a", tried: 2, outcome: "hit" as const, emailPresent: true, phonePresent: false, calls: 1 }],
+    };
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: adapterRows(), nextCursor: null, costUsd: 0.0019, costMicro: 1900, tregCallId: "call_1", providerCallCount: 7, lookupLog }));
+    for (let i = 0; i < 6; i++) {
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+        method: "POST", headers: { authorization: "Bearer people-test-secret" },
+        body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
+      }));
+      const json: any = await res.json();
+      if (json.done === true || json.released === true || res.status >= 400) break;
+    }
+    const logs = db.events.filter((event) => event.event_type === "lookup_log");
+    expect(logs).toHaveLength(1);
+    const parsed = JSON.parse(String(logs[0].message));
+    expect(parsed).toMatchObject({ step: 0, summary: { lookedUp: 3, lookupCalls: 6 }, lookups: [{ endpoint: "treg.people.email.find", outcome: "hit", status: 200 }] });
+    expect(String(logs[0].message)).not.toMatch(/@|Mona|Omar|linkedin\.com|\+20/);
+    // the customer's own events never include it
+    expect(db.events.filter((event) => event.event_type !== "lookup_log").every((event) => !/lookups|endpoint/.test(String(event.message)))).toBe(true);
   });
 });

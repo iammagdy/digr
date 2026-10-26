@@ -6,8 +6,10 @@ const USD_MICROS = 1_000_000;
 const ROUTE_CAP_MICROS = Math.round(DECISION_MAKER_ROUTE_COST_CAP_USD * USD_MICROS);
 
 /**
- * Reserve the route ceiling before each outbound people call. This uses the
- * worst case for calls whose provider cost has not been reported yet.
+ * Reserve the route ceiling before each outbound people call. This uses the worst case for calls whose provider cost has not been reported yet.
+ * When a call comes back with its cost KNOWN (a hit, a free miss, or a refusal), `settleCall` gives back what it did not spend, so a miss that
+ * bills 0 does not use up the allowance. A call whose cost is unknown (it timed out: the source may have billed it) keeps its whole reservation.
+ * What is left is the job's ceiling minus ACTUAL spend (and the reservation of any call still in flight), so spend can never pass the ceiling.
  */
 export function createDecisionMakerSpendBudget(remainingUsd: number) {
   let remainingMicros = Math.max(0, Math.floor(remainingUsd * USD_MICROS));
@@ -17,6 +19,12 @@ export function createDecisionMakerSpendBudget(remainingUsd: number) {
       if (remainingMicros < ROUTE_CAP_MICROS) return false;
       remainingMicros -= ROUTE_CAP_MICROS;
       return true;
+    },
+    /** `calls` reservations were made for one lookup (the call and its replay); `actualMicros` is what it cost; `costKnown` false keeps the reservations. */
+    settleCall(settlement: { calls?: number; actualMicros: number; costKnown: boolean }): void {
+      if (!settlement.costKnown) return;
+      const reserved = Math.max(1, Math.floor(settlement.calls ?? 1)) * ROUTE_CAP_MICROS;
+      remainingMicros += reserved - Math.max(0, Math.floor(settlement.actualMicros) || 0);
     },
     remainingUsd(): number {
       return remainingMicros / USD_MICROS;

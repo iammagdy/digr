@@ -1,5 +1,6 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
 import { evaluateResearchRowRelevance } from "./researchRelevanceGate";
+import { buildPeopleIdentity, identityScore, returnedPersonMatches } from "../peopleIdentity";
 import { getEndpointDetails } from "../../functions/shared/catalogClient";
 import {
   extractAndFlattenRows,
@@ -523,23 +524,6 @@ function findContactValue(data: any, keys: string[]): string {
 }
 
 /**
- * Everything known about the person, in one identity: the lookups' own contract says «send everything you know about the subject», and the gateway
- * sends each provider only the variants it accepts (a profile link, or a company domain with a full name). Sending BOTH lets the providers that
- * accept either variant answer (the cheaper ones accept the profile link; others only a domain with a name); sending the link alone left
- * every provider that needs a domain and a name out of the lookup.
- */
-function getPeopleIdentity(row: Record<string, any>): Record<string, string> | null {
-  const identity: Record<string, string> = {};
-  const linkedin = firstPeopleText(row.linkedin_url, row.linkedinUrl, row.profile_url);
-  if (linkedin) identity.linkedin_url = linkedin;
-  const domainValue = firstPeopleText(row.domain, row.company_domain, row.website);
-  const domain = domainValue.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0];
-  const name = firstPeopleText(row.contact_name, row.full_name, row.fullName, row.name);
-  if (domain && name) { identity.domain = domain; identity.full_name = name; }
-  return Object.keys(identity).length > 0 ? identity : null;
-}
-
-/**
  * The people search goes to ONE direct source, not through the routed endpoint. The routed `treg.people.search` tries providers one after
  * another (a miss moves on to the next) and answered after our 30 s limit while billing the call (live 2026-10-26, two jobs); its direct
  * child `icypeas.people.search` is synchronous (catalog: p50 584 ms, p95 1,122 ms) and a job through it finished in 8 s on 2026-10-16.
@@ -617,6 +601,45 @@ export async function executeTregCallWithReplay(
 export const callCostMicro = (result: Pick<TregCallResult, "costMicro" | "originalCostMicro">): number =>
   Math.max(0, Number(result.costMicro) || 0, Number(result.originalCostMicro) || 0);
 
+/** One lookup, as the owner reads it afterwards: no name, email, phone, link or token, only what happened. */
+export interface PeopleLookupLogEntry {
+  endpoint: string;
+  step: string;
+  /** Position of the person in the source's answer, and the place in the order the people were looked up. */
+  person: number;
+  rank: number;
+  /** The NAMES of the identity keys that were sent. */
+  keys: string[];
+  status: number;
+  latencyMs: number;
+  costUsd: number;
+  servedBy?: string;
+  tried?: number;
+  outcome: "hit" | "miss" | "error" | "timeout" | "mismatch";
+  emailPresent: boolean;
+  phonePresent: boolean;
+  /** Outbound calls for this lookup (2 when the first was cut by our time limit and replayed). */
+  calls: number;
+  error?: string;
+}
+
+export interface PeopleLookupSummary {
+  rows: number;
+  eligible: number;
+  noIdentity: number;
+  lookedUp: number;
+  lookupCalls: number;
+  skippedBudget: number;
+  skippedTime: number;
+  skippedEnough: number;
+  withContact: number;
+}
+
+const safeLogText = (value: unknown): string | undefined => {
+  const text = typeof value === "string" ? value.trim() : "";
+  return /^[A-Za-z0-9._:-]{1,48}$/.test(text) ? text : undefined;
+};
+
 async function enrichTregPeopleRows(
   rows: Record<string, any>[],
   input: ProviderAdapterCallInput,
@@ -627,13 +650,14 @@ async function enrichTregPeopleRows(
   let providerCallCount = 0;
   let spendBudgetExhausted = false;
   const callIds: string[] = [];
-  const enriched: Record<string, any>[] = [];
+  const log: PeopleLookupLogEntry[] = [];
+  const summary: PeopleLookupSummary = { rows: rows.length, eligible: 0, noIdentity: 0, lookedUp: 0, lookupCalls: 0, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 0 };
   // Time kept free for what must still happen after a lookup (saving the rows): no lookup starts when the worker's deadline is this close.
   const RESERVE_MS = 6_000;
   const hasTime = () => !input.deadlineMs || Date.now() + RESERVE_MS < input.deadlineMs;
   const lookup = async (endpointId: string, params: Record<string, any>, stepId: string) => {
-    if (!hasTime()) return null;
-    if (!spendBudget.reserveCall()) { spendBudgetExhausted = true; return null; }
+    if (!hasTime()) { summary.skippedTime += 1; return null; }
+    if (!spendBudget.reserveCall()) { spendBudgetExhausted = true; summary.skippedBudget += 1; return null; }
     providerCallCount += 1;
     const { result, calls } = await executeTregCallWithReplay({
       endpointId, method: "POST", params,
@@ -642,36 +666,86 @@ async function enrichTregPeopleRows(
       timeoutMs: 12000,
     }, { deadlineMs: input.deadlineMs, reserveMs: RESERVE_MS, beforeReplay: () => spendBudget.reserveCall() });
     providerCallCount += calls - 1;
-    costMicro += callCostMicro(result);
+    summary.lookupCalls += calls;
+    const spent = callCostMicro(result);
+    costMicro += spent;
+    // A cost that was reported (a hit, a free miss, a refusal) gives back what it did not use of its reservation; one that is unknown (a timeout) keeps it.
+    spendBudget.settleCall({ calls, actualMicros: spent, costKnown: result.ok || (!result.timedOut && result.httpStatus >= 400 && result.httpStatus < 500) });
     if (result.tregCallId) callIds.push(result.tregCallId);
     if (!result.ok) {
       console.warn("[decision_maker:contact_call_failed]", { endpointId, status: result.httpStatus, callId: result.tregCallId || "none", timedOut: Boolean(result.timedOut) });
     }
-    return result;
+    return { result, calls, spent };
   };
+  const record = (entry: Omit<PeopleLookupLogEntry, "costUsd" | "status" | "latencyMs" | "servedBy" | "tried" | "calls" | "error"> & { done: { result: TregCallResult; calls: number; spent: number } }) => {
+    const { done, ...rest } = entry;
+    const tregInfo = done.result.data?._treg;
+    const tried = Array.isArray(tregInfo?.tried) ? tregInfo.tried.length : Number.isFinite(Number(tregInfo?.tried)) ? Number(tregInfo.tried) : undefined;
+    log.push({
+      ...rest, status: done.result.httpStatus, latencyMs: Math.round(done.result.latencyMs || 0), costUsd: Number((done.spent / 1_000_000).toFixed(6)),
+      ...(safeLogText(tregInfo?.served_by) ? { servedBy: safeLogText(tregInfo.served_by) } : {}),
+      ...(tried !== undefined ? { tried } : {}), calls: done.calls,
+      ...(!done.result.ok ? { error: safeLogText(done.result.error) || `http_${done.result.httpStatus}` } : {}),
+    });
+  };
+
+  const eligibleAt = rows.map((row) => (options.shouldEnrich ? options.shouldEnrich(row) : true));
+  const identities = rows.map((row, at) => (eligibleAt[at] ? buildPeopleIdentity(row) : null));
+  summary.eligible = eligibleAt.filter(Boolean).length;
+  summary.noIdentity = rows.filter((_, at) => eligibleAt[at] && !identities[at]).length;
+  // The best identities first (a profile link with a real company domain), so the allowance and the time go to the people most likely to answer.
+  const order = rows.map((_, at) => at).sort((a, b) => identityScore(identities[b]) - identityScore(identities[a]) || a - b);
+  const done: Record<string, any>[] = new Array(rows.length);
   let withContact = 0;
-  for (let index = 0; index < rows.length; index++) {
+  for (let rank = 0; rank < order.length; rank++) {
+    const index = order[rank];
     const row = { ...rows[index] };
     // Only a row that matches the request is looked up (a person of another country or a company of another activity costs nothing more),
     // and only until the people still needed have a contact value.
-    const eligible = options.shouldEnrich ? options.shouldEnrich(row) : true;
+    const eligible = eligibleAt[index];
     const enough = options.wanted !== undefined && withContact >= options.wanted;
-    const identity = eligible && !enough ? getPeopleIdentity(row) : null;
+    if (eligible && enough && identities[index]) summary.skippedEnough += 1;
+    const identity = eligible && !enough ? identities[index] : null;
+    let lookedUp = false;
+    const wantedName = row.contact_name;
     if (identity && !row.work_email) {
       const result = await lookup("treg.people.email.find", identity, `people_email_${input.step}_${index}`);
-      if (result?.ok) {
-        row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
-        row.work_email_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.work_email));
+      if (result) {
+        lookedUp = true;
+        let outcome: PeopleLookupLogEntry["outcome"] = result.result.ok ? "miss" : result.result.timedOut ? "timeout" : "error";
+        if (result.result.ok) {
+          const answer = result.result.data?.output ?? {};
+          const value = findContactValue(result.result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
+          if (value && !returnedPersonMatches(wantedName, { first: answer.first_name ?? answer.firstName, last: answer.last_name ?? answer.lastName, full: answer.full_name ?? answer.name })) {
+            // an email that belongs to someone else is never delivered or charged
+            outcome = "mismatch";
+          } else if (value) {
+            row.work_email = value;
+            row.work_email_verification_status = arabicVerificationStatus(result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified, true);
+            outcome = "hit";
+          }
+        }
+        record({ endpoint: "treg.people.email.find", step: `people_email_${input.step}_${index}`, person: index, rank, keys: Object.keys(identity).sort(), outcome, emailPresent: Boolean(row.work_email), phonePresent: false, done: result });
       }
     }
     if (identity && !row.phone) {
       const phoneIdentity = row.work_email ? { ...identity, email: String(row.work_email) } : identity;
       const result = await lookup("treg.people.phone.find", phoneIdentity, `people_phone_${input.step}_${index}`);
-      if (result?.ok) {
-        row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
-        row.phone_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.phone));
+      if (result) {
+        lookedUp = true;
+        let outcome: PeopleLookupLogEntry["outcome"] = result.result.ok ? "miss" : result.result.timedOut ? "timeout" : "error";
+        if (result.result.ok) {
+          const value = findContactValue(result.result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
+          if (value) {
+            row.phone = value;
+            row.phone_verification_status = arabicVerificationStatus(result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified, true);
+            outcome = "hit";
+          }
+        }
+        record({ endpoint: "treg.people.phone.find", step: `people_phone_${input.step}_${index}`, person: index, rank, keys: Object.keys(phoneIdentity).sort(), outcome, emailPresent: false, phonePresent: Boolean(row.phone), done: result });
       }
     }
+    if (lookedUp) summary.lookedUp += 1;
     row.work_email = firstPeopleText(row.work_email);
     row.phone = firstPeopleText(row.phone);
     row.work_email_verification_status = arabicVerificationStatus(row.work_email_verification_status, Boolean(row.work_email));
@@ -680,8 +754,10 @@ async function enrichTregPeopleRows(
     row.phone_presence_status = row.phone ? "موجود" : "غير موجود";
     if (eligible && (row.work_email || row.phone)) withContact += 1;
     row._people_match = eligible;
-    enriched.push(row);
+    done[index] = row;
   }
+  summary.withContact = withContact;
+  const enriched = done;
   const requiredFields = Array.isArray(input.params?.requiredContactFields)
     ? input.params.requiredContactFields.map((field: unknown) => String(field))
     : [];
@@ -698,7 +774,7 @@ async function enrichTregPeopleRows(
   for (const row of ordered) delete row._people_match;
   // Keep incomplete people visible. Enrichment calls have already incurred provider cost,
   // and settlement decides the delivered contact units independently from these review rows.
-  return { rows: ordered, costMicro, callIds, spendBudgetExhausted, providerCallCount };
+  return { rows: ordered, costMicro, callIds, spendBudgetExhausted, providerCallCount, lookupLog: { entries: log, summary } };
 }
 
 export interface ProviderAdapterCallInput {
@@ -740,6 +816,8 @@ export interface ProviderAdapterCallOutput {
   costMicro: number;
   /** Number of outbound TREG attempts, used for conservative DM cap accounting. */
   providerCallCount?: number;
+  /** Decision makers: what each email and phone lookup did (no personal value), for the owner's internal job event. */
+  lookupLog?: { entries: PeopleLookupLogEntry[]; summary: PeopleLookupSummary };
   tregCallId: string;
   errorCode?: string;
   errorMessageAr?: string;
@@ -1063,6 +1141,11 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     });
     callResult = out.result;
     searchCalls = out.calls;
+    // The search bills per row (0.00038 USD), well under the 0.005 reserved for it: the difference goes back to the job's allowance.
+    peopleSpendBudget!.settleCall({
+      calls: out.calls, actualMicros: callCostMicro(callResult),
+      costKnown: callResult.ok || (!callResult.timedOut && callResult.httpStatus >= 400 && callResult.httpStatus < 500),
+    });
   } else {
     callResult = await executeTregCallWithRetry(
       callOptions(pageParams, cursorFromKeywordsQuery ? "_kw" : ""),
@@ -1074,6 +1157,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   let costMicro = callCostMicro(callResult);
   let costUsd = Number((costMicro / 1_000_000).toFixed(6));
   let providerCallCount = searchCalls;
+  let peopleLookupLog: ProviderAdapterCallOutput["lookupLog"];
   let keywordsRetryUsed = false;
 
   if (!callResult.ok) {
@@ -1151,6 +1235,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     rows = enriched.rows;
     costMicro += enriched.costMicro;
     providerCallCount += enriched.providerCallCount;
+    peopleLookupLog = enriched.lookupLog;
     costUsd = Number((costMicro / 1_000_000).toFixed(6));
     const allCallIds = [callResult.tregCallId, ...enriched.callIds].filter(Boolean);
     callResult.tregCallId = allCallIds.join(",");
@@ -1207,6 +1292,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     costUsd,
     costMicro,
     providerCallCount,
+    ...(peopleLookupLog ? { lookupLog: peopleLookupLog } : {}),
     tregCallId: callResult.tregCallId || "",
   };
 };

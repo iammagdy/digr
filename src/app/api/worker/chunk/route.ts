@@ -5,6 +5,7 @@ import { usesPostLevelReview } from "../../../../lib/server/postLevelReview";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, maxPagesForJob, POST_REVIEW_BUDGET_NOTE_AR, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { LOOKUP_LOG_EVENT_TYPE } from "../../../../lib/reviewCostEvent";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
 import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
@@ -852,6 +853,21 @@ export async function POST(req: NextRequest) {
     const adapterResult = providerFailedAfterDelivery ? noProviderCall : rawAdapterResult;
     // What the reading of the posts of this chunk found (Facebook keyword service): kept for the one sentence that says why fewer comments arrived.
     recordPostReads(chunkDiagnostic, rawAdapterResult.postReads);
+    // Decision makers: one internal row says what each email and phone lookup did (never a name, email, phone, link or token), so the reason a
+    // lookup found nothing can be read from the database afterwards. Customers never see it (its own event type).
+    if (isPeopleJob && rawAdapterResult.lookupLog && userId) {
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: JSON.stringify({ step: currentStep, summary: rawAdapterResult.lookupLog.summary, lookups: rawAdapterResult.lookupLog.entries }),
+          units: rawAdapterResult.lookupLog.entries.length,
+          event_type: LOOKUP_LOG_EVENT_TYPE,
+        });
+      } catch (logErr: any) {
+        console.warn("[worker:lookup_log_insert_warning]", logErr?.message || "");
+      }
+    }
     if (providerFailedAfterDelivery) {
       console.warn(`[worker:provider_failed_after_delivery] jobId=${jobId} delivered=${effectiveDelivered}`);
     }
