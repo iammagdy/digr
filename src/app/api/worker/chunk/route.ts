@@ -861,7 +861,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: JSON.stringify({ step: currentStep, summary: rawAdapterResult.lookupLog.summary, lookups: rawAdapterResult.lookupLog.entries }),
+          message: JSON.stringify({ step: currentStep, summary: rawAdapterResult.lookupLog.summary, lookups: rawAdapterResult.lookupLog.entries, rows: rawAdapterResult.lookupLog.rows ?? [] }),
           units: rawAdapterResult.lookupLog.entries.length,
           event_type: LOOKUP_LOG_EVENT_TYPE,
         });

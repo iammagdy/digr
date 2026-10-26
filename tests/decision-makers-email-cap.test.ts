@@ -300,7 +300,9 @@ describe("(5) a personal mailbox is not a work email: not delivered, not charged
     expect(entry).toMatchObject({ outcome: "personal_email", emailPresent: false });
     expect(result.rows.every((row) => row.work_email === "")).toBe(true);
     const kept = JSON.stringify(result.lookupLog);
-    for (const secret of ["gmail", "mona.private", "@"]) expect(kept, secret).not.toContain(secret);
+    // only the mailbox DOMAIN of the discarded address is kept (see tests/decision-makers-smart-lookups.test.ts), never the address
+    expect(entry.mailboxDomain).toBe("gmail.com");
+    for (const secret of ["mona.private", "@"]) expect(kept, secret).not.toContain(secret);
     // a person with no other contact value goes to review as before (and is not charged)
     const verdicts = result.rows.map((row) => evaluateResearchRowRelevance(row, { capabilitySlug: "professional-people-search", endpointId: "treg.people.search", params: PARAMS }));
     expect(verdicts.filter((verdict) => verdict.decision === "match")).toEqual([]);

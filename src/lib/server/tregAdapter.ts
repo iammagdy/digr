@@ -1,6 +1,6 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
 import { evaluateResearchRowRelevance } from "./researchRelevanceGate";
-import { buildPeopleIdentity, identityScore, isPersonalEmail, returnedPersonMatches } from "../peopleIdentity";
+import { buildPeopleIdentity, companyDomainFromWebsite, emailDomain, identityScore, isPersonalEmail, returnedPersonMatches } from "../peopleIdentity";
 import { getEndpointDetails } from "../../functions/shared/catalogClient";
 import {
   extractAndFlattenRows,
@@ -582,12 +582,20 @@ export const PEOPLE_PHONE_LOOKUP_TIMEOUT_MS = 12_000;
 /** How long to wait before reading a call our time limit cut (the source is likely finished by then), and before one more read of an answer that is still in flight. */
 export const PEOPLE_REPLAY_WAIT_MS = 4_000;
 export const PEOPLE_REREAD_WAIT_MS = 3_000;
+/** The person lookups wait longer: a work email is a slow answer (7 to 57 s measured), so the first read follows a cut call after 8 s, and a 409 gets one more after 4 s. */
+export const PEOPLE_LOOKUP_REPLAY_WAIT_MS = 8_000;
+export const PEOPLE_LOOKUP_REREAD_WAIT_MS = 4_000;
 /** The shortest read worth making. */
 const MIN_READ_MS = 3_000;
 /** How many people are looked up at the same time: the worker has 45 s, and one slow email lookup may take 25. */
 export const PEOPLE_LOOKUP_CONCURRENCY = 3;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** One outbound call of a lookup, as the owner reads it: the status, the time, and whether OUR time limit cut it. */
+export interface LookupAttempt { status: number; latencyMs: number; cut: boolean }
+const attemptOf = (result: Pick<TregCallResult, "httpStatus" | "latencyMs" | "timedOut">): LookupAttempt =>
+  ({ status: result.httpStatus, latencyMs: Math.round(result.latencyMs || 0), cut: Boolean(result.timedOut) });
 
 /** A call that has no answer YET: our own time limit cut it, or the gateway says the first call with this key is still running (HTTP 409). */
 export const isInFlightResult = (result: Pick<TregCallResult, "ok" | "timedOut" | "httpStatus">): boolean =>
@@ -603,11 +611,12 @@ export const isInFlightResult = (result: Pick<TregCallResult, "ok" | "timedOut" 
 export async function executeTregCallWithReplay(
   options: TregCallOptions,
   control: { deadlineMs?: number; reserveMs?: number; beforeReplay?: () => boolean; now?: () => number; sleep?: (ms: number) => Promise<void>; waitsMs?: number[] } = {},
-): Promise<{ result: TregCallResult; calls: number }> {
+): Promise<{ result: TregCallResult; calls: number; attempts: LookupAttempt[] }> {
   const now = control.now ?? Date.now;
   const sleep = control.sleep ?? defaultSleep;
   let result = await executeTregCall(options);
   let calls = 1;
+  const attempts: LookupAttempt[] = [attemptOf(result)];
   for (const wait of control.waitsMs ?? [PEOPLE_REPLAY_WAIT_MS, PEOPLE_REREAD_WAIT_MS]) {
     // the first read follows a call that has no answer yet (cut by our limit, or 409); one more read follows only a 409 ("not ready")
     if (calls === 1 ? !isInFlightResult(result) : result.httpStatus !== 409) break;
@@ -617,8 +626,9 @@ export async function executeTregCallWithReplay(
     await sleep(wait);
     result = await executeTregCall({ ...options, timeoutMs: Math.min(15_000, Math.floor(left - wait)) });
     calls += 1;
+    attempts.push(attemptOf(result));
   }
-  return { result, calls };
+  return { result, calls, attempts };
 }
 
 /** What a call cost: a replay reports 0 and carries the first call's charge in the original-cost header. */
@@ -645,6 +655,28 @@ export interface PeopleLookupLogEntry {
   /** Outbound calls for this lookup (2 when the first was cut by our time limit and replayed). */
   calls: number;
   error?: string;
+  /** Set when the lookup took more than one call: the FIRST call (its status, time and whether our own limit cut it) and each read after it. */
+  firstAttempt?: LookupAttempt;
+  reads?: Array<{ status: number; latencyMs: number }>;
+  /** A discarded personal address: its mailbox domain only («gmail.com»), never the address. */
+  mailboxDomain?: string;
+  /** `retry_without_profile_link`: the one second email lookup after a personal address, sent without the profile link. */
+  attempt?: "first" | "retry_without_profile_link";
+}
+
+/** Why a person did or did not reach delivery, from the rules (no personal value): the gate's verdict and code, the identity, and the final reason. */
+export interface PeopleRowLogEntry {
+  person: number;
+  gate: "match" | "uncertain" | "no_match";
+  /** The gate's code when it did not match (`out_of_scope`, `no_evidence`); a person's own foreign address is `out_of_scope` too. */
+  reasonCode?: "out_of_scope" | "no_evidence" | "no_contact";
+  hasDomain: boolean;
+  hasProfileLink: boolean;
+  /** No profile link and no company domain with a name: nothing a provider could match on. */
+  identityNull: boolean;
+  lookedUp: boolean;
+  /** `contact`: a work email or an office phone was found; otherwise the code that kept the person out. */
+  finalReason: "contact" | "out_of_scope" | "no_evidence" | "no_contact" | "identity_null" | "personal_email" | "mismatch";
 }
 
 export interface PeopleLookupSummary {
@@ -657,6 +689,8 @@ export interface PeopleLookupSummary {
   skippedTime: number;
   skippedEnough: number;
   withContact: number;
+  /** Lookups after a personal address (the one retry without the profile link). */
+  personalRetries?: number;
 }
 
 const safeLogText = (value: unknown): string | undefined => {
@@ -668,14 +702,14 @@ async function enrichTregPeopleRows(
   rows: Record<string, any>[],
   input: ProviderAdapterCallInput,
   spendBudget: ReturnType<typeof createDecisionMakerSpendBudget>,
-  options: { shouldEnrich?: (row: Record<string, any>) => boolean; wanted?: number } = {},
+  options: { judge?: (row: Record<string, any>) => { decision: "match" | "uncertain" | "no_match"; reasonCode?: string }; wanted?: number } = {},
 ) {
   let costMicro = 0;
   let providerCallCount = 0;
   let spendBudgetExhausted = false;
   const callIds: string[] = [];
   const log: PeopleLookupLogEntry[] = [];
-  const summary: PeopleLookupSummary = { rows: rows.length, eligible: 0, noIdentity: 0, lookedUp: 0, lookupCalls: 0, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 0 };
+  const summary: PeopleLookupSummary = { rows: rows.length, eligible: 0, noIdentity: 0, lookedUp: 0, lookupCalls: 0, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 0, personalRetries: 0 };
   // Time kept free for what must still happen after a lookup (saving the rows): no lookup starts when the worker's deadline is this close.
   const RESERVE_MS = 6_000;
   /** The time a lookup may take: its own limit, or what the worker's deadline leaves; 0 when too little is left to start one. */
@@ -691,12 +725,12 @@ async function enrichTregPeopleRows(
     if (timeoutMs <= 0) { summary.skippedTime += 1; return null; }
     if (!spendBudget.reserveCall(capUsd)) { spendBudgetExhausted = true; summary.skippedBudget += 1; return null; }
     providerCallCount += 1;
-    const { result, calls } = await executeTregCallWithReplay({
+    const { result, calls, attempts } = await executeTregCallWithReplay({
       endpointId, method: "POST", params,
       userId: input.userId, jobId: input.jobId, stepId,
       page: input.step + 1, routeMaxCostUsd: String(capUsd),
       timeoutMs,
-    }, { deadlineMs: input.deadlineMs, reserveMs: RESERVE_MS });
+    }, { deadlineMs: input.deadlineMs, reserveMs: RESERVE_MS, waitsMs: [PEOPLE_LOOKUP_REPLAY_WAIT_MS, PEOPLE_LOOKUP_REREAD_WAIT_MS] });
     providerCallCount += calls - 1;
     summary.lookupCalls += calls;
     const spent = callCostMicro(result);
@@ -709,9 +743,9 @@ async function enrichTregPeopleRows(
     if (!result.ok) {
       console.warn("[decision_maker:contact_call_failed]", { endpointId, status: result.httpStatus, callId: result.tregCallId || "none", timedOut: Boolean(result.timedOut), inFlight: isInFlightResult(result) });
     }
-    return { result, calls, spent };
+    return { result, calls, spent, attempts };
   };
-  const record = (entry: Omit<PeopleLookupLogEntry, "costUsd" | "status" | "latencyMs" | "servedBy" | "tried" | "calls" | "error"> & { done: { result: TregCallResult; calls: number; spent: number } }): PeopleLookupLogEntry => {
+  const record = (entry: Omit<PeopleLookupLogEntry, "costUsd" | "status" | "latencyMs" | "servedBy" | "tried" | "calls" | "error"> & { done: { result: TregCallResult; calls: number; spent: number; attempts: LookupAttempt[] } }): PeopleLookupLogEntry => {
     const { done, ...rest } = entry;
     const tregInfo = done.result.data?._treg;
     const tried = Array.isArray(tregInfo?.tried) ? tregInfo.tried.length : Number.isFinite(Number(tregInfo?.tried)) ? Number(tregInfo.tried) : undefined;
@@ -720,10 +754,13 @@ async function enrichTregPeopleRows(
       ...(safeLogText(tregInfo?.served_by) ? { servedBy: safeLogText(tregInfo.served_by) } : {}),
       ...(tried !== undefined ? { tried } : {}), calls: done.calls,
       ...(!done.result.ok ? { error: safeLogText(done.result.error) || `http_${done.result.httpStatus}` } : {}),
+      // a lookup that took more than one call: the FIRST call apart (was it cut by our own limit?), then each read
+      ...(done.attempts.length > 1 ? { firstAttempt: done.attempts[0], reads: done.attempts.slice(1).map(({ status, latencyMs }) => ({ status, latencyMs })) } : {}),
     } satisfies PeopleLookupLogEntry;
   };
 
-  const eligibleAt = rows.map((row) => (options.shouldEnrich ? options.shouldEnrich(row) : true));
+  const verdicts = rows.map((row) => (options.judge ? options.judge(row) : { decision: "match" as const }));
+  const eligibleAt = verdicts.map((verdict) => verdict.decision === "match");
   const identities = rows.map((row, at) => (eligibleAt[at] ? buildPeopleIdentity(row) : null));
   summary.eligible = eligibleAt.filter(Boolean).length;
   summary.noIdentity = rows.filter((_, at) => eligibleAt[at] && !identities[at]).length;
@@ -731,9 +768,23 @@ async function enrichTregPeopleRows(
   const order = rows.map((_, at) => at).sort((a, b) => identityScore(identities[b]) - identityScore(identities[a]) || a - b);
   const done: Record<string, any>[] = new Array(rows.length);
   let withContact = 0;
-  type Candidate = { index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean; entries: PeopleLookupLogEntry[] };
-  const finish = (index: number, row: Record<string, any>, eligible: boolean, lookedUp: boolean) => {
+  type Candidate = { index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean; entries: PeopleLookupLogEntry[]; personal: boolean; mismatch: boolean };
+  const rowLog: PeopleRowLogEntry[] = new Array(rows.length);
+  const noteRow = (index: number, row: Record<string, any>, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean } = {}) => {
+    const verdict = verdicts[index];
+    const contact = Boolean(row.work_email || row.phone);
+    const gateCode = verdict.decision === "match" ? undefined : verdict.reasonCode === "no_evidence" ? "no_evidence" : "out_of_scope";
+    const finalReason: PeopleRowLogEntry["finalReason"] = verdict.decision !== "match" ? gateCode! : !identities[index] ? "identity_null" : contact ? "contact" : flags.personal ? "personal_email" : flags.mismatch ? "mismatch" : "no_contact";
+    rowLog[index] = {
+      person: index, gate: verdict.decision, ...(gateCode ? { reasonCode: gateCode } : {}),
+      hasDomain: Boolean(companyDomainFromWebsite(row.domain ?? row.company_domain) || companyDomainFromWebsite(row.website)),
+      hasProfileLink: Boolean(String(row.linkedin_url ?? row.linkedinUrl ?? row.profile_url ?? "").trim()),
+      identityNull: !buildPeopleIdentity(row), lookedUp, finalReason,
+    };
+  };
+  const finish = (index: number, row: Record<string, any>, eligible: boolean, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean } = {}) => {
     if (lookedUp) summary.lookedUp += 1;
+    noteRow(index, row, lookedUp, flags);
     row.work_email = firstPeopleText(row.work_email);
     row.phone = firstPeopleText(row.phone);
     row.work_email_verification_status = arabicVerificationStatus(row.work_email_verification_status, Boolean(row.work_email));
@@ -744,29 +795,49 @@ async function enrichTregPeopleRows(
     row._people_match = eligible;
     done[index] = row;
   };
-  const emailLookup = async (person: Candidate) => {
-    if (person.row.work_email) return;
-    const stepId = `people_email_${input.step}_${person.index}`;
-    const result = await lookup("treg.people.email.find", person.identity, stepId);
-    if (!result) return;
+  /** One work-email lookup with the identity given; null when it was not made (no time, no budget). */
+  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: "first" | "retry_without_profile_link"): Promise<PeopleLookupLogEntry["outcome"] | null> => {
+    const result = await lookup("treg.people.email.find", identity, stepId);
+    if (!result) return null;
     person.lookedUp = true;
     let outcome: PeopleLookupLogEntry["outcome"] = result.result.ok ? "miss" : isInFlightResult(result.result) ? "timeout" : "error";
+    let mailboxDomain: string | undefined;
     if (result.result.ok) {
       const answer = result.result.data?.output ?? {};
       const value = findContactValue(result.result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
       if (value && !returnedPersonMatches(person.row.contact_name, { first: answer.first_name ?? answer.firstName, last: answer.last_name ?? answer.lastName, full: answer.full_name ?? answer.name })) {
         // an email that belongs to someone else is never delivered or charged
         outcome = "mismatch";
+        person.mismatch = true;
       } else if (value && isPersonalEmail(value)) {
-        // an address on a personal mailbox (gmail, yahoo, ...) is not a work email: not delivered, not charged, and never written to the log
+        // an address on a personal mailbox (gmail, yahoo, ...) is not a work email: not delivered, not charged; only its mailbox DOMAIN is kept in the log
         outcome = "personal_email";
+        person.personal = true;
+        mailboxDomain = emailDomain(value) || undefined;
       } else if (value) {
         person.row.work_email = value;
         person.row.work_email_verification_status = arabicVerificationStatus(result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified, true);
         outcome = "hit";
       }
     }
-    person.entries.push(record({ endpoint: "treg.people.email.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(person.identity).sort(), outcome, emailPresent: Boolean(person.row.work_email), phonePresent: false, done: result }));
+    person.entries.push({
+      ...record({ endpoint: "treg.people.email.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(identity).sort(), outcome, emailPresent: Boolean(person.row.work_email), phonePresent: false, done: result }),
+      ...(mailboxDomain ? { mailboxDomain } : {}),
+      ...(attempt === "retry_without_profile_link" ? { attempt } : {}),
+    });
+    return outcome;
+  };
+  const emailLookup = async (person: Candidate) => {
+    if (person.row.work_email) return;
+    const outcome = await runEmail(person, person.identity, `people_email_${input.step}_${person.index}`, "first");
+    // A profile-link finder may answer with a PERSONAL address (billed, discarded). One second lookup follows, without the profile link: only finders that
+    // work from the company domain and the name can take it, and they return company addresses. It needs a domain and a name, its own step key (so its own
+    // idempotency key) and the job's budget; it is never made after any other outcome.
+    if (outcome === "personal_email" && person.identity.domain && person.identity.full_name) {
+      const { linkedin_url: _profileLink, ...withoutProfileLink } = person.identity;
+      summary.personalRetries = (summary.personalRetries ?? 0) + 1;
+      await runEmail(person, withoutProfileLink, `people_email_retry_${input.step}_${person.index}`, "retry_without_profile_link");
+    }
   };
   const phoneLookup = async (person: Candidate) => {
     if (person.row.phone) return;
@@ -800,14 +871,14 @@ async function enrichTregPeopleRows(
       const identity = eligibleAt[index] ? identities[index] : null;
       rank += 1;
       if (!identity) { finish(index, row, eligibleAt[index], false); continue; }
-      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, entries: [] });
+      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, entries: [], personal: false, mismatch: false });
     }
     if (group.length === 0) break;
     await Promise.all(group.map(emailLookup));
     await Promise.all(group.map(phoneLookup));
     for (const person of group) {
       log.push(...person.entries);
-      finish(person.index, person.row, true, person.lookedUp);
+      finish(person.index, person.row, true, person.lookedUp, { personal: person.personal, mismatch: person.mismatch });
     }
   }
   // Rows the lookups did not reach: the people still needed all have a contact value (skipped as enough), or nothing was left to ask.
@@ -827,14 +898,14 @@ async function enrichTregPeopleRows(
   // The people who match come first, those with a contact value before those without; the rest follow (the relevance gate keeps them out of
   // the delivery and the charge). The order is stable inside each group.
   let ordered = reviewedRows;
-  if (options.shouldEnrich) {
+  if (options.judge) {
     const rank = (row: Record<string, any>) => (row._people_match ? (row.work_email || row.phone ? 0 : 1) : 2);
     ordered = reviewedRows.map((row, at) => ({ row, at })).sort((a, b) => rank(a.row) - rank(b.row) || a.at - b.at).map(({ row }) => row);
   }
   for (const row of ordered) delete row._people_match;
   // Keep incomplete people visible. Enrichment calls have already incurred provider cost,
   // and settlement decides the delivered contact units independently from these review rows.
-  return { rows: ordered, costMicro, callIds, spendBudgetExhausted, providerCallCount, lookupLog: { entries: log, summary } };
+  return { rows: ordered, costMicro, callIds, spendBudgetExhausted, providerCallCount, lookupLog: { entries: log, summary, rows: rowLog } };
 }
 
 export interface ProviderAdapterCallInput {
@@ -877,7 +948,7 @@ export interface ProviderAdapterCallOutput {
   /** Number of outbound TREG attempts, used for conservative DM cap accounting. */
   providerCallCount?: number;
   /** Decision makers: what each email and phone lookup did (no personal value), for the owner's internal job event. */
-  lookupLog?: { entries: PeopleLookupLogEntry[]; summary: PeopleLookupSummary };
+  lookupLog?: { entries: PeopleLookupLogEntry[]; summary: PeopleLookupSummary; rows?: PeopleRowLogEntry[] };
   tregCallId: string;
   errorCode?: string;
   errorMessageAr?: string;
@@ -1283,13 +1354,13 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     rows = parseDirectPeopleRows(callResult.data);
     if (rows.length === 0) rows = extractAndFlattenRows(callResult.data?.output ?? callResult.data?.raw ?? callResult.data);
     // The same deterministic gate the worker applies decides which people are looked up (a mismatching row costs nothing more).
-    const matchesRequest = (row: Record<string, any>) => evaluateResearchRowRelevance(row, {
+    const judge = (row: Record<string, any>) => evaluateResearchRowRelevance(row, {
       capabilitySlug: input.capabilitySlug,
       endpointId: input.endpointId,
       params: input.params || {},
-    }).decision === "match";
+    });
     const enriched = await enrichTregPeopleRows(rows, input, peopleSpendBudget!, {
-      shouldEnrich: matchesRequest,
+      judge,
       wanted: Math.max(1, Math.floor(Number(input.remainingNeeded) || Number(input.targetVolumeMax) || 1)),
     });
     rows = enriched.rows;

@@ -104,3 +104,42 @@ Not changed: name matching, profile link + domain identity, the link-in-bio filt
 
 ### Live test for the tester (test account, 3 people, quote limit 1,000 points)
 Send `عايز ٣ من صناع القرار في شركات تكنولوجيا في مصر، مع البريد المهني والهاتف`. Expect the plan card ٢٥٨ نقطة للشخص, expected ٧٧٤, hold ٨٩١ (inside the 1,000 limit), and the sentence that the work email is charged only when delivered. Approve, wait, then read (read-only): `provider_costs` (`units`, `cost_usd`, `duration_ms`; at most 0.10 USD for the job) and the `lookup_log` row (`summary.lookedUp`, `skippedBudget`, `skippedTime`; each email entry: `status`, `latencyMs`, `costUsd`, `outcome`, `calls`; no `personal_email` should be delivered). Pass: emails delivered for most of the 3 people; `charged_credits` = 83 × (people with a contact) + 120 × (work emails) + 55 × (phones), at most 891; the remainder released with «حجز مؤقت مُحرَّر».
+
+## Follow-up 4: why work emails were still not delivered (preview jobs of 12:50 and 12:53 UTC), smarter lookups
+
+Evidence (`lookup_log`, `provider_costs`): 3 of 9 rows eligible before the lookups (positions 2, 3, 8, both jobs). The three email lookups that answered came from `tomba.people.email.find.linkedin` (0.0089 USD each) and every address was on a personal mailbox, so it was discarded after being billed (0.0089 and 0.0178 USD of the two jobs' 0.01232 and 0.02122). Three emails ended on HTTP 409 after 2 or 3 calls. All six phone lookups were free misses.
+
+### Why a row is not eligible before the lookups (code: `parseTregPeopleRows`, `evaluateResearchRowRelevance` > `evaluateDirectPeopleRow`, `buildPeopleIdentity`)
+| Order | Rule | Source field (icypeas lead → row) | Verdict | Code (log) |
+|---|---|---|---|---|
+| 1 | The person's own place names another country than the request | `address`, `location` (the lead's `address`) | no_match (excluded, not charged) | `out_of_scope` |
+| 2 | The company's address names only other countries (several places: any part naming the country is enough; no recognisable country contradicts nothing) | `lastCompanyAddress` → `company_address` | uncertain (review) | `out_of_scope` |
+| 3 | No sign of the requested activity in the company's OWN name or description (the industry label is never evidence): the request's English keywords, every word of a phrase needed (`information technology` needs both stems), light stemming | `lastCompanyName` → `company_name`, `lastCompanyDescription` → `industry_description` | uncertain (review) | `no_evidence` |
+| 4 | After the lookups: no delivered work email and no office phone (a personal address, a mismatch and a miss all count as none) | `work_email`, `phone` | uncertain (review) | `no_contact` |
+| not a gate | Identity: no profile link and no real company domain with a name (link-in-bio, social and shortener hosts are never a domain): nothing a provider can match on; counted in `summary.noIdentity` | `profileUrl`, `lastCompanyWebsite` (`lastCompanyUrl` is a company page, not read) | not looked up | `identity_null` |
+
+Rules 1 to 3 decide `summary.eligible`. The jobs said «٩ إلى المراجعة» and none excluded, so the six were rule 2 or 3 (not stored per row: the most likely is rule 3, an empty or non-technology company description, because the source's label is deliberately not accepted; GUESS). The log now says it per row.
+
+### Changes
+1. `lookup_log` gets `rows`: per person `person`, `gate` (match, uncertain, no_match), `reasonCode` (out_of_scope, no_evidence), `hasDomain`, `hasProfileLink`, `identityNull`, `lookedUp` and `finalReason` (contact, out_of_scope, no_evidence, no_contact, identity_null, personal_email, mismatch). Codes and booleans only. Read it with `select message::json->'rows' from job_events where job_id='<job>' and event_type='lookup_log'`.
+2. A discarded personal address logs `mailboxDomain` (`gmail.com`, never the address). After a personal address ONE more email lookup is made, without `linkedin_url` (`domain`, `full_name`, `first_name`, `last_name`), under its own step key `people_email_retry_<step>_<index>` (its own idempotency key), only when the person has a company domain and a name, only while the job's budget holds another 0.02 ceiling, and never after any other outcome. Without a profile link the gateway can use only the finders that work from the company domain and the name (below). Its log entry carries `attempt: "retry_without_profile_link"`; `summary.personalRetries` counts them. The catalog documents `X-Treg-Route-Prefer` and `X-Treg-Route-Exclude`; they are NOT sent: leaving out the link already removes the link-based finders.
+3. A lookup that took more than one call logs `firstAttempt` {status, latencyMs, cut (cut by OUR limit)} and `reads` [{status, latencyMs}]. The person lookups wait 8 s before the first read of a cut call and 4 s before one more read after a 409 (the search keeps 4 s and 3 s); every read needs the worker's time (the 6 s kept for saving included); `timeout` is recorded only when the reads fail; a 409 is never a failure and never billed.
+
+### Finders that accept `{domain, first_name, last_name}` or `{domain, full_name}` without `linkedin_url` (public catalog, read 2026-10-26; hit rate and p50/p95 as observed by the catalog)
+| Child of `treg.people.email.find` | USD per hit | Takes | Hit rate | p50 / p95 ms |
+|---|---|---|---|---|
+| quickenrich.people.email.find | 0.004834 | company_url + first_name + last_name (or linkedin_url) | 0.3155 | 65 / 258 |
+| trykitt.people.email.find | 0.005 | fullName + domain | 0.3652 | 3,742 / 11,777 |
+| tomba.people.email.find | 0.0089 | domain + full_name, or first_name + last_name | 0.2011 | 5,859 / 50,210 |
+| moltsets.people.email.find.name | 0.01 | name or first_name + last_name, company_domain | 0.0758 | 43 / 218 |
+| dropleads.people.email.find | 0.018 | first_name + last_name, company_domain | 0.2306 | 2,367 / 20,991 |
+| findymail.search.name | 0.0198 | name + domain | 0.1516 | 3,523 / 18,145 |
+| limadata.people.email.find.name | 0.02 | full_name + company_domain | 0.403 | 317 / 27,791 |
+| hunter.people.email.find | 0.0245 | domain (or company) + names | 0.084 | 2,984 / 10,294 |
+| leadsforge.people.email.find | 0.0245 | companyDomain + firstName + lastName | 0.0579 | 4,398 / 12,125 |
+| leadmagic.people.email.find | 0.025 | domain + names | 0.0297 | 6,822 / 16,220 |
+
+Finders that need the profile link (not reachable by the retry): blitzapi (0.000495), tomba.people.email.find.linkedin (0.0089, the one that returned personal addresses), limadata.people.email.find.linkedin (0.06), findymail.search.business-profile (0.0198), fiber-ai reveal/turbo (0.04, 0.06), contactout (0.15), aviato (0.08), aiark (0.005267), harvestapi (0.02), prospeo, wiza, sixtyfour. `datagma.people.email.find` did not answer the catalog request (HTTP 503). Whether the routed call keeps all the domain finders under the 0.02 ceiling is the gateway's order (cheapest first): not verified.
+
+### Single live test (test account, 3 people, quote limit 1,000 points; the only live step)
+Send `عايز ٣ من صناع القرار في شركات تكنولوجيا في مصر، مع البريد المهني والهاتف`, approve, wait. Then read (read-only): `provider_costs` (the job's total must stay at or under 0.10 USD) and the `lookup_log` row: `summary` (`eligible`, `personalRetries`, `skippedBudget`, `skippedTime`), `rows` (the reason of every one of the 9 people), and each email entry (`outcome`, `mailboxDomain`, `servedBy`, `costUsd`, `calls`, `firstAttempt`, `reads`, `attempt`). Pass: at least one retry entry with outcome `hit` and a `servedBy` that is not a profile-link finder; `charged_credits` = 83 × (people with a contact) + 120 × (work emails) + 55 × (phones), at most 891.
