@@ -580,6 +580,10 @@ export function parseDirectPeopleRows(data: any): Record<string, any>[] {
 
 /** A work-email lookup may run long (measured 7 to 57 s at the 0.02 ceiling); a phone lookup answers quickly or not at all. */
 export const PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS = 25_000;
+/** The FIRST work-email lookups of all people run together, and each is cut at this limit (the live answers came in at 5 to 13 s): a slow one does not hold the window for the checks and phones of the people already found. */
+export const PEOPLE_FIRST_EMAIL_LOOKUP_TIMEOUT_MS = 14_000;
+/** A first lookup cut by its limit is read ONCE more after the checks and phones (the same idempotency key: no new charge), only with this much time for the read. */
+export const PEOPLE_FIRST_EMAIL_RETRY_MIN_MS = 4_000;
 export const PEOPLE_PHONE_LOOKUP_TIMEOUT_MS = 12_000;
 /** The deliverability check of a found work email answers in seconds (measured 0.4 to a few s). */
 export const PEOPLE_VERIFY_LOOKUP_TIMEOUT_MS = 12_000;
@@ -702,6 +706,8 @@ export interface PeopleLookupLogEntry {
   mailboxDomain?: string;
   /** Which identity this email lookup sent: the company domain with the names (the first choice), the profile link with the names (when no domain exists), or the profile link as the fallback after a miss. */
   attempt?: "domain_and_name" | "profile_link" | "profile_link_fallback";
+  /** The one later read of a first lookup that its limit had cut (same idempotency key as the cut call). */
+  retry?: true;
   /** The DNS answer for the domain (a code only): `mx`, `a` (no MX, an address record: not a mail server for this decision), `unknown` (the check itself failed). `none` is the outcome `no_mx`. */
   mailServer?: Exclude<MailDomainStatus, "none">;
   /** The deliverability verdict of a checked work email, as a code. */
@@ -735,6 +741,11 @@ export interface PeopleLookupSummary {
   withContact: number;
   /** Lookups with the profile link made after the first lookup (company domain and names) found nothing. */
   linkFallbacks?: number;
+  /** People with no company domain: their only identity is the profile link, which is not paid for as a first lookup (they keep the phone lookup). */
+  linkOnlySkipped?: number;
+  /** First lookups cut by their limit (PEOPLE_FIRST_EMAIL_LOOKUP_TIMEOUT_MS), and the later reads made of them. */
+  firstEmailCut?: number;
+  firstEmailRetries?: number;
   /** People whose domain has no mail server (the paid lookup was not made) or whose found address is on a domain with none: outcome `no_mx`. */
   noMx?: number;
   verifyInvalid?: number;
@@ -768,20 +779,21 @@ async function enrichTregPeopleRows(
     const left = input.deadlineMs - Date.now() - RESERVE_MS;
     return left >= MIN_READ_MS ? Math.min(limitMs, Math.floor(left)) : 0;
   };
-  const lookup = async (endpointId: string, params: Record<string, any>, stepId: string) => {
+  // A later read of a cut call sends the same idempotency key, so the reservation the cut call still holds (its cost is unknown) covers it: no new one.
+  const lookup = async (endpointId: string, params: Record<string, any>, stepId: string, options: { limitMs?: number; waitsMs?: number[]; reuseReservation?: boolean } = {}) => {
     const isEmail = endpointId === "treg.people.email.find";
     const isVerify = endpointId === "treg.people.email.verify";
     const capUsd = isEmail ? DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD : isVerify ? DECISION_MAKER_VERIFY_ROUTE_COST_CAP_USD : DECISION_MAKER_ROUTE_COST_CAP_USD;
-    const timeoutMs = timeLeftFor(isEmail ? PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS : isVerify ? PEOPLE_VERIFY_LOOKUP_TIMEOUT_MS : PEOPLE_PHONE_LOOKUP_TIMEOUT_MS);
+    const timeoutMs = timeLeftFor(options.limitMs ?? (isEmail ? PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS : isVerify ? PEOPLE_VERIFY_LOOKUP_TIMEOUT_MS : PEOPLE_PHONE_LOOKUP_TIMEOUT_MS));
     if (timeoutMs <= 0) { summary.skippedTime += 1; return null; }
-    if (!spendBudget.reserveCall(capUsd)) { spendBudgetExhausted = true; summary.skippedBudget += 1; return null; }
+    if (!options.reuseReservation && !spendBudget.reserveCall(capUsd)) { spendBudgetExhausted = true; summary.skippedBudget += 1; return null; }
     providerCallCount += 1;
     const { result, calls, attempts } = await executeTregCallWithReplay({
       endpointId, method: "POST", params,
       userId: input.userId, jobId: input.jobId, stepId,
       page: input.step + 1, routeMaxCostUsd: String(capUsd),
       timeoutMs,
-    }, { deadlineMs: input.deadlineMs, reserveMs: RESERVE_MS, waitsMs: [PEOPLE_LOOKUP_REPLAY_WAIT_MS, PEOPLE_LOOKUP_REREAD_WAIT_MS] });
+    }, { deadlineMs: input.deadlineMs, reserveMs: RESERVE_MS, waitsMs: options.waitsMs ?? [PEOPLE_LOOKUP_REPLAY_WAIT_MS, PEOPLE_LOOKUP_REREAD_WAIT_MS] });
     providerCallCount += calls - 1;
     summary.lookupCalls += calls;
     const spent = callCostMicro(result);
@@ -823,6 +835,8 @@ async function enrichTregPeopleRows(
     index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean;
     /** The first email lookup's outcome (null when it was not made); `canFallback`: a miss may be retried once with the profile link. */
     firstOutcome?: PeopleLookupLogEntry["outcome"] | null; canFallback: boolean;
+    /** What the first lookup sent (the identity, its step key and attempt): a later read of a cut lookup sends the same. */
+    first?: { identity: Record<string, string>; stepId: string; attempt: NonNullable<PeopleLookupLogEntry["attempt"]> };
     /** Reached by the second step (the check and the phone), and whether its deliverability check was decided (made, or skipped for time). */
     reached: boolean; checked: boolean;
     personal: boolean; mismatch: boolean; noMx: boolean; verifyInvalid: boolean;
@@ -876,7 +890,7 @@ async function enrichTregPeopleRows(
     return { made: true, verdict };
   };
   /** One work-email lookup with the identity given; null when it was not made (no time, no budget). */
-  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: NonNullable<PeopleLookupLogEntry["attempt"]>, companyStatus?: MailDomainStatus): Promise<PeopleLookupLogEntry["outcome"] | null> => {
+  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: NonNullable<PeopleLookupLogEntry["attempt"]>, companyStatus?: MailDomainStatus, options: { limitMs?: number; waitsMs?: number[]; retry?: true; reuseReservation?: boolean } = {}): Promise<PeopleLookupLogEntry["outcome"] | null> => {
     // Before the paid call: the company domain must publish a mail server. None (or an address record only) and the lookup is not made: nothing is charged,
     // and the log keeps the domain only. A DNS check that cannot answer does not stop the lookup.
     const companyDomain = identity.domain;
@@ -893,7 +907,7 @@ async function enrichTregPeopleRows(
         return "no_mx";
       }
     }
-    const result = await lookup("treg.people.email.find", identity, stepId);
+    const result = await lookup("treg.people.email.find", identity, stepId, { limitMs: options.limitMs, waitsMs: options.waitsMs, reuseReservation: options.reuseReservation });
     if (!result) return null;
     person.lookedUp = true;
     let outcome: PeopleLookupLogEntry["outcome"] = result.result.ok ? "miss" : isInFlightResult(result.result) ? "timeout" : "error";
@@ -932,6 +946,7 @@ async function enrichTregPeopleRows(
       ...(mailboxDomain && outcome !== "hit" && outcome !== "miss" ? { mailboxDomain } : {}),
       ...(mailServer && mailServer !== "none" ? { mailServer } : {}),
       attempt,
+      ...(options.retry ? { retry: options.retry } : {}),
     };
     person.findEntries.push(findEntry);
     if (outcome === "hit" && foundValue) person.candidate = { value: foundValue, mailboxDomain: mailboxDomain ?? "", findEntry, fallbackStatus: result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified };
@@ -965,16 +980,20 @@ async function enrichTregPeopleRows(
     }
     deliverCandidate(person, verdict);
   };
-  // The first work-email lookup: from the company domain and the person's names when both exist (the profile-link finders answered with a PERSONAL address
-  // 6 of 6 times in live jobs, and the domain-and-name finders delivered a work address both times they were asked). The profile link is used only when no
-  // company domain exists (then it is all there is), or as the one fallback after a miss.
+  // The first work-email lookup: from the company domain and the person's names when both exist (the domain-and-name finders delivered a work address both
+  // times they were asked). A person with NO company domain has only the profile link, which answered with a PERSONAL mailbox 6 of 6 times in live jobs and
+  // again in the job of 18:35 UTC: it is not paid for as a first lookup, and the person keeps the phone lookup. The first lookups are cut at their own limit
+  // and not replayed here: a later read comes in its own step, after the checks and phones of the people already found.
   const firstEmail = async (person: Candidate, companyStatus?: MailDomainStatus) => {
     if (person.row.work_email) return;
+    if (!person.identity.domain) { summary.linkOnlySkipped = (summary.linkOnlySkipped ?? 0) + 1; return; }
     const { linkedin_url: profileLink, ...byDomainAndName } = person.identity;
-    const byName = Boolean(person.identity.domain && person.identity.full_name);
+    const byName = Boolean(person.identity.full_name);
     person.canFallback = byName && Boolean(profileLink);
-    const first = byName ? byDomainAndName : person.identity;
-    person.firstOutcome = await runEmail(person, first, `people_email_${input.step}_${person.index}`, byName ? "domain_and_name" : "profile_link", companyStatus);
+    const first = { identity: byName ? byDomainAndName : person.identity, stepId: `people_email_${input.step}_${person.index}`, attempt: (byName ? "domain_and_name" : "profile_link") as NonNullable<PeopleLookupLogEntry["attempt"]> };
+    person.first = first;
+    person.firstOutcome = await runEmail(person, first.identity, first.stepId, first.attempt, companyStatus, { limitMs: PEOPLE_FIRST_EMAIL_LOOKUP_TIMEOUT_MS, waitsMs: [] });
+    if (person.firstOutcome === "timeout") summary.firstEmailCut = (summary.firstEmailCut ?? 0) + 1;
   };
   const fallbackEmail = async (person: Candidate) => {
     if (person.firstOutcome !== "miss" || !person.canFallback) return;
@@ -1001,11 +1020,13 @@ async function enrichTregPeopleRows(
     }
     person.phoneEntries.push(record({ endpoint: "treg.people.phone.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(phoneIdentity).sort(), outcome, emailPresent: false, phonePresent: Boolean(person.row.phone), done: result }));
   };
-  // The people are looked up best identity first, in three steps, so that no person waits behind another person's slow answer for a first try:
-  //  1. the first work-email lookup of EVERY eligible person, all at the same time (each reserves its ceiling from the job's budget; what does not fit is skipped for budget);
+  // The people are looked up best identity first, in four steps, so that no person waits behind another person's slow answer for a first try:
+  //  1. the first work-email lookup of every eligible person WITH a company domain, all at the same time, each cut at PEOPLE_FIRST_EMAIL_LOOKUP_TIMEOUT_MS
+  //     (each reserves its ceiling from the job's budget; what does not fit is skipped for budget); a person with no company domain gets no paid lookup;
   //  2. the deliverability check of the address found and the office phone lookup, for the best identities first, in groups of at most PEOPLE_LOOKUP_CONCURRENCY
   //     and only while people are still needed (each person's two lookups run at the same time);
-  //  3. the one fallback lookup of a missed person (the profile link), for the people reached in step 2, again only while people are still needed.
+  //  3. one later read of each first lookup that its limit cut, for the people still needed, and only while the window leaves the verify minimum after it;
+  //  4. the one fallback lookup of a missed person (the profile link), for the people reached in step 2, again only while people are still needed.
   // A found address whose person was not reached in step 2 is not delivered (the wanted count is already met); its lookup is still billed and logged.
   const people: Candidate[] = [];
   order.forEach((index, at) => {
@@ -1030,6 +1051,24 @@ async function enrichTregPeopleRows(
     await Promise.all(group.map(async (person) => {
       person.reached = true;
       await Promise.all([verifyCandidate(person), phoneLookup(person)]);
+    }));
+  }
+  // Step 3: each first lookup that its limit cut gets ONE later read, with the same identity and idempotency key (the gateway answers a stored result at no
+  // new charge), while people are still needed. The read's own limit leaves the verify minimum after it, so an address it finds can still be checked; a
+  // found address is checked before the next read.
+  const retryFirstEmail = async (person: Candidate) => {
+    const limitMs = timeLeftFor(PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS) - PEOPLE_VERIFY_MIN_TIME_MS;
+    if (!person.first || limitMs < PEOPLE_FIRST_EMAIL_RETRY_MIN_MS) return;
+    summary.firstEmailRetries = (summary.firstEmailRetries ?? 0) + 1;
+    await runEmail(person, person.first.identity, person.first.stepId, person.first.attempt, undefined, { limitMs, waitsMs: [], retry: true, reuseReservation: true });
+  };
+  const cut = people.filter((person) => person.firstOutcome === "timeout");
+  for (let at = 0; at < cut.length && needed() > 0;) {
+    const group = cut.slice(at, at + Math.min(PEOPLE_LOOKUP_CONCURRENCY, needed()));
+    at += group.length;
+    await Promise.all(group.map(async (person) => {
+      await retryFirstEmail(person);
+      if (person.candidate && !person.checked) await verifyCandidate(person);
     }));
   }
   const reachedPeople = people.filter((person) => person.reached);
