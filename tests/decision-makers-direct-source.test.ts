@@ -146,9 +146,9 @@ describe("the direct answer is read and judged: only people who match the reques
     const result = await defaultTregAdapter(input());
     expect(result.ok).toBe(true);
     const sent = mocks.call.mock.calls.map(([call]: any[]) => call);
-    // the two people are looked up together: both emails, each found address checked for deliverability, then both phones
+    // the two people are looked up together: both emails, then for each person the deliverability check of the address found and the phone lookup at the same time
     expect(sent.map((call: any) => call.endpointId)).toEqual([
-      "icypeas.people.search", "treg.people.email.find", "treg.people.email.find", "treg.people.email.verify", "treg.people.email.verify", "treg.people.phone.find", "treg.people.phone.find",
+      "icypeas.people.search", "treg.people.email.find", "treg.people.email.find", "treg.people.email.verify", "treg.people.phone.find", "treg.people.email.verify", "treg.people.phone.find",
     ]);
     expect(sent[0].params).toEqual({
       query: { currentJobTitle: { include: ["CEO"] }, location: { include: ["EG"] }, keyword: { include: ["information technology", "software", "technology"] } },

@@ -589,6 +589,14 @@ export const PEOPLE_REREAD_WAIT_MS = 3_000;
 /** The person lookups wait longer: a work email is a slow answer (7 to 57 s measured), so the first read follows a cut call after 8 s, and a 409 gets one more after 4 s. */
 export const PEOPLE_LOOKUP_REPLAY_WAIT_MS = 8_000;
 export const PEOPLE_LOOKUP_REREAD_WAIT_MS = 4_000;
+/**
+ * Time kept free, after the last lookup, for what must still happen in the same chunk: recording the page, building and saving the files, and the
+ * settlement check (measured about 10 s in the live job of 14:59 UTC). No people lookup starts when the worker's deadline (45 s from its start) is this
+ * close: lookups end at about 33 s, saving and settling at about 43 s, inside both the worker's deadline and the dispatcher's 55 s wait.
+ */
+export const PEOPLE_LOOKUP_RESERVE_MS = 12_000;
+/** A deliverability check is skipped (the address is delivered as «لم يتوفر تأكيد») when less than this is left before the reserve: it answers in 1.6 to 4 s. */
+export const PEOPLE_VERIFY_MIN_TIME_MS = 6_000;
 /** The shortest read worth making. */
 const MIN_READ_MS = 3_000;
 /** How many people are looked up at the same time: the worker has 45 s, and one slow email lookup may take 25. */
@@ -731,6 +739,8 @@ export interface PeopleLookupSummary {
   noMx?: number;
   verifyInvalid?: number;
   verifyCalls?: number;
+  /** Deliverability checks not made because too little time was left (the address is delivered as «لم يتوفر تأكيد»). */
+  verifySkippedTime?: number;
 }
 
 const safeLogText = (value: unknown): string | undefined => {
@@ -751,7 +761,7 @@ async function enrichTregPeopleRows(
   const log: PeopleLookupLogEntry[] = [];
   const summary: PeopleLookupSummary = { rows: rows.length, eligible: 0, noIdentity: 0, lookedUp: 0, lookupCalls: 0, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 0, linkFallbacks: 0, noMx: 0, verifyInvalid: 0, verifyCalls: 0 };
   // Time kept free for what must still happen after a lookup (saving the rows): no lookup starts when the worker's deadline is this close.
-  const RESERVE_MS = 6_000;
+  const RESERVE_MS = PEOPLE_LOOKUP_RESERVE_MS;
   /** The time a lookup may take: its own limit, or what the worker's deadline leaves; 0 when too little is left to start one. */
   const timeLeftFor = (limitMs: number): number => {
     if (!input.deadlineMs) return limitMs;
@@ -809,7 +819,14 @@ async function enrichTregPeopleRows(
   const order = rows.map((_, at) => at).sort((a, b) => identityScore(identities[b]) - identityScore(identities[a]) || a - b);
   const done: Record<string, any>[] = new Array(rows.length);
   let withContact = 0;
-  type Candidate = { index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean; entries: PeopleLookupLogEntry[]; personal: boolean; mismatch: boolean; noMx: boolean; verifyInvalid: boolean };
+  type Candidate = {
+    index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean;
+    personal: boolean; mismatch: boolean; noMx: boolean; verifyInvalid: boolean;
+    // the log entries of the three kinds of lookup are kept apart: verify and phone run at the same time, and the log keeps one fixed order (finds, verify, phone)
+    findEntries: PeopleLookupLogEntry[]; verifyEntries: PeopleLookupLogEntry[]; phoneEntries: PeopleLookupLogEntry[];
+    /** A found address that passed the free DNS check and waits for its deliverability check. */
+    candidate?: { value: string; mailboxDomain: string; findEntry: PeopleLookupLogEntry; fallbackStatus: unknown };
+  };
   const rowLog: PeopleRowLogEntry[] = new Array(rows.length);
   const noteRow = (index: number, row: Record<string, any>, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean; noMx?: boolean; verifyInvalid?: boolean } = {}) => {
     const verdict = verdicts[index];
@@ -848,7 +865,7 @@ async function enrichTregPeopleRows(
     summary.verifyCalls = (summary.verifyCalls ?? 0) + 1;
     const verdict = result.result.ok ? emailVerdictOf(result.result.data) : null;
     const outcome: PeopleLookupLogEntry["outcome"] = verdict === "invalid" ? "verify_invalid" : result.result.ok ? (verdict ? "hit" : "miss") : isInFlightResult(result.result) ? "timeout" : "error";
-    person.entries.push({
+    person.verifyEntries.push({
       ...record({ endpoint: "treg.people.email.verify", step: stepId, person: person.index, rank: person.rank, keys: ["email"], outcome, emailPresent: true, phonePresent: false, done: result }),
       ...(verdict === "invalid" ? { mailboxDomain } : {}), ...(verdict ? { verdict } : {}),
     });
@@ -862,7 +879,7 @@ async function enrichTregPeopleRows(
     let outcome: PeopleLookupLogEntry["outcome"] = result.result.ok ? "miss" : isInFlightResult(result.result) ? "timeout" : "error";
     let mailboxDomain: string | undefined;
     let mailServer: MailDomainStatus | undefined;
-    let verifyEntries: PeopleLookupLogEntry[] = [];
+    let foundValue = "";
     if (result.result.ok) {
       const answer = result.result.data?.output ?? {};
       const value = findContactValue(result.result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
@@ -877,6 +894,7 @@ async function enrichTregPeopleRows(
         mailboxDomain = emailDomain(value) || undefined;
       } else if (value) {
         mailboxDomain = emailDomain(value) || undefined;
+        foundValue = value;
         // 1) a free DNS check: a domain with no mail server can never receive the message, so the address is neither delivered nor charged
         mailServer = mailboxDomain ? await mailDomain(mailboxDomain) : "unknown";
         if (mailServer === "none") {
@@ -884,31 +902,42 @@ async function enrichTregPeopleRows(
           person.noMx = true;
           summary.noMx = (summary.noMx ?? 0) + 1;
         } else {
-          // 2) the deliverability check (about 0.0004 USD): an address the source calls invalid is neither delivered nor charged; a check that could not be made
-          // (no time, no budget, no answer) does not keep the address out, it is delivered with the status «لم يتوفر تأكيد»
-          const before = person.entries.length;
-          const check = await runVerify(person, value, mailboxDomain ?? "");
-          verifyEntries = person.entries.splice(before);
-          if (check.verdict === "invalid") {
-            outcome = "verify_invalid";
-            person.verifyInvalid = true;
-            summary.verifyInvalid = (summary.verifyInvalid ?? 0) + 1;
-          } else {
-            person.row.work_email = value;
-            person.row.work_email_verification_status = arabicVerificationStatus(check.verdict ?? result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified, true);
-            outcome = "hit";
-          }
+          // the address waits for its deliverability check (verifyCandidate), which runs at the same time as the phone lookup
+          outcome = "hit";
         }
       }
     }
-    person.entries.push({
-      ...record({ endpoint: "treg.people.email.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(identity).sort(), outcome, emailPresent: Boolean(person.row.work_email), phonePresent: false, done: result }),
+    const findEntry: PeopleLookupLogEntry = {
+      ...record({ endpoint: "treg.people.email.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(identity).sort(), outcome, emailPresent: false, phonePresent: false, done: result }),
       ...(mailboxDomain && outcome !== "hit" && outcome !== "miss" ? { mailboxDomain } : {}),
       ...(mailServer && mailServer !== "none" ? { mailServer } : {}),
       attempt,
-    });
-    person.entries.push(...verifyEntries);
+    };
+    person.findEntries.push(findEntry);
+    if (outcome === "hit" && foundValue) person.candidate = { value: foundValue, mailboxDomain: mailboxDomain ?? "", findEntry, fallbackStatus: result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified };
     return outcome;
+  };
+  /**
+   * The deliverability check of the found address, and what follows from it: `invalid` keeps the address out (not delivered, not charged), any other verdict
+   * delivers it with its honest status label, and a check that was not made (no time left, no budget, no answer) delivers it as «لم يتوفر تأكيد».
+   */
+  const verifyCandidate = async (person: Candidate) => {
+    const candidate = person.candidate;
+    if (!candidate) return;
+    let verdict: EmailVerdict | null = null;
+    const timeLeft = input.deadlineMs ? input.deadlineMs - Date.now() - RESERVE_MS : Number.POSITIVE_INFINITY;
+    if (timeLeft < PEOPLE_VERIFY_MIN_TIME_MS) summary.verifySkippedTime = (summary.verifySkippedTime ?? 0) + 1;
+    else verdict = (await runVerify(person, candidate.value, candidate.mailboxDomain)).verdict;
+    if (verdict === "invalid") {
+      person.verifyInvalid = true;
+      summary.verifyInvalid = (summary.verifyInvalid ?? 0) + 1;
+      candidate.findEntry.outcome = "verify_invalid";
+      if (candidate.mailboxDomain) candidate.findEntry.mailboxDomain = candidate.mailboxDomain;
+      return;
+    }
+    person.row.work_email = candidate.value;
+    person.row.work_email_verification_status = arabicVerificationStatus(verdict ?? candidate.fallbackStatus, true);
+    candidate.findEntry.emailPresent = true;
   };
   const emailLookup = async (person: Candidate) => {
     if (person.row.work_email) return;
@@ -926,7 +955,9 @@ async function enrichTregPeopleRows(
   };
   const phoneLookup = async (person: Candidate) => {
     if (person.row.phone) return;
-    const phoneIdentity = person.row.work_email ? { ...person.identity, email: String(person.row.work_email) } : person.identity;
+    // the phone lookup carries the address found (it need not wait for its deliverability check, which runs at the same time)
+    const knownEmail = person.candidate?.value || person.row.work_email;
+    const phoneIdentity = knownEmail ? { ...person.identity, email: String(knownEmail) } : person.identity;
     const stepId = `people_phone_${input.step}_${person.index}`;
     const result = await lookup("treg.people.phone.find", phoneIdentity, stepId);
     if (!result) return;
@@ -940,10 +971,10 @@ async function enrichTregPeopleRows(
         outcome = "hit";
       }
     }
-    person.entries.push(record({ endpoint: "treg.people.phone.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(phoneIdentity).sort(), outcome, emailPresent: false, phonePresent: Boolean(person.row.phone), done: result }));
+    person.phoneEntries.push(record({ endpoint: "treg.people.phone.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(phoneIdentity).sort(), outcome, emailPresent: false, phonePresent: Boolean(person.row.phone), done: result }));
   };
-  // The people are looked up best identity first, in groups of at most PEOPLE_LOOKUP_CONCURRENCY at the same time (the emails of a group together, then
-  // the phones), and only until the people still needed have a contact value: a group is never larger than what is still needed.
+  // The people are looked up best identity first, in groups of at most PEOPLE_LOOKUP_CONCURRENCY at the same time (each person's email, then the check of the
+  // address and the phone together), and only until the people still needed have a contact value: a group is never larger than what is still needed.
   let rank = 0;
   while (rank < order.length) {
     const needed = options.wanted !== undefined ? Math.max(0, options.wanted - withContact) : Number.POSITIVE_INFINITY;
@@ -956,13 +987,17 @@ async function enrichTregPeopleRows(
       const identity = eligibleAt[index] ? identities[index] : null;
       rank += 1;
       if (!identity) { finish(index, row, eligibleAt[index], false); continue; }
-      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, entries: [], personal: false, mismatch: false, noMx: false, verifyInvalid: false });
+      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, personal: false, mismatch: false, noMx: false, verifyInvalid: false, findEntries: [], verifyEntries: [], phoneEntries: [] });
     }
     if (group.length === 0) break;
-    await Promise.all(group.map(emailLookup));
-    await Promise.all(group.map(phoneLookup));
+    // Each person runs on their own: the email, then the deliverability check of the address found at the same time as the phone lookup. A person who
+    // answers early does not wait for the slowest of the group, and the check never adds its whole time to the group's.
+    await Promise.all(group.map(async (person) => {
+      await emailLookup(person);
+      await Promise.all([verifyCandidate(person), phoneLookup(person)]);
+    }));
     for (const person of group) {
-      log.push(...person.entries);
+      log.push(...person.findEntries, ...person.verifyEntries, ...person.phoneEntries);
       finish(person.index, person.row, true, person.lookedUp, { personal: person.personal, mismatch: person.mismatch, noMx: person.noMx, verifyInvalid: person.verifyInvalid });
     }
   }

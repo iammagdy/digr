@@ -227,9 +227,9 @@ describe("(b) 409 then success on a later read: delivered once, charged once; th
     expect(result.rows.every((row) => row.work_email === "")).toBe(true);
   });
 
-  it("the worker's deadline is respected: with too little time left there is no read after the first call (a read needs 8 s + 3 s and 6 s are kept for saving)", async () => {
+  it("the worker's deadline is respected: with too little time left there is no read after the first call (a read needs 8 s + 3 s and 12 s are kept for saving and settling)", async () => {
     const calls = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([mona]) } : isEmail(call) ? { status: 409, body: { error: "in_flight" } } : { body: phoneMiss }));
-    const result = await defaultTregAdapter(input({ deadlineMs: Date.now() + 15_000 }) as any);
+    const result = await defaultTregAdapter(input({ deadlineMs: Date.now() + 21_000 }) as any);
     expect(calls.filter(isEmail)).toHaveLength(1);
     expect(result.lookupLog!.entries.find(isEntryEmail)).toMatchObject({ outcome: "timeout", calls: 1 });
     expect(result.lookupLog!.entries.find(isEntryEmail)).not.toHaveProperty("reads");

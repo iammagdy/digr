@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
-import { deliveredNothing, producedFormats } from "@/lib/producedFormats";
+import { deliveredNothing, NO_RELEASABLE_RESULT_AR, producedFormats, resultsReleasable } from "@/lib/producedFormats";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +51,11 @@ export async function GET(
     const isAdmin = user.app_metadata?.role === "admin";
     if (jobDoc.user_id !== verifiedUserId && !isAdmin) {
       return NextResponse.json({ success: false, error: "غير مصرح بعرض هذا الطلب." }, { status: 403 });
+    }
+
+    // A request that did not settle and charge serves no rows and no file ids (its files are saved before settlement and stay in storage).
+    if (!resultsReleasable(jobDoc)) {
+      return NextResponse.json({ success: false, error: NO_RELEASABLE_RESULT_AR }, { status: 409 });
     }
 
     // 3. Read JSON result from private storage bucket (results or partials)

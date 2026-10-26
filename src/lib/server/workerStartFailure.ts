@@ -24,6 +24,24 @@ export function startFailureEventAr(failureCode: string | undefined): { code: nu
   return { code, message: `تعثر بدء المعالجة مؤقتاً، وستُعاد المحاولة تلقائياً، ولن يُخصم من رصيدك إلا ما يُسلَّم (رمز السبب ${digits}).` };
 }
 
+/**
+ * Whether a failed dispatch is a failed START. A dispatch that was cut by OUR time limit says nothing about the worker: it may be running (the live job of
+ * 14:59 UTC: the worker finished its chunk after the 45 s limit, but recording a start failure had already turned the job from `running` to `queued`,
+ * and the worker then refused to settle). The job is read FIRST; a start failure is recorded only when the job is still `queued` (never claimed). A job
+ * that is running, completed, failed or cancelled is left exactly as it is. Any other failure code, and a job that cannot be read, keep the old behaviour
+ * (the failure is recorded).
+ */
+export async function startFailureStillApplies(adminClient: any, jobId: string, failureCode: string | undefined): Promise<boolean> {
+  if (failureCode !== "dispatch_timeout") return true;
+  try {
+    const { data, error } = await adminClient.from("jobs").select("status").eq("id", jobId).maybeSingle();
+    if (error || !data) return true;
+    return String(data.status || "").toLowerCase() === "queued";
+  } catch {
+    return true;
+  }
+}
+
 export interface WorkerStartFailureResult {
   attemptCount: number | null;
   failed: boolean;

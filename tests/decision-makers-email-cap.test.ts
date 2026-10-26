@@ -197,10 +197,10 @@ describe("(3) the work email waits up to 25 s, the phone 12 s; the worker's dead
     expect(seen.options.find((options) => options.endpointId === "icypeas.people.search").timeoutMs).toBe(20_000);
   });
 
-  it("a lookup never waits longer than the deadline leaves (minus 6 s kept for saving), and none starts with less than 3 s", async () => {
+  it("a lookup never waits longer than the deadline leaves (minus 12 s kept for saving and settling), and none starts with less than 3 s", async () => {
     gateway((call) => (isSearch(call) ? { cost: 3420, body: SEARCH_ANSWER } : missAnswer(call)));
-    // 20 s left: the email gets 20 - 6 = 14 s (and the search, which runs first, spends a little of it)
-    await defaultTregAdapter(input({ deadlineMs: Date.now() + 20_000 }) as any);
+    // 26 s left: the email gets 26 - 12 = 14 s (and the search, which runs first, spends a little of it)
+    await defaultTregAdapter(input({ deadlineMs: Date.now() + 26_000 }) as any);
     const emailLimits = seen.options.filter((options) => options.endpointId === "treg.people.email.find").map((options) => options.timeoutMs);
     expect(emailLimits.length).toBeGreaterThan(0);
     for (const limit of emailLimits) { expect(limit).toBeLessThanOrEqual(14_000); expect(limit).toBeGreaterThan(10_000); }
@@ -243,7 +243,7 @@ describe("(4) HTTP 409 is «still running», never a failure and never a second 
 
   it("with no time left for a read the lookup ends as «timeout» after ONE call (no blind replay)", async () => {
     gateway((call) => (isSearch(call) ? { cost: 3420, body: SEARCH_ANSWER } : isEmail(call) ? { status: 409, body: { error: "in_flight" } } : missAnswer(call)));
-    const result = await defaultTregAdapter(input({ remainingNeeded: 1, targetVolumeMax: 1, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(1), deadlineMs: Date.now() + 11_000 }) as any);
+    const result = await defaultTregAdapter(input({ remainingNeeded: 1, targetVolumeMax: 1, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(1), deadlineMs: Date.now() + 17_000 }) as any);
     const entry = result.lookupLog!.entries.find((e) => e.endpoint === "treg.people.email.find")!;
     expect(entry).toMatchObject({ outcome: "timeout", calls: 1 });
     expect(result.ok).toBe(true);

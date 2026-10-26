@@ -1,3 +1,4 @@
+import { collectionCompleteBeforeSettlement } from "@/lib/server/settlementPrecheck";
 import { pointsAr } from "@/lib/pointsFormat";
 import { countPlainAr, duplicateRecordsAr } from "@/lib/planCounts";
 import { JOB_MAX_POINTS_CAP } from "../../../../lib/jobPointsCap";
@@ -2339,12 +2340,7 @@ export async function POST(req: NextRequest) {
         .select("status, current_cursor, delivered_units, target_volume_max")
         .eq("id", jobId)
         .maybeSingle();
-      if (
-        persistedCompletionErr ||
-        persistedCompletion?.status !== "running" ||
-        persistedCompletion?.current_cursor !== "completed" ||
-        Number(persistedCompletion?.delivered_units || 0) !== Number(recordedDeliveredUnits)
-      ) {
+      if (!collectionCompleteBeforeSettlement(persistedCompletion, persistedCompletionErr, recordedDeliveredUnits)) {
         throw new Error("تعذر التحقق من اكتمال جمع البيانات قبل التسوية.");
       }
 

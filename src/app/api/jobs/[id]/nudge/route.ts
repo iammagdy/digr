@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient, createServerSideClient } from "../../../../../lib/supabase/server";
 import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk } from "../../../../../lib/server/workerDispatch";
-import { recordWorkerStartFailure, WORKER_START_FINAL_REASON_AR, WORKER_START_RETRY_REASON_AR } from "../../../../../lib/server/workerStartFailure";
+import { recordWorkerStartFailure, startFailureStillApplies, WORKER_START_FINAL_REASON_AR, WORKER_START_RETRY_REASON_AR } from "../../../../../lib/server/workerStartFailure";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -193,6 +193,11 @@ export async function POST(
       });
     } catch (nudgeErr) {
       console.warn(`[nudge:trigger_warn] jobId=${jobId} code=${(nudgeErr as any)?.name || "dispatch_failed"}`);
+      // A dispatch cut by our own time limit is not a failed start when the worker has the job: leave a running job as it is.
+      const timedOut = (nudgeErr as any)?.name === "TimeoutError" || (nudgeErr as any)?.name === "AbortError";
+      if (timedOut && !(await startFailureStillApplies(createAdminClient(), job?.id || jobId, "dispatch_timeout"))) {
+        return NextResponse.json({ success: true, nudged: true, status: "running", jobId, message: "تم تنفيذ محاولة تنشيط المهمة." });
+      }
       const outcome = await recordWorkerStartFailure(createAdminClient(), job?.id || jobId);
       return NextResponse.json({
         success: true,

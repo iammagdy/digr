@@ -388,8 +388,8 @@ describe("A1 and A5: the order of the lookups, and a lookup cut by our own limit
       if (isVerify(call)) return { body: { output: { status: "valid" } } };
       return { body: phoneMiss };
     });
-    // 12 s left: 6 s are kept for saving, so a 25 s lookup is cut to what is left and no wait + read fits
-    const result = await defaultTregAdapter(input({ remainingNeeded: 1, targetVolumeMax: 1, deadlineMs: Date.now() + 12_000 }) as any);
+    // 18 s left: 12 s are kept for saving and settling, so a 25 s lookup is cut to the 6 s that are left and no wait + read fits
+    const result = await defaultTregAdapter(input({ remainingNeeded: 1, targetVolumeMax: 1, deadlineMs: Date.now() + 18_000 }) as any);
     const entries = result.lookupLog!.entries.filter(isEntryEmail);
     expect(entries[0]).toMatchObject({ outcome: "timeout", calls: 1 });
     expect(entries[0]).not.toHaveProperty("reads");

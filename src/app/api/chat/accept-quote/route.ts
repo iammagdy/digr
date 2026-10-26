@@ -7,7 +7,7 @@ import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/pr
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
 import { resolveInternalBaseUrl, createInternalWorkerAuthHeaders } from "../../../../lib/server/cronAuth";
 import { dispatchWorkerChunk, type WorkerChunkDispatchResult } from "../../../../lib/server/workerDispatch";
-import { recordWorkerStartFailure, startFailureEventAr, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
+import { recordWorkerStartFailure, startFailureEventAr, startFailureStillApplies, WORKER_START_RETRY_REASON_AR } from "../../../../lib/server/workerStartFailure";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { countActiveJobs, evaluateConcurrentJobs } from "../../../../lib/server/concurrentJobs";
 import { getBusyState } from "../../../../lib/server/busyState";
@@ -182,6 +182,13 @@ export async function POST(req: NextRequest) {
       console.error(`[accept-quote:worker_trigger_failed] jobId=${acceptedJobId} code=${chunkErr?.name || "dispatch_failed"}`);
       const timedOut = chunkErr?.name === "TimeoutError" || chunkErr?.name === "AbortError";
       workerDispatch = { started: false, status: 0, body: { dispatchFailed: true }, failureCode: timedOut ? "dispatch_timeout" : "dispatch_exception" };
+    }
+
+    if (!workerDispatch.started && workerDispatch.body?.claimed !== false && !(await startFailureStillApplies(adminClient, acceptedJobId, workerDispatch.failureCode))) {
+      // The dispatch was cut by our own time limit but the worker has the job (running, or already finished): that is not a failed start. Nothing is
+      // recorded and no warning is written, so the job's status stays as the worker keeps it and it can settle.
+      console.log(`[accept-quote:worker_running_after_timeout] jobId=${acceptedJobId}`);
+      workerDispatch = { ...workerDispatch, started: true, failureCode: undefined, body: { ...workerDispatch.body, workerAlreadyRunning: true } };
     }
 
     if (!workerDispatch.started && workerDispatch.body?.claimed !== false) {
