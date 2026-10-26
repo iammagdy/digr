@@ -161,13 +161,18 @@ describe("the direct answer is read and judged: only people who match the reques
     expect(decisionMakerChargePoints(units, DECISION_MAKER_UNIT_PRICES_POINTS)).toBe(2 * 83 + 2 * 55 + 1 * 55);
   });
 
-  it("when no contact value is found the people stay in the file for review and nothing is charged", async () => {
+  it("when no contact value is found the people are NOT delivered: they go to review and nothing is charged", async () => {
     mocks.call.mockImplementation(async (options: any) => options.endpointId === "icypeas.people.search" ? res({ costMicro: 1900, data: DIRECT_ANSWER }) : res({ costMicro: 20, data: { output: {} } }));
     const result = await defaultTregAdapter(input());
+    // the lookups ran and found nothing: every person is still a row of the adapter's answer, with the status of each contact field
+    expect(result.rows.every((row) => row.work_email === "" && row.phone === "")).toBe(true);
+    expect(result.rows[0].work_email_presence_status).toBe("غير موجود");
+    expect(result.rows[0].contact_review_status).toContain("لم يتوفر");
+    // the gate sends a person with NEITHER requested contact value to review (was: delivered with a charge of 0)
+    const verdicts = result.rows.map((row) => gate(row));
+    expect(verdicts.filter((verdict) => verdict.decision === "match")).toEqual([]);
+    expect(verdicts.filter((verdict) => verdict.reasonCode === "no_contact").length).toBeGreaterThan(0);
     const delivered = result.rows.filter((row) => gate(row).decision === "match");
-    expect(delivered.every((row) => row.work_email === "" && row.phone === "")).toBe(true);
-    expect(delivered[0].work_email_presence_status).toBe("غير موجود");
-    expect(delivered[0].contact_review_status).toContain("لم يتوفر");
     expect(decisionMakerChargePoints(decisionMakerDeliveredUnits(delivered, ["work_email", "phone"]), DECISION_MAKER_UNIT_PRICES_POINTS)).toBe(0);
   });
 });

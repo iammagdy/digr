@@ -11,6 +11,7 @@ import ActivityTerminal, { TerminalEvent } from "./ActivityTerminal";
 import type { LivePreviewSample } from "@/lib/liveJobView";
 import { customerResultColumnLabel, emptyPromisedFieldTitles, ensurePostLinkColumn, orderPreviewColumns, previewColumns, splitEmptyColumns } from "@/lib/customerResultColumns";
 import { COMPANY_SCREEN_ORDER, companyColumnTitleAr } from "@/lib/companyColumns";
+import { orderPeopleColumns, peopleColumnTitleAr } from "@/lib/peopleColumns";
 import { formatPhoneDisplay, phoneMayBeIncomplete, PHONE_MAY_BE_INCOMPLETE_AR } from "@/lib/phoneDisplay";
 import { contactCellUnavailable } from "@/lib/contactVerification";
 import { industryLabelForCell } from "@/lib/industryLabels";
@@ -50,6 +51,8 @@ interface ResultsCanvasProps {
   planNode?: React.ReactNode;
   /** The contact fields the approved plan promised (e.g. work_email, phone): the table says so when one came back empty in every row. */
   promisedContactFields?: string[];
+  /** The request is a decision-makers search: its rows are people, shown in the same columns and order as its workbook. */
+  peopleDataset?: boolean;
   onCloseMobile: () => void;
   onClose?: () => void;
   review?: ResultReview | null;
@@ -123,6 +126,7 @@ export function formatCell(value: unknown): string {
 
 export default function ResultsCanvas({
   records,
+  peopleDataset,
   profile,
   jobId,
   jobStatus,
@@ -178,6 +182,8 @@ export default function ResultsCanvas({
     Object.values(record).some((value) => String(value ?? "").toLocaleLowerCase().includes(searchTerm.toLocaleLowerCase()))
   );
   const isCompanyDataset = records.some((record) => record.company_name);
+  // A decision-makers dataset is a file of people: the same columns, titles and order as its workbook (the shared people list).
+  const isPeopleRows = peopleDataset === true && records.length > 0;
   // The same order the workbook uses (the one shared company column list).
   const COMPANY_PREFERRED = COMPANY_SCREEN_ORDER;
 
@@ -223,15 +229,16 @@ export default function ResultsCanvas({
   }
 
   // One title per column: a company column reads the shared company list (the workbook's own titles), any other the screen's labels.
-  const columnTitle = (key: string) => (isCompanyDataset ? companyColumnTitleAr(key) : undefined) || LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key, profile?.postUnit === true);
+  const columnTitle = (key: string) => (isPeopleRows ? peopleColumnTitleAr(key) : undefined) || (isCompanyDataset ? companyColumnTitleAr(key) : undefined) || LEGACY_COLUMN_LABELS[key] || customerResultColumnLabel(key, profile?.postUnit === true);
   const tableColumns = ensurePostLinkColumn(previewColumns(orderedColumns, isCompanyDataset), orderedColumns, profile?.sourcePlatform).filter((key, index, shown) => {
     const label = columnTitle(key);
     return shown.findIndex((candidate) => columnTitle(candidate) === label) === index;
   });
   // Useful columns first, availability columns last, and the columns that are empty in every row hidden (with a line that says which, and a switch).
   const [showEmptyColumns, setShowEmptyColumns] = useState(false);
-  const { shown: nonEmptyColumns, empty: emptyColumns } = splitEmptyColumns(records, orderPreviewColumns(tableColumns));
-  const visibleColumns = showEmptyColumns ? orderPreviewColumns(tableColumns) : nonEmptyColumns;
+  const orderedTableColumns = isPeopleRows ? orderPeopleColumns(tableColumns) : orderPreviewColumns(tableColumns);
+  const { shown: nonEmptyColumns, empty: emptyColumns } = splitEmptyColumns(records, orderedTableColumns);
+  const visibleColumns = showEmptyColumns ? orderedTableColumns : nonEmptyColumns;
   const missingPromised = emptyPromisedFieldTitles(records, promisedContactFields);
   // A request that ended with no delivered record has no file to offer (failed, cancelled, or finished with nothing): zero files, said once.
   const deliveredCount = records.length > 0 ? records.length : rowsCollected ?? 0;

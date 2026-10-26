@@ -11,7 +11,10 @@ import { fontRegularBase64, fontBoldBase64 } from "./embeddedFonts";
 import { localizeAddressAr, localizeCityFromAddress, localizeCityName } from "../../lib/server/addressParser";
 import { detectCountryFromText } from "../../lib/server/tregAdapter";
 import { toArabicDigits } from "../../lib/arabicDigits";
-import { markedInvalid } from "../../lib/contactVerification";
+import { arabicVerificationStatus, markedInvalid } from "../../lib/contactVerification";
+import { PEOPLE_COLUMNS } from "../../lib/peopleColumns";
+import { peopleDeliveryRow } from "../../lib/server/peopleDelivery";
+import { contactValueDelivered } from "./decisionMakerPricing";
 import { industryLabelForCell } from "../../lib/industryLabels";
 import { cleanCompanyRecord } from "../../lib/companyRowHygiene";
 import { isoCountryCodeFromName } from "../../lib/planParameters";
@@ -632,27 +635,48 @@ async function generateStructuredDataWorkbook(payload: any, norm: NormalizedData
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
-/** Contact-first workbook for professional people-search results. */
+/**
+ * The customer workbook of a decision-makers request: one row per PERSON, in the shared people columns (`src/lib/peopleColumns.ts`, the list the
+ * results screen reads too). The name, title, company, work email, office phone, their two statuses and the profile link are always written
+ * («غير متاح» where the person has no value, or where the source marked the value invalid); the country, city, company website, industry and
+ * the company description are written only when at least one person has a value, like the screen. A value the source marked invalid is not
+ * delivered, so it is not written (the settlement does not charge it either).
+ */
+const PEOPLE_ALWAYS_COLUMNS = new Set(["contact_name", "job_title", "company_name", "work_email", "work_email_verification_status", "phone", "phone_verification_status", "linkedin_url"]);
+
 async function generatePeopleDataWorkbook(norm: NormalizedDataset, uncertainRows: any[] = []): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   wb.title = customerFacingTitle(norm.metadata.title);
+  const text = (value: unknown) => String(value ?? "").replace(/^'/, "").trim();
+  const cell = (record: Record<string, any>, key: string): string => {
+    if (key === "work_email") return contactValueDelivered(record, "work_email") ? text(record.work_email) : "";
+    if (key === "phone") return contactValueDelivered(record, "phone") ? text(record.phone) : "";
+    if (key === "work_email_verification_status") return contactValueDelivered(record, "work_email") ? arabicVerificationStatus(record.work_email_verification_status, true) : "";
+    if (key === "phone_verification_status") return contactValueDelivered(record, "phone") ? arabicVerificationStatus(record.phone_verification_status, true) : "";
+    return text(record[key]);
+  };
+  // Rows already in the shared columns (the worker's) pass through unchanged; a row from another path is put in them (country and city in Arabic).
+  const rows = norm.rows.map(peopleDeliveryRow);
+  const columns = PEOPLE_COLUMNS.filter((column) => PEOPLE_ALWAYS_COLUMNS.has(column.key) || rows.some((record) => cell(record, column.key) !== ""));
+  const lastColumn = columns.length + 1;
   const ws = wb.addWorksheet("بيانات المهنيين", {
     views: [{ state: "frozen", ySplit: 4, rightToLeft: true }],
   });
-  ws.mergeCells("A1:L1");
+  ws.mergeCells(1, 1, 1, lastColumn);
   ws.getCell("A1").value = customerFacingTitle(norm.metadata.title);
   ws.getCell("A1").font = { name: "Calibri", size: 15, bold: true, color: { argb: COLOR_WHITE } };
   ws.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
   ws.getCell("A1").alignment = { horizontal: "center", vertical: "middle" };
   ws.getRow(1).height = 36;
-  ws.mergeCells("A2:L2");
-  ws.getCell("A2").value = "بيانات الاتصال المهنية كما أرجعتها المصادر؛ وجود القيمة لا يعني التحقق المستقل من صحتها.";
+  ws.mergeCells(2, 1, 2, lastColumn);
+  const companyNote = columns.some((column) => column.key === "description" || column.key === "website") ? " الموقع الإلكتروني والوصف للشركة التي يعمل بها الشخص." : "";
+  ws.getCell("A2").value = `بيانات الاتصال المهنية كما أرجعتها المصادر؛ وجود القيمة لا يعني التحقق المستقل من صحتها.${companyNote}`;
   ws.getCell("A2").font = { name: "Calibri", size: 10, color: { argb: "FF475569" } };
   ws.getCell("A2").alignment = { horizontal: "right", vertical: "middle", wrapText: true };
   ws.getRow(2).height = 28;
-  ws.addRow(["عدد السجلات", norm.rows.length]);
-  const headers = ["م", "اسم جهة الاتصال", "المسمى الوظيفي", "الشركة", "مجال النشاط", "الدولة / الموقع", "لينكد إن", "البريد المهني", "رقم الهاتف", "حالة الحقول", "حالة تحقق البريد المهني", "حالة تحقق الهاتف"];
+  ws.addRow(["عدد السجلات", rows.length]);
+  const headers = ["م", ...columns.map((column) => column.titleAr)];
   const header = ws.addRow(headers);
   header.height = 30;
   header.eachCell((cell) => {
@@ -661,51 +685,38 @@ async function generatePeopleDataWorkbook(norm: NormalizedDataset, uncertainRows
     cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     cell.border = borderThin;
   });
-  norm.rows.forEach((record, index) => {
-    const email = String(record.work_email || record.workEmail || record.email || "").trim();
-    const phone = String(record.phone || record.phone_number || record.business_phone || record.work_phone || "").replace(/^'/, "").trim();
-    const linkedin = String(record.linkedin_url || record.linkedin || record.profile_url || "").trim();
-    const values = [
-      index + 1,
-      record.contact_name || record.full_name || record.fullName || record.name || "غير متاح",
-      record.job_title || record.jobTitle || record.title || record.currentJobTitle || "غير متاح",
-      record.company_name || record.companyName || record.company || "غير متاح",
-      industryLabelForCell(record.industry || record.keywords || ""),
-      (() => {
-        const localized = localizeCityName(record.city || record.location);
-        return localized !== "غير متاح" ? localized : detectCountryFromText(record.country || record.location || "")?.arabicLabel || "غير متاح";
-      })(),
-      linkedin,
-      email || "غير متاح",
-      phone ? formatPhoneDisplay(phone) : "غير متاح",
-      `البريد: ${email ? "موجود" : "غير موجود"} • الهاتف: ${phone ? "موجود" : "غير موجود"}`,
-      record.work_email_verification_status || (email ? "لم يتوفر تأكيد" : "غير متاح"),
-      record.phone_verification_status || (phone ? "لم يتوفر تأكيد" : "غير متاح"),
-    ];
-    const row = ws.addRow(values.map((value, column) =>
-      typeof value === "string" && column !== 8 ? escapeFormula(value) : value,
-    ));
+  rows.forEach((record, index) => {
+    const values = columns.map((column) => {
+      const value = cell(record, column.key);
+      if (value === "") return "غير متاح";
+      return column.key === "phone" ? formatPhoneDisplay(value) : value;
+    });
+    const row = ws.addRow([index + 1, ...values.map((value, at) => (typeof value === "string" && columns[at].key !== "work_email" ? escapeFormula(value) : value))]);
     row.height = 24;
     row.alignment = { vertical: "middle", wrapText: true };
-    row.eachCell((cell) => {
-      cell.border = borderThin;
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
+    row.eachCell((c) => {
+      c.border = borderThin;
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 ? COLOR_ZEBRA_FILL : COLOR_WHITE } };
     });
-    const profileCell = row.getCell(7);
-    if (/^https?:\/\//i.test(linkedin)) {
-      profileCell.value = workbookHyperlink(linkedin);
-      profileCell.font = { color: { argb: "FF0563C1" }, underline: true };
-    }
-    row.getCell(9).numFmt = "@";
+    columns.forEach((column, at) => {
+      const link = cell(record, column.key);
+      if ((column.key === "linkedin_url" || column.key === "website") && /^https?:\/\//i.test(link)) {
+        const target = row.getCell(at + 2);
+        target.value = workbookHyperlink(link);
+        target.font = { color: { argb: "FF0563C1" }, underline: true };
+      }
+      if (column.key === "phone") row.getCell(at + 2).numFmt = "@";
+    });
   });
-  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: norm.rows.length + 4, column: headers.length } };
-  ws.columns = [
-    { width: 8 }, { width: 28 }, { width: 27 }, { width: 28 }, { width: 24 },
-    { width: 24 }, { width: 34 }, { width: 34 }, { width: 22 }, { width: 32 }, { width: 30 }, { width: 30 },
-  ];
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: rows.length + 4, column: headers.length } };
+  ws.columns = [{ width: 8 }, ...columns.map((column) => ({ width: column.width }))];
   ws.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
   addGenericReviewSheet(wb, Array.isArray(uncertainRows) ? uncertainRows : [], {
-    text: (row) => [row.contact_name || row.full_name || row.name, row.job_title, row.company_name].filter(Boolean).join(" — "),
+    text: (row) => [
+      [row.contact_name || row.full_name || row.name, row.job_title, row.company_name].filter(Boolean).join(" — "),
+      row.location || row.address ? `عنوان الشخص: ${row.location || row.address}` : "",
+      row.company_address ? `عنوان الشركة: ${row.company_address}` : "",
+    ].filter(Boolean).join("؛ "),
     link: (row) => row.linkedin_url || row.profile_url || "",
   });
   return Buffer.from(await wb.xlsx.writeBuffer());

@@ -68,16 +68,17 @@ export function detectCountryFromText(text: string): CountryMapping | null {
   if (t.includes("ليختنشتاين") || t.includes("liechtenstein")) {
     return { canonicalEnglish: "Liechtenstein", arabicLabel: "ليختنشتاين" };
   }
-  if (t.includes("ألمانيا") || t.includes("المانيا") || t.includes("germany") || t.includes("deutschland") || t.includes("برلين") || t.includes("ميونخ")) {
+  if (t.includes("ألمانيا") || t.includes("المانيا") || t.includes("germany") || t.includes("deutschland") || t.includes("allemagne") || t.includes("alemania") || t.includes("برلين") || t.includes("ميونخ")) {
     return { canonicalEnglish: "Germany", arabicLabel: "ألمانيا" };
   }
-  if (t.includes("النمسا") || t.includes("austria") || t.includes("österreich") || t.includes("فيينا")) {
+  if (t.includes("النمسا") || t.includes("austria") || t.includes("österreich") || t.includes("autriche") || t.includes("فيينا")) {
     return { canonicalEnglish: "Austria", arabicLabel: "النمسا" };
   }
   if (
     t.includes("السعودية") ||
     t.includes("المملكة العربية السعودية") ||
     t.includes("saudi") ||
+    t.includes("arabie saoudite") ||
     t.includes("ksa") ||
     // «الرياض» is the city; «الرياضة» (sports) is not it.
     /الرياض(?![ةيه])/u.test(t) ||
@@ -94,6 +95,8 @@ export function detectCountryFromText(text: string): CountryMapping | null {
     t.includes("ابوظبي") ||
     t.includes("uae") ||
     t.includes("emirates") ||
+    t.includes("émirats arabes unis") ||
+    t.includes("emirats arabes unis") ||
     t.includes("الشارقة")
   ) {
     return { canonicalEnglish: "United Arab Emirates", arabicLabel: "الإمارات العربية المتحدة" };
@@ -106,47 +109,56 @@ export function detectCountryFromText(text: string): CountryMapping | null {
     t.includes("الجيزة") ||
     t.includes("egypt") ||
     t.includes("cairo") ||
-    t.includes("alexandria")
+    t.includes("alexandria") ||
+    // the same country written in French, Spanish, Italian and German («Égypte», «Le Caire», «El Cairo», «Il Cairo», «Ägypten»)
+    t.includes("égypte") ||
+    t.includes("egypte") ||
+    t.includes("le caire") ||
+    t.includes("egipto") ||
+    t.includes("egitto") ||
+    t.includes("ägypten") ||
+    t.includes("agypten") ||
+    t.includes("kairo")
   ) {
     return { canonicalEnglish: "Egypt", arabicLabel: "مصر" };
   }
-  if (t.includes("الكويت") || t.includes("kuwait")) {
+  if (t.includes("الكويت") || t.includes("kuwait") || t.includes("koweït") || t.includes("koweit")) {
     return { canonicalEnglish: "Kuwait", arabicLabel: "الكويت" };
   }
   if (t.includes("قطر") || t.includes("qatar") || t.includes("الدوحة")) {
     return { canonicalEnglish: "Qatar", arabicLabel: "قطر" };
   }
-  if (t.includes("البحرين") || t.includes("bahrain") || t.includes("المنامة")) {
+  if (t.includes("البحرين") || t.includes("bahrain") || t.includes("bahreïn") || t.includes("bahrein") || t.includes("المنامة")) {
     return { canonicalEnglish: "Bahrain", arabicLabel: "البحرين" };
   }
   if (t.includes("عمان") || t.includes("سلطنة عمان") || t.includes("oman") || t.includes("مسقط")) {
     return { canonicalEnglish: "Oman", arabicLabel: "سلطنة عمان" };
   }
-  if (t.includes("الأردن") || t.includes("الاردن") || t.includes("jordan")) {
+  if (t.includes("الأردن") || t.includes("الاردن") || t.includes("jordan") || t.includes("jordanie")) {
     return { canonicalEnglish: "Jordan", arabicLabel: "الأردن" };
   }
-  if (t.includes("المملكة المتحدة") || t.includes("بريطانيا") || t.includes("إنجلترا") || t.includes("uk") || t.includes("united kingdom") || t.includes("لندن")) {
+  if (t.includes("المملكة المتحدة") || t.includes("بريطانيا") || t.includes("إنجلترا") || t.includes("uk") || t.includes("united kingdom") || t.includes("royaume-uni") || t.includes("لندن")) {
     return { canonicalEnglish: "United Kingdom", arabicLabel: "المملكة المتحدة" };
   }
-  if (t.includes("الولايات المتحدة") || t.includes("أمريكا") || t.includes("امريكا") || t.includes("usa") || t.includes("united states") || t.includes("نيويورك")) {
+  if (t.includes("الولايات المتحدة") || t.includes("أمريكا") || t.includes("امريكا") || t.includes("usa") || t.includes("united states") || t.includes("états-unis") || t.includes("etats-unis") || t.includes("نيويورك")) {
     return { canonicalEnglish: "United States", arabicLabel: "الولايات المتحدة" };
   }
   if (t.includes("فرنسا") || t.includes("france") || t.includes("باريس")) {
     return { canonicalEnglish: "France", arabicLabel: "فرنسا" };
   }
-  if (t.includes("إيطاليا") || t.includes("ايطاليا") || t.includes("italy") || t.includes("روما")) {
+  if (t.includes("إيطاليا") || t.includes("ايطاليا") || t.includes("italy") || t.includes("italie") || t.includes("روما")) {
     return { canonicalEnglish: "Italy", arabicLabel: "إيطاليا" };
   }
-  if (t.includes("إسبانيا") || t.includes("اسبانيا") || t.includes("spain") || t.includes("مدريد")) {
+  if (t.includes("إسبانيا") || t.includes("اسبانيا") || t.includes("spain") || t.includes("espagne") || t.includes("مدريد")) {
     return { canonicalEnglish: "Spain", arabicLabel: "إسبانيا" };
   }
-  if (t.includes("سويسرا") || t.includes("switzerland") || t.includes("جنيف") || t.includes("زيورخ")) {
+  if (t.includes("سويسرا") || t.includes("switzerland") || t.includes("suisse") || t.includes("جنيف") || t.includes("زيورخ")) {
     return { canonicalEnglish: "Switzerland", arabicLabel: "سويسرا" };
   }
-  if (t.includes("هولندا") || t.includes("netherlands") || t.includes("holland") || t.includes("أمستردام")) {
+  if (t.includes("هولندا") || t.includes("netherlands") || t.includes("pays-bas") || t.includes("holland") || t.includes("أمستردام")) {
     return { canonicalEnglish: "Netherlands", arabicLabel: "هولندا" };
   }
-  if (t.includes("تركيا") || t.includes("turkey") || t.includes("türkiye") || t.includes("إسطنبول")) {
+  if (t.includes("تركيا") || t.includes("turkey") || t.includes("turquie") || t.includes("türkiye") || t.includes("إسطنبول")) {
     return { canonicalEnglish: "Turkey", arabicLabel: "تركيا" };
   }
 

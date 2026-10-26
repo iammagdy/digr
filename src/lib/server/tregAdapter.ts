@@ -522,13 +522,21 @@ function findContactValue(data: any, keys: string[]): string {
   return visit(data, 0);
 }
 
+/**
+ * Everything known about the person, in one identity: the lookups' own contract says «send everything you know about the subject», and the gateway
+ * sends each provider only the variants it accepts (a profile link, or a company domain with a full name). Sending BOTH lets the providers that
+ * accept either variant answer (the cheaper ones accept the profile link; others only a domain with a name); sending the link alone left
+ * every provider that needs a domain and a name out of the lookup.
+ */
 function getPeopleIdentity(row: Record<string, any>): Record<string, string> | null {
+  const identity: Record<string, string> = {};
   const linkedin = firstPeopleText(row.linkedin_url, row.linkedinUrl, row.profile_url);
-  if (linkedin) return { linkedin_url: linkedin };
+  if (linkedin) identity.linkedin_url = linkedin;
   const domainValue = firstPeopleText(row.domain, row.company_domain, row.website);
   const domain = domainValue.replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0];
   const name = firstPeopleText(row.contact_name, row.full_name, row.fullName, row.name);
-  return domain && name ? { domain, full_name: name } : null;
+  if (domain && name) { identity.domain = domain; identity.full_name = name; }
+  return Object.keys(identity).length > 0 ? identity : null;
 }
 
 /**
@@ -657,7 +665,7 @@ async function enrichTregPeopleRows(
       }
     }
     if (identity && !row.phone) {
-      const phoneIdentity = row.work_email ? { email: String(row.work_email) } : identity;
+      const phoneIdentity = row.work_email ? { ...identity, email: String(row.work_email) } : identity;
       const result = await lookup("treg.people.phone.find", phoneIdentity, `people_phone_${input.step}_${index}`);
       if (result?.ok) {
         row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);

@@ -9,6 +9,7 @@ import { nonCompanyReasonAr } from "../companyRowHygiene";
 import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidence";
 import { isChainSlug } from "../multiProvider/routes";
 import { rowPassesGate } from "../multiProvider/policy";
+import { contactValueDelivered } from "../../functions/shared/decisionMakerPricing";
 
 export interface ResearchRelevanceContext {
   capabilitySlug: string;
@@ -21,7 +22,7 @@ export interface ResearchRelevanceResult {
   decision: RelevanceDecision;
   reasonAr: string;
   /** Short code for a demotion decided here (for logs and tests; never shown to the customer). */
-  reasonCode?: "no_evidence";
+  reasonCode?: "no_evidence" | "no_contact" | "out_of_scope";
   /** `own_text`: the match rests on the company's own text (not on the source label); see evaluateDeterministicRelevance. */
   evidence?: "own_text";
   /**
@@ -159,6 +160,21 @@ function regionMatches(row: Record<string, any>, requestedRegion: string): boole
   return true;
 }
 
+/**
+ * A company's own address can name its head office and its branches («Cairo, Egypt; Berlin, Germany»). It is in the requested country when any
+ * part of it names that country; when no part names a recognisable country it contradicts nothing. Only an address whose every named country
+ * is another country is outside the request.
+ */
+function companyAddressMatches(address: string, requestedRegion: string): boolean {
+  const parts = address.split(/[;|\n]+|\s+\/\s+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length <= 1) return regionMatches({ address }, requestedRegion);
+  const expected = requestedRegion.trim();
+  const expectedCode = /^[A-Za-z]{2}$/.test(expected) ? expected.toUpperCase() : (() => { const d = detectCountryFromText(expected); return d ? isoCountryCodeFromName(d.canonicalEnglish) : undefined; })();
+  const named = parts.map((part) => { const d = detectCountryFromText(part); return d ? isoCountryCodeFromName(d.canonicalEnglish) : undefined; }).filter(Boolean);
+  if (!expectedCode || named.length === 0) return true;
+  return named.includes(expectedCode);
+}
+
 /** The activity words of a people request: the plan's English `keywords` (a list or one string) and any `query.keyword.include`. */
 function peopleActivityKeywords(params: Record<string, any>): string[] {
   const out = [...companyActivityKeywords(params)];
@@ -179,20 +195,28 @@ function evaluateDirectPeopleRow(row: Record<string, any>, params: Record<string
   const match: ResearchRelevanceResult = { decision: "match", reasonAr: "سجل مهني ضمن النطاق المطلوب" };
   if (row.people_source !== "icypeas") return match;
   const companyAddress = typeof row.company_address === "string" ? row.company_address.trim() : "";
-  if (requestedRegion && companyAddress && !regionMatches({ address: companyAddress }, requestedRegion)) {
-    return { decision: "uncertain", reasonAr: "شركة الشخص خارج النطاق الجغرافي المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب" };
+  if (requestedRegion && companyAddress && !companyAddressMatches(companyAddress, requestedRegion)) {
+    return { decision: "uncertain", reasonAr: "شركة الشخص خارج النطاق الجغرافي المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب", reasonCode: "out_of_scope" };
   }
   const keywords = peopleActivityKeywords(params);
   if (keywords.length > 0) {
-    // For a person the company's declared industry counts with its name and description: the label says what the employer is, and the
-    // customer is charged per person, so a company with none of the three is not delivered.
-    const companyText = {
-      company_name: row.company_name,
-      industry_description: [row.industry, row.industry_description].filter((part) => typeof part === "string" && part.trim()).join(" "),
-    };
+    // The source's industry label alone is never evidence (the same rule as the company directory): the customer is charged per person, so a
+    // company is delivered only when its OWN name or description names the requested activity. A label with no such text goes to review.
+    const companyText = { company_name: row.company_name, industry_description: row.industry_description };
     if (!hasActivityEvidence(companyText, keywords)) {
-      return { decision: "uncertain", reasonAr: "لا يتضمن السجل ما يؤكد أن شركة الشخص تعمل في المجال المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب", reasonCode: "no_evidence" };
+      return {
+        decision: "uncertain",
+        reasonAr: "تصنيف المصدر وحده لا يكفي ولا يوجد في اسم شركة الشخص أو وصفها ما يؤكد نشاطها المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب",
+        reasonCode: "no_evidence",
+      };
     }
+  }
+  // A person with NEITHER requested contact value (after the lookups ran) is shown for review and is not delivered or charged: the price of a
+  // person is paid for what reached the customer. `contact_review_status` is written once the lookups have run, so the people searched
+  // BEFORE the lookups (to decide whom to look up) are not judged by a value they cannot have yet.
+  const required = (Array.isArray(params?.requiredContactFields) ? params.requiredContactFields : []).filter((field: unknown) => field === "work_email" || field === "phone") as Array<"work_email" | "phone">;
+  if (required.length > 0 && typeof row.contact_review_status === "string" && !required.some((field) => contactValueDelivered(row, field))) {
+    return { decision: "uncertain", reasonAr: "لم يتوفر لهذا الشخص بريد مهني ولا هاتف مهني؛ أُحيل السجل للمراجعة ولم يُحتسب", reasonCode: "no_contact" };
   }
   return match;
 }

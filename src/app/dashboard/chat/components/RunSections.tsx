@@ -15,10 +15,12 @@ const FILES: Record<ResultFormat, { name: string; desc: string; requestLabel: st
 
 /** Design «الملفات»: delivery summary + ONLY the files this request produced (the formats of the approved quote). Numbers come from the finished job, never from the quote. */
 export function FilesSection({
-  rows, requested, charged, reserved, fileIds, downloadingKey, onDownload, onOpenCanvas, canvasOpen,
+  rows, requested, deliverySentence, charged, reserved, fileIds, downloadingKey, onDownload, onOpenCanvas, canvasOpen,
 }: {
   rows: number;
   requested?: number;
+  /** A sentence that says what was delivered when a count of records is not enough (decision makers: how many carry an email, how many a phone). */
+  deliverySentence?: string;
   charged?: number;
   reserved?: number;
   /** Stored file ids of the finished job; a missing id means that format was not produced. */
@@ -32,7 +34,9 @@ export function FilesSection({
   return (
     <div style={{ animation: "up .6s both" }}>
       <p className="mb-0 mt-3 text-sm font-light leading-[1.9] text-ink">
-        {requested && rows < requested
+        {deliverySentence
+          ? <>{requested && rows < requested ? `${PARTIAL_SENTENCE_AR}: ` : ""}{deliverySentence}</>
+          : requested && rows < requested
           ? <>{PARTIAL_SENTENCE_AR}: {deliveredOfRequestedAr(rows, requested)}</>
           : <>سُلّم {formatAr(rows)} سجلًا{requested ? ` من ${formatAr(requested)}` : ""}</>}
         {typeof charged === "number" && <> — تم خصم {pointsAr(charged)}.</>}

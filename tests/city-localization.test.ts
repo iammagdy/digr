@@ -78,6 +78,8 @@ describe("city names in the delivered Excel files", () => {
     })) as any);
     const sheet = workbook.getWorksheet("بيانات المهنيين")!;
     const headers = sheet.getRow(4).values as string[];
-    expect(sheet.getRow(5).getCell(headers.indexOf("الدولة / الموقع")).value).toBe("الرياض");
+    // the combined «الدولة / الموقع» column is now two: the city and the country, both Arabic
+    expect(sheet.getRow(5).getCell(headers.indexOf("المدينة")).value).toBe("الرياض");
+    expect(sheet.getRow(5).getCell(headers.indexOf("الدولة")).value).toBe("المملكة العربية السعودية");
   });
 });

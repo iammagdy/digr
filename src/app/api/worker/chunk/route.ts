@@ -82,7 +82,9 @@ import {
 } from "../../../../lib/planParameters";
 import { isCompanyDirectoryJob } from "../../../../lib/server/directoryCapability";
 import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../../../../lib/server/researchRelevanceGate";
-import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
+import { contactValueDelivered, decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
+import { peopleContactCounts, peopleDeliverySentenceAr, peopleShortfallReasonAr } from "../../../../lib/peopleColumns";
+import { peopleDeliveryRow } from "../../../../lib/server/peopleDelivery";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerEmailJobTitle, customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
@@ -1475,7 +1477,7 @@ export async function POST(req: NextRequest) {
         } else if (rev.decision === "uncertain" && budgetUnreviewed.has(idx)) {
           unreviewedRows.push({ ...originalRow, _relevance_status: "غير مراجَع", _relevance_reason: rev.reasonAr });
         } else if (rev.decision === "uncertain") {
-          uncertainRows.push({ ...originalRow, _relevance_status: "قيد المراجعة والتدقيق", _relevance_reason: rev.reasonAr });
+          uncertainRows.push({ ...originalRow, _relevance_status: "قيد المراجعة والتدقيق", _relevance_reason: rev.reasonAr, ...(rev.reasonCode ? { _relevance_code: rev.reasonCode } : {}) });
         } else {
           excludedRows.push({ ...originalRow, _relevance_status: "غير مطابق", _relevance_reason: rev.reasonAr });
         }
@@ -2003,7 +2005,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const finalRows = collectedRows;
+      // A decision-makers file holds PEOPLE in the shared people columns (the settlement reads the same contact keys from these rows).
+      const finalRows = isPeopleJob ? collectedRows.map(peopleDeliveryRow) : collectedRows;
 
       // The Facebook topic report: its posts, axes and counts are the record the LAST chunk saved. Without it the report cannot be built, and nothing is charged.
       const reportRecord: ReportState | null = isReportJob && reportStore ? await reportStore.load(currentStep) : null;
@@ -2023,7 +2026,9 @@ export async function POST(req: NextRequest) {
         (spec.capabilitySlug.endsWith("-profile") || spec.capabilitySlug.includes("profile")) &&
         !finalRows.some((r) => r.company_name || r.cr_number);
 
+      // A decision-makers file is a file of PEOPLE: its rows carry a company name too, which must not turn it into a company file.
       const isCompanyResearch =
+        !isPeopleJob &&
         !isProfileResearch &&
         (spec.capabilitySlug.includes("company") ||
          spec.capabilitySlug.includes("companies") ||
@@ -2091,6 +2096,8 @@ export async function POST(req: NextRequest) {
 
       const cleanTitle = reportPayload
         ? `تقرير فيسبوك: ${reportPayload.request.topic}`
+        : isPeopleJob
+        ? `صناع القرار في ${detectedCountry || "النطاق المطلوب"}`
         : isCompanyResearch
         ? `شركات ${detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? detectedIndustry.arabicLabel : "وأعمال"} في ${detectedCountry || "النطاق المطلوب"}`
         : socialCapability
@@ -2109,7 +2116,7 @@ export async function POST(req: NextRequest) {
           collectedAt: completedAtIso,
           rowsCount: finalRows.length,
           targetRequested: targetMax,
-          entityType: isCompanyResearch ? "companies" : undefined,
+          entityType: isPeopleJob ? "people" : isCompanyResearch ? "companies" : undefined,
           exclusionApplied: Boolean(spec.params?.exclusionRules),
           methodology: methodologySummary,
           reportContext,
@@ -2378,7 +2385,9 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
+          message: isPeopleJob
+            ? `${peopleDeliverySentenceAr(peopleContactCounts(finalRows, (row, field) => contactValueDelivered(row, field)), targetMax)}، وحُفظت ملفات النتائج.`
+            : `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,
@@ -2412,8 +2421,18 @@ export async function POST(req: NextRequest) {
                 commentsNotReturned: reportPayload.collection.commentsNotReturned,
               })
             : null;
+          const reviewCodes = collectedUncertainRows.map((row) => String(row?._relevance_code || ""));
+          const peopleShortfall = isPeopleJob && !providerFailedAfterDelivery
+            ? peopleShortfallReasonAr({
+                noContact: reviewCodes.filter((code) => code === "no_contact").length,
+                outside: reviewCodes.filter((code) => code === "out_of_scope").length,
+                noEvidence: reviewCodes.filter((code) => code === "no_evidence").length,
+              })
+            : null;
           const reason = reportShortfall
             ? reportShortfall
+            : peopleShortfall
+            ? peopleShortfall
             : keywordShortfall
             ? `${keywordShortfall}${callCapReason && callCapReason !== "source_repeats" ? ` ${stopNoteAr(callCapReason)}` : ""}`
             : providerFailedAfterDelivery
