@@ -86,17 +86,18 @@ describe("decision makers, live failure 1: a people search with no identity key 
   describe("through the adapter, against a source that enforces the catalog rule", () => {
     beforeEach(() => { mocks.call.mockReset(); });
 
-    // treg.people.search answers a body with no q, company_domain, title or full_name with 422; email and phone lookups take domain + name.
+    // The search goes to the direct source (icypeas.people.search): it refuses a body with no query filter (422), and answers {total, success, leads}.
+    // Email and phone lookups take domain + name or a profile link.
     const source = async (options: { endpointId: string; params?: Record<string, any>; timeoutMs?: number }) => {
       const params = options.params || {};
-      if (options.endpointId === "treg.people.search") {
-        const identified = ["q", "company_domain", "title", "full_name"].some((key) => typeof params[key] === "string" && params[key].trim());
+      if (options.endpointId === "icypeas.people.search") {
+        const identified = Boolean(params.query?.currentJobTitle?.include?.length || params.query?.keyword?.include?.length);
         if (!identified) {
           return { ok: false, httpStatus: 422, tregCallId: "", costMicro: 0, latencyMs: 360, data: { error: "no_identity" }, error: "no_identity", isRouteMaxCost: false, isPlatformBalanceLow: false };
         }
         return {
           ok: true, httpStatus: 200, tregCallId: "search_1", costMicro: 100, latencyMs: 1,
-          data: { output: { people: [{ first_name: "Mona", last_name: "Saleh", title: "CEO", company_name: "Example Ltd", company_domain: "example.com", linkedin_url: "https://www.linkedin.com/in/mona-saleh" }] } },
+          data: { total: 2560, success: true, leads: [{ firstname: "Mona", lastname: "Saleh", headline: "CEO", lastJobTitle: "CEO", lastCompanyName: "Example Software", lastCompanyWebsite: "https://example.com", lastCompanyIndustry: "Information Technology & Services", lastCompanyAddress: "Cairo, Egypt", address: "Cairo, Egypt", profileUrl: "https://www.linkedin.com/in/mona-saleh" }], pagination: { token: "t", size: 9 } },
           isRouteMaxCost: false, isPlatformBalanceLow: false,
         };
       }
@@ -113,21 +114,24 @@ describe("decision makers, live failure 1: a people search with no identity key 
       targetVolumeMax: 3, deliveredSoFar: 0, ...extra,
     });
 
-    it("the stored live plan is served: a person with a work email and a phone, from the one search body that has a title", async () => {
+    it("the stored live plan is served: a person with a work email and a phone, from the direct source body that carries the title", async () => {
       mocks.call.mockImplementation(source);
       const result = await defaultTregAdapter(callInput(STORED_LIVE_PARAMS));
       expect(result.ok).toBe(true);
       expect(result.rows).toHaveLength(1);
       expect(result.rows[0]).toMatchObject({ contact_name: "Mona Saleh", work_email: "mona@example.com", phone: "+201000000000" });
       const sent = mocks.call.mock.calls[0][0];
-      expect(sent.endpointId).toBe("treg.people.search");
-      expect(sent.params).toEqual({ title: "CEO", country: "EG", keywords: ["information technology", "software", "technology"], limit: 3 });
+      expect(sent.endpointId).toBe("icypeas.people.search");
+      expect(sent.params).toEqual({
+        query: { currentJobTitle: { include: ["CEO"] }, location: { include: ["EG"] }, keyword: { include: ["information technology", "software", "technology"] } },
+        pagination: { size: 9 },
+      });
     });
 
     it("a plan that already names its role is sent with that role", async () => {
       mocks.call.mockImplementation(source);
       await defaultTregAdapter(callInput({ ...STORED_LIVE_PARAMS, title: "Director" }));
-      expect(mocks.call.mock.calls[0][0].params.title).toBe("Director");
+      expect(mocks.call.mock.calls[0][0].params.query.currentJobTitle).toEqual({ include: ["Director"] });
     });
 
     it("a source that still refuses the body fails the job at once, with the input sentence, no enrichment calls and no cost", async () => {
@@ -143,7 +147,7 @@ describe("decision makers, live failure 1: a people search with no identity key 
   });
 });
 
-describe("decision makers, live failure 1b: the routed search may use the time the worker's deadline leaves", () => {
+describe("decision makers, live failure 1b: the search may use the time the worker's deadline leaves", () => {
   beforeEach(() => { mocks.call.mockReset(); });
 
   it("12 s without a deadline or with little time left, up to 30 s when the deadline allows", () => {
@@ -156,8 +160,8 @@ describe("decision makers, live failure 1b: the routed search may use the time t
   });
 
   it("the search call is given that time; the per-person lookups keep 12 s", async () => {
-    mocks.call.mockImplementation(async (options: { endpointId: string }) => options.endpointId === "treg.people.search"
-      ? { ok: true, httpStatus: 200, tregCallId: "s", costMicro: 10, latencyMs: 1, data: { output: { people: [{ first_name: "A", last_name: "B", title: "CEO", company_domain: "example.com", linkedin_url: "https://www.linkedin.com/in/a-b" }] } }, isRouteMaxCost: false, isPlatformBalanceLow: false }
+    mocks.call.mockImplementation(async (options: { endpointId: string }) => options.endpointId === "icypeas.people.search"
+      ? { ok: true, httpStatus: 200, tregCallId: "s", costMicro: 10, latencyMs: 1, data: { output: { people: [{ first_name: "A", last_name: "B", title: "CEO", company_name: "Example Software", industry: "Information Technology & Services", company_domain: "example.com", linkedin_url: "https://www.linkedin.com/in/a-b" }] } }, isRouteMaxCost: false, isPlatformBalanceLow: false }
       : { ok: true, httpStatus: 200, tregCallId: "x", costMicro: 1, latencyMs: 1, data: { output: {} }, isRouteMaxCost: false, isPlatformBalanceLow: false });
     await defaultTregAdapter({
       jobId: "job_t", userId: "user_t", step: 0, endpointId: "treg.people.search", capabilitySlug: "professional-people-search", method: "POST",
@@ -165,7 +169,7 @@ describe("decision makers, live failure 1b: the routed search may use the time t
       deadlineMs: Date.now() + 100_000,
     });
     const timeouts = new Map(mocks.call.mock.calls.map(([options]: any[]) => [options.endpointId, options.timeoutMs]));
-    expect(timeouts.get("treg.people.search")).toBe(30_000);
+    expect(timeouts.get("icypeas.people.search")).toBe(20_000);
     expect(timeouts.get("treg.people.email.find")).toBe(12_000);
   });
 });

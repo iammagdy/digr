@@ -49,7 +49,7 @@ describe("TREG people search and enrichment", () => {
   it("looks up missing professional email and phone and adds their actual TREG cost", async () => {
     mocks.call.mockImplementation(async (options: { endpointId: string } = { endpointId: "" }) => {
       const { endpointId } = options || { endpointId: "" };
-      if (endpointId === "treg.people.search") return {
+      if (endpointId === "icypeas.people.search") return {
         ok: true, httpStatus: 200, tregCallId: "search_1", costMicro: 100, latencyMs: 1,
         data: { output: { people: [{
           first_name: "Mona", last_name: "Saleh", title: "Operations Director",
@@ -87,7 +87,7 @@ describe("TREG people search and enrichment", () => {
       phone_presence_status: "موجود",
     });
     expect(mocks.call.mock.calls.map(([call]) => call.endpointId)).toEqual([
-      "treg.people.search", "treg.people.email.find", "treg.people.phone.find",
+      "icypeas.people.search", "treg.people.email.find", "treg.people.phone.find",
     ]);
     expect(mocks.call.mock.calls.slice(1).every(([call]) => call.routeMaxCostUsd === "0.005")).toBe(true);
   });
@@ -95,7 +95,7 @@ describe("TREG people search and enrichment", () => {
   it("caps a three-person request at seven calls and disables retries for every people route", async () => {
     mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
       const endpointId = options?.endpointId || "";
-      if (endpointId === "treg.people.search") return {
+      if (endpointId === "icypeas.people.search") return {
         ok: true, httpStatus: 200, tregCallId: "search_3", costMicro: 100,
         data: { output: { people: [1, 2, 3].map((n) => ({
           full_name: `Person ${n}`, title: "Director", company_name: `Company ${n}`,
@@ -131,7 +131,7 @@ describe("TREG people search and enrichment", () => {
   it("stops enriching at the per-job spend ceiling and leaves unavailable fields reviewable", async () => {
     mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
       const endpointId = options?.endpointId || "";
-      if (endpointId === "treg.people.search") return {
+      if (endpointId === "icypeas.people.search") return {
         ok: true, httpStatus: 200, tregCallId: "search_budget", costMicro: 100,
         data: { output: { people: [1, 2, 3].map((n) => ({
           full_name: `Person ${n}`, title: "Director", company_name: `Company ${n}`,
@@ -165,7 +165,7 @@ describe("TREG people search and enrichment", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
       const endpointId = options?.endpointId || "";
-      if (endpointId === "treg.people.search") return {
+      if (endpointId === "icypeas.people.search") return {
         ok: true, httpStatus: 200, tregCallId: "search_failure_case", costMicro: 100,
         data: { output: { people: [{ full_name: "Person One", title: "Director", company_name: "Company One", company_domain: "company.test" }] } },
         isRouteMaxCost: false, isPlatformBalanceLow: false,

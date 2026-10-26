@@ -1,4 +1,5 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
+import { evaluateResearchRowRelevance } from "./researchRelevanceGate";
 import { getEndpointDetails } from "../../functions/shared/catalogClient";
 import {
   extractAndFlattenRows,
@@ -29,12 +30,14 @@ import {
   PROVIDER_INPUT_REJECTED_AR,
   PROVIDER_ROUTE_COST_EXCEEDED_AR,
   PROVIDER_TARGET_NOT_FOUND_AR,
+  PROVIDER_TIMEOUT_AR,
   PROVIDER_UNAVAILABLE_AR,
 } from "../providerFailureText";
 import {
   detectCountryFromText as detectInternationalCountryFromText,
   detectIndustryFromText as detectInternationalIndustryFromText,
   getMissingCompanyResearchRequirements,
+  isoCountryCodeFromName,
 } from "../planParameters";
 
 /**
@@ -438,7 +441,9 @@ export function normalizeTregPeopleParams(rawParams: Record<string, any>, pageSi
 function getTregPeopleArray(data: any): any[] {
   const candidates = [data?.output, data?.output?.people, data?.output?.results, data?.output?.items,
     data?.output?.data, data?.people, data?.results, data?.items, data?.data,
-    data?.raw?.people, data?.raw?.results, data?.raw?.items, data?.raw?.data];
+    data?.raw?.people, data?.raw?.results, data?.raw?.items, data?.raw?.data,
+    // the direct people source answers {total, success, leads: [...], pagination}
+    data];
   for (const candidate of candidates) {
     if (Array.isArray(candidate)) return candidate;
     if (candidate && typeof candidate === "object") {
@@ -465,7 +470,7 @@ function parseTregPeopleRows(data: any): Record<string, any>[] {
     const name = firstPeopleText(person?.full_name, person?.fullName, person?.name,
       [person?.first_name || person?.firstname, person?.last_name || person?.lastname].filter(Boolean).join(" "));
     const title = firstPeopleText(person?.job_title, person?.jobTitle, person?.title, person?.current_title,
-      person?.currentJobTitle, person?.headline);
+      person?.currentJobTitle, person?.lastJobTitle, person?.headline);
     const email = firstPeopleText(person?.work_email, person?.workEmail, person?.business_email,
       person?.businessEmail, person?.corporateEmail, person?.email, contact?.work_email, contact?.email);
     const phone = firstPeopleText(person?.work_phone, person?.workPhone, person?.business_phone,
@@ -475,10 +480,14 @@ function parseTregPeopleRows(data: any): Record<string, any>[] {
       contact_name: name,
       job_title: title,
       company_name: firstPeopleText(person?.company_name, person?.companyName, person?.current_company_name,
-        person?.currentCompanyName, company?.name, company?.company_name, person?.organization),
-      website: firstPeopleText(person?.company_website, person?.companyWebsite, person?.website, person?.domain, company?.website, company?.domain),
+        person?.currentCompanyName, person?.lastCompanyName, company?.name, company?.company_name, person?.organization),
+      website: firstPeopleText(person?.company_website, person?.companyWebsite, person?.website, person?.domain, person?.lastCompanyWebsite, company?.website, company?.domain),
       linkedin_url: firstPeopleText(person?.linkedin_url, person?.linkedinUrl, person?.profile_url, person?.profileUrl, person?.linkedin, contact?.linkedin_url),
-      location: firstPeopleText(person?.location, person?.city, person?.country, company?.location),
+      location: firstPeopleText(person?.location, person?.city, person?.country, person?.address, company?.location),
+      // what the company is and where it is: the relevance gate reads these, never the person's free profile text for a contact value
+      company_address: firstPeopleText(person?.lastCompanyAddress, company?.address),
+      industry: firstPeopleText(person?.lastCompanyIndustry, person?.industry, company?.industry),
+      industry_description: firstPeopleText(person?.lastCompanyDescription, company?.description),
       work_email: email,
       phone,
       work_email_verification_status: arabicVerificationStatus(
@@ -522,70 +531,137 @@ function getPeopleIdentity(row: Record<string, any>): Record<string, string> | n
   return domain && name ? { domain, full_name: name } : null;
 }
 
+/**
+ * The people search goes to ONE direct source, not through the routed endpoint. The routed `treg.people.search` tries providers one after
+ * another (a miss moves on to the next) and answered after our 30 s limit while billing the call (live 2026-10-26, two jobs); its direct
+ * child `icypeas.people.search` is synchronous (catalog: p50 584 ms, p95 1,122 ms) and a job through it finished in 8 s on 2026-10-16.
+ */
+export const PEOPLE_DISCOVERY_ENDPOINT = "icypeas.people.search";
+/** Catalog price of one row (USD). `pagination.size` is the price dial: every row returned is billed. */
+export const PEOPLE_DISCOVERY_USD_PER_ROW = 0.00038;
+
+/**
+ * Rows asked for: three times the people wanted (the relevance gate keeps the ones that match), never above what one call may cost: the rows
+ * are billed one by one, so the most is what fits under the per-call ceiling with a tenth to spare (11 rows = 0.00418 USD under 0.005).
+ */
+export function peopleDiscoverySize(limit: number): number {
+  const most = Math.max(1, Math.floor((DECISION_MAKER_ROUTE_COST_CAP_USD * 0.9) / PEOPLE_DISCOVERY_USD_PER_ROW));
+  return Math.max(1, Math.min(most, Math.floor(Number(limit) || 1) * 3));
+}
+
+const countryCodeOf = (value: unknown): string | undefined => {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return undefined;
+  if (/^[A-Za-z]{2}$/.test(text)) return text.toUpperCase();
+  const detected = detectInternationalCountryFromText(text);
+  return detected ? isoCountryCodeFromName(detected.canonicalEnglish) : undefined;
+};
+
+/**
+ * The body of the direct source, from the plan's flat people params: the title as `currentJobTitle`, the country as an alpha-2 code in
+ * `location` (the catalog: «Locations are best given as alpha-2 country codes»), the activity words as `keyword`, the company site as
+ * `currentCompanyWebsite`; `pagination.size` is what is billed.
+ */
+export function icypeasPeopleBody(params: Record<string, any>, size: number): Record<string, any> {
+  const list = (value: unknown): string[] => (Array.isArray(value) ? value : value ? [value] : [])
+    .filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 120));
+  const query: Record<string, any> = {};
+  const title = list(params.title);
+  if (title.length) query.currentJobTitle = { include: title };
+  const place = countryCodeOf(params.country) || (typeof params.location === "string" && params.location.trim() ? params.location.trim().slice(0, 120) : undefined);
+  if (place) query.location = { include: [place] };
+  const keywords = list(params.keywords).filter((keyword) => !/[\u0600-\u06FF]/.test(keyword)).slice(0, 5);
+  if (keywords.length) query.keyword = { include: keywords };
+  const domain = typeof params.company_domain === "string" ? params.company_domain.trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0] : "";
+  if (domain) query.currentCompanyWebsite = { include: [domain] };
+  if (!title.length && typeof params.q === "string" && params.q.trim()) query.keyword = { include: [...(query.keyword?.include || []), params.q.trim().slice(0, 120)] };
+  return { query, pagination: { size } };
+}
+
+/** The answer's own people rows, marked as coming from the direct source (the relevance gate judges those by their company and country). */
+export function parseDirectPeopleRows(data: any): Record<string, any>[] {
+  return parseTregPeopleRows(data).map((row) => ({ ...row, people_source: "icypeas" }));
+}
+
+const MIN_REPLAY_MS = 5_000;
+
+/**
+ * One call, and when OUR time limit cut it, one replay with the SAME idempotency key: the gateway answers a replay from the stored result
+ * at no charge (`X-Treg-Original-Cost-Micro` carries the first call's charge), so an answer the source finished after we stopped waiting
+ * is read, not bought again. The replay runs only when time is left (`deadlineMs`, minus `reserveMs` for what must still happen) and the
+ * job's spend budget allows another reserved call (`beforeReplay`).
+ */
+export async function executeTregCallWithReplay(
+  options: TregCallOptions,
+  control: { deadlineMs?: number; reserveMs?: number; beforeReplay?: () => boolean; now?: () => number } = {},
+): Promise<{ result: TregCallResult; calls: number }> {
+  const now = control.now ?? Date.now;
+  const first = await executeTregCall(options);
+  if (first.ok || !first.timedOut) return { result: first, calls: 1 };
+  const left = control.deadlineMs ? control.deadlineMs - now() - (control.reserveMs ?? 0) : 10_000;
+  if (left < MIN_REPLAY_MS) return { result: first, calls: 1 };
+  if (control.beforeReplay && !control.beforeReplay()) return { result: first, calls: 1 };
+  const replay = await executeTregCall({ ...options, timeoutMs: Math.min(15_000, Math.floor(left)) });
+  return { result: replay, calls: 2 };
+}
+
+/** What a call cost: a replay reports 0 and carries the first call's charge in the original-cost header. */
+export const callCostMicro = (result: Pick<TregCallResult, "costMicro" | "originalCostMicro">): number =>
+  Math.max(0, Number(result.costMicro) || 0, Number(result.originalCostMicro) || 0);
+
 async function enrichTregPeopleRows(
   rows: Record<string, any>[],
   input: ProviderAdapterCallInput,
   spendBudget: ReturnType<typeof createDecisionMakerSpendBudget>,
+  options: { shouldEnrich?: (row: Record<string, any>) => boolean; wanted?: number } = {},
 ) {
   let costMicro = 0;
   let providerCallCount = 0;
   let spendBudgetExhausted = false;
   const callIds: string[] = [];
   const enriched: Record<string, any>[] = [];
+  // Time kept free for what must still happen after a lookup (saving the rows): no lookup starts when the worker's deadline is this close.
+  const RESERVE_MS = 6_000;
+  const hasTime = () => !input.deadlineMs || Date.now() + RESERVE_MS < input.deadlineMs;
+  const lookup = async (endpointId: string, params: Record<string, any>, stepId: string) => {
+    if (!hasTime()) return null;
+    if (!spendBudget.reserveCall()) { spendBudgetExhausted = true; return null; }
+    providerCallCount += 1;
+    const { result, calls } = await executeTregCallWithReplay({
+      endpointId, method: "POST", params,
+      userId: input.userId, jobId: input.jobId, stepId,
+      page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
+      timeoutMs: 12000,
+    }, { deadlineMs: input.deadlineMs, reserveMs: RESERVE_MS, beforeReplay: () => spendBudget.reserveCall() });
+    providerCallCount += calls - 1;
+    costMicro += callCostMicro(result);
+    if (result.tregCallId) callIds.push(result.tregCallId);
+    if (!result.ok) {
+      console.warn("[decision_maker:contact_call_failed]", { endpointId, status: result.httpStatus, callId: result.tregCallId || "none", timedOut: Boolean(result.timedOut) });
+    }
+    return result;
+  };
+  let withContact = 0;
   for (let index = 0; index < rows.length; index++) {
     const row = { ...rows[index] };
-    const identity = getPeopleIdentity(row);
+    // Only a row that matches the request is looked up (a person of another country or a company of another activity costs nothing more),
+    // and only until the people still needed have a contact value.
+    const eligible = options.shouldEnrich ? options.shouldEnrich(row) : true;
+    const enough = options.wanted !== undefined && withContact >= options.wanted;
+    const identity = eligible && !enough ? getPeopleIdentity(row) : null;
     if (identity && !row.work_email) {
-      if (spendBudget.reserveCall()) {
-        providerCallCount += 1;
-        const result = await executeTregCallWithRetry({
-          endpointId: "treg.people.email.find", method: "POST", params: identity,
-          userId: input.userId, jobId: input.jobId, stepId: `people_email_${input.step}_${index}`,
-          page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
-          timeoutMs: 12000,
-        }, 0, input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined);
-        costMicro += Math.max(0, Number(result.costMicro) || 0);
-        if (result.tregCallId) callIds.push(result.tregCallId);
-        if (!result.ok) {
-          console.warn("[decision_maker:contact_call_failed]", {
-            endpointId: "treg.people.email.find",
-            status: result.httpStatus,
-            callId: result.tregCallId || "none",
-          });
-        }
-        if (result.ok) {
-          row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
-          row.work_email_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.work_email));
-        }
-      } else {
-        spendBudgetExhausted = true;
+      const result = await lookup("treg.people.email.find", identity, `people_email_${input.step}_${index}`);
+      if (result?.ok) {
+        row.work_email = findContactValue(result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
+        row.work_email_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.work_email));
       }
     }
     if (identity && !row.phone) {
-      if (spendBudget.reserveCall()) {
-        providerCallCount += 1;
-        const phoneIdentity = row.work_email ? { email: String(row.work_email) } : identity;
-        const result = await executeTregCallWithRetry({
-          endpointId: "treg.people.phone.find", method: "POST", params: phoneIdentity,
-          userId: input.userId, jobId: input.jobId, stepId: `people_phone_${input.step}_${index}`,
-          page: input.step + 1, routeMaxCostUsd: String(DECISION_MAKER_ROUTE_COST_CAP_USD),
-          timeoutMs: 12000,
-        }, 0, input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined);
-        costMicro += Math.max(0, Number(result.costMicro) || 0);
-        if (result.tregCallId) callIds.push(result.tregCallId);
-        if (!result.ok) {
-          console.warn("[decision_maker:contact_call_failed]", {
-            endpointId: "treg.people.phone.find",
-            status: result.httpStatus,
-            callId: result.tregCallId || "none",
-          });
-        }
-        if (result.ok) {
-          row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
-          row.phone_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.phone));
-        }
-      } else {
-        spendBudgetExhausted = true;
+      const phoneIdentity = row.work_email ? { email: String(row.work_email) } : identity;
+      const result = await lookup("treg.people.phone.find", phoneIdentity, `people_phone_${input.step}_${index}`);
+      if (result?.ok) {
+        row.phone = findContactValue(result.data, ["work_phone", "workPhone", "business_phone", "businessPhone", "phone_number", "phone", "officePhone"]);
+        row.phone_verification_status = arabicVerificationStatus(result.data?._treg?.verification?.verdict ?? result.data?.verified, Boolean(row.phone));
       }
     }
     row.work_email = firstPeopleText(row.work_email);
@@ -594,6 +670,8 @@ async function enrichTregPeopleRows(
     row.phone_verification_status = arabicVerificationStatus(row.phone_verification_status, Boolean(row.phone));
     row.work_email_presence_status = row.work_email ? "موجود" : "غير موجود";
     row.phone_presence_status = row.phone ? "موجود" : "غير موجود";
+    if (eligible && (row.work_email || row.phone)) withContact += 1;
+    row._people_match = eligible;
     enriched.push(row);
   }
   const requiredFields = Array.isArray(input.params?.requiredContactFields)
@@ -602,9 +680,17 @@ async function enrichTregPeopleRows(
   const reviewedRows = markContactRowsForReview(enriched, requiredFields.filter(
     (field): field is "work_email" | "phone" => field === "work_email" || field === "phone",
   ));
+  // The people who match come first, those with a contact value before those without; the rest follow (the relevance gate keeps them out of
+  // the delivery and the charge). The order is stable inside each group.
+  let ordered = reviewedRows;
+  if (options.shouldEnrich) {
+    const rank = (row: Record<string, any>) => (row._people_match ? (row.work_email || row.phone ? 0 : 1) : 2);
+    ordered = reviewedRows.map((row, at) => ({ row, at })).sort((a, b) => rank(a.row) - rank(b.row) || a.at - b.at).map(({ row }) => row);
+  }
+  for (const row of ordered) delete row._people_match;
   // Keep incomplete people visible. Enrichment calls have already incurred provider cost,
   // and settlement decides the delivered contact units independently from these review rows.
-  return { rows: reviewedRows, costMicro, callIds, spendBudgetExhausted, providerCallCount };
+  return { rows: ordered, costMicro, callIds, spendBudgetExhausted, providerCallCount };
 }
 
 export interface ProviderAdapterCallInput {
@@ -745,12 +831,13 @@ export async function executeTregCallWithRetry(
 }
 
 /** Plain Arabic reason a provider call failed, with no provider or technical wording. */
-export function providerFailureMessageAr(callResult: Pick<TregCallResult, "httpStatus" | "isRouteMaxCost" | "isPlatformBalanceLow">): string {
+export function providerFailureMessageAr(callResult: Pick<TregCallResult, "httpStatus" | "isRouteMaxCost" | "isPlatformBalanceLow"> & { timedOut?: boolean }): string {
   if (callResult.isRouteMaxCost) return PROVIDER_ROUTE_COST_EXCEEDED_AR;
   if (callResult.isPlatformBalanceLow) return PROVIDER_UNAVAILABLE_AR;
   if (callResult.httpStatus === 404) return PROVIDER_TARGET_NOT_FOUND_AR;
   if (callResult.httpStatus === 422) return PROVIDER_INPUT_REJECTED_AR;
   if (callResult.httpStatus === 429) return PROVIDER_BUSY_AR;
+  if (callResult.timedOut) return PROVIDER_TIMEOUT_AR;
   return PROVIDER_GENERIC_FAILURE_AR;
 }
 
@@ -890,7 +977,8 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   } else if (isIcypeasPeople) {
     pageParams = normalizeIcypeasPeopleParams(input.params || {}, input.pageSize, input.cursor);
   } else if (isTregPeople) {
-    pageParams = normalizeTregPeopleParams(input.params || {}, input.pageSize);
+    const flat = normalizeTregPeopleParams(input.params || {}, input.pageSize);
+    pageParams = icypeasPeopleBody(flat, peopleDiscoverySize(Number(flat.limit)));
   } else {
     pageParams = serializeProviderParams(input.params || {}, allowedParamKeys);
     if (input.paginationStrategy === "cursor") {
@@ -940,27 +1028,44 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   const callOptions = (params: Record<string, any>, stepSuffix = "") => ({
-    endpointId: effectiveEndpointId,
+    endpointId: isTregPeople ? PEOPLE_DISCOVERY_ENDPOINT : effectiveEndpointId,
     method: effectiveMethod,
     params,
-    allowedParamKeys,
+    allowedParamKeys: isTregPeople ? ["query", "pagination"] : allowedParamKeys,
     userId: input.userId,
     jobId: input.jobId,
     // The retry gets its own idempotency key: it is a different request and must not replay the narrow one's answer.
     stepId: `step_${input.step}${stepSuffix}`,
     page,
+    // The same ceiling as before for every people call. The direct source bills per row returned (`pagination.size`, at most 11 rows = 0.00418 USD),
+    // so the ceiling holds; the live routed call that billed 3 rows of this source (0.00114 USD) passed the same 0.005 guard.
     routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
-    timeoutMs: isTregPeople ? peopleSearchTimeoutMs(input.deadlineMs) : 12000,
+    // Up to 20 s for the first answer: the direct source answers in about a second (p95 1.1 s), and what is left of the worker's deadline
+    // is kept for one replay of the same call and for the per-person lookups.
+    timeoutMs: isTregPeople ? Math.min(20_000, peopleSearchTimeoutMs(input.deadlineMs)) : 12000,
   });
-  let callResult = await executeTregCallWithRetry(
-    callOptions(pageParams, cursorFromKeywordsQuery ? "_kw" : ""),
-    retries,
-    input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
-  );
+  let callResult: TregCallResult;
+  let searchCalls = 1;
+  if (isTregPeople) {
+    // A call cut by our own time limit may already be billed at the source: replay it once with the same idempotency key (read, not bought again).
+    const out = await executeTregCallWithReplay(callOptions(pageParams), {
+      deadlineMs: input.deadlineMs,
+      reserveMs: 12_000,
+      beforeReplay: () => peopleSpendBudget!.reserveCall(),
+    });
+    callResult = out.result;
+    searchCalls = out.calls;
+  } else {
+    callResult = await executeTregCallWithRetry(
+      callOptions(pageParams, cursorFromKeywordsQuery ? "_kw" : ""),
+      retries,
+      input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
+    );
+  }
 
-  let costMicro = Math.max(0, Number(callResult.costMicro) || 0);
+  let costMicro = callCostMicro(callResult);
   let costUsd = Number((costMicro / 1_000_000).toFixed(6));
-  let providerCallCount = 1;
+  let providerCallCount = searchCalls;
   let keywordsRetryUsed = false;
 
   if (!callResult.ok) {
@@ -1023,9 +1128,18 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     rows = parsed.rows;
     nextCursor = parsed.nextCursor && (keywordsRetryUsed || cursorFromKeywordsQuery) ? `${KEYWORDS_ONLY_CURSOR_PREFIX}${parsed.nextCursor}` : parsed.nextCursor;
   } else if (isTregPeople) {
-    rows = parseTregPeopleRows(callResult.data);
+    rows = parseDirectPeopleRows(callResult.data);
     if (rows.length === 0) rows = extractAndFlattenRows(callResult.data?.output ?? callResult.data?.raw ?? callResult.data);
-    const enriched = await enrichTregPeopleRows(rows, input, peopleSpendBudget!);
+    // The same deterministic gate the worker applies decides which people are looked up (a mismatching row costs nothing more).
+    const matchesRequest = (row: Record<string, any>) => evaluateResearchRowRelevance(row, {
+      capabilitySlug: input.capabilitySlug,
+      endpointId: input.endpointId,
+      params: input.params || {},
+    }).decision === "match";
+    const enriched = await enrichTregPeopleRows(rows, input, peopleSpendBudget!, {
+      shouldEnrich: matchesRequest,
+      wanted: Math.max(1, Math.floor(Number(input.remainingNeeded) || Number(input.targetVolumeMax) || 1)),
+    });
     rows = enriched.rows;
     costMicro += enriched.costMicro;
     providerCallCount += enriched.providerCallCount;

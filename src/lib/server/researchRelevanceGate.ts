@@ -159,6 +159,44 @@ function regionMatches(row: Record<string, any>, requestedRegion: string): boole
   return true;
 }
 
+/** The activity words of a people request: the plan's English `keywords` (a list or one string) and any `query.keyword.include`. */
+function peopleActivityKeywords(params: Record<string, any>): string[] {
+  const out = [...companyActivityKeywords(params)];
+  const raw = params?.keywords;
+  for (const keyword of Array.isArray(raw) ? raw : raw ? [raw] : []) {
+    if (typeof keyword === "string" && /[a-z]/i.test(keyword) && keyword.trim()) out.push(keyword.trim());
+  }
+  return [...new Set(out)];
+}
+
+/**
+ * A person from the direct people source. The source's location filter is loose (a live direct call returned a person in Bahrain at a Sudanese
+ * company for a search in Egypt), so the row is judged here, never trusted: a company address of another country, or a company with no sign
+ * of the requested activity in its name, industry or description, is shown for review and is neither delivered nor charged. The person's own
+ * address of another country is already refused by the region check above. Rows from other sources keep the region check only.
+ */
+function evaluateDirectPeopleRow(row: Record<string, any>, params: Record<string, any>, requestedRegion: string): ResearchRelevanceResult {
+  const match: ResearchRelevanceResult = { decision: "match", reasonAr: "سجل مهني ضمن النطاق المطلوب" };
+  if (row.people_source !== "icypeas") return match;
+  const companyAddress = typeof row.company_address === "string" ? row.company_address.trim() : "";
+  if (requestedRegion && companyAddress && !regionMatches({ address: companyAddress }, requestedRegion)) {
+    return { decision: "uncertain", reasonAr: "شركة الشخص خارج النطاق الجغرافي المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب" };
+  }
+  const keywords = peopleActivityKeywords(params);
+  if (keywords.length > 0) {
+    // For a person the company's declared industry counts with its name and description: the label says what the employer is, and the
+    // customer is charged per person, so a company with none of the three is not delivered.
+    const companyText = {
+      company_name: row.company_name,
+      industry_description: [row.industry, row.industry_description].filter((part) => typeof part === "string" && part.trim()).join(" "),
+    };
+    if (!hasActivityEvidence(companyText, keywords)) {
+      return { decision: "uncertain", reasonAr: "لا يتضمن السجل ما يؤكد أن شركة الشخص تعمل في المجال المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب", reasonCode: "no_evidence" };
+    }
+  }
+  return match;
+}
+
 /**
  * Deterministic final gate applied to provider rows before they are persisted,
  * counted as delivered, or charged. Advisory model output never controls a match.
@@ -209,7 +247,7 @@ export function evaluateResearchRowRelevance(
   if (requestedRegion && !regionMatches(row, requestedRegion)) {
     return { decision: "no_match", reasonAr: peopleCapability ? "الشخص خارج النطاق الجغرافي المطلوب" : "النطاق الجغرافي في السجل لا يطابق الدولة المطلوبة" };
   }
-  if (peopleCapability) return { decision: "match", reasonAr: "سجل مهني ضمن النطاق المطلوب" };
+  if (peopleCapability) return evaluateDirectPeopleRow(row, params, requestedRegion);
 
   // Facebook keyword service: the post was judged (adopted) before its comments were read, so its comments are delivered as they are. Only an empty
   // comment or a link on its own is not a delivered unit; no comment-content judgment (pleasantry, length, reaction, topic words) applies here.
