@@ -9,16 +9,22 @@ export const DECISION_MAKER_ROUTE_COST_CAP_USD = 0.005;
  */
 export const DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD = 0.02;
 
+/**
+ * The per-call cost ceiling of the deliverability check of a found work email (about 0.0004 USD measured, 0.0015 catalog price of the usual child):
+ * a found address is checked once before it is delivered and charged. Part of every person's allowance in the job ceiling.
+ */
+export const DECISION_MAKER_VERIFY_ROUTE_COST_CAP_USD = 0.005;
+
 const USD_MICROS = 1_000_000;
 const ROUTE_CAP_MICROS = Math.round(DECISION_MAKER_ROUTE_COST_CAP_USD * USD_MICROS);
 
 /**
- * The most a whole job may spend at the source: the base allowance plus one email ceiling per person wanted. Never unbounded: it grows with the
- * number of people the customer asked for and with nothing else. 1 person 0.06, 3 people 0.10, 10 people 0.24 USD.
+ * The most a whole job may spend at the source: the base allowance plus, per person wanted, one email ceiling and one deliverability-check ceiling.
+ * Never unbounded: it grows with the number of people the customer asked for and with nothing else. 1 person 0.065, 3 people 0.115, 10 people 0.29 USD.
  */
 export function decisionMakerJobSpendCeilingUsd(people: number): number {
   const count = Math.max(1, Math.floor(Number(people) || 1));
-  return Math.round((DECISION_MAKER_PROVIDER_SPEND_CAP_USD + count * DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD) * USD_MICROS) / USD_MICROS;
+  return Math.round((DECISION_MAKER_PROVIDER_SPEND_CAP_USD + count * (DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD + DECISION_MAKER_VERIFY_ROUTE_COST_CAP_USD)) * USD_MICROS) / USD_MICROS;
 }
 
 /**
@@ -62,7 +68,7 @@ export function createDecisionMakerSpendBudget(remainingUsd: number) {
 
 /**
  * The worst case the daily provider cap and the capacity gate reserve for one worker chunk: the job's own ceiling for that many people (the
- * budget below stops every call before the ceiling, so nothing can spend more). 3 people: 0.04 + 3 x 0.02 = 0.10 USD.
+ * budget below stops every call before the ceiling, so nothing can spend more). 3 people: 0.04 + 3 x (0.02 + 0.005) = 0.115 USD.
  */
 export function estimateDecisionMakerChunkSpendUsd(personCount: number): number {
   return decisionMakerJobSpendCeilingUsd(personCount);

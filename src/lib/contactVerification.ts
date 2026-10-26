@@ -13,7 +13,7 @@ export function arabicVerificationStatus(value: unknown, hasValue: boolean): str
   if (value === false) return "لم يتم التحقق";
   const status = String(value || "").trim().toLowerCase();
   if (/^(?:verified|valid|deliverable|confirmed|true|pass)$/i.test(status)) return "متحقق";
-  if (/accept[_ -]?all|catch[_ -]?all/i.test(status)) return "يحتاج مراجعة";
+  if (/accept[_ -]?all|catch[_ -]?all|risky/i.test(status)) return "يحتاج مراجعة";
   if (/invalid|undeliverable|false|fail|disposable/i.test(status)) return "غير صالح";
   return "لم يتوفر تأكيد";
 }

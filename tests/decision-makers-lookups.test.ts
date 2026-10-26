@@ -62,17 +62,17 @@ const spentMicro = (costs: number[]) => costs.reduce((total, cost) => total + co
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("(a) a miss bills 0 and gives its reservation back: every person is looked up inside the job ceiling", () => {
-  it("9 people, every lookup a free miss: 18 lookups after the search, all 9 people looked up, the job still billed only the search", async () => {
+  it("9 people, every lookup a free miss: 21 lookups after the search (9 first email lookups, 3 profile-link fallbacks for the 3 people with a company domain, 9 phones), all 9 people looked up, the job still billed only the search", async () => {
     const calls = gateway((call) => (searchOnly(call) ? { cost: 3420, body: SEARCH_ANSWER } : miss(call)));
     const result = await defaultTregAdapter(input() as any);
     const lookups = calls.filter((call) => !searchOnly(call));
     expect(calls.filter(searchOnly)).toHaveLength(1);
-    expect(lookups).toHaveLength(18);
-    expect(lookups.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(9);
+    expect(lookups).toHaveLength(21);
+    expect(lookups.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(12);
     expect(lookups.filter((call) => call.endpoint === "treg.people.phone.find")).toHaveLength(9);
-    expect(result.providerCallCount).toBe(19);
+    expect(result.providerCallCount).toBe(22);
     expect(result.costMicro).toBe(3420); // 9 rows × 0.00038: the lookups billed nothing
-    expect(result.lookupLog!.summary).toMatchObject({ rows: 9, eligible: 9, lookedUp: 9, lookupCalls: 18, skippedBudget: 0, withContact: 0 });
+    expect(result.lookupLog!.summary).toMatchObject({ rows: 9, eligible: 9, lookedUp: 9, lookupCalls: 21, linkFallbacks: 3, skippedBudget: 0, withContact: 0 });
   });
 
   it("before this change the same 9 people stopped at 7 lookups: the reservation arithmetic (0.04 / 0.005 = 8 calls, the search included)", () => {
@@ -151,10 +151,14 @@ describe("(c) the company domain is a real one, and the first and last names are
     const calls = gateway((call) => (searchOnly(call) ? { cost: 3420, body: SEARCH_ANSWER } : miss(call)));
     await defaultTregAdapter(input() as any);
     const emails = calls.filter((call) => call.endpoint === "treg.people.email.find").map((call) => call.body);
-    expect(emails).toHaveLength(9);
+    // 9 first lookups (the company domain and the names, no profile link; the profile link only where there is no domain) and 3 profile-link fallbacks after a miss
+    expect(emails).toHaveLength(12);
+    expect(emails.filter((body) => body.domain && !body.linkedin_url)).toHaveLength(3);
+    expect(emails.filter((body) => body.domain && body.linkedin_url)).toHaveLength(3);
+    expect(emails.filter((body) => !body.domain).every((body) => body.linkedin_url)).toBe(true);
     for (const body of emails) {
       expect(body.full_name).toBe(`${body.first_name} ${body.last_name}`);
-      expect(String(body.linkedin_url)).toMatch(/^https:\/\/www\.linkedin\.com\/in\//);
+      if (body.linkedin_url) expect(String(body.linkedin_url)).toMatch(/^https:\/\/www\.linkedin\.com\/in\//);
       expect(body.domain ?? "").not.toMatch(/linktr\.ee|linkedin\.com|instagram\.com|bit\.ly/);
     }
     const byName = (first: string) => emails.find((body) => body.first_name === first);
@@ -202,7 +206,7 @@ describe("(d) every lookup is logged, with no personal value", () => {
     const hit = entries.find((entry) => entry.outcome === "hit" && entry.endpoint === "treg.people.email.find")!;
     expect(hit).toMatchObject({ endpoint: "treg.people.email.find", status: 200, costUsd: 0.000495, servedBy: "provider-c", tried: 2, emailPresent: true, phonePresent: false, calls: 1 });
     expect(hit.step).toMatch(/^people_email_0_\d+$/);
-    expect(hit.keys).toEqual(["domain", "first_name", "full_name", "last_name", "linkedin_url"]);
+    expect(hit.keys).toEqual(["domain", "first_name", "full_name", "last_name"]); // the first lookup: domain and names, no profile link
     expect(typeof hit.latencyMs).toBe("number");
     const error = entries.find((entry) => entry.outcome === "error")!;
     expect(error).toMatchObject({ status: 502, error: "bad_gateway" });

@@ -62,6 +62,10 @@ describe("TREG people search and enrichment", () => {
         ok: true, httpStatus: 200, tregCallId: "email_1", costMicro: 20, latencyMs: 1,
         data: { output: { work_email: "mona@example.com" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
       };
+      if (endpointId === "treg.people.email.verify") return {
+        ok: true, httpStatus: 200, tregCallId: "verify_1", costMicro: 30, latencyMs: 1,
+        data: { output: { status: "valid" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
+      };
       return {
         ok: true, httpStatus: 200, tregCallId: "phone_1", costMicro: 30, latencyMs: 1,
         data: { output: { phone_number: "+201000000000" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
@@ -77,23 +81,24 @@ describe("TREG people search and enrichment", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.costMicro).toBe(150);
+    expect(result.costMicro).toBe(180); // the search, the email, the deliverability check of the found email (30), the phone
     expect(result.rows[0]).toMatchObject({
       contact_name: "Mona Saleh",
       job_title: "Operations Director",
       company_name: "Example Ltd",
       work_email: "mona@example.com",
       phone: "+201000000000",
+      work_email_verification_status: "متحقق",
       work_email_presence_status: "موجود",
       phone_presence_status: "موجود",
     });
     expect(mocks.call.mock.calls.map(([call]) => call.endpointId)).toEqual([
-      "icypeas.people.search", "treg.people.email.find", "treg.people.phone.find",
+      "icypeas.people.search", "treg.people.email.find", "treg.people.email.verify", "treg.people.phone.find",
     ]);
     expect(mocks.call.mock.calls.slice(1).every(([call]) => call.routeMaxCostUsd === (call.endpointId === "treg.people.email.find" ? "0.02" : "0.005"))).toBe(true);
   });
 
-  it("caps a three-person request at seven calls and disables retries for every people route", async () => {
+  it("caps a three-person request at ten calls (search, 3 emails, 3 deliverability checks, 3 phones) and disables retries for every people route", async () => {
     mocks.call.mockImplementation(async (options: { endpointId?: string } = {}) => {
       const endpointId = options?.endpointId || "";
       if (endpointId === "icypeas.people.search") return {
@@ -122,9 +127,9 @@ describe("TREG people search and enrichment", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.providerCallCount).toBe(7);
-    expect(result.costMicro).toBe(250);
-    expect(mocks.call).toHaveBeenCalledTimes(7);
+    expect(result.providerCallCount).toBe(10);
+    expect(result.costMicro).toBe(340); // 250 before + 3 deliverability checks at 30
+    expect(mocks.call).toHaveBeenCalledTimes(10);
     expect(mocks.call.mock.calls.every(([call]) => call.routeMaxCostUsd === (call.endpointId === "treg.people.email.find" ? "0.02" : "0.005"))).toBe(true);
     expect(result.costMicro / 1_000_000).toBeLessThanOrEqual(0.035);
   });

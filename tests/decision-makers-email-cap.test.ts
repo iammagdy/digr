@@ -90,7 +90,7 @@ async function withFastWaits<T>(run: () => Promise<T>): Promise<T> {
   vi.useFakeTimers({ toFake: ["setTimeout"] });
   try {
     const pending = run();
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(150_000);
     return await pending;
   } finally {
     vi.useRealTimers();
@@ -128,25 +128,26 @@ describe("(1) the work-email lookup is sent at the 0.02 ceiling; the search and 
     }));
     await defaultTregAdapter(input({ remainingNeeded: 3 }) as any);
     expect(peak).toBe(3);
-    expect(order.slice(0, 7)).toEqual(["icypeas.people.search", ...Array(3).fill("treg.people.email.find"), ...Array(3).fill("treg.people.phone.find")]);
+    // the first group: the three emails together (company domain and names), then the profile-link fallback of each after its miss, then the three phones
+    expect(order.slice(0, 10)).toEqual(["icypeas.people.search", ...Array(3).fill("treg.people.email.find"), ...Array(3).fill("treg.people.email.find"), ...Array(3).fill("treg.people.phone.find")]);
   });
 });
 
-describe("(2) the job's spend never passes its ceiling: 0.04 + 0.02 x people", () => {
-  it("the ceiling formula: 1 person 0.06, 3 people 0.10, 10 people 0.24 USD; never unbounded (it grows with the people asked for only)", () => {
+describe("(2) the job's spend never passes its ceiling: 0.04 + (0.02 + 0.005) x people", () => {
+  it("the ceiling formula: 1 person 0.065, 3 people 0.115, 10 people 0.29 USD (the 0.005 is the deliverability check of each person's email); never unbounded (it grows with the people asked for only)", () => {
     expect(DECISION_MAKER_PROVIDER_SPEND_CAP_USD).toBe(0.04);
-    expect([1, 3, 10, 30].map(decisionMakerJobSpendCeilingUsd)).toEqual([0.06, 0.1, 0.24, 0.64]);
-    expect(decisionMakerJobSpendCeilingUsd(0)).toBe(0.06);
-    expect(decisionMakerJobSpendCeilingUsd(Number.NaN)).toBe(0.06);
+    expect([1, 3, 10, 30].map(decisionMakerJobSpendCeilingUsd)).toEqual([0.065, 0.115, 0.29, 0.79]);
+    expect(decisionMakerJobSpendCeilingUsd(0)).toBe(0.065);
+    expect(decisionMakerJobSpendCeilingUsd(Number.NaN)).toBe(0.065);
     // the daily provider cap and the capacity gate reserve this worst case for the chunk
-    expect(estimateDecisionMakerChunkSpendUsd(3)).toBe(0.1);
-    expect(remainingDecisionMakerSpendUsd(0.025, decisionMakerJobSpendCeilingUsd(3))).toBeCloseTo(0.075);
+    expect(estimateDecisionMakerChunkSpendUsd(3)).toBe(0.115);
+    expect(remainingDecisionMakerSpendUsd(0.025, decisionMakerJobSpendCeilingUsd(3))).toBeCloseTo(0.09);
     const route = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
     expect(route).toContain("remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId), decisionMakerJobSpendCeilingUsd(targetMax))");
     expect(route).toContain("estimateDecisionMakerChunkSpendUsd(");
   });
 
-  it("every email bills the whole 0.02 and every phone 0.005 (nothing found): the three people asked for are looked up, and the job spends at most 0.10", async () => {
+  it("every email bills the whole 0.02 and every phone 0.005 (nothing found): the three people asked for are looked up, and the job spends at most 0.115", async () => {
     const costs: number[] = [];
     const calls = gateway((call) => {
       const cost = isSearch(call) ? 3420 : isEmail(call) ? 20000 : 5000;

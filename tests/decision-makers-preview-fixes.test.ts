@@ -224,7 +224,7 @@ describe("item 1: the lookups send everything known about the person", () => {
   beforeEach(() => { sent.length = 0; });
   afterEach(() => { vi.unstubAllGlobals(); });
 
-  it("the email lookup carries the profile link AND the company domain with the full name; the phone lookup adds the email found", async () => {
+  it("the email lookup carries the company domain with the full name (no profile link: the link finders answered with personal addresses); the phone lookup carries the profile link too and adds the email found", async () => {
     tregCall.mockReset();
     tregCall.mockImplementation(async (options: any) => {
       sent.push({ endpointId: options.endpointId, params: options.params });
@@ -238,7 +238,7 @@ describe("item 1: the lookups send everything known about the person", () => {
       params: PLAN_PARAMS, paginationStrategy: "none", cursor: null, pageSize: 1, remainingNeeded: 1, targetVolumeMax: 1, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.04,
     } as any);
     const email = sent.find((call) => call.endpointId === "treg.people.email.find")!;
-    expect(email.params).toEqual({ linkedin_url: "https://www.linkedin.com/in/mona-saleh-a", domain: "delta-soft.example", full_name: "Mona Saleh", first_name: "Mona", last_name: "Saleh" });
+    expect(email.params).toEqual({ domain: "delta-soft.example", full_name: "Mona Saleh", first_name: "Mona", last_name: "Saleh" });
     const phone = sent.find((call) => call.endpointId === "treg.people.phone.find")!;
     expect(phone.params).toEqual({ linkedin_url: "https://www.linkedin.com/in/mona-saleh-a", domain: "delta-soft.example", full_name: "Mona Saleh", first_name: "Mona", last_name: "Saleh", email: "mona@delta-soft.example" });
     // the person's free profile text («mona.boss@…») is never a contact value

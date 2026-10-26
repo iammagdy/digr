@@ -9,11 +9,11 @@ import {
 } from "../src/lib/server/decisionMakerSpend";
 
 describe("decision-maker live provider spend ceiling", () => {
-  it("sets a 0.04 USD base allowance and estimates a three-person job at its ceiling, 0.04 + 3 x 0.02 = 0.10 USD (30 people: 0.64)", () => {
+  it("sets a 0.04 USD base allowance and estimates a three-person job at its ceiling, 0.04 + 3 x (0.02 + 0.005 for the deliverability check) = 0.115 USD (30 people: 0.79)", () => {
     expect(DECISION_MAKER_PROVIDER_SPEND_CAP_USD).toBe(0.04);
     expect(DECISION_MAKER_ROUTE_COST_CAP_USD).toBe(0.005);
-    expect(estimateDecisionMakerChunkSpendUsd(3)).toBe(0.1);
-    expect(estimateDecisionMakerChunkSpendUsd(30)).toBe(0.64);
+    expect(estimateDecisionMakerChunkSpendUsd(3)).toBe(0.115);
+    expect(estimateDecisionMakerChunkSpendUsd(30)).toBe(0.79);
   });
 
   it("allows no more calls than the remaining ceiling can cover at the route cap", () => {

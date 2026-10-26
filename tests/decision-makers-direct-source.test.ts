@@ -45,12 +45,15 @@ const TIMED_OUT = { ok: false, httpStatus: 503, tregCallId: "err_1792997613504",
 /** The source: the direct search answers the leads; the email lookup answers for two people; the phone lookup for the first only. */
 const source = (search: any = res({ costMicro: 1900, tregCallId: "search_1", data: DIRECT_ANSWER })) => async (options: { endpointId: string; params: Record<string, any> }) => {
   if (options.endpointId === "icypeas.people.search") return search;
-  const link = String(options.params?.linkedin_url || "");
+  // the first email lookup carries the company domain and the names (no profile link), so the people are told apart by name
+  const name = String(options.params?.full_name || "");
   if (options.endpointId === "treg.people.email.find") {
-    if (link.endsWith("mona-saleh-a")) return res({ costMicro: 20, data: { output: { work_email: "mona@delta-soft.example" } } });
-    if (link.endsWith("omar-hassan-e")) return res({ costMicro: 20, data: { output: { work_email: "omar@pyramid-cloud.example" } } });
+    if (name === "Mona Saleh") return res({ costMicro: 20, data: { output: { work_email: "mona@delta-soft.example" } } });
+    if (name === "Omar Hassan") return res({ costMicro: 20, data: { output: { work_email: "omar@pyramid-cloud.example" } } });
     return res({ costMicro: 20, data: { output: {} } });
   }
+  // the deliverability check of a found address: valid, 40 micro-USD
+  if (options.endpointId === "treg.people.email.verify") return res({ costMicro: 40, data: { output: { status: "valid" } } });
   return String(options.params?.email || "").startsWith("mona@")
     ? res({ costMicro: 30, data: { output: { phone_number: "+201000000001" } } })
     : res({ costMicro: 30, data: { output: {} } });
@@ -143,24 +146,25 @@ describe("the direct answer is read and judged: only people who match the reques
     const result = await defaultTregAdapter(input());
     expect(result.ok).toBe(true);
     const sent = mocks.call.mock.calls.map(([call]: any[]) => call);
-    // the two people are looked up together: both emails, then both phones
+    // the two people are looked up together: both emails, each found address checked for deliverability, then both phones
     expect(sent.map((call: any) => call.endpointId)).toEqual([
-      "icypeas.people.search", "treg.people.email.find", "treg.people.email.find", "treg.people.phone.find", "treg.people.phone.find",
+      "icypeas.people.search", "treg.people.email.find", "treg.people.email.find", "treg.people.email.verify", "treg.people.email.verify", "treg.people.phone.find", "treg.people.phone.find",
     ]);
     expect(sent[0].params).toEqual({
       query: { currentJobTitle: { include: ["CEO"] }, location: { include: ["EG"] }, keyword: { include: ["information technology", "software", "technology"] } },
       pagination: { size: 9 },
     });
     expect(sent.every((call: any) => call.routeMaxCostUsd === (call.endpointId === "treg.people.email.find" ? "0.02" : "0.005"))).toBe(true);
-    const looked = sent.filter((call: any) => call.endpointId === "treg.people.email.find").map((call: any) => call.params.linkedin_url);
-    expect(looked).toEqual(["https://www.linkedin.com/in/mona-saleh-a", "https://www.linkedin.com/in/omar-hassan-e"]);
+    const looked = sent.filter((call: any) => call.endpointId === "treg.people.email.find").map((call: any) => call.params);
+    expect(looked.map((params: any) => params.full_name)).toEqual(["Mona Saleh", "Omar Hassan"]);
+    expect(looked.every((params: any) => params.linkedin_url === undefined && params.domain)).toBe(true); // company domain and names, no profile link
     // the people who match come first, with their contact values; the others follow and wait for review
     expect(names(result.rows)).toEqual(["Mona Saleh", "Omar Hassan", "Nour Adel", "Yusuf Ali", "Salma Farid"]);
     expect(result.rows[0]).toMatchObject({ work_email: "mona@delta-soft.example", phone: "+201000000001" });
     expect(result.rows[1]).toMatchObject({ work_email: "omar@pyramid-cloud.example", phone: "", phone_presence_status: "غير موجود" });
     expect(result.rows.slice(2).every((row) => row.work_email === "" && row.phone === "")).toBe(true);
-    expect(result.providerCallCount).toBe(5);
-    expect(result.costMicro).toBe(1900 + 20 + 30 + 20 + 30);
+    expect(result.providerCallCount).toBe(7);
+    expect(result.costMicro).toBe(1900 + 20 + 30 + 20 + 30 + 40 + 40);
   });
 
   it("what is delivered and charged: the two matching people, their own fields only (a phone that was not found is not charged)", async () => {
@@ -210,9 +214,9 @@ describe("a slow source: the answer is read once the source has it, never bought
     expect({ ...searchCalls[1], timeoutMs: undefined }).toEqual({ ...searchCalls[0], timeoutMs: undefined });
     expect(searchCalls[0].timeoutMs).toBe(20_000);
     expect(searchCalls[1].timeoutMs).toBeGreaterThanOrEqual(5_000);
-    // the search is paid once (1,900 micro-USD, the first call's charge), plus the four lookups: no double billing
-    expect(result.costMicro).toBe(1900 + 100);
-    expect(result.providerCallCount).toBe(2 + 4);
+    // the search is paid once (1,900 micro-USD, the first call's charge), plus the six lookups (2 emails, 2 deliverability checks, 2 phones): no double billing
+    expect(result.costMicro).toBe(1900 + 100 + 80);
+    expect(result.providerCallCount).toBe(2 + 6);
     expect(result.tregCallId).toContain("callref");
   });
 

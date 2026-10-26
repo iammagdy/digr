@@ -10,6 +10,7 @@ import { companyActivityKeywords, hasActivityEvidence } from "./relevanceEvidenc
 import { isChainSlug } from "../multiProvider/routes";
 import { rowPassesGate } from "../multiProvider/policy";
 import { contactValueDelivered } from "../../functions/shared/decisionMakerPricing";
+import { isTechnologyRequest, technologyEvidenceOf } from "./technologyEvidence";
 
 export interface ResearchRelevanceContext {
   capabilitySlug: string;
@@ -203,7 +204,10 @@ function evaluateDirectPeopleRow(row: Record<string, any>, params: Record<string
     // The source's industry label alone is never evidence (the same rule as the company directory): the customer is charged per person, so a
     // company is delivered only when its OWN name or description names the requested activity. A label with no such text goes to review.
     const companyText = { company_name: row.company_name, industry_description: row.industry_description };
-    if (!hasActivityEvidence(companyText, keywords)) {
+    // A request for technology companies also accepts ONE clear technology signal anywhere in the person's own data (see technologyEvidence): the
+    // company's name or description, or a job title or headline that names a firm's technology activity. Never the label alone.
+    const technologyEvidence = isTechnologyRequest(keywords, params?.industry) && technologyEvidenceOf(row) !== null;
+    if (!hasActivityEvidence(companyText, keywords) && !technologyEvidence) {
       return {
         decision: "uncertain",
         reasonAr: "تصنيف المصدر وحده لا يكفي ولا يوجد في اسم شركة الشخص أو وصفها ما يؤكد نشاطها المطلوب؛ أُحيل السجل للمراجعة ولم يُحتسب",

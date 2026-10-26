@@ -19,8 +19,10 @@ import {
   createDecisionMakerSpendBudget,
   DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD,
   DECISION_MAKER_ROUTE_COST_CAP_USD,
+  DECISION_MAKER_VERIFY_ROUTE_COST_CAP_USD,
   decisionMakerJobSpendCeilingUsd,
 } from "./decisionMakerSpend";
+import { createCachedMailDomainResolver, currentMailDomainResolver, type MailDomainStatus } from "./mailDomainCheck";
 
 export { hasRecognizedProviderResultShape };
 import { arabicVerificationStatus } from "../contactVerification";
@@ -579,6 +581,8 @@ export function parseDirectPeopleRows(data: any): Record<string, any>[] {
 /** A work-email lookup may run long (measured 7 to 57 s at the 0.02 ceiling); a phone lookup answers quickly or not at all. */
 export const PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS = 25_000;
 export const PEOPLE_PHONE_LOOKUP_TIMEOUT_MS = 12_000;
+/** The deliverability check of a found work email answers in seconds (measured 0.4 to a few s). */
+export const PEOPLE_VERIFY_LOOKUP_TIMEOUT_MS = 12_000;
 /** How long to wait before reading a call our time limit cut (the source is likely finished by then), and before one more read of an answer that is still in flight. */
 export const PEOPLE_REPLAY_WAIT_MS = 4_000;
 export const PEOPLE_REREAD_WAIT_MS = 3_000;
@@ -635,6 +639,34 @@ export async function executeTregCallWithReplay(
 export const callCostMicro = (result: Pick<TregCallResult, "costMicro" | "originalCostMicro">): number =>
   Math.max(0, Number(result.costMicro) || 0, Number(result.originalCostMicro) || 0);
 
+/** What the deliverability check said about an address, as a code. */
+export type EmailVerdict = "valid" | "risky" | "catch_all" | "unknown" | "invalid";
+
+/**
+ * The verdict of a `treg.people.email.verify` answer. The routed answer is `{output, raw, _treg}` and the child that served it names its own fields, so the
+ * status is read from the usual ones (`status`, `result`, `deliverability`, `verdict`, `state`, `validity`, or a boolean `valid` / `deliverable`);
+ * a reason («risky», «catch-all») only refines a positive one. Null when the answer carries no verdict (a miss: nothing is known).
+ */
+export function emailVerdictOf(data: any): EmailVerdict | null {
+  const out = data?.output && typeof data.output === "object" ? data.output : data?.raw && typeof data.raw === "object" ? data.raw : data;
+  if (!out || typeof out !== "object") return null;
+  const text = (value: unknown): string => (typeof value === "string" ? value.trim().toLowerCase() : "");
+  const status = ["status", "result", "deliverability", "verdict", "state", "validity"].map((key) => text(out[key])).find(Boolean) || "";
+  const reason = ["reason", "sub_status", "substatus", "detail"].map((key) => text(out[key])).filter(Boolean).join(" ");
+  if (!status) {
+    for (const key of ["valid", "is_valid", "deliverable", "is_deliverable"]) {
+      if (typeof out[key] === "boolean") return out[key] ? (/risky|catch|accept/.test(reason) ? "risky" : "valid") : "invalid";
+    }
+    return null;
+  }
+  if (/invalid|undeliverable|undelivered|bounce|disposable|rejected|fail|bad/.test(status)) return "invalid";
+  if (/catch[-_ ]?all|accept[-_ ]?all/.test(status)) return "catch_all";
+  if (/risky/.test(status)) return "risky";
+  if (/unknown|unverifiable|inconclusive|error|timeout|pending/.test(status)) return "unknown";
+  if (/valid|deliverable|verified|safe|^ok$|^good$/.test(status)) return /catch[-_ ]?all|accept[-_ ]?all/.test(reason) ? "catch_all" : /risky/.test(reason) ? "risky" : "valid";
+  return "unknown";
+}
+
 /** One lookup, as the owner reads it afterwards: no name, email, phone, link or token, only what happened. */
 export interface PeopleLookupLogEntry {
   endpoint: string;
@@ -649,7 +681,7 @@ export interface PeopleLookupLogEntry {
   costUsd: number;
   servedBy?: string;
   tried?: number;
-  outcome: "hit" | "miss" | "error" | "timeout" | "mismatch" | "personal_email";
+  outcome: "hit" | "miss" | "error" | "timeout" | "mismatch" | "personal_email" | "no_mx" | "verify_invalid";
   emailPresent: boolean;
   phonePresent: boolean;
   /** Outbound calls for this lookup (2 when the first was cut by our time limit and replayed). */
@@ -658,10 +690,14 @@ export interface PeopleLookupLogEntry {
   /** Set when the lookup took more than one call: the FIRST call (its status, time and whether our own limit cut it) and each read after it. */
   firstAttempt?: LookupAttempt;
   reads?: Array<{ status: number; latencyMs: number }>;
-  /** A discarded personal address: its mailbox domain only («gmail.com»), never the address. */
+  /** A discarded address (personal mailbox, no mail server, invalid): its mailbox domain only («gmail.com»), never the address. */
   mailboxDomain?: string;
-  /** `retry_without_profile_link`: the one second email lookup after a personal address, sent without the profile link. */
-  attempt?: "first" | "retry_without_profile_link";
+  /** Which identity this email lookup sent: the company domain with the names (the first choice), the profile link with the names (when no domain exists), or the profile link as the fallback after a miss. */
+  attempt?: "domain_and_name" | "profile_link" | "profile_link_fallback";
+  /** The DNS answer for the address's domain (a code only): `mx`, `a` (no MX, an address record), `unknown` (the check itself failed). `none` is the outcome `no_mx`. */
+  mailServer?: Exclude<MailDomainStatus, "none">;
+  /** The deliverability verdict of a checked work email, as a code. */
+  verdict?: EmailVerdict;
 }
 
 /** Why a person did or did not reach delivery, from the rules (no personal value): the gate's verdict and code, the identity, and the final reason. */
@@ -676,7 +712,7 @@ export interface PeopleRowLogEntry {
   identityNull: boolean;
   lookedUp: boolean;
   /** `contact`: a work email or an office phone was found; otherwise the code that kept the person out. */
-  finalReason: "contact" | "out_of_scope" | "no_evidence" | "no_contact" | "identity_null" | "personal_email" | "mismatch";
+  finalReason: "contact" | "out_of_scope" | "no_evidence" | "no_contact" | "identity_null" | "personal_email" | "mismatch" | "no_mx" | "verify_invalid";
 }
 
 export interface PeopleLookupSummary {
@@ -689,8 +725,12 @@ export interface PeopleLookupSummary {
   skippedTime: number;
   skippedEnough: number;
   withContact: number;
-  /** Lookups after a personal address (the one retry without the profile link). */
-  personalRetries?: number;
+  /** Lookups with the profile link made after the first lookup (company domain and names) found nothing. */
+  linkFallbacks?: number;
+  /** Found addresses kept out of the delivery: no mail server, or the deliverability check said invalid. */
+  noMx?: number;
+  verifyInvalid?: number;
+  verifyCalls?: number;
 }
 
 const safeLogText = (value: unknown): string | undefined => {
@@ -709,7 +749,7 @@ async function enrichTregPeopleRows(
   let spendBudgetExhausted = false;
   const callIds: string[] = [];
   const log: PeopleLookupLogEntry[] = [];
-  const summary: PeopleLookupSummary = { rows: rows.length, eligible: 0, noIdentity: 0, lookedUp: 0, lookupCalls: 0, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 0, personalRetries: 0 };
+  const summary: PeopleLookupSummary = { rows: rows.length, eligible: 0, noIdentity: 0, lookedUp: 0, lookupCalls: 0, skippedBudget: 0, skippedTime: 0, skippedEnough: 0, withContact: 0, linkFallbacks: 0, noMx: 0, verifyInvalid: 0, verifyCalls: 0 };
   // Time kept free for what must still happen after a lookup (saving the rows): no lookup starts when the worker's deadline is this close.
   const RESERVE_MS = 6_000;
   /** The time a lookup may take: its own limit, or what the worker's deadline leaves; 0 when too little is left to start one. */
@@ -720,8 +760,9 @@ async function enrichTregPeopleRows(
   };
   const lookup = async (endpointId: string, params: Record<string, any>, stepId: string) => {
     const isEmail = endpointId === "treg.people.email.find";
-    const capUsd = isEmail ? DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD : DECISION_MAKER_ROUTE_COST_CAP_USD;
-    const timeoutMs = timeLeftFor(isEmail ? PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS : PEOPLE_PHONE_LOOKUP_TIMEOUT_MS);
+    const isVerify = endpointId === "treg.people.email.verify";
+    const capUsd = isEmail ? DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD : isVerify ? DECISION_MAKER_VERIFY_ROUTE_COST_CAP_USD : DECISION_MAKER_ROUTE_COST_CAP_USD;
+    const timeoutMs = timeLeftFor(isEmail ? PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS : isVerify ? PEOPLE_VERIFY_LOOKUP_TIMEOUT_MS : PEOPLE_PHONE_LOOKUP_TIMEOUT_MS);
     if (timeoutMs <= 0) { summary.skippedTime += 1; return null; }
     if (!spendBudget.reserveCall(capUsd)) { spendBudgetExhausted = true; summary.skippedBudget += 1; return null; }
     providerCallCount += 1;
@@ -768,13 +809,13 @@ async function enrichTregPeopleRows(
   const order = rows.map((_, at) => at).sort((a, b) => identityScore(identities[b]) - identityScore(identities[a]) || a - b);
   const done: Record<string, any>[] = new Array(rows.length);
   let withContact = 0;
-  type Candidate = { index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean; entries: PeopleLookupLogEntry[]; personal: boolean; mismatch: boolean };
+  type Candidate = { index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean; entries: PeopleLookupLogEntry[]; personal: boolean; mismatch: boolean; noMx: boolean; verifyInvalid: boolean };
   const rowLog: PeopleRowLogEntry[] = new Array(rows.length);
-  const noteRow = (index: number, row: Record<string, any>, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean } = {}) => {
+  const noteRow = (index: number, row: Record<string, any>, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean; noMx?: boolean; verifyInvalid?: boolean } = {}) => {
     const verdict = verdicts[index];
     const contact = Boolean(row.work_email || row.phone);
     const gateCode = verdict.decision === "match" ? undefined : verdict.reasonCode === "no_evidence" ? "no_evidence" : "out_of_scope";
-    const finalReason: PeopleRowLogEntry["finalReason"] = verdict.decision !== "match" ? gateCode! : !identities[index] ? "identity_null" : contact ? "contact" : flags.personal ? "personal_email" : flags.mismatch ? "mismatch" : "no_contact";
+    const finalReason: PeopleRowLogEntry["finalReason"] = verdict.decision !== "match" ? gateCode! : !identities[index] ? "identity_null" : contact ? "contact" : flags.noMx ? "no_mx" : flags.verifyInvalid ? "verify_invalid" : flags.personal ? "personal_email" : flags.mismatch ? "mismatch" : "no_contact";
     rowLog[index] = {
       person: index, gate: verdict.decision, ...(gateCode ? { reasonCode: gateCode } : {}),
       hasDomain: Boolean(companyDomainFromWebsite(row.domain ?? row.company_domain) || companyDomainFromWebsite(row.website)),
@@ -782,7 +823,7 @@ async function enrichTregPeopleRows(
       identityNull: !buildPeopleIdentity(row), lookedUp, finalReason,
     };
   };
-  const finish = (index: number, row: Record<string, any>, eligible: boolean, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean } = {}) => {
+  const finish = (index: number, row: Record<string, any>, eligible: boolean, lookedUp: boolean, flags: { personal?: boolean; mismatch?: boolean; noMx?: boolean; verifyInvalid?: boolean } = {}) => {
     if (lookedUp) summary.lookedUp += 1;
     noteRow(index, row, lookedUp, flags);
     row.work_email = firstPeopleText(row.work_email);
@@ -795,13 +836,33 @@ async function enrichTregPeopleRows(
     row._people_match = eligible;
     done[index] = row;
   };
+  const mailDomain = createCachedMailDomainResolver(currentMailDomainResolver());
+  /**
+   * The deliverability check of a found work email: one `treg.people.email.verify` call. Null when it was not made (no time, no budget); otherwise the verdict
+   * (null inside when the answer carried none). Only the address is sent to the source; the log keeps the verdict and the domain, never the address.
+   */
+  const runVerify = async (person: Candidate, address: string, mailboxDomain: string): Promise<{ made: boolean; verdict: EmailVerdict | null }> => {
+    const stepId = `people_verify_${input.step}_${person.index}`;
+    const result = await lookup("treg.people.email.verify", { email: address }, stepId);
+    if (!result) return { made: false, verdict: null };
+    summary.verifyCalls = (summary.verifyCalls ?? 0) + 1;
+    const verdict = result.result.ok ? emailVerdictOf(result.result.data) : null;
+    const outcome: PeopleLookupLogEntry["outcome"] = verdict === "invalid" ? "verify_invalid" : result.result.ok ? (verdict ? "hit" : "miss") : isInFlightResult(result.result) ? "timeout" : "error";
+    person.entries.push({
+      ...record({ endpoint: "treg.people.email.verify", step: stepId, person: person.index, rank: person.rank, keys: ["email"], outcome, emailPresent: true, phonePresent: false, done: result }),
+      ...(verdict === "invalid" ? { mailboxDomain } : {}), ...(verdict ? { verdict } : {}),
+    });
+    return { made: true, verdict };
+  };
   /** One work-email lookup with the identity given; null when it was not made (no time, no budget). */
-  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: "first" | "retry_without_profile_link"): Promise<PeopleLookupLogEntry["outcome"] | null> => {
+  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: NonNullable<PeopleLookupLogEntry["attempt"]>): Promise<PeopleLookupLogEntry["outcome"] | null> => {
     const result = await lookup("treg.people.email.find", identity, stepId);
     if (!result) return null;
     person.lookedUp = true;
     let outcome: PeopleLookupLogEntry["outcome"] = result.result.ok ? "miss" : isInFlightResult(result.result) ? "timeout" : "error";
     let mailboxDomain: string | undefined;
+    let mailServer: MailDomainStatus | undefined;
+    let verifyEntries: PeopleLookupLogEntry[] = [];
     if (result.result.ok) {
       const answer = result.result.data?.output ?? {};
       const value = findContactValue(result.result.data, ["work_email", "workEmail", "business_email", "businessEmail", "corporateEmail", "email"]);
@@ -815,28 +876,52 @@ async function enrichTregPeopleRows(
         person.personal = true;
         mailboxDomain = emailDomain(value) || undefined;
       } else if (value) {
-        person.row.work_email = value;
-        person.row.work_email_verification_status = arabicVerificationStatus(result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified, true);
-        outcome = "hit";
+        mailboxDomain = emailDomain(value) || undefined;
+        // 1) a free DNS check: a domain with no mail server can never receive the message, so the address is neither delivered nor charged
+        mailServer = mailboxDomain ? await mailDomain(mailboxDomain) : "unknown";
+        if (mailServer === "none") {
+          outcome = "no_mx";
+          person.noMx = true;
+          summary.noMx = (summary.noMx ?? 0) + 1;
+        } else {
+          // 2) the deliverability check (about 0.0004 USD): an address the source calls invalid is neither delivered nor charged; a check that could not be made
+          // (no time, no budget, no answer) does not keep the address out, it is delivered with the status «لم يتوفر تأكيد»
+          const before = person.entries.length;
+          const check = await runVerify(person, value, mailboxDomain ?? "");
+          verifyEntries = person.entries.splice(before);
+          if (check.verdict === "invalid") {
+            outcome = "verify_invalid";
+            person.verifyInvalid = true;
+            summary.verifyInvalid = (summary.verifyInvalid ?? 0) + 1;
+          } else {
+            person.row.work_email = value;
+            person.row.work_email_verification_status = arabicVerificationStatus(check.verdict ?? result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified, true);
+            outcome = "hit";
+          }
+        }
       }
     }
     person.entries.push({
       ...record({ endpoint: "treg.people.email.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(identity).sort(), outcome, emailPresent: Boolean(person.row.work_email), phonePresent: false, done: result }),
-      ...(mailboxDomain ? { mailboxDomain } : {}),
-      ...(attempt === "retry_without_profile_link" ? { attempt } : {}),
+      ...(mailboxDomain && outcome !== "hit" && outcome !== "miss" ? { mailboxDomain } : {}),
+      ...(mailServer && mailServer !== "none" ? { mailServer } : {}),
+      attempt,
     });
+    person.entries.push(...verifyEntries);
     return outcome;
   };
   const emailLookup = async (person: Candidate) => {
     if (person.row.work_email) return;
-    const outcome = await runEmail(person, person.identity, `people_email_${input.step}_${person.index}`, "first");
-    // A profile-link finder may answer with a PERSONAL address (billed, discarded). One second lookup follows, without the profile link: only finders that
-    // work from the company domain and the name can take it, and they return company addresses. It needs a domain and a name, its own step key (so its own
-    // idempotency key) and the job's budget; it is never made after any other outcome.
-    if (outcome === "personal_email" && person.identity.domain && person.identity.full_name) {
-      const { linkedin_url: _profileLink, ...withoutProfileLink } = person.identity;
-      summary.personalRetries = (summary.personalRetries ?? 0) + 1;
-      await runEmail(person, withoutProfileLink, `people_email_retry_${input.step}_${person.index}`, "retry_without_profile_link");
+    // The first lookup is made from the company domain and the person's names: the profile-link finders answered with a PERSONAL address (billed, then
+    // discarded) 6 of 6 times in live jobs, and the domain-and-name finders delivered a work address both times they were asked. The profile link is used only
+    // when no company domain exists (then it is all there is), or as the one fallback after the first lookup found nothing (a miss).
+    const { linkedin_url: profileLink, ...byDomainAndName } = person.identity;
+    const byName = Boolean(person.identity.domain && person.identity.full_name);
+    const first = byName ? byDomainAndName : person.identity;
+    const outcome = await runEmail(person, first, `people_email_${input.step}_${person.index}`, byName ? "domain_and_name" : "profile_link");
+    if (outcome === "miss" && byName && profileLink) {
+      summary.linkFallbacks = (summary.linkFallbacks ?? 0) + 1;
+      await runEmail(person, person.identity, `people_email_link_${input.step}_${person.index}`, "profile_link_fallback");
     }
   };
   const phoneLookup = async (person: Candidate) => {
@@ -871,14 +956,14 @@ async function enrichTregPeopleRows(
       const identity = eligibleAt[index] ? identities[index] : null;
       rank += 1;
       if (!identity) { finish(index, row, eligibleAt[index], false); continue; }
-      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, entries: [], personal: false, mismatch: false });
+      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, entries: [], personal: false, mismatch: false, noMx: false, verifyInvalid: false });
     }
     if (group.length === 0) break;
     await Promise.all(group.map(emailLookup));
     await Promise.all(group.map(phoneLookup));
     for (const person of group) {
       log.push(...person.entries);
-      finish(person.index, person.row, true, person.lookedUp, { personal: person.personal, mismatch: person.mismatch });
+      finish(person.index, person.row, true, person.lookedUp, { personal: person.personal, mismatch: person.mismatch, noMx: person.noMx, verifyInvalid: person.verifyInvalid });
     }
   }
   // Rows the lookups did not reach: the people still needed all have a contact value (skipped as enough), or nothing was left to ask.

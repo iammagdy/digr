@@ -4,10 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * Decision makers, smarter lookups (PR #253): SIMULATION only. The REAL client and adapter run against a stubbed `fetch` that answers in the payload shapes
  * the live jobs showed (`{output, raw, _treg: {served_by, tried, charged_micro}}`, the charge in `X-Treg-Cost-Micro`, a replay's charge in
  * `X-Treg-Original-Cost-Micro`, HTTP 409 while the first call is still running). No network, nothing paid.
- *   (a) a personal address first, a company-domain address on the one retry without the profile link
+ *   (a) the first email lookup is made from the company domain and the names (no profile link); the profile link only after a miss, or when no domain exists
  *   (b) 409 then success on a later read: delivered once, charged once; the first attempt is logged apart
  *   (c) per-row reason codes in the log, with no personal value
- *   (d) the budget ceiling is never passed by the retry
+ *   (d) the budget ceiling is never passed by the profile-link fallback
  *   (e) the mailbox DOMAIN of a discarded personal address is logged, never the address
  */
 vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/functions/shared/catalogClient")>()), getEndpointDetails: vi.fn(async () => null) }));
@@ -62,6 +62,9 @@ function gateway(handler: (call: Call) => Answer) {
 const isSearch = (call: Call) => call.endpoint === "icypeas.people.search";
 const isEmail = (call: Call) => call.endpoint === "treg.people.email.find";
 const isPhone = (call: Call) => call.endpoint === "treg.people.phone.find";
+const isVerify = (call: Call) => call.endpoint === "treg.people.email.verify";
+/** The deliverability check of a found address: valid (free in these fixtures, so the lookup charges stay exact). */
+const validAnswer = { body: { output: { status: "valid" } } };
 const emailBody = (call: Call, address: string | null, servedBy: string, charged: number) => ({
   output: { email: address, first_name: call.body.first_name, last_name: call.body.last_name },
   raw: { status: address ? "valid" : "none" },
@@ -92,69 +95,86 @@ async function withFastWaits<T>(run: () => Promise<T>): Promise<{ value: T; wait
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
-describe("(a) a personal address first, a company-domain address on the one retry without the profile link", () => {
+describe("(a) the first email lookup is the company domain and the names; the profile link only after a miss, or when no domain exists", () => {
   const mona = person("Mona", "Delta");
-  const run = async () => {
+  const KEYS_NO_LINK = ["domain", "first_name", "full_name", "last_name"];
+  const KEYS_WITH_LINK = ["domain", "first_name", "full_name", "last_name", "linkedin_url"];
+
+  it("the first lookup carries the domain and the names (no profile link) and is answered with a work address: ONE email lookup, delivered once, charged by the per-field rule", async () => {
+    const calls = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([mona]) } : isEmail(call) ? { cost: 8900, body: emailBody(call, "mona@delta-soft.example", "tomba.people.email.find", 8900) } : isVerify(call) ? validAnswer : { body: phoneMiss }));
+    const result = await defaultTregAdapter(input() as any);
+    const emailCalls = calls.filter(isEmail);
+    expect(emailCalls).toHaveLength(1);
+    expect(Object.keys(emailCalls[0].body).sort()).toEqual(KEYS_NO_LINK);
+    expect(emailCalls[0].headers["Idempotency-Key"]).toContain("people_email_0_");
+    expect(emailCalls[0].headers["X-Treg-Route-Max-Cost"]).toBe("0.02");
+    expect(Object.keys(emailCalls[0].headers).some((name) => /prefer|exclude/i.test(name))).toBe(false);
+    expect(result.rows.filter((r) => r.work_email)).toHaveLength(1);
+    expect(result.rows[0].work_email).toBe("mona@delta-soft.example");
+    expect(result.costMicro).toBe(380 + 8900);
+    const units = decisionMakerDeliveredUnits([result.rows[0]], ["work_email", "phone"]);
+    expect(units).toEqual({ baseUnits: 1, emailUnits: 1, phoneUnits: 0 });
+    expect(decisionMakerChargePoints(units, DECISION_MAKER_UNIT_PRICES_POINTS)).toBe(83 + 120);
+    expect(result.lookupLog!.summary).toMatchObject({ linkFallbacks: 0, withContact: 1 });
+  });
+
+  const missThenLink = async () => {
     const calls = gateway((call) => {
       if (isSearch(call)) return { cost: 380, body: answerOf([mona]) };
-      if (isEmail(call) && call.body.linkedin_url) return { cost: 8900, body: emailBody(call, "mona.private@gmail.com", "tomba.people.email.find.linkedin", 8900) };
-      if (isEmail(call)) return { cost: 8900, body: emailBody(call, "mona@delta-soft.example", "tomba.people.email.find", 8900) };
-      return { body: phoneMiss };
+      if (isEmail(call) && !call.body.linkedin_url) return { body: emailBody(call, null, "none", 0) }; // a free miss
+      if (isEmail(call)) return { cost: 8900, body: emailBody(call, "mona@delta-soft.example", "tomba.people.email.find.linkedin", 8900) };
+      return isVerify(call) ? validAnswer : { body: phoneMiss };
     });
     const result = await defaultTregAdapter(input() as any);
     return { calls, result };
   };
 
-  it("the profile-link lookup is answered with a personal address, the retry (domain + names, no link) with a company address: delivered once", async () => {
-    const { calls, result } = await run();
+  it("after a MISS the profile-link lookup follows: its own idempotency key, the same ceiling, no prefer/exclude header; delivered once", async () => {
+    const { calls, result } = await missThenLink();
     const emailCalls = calls.filter(isEmail);
     expect(emailCalls).toHaveLength(2);
-    expect(Object.keys(emailCalls[0].body).sort()).toEqual(["domain", "first_name", "full_name", "last_name", "linkedin_url"]);
-    expect(Object.keys(emailCalls[1].body).sort()).toEqual(["domain", "first_name", "full_name", "last_name"]);
-    // a different idempotency key and step key; the same ceiling; no prefer/exclude header
+    expect(Object.keys(emailCalls[0].body).sort()).toEqual(KEYS_NO_LINK);
+    expect(Object.keys(emailCalls[1].body).sort()).toEqual(KEYS_WITH_LINK);
     expect(emailCalls[1].headers["Idempotency-Key"]).not.toBe(emailCalls[0].headers["Idempotency-Key"]);
     expect(emailCalls[0].headers["Idempotency-Key"]).toContain("people_email_0_");
-    expect(emailCalls[1].headers["Idempotency-Key"]).toContain("people_email_retry_0_");
+    expect(emailCalls[1].headers["Idempotency-Key"]).toContain("people_email_link_0_");
     for (const call of emailCalls) {
       expect(call.headers["X-Treg-Route-Max-Cost"]).toBe("0.02");
       expect(Object.keys(call.headers).some((name) => /prefer|exclude/i.test(name))).toBe(false);
     }
-    const row = result.rows[0];
-    expect(row.work_email).toBe("mona@delta-soft.example");
     expect(result.rows.filter((r) => r.work_email)).toHaveLength(1);
-    // the provider billed both lookups (380 search + 2 x 8,900); the customer is charged for ONE delivered email by the existing per-field rule
-    expect(result.costMicro).toBe(380 + 2 * 8900);
-    const units = decisionMakerDeliveredUnits([row], ["work_email", "phone"]);
-    expect(units).toEqual({ baseUnits: 1, emailUnits: 1, phoneUnits: 0 });
-    expect(decisionMakerChargePoints(units, DECISION_MAKER_UNIT_PRICES_POINTS)).toBe(83 + 120);
+    expect(result.costMicro).toBe(380 + 8900);
   });
 
-  it("the log: the personal lookup (with its mailbox domain), then the retry flagged and a hit; the summary counts the retry", async () => {
-    const { result } = await run();
+  it("the log: the first lookup (domain_and_name, a miss), then the fallback (profile_link_fallback, a hit); the summary counts the fallback", async () => {
+    const { result } = await missThenLink();
     const emails = result.lookupLog!.entries.filter((e) => e.endpoint === "treg.people.email.find");
     expect(emails).toHaveLength(2);
-    expect(emails[0]).toMatchObject({ outcome: "personal_email", mailboxDomain: "gmail.com", servedBy: "tomba.people.email.find.linkedin", costUsd: 0.0089, emailPresent: false });
-    expect(emails[0].keys).toEqual(["domain", "first_name", "full_name", "last_name", "linkedin_url"]);
-    expect(emails[0]).not.toHaveProperty("attempt");
-    expect(emails[1]).toMatchObject({ outcome: "hit", attempt: "retry_without_profile_link", servedBy: "tomba.people.email.find", costUsd: 0.0089, emailPresent: true });
-    expect(emails[1].keys).toEqual(["domain", "first_name", "full_name", "last_name"]);
-    expect(emails[1].step).toMatch(/^people_email_retry_0_\d+$/);
-    expect(result.lookupLog!.summary).toMatchObject({ personalRetries: 1, withContact: 1 });
+    expect(emails[0]).toMatchObject({ outcome: "miss", attempt: "domain_and_name", emailPresent: false });
+    expect(emails[0].keys).toEqual(KEYS_NO_LINK);
+    expect(emails[1]).toMatchObject({ outcome: "hit", attempt: "profile_link_fallback", servedBy: "tomba.people.email.find.linkedin", costUsd: 0.0089, emailPresent: true });
+    expect(emails[1].keys).toEqual(KEYS_WITH_LINK);
+    expect(emails[1].step).toMatch(/^people_email_link_0_\d+$/);
+    expect(result.lookupLog!.summary).toMatchObject({ linkFallbacks: 1, withContact: 1 });
     const kept = JSON.stringify(result.lookupLog);
-    for (const secret of ["mona.private", "mona@", "delta-soft", "Mona", "Delta", "linkedin.com", "test-token-not-a-secret"]) expect(kept, secret).not.toContain(secret);
+    for (const secret of ["mona@", "delta-soft", "Mona", "Delta", "linkedin.com", "test-token-not-a-secret"]) expect(kept, secret).not.toContain(secret);
   });
 
-  it("no retry after any other outcome (a miss, a mismatch), nor when the person has no company domain or the answer is already a work address", async () => {
-    const noDomain = person("Rania", "Ayman", { lastCompanyWebsite: "https://linktr.ee/x" });
-    const calls = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([noDomain]) } : isEmail(call) ? { cost: 8900, body: emailBody(call, "rania.private@yahoo.co.uk", "tomba.people.email.find.linkedin", 8900) } : { body: phoneMiss }));
-    const result = await defaultTregAdapter(input() as any);
-    expect(calls.filter(isEmail)).toHaveLength(1); // personal, but no domain and name to retry with
-    expect(result.lookupLog!.entries.find(isEntryEmail)).toMatchObject({ outcome: "personal_email", mailboxDomain: "yahoo.co.uk" });
-    expect(result.lookupLog!.summary.personalRetries ?? 0).toBe(0);
+  it("a PERSONAL address from the first lookup is billed and discarded and never retried; no domain means the profile link is the first lookup; a mismatch is not retried either", async () => {
+    const personal = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([mona]) } : isEmail(call) ? { cost: 8900, body: emailBody(call, "mona.private@gmail.com", "tomba.people.email.find", 8900) } : { body: phoneMiss }));
+    const personalResult = await defaultTregAdapter(input() as any);
+    expect(personal.filter(isEmail)).toHaveLength(1);
+    expect(personal.filter(isVerify)).toHaveLength(0); // a personal address is never checked
+    expect(personalResult.lookupLog!.entries.find(isEntryEmail)).toMatchObject({ outcome: "personal_email", mailboxDomain: "gmail.com", attempt: "domain_and_name" });
+    expect(personalResult.rows[0].work_email).toBe("");
+    expect(personalResult.lookupLog!.summary.linkFallbacks ?? 0).toBe(0);
 
-    const missed = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([mona]) } : isEmail(call) ? { body: emailBody(call, null, "x", 0) } : { body: phoneMiss }));
-    await defaultTregAdapter(input() as any);
-    expect(missed.filter(isEmail)).toHaveLength(1);
+    const noDomain = person("Rania", "Ayman", { lastCompanyWebsite: "https://linktr.ee/x" });
+    const linkFirst = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([noDomain]) } : isEmail(call) ? { cost: 8900, body: emailBody(call, "rania.private@yahoo.co.uk", "tomba.people.email.find.linkedin", 8900) } : { body: phoneMiss }));
+    const linkResult = await defaultTregAdapter(input() as any);
+    expect(linkFirst.filter(isEmail)).toHaveLength(1);
+    expect(Object.keys(linkFirst.filter(isEmail)[0].body).sort()).toEqual(["first_name", "full_name", "last_name", "linkedin_url"]); // all there is
+    expect(linkResult.lookupLog!.entries.find(isEntryEmail)).toMatchObject({ outcome: "personal_email", mailboxDomain: "yahoo.co.uk", attempt: "profile_link" });
 
     const wrong = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([mona]) } : isEmail(call) ? { cost: 8900, body: { output: { email: "someone@other.example", first_name: "Karim", last_name: "Nabil" } } } : { body: phoneMiss }));
     const wrongResult = await defaultTregAdapter(input() as any);
@@ -174,6 +194,7 @@ describe("(b) 409 then success on a later read: delivered once, charged once; th
     const calls = gateway((call) => {
       if (isSearch(call)) return { cost: 380, body: answerOf([mona]) };
       if (isPhone(call)) return { body: phoneMiss };
+      if (isVerify(call)) return validAnswer;
       if (call.attempt === 1) return { timeout: true };
       if (call.attempt === 2) return { status: 409, body: { error: "in_flight" } };
       // the stored result: cost 0, the first call's charge in the original-cost header
@@ -232,6 +253,7 @@ describe("(c) per-row reason codes in the log, with no personal value", () => {
     const calls = gateway((call) => {
       if (isSearch(call)) return { cost: 3420, body: answerOf(LEADS) };
       if (isPhone(call)) return { body: phoneMiss };
+      if (isVerify(call)) return validAnswer;
       const first = call.body.first_name;
       if (first === "Mona") return { cost: 8900, body: emailBody(call, "mona@delta-soft.example", "tomba.people.email.find", 8900) };
       if (first === "Omar") return { cost: 8900, body: { output: { email: "x@other.example", first_name: "Karim", last_name: "Nabil" } } };
@@ -275,35 +297,35 @@ describe("(c) per-row reason codes in the log, with no personal value", () => {
   });
 });
 
-describe("(d) the job's budget ceiling is never passed, retries included", () => {
+describe("(d) the job's budget ceiling is never passed, profile-link fallbacks included", () => {
   const TEN = ["Mona", "Nour", "Omar", "Salma", "Yusuf", "Hana", "Karim", "Rasha", "Youssef"].map((first, at) => person(first, `Lastname${at}`));
 
-  it("every email is a personal address billing the whole 0.02 and every retry too: the spend stays at or under 0.04 + 0.02 x 3 = 0.10 USD and the rest are skipped for budget", async () => {
+  it("every email lookup bills the whole 0.02 and finds nothing, so every profile-link fallback is made too: the spend stays at or under 0.04 + (0.02 + 0.005) x 3 = 0.115 USD and the rest are skipped for budget", async () => {
     const costs: number[] = [];
     const calls = gateway((call) => {
       const cost = isSearch(call) ? 3420 : isEmail(call) ? 20000 : 0;
       costs.push(cost);
       if (isSearch(call)) return { cost, body: answerOf(TEN) };
-      if (isEmail(call)) return { cost, body: emailBody(call, `${String(call.body.first_name).toLowerCase()}@gmail.com`, "tomba.people.email.find.linkedin", cost) };
+      if (isEmail(call)) return { cost, body: emailBody(call, null, "none", cost) };
       return { body: phoneMiss };
     });
     const result = await defaultTregAdapter(input({ remainingNeeded: 3, targetVolumeMax: 3, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(3) }) as any);
     const spent = costs.reduce((total, cost) => total + cost, 0);
     expect(result.costMicro).toBe(spent);
     expect(spent).toBeLessThanOrEqual(Math.round(decisionMakerJobSpendCeilingUsd(3) * 1e6));
-    expect(calls.filter(isEmail).some((call) => !call.body.linkedin_url)).toBe(true); // retries were made while the budget allowed
+    expect(calls.filter(isEmail).some((call) => call.body.linkedin_url)).toBe(true); // fallbacks were made while the budget allowed
     expect(result.lookupLog!.summary.skippedBudget).toBeGreaterThan(0);
-    expect(result.lookupLog!.summary.personalRetries).toBeGreaterThan(0);
+    expect(result.lookupLog!.summary.linkFallbacks).toBeGreaterThan(0);
   });
 
-  it("with a budget that holds the first lookup but not the retry, the retry is skipped (never reserved above the ceiling) and counted as skipped for budget", async () => {
-    const calls = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([TEN[0]]) } : isEmail(call) ? { cost: 8900, body: emailBody(call, "x@gmail.com", "tomba.people.email.find.linkedin", 8900) } : { body: phoneMiss }));
-    // a ceiling of 0.025: after the search (0.00038) and the first email (0.0089 spent) 0.0157 is left, which cannot hold the retry's own 0.02 ceiling
+  it("with a budget that holds the first lookup but not the fallback, the fallback is skipped (never reserved above the ceiling) and counted as skipped for budget", async () => {
+    const calls = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([TEN[0]]) } : isEmail(call) ? { cost: 8900, body: emailBody(call, null, "none", 8900) } : { body: phoneMiss }));
+    // a ceiling of 0.025: after the search (0.00038) and the first email (0.0089 spent) 0.0157 is left, which cannot hold the fallback's own 0.02 ceiling
     const result = await defaultTregAdapter(input({ decisionMakerSpendBudgetUsd: 0.025 }) as any);
     const spent = result.costMicro;
     expect(spent).toBeLessThanOrEqual(25_000);
     expect(calls.filter(isEmail)).toHaveLength(1);
-    expect(result.lookupLog!.summary.personalRetries).toBe(1);
+    expect(result.lookupLog!.summary.linkFallbacks).toBe(1);
     expect(result.lookupLog!.summary.skippedBudget).toBeGreaterThanOrEqual(1);
   });
 });
