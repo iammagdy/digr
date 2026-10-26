@@ -11,6 +11,7 @@ import { isChainSlug } from "../multiProvider/routes";
 import { rowPassesGate } from "../multiProvider/policy";
 import { contactValueDelivered } from "../../functions/shared/decisionMakerPricing";
 import { isTechnologyRequest, technologyEvidenceOf } from "./technologyEvidence";
+import { xAccountHandle } from "../socialSources";
 
 export interface ResearchRelevanceContext {
   capabilitySlug: string;
@@ -128,6 +129,46 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
   // because it names the country (it has no word of the topic).
   const suspicious = !commentRow && (isReactionOnly(own) || !evidence);
   return { decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب", ...(suspicious ? { suspicious: true } : {}) };
+}
+
+/** The account a post says wrote it, in lower case without «@»: the flat keys sources use, or the name inside an author object. Null when the row names none. */
+const AUTHOR_HANDLE_KEYS = ["author_username", "authorUsername", "author_handle", "author_screen_name", "username", "user_name", "userName", "screen_name", "handle"];
+const AUTHOR_OBJECT_KEYS = ["author", "user", "account"];
+const AUTHOR_NAME_KEYS = ["username", "userName", "user_name", "screen_name", "screenName", "handle"];
+export function postAuthorHandle(row: Record<string, any>): string | null {
+  const clean = (value: unknown): string | null => {
+    const text = typeof value === "string" ? value.trim().replace(/^@+/, "") : "";
+    return /^[A-Za-z0-9_]{1,15}$/.test(text) ? text.toLowerCase() : null;
+  };
+  for (const key of AUTHOR_HANDLE_KEYS) {
+    const found = clean(row?.[key]);
+    if (found) return found;
+  }
+  for (const key of AUTHOR_OBJECT_KEYS) {
+    const nested = row?.[key];
+    if (!nested || typeof nested !== "object") continue;
+    for (const nameKey of AUTHOR_NAME_KEYS) {
+      const found = clean((nested as Record<string, any>)[nameKey]);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/** The request reads the posts of ONE X account: a handle and no search text (a search text makes it a topic search, judged by topic words). */
+export function isXAccountRequest(params: Record<string, any>): boolean {
+  return typeof params?.channel === "string" && params.channel.trim() !== "" && !(typeof params.query === "string" && params.query.trim() !== "");
+}
+
+/**
+ * A row of an X account's timeline is judged by WHO wrote it, never by topic words (the plan names an account, not a topic). A post whose author is another
+ * account is not the account's own post; a row that names no author cannot be shown to be foreign, so it stays (the same rule as a missing country).
+ */
+function evaluateXAccountPost(row: Record<string, any>, params: Record<string, any>): ResearchRelevanceResult {
+  const wanted = xAccountHandle(params.channel)?.toLowerCase();
+  const author = postAuthorHandle(row);
+  if (wanted && author && author !== wanted) return { decision: "no_match", reasonAr: "المنشور ليس من الحساب المطلوب" };
+  return { decision: "match", reasonAr: "منشور من الحساب المطلوب" };
 }
 
 function countMatches(value: string, pattern: RegExp): number {
@@ -276,6 +317,7 @@ export function evaluateResearchRowRelevance(
     return { decision: "no_match", reasonAr: peopleCapability ? "الشخص خارج النطاق الجغرافي المطلوب" : "النطاق الجغرافي في السجل لا يطابق الدولة المطلوبة" };
   }
   if (peopleCapability) return evaluateDirectPeopleRow(row, params, requestedRegion);
+  if (capabilitySlug === "social-x-posts" && isXAccountRequest(params)) return evaluateXAccountPost(row, params);
 
   // Facebook keyword service: the post was judged (adopted) before its comments were read, so its comments are delivered as they are. Only an empty
   // comment or a link on its own is not a delivered unit; no comment-content judgment (pleasantry, length, reaction, topic words) applies here.

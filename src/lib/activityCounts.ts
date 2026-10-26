@@ -1,4 +1,6 @@
 import { normalizeEasternArabicDigits } from "./arabicNumbers";
+import { toArabicDigits } from "./arabicDigits";
+import { countPlainAr } from "./planCounts";
 
 /**
  * What the customer's activity panel counts, read from the page lines of the run («الصفحة ١: استلمنا ٥٠ سجل · الجديد ٣ · ... ·
@@ -72,4 +74,29 @@ export function summarizeActivityCounts(events: Array<{ textAr: string }> | null
   }
   // Per-page lines already include every exclusion of that page, so they win over the separate audit line.
   return { received: runningTotal !== null ? Math.max(runningTotal, received ?? 0) : received, underReview, excluded: fromPages > 0 ? fromPages : fromAudit };
+}
+
+/**
+ * The page line of the page that ENDS a job with nothing delivered. It carries the same labels as every other page line («غير مطابق», «قيد المراجعة», «غير مراجَع»),
+ * because the panel adds those labels over the page lines: a closing line without them left the panel at the first page's count while the message and the job's
+ * diagnostic line said the job's total.
+ */
+export function zeroDeliveryPageLineAr(page: {
+  pageNumber: number;
+  receivedThisPage: number;
+  receivedSoFar: number | null;
+  dateExcluded: number;
+  notMatching: number;
+  underReview: number;
+  unreviewed: number;
+}): string {
+  return [
+    `الصفحة ${toArabicDigits(page.pageNumber)}: استلمنا ${countPlainAr(page.receivedThisPage, "records")}`,
+    page.pageNumber > 1 && page.receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(page.receivedSoFar)}` : null,
+    "الجديد ٠",
+    page.dateExcluded ? `${DATE_EXCLUDED_LABEL} ${toArabicDigits(page.dateExcluded)}` : null,
+    page.notMatching ? `غير مطابق ${toArabicDigits(page.notMatching)}` : null,
+    page.underReview ? `قيد المراجعة ${toArabicDigits(page.underReview)}` : null,
+    page.unreviewed ? `غير مراجَع ${toArabicDigits(page.unreviewed)}` : null,
+  ].filter(Boolean).join(" · ");
 }

@@ -9,7 +9,7 @@ import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "
 import { LOOKUP_LOG_EVENT_TYPE } from "../../../../lib/reviewCostEvent";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
-import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
+import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, heldToReport, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
 import { PAGED_FIRST_CHUNK_ROWS, isFacebookKeywordService } from "../../../../lib/facebookKeywordService";
 import { isFacebookTopicReport } from "../../../../lib/facebookReport/constants";
 import { reportStatePath, type ReportState, type ReportStateStore } from "../../../../lib/server/facebookReportAdapter";
@@ -97,7 +97,7 @@ import { cleanupRetrySources, ensureRetrySeed, rowIdentity } from "../../../../l
 import { cursorKey, emptyRunningSet, extendRunningSet, loadRunningSet, rebuildRunningSet, removeRunningSets, runningSetKey, saveRunningSet, type RunningSet } from "../../../../lib/server/jobRunningSet";
 import { getSocialCapability, socialResultTitleAr } from "../../../../lib/socialSources";
 import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
-import { DATE_EXCLUDED_LABEL, RECEIVED_SO_FAR_LABEL } from "../../../../lib/activityCounts";
+import { DATE_EXCLUDED_LABEL, RECEIVED_SO_FAR_LABEL, zeroDeliveryPageLineAr } from "../../../../lib/activityCounts";
 import {
   DECISION_MAKER_ROUTE_COST_CAP_USD,
   decisionMakerJobSpendCeilingUsd,
@@ -1645,6 +1645,17 @@ export async function POST(req: NextRequest) {
       const noConfirmedHintAr = socialCapability?.platform === "facebook" ? NO_CONFIRMED_POST_HINT_AR : NO_CONFIRMED_VIDEO_HINT_AR;
       // What the customer reads is the job's total, the same number the activity panel shows, never only the last page.
       const receivedShown = receivedSoFar ?? receivedFromSource;
+      // The job's own total of what was judged (every page): the sentence below, the diagnostic line and the page lines the panel adds up all read this one
+      // record, so «أُحيل N إلى المراجعة» is the same N in all three. Best effort: without it the last page's own count is what is known.
+      let diagnosticTotal: ReturnType<typeof totalDiagnostic> | null = null;
+      if (jobId) {
+        try {
+          diagnosticTotal = await saveStepDiagnostic(adminClient.storage.from("partials"), jobId, currentStep, chunkDiagnostic);
+        } catch (diagErr: any) {
+          console.warn("[worker:zero_delivery_diagnostic_warning]", diagErr?.message || "");
+        }
+      }
+      const heldShown = heldToReport(diagnosticTotal, uncertainRows.length);
       const emptyErrorAr = reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
         : reviewBudgetUsedUp && unreviewedRows.length > 0
@@ -1653,11 +1664,11 @@ export async function POST(req: NextRequest) {
         ? socialCapability && feedHasWindow && datesDroppedKnown && datesDroppedTotal > 0 && receivedShown - datesDroppedTotal > 0
           // Some rows were removed by date and the rest (inside the window) did not match the topic: say both, with the job's own totals.
           // «وتواريخها داخل الفترة» would be false here, and it used to be said whenever the LAST page had a row left after the date filter.
-          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, uncertainRows.length)}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
+          ? `${emptyAfterDateDropSentenceAr(receivedShown, datesDroppedTotal, heldShown)}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
         : socialCapability && rawPageRowCount > 0
           // The dates passed the window; what failed is the topic. Saying "your scope" here read as a date problem.
-          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
-          : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${uncertainRows.length ? ` (أُحيل ${toArabicDigits(uncertainRows.length)} إلى المراجعة ولم يُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
+          ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر${feedHasWindow && datesDroppedKnown && datesDroppedTotal === 0 ? " وتواريخها داخل الفترة التي حددتها" : ""}، لكن لم يتحقق في أيٍّ منها موضوع طلبك${heldShown ? ` (أُحيل ${toArabicDigits(heldShown)} إلى المراجعة ولم يُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.${videoSelectionReviewed > 0 ? ` ${noConfirmedHintAr}` : ""}`
+          : `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك${allRowsOutside ? `: ${OUTSIDE_WINDOW_SENTENCE_AR}${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow) ? `؛ ${youtubeRecencySentenceAr(rawAdapterResult.discoveryWindow)}` : ""}` : ""}${heldShown ? ` (أُحيل ${toArabicDigits(heldShown)} إلى المراجعة ولم يُحتسب)` : ""}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`
         : rawAdapterResult.emptyReason === "no_relevant_videos" && socialCapability
         ? videoSelectionUnreviewed
           ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
@@ -1674,12 +1685,15 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: [
-            `الصفحة ${toArabicDigits(currentStep + 1)}: استلمنا ${countPlainAr(providerRows.length, "records")}`,
-            currentStep > 0 && receivedSoFar !== null ? `${RECEIVED_SO_FAR_LABEL} ${toArabicDigits(receivedSoFar)}` : null,
-            "الجديد ٠",
-            dateFiltered.excludedCount ? `${DATE_EXCLUDED_LABEL} ${toArabicDigits(dateFiltered.excludedCount)}` : null,
-          ].filter(Boolean).join(" · "),
+          message: zeroDeliveryPageLineAr({
+            pageNumber: currentStep + 1,
+            receivedThisPage: providerRows.length,
+            receivedSoFar,
+            dateExcluded: dateFiltered.excludedCount,
+            notMatching: relevanceExcludedCount,
+            underReview: uncertainRows.length,
+            unreviewed: unreviewedRows.length,
+          }),
           units: 0,
           event_type: "progress",
         });
@@ -1690,8 +1704,8 @@ export async function POST(req: NextRequest) {
       // Best effort: it never changes the release, the charge or the answer.
       if (jobId) {
         try {
-          const total = await saveStepDiagnostic(adminClient.storage.from("partials"), jobId, currentStep, chunkDiagnostic);
-          const line = zeroDeliveryEventAr(total);
+          const total = diagnosticTotal;
+          const line = total ? zeroDeliveryEventAr(total) : null;
           if (line) await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: line, units: 0, event_type: "info" });
         } catch (diagErr: any) {
           console.warn("[worker:zero_delivery_diagnostic_warning]", diagErr?.message || "");

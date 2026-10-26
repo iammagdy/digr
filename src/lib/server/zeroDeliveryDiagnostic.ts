@@ -102,6 +102,9 @@ export function recordPostReads(d: JobDiagnostic, reads: { read: number; sourceS
   return d;
 }
 
+/** The records held for review that a customer sentence says: the job's total over every page (never only the last page), and never fewer than the last page held. */
+export const heldToReport = (total: JobDiagnostic | null | undefined, lastPageHeld: number): number => Math.max(count(lastPageHeld), count(total?.rows?.held));
+
 export const hasDiagnosticSignal = (d: JobDiagnostic): boolean => d.postReads.read > 0 || d.posts.judged > 0 || d.rows.received > 0 || d.rows.excluded > 0 || d.rows.held > 0 || d.rows.unreviewed > 0;
 
 const REASON_LABEL_AR: Record<RejectedReasonCode, string> = {
