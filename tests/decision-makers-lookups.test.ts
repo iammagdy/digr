@@ -62,17 +62,17 @@ const spentMicro = (costs: number[]) => costs.reduce((total, cost) => total + co
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("(a) a miss bills 0 and gives its reservation back: every person is looked up inside the job ceiling", () => {
-  it("9 people, every lookup a free miss: 21 lookups after the search (9 first email lookups, 3 profile-link fallbacks for the 3 people with a company domain, 9 phones), all 9 people looked up, the job still billed only the search", async () => {
+  it("9 people, every lookup a free miss: 15 lookups after the search (3 first email lookups for the 3 people with a company domain, 3 profile-link fallbacks, 9 phones; the 6 with no domain get no paid email lookup), all 9 people looked up, the job still billed only the search", async () => {
     const calls = gateway((call) => (searchOnly(call) ? { cost: 3420, body: SEARCH_ANSWER } : miss(call)));
     const result = await defaultTregAdapter(input() as any);
     const lookups = calls.filter((call) => !searchOnly(call));
     expect(calls.filter(searchOnly)).toHaveLength(1);
-    expect(lookups).toHaveLength(21);
-    expect(lookups.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(12);
+    expect(lookups).toHaveLength(15);
+    expect(lookups.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(6);
     expect(lookups.filter((call) => call.endpoint === "treg.people.phone.find")).toHaveLength(9);
-    expect(result.providerCallCount).toBe(22);
+    expect(result.providerCallCount).toBe(16);
     expect(result.costMicro).toBe(3420); // 9 rows × 0.00038: the lookups billed nothing
-    expect(result.lookupLog!.summary).toMatchObject({ rows: 9, eligible: 9, lookedUp: 9, lookupCalls: 21, linkFallbacks: 3, skippedBudget: 0, withContact: 0 });
+    expect(result.lookupLog!.summary).toMatchObject({ rows: 9, eligible: 9, lookedUp: 9, lookupCalls: 15, linkFallbacks: 3, skippedBudget: 0, withContact: 0 });
   });
 
   it("before this change the same 9 people stopped at 7 lookups: the reservation arithmetic (0.04 / 0.005 = 8 calls, the search included)", () => {
@@ -151,11 +151,11 @@ describe("(c) the company domain is a real one, and the first and last names are
     const calls = gateway((call) => (searchOnly(call) ? { cost: 3420, body: SEARCH_ANSWER } : miss(call)));
     await defaultTregAdapter(input() as any);
     const emails = calls.filter((call) => call.endpoint === "treg.people.email.find").map((call) => call.body);
-    // 9 first lookups (the company domain and the names, no profile link; the profile link only where there is no domain) and 3 profile-link fallbacks after a miss
-    expect(emails).toHaveLength(12);
+    // 3 first lookups (the company domain and the names, no profile link) and 3 profile-link fallbacks after a miss; the 6 people with no company domain get no paid email lookup
+    expect(emails).toHaveLength(6);
     expect(emails.filter((body) => body.domain && !body.linkedin_url)).toHaveLength(3);
     expect(emails.filter((body) => body.domain && body.linkedin_url)).toHaveLength(3);
-    expect(emails.filter((body) => !body.domain).every((body) => body.linkedin_url)).toBe(true);
+    expect(emails.filter((body) => !body.domain)).toHaveLength(0);
     for (const body of emails) {
       expect(body.full_name).toBe(`${body.first_name} ${body.last_name}`);
       if (body.linkedin_url) expect(String(body.linkedin_url)).toMatch(/^https:\/\/www\.linkedin\.com\/in\//);
@@ -163,24 +163,27 @@ describe("(c) the company domain is a real one, and the first and last names are
     }
     const byName = (first: string) => emails.find((body) => body.first_name === first);
     expect(byName("Mohamed").domain).toBe("talentstailor.com");
-    expect(byName("Rania")).not.toHaveProperty("domain");
-    expect(byName("Mohammed")).not.toHaveProperty("domain");
-    expect(byName("Rasha")).not.toHaveProperty("domain"); // an empty website
+    // the people with no company domain get no paid email lookup; their phone lookup carries no domain either
+    const phones = calls.filter((call) => call.endpoint === "treg.people.phone.find").map((call) => call.body);
+    const phoneByName = (first: string) => phones.find((body) => body.first_name === first);
+    expect(phoneByName("Rania")).not.toHaveProperty("domain");
+    expect(phoneByName("Mohammed")).not.toHaveProperty("domain");
+    expect(phoneByName("Rasha")).not.toHaveProperty("domain"); // an empty website
     expect(byName("Omar").domain).toBe("delta-soft.example");
-    expect(byName("Rasha").last_name).toBe("El-Azhry");
+    expect(phoneByName("Rasha").last_name).toBe("El-Azhry");
   });
 
-  it("the best identities are looked up first (a profile link with a real domain before a link alone)", async () => {
+  it("the best identities are looked up first; a link alone is not a first lookup, so every first lookup carries a company domain", async () => {
     const calls = gateway((call) => (searchOnly(call) ? { cost: 3420, body: SEARCH_ANSWER } : miss(call)));
     await defaultTregAdapter(input() as any);
     // the first lookups only (a profile-link fallback comes after every first lookup, and carries the domain too)
     const order = calls.filter((call) => call.endpoint === "treg.people.email.find" && !String(call.headers["Idempotency-Key"]).includes("people_email_link_")).map((call) => Boolean(call.body.domain));
     expect(order).toEqual([...order].sort((a, b) => Number(b) - Number(a)));
     expect(order[0]).toBe(true);
-    expect(order[order.length - 1]).toBe(false);
+    expect(order.every(Boolean)).toBe(true);
   });
 
-  it("every eligible person gets a first email lookup; once the people still needed have a contact value, no further person gets a check or a phone lookup", async () => {
+  it("every person with a company domain gets a first email lookup; once the people still needed have a contact value, no further person gets a check or a phone lookup", async () => {
     const calls = gateway((call) => {
       if (searchOnly(call)) return { cost: 3420, body: SEARCH_ANSWER };
       return call.endpoint.includes("email")
@@ -188,10 +191,10 @@ describe("(c) the company domain is a real one, and the first and last names are
         : { cost: 0, body: { output: { phone: null } } };
     });
     const result = await defaultTregAdapter(input({ remainingNeeded: 3, targetVolumeMax: 3 }) as any);
-    expect(calls.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(9);
+    expect(calls.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(3);
     expect(calls.filter((call) => call.endpoint === "treg.people.email.verify")).toHaveLength(3);
     expect(calls.filter((call) => call.endpoint === "treg.people.phone.find")).toHaveLength(3);
-    expect(result.lookupLog!.summary).toMatchObject({ lookedUp: 9, withContact: 3, skippedEnough: 6 });
+    expect(result.lookupLog!.summary).toMatchObject({ lookedUp: 3, withContact: 3, skippedEnough: 6 });
   });
 });
 
@@ -244,7 +247,7 @@ describe("(e) a contact returned for another person is discarded, not delivered 
 
   it("the live case: a lookup for Rasha El-Azhry answers an email of another person with confidence 1.0: no email on the row, the log says «mismatch», the phone lookup does not use it", async () => {
     const calls = gateway((call) => {
-      if (searchOnly(call)) return { cost: 3420, body: { total: 1, success: true, leads: [LEADS[3]] } };
+      if (searchOnly(call)) return { cost: 3420, body: { total: 1, success: true, leads: [{ ...LEADS[3], lastCompanyWebsite: "https://company.example" }] } }; // a company domain: the paid first lookup is made
       if (call.endpoint === "treg.people.email.find") return { cost: 495, body: { output: { email: "er@vodafone.example", confidence: 1, first_name: "Esraa", last_name: "Rashad" }, _treg: { served_by: "provider-a", tried: ["provider-a"] } } };
       return { cost: 0, body: { output: { phone: null } } };
     });
@@ -261,7 +264,7 @@ describe("(e) a contact returned for another person is discarded, not delivered 
 
   it("an email returned for the right person (accents and case aside) is delivered and feeds the phone lookup", async () => {
     const calls = gateway((call) => {
-      if (searchOnly(call)) return { cost: 3420, body: { total: 1, success: true, leads: [LEADS[3]] } };
+      if (searchOnly(call)) return { cost: 3420, body: { total: 1, success: true, leads: [{ ...LEADS[3], lastCompanyWebsite: "https://company.example" }] } }; // a company domain: the paid first lookup is made
       if (call.endpoint === "treg.people.email.find") return { cost: 495, body: { output: { email: "rasha@company.example", first_name: "RASHA", last_name: "el azhry" } } };
       return { cost: 0, body: { output: { phone: "+201000000009" } } };
     });

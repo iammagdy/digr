@@ -338,12 +338,13 @@ describe("A1 and A5: the order of the lookups, and a lookup cut by our own limit
     expect(emails).toHaveLength(2);
   });
 
-  it("a person with no domain is looked up by the profile link (all there is) and not twice", async () => {
+  it("a person with no company domain gets no paid email lookup (the profile link alone returned personal mailboxes in live jobs); the phone lookup still runs", async () => {
     const rania = person("Rania", "Ayman", { lastCompanyWebsite: "" });
     const calls = gateway((call) => (isSearch(call) ? { cost: 380, body: answerOf([rania]) } : isEmail(call) ? { body: emailBody(call, null) } : { body: phoneMiss }));
     await defaultTregAdapter(input() as any);
     const emails = calls.filter(isEmail).map((call) => call.body);
-    expect(emails).toEqual([{ linkedin_url: "https://www.linkedin.com/in/rania-ayman", full_name: "Rania Ayman", first_name: "Rania", last_name: "Ayman" }]);
+    expect(emails).toEqual([]);
+    expect(calls.filter((call) => call.endpoint === "treg.people.phone.find")).toHaveLength(1);
   });
 
   async function withFastWaits<T>(run: () => Promise<T>): Promise<{ value: T; waits: number[] }> {
@@ -361,7 +362,7 @@ describe("A1 and A5: the order of the lookups, and a lookup cut by our own limit
     }
   }
 
-  it("cut by our own limit: the first attempt is logged apart (cut: true), one wait, the same key is read, the answer is delivered and charged once", async () => {
+  it("cut by our own limit: the first attempt is logged apart, the same key is read ONCE after the checks and phones (no wait), the answer is delivered and charged once", async () => {
     setMailDomainResolverForTesting(async () => "mx");
     const mona = person("Mona", "Delta");
     const calls = gateway((call) => {
@@ -374,13 +375,13 @@ describe("A1 and A5: the order of the lookups, and a lookup cut by our own limit
     const emailCalls = calls.filter(isEmail);
     expect(emailCalls).toHaveLength(2);
     expect(new Set(emailCalls.map((call) => call.headers["Idempotency-Key"])).size).toBe(1);
-    expect(waits).toEqual([PEOPLE_LOOKUP_REPLAY_WAIT_MS]);
+    expect(waits).toEqual([]);
     expect(result.rows[0].work_email).toBe("mona@delta-soft.example");
     expect(result.costMicro).toBe(380 + 8900);
+    // the cut call is logged apart; the later read is its own entry, sent with the same key
     const entry = result.lookupLog!.entries.find(isEntryEmail)!;
-    expect(entry).toMatchObject({ outcome: "hit", calls: 2, attempt: "domain_and_name" });
-    expect(entry.firstAttempt).toMatchObject({ cut: true });
-    expect(entry.reads).toHaveLength(1);
+    expect(entry).toMatchObject({ outcome: "timeout", calls: 1, attempt: "domain_and_name" });
+    expect(result.lookupLog!.entries.find((e) => e.retry)).toMatchObject({ outcome: "hit", calls: 1, retry: true });
   });
 
   it("a deadline that allows no read: the lookup ends as «timeout» after ONE call, no fallback is made for it, and the next person is still looked up", async () => {

@@ -187,14 +187,14 @@ describe("(2) the job's spend never passes its ceiling: 0.04 + (0.02 + 0.005) x 
   });
 });
 
-describe("(3) the work email waits up to 25 s, the phone 12 s; the worker's deadline is respected", () => {
-  it("25 s for the email and 12 s for the phone (and the search keeps its own limit)", async () => {
+describe("(3) a first email waits up to 14 s, a later read or a fallback up to 25 s, the phone 12 s; the worker's deadline is respected", () => {
+  it("14 s for a first email, 25 s for a later read and the fallback, 12 s for the phone (and the search keeps its own limit)", async () => {
     expect(PEOPLE_EMAIL_LOOKUP_TIMEOUT_MS).toBe(25_000);
     expect(PEOPLE_PHONE_LOOKUP_TIMEOUT_MS).toBe(12_000);
     gateway((call) => (isSearch(call) ? { cost: 3420, body: SEARCH_ANSWER } : missAnswer(call)));
     await defaultTregAdapter(input({ deadlineMs: Date.now() + 100_000 }) as any);
     const timeouts = new Set(seen.options.filter((options) => options.endpointId === "treg.people.email.find").map((options) => options.timeoutMs));
-    expect([...timeouts]).toEqual([25_000]);
+    expect([...timeouts].sort((a, b) => a - b)).toEqual([14_000, 25_000]);
     expect(new Set(seen.options.filter((options) => options.endpointId === "treg.people.phone.find").map((options) => options.timeoutMs))).toEqual(new Set([12_000]));
     expect(seen.options.find((options) => options.endpointId === "icypeas.people.search").timeoutMs).toBe(20_000);
   });
@@ -215,7 +215,7 @@ describe("(3) the work email waits up to 25 s, the phone 12 s; the worker's dead
 });
 
 describe("(4) HTTP 409 is «still running», never a failure and never a second charge", () => {
-  it("the first call has no answer yet (409): after a wait the same key is read, the answer is delivered, and the call is charged ONCE", async () => {
+  it("the first call has no answer yet (409): after the checks and phones the same key is read ONCE, the answer is delivered, and the call is charged ONCE", async () => {
     const calls = gateway((call, attempt) => {
       if (isSearch(call)) return { cost: 3420, body: SEARCH_ANSWER };
       if (isEmail(call) && attempt === 1) return { status: 409, body: { error: "in_flight" } };
@@ -228,20 +228,23 @@ describe("(4) HTTP 409 is «still running», never a failure and never a second 
     // each first lookup met its 409 and was read again with ITS OWN key: two calls per lookup, and the budget holds three first lookups for one person
     const keys = [...new Set(emailCalls.map((call) => call.headers["Idempotency-Key"]))];
     expect(keys).toHaveLength(3);
-    for (const key of keys) expect(emailCalls.filter((call) => call.headers["Idempotency-Key"] === key)).toHaveLength(2);
+    // the first calls are not read again before the checks and phones; once one later read finds an address, nobody else is still needed, so only that lookup is read again
+    expect(keys.map((key) => emailCalls.filter((call) => call.headers["Idempotency-Key"] === key).length).sort()).toEqual([1, 1, 2]);
     expect(result.rows.filter((row) => row.work_email)).toHaveLength(1);
-    expect(result.costMicro).toBe(3420 + 3 * 20000); // each lookup charged once, not 2 x 20000
-    const entry = result.lookupLog!.entries.find((e) => e.endpoint === "treg.people.email.find")!;
-    expect(entry).toMatchObject({ outcome: "hit", calls: 2, status: 200 });
+    expect(result.costMicro).toBe(3420 + 20000); // the stored answer carries the one charge; the 409 calls billed nothing
+    const later = result.lookupLog!.entries.find((e) => e.retry)!;
+    expect(later).toMatchObject({ outcome: "hit", calls: 1, status: 200 });
   });
 
-  it("still 409 after the reads: the outcome is «timeout», the job does not fail, nothing extra is charged, and the log says calls: 3", async () => {
+  it("still 409 after the later reads: the outcome is «timeout», the job does not fail, nothing extra is charged, and the log says one call per read", async () => {
     const calls = gateway((call) => (isSearch(call) ? { cost: 3420, body: SEARCH_ANSWER } : isEmail(call) ? { status: 409, body: { error: "in_flight" } } : missAnswer(call)));
     const result = await withFastWaits(() => defaultTregAdapter(input({ remainingNeeded: 1, targetVolumeMax: 1, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(1), deadlineMs: Date.now() + 100_000 }) as any));
     expect(result.ok).toBe(true);
     const entry = result.lookupLog!.entries.find((e) => e.endpoint === "treg.people.email.find")!;
-    expect(entry).toMatchObject({ outcome: "timeout", status: 409, calls: 3 });
-    expect(calls.filter(isEmail).length).toBeGreaterThanOrEqual(3);
+    expect(entry).toMatchObject({ outcome: "timeout", status: 409, calls: 1 });
+    expect(calls.filter(isEmail).length).toBeGreaterThanOrEqual(3); // the first calls
+    // one later read for each cut lookup while people are still needed; each read is also 409, so none of them is charged
+    expect(result.lookupLog!.entries.filter((e) => e.retry)).toHaveLength(3);
     expect(result.costMicro).toBe(3420);
   });
 
