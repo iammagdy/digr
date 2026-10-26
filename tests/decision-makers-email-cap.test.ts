@@ -113,7 +113,7 @@ describe("(1) the work-email lookup is sent at the 0.02 ceiling; the search and 
     for (const call of calls) expect(call.headers["X-Treg-Route-Max-Cost"], call.endpoint).toBe(isEmail(call) ? "0.02" : "0.005");
   });
 
-  it("the people are looked up best identity first, together (at most three at a time): the emails of a group, then its phones", async () => {
+  it("the first emails go out together (best identity first, as far as the budget holds them), then the checks and phones at most three at a time, then the fallbacks", async () => {
     let live = 0;
     let peak = 0;
     const order: string[] = [];
@@ -127,9 +127,11 @@ describe("(1) the work-email lookup is sent at the 0.02 ceiling; the search and 
       return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json", "x-treg-cost-micro": endpoint === "icypeas.people.search" ? "3420" : "0" } });
     }));
     await defaultTregAdapter(input({ remainingNeeded: 3 }) as any);
-    expect(peak).toBe(3);
-    // the first group: the three emails together (company domain and names), then the profile-link fallback of each after its miss, then the three phones
-    expect(order.slice(0, 10)).toEqual(["icypeas.people.search", ...Array(3).fill("treg.people.email.find"), ...Array(3).fill("treg.people.email.find"), ...Array(3).fill("treg.people.phone.find")]);
+    expect(peak).toBe(5);
+    // five first emails together (the budget holds five at the 0.02 ceiling); then the checks and phones in groups of three while people are still needed (none
+    // is found, so all nine get a phone lookup); then the profile-link fallback of each of the five misses
+    expect(order.slice(0, 9)).toEqual(["icypeas.people.search", ...Array(5).fill("treg.people.email.find"), ...Array(3).fill("treg.people.phone.find")]);
+    expect(order.slice(9)).toEqual([...Array(6).fill("treg.people.phone.find"), ...Array(5).fill("treg.people.email.find")]);
   });
 });
 
@@ -162,12 +164,12 @@ describe("(2) the job's spend never passes its ceiling: 0.04 + (0.02 + 0.005) x 
     expect(result.lookupLog!.summary.skippedBudget).toBeGreaterThan(0);
   });
 
-  it("every email bills 0.02 AND is found: only the people still needed are looked up (3), the spend is 3 x 0.02 + the search", async () => {
+  it("every email bills 0.02 AND is found: the budget holds five first lookups (nine people), the check and the phone go to the three still needed, the spend stays under the ceiling", async () => {
     const calls = gateway((call) => (isSearch(call) ? { cost: 3420, body: SEARCH_ANSWER } : isEmail(call) ? emailAnswer(call) : missAnswer(call)));
     const result = await defaultTregAdapter(input() as any);
-    expect(calls.filter(isEmail)).toHaveLength(3);
-    expect(result.costMicro).toBe(3420 + 3 * 20000);
-    expect(result.lookupLog!.summary).toMatchObject({ withContact: 3, skippedEnough: 6, skippedBudget: 0 });
+    expect(calls.filter(isEmail)).toHaveLength(5);
+    expect(result.costMicro).toBe(3420 + 5 * 20000);
+    expect(result.lookupLog!.summary).toMatchObject({ withContact: 3, skippedEnough: 6, skippedBudget: 8 });
     expect(result.rows.filter((row) => row.work_email).length).toBe(3);
   });
 
@@ -223,10 +225,12 @@ describe("(4) HTTP 409 is «still running», never a failure and never a second 
     const result = await withFastWaits(() => defaultTregAdapter(input({ remainingNeeded: 1, targetVolumeMax: 1, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(1), deadlineMs: Date.now() + 100_000 }) as any));
     expect(result.ok).toBe(true);
     const emailCalls = calls.filter(isEmail);
-    expect(emailCalls.length).toBe(2); // one lookup: the call and its read, same idempotency key
-    expect(emailCalls[1].headers["Idempotency-Key"]).toBe(emailCalls[0].headers["Idempotency-Key"]);
+    // each first lookup met its 409 and was read again with ITS OWN key: two calls per lookup, and the budget holds three first lookups for one person
+    const keys = [...new Set(emailCalls.map((call) => call.headers["Idempotency-Key"]))];
+    expect(keys).toHaveLength(3);
+    for (const key of keys) expect(emailCalls.filter((call) => call.headers["Idempotency-Key"] === key)).toHaveLength(2);
     expect(result.rows.filter((row) => row.work_email)).toHaveLength(1);
-    expect(result.costMicro).toBe(3420 + 20000); // charged once, not 2 x 20000
+    expect(result.costMicro).toBe(3420 + 3 * 20000); // each lookup charged once, not 2 x 20000
     const entry = result.lookupLog!.entries.find((e) => e.endpoint === "treg.people.email.find")!;
     expect(entry).toMatchObject({ outcome: "hit", calls: 2, status: 200 });
   });
@@ -313,7 +317,7 @@ describe("(5) a personal mailbox is not a work email: not delivered, not charged
 
   it("a personal address on a person who also has an office phone: the phone is delivered and charged, the email is not", async () => {
     gateway((call) => {
-      if (isSearch(call)) return { cost: 3420, body: SEARCH_ANSWER };
+      if (isSearch(call)) return { cost: 3420, body: { ...SEARCH_ANSWER, leads: LEADS.slice(0, 1), pagination: { token: "next", size: 1 } } }; // one person: the budget for one email and one phone
       if (isEmail(call)) return emailAnswer(call, "x@outlook.com");
       return { cost: 5000, body: { output: { phone: "+20 2 3333 4444" } } };
     });

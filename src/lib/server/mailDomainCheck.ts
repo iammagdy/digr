@@ -3,11 +3,15 @@
  * charged: an address on a domain with no mail server can never receive a message. Only the DOMAIN is looked up, never the address.
  *
  * «mx»: the domain publishes mail servers. «a»: no MX record, but the domain has an address record (the implicit-MX fallback of the mail
- * standard; the deliverability check decides the rest). «none»: the domain does not exist or has neither (or publishes a null MX).
+ * standard). For the decision that matters here, «a» is NOT a mail server: an address record alone is kept out before the paid lookup and after it.
+ * «none»: the domain does not exist or has neither (or publishes a null MX).
  * «unknown»: the lookup itself failed (timeout, resolver error); an unanswered question never keeps an address out.
  */
 export type MailDomainStatus = "mx" | "a" | "none" | "unknown";
 export type MailDomainResolver = (domain: string) => Promise<MailDomainStatus>;
+
+/** Does the domain take mail, for the decision: it publishes mail servers, or the check could not answer (fail open). */
+export const takesMail = (status: MailDomainStatus): boolean => status === "mx" || status === "unknown";
 
 /** A DNS answer comes in milliseconds; a resolver that does not answer in this time is «unknown». */
 export const MAIL_DOMAIN_CHECK_TIMEOUT_MS = 2_500;
