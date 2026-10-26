@@ -13,6 +13,7 @@ import { getEndpointDetails, sanitizeCustomerErrorMessage } from "@/functions/sh
 import { calculateBalance } from "@/lib/supabase/ledger";
 import { applyCustomerCap } from "@/lib/pointsCap";
 import { editedPlanSummaryAr } from "@/lib/planParameters";
+import { getSocialCapability, normalizeXAccountPlanItem, socialPlanSummaryAr } from "@/lib/socialSources";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
@@ -135,6 +136,12 @@ export async function POST(req: NextRequest) {
 
     const updatedPlan = applyPlanOperations(currentPlan, operationsToApply);
 
+    // An X account plan is edited through its account: a keyword written beside it must never turn it into a topic search.
+    for (const planItem of updatedPlan.items) {
+      const accountError = normalizeXAccountPlanItem(planItem);
+      if (accountError) return NextResponse.json({ success: false, error: accountError }, { status: 400 });
+    }
+
     // 5. Validate updated plan against all capability schemas (static + catalog)
     const [capabilities, catalogCapabilities] = await Promise.all([
       getEnabledCapabilitiesWithCoreServices(adminClient),
@@ -175,6 +182,11 @@ export async function POST(req: NextRequest) {
     const primaryItem = updatedPlan.items[0];
     if (primaryItem) {
       updatedPlan.summaryAr = editedPlanSummaryAr(primaryItem, updatedPlan.summaryAr, toArabicDigits);
+      // An X account plan keeps the sentence the plan itself writes («أحدث المنشورات للحساب المحدد»): the generic edit line named the account like a sector («خطة حصر … : elonmusk و billgates»).
+      const xPosts = getSocialCapability("social-x-posts");
+      if (xPosts && primaryItem.capabilitySlug === "social-x-posts" && typeof primaryItem.params?.channel === "string" && primaryItem.params.channel.trim()) {
+        updatedPlan.summaryAr = socialPlanSummaryAr(xPosts, primaryItem.params, Math.max(1, Number(primaryItem.targetVolumeMax) || 1), (value) => toArabicDigits(value));
+      }
     }
 
     // 6. Generate NEW quote (supersedes old quote and recalculates price)

@@ -13,7 +13,7 @@ import { effectiveSocialMaxRows, scaleValue } from "./scaleConfig"; import { FAC
 
 import { normalizeDigits } from "./arabicDigits";
 import { channelsCountAr, videosCountAr } from "./channelNames";
-import { extractUrls, socialLocationText, socialSubjectText, stripReportWords, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
+import { X_RESERVED_PATHS, extractUrls, socialLocationText, socialSubjectText, stripReportWords, wantsReplies, type SocialIntent, type SocialPlatformId } from "./socialTasks";
 import { detectCountryFromText, isoCountryCodeFromName } from "./planParameters";
 import { withTopicCountryWord, withXCountryTerms, withXDateOperators } from "./xSearchWindow";
 import { regionNameAr } from "./regionNames";
@@ -121,7 +121,7 @@ function xHandleOf(channel: string | undefined): string | undefined {
   if (!raw) return undefined;
   const fromUrl = /(?:twitter|x)\.com\/([A-Za-z0-9_]{1,15})(?:[/?#]|$)/i.exec(raw)?.[1];
   const handle = (fromUrl || raw.replace(/^@/, "")).trim();
-  return /^[A-Za-z0-9_]{1,15}$/.test(handle) ? handle : undefined;
+  return /^[A-Za-z0-9_]{1,15}$/.test(handle) && !(fromUrl && X_RESERVED_PATHS.has(handle.toLowerCase())) ? handle : undefined; // «x.com/search», «x.com/home» are pages of the site, never an account
 }
 
 function youtubeChannelRef(channel: string | undefined): string | undefined {
@@ -891,6 +891,40 @@ export function xCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, 
   return name ? `، ولأن إكس لا يتيح تحديد الدولة يقتصر البحث على المنشورات التي تذكر ${name} أو ما يُنسب إليها` : "";
 }
 
+/**
+ * An X account's posts are read as the account published them: the source takes a handle and a count, neither a topic nor a period. The plan says so, and says
+ * what is done with a window the customer asked for (the posts inside it are kept, the others are skipped, so fewer than asked may arrive). Empty for any other service.
+ */
+export function xAccountNoteAr(cap: SocialCapabilityDef, params: Record<string, any>): string {
+  if (cap.platform !== "x" || cap.kind !== "posts") return "";
+  const from = typeof params?.dateFrom === "string" && params.dateFrom ? params.dateFrom : "";
+  const to = typeof params?.dateTo === "string" && params.dateTo ? params.dateTo : "";
+  const window = from && to ? `من ${formatDateAr(from)} إلى ${formatDateAr(to)}` : from ? `منذ ${formatDateAr(from)}` : to ? `حتى ${formatDateAr(to)}` : "";
+  const windowNote = window ? `، ويُبقى منها ما نُشر ${window} فقط لأن المصدر لا يحدد الفترة عند الطلب، فقد يقل العدد عن المطلوب` : "";
+  return `، كما نشرها الحساب دون تصفية بالموضوع${windowNote}`;
+}
+
+/** The handle an X account reference names («@name», a profile link, or the bare name), without «@»; undefined when it is not an account. */
+export function xAccountHandle(channel: unknown): string | undefined {
+  return xHandleOf(typeof channel === "string" ? channel : undefined);
+}
+
+/**
+ * The editor of a plan names the topic in one field. On an X ACCOUNT plan that field is the account, never a search text: a keyword written beside the account made the
+ * plan a topic search («query» wins over «channel»), and a request for the posts of an account ran as a search for its name. Returns an Arabic reason when the account
+ * written is not one account; otherwise the item is cleaned in place (the keyword removed, the account written once, as «@handle»).
+ */
+export function normalizeXAccountPlanItem(item: { capabilitySlug?: string; params?: Record<string, any> }): string | null {
+  if (item?.capabilitySlug !== "social-x-posts" || !item.params || typeof item.params.channel !== "string" || !item.params.channel.trim()) return null;
+  const handle = xHandleOf(item.params.channel);
+  if (!handle) return X_ACCOUNT_EDIT_AR;
+  item.params.channel = `@${handle}`;
+  delete item.params.query;
+  return null;
+}
+
+export const X_ACCOUNT_EDIT_AR = "اكتب اسم حساب واحد على منصة إكس أو رابطه؛ الخطة تقرأ منشورات حساب واحد.";
+
 /** YouTube, TikTok and Facebook topic searches carry the country's name in the search text when a country was asked for: the plan says so. Empty otherwise. */
 export function topicCountryNoteAr(cap: SocialCapabilityDef, params: Record<string, any>): string {
   if (cap.platform !== "youtube" && cap.platform !== "tiktok" && !cap.pagedDiscovery) return "";
@@ -951,7 +985,7 @@ export function socialPlanSummaryAr(
       return cap.kind === "comments"
         ? `سحب ${what} من أحدث ما نشرته القناة أو الصفحة المحددة على ${platform}${commentLimit}`
         : cap.kind === "posts"
-          ? `سحب أحدث ${what} للحساب المحدد على ${platform}`
+          ? `سحب أحدث ${what} للحساب المحدد على ${platform}${xAccountNoteAr(cap, params)}`
           : `سحب أحدث ${what} للقناة أو الصفحة المحددة على ${platform}`;
     case "trending":
       return cap.kind === "comments"

@@ -110,9 +110,12 @@ function usableText(val: unknown): boolean {
 /** A value made only of the leftovers of a card label («ال المطلوب مطلوب»): a stranded article, or «المطلوب» next to «مطلوب». */
 const BROKEN_FIELD = /(?:^|\s)ال(?=\s|$)|المطلوب[ةه]?\s+مطلوب/u;
 
+/** A value a model wrote when it did not know the real one: «<UNKNOWN>», «<TBD>», «<placeholder>». The source would be asked about a thing that does not exist. */
+const ANGLE_PLACEHOLDER = /<\s*(?:unknown|unspecified|tbd|todo|placeholder|n\/a|none|null|id|value)\s*>/i;
+
 function hasPlaceholderText(val: unknown): boolean {
   if (typeof val === "string") {
-    return /يلزم تحديد/.test(val) || (MISSING_TOKEN.test(val) && val.trim().length > 0);
+    return /يلزم تحديد/.test(val) || ANGLE_PLACEHOLDER.test(val) || (MISSING_TOKEN.test(val) && val.trim().length > 0);
   }
   if (Array.isArray(val)) {
     return val.some(hasPlaceholderText);

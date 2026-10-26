@@ -9,7 +9,7 @@ import { knownEventWindow, parseRelativeWindow, parseStatedDates, resolveTimeWin
 import { lowBalanceMessageAr } from "../../lib/lowBalance";
 import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } from "../../lib/jobCaps";
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
-import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR, platformFollowUpStateAr, readSocialFacts, unsupportedPlatformAnswerAr, UNSUPPORTED_PLATFORM_AR, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
+import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR, platformFollowUpStateAr, readSocialFacts, unsupportedPlatformAnswerAr, UNSUPPORTED_PLATFORM_AR, X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
 import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
 import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
@@ -112,8 +112,8 @@ import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote"
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { pairRoleOf } from "../../lib/planFit";
-import { videosCountAr } from "../../lib/channelNames";
-import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
+import { handlesInText, videosCountAr } from "../../lib/channelNames";
+import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, isSocialCapabilitySlug, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { loadMeasuredTimings } from "../../lib/server/jobTimings";
 import { missionDurationForPlan } from "../../lib/missionDuration";
 import { longJobDriverMode } from "../../lib/driverMode";
@@ -333,6 +333,11 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
       const followUp = platformFollowUpStateAr(normalized);
       if (followUp === "asked") return { id: "social_platform_other_required", text: PLATFORM_OTHER_QUESTION_AR, question: PLATFORM_OTHER_QUESTION_AR, type: "free", options: [], allowOther: true };
       if (followUp === "answered" || unsupportedPlatformAnswerAr(normalized)) return { plain: true, id: "platform_unsupported", text: UNSUPPORTED_PLATFORM_AR };
+      // X: there is no service for the comments of a post, and an account's posts are read one account at a time. Each is said once, before any plan or hold.
+      if (socialTaskIntent.platform === "x") {
+        if (socialTaskIntent.wantsComments) return { plain: true, id: "x_comments_unavailable", text: X_COMMENTS_UNAVAILABLE_AR };
+        if (socialTaskIntent.task === "x_posts" && socialTaskIntent.discover === "channel" && handlesInText(normalized).length > 1) return { plain: true, id: "x_one_account", text: X_ONE_ACCOUNT_AR };
+      }
     }
     // A mission over channels (their top videos, then the comments) is decided by its own understanding: the channels
     // and the comment cap are asked ONE at a time, and nothing else is.
@@ -370,7 +375,7 @@ function discoveryQuestionFor(text: string, brief: ResearchBrief, capabilities: 
       if (gap) return gap;
     }
     if (missingSocial.includes("social_topic_required")) return { id: "social_topic_required", text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true };
-    if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "فيسبوك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true };
+    if (missingSocial.includes("social_platform_required")) return { id: "social_platform_required", text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "فيسبوك", "يوتيوب", "منصة X", "إنستغرام", "أخرى"], allowOther: true };
     if (!ignore.has("social_time_required") && shouldAskSocialTimeWindow(normalized)) return socialTimeWindowQuestion();
   }
   return null;
@@ -1188,10 +1193,18 @@ export function routeCompanySearchRequest(
   return buildAutoPlanProposal(brief, companyCapabilities, requestText);
 }
 
-export function routeUnavailablePlatformRequest(output: any, requestText: string): any {
+export function routeUnavailablePlatformRequest(output: any, requestText: string, planItems?: ReadonlyArray<{ capabilitySlug?: string }>): any {
   // TREG-backed capabilities are owner-confirmed and are not blocked by a
   // second local availability gate. Pricing and executable plans are still
   // validated against the server catalog below.
+  // X is the one platform with its own verified service: a plan for an X request made of any OTHER service (a post-comments endpoint priced per call, with an
+  // invented post id) is never shown. The price of one service must not be put on the request of another; the customer is told once and nothing is held.
+  // The plan items are the final ones (the verified service already put in place of a model's alias), so only a service that is not one of ours trips this.
+  if (output?.type === "propose_plan" && planItems && planItems.length > 0 && detectSocialIntent(requestText).platform === "x") {
+    if (planItems.some((item) => !isSocialCapabilitySlug(String(item?.capabilitySlug || "")))) {
+      return { type: "refuse", reasonAr: X_REQUEST_NOT_SERVED_AR };
+    }
+  }
   return output;
 }
 
@@ -3699,7 +3712,7 @@ export class ChatHandler {
             people_roles_required: { id: firstMissing, text: "ما المسميات الوظيفية التي تريدها؟", question: "ما المسميات الوظيفية التي تريدها؟", type: "free", options: [], allowOther: true },
             people_count_required: { id: firstMissing, text: "كم صانع قرار تريد؟", question: "كم صانع قرار تريد؟", type: "free", options: [], allowOther: true },
             social_account_required: { id: firstMissing, text: "ما اسم الحساب أو رابطه على تيك توك؟", question: "ما اسم الحساب أو رابطه على تيك توك؟", type: "free", options: [], allowOther: true },
-            social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "فيسبوك", "يوتيوب", "إنستغرام", "أخرى"], allowOther: true },
+            social_platform_required: { id: firstMissing, text: "على أي منصة تريد البحث؟", question: "على أي منصة تريد البحث؟", type: "single", options: ["تيك توك", "فيسبوك", "يوتيوب", "منصة X", "إنستغرام", "أخرى"], allowOther: true },
             social_time_required: { id: firstMissing, text: windowQuestion().text, question: windowQuestion().text, type: "single", options: [...WINDOW_OPTIONS_AR], allowOther: true },
             social_topic_required: { id: firstMissing, text: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", question: "ما الموضوع أو الكلمات التي تريد البحث عنها؟", type: "free", options: [], allowOther: true },
             social_comment_target_required: socialTaskQuestion("social_comment_target_required", socialIntent.platform),
@@ -3853,7 +3866,7 @@ export class ChatHandler {
 
         if (platformCheck.valid && planValidation.valid && planOutput) {
           const peopleGate = routePeopleAlternative(planOutput, brief, validationCaps, conversationRequestText);
-          const platformGate = routeUnavailablePlatformRequest(planOutput, conversationRequestText);
+          const platformGate = routeUnavailablePlatformRequest(planOutput, conversationRequestText, planItems);
           const unavailableGate = peopleGate.type === "refuse" ? peopleGate : platformGate;
           if (unavailableGate.type === "refuse") {
             output = unavailableGate;

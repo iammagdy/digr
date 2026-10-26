@@ -3,6 +3,7 @@ import { detectSocialIntent, getMissingSocialTaskInputs, socialSubjectText, want
 import { consultantIntroAr } from "../src/lib/consultantCopy";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { createChatDb } from "./helpers/chatSession";
+import { X_COMMENTS_UNAVAILABLE_AR } from "../src/lib/socialDiscoveryCard";
 
 /**
  * «Posts and their replies» on X is one posts collection. The word «ردود» used to make it a comments request, and X has no
@@ -62,9 +63,11 @@ describe("through the chat handler (model stubbed to throw)", () => {
     expect(JSON.stringify(reply.planQuote.items[0].params)).not.toMatch(/ردود/);
   });
 
-  it("a comments request on X still asks the platform question (X has no comments)", async () => {
+  it("a comments request on X is told once that X has no comments service: no platform question (the platform was named), no plan, nothing held", async () => {
     const reply = await run("عايز ١٠٠ تعليق على إكس عن ماتش الأهلي آخر شهر");
-    expect(reply.outputType).toBe("ask_clarification");
-    expect(reply.clarificationItems.map((q: any) => q.id)).toEqual(["social_platform_required"]);
+    expect(reply.outputType).toBe("answer_question");
+    expect(reply.contentAr).toBe(X_COMMENTS_UNAVAILABLE_AR);
+    expect(reply.clarificationItems ?? []).toEqual([]);
+    expect(reply.planQuote).toBeUndefined();
   });
 });

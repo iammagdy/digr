@@ -1139,6 +1139,8 @@ export default function ChatWorkspacePage() {
     }
     if (!isCompany && !slug.includes("people") && cleanVal && cleanVal !== "[object Object]") {
       const isPostOrUrl = slug.includes("post") || slug.includes("comment") || slug.includes("video");
+      // An X account plan (a channel, no keyword) is edited through its account, a link included; writing the field as a keyword or a link made it another kind of search.
+      const isAccountPlan = slug === "social-x-posts" && Boolean(primaryItem.params && typeof (primaryItem.params as Record<string, unknown>).channel === "string" && !("query" in primaryItem.params) && !("keyword" in primaryItem.params));
 
       if (isProfile) {
         operations.push({
@@ -1147,7 +1149,7 @@ export default function ChatWorkspacePage() {
           key: "username",
           value: cleanVal.replace(/^@/, "").trim(),
         });
-      } else if (isPostOrUrl && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
+      } else if (isPostOrUrl && !isAccountPlan && (cleanVal.startsWith("http://") || cleanVal.startsWith("https://"))) {
         const urlKey = slug.includes("youtube") ? "videoUrl" : slug.includes("reddit") ? "postUrl" : "url";
         operations.push({
           action: "set_param",
@@ -1156,7 +1158,7 @@ export default function ChatWorkspacePage() {
           value: cleanVal,
         });
       } else {
-        const paramKey = primaryItem.params && "keyword" in primaryItem.params ? "keyword" : "query";
+        const paramKey = isAccountPlan ? "channel" : primaryItem.params && "keyword" in primaryItem.params ? "keyword" : "query";
         operations.push({
           action: "set_param",
           capabilitySlug: slug,

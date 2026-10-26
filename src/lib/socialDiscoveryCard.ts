@@ -238,6 +238,15 @@ export function socialDiscoveryIntroAr(rawText: string, context: DiscoveryContex
 /** Said once when the name typed after «أخرى» is not a platform this service reads. No plan, no hold, no balance. */
 export const UNSUPPORTED_PLATFORM_AR = "عذرًا، هذه المنصة غير متاحة عندنا الآن، ولم أبدأ أي بحث ولم يُحجز أي رصيد. المنصات المتاحة: تيك توك، فيسبوك، يوتيوب، ومنصة X. اختر إحداها لأجهز لك الخطة.";
 
+/** X has no service that reads the comments of a post. Said once, before any plan, when comments are asked on X: nothing is searched, quoted or held. */
+export const X_COMMENTS_UNAVAILABLE_AR = "عذرًا، تعليقات منشورات منصة X غير متاحة عندنا الآن، ولم أبدأ أي بحث ولم يُحجز أي رصيد. المتاح على منصة X هو المنشورات نفسها مع ردودها إن أعادها المصدر، فأعد طلبك بدون التعليقات لأجهز لك الخطة.";
+
+/** A plan for an X request that only another service could run is never shown: said once, nothing held. */
+export const X_REQUEST_NOT_SERVED_AR = "عذرًا، لا توجد عندنا خدمة تنفّذ هذا الطلب على منصة X، ولم أبدأ أي بحث ولم يُحجز أي رصيد. المتاح على منصة X هو منشورات حساب واحد أو منشورات موضوع محدد، فأعد صياغة طلبك لأجهز لك الخطة.";
+
+/** An account's posts are read one account at a time: a request that names several accounts is told so, once, before any plan. */
+export const X_ONE_ACCOUNT_AR = "عذرًا، أقرأ منشورات حساب واحد على منصة X في كل طلب، ولم أبدأ أي بحث ولم يُحجز أي رصيد. أرسل اسم حساب واحد لأجهز لك الخطة، ثم اطلب الحساب الآخر في طلب منفصل.";
+
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PLATFORM_LABEL_RE = new RegExp(`${escapeRe(CLARIFICATION_ANSWER_LABELS.social_platform_required)}\\s*:\\s*(?:أخرى|اخرى)(?![\\p{L}])`, "u");
 const OTHER_LABEL_RE = new RegExp(`${escapeRe(CLARIFICATION_ANSWER_LABELS.social_platform_other_required)}\\s*:`, "u");
@@ -261,7 +270,7 @@ export function platformFollowUpStateAr(rawText: string): "asked" | "answered" |
 export const FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR = "على فيسبوك البحث بالموضوع يعيد التعليقات فقط، ولا توجد عندنا خدمة لمنشورات بلا تعليقات بالموضوع، فاختر «نعم، مع التعليقات» أو أرسل رابط صفحة عامة لقراءة منشوراتها، ولم يُحجز أي رصيد.";
 
 /** A platform name typed as the answer to the platform question that no service of ours reads. The supported names are the four we serve. */
-const SUPPORTED_PLATFORM_ANSWER_RE = /تيك\s*توك|tiktok|فيسبوك|فيس\s*بوك|facebook|يوتيوب|youtube|منصة\s*x|\bx\b|إكس|اكس|تويتر|twitter/iu;
+const SUPPORTED_PLATFORM_ANSWER_RE = /تيك\s*توك|tiktok|فيسبوك|فيس\s*بوك|facebook|يوتيوب|youtube|منصة\s*x|\bx\b|إكس|اكس|أكس|تويتر|twitter/iu;
 
 /**
  * True when the LAST platform name given names a platform this service does not read (typed «سناب شات», «انستجرام», …).

@@ -11,6 +11,7 @@ import { FACEBOOK_REPORT_ENABLED } from "./facebookReport/registry";
 import { extractNumberFromText, isNumberWord } from "./arabicNumbers";
 import { normalizeDigits } from "./arabicDigits";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
+import { X_PLATFORM_NAME_SOURCE } from "./xPlatform";
 
 
 export type SocialPlatformId = "facebook" | "youtube" | "tiktok" | "instagram" | "x" | "reddit" | "linkedin";
@@ -31,7 +32,7 @@ const PLATFORM_RES: Array<[SocialPlatformId, RegExp]> = [
   ["youtube", /يوتيوب|يوتوب|اليوتيوب|youtube|youtu\.be|\bshorts?\b|شورتس/iu],
   ["facebook", /فيسبوك|فيس\s*بوك|الفيس(?![\p{L}])|فيس(?![\p{L}])|facebook|\bfb\b|fb\.watch/iu],
   ["instagram", /انستغرام|إنستغرام|انستجرام|إنستجرام|انستا(?![\p{L}])|instagram|\binsta\b/iu],
-  ["x", /تويتر|تغريد|منصة\s*(?:x|إكس|اكس)|(?:على|علي|في|من)\s+(?:إكس|اكس)(?![\p{L}])|twitter|\bx\b|\bx\.com\b/iu],
+  ["x", new RegExp(`${X_PLATFORM_NAME_SOURCE}|\\bx\\b`, "iu")],
   ["reddit", /ريديت|reddit/iu],
   ["linkedin", /لينكد\s*إن|لينكدإن|لينكدان|linkedin/iu],
 ];
@@ -64,6 +65,13 @@ const POST_WORDS_RE = /بوست|بوستات|منشور|منشورات|posts?/iu
 const X_POST_WORDS_RE = /تغريدة|تغريدات|تويتة|تويتات|تويت|tweets?/iu;
 const VIDEO_WORDS_RE = /فيديو|فيديوهات|مقطع|مقاطع|ريلز|ريل|شورتس|videos?|reels?|shorts?/iu;
 const CHANNEL_WORDS_RE = /قناة|قنوات|قناه|حساب|channel/iu;
+/**
+ * On X, «من الصفحة الرسمية لوزارة…», «من حساب …», «نشرها حساب …»: the posts are FROM an account, so the account is the scope, never a topic made of its description.
+ * «عن حساب» is not here: it says the posts are ABOUT an account.
+ */
+const X_ACCOUNT_SCOPE_RE = /(?:^|[\s،,])(?:من|صادرة?\s+(?:من|عن))\s+(?:ال)?(?:صفحة|صفحه|حساب)(?![\p{L}])|(?:^|[\s،,])(?:ال)?(?:صفحة|صفحه|حساب)\s+(?:ال)?رسمي[ةه]?(?![\p{L}])|نشر(?:ها|ه|ته|تها)\s+(?:حساب|صفحة)/u;
+/** The typed or tapped answer of the X account question («اسم الحساب المطلوب: SaudiMOH»), with or without «@». */
+const X_ACCOUNT_ANSWER_RE = /اسم الحساب المطلوب\s*:\s*@?([A-Za-z0-9_]{1,15})(?![A-Za-z0-9_])/u;
 
 export interface SocialUrl {
   platform: SocialPlatformId | null;
@@ -96,6 +104,9 @@ export function extractUrls(text: string): SocialUrl[] {
   return found;
 }
 
+/** First path segments of x.com that are pages of the site, never an account. */
+export const X_RESERVED_PATHS = new Set(["home", "search", "explore", "i", "hashtag", "settings", "notifications", "messages", "intent", "share", "login", "signup", "tos", "privacy", "compose"]);
+
 function classifyUrl(platform: SocialPlatformId | null, host: string, path: string): Pick<SocialUrl, "kind" | "id"> {
   if (platform === "youtube") {
     const watch = /[?&]v=([\w-]{11})/.exec(path)?.[1];
@@ -111,6 +122,10 @@ function classifyUrl(platform: SocialPlatformId | null, host: string, path: stri
     if (/^vm\.|^vt\./.test(host)) return { kind: "video" };
     const handle = /^\/@([\w.]{2,30})\/?(?:\?|$)/.exec(path)?.[1];
     if (handle) return { kind: "channel", id: handle };
+  }
+  if (platform === "x") {
+    const handle = /^\/([A-Za-z0-9_]{1,15})\/?(?:\?|$)/.exec(path)?.[1];
+    if (handle && !X_RESERVED_PATHS.has(handle.toLowerCase())) return { kind: "channel", id: handle };
   }
   if (platform === "facebook") {
     if (/\/(?:posts|videos|reel|watch|permalink|photo|story)[/.?]|story_fbid=|[?&]v=\d+|\/share\/[pvr]\//.test(path)) return { kind: "post" };
@@ -212,12 +227,22 @@ export function commentsAnsweredNo(text: string): boolean {
   return no >= 0 && no > lastAt(COMMENTS_YES_ANSWER_RE);
 }
 
+/**
+ * «وليست تعليقات», «لا فيديوهات ولا تعليقات», «بدون تعليقات»: a comment word the customer turned away is not a request for comments. Read for X only
+ * (X has no comments service, so a refused comment word must not send a posts request to the comments route).
+ */
+const NEGATED_COMMENT_RE = /(?:^|[\s،,؛.:])(?:وليست|ليست|وليس|ليس|ولا|لا|بدون|وبدون|دون|ودون|بلا|وبلا|غير|مش)(?:\s+(?:أريد|اريد|أبغى|ابغى|أطلب|اطلب|أحتاج|احتاج))?\s+(?:ال)?(?:تعليقات|تعليق|كومنتات|كومنت|كومنتس|آراء|اراء)(?![\p{L}])/gu;
+
+export function withoutNegatedCommentWords(text: string): string {
+  return (text || "").replace(NEGATED_COMMENT_RE, " ");
+}
+
 export function detectSocialIntent(text: string): SocialIntent {
   const body = text || "";
   const urls = extractUrls(body);
   const platform = detectPlatform(body, urls);
   // On X, «posts and their replies» is one posts collection; only the other comment words make it a comments request.
-  const wantsComments = (platform === "x" ? COMMENT_WORDS_NO_REPLIES_RE : COMMENT_WORDS_RE).test(body) && !commentsAnsweredNo(body);
+  const wantsComments = (platform === "x" ? COMMENT_WORDS_NO_REPLIES_RE.test(withoutNegatedCommentWords(body)) : COMMENT_WORDS_RE.test(body)) && !commentsAnsweredNo(body);
   // A trend word with a topic («الأكثر انتشارًا عن كرة السلة») asks for the popular videos OF that topic: a topic search. The trending feed
   // has no topic filter, so routing it there would drop the topic and read unrelated videos. Trend words alone stay the trending feed.
   const trendWithTopic = TREND_WORDS_RE.test(body) && namesTopicBesidesTrend(body);
@@ -225,9 +250,9 @@ export function detectSocialIntent(text: string): SocialIntent {
   const wantsPosts = POST_WORDS_RE.test(body);
   const wantsXTweets = platform === "x" && (X_POST_WORDS_RE.test(body) || POST_WORDS_RE.test(body));
   const wantsVideos = VIDEO_WORDS_RE.test(body);
-  const wantsChannel = CHANNEL_WORDS_RE.test(body);
+  const wantsChannel = CHANNEL_WORDS_RE.test(body) || (platform === "x" && X_ACCOUNT_SCOPE_RE.test(body));
   const targetUrl = urls.find((u) => u.kind === "video" || u.kind === "post") ?? null;
-  const channelRef = detectChannelRef(body, urls);
+  const channelRef = detectChannelRef(body, urls) ?? (platform === "x" && X_ACCOUNT_ANSWER_RE.exec(body)?.[1] ? `@${X_ACCOUNT_ANSWER_RE.exec(body)![1]}` : null);
 
   let task: SocialTask | null = null;
   let discover: SocialIntent["discover"] = null;
