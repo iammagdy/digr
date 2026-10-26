@@ -29,6 +29,10 @@ export interface TregCallResult {
   detail?: string;
   isRouteMaxCost: boolean;
   isPlatformBalanceLow: boolean;
+  /** The call was cut by OUR time limit: the source may have answered (and billed) after we stopped waiting. */
+  timedOut?: boolean;
+  /** What the FIRST call of an idempotent replay cost (header `X-Treg-Original-Cost-Micro`); a replay itself reports 0. */
+  originalCostMicro?: number;
 }
 
 /**
@@ -247,12 +251,15 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
       detail: errorMsg,
       isRouteMaxCost: false,
       isPlatformBalanceLow: false,
+      // AbortSignal.timeout rejects with a TimeoutError (a manual abort with an AbortError): either way we stopped waiting.
+      timedOut: netErr?.name === "TimeoutError" || netErr?.name === "AbortError",
     };
   }
 
   const latencyMs = Date.now() - startTime;
   if (resolvedKey) reportProviderHttpStatus("treg", response.status, resolvedKey.source);
   const costMicro = parseInt(response.headers.get("x-treg-cost-micro") || "0", 10);
+  const originalCostMicro = parseInt(response.headers.get("x-treg-original-cost-micro") || "0", 10);
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
   console.log(
@@ -332,5 +339,6 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     detail: sanitizedDetail,
     isRouteMaxCost,
     isPlatformBalanceLow,
+    ...(Number.isFinite(originalCostMicro) && originalCostMicro > 0 ? { originalCostMicro } : {}),
   };
 }

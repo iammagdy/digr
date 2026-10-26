@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../src/functions/shared/catalogClient", () => ({
   searchCatalog: vi.fn(async () => []),
@@ -80,6 +80,7 @@ const brief: any = { platforms: [], topics: [] };
 
 describe("decision makers are normal B2B work (owner decision D3)", () => {
   beforeEach(() => clearBriefCacheForTesting());
+  afterEach(() => { vi.unstubAllEnvs(); });
 
   it("the generic phrase already names who is wanted, so the roles question is not asked", () => {
     for (const text of ["5 شركات كهروميكانيكية في مصر مع صناع القرار وإيميلاتهم وأرقامهم", "٥ مدراء تنفيذيين لشركات برمجيات في السعودية", "five decision makers at solar companies in Germany"]) {
@@ -89,6 +90,8 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
   });
 
   it("routes the owner's exact Egyptian Arabic wording to people search with default email and phone fields", async () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774, which that cap would cut to two
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const text = "أنا عايز تلاتة صناع قرار في شركات الكهرباء والميكانيكا في مصر.";
     expect(isPeopleSearchRequest(text)).toBe(true);
     expect(requiredProfessionalContactFields(text)).toEqual(["work_email", "phone"]);
@@ -144,8 +147,8 @@ describe("decision makers are normal B2B work (owner decision D3)", () => {
     expect(res.contentAr).not.toMatch(/لا أستطيع|غير متاحة حالياً/);
     expect(res.planQuote.items[0].capabilitySlug).toBe("professional-people-search");
     expect(res.planQuote.items[0].targetVolumeMax).toBeLessThanOrEqual(5);
-    expect(res.planQuote.items[0].contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
-    expect(res.planQuote.items[0].unitPricePoints).toBe(193);
+    expect(res.planQuote.items[0].contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 120, phone: 55 });
+    expect(res.planQuote.items[0].unitPricePoints).toBe(258);
     expect(res.planQuote.items[0].params.country).toBe("EG");
     expect(res.planQuote.methodologyNotes).toContain(CONTACT_EXPECTATION_AR);
     // Customer text never names a provider, an endpoint, a currency in dollars or an English word.

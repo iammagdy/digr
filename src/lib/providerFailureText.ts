@@ -9,6 +9,8 @@ export const PROVIDER_TARGET_NOT_FOUND_AR = "الهدف المطلوب غير م
 export const PROVIDER_INPUT_REJECTED_AR = "تعذر معالجة مدخلات الطلب لدى المصدر.";
 export const PROVIDER_BUSY_AR = "المصدر مشغول حالياً بعد استنفاد محاولات الإعادة.";
 export const PROVIDER_GENERIC_FAILURE_AR = "تعذر استخراج البيانات من المصدر بعد عدة محاولات.";
+/** We stopped waiting for the source (its answer did not arrive in time): honest about what happened, and a retry may work. */
+export const PROVIDER_TIMEOUT_AR = "تأخر المصدر في الرد ولم يصلنا ردّه، ويمكنك إعادة المحاولة.";
 export const PROVIDER_INCOMPATIBLE_ANSWER_AR = "استجاب المصدر ببيانات غير متوافقة مع نوع البحث";
 
 /** Sentences whose cause is in the request itself: the source will answer the same again. */

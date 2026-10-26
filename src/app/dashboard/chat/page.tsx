@@ -1,6 +1,8 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
+import { markedInvalid } from "@/lib/contactVerification";
+import { PEOPLE_CAPABILITY_SLUG, peopleContactCounts, peopleDeliverySentenceAr } from "@/lib/peopleColumns";
 import { persistedFileShape } from "@/lib/fileShapeMessage";
 import { pickRestoredJobId } from "@/lib/jobs/restoredJob";
 import ReportProblemButton from "@/components/ReportProblemButton";
@@ -1984,6 +1986,16 @@ export default function ChatWorkspacePage() {
     activeJob && isTerminalJobStatus(activeJob.status) &&
     (activeJob.status === "failed" || (activeJob.requestedRows && activeJob.rowsCollected < activeJob.requestedRows)),
   );
+  // A decision-makers file says how many people carry each contact value (the count of «سجل» alone would hide that).
+  const peopleDeliverySentence = activeJob && jobFinished && extractedRecords.length > 0 && activeJob.templateSlug === PEOPLE_CAPABILITY_SLUG
+    ? peopleDeliverySentenceAr(
+        peopleContactCounts(extractedRecords as unknown as Array<Record<string, unknown>>, (row, field) => {
+          const value = String(row[field] ?? "").replace(/^'/, "").trim();
+          return value !== "" && value !== "غير متاح" && !markedInvalid(row[field === "phone" ? "phone_verification_status" : "work_email_verification_status"], true);
+        }),
+        activeJob.requestedRows,
+      )
+    : undefined;
   const filesNode = (
     <>
       {activeJob && jobNeedsReport && <ReportProblemButton jobId={activeJob.jobId} className="mt-3" />}
@@ -1991,6 +2003,7 @@ export default function ChatWorkspacePage() {
         <FilesSection
           rows={activeJob.rowsCollected}
           requested={activeJob.requestedRows}
+          deliverySentence={peopleDeliverySentence}
           charged={activeJob.chargedCredits}
           reserved={activeJob.reservedCredits}
           fileIds={activeJob.fileIds}
@@ -2168,6 +2181,7 @@ export default function ChatWorkspacePage() {
             ) : (
             <ResultsCanvas
               records={extractedRecords}
+              peopleDataset={activeJob?.templateSlug === PEOPLE_CAPABILITY_SLUG}
               profile={extractedProfile}
               jobId={activeJob?.jobId || null}
               jobStatus={activeJob?.status}

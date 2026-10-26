@@ -29,21 +29,21 @@ const SENTENCE = `الطلب الواحد يتسع حتى ${peopleCountAr(SIZING
 const textOf = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
 describe("D5: the sentence and its number", () => {
-  it("is built from the shared sizing function: three decision makers today, in the owner's own wording", () => {
-    expect(SIZING_NUMBER).toBe(3);
+  it("is built from the shared sizing function: two decision makers at the lowered cap of 600 (258 points a person), in the owner's own wording", () => {
+    expect(SIZING_NUMBER).toBe(2);
     expect(decisionMakersPerRequest()).toBe(SIZING_NUMBER);
     expect(decisionMakersPerRequestLine()).toBe(SENTENCE);
-    expect(SENTENCE).toBe("الطلب الواحد يتسع حتى ٣ صناع قرار؛ ويمكنك تقديم أكثر من طلب.");
+    expect(SENTENCE).toBe("الطلب الواحد يتسع حتى صانعي قرار؛ ويمكنك تقديم أكثر من طلب.");
   });
 
   it("follows the sizing function when the limit moves (the live daily limit lowers it), and never states a zero as a promise", () => {
-    expect(decisionMakersPerRequest({ dailyCapPoints: 400 })).toBe(Math.floor(400 / person));
-    expect(decisionMakersPerRequestLine({ dailyCapPoints: 400 })).toBe("الطلب الواحد يتسع حتى صانعي قرار؛ ويمكنك تقديم أكثر من طلب.");
-    expect(decisionMakersPerRequestLine({ dailyCapPoints: 200 })).toBe("الطلب الواحد يتسع حتى صانع قرار واحد؛ ويمكنك تقديم أكثر من طلب.");
-    expect(decisionMakersPerRequestLine({ dailyCapPoints: 100 })).not.toContain("يتسع حتى");
+    expect(decisionMakersPerRequest({ dailyCapPoints: 600 })).toBe(Math.floor(600 / person));
+    expect(decisionMakersPerRequestLine({ dailyCapPoints: 600 })).toBe("الطلب الواحد يتسع حتى صانعي قرار؛ ويمكنك تقديم أكثر من طلب.");
+    expect(decisionMakersPerRequestLine({ dailyCapPoints: 300 })).toBe("الطلب الواحد يتسع حتى صانع قرار واحد؛ ويمكنك تقديم أكثر من طلب.");
+    expect(decisionMakersPerRequestLine({ dailyCapPoints: 200 })).not.toContain("يتسع حتى");
     expect(decisionMakersPerRequestLineAr(0)).not.toMatch(/[0-9]/);
     // fewer contact fields cost less per person, so one request holds more people
-    expect(decisionMakersPerRequest({ contactFields: ["work_email"] })).toBeGreaterThan(SIZING_NUMBER);
+    expect(decisionMakersPerRequest({ contactFields: ["phone"] })).toBeGreaterThan(SIZING_NUMBER);
   });
 
   it("people in correct Arabic", () => {

@@ -31,7 +31,7 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type Conta
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
-import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit"; import { capacityRefusalAr, LARGE_PLAN_FROM_POINTS, PlanRefusalError } from "../../lib/capacityRefusal";
+import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit"; import { capacityRefusalAr, LARGE_PLAN_FROM_POINTS, PlanRefusalError } from "../../lib/capacityRefusal"; import { DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD } from "../../lib/server/decisionMakerSpend";
 import { multiProviderEnabled } from "../../lib/multiProvider/flag";
 import { isChainSlug } from "../../lib/multiProvider/routes";
 import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
@@ -744,8 +744,9 @@ export async function createAndSaveManagedQuote(
       (it as any).requiredContactFields = requestedFields;
       (it as any).contactUnitPricesPoints = contactUnitPricesPoints;
       (it as any).contactPricingDescriptionAr = "السعر الأساسي للسجل المهني، ويُضاف سعر البريد المهني والهاتف المكتبي عند إرجاع كل حقل مطلوب.";
+      // The capacity gate counts the worst case of a work email: the lookup may bill up to its own ceiling (0.02), whatever the catalog's price says.
       itemProviderCostUsd = baseCatalogPriceUsd +
-        (requestedFields.includes("work_email") ? emailCatalog.catalogPriceUsd : 0) +
+        (requestedFields.includes("work_email") ? Math.max(emailCatalog.catalogPriceUsd, DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD) : 0) +
         (requestedFields.includes("phone") ? phoneCatalog.catalogPriceUsd : 0);
     }
     const itemVolume = Math.max(1, it.targetVolumeMax || 1);

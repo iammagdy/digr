@@ -1,3 +1,4 @@
+import { collectionCompleteBeforeSettlement } from "@/lib/server/settlementPrecheck";
 import { pointsAr } from "@/lib/pointsFormat";
 import { countPlainAr, duplicateRecordsAr } from "@/lib/planCounts";
 import { JOB_MAX_POINTS_CAP } from "../../../../lib/jobPointsCap";
@@ -5,6 +6,7 @@ import { usesPostLevelReview } from "../../../../lib/server/postLevelReview";
 import { CALL_CAP_NOTE_AR, evaluateProviderCallCap, maxPagesForJob, POST_REVIEW_BUDGET_NOTE_AR, type CallCapReason } from "../../../../lib/server/providerCallCaps";
 import { applyAdvisoryToReviews, applyStrictAdvisory, getRowAdvisor, REVIEW_CALL_COST_ESTIMATE_USD, REVIEW_STOPPED_LOW_YIELD_REASON_AR, REVIEW_DAILY_CEILING_USD, reviewStopForLowYield, socialReviewCapUsd, strictSocialReviewForcedByTests, UNREVIEWED_BY_BUDGET_REASON_AR } from "../../../../lib/server/rowReviewAdvisor";
 import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "../../../../lib/server/sampledReview";
+import { LOOKUP_LOG_EVENT_TYPE } from "../../../../lib/reviewCostEvent";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
 import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
@@ -82,7 +84,9 @@ import {
 } from "../../../../lib/planParameters";
 import { isCompanyDirectoryJob } from "../../../../lib/server/directoryCapability";
 import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../../../../lib/server/researchRelevanceGate";
-import { decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
+import { contactValueDelivered, decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
+import { peopleContactCounts, peopleDeliverySentenceAr, peopleShortfallReasonAr } from "../../../../lib/peopleColumns";
+import { peopleDeliveryRow } from "../../../../lib/server/peopleDelivery";
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "../../../../functions/shared/peopleSettlementReadiness";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
 import { customerEmailJobTitle, customerFacingCapabilityLabel } from "../../../../lib/customerFacingRequestLabels";
@@ -96,6 +100,7 @@ import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
 import { DATE_EXCLUDED_LABEL, RECEIVED_SO_FAR_LABEL } from "../../../../lib/activityCounts";
 import {
   DECISION_MAKER_ROUTE_COST_CAP_USD,
+  decisionMakerJobSpendCeilingUsd,
   estimateDecisionMakerChunkSpendUsd,
   readDecisionMakerSpendToDate,
   remainingDecisionMakerSpendUsd,
@@ -519,7 +524,7 @@ export async function POST(req: NextRequest) {
 
     const isPeopleJob = spec.capabilitySlug === "professional-people-search";
     const decisionMakerSpendBudgetUsd = isPeopleJob
-      ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId))
+      ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId), decisionMakerJobSpendCeilingUsd(targetMax))
       : undefined;
 
     // A directory search is billed for every record REQUESTED on the page, matched or not: the estimate (and the daily cap
@@ -850,6 +855,21 @@ export async function POST(req: NextRequest) {
     const adapterResult = providerFailedAfterDelivery ? noProviderCall : rawAdapterResult;
     // What the reading of the posts of this chunk found (Facebook keyword service): kept for the one sentence that says why fewer comments arrived.
     recordPostReads(chunkDiagnostic, rawAdapterResult.postReads);
+    // Decision makers: one internal row says what each email and phone lookup did (never a name, email, phone, link or token), so the reason a
+    // lookup found nothing can be read from the database afterwards. Customers never see it (its own event type).
+    if (isPeopleJob && rawAdapterResult.lookupLog && userId) {
+      try {
+        await adminClient.from("job_events").insert({
+          job_id: jobId,
+          user_id: userId,
+          message: JSON.stringify({ step: currentStep, summary: rawAdapterResult.lookupLog.summary, lookups: rawAdapterResult.lookupLog.entries, rows: rawAdapterResult.lookupLog.rows ?? [] }),
+          units: rawAdapterResult.lookupLog.entries.length,
+          event_type: LOOKUP_LOG_EVENT_TYPE,
+        });
+      } catch (logErr: any) {
+        console.warn("[worker:lookup_log_insert_warning]", logErr?.message || "");
+      }
+    }
     if (providerFailedAfterDelivery) {
       console.warn(`[worker:provider_failed_after_delivery] jobId=${jobId} delivered=${effectiveDelivered}`);
     }
@@ -1475,7 +1495,7 @@ export async function POST(req: NextRequest) {
         } else if (rev.decision === "uncertain" && budgetUnreviewed.has(idx)) {
           unreviewedRows.push({ ...originalRow, _relevance_status: "غير مراجَع", _relevance_reason: rev.reasonAr });
         } else if (rev.decision === "uncertain") {
-          uncertainRows.push({ ...originalRow, _relevance_status: "قيد المراجعة والتدقيق", _relevance_reason: rev.reasonAr });
+          uncertainRows.push({ ...originalRow, _relevance_status: "قيد المراجعة والتدقيق", _relevance_reason: rev.reasonAr, ...(rev.reasonCode ? { _relevance_code: rev.reasonCode } : {}) });
         } else {
           excludedRows.push({ ...originalRow, _relevance_status: "غير مطابق", _relevance_reason: rev.reasonAr });
         }
@@ -2003,7 +2023,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const finalRows = collectedRows;
+      // A decision-makers file holds PEOPLE in the shared people columns (the settlement reads the same contact keys from these rows).
+      const finalRows = isPeopleJob ? collectedRows.map(peopleDeliveryRow) : collectedRows;
 
       // The Facebook topic report: its posts, axes and counts are the record the LAST chunk saved. Without it the report cannot be built, and nothing is charged.
       const reportRecord: ReportState | null = isReportJob && reportStore ? await reportStore.load(currentStep) : null;
@@ -2023,7 +2044,9 @@ export async function POST(req: NextRequest) {
         (spec.capabilitySlug.endsWith("-profile") || spec.capabilitySlug.includes("profile")) &&
         !finalRows.some((r) => r.company_name || r.cr_number);
 
+      // A decision-makers file is a file of PEOPLE: its rows carry a company name too, which must not turn it into a company file.
       const isCompanyResearch =
+        !isPeopleJob &&
         !isProfileResearch &&
         (spec.capabilitySlug.includes("company") ||
          spec.capabilitySlug.includes("companies") ||
@@ -2091,6 +2114,8 @@ export async function POST(req: NextRequest) {
 
       const cleanTitle = reportPayload
         ? `تقرير فيسبوك: ${reportPayload.request.topic}`
+        : isPeopleJob
+        ? `صناع القرار في ${detectedCountry || "النطاق المطلوب"}`
         : isCompanyResearch
         ? `شركات ${detectedIndustry.arabicLabel !== "قواعد بيانات الشركات" ? detectedIndustry.arabicLabel : "وأعمال"} في ${detectedCountry || "النطاق المطلوب"}`
         : socialCapability
@@ -2109,7 +2134,7 @@ export async function POST(req: NextRequest) {
           collectedAt: completedAtIso,
           rowsCount: finalRows.length,
           targetRequested: targetMax,
-          entityType: isCompanyResearch ? "companies" : undefined,
+          entityType: isPeopleJob ? "people" : isCompanyResearch ? "companies" : undefined,
           exclusionApplied: Boolean(spec.params?.exclusionRules),
           methodology: methodologySummary,
           reportContext,
@@ -2315,12 +2340,7 @@ export async function POST(req: NextRequest) {
         .select("status, current_cursor, delivered_units, target_volume_max")
         .eq("id", jobId)
         .maybeSingle();
-      if (
-        persistedCompletionErr ||
-        persistedCompletion?.status !== "running" ||
-        persistedCompletion?.current_cursor !== "completed" ||
-        Number(persistedCompletion?.delivered_units || 0) !== Number(recordedDeliveredUnits)
-      ) {
+      if (!collectionCompleteBeforeSettlement(persistedCompletion, persistedCompletionErr, recordedDeliveredUnits)) {
         throw new Error("تعذر التحقق من اكتمال جمع البيانات قبل التسوية.");
       }
 
@@ -2378,7 +2398,9 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
+          message: isPeopleJob
+            ? `${peopleDeliverySentenceAr(peopleContactCounts(finalRows, (row, field) => contactValueDelivered(row, field)), targetMax)}، وحُفظت ملفات النتائج.`
+            : `تم إكمال استخراج ${countPlainAr(finalRows.length, "records")} بنجاح وحفظ ملفات النتائج.`,
           units: finalRows.length,
           event_type: "progress",
           created_at: completedAtIso,
@@ -2412,8 +2434,18 @@ export async function POST(req: NextRequest) {
                 commentsNotReturned: reportPayload.collection.commentsNotReturned,
               })
             : null;
+          const reviewCodes = collectedUncertainRows.map((row) => String(row?._relevance_code || ""));
+          const peopleShortfall = isPeopleJob && !providerFailedAfterDelivery
+            ? peopleShortfallReasonAr({
+                noContact: reviewCodes.filter((code) => code === "no_contact").length,
+                outside: reviewCodes.filter((code) => code === "out_of_scope").length,
+                noEvidence: reviewCodes.filter((code) => code === "no_evidence").length,
+              })
+            : null;
           const reason = reportShortfall
             ? reportShortfall
+            : peopleShortfall
+            ? peopleShortfall
             : keywordShortfall
             ? `${keywordShortfall}${callCapReason && callCapReason !== "source_repeats" ? ` ${stopNoteAr(callCapReason)}` : ""}`
             : providerFailedAfterDelivery

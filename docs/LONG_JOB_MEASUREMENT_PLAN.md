@@ -33,7 +33,7 @@ so a result can be checked by hand.
 ## 3. The seven small requests for the tester (one per source)
 
 The owner asked for each request to quote **at most 20 points** and the whole set to cost the provider **under 0.02 USD**. These two limits now both hold for most requests: the customer price per record is cost per delivered record x 5,500, 0.12 to 3.45 points for social data (0.275 a comment, 0.11715 an X post, 3.4485 a Facebook page post) and 3.168 a company
-(`src/lib/measurementPlan.ts` asks the public quote function, it sets nothing): 30 YouTube comments quote 10 points. The channels mission (38), the Facebook page posts (80) and decision makers (222) still quote above 20. So each request is given in two forms: **A, as specified** (the caps the owner listed, with the real quote), and **B, the largest
+(`src/lib/measurementPlan.ts` asks the public quote function, it sets nothing): 30 YouTube comments quote 10 points. The channels mission (38), the Facebook page posts (80) and decision makers (297) still quote above 20. So each request is given in two forms: **A, as specified** (the caps the owner listed, with the real quote), and **B, the largest
 volume that stays within 20 points** (too small to measure records per call, useful only as a check of the price and the flow). Provider USD is an **estimate** from the catalog's price per call and records per call (not a measurement).
 The customer points are the tester's account's points, not provider spend.
 
@@ -45,14 +45,14 @@ The customer points are the tester's account's points, not provider spend.
 | 4 | منشورات إكس عن حدث | استخرج ١٠٠ منشور عن [حدث محدد] من منصة إكس | 100 | 14 | 12 (0.11715 a post) | 0.0015 (2) | 100 | 14 | 12 |
 | 5 | منشورات صفحة فيسبوك | استخرج آخر ٢٠ منشورًا من صفحة [اسم الصفحة] على فيسبوك بين [تاريخ البداية] و[تاريخ النهاية] | 20 | 80 | 69 (3.4485 a post) | 0.0040 (2) | 5 | 20 | 18 |
 | 6 | شركات | ابحث عن ٥ شركات [نشاط] في [مدينة] | 5 | 19 | 16 (3.168 a company) | 0.00288 (1) | 5 | 19 | 16 |
-| 7 | صناع القرار | ابحث عن صانع قرار واحد في شركة [اسم الشركة] | 1 | 222 | 0, 138 or 193 (see below) | 0.00076 (1) | none: the smallest quote is 222 | n/a | n/a |
+| 7 | صناع القرار | ابحث عن صانع قرار واحد في شركة [اسم الشركة] | 1 | 297 | 0, 138, 203 or 258 (see below) | 0.00076 (1) | none: the smallest quote is 297 | n/a | n/a |
 
 **Total expected provider spend as specified: 0.02134 USD, which is above the 0.02 limit** (the mission is 0.0084 of it). **Recommended set: request 3 with two videos per channel** ("استخرج تعليقات أعلى فيديوهين من قناتين على تيك توك، حتى ٢٠ تعليقًا لكل فيديو: [القناة الأولى] و[القناة الثانية]";
 80 comments, quote 26 points, settles 22 if all arrive, 6 calls, 0.0064 USD), which brings the total to **0.01934 USD**, under the limit. The other six stay as specified.
 
 What each settles (the rule is the existing one: charge = ceil(delivered unique matching units x unit price), never above the quote, nothing before approval):
 - comments and posts, companies: `ceil(delivered x unit price)` with the unit prices above; fewer records than asked settle less, and the rest of the quote returns;
-- decision makers (one person, both contact fields asked): 0 if neither a work e-mail nor a phone arrives, **138** if one of them arrives (83 for the person plus 55), **193** if both arrive (83 + 55 + 55); the quote is 222.
+- decision makers (one person, both contact fields asked): 0 if neither a work e-mail nor a phone arrives, **138** if only a phone arrives (83 for the person plus 55), **203** if only a work e-mail arrives (83 plus 120), **258** if both arrive (83 + 120 + 55); the quote is 297 (ceil(258 x 1.15)).
 
 What to read for each (beyond the settled points): the page lines of the request (they show the records per page and the time), `docs/proposals/09_measurement_query.sql` afterwards for the cost rows, and the provider's usage panel for the number of calls
 and their USD before and after (the difference is the real spend of the request: it must be at or under the estimate in the table; if a request costs more than twice its estimate, stop the series).

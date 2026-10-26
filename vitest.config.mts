@@ -12,6 +12,7 @@ export default defineConfig({
     include: ["tests/**/*.test.{ts,tsx}"],
     exclude: ["**/node_modules/**", "**/dist/**", "**/supabase/functions/**"],
     testTimeout: 30000,
+    setupFiles: ["tests/setup/mailDomain.ts"],
     // The suites written before the cap was raised assume the 600-point cap. The cap can be LOWERED by this variable (`effectiveJobPointsCap`, read by every surface that decides
     // what a plan may hold), so they run lowered to 600 and keep every one of their assertions. The 25,000 default is tested where it matters with the variable cleared
     // (`vi.stubEnv("JOB_MAX_POINTS_CAP", "")`: tests/cap-25000-default.test.ts, tests/phase5-discovery-and-honest-limits.test.ts) and on the real PostgreSQL replica (tests/sql/job-cap-25000.replica.test.ts, tests/replica-money-properties.test.ts).

@@ -15,6 +15,7 @@ import { dayLabel } from "@/lib/dayLabel";
 import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
+import { resultsReleasable } from "@/lib/producedFormats";
 import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, deliveredNothing, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
@@ -389,7 +390,8 @@ export default function RequestsPage() {
           const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           // A finished request that delivered no record has no data file to offer: zero files, said once (the same rule as the results panel).
-          const nothingDelivered = deliveredNothing({ kind: k, delivered: rows, deliveredKnown: j.deliveredKnown });
+          // A request that did not settle and charge offers no file either, whatever it saved before settlement (resultsReleasable).
+          const nothingDelivered = deliveredNothing({ kind: k, delivered: rows, deliveredKnown: j.deliveredKnown }) || !resultsReleasable({ status: j.status, charged_credits: j.chargedCredits });
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
           const note = k === "running" ? `جارٍ الجمع — ${closePageLineAr(driverMode)}`

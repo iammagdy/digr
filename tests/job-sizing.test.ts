@@ -123,10 +123,10 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     expect(limitedByServiceCeiling(base)).toBe(false);
   });
 
-  it("decision makers: the public estimate says what the real quote says (3 people, 600 points held), for any size asked", async () => {
+  it("decision makers: the public estimate says what the real quote says (2 people at the lowered cap of 600), for any size asked", async () => {
     for (const asked of ["١٠٤", "٢٠٠"]) {
       const plan = await writerPeople(asked);
-      expect(plan.targetVolumeMax).toBe(3);
+      expect(plan.targetVolumeMax).toBe(2);
       const estimate: any = estimateMission({ kind: "people", volume: Number(asked.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))) });
       expect(estimate.maxVolumeInOneJob).toBe(plan.targetVolumeMax);
       expect(estimateMission({ kind: "people", volume: plan.targetVolumeMax })).toMatchObject({ reservePoints: plan.quotedPoints, fitsInOneJob: true, jobsNeeded: 1 });
@@ -176,11 +176,11 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     }
   });
 
-  it("decision makers are priced per person plus both contact fields in the detailed calculator, as the writer does (193, not the base 83)", () => {
+  it("decision makers are priced per person plus both contact fields in the detailed calculator, as the writer does (258, not the base 83)", () => {
     const detailed = computePublicCalculatorQuote("professional-people-search", 3, 3);
-    expect(detailed.unitPricePoints).toBe(83 + 55 + 55);
-    expect(detailed.maxCappedVolume).toBe(3);
-    expect(detailed.cappedReservedPoints).toBe(600);
+    expect(detailed.unitPricePoints).toBe(83 + 120 + 55);
+    expect(detailed.maxCappedVolume).toBe(2);
+    expect(detailed.cappedReservedPoints).toBe(594);
   });
 
   it("the segment pages size one job exactly as the estimate box does, at the default and at a live limit", () => {

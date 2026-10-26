@@ -3,7 +3,7 @@ import { z } from "zod";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
 import { applyArtifactEdit, ArtifactEditOperationSchema, type ArtifactResultPayload } from "@/functions/shared/artifactEditing";
 import { artifactVersionRowId } from "@/functions/shared/artifactVersions";
-import { producedFormats } from "@/lib/producedFormats";
+import { producedFormats, resultsReleasable } from "@/lib/producedFormats";
 import { generateCsvReport, generateExcelReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 
@@ -165,6 +165,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     if (job.user_id !== auth.userId) {
       return NextResponse.json({ success: false, error: "غير مصرح بعرض هذا الطلب." }, { status: 403 });
+    }
+
+    // A request that did not settle and charge lists no result versions (their files were saved before settlement).
+    if (!resultsReleasable(job)) {
+      return NextResponse.json({ success: true, historyAvailable: true, current: null, versions: [] });
     }
 
     try {

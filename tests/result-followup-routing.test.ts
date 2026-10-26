@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildResultFollowupReply, type PriorConversationMessage } from "../src/functions/shared/resultFollowup";
 import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../src/functions/shared/chatErrors";
 import { resultFileManifest } from "../src/lib/server/resultFileManifest";
@@ -14,7 +14,10 @@ const quote = {
 };
 
 describe("company result follow-up conversation", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
   it("answers the exact repeated email complaint conversationally without posting the same plan again", () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774 (hold 891), which that cap would cut to 600
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const transcript: PriorConversationMessage[] = [
       { role: "user", content: "عايز ٣ شركات كهرباء في مصر", requestStatus: "accepted" },
       { role: "assistant", content: firstPlan, quote },
@@ -32,10 +35,10 @@ describe("company result follow-up conversation", () => {
     expect(reply).toBeTruthy();
     expect(reply).toContain("بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص");
     expect(reply).toContain("السجل الأساسي ٨٣ نقطة");
-    expect(reply).toContain("٥٥ للبريد المهني");
+    expect(reply).toContain("١٢٠ للبريد المهني");
     expect(reply).toContain("٥٥ للهاتف المكتبي");
-    expect(reply).toContain("السعر المتوقع ٥٧٩ نقطة");
-    expect(reply).toContain("الحجز المتوقع ٦٠٠ نقطة");
+    expect(reply).toContain("السعر المتوقع ٧٧٤ نقطة");
+    expect(reply).toContain("الحجز المتوقع ٨٩١ نقطة");
     expect(reply).toContain("هل تريد أن أجهز الخطة؟");
     expect(reply).not.toContain(firstPlan);
     expect(reply).not.toMatch(/[A-Za-z]|\p{Extended_Pictographic}/u);
@@ -61,6 +64,8 @@ describe("company result follow-up conversation", () => {
     ["completed job", "accepted", [{ role: "assistant", content: "تم إكمال البحث وحفظ الملف." }]],
     ["failed job", "quoted", [{ role: "assistant", content: "تعذر إكمال البحث، وأُعيدت النقاط المحجوزة." }]],
   ] as const)("answers both email follow-ups after a %s without returning a plan card", (_state, requestStatus, extraMessages) => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774 (hold 891), which that cap would cut to 600
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const transcript: PriorConversationMessage[] = [
       {
         role: "user",
@@ -78,7 +83,7 @@ describe("company result follow-up conversation", () => {
         targetVolume: 3,
       });
       expect(reply).toContain("بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص");
-      expect(reply).toContain("السعر المتوقع ٥٧٩ نقطة");
+      expect(reply).toContain("السعر المتوقع ٧٧٤ نقطة");
       expect(reply).toContain("هل تريد أن أجهز الخطة؟");
       expect(reply).not.toContain(firstPlan);
     }

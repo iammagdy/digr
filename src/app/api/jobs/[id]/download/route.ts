@@ -8,7 +8,7 @@ import {
 } from "@/functions/shared/fileGenerators";
 import { decodeFileSpec, validateFileSpec, type FileSpec } from "@/lib/fileSpec";
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
-import { deliveredNothing } from "@/lib/producedFormats";
+import { deliveredNothing, NO_RELEASABLE_RESULT_AR, resultsReleasable } from "@/lib/producedFormats";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
@@ -72,6 +72,11 @@ export async function GET(
         { success: false, error: "لا يوجد ملف لتحميله لأن هذا الطلب لم يُسلّم أي سجل، ولم يُخصم منك أي رصيد." },
         { status: 409 }
       );
+    }
+
+    // A request that did not settle and charge has no result to release, whatever was saved before settlement (a failed request that delivered nothing is answered above): checked before anything is read, created or priced.
+    if (!resultsReleasable(job)) {
+      return NextResponse.json({ success: false, error: NO_RELEASABLE_RESULT_AR }, { status: 409 });
     }
 
     // File formats can be generated later from the saved dataset, even when

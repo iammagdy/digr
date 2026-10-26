@@ -9,6 +9,9 @@ export const CONTACT_BILLING_NOTE_AR =
 export const CONTACT_AVAILABILITY_AR =
   "لا يتوفر البريد المهني ولا الهاتف المكتبي لكل شخص؛ يصل كل منهما لبعض الأشخاص فقط، وقد تصلك بيانات تواصل لعدد أقل من المطلوب.";
 
+/** Said on the plan card next to the price of the work email: it is charged only when it is delivered. */
+export const CONTACT_EMAIL_BILLING_AR = "يُحتسب سعر البريد المهني فقط عند تسليمه فعلًا.";
+
 /** Said when the request names no job title: the search starts from the chief executive and the customer may change it before approving. */
 export const DEFAULT_TITLE_NOTE_AR =
   "ما لم تحدد مسمى وظيفيًا نبحث عن «الرئيس التنفيذي»، ويمكنك تعديل «نوع البحث» قبل الموافقة.";

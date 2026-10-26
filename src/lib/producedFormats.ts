@@ -17,6 +17,19 @@ export function producedFormats(fileIds?: ResultFileIds | null, options: { nothi
   return produced.length > 0 ? produced : ["xlsx"];
 }
 
+/**
+ * A result (file or rows) is released to the customer only when the request settled and charged: its status is completed (or done), or points were
+ * charged for it. The files are saved BEFORE settlement, and a request that fails at settlement keeps `delivered_units` (a release does not reset it)
+ * but is not charged and not delivered: its file and rows are never served. Money is never read or written here; the caller passes the job row.
+ */
+export function resultsReleasable(job: { status?: unknown; charged_credits?: unknown; chargedCredits?: unknown } | null | undefined): boolean {
+  const status = String(job?.status || "").toLowerCase();
+  return status === "completed" || status === "done" || (Number(job?.charged_credits ?? job?.chargedCredits) || 0) > 0;
+}
+
+/** What the customer is told when a request has no releasable result (Arabic only, no hold wording other than the approved one). */
+export const NO_RELEASABLE_RESULT_AR = "لا يوجد ملف لتحميله لأن هذا الطلب لم يكتمل، ولم يُخصم منك أي رصيد.";
+
 /** A finished-and-failed request that delivered no record: nothing to download. */
 export function deliveredNothing(job: { status?: unknown; delivered?: unknown } | null | undefined): boolean {
   const status = String(job?.status || "").toLowerCase();

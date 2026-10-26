@@ -694,6 +694,10 @@ export function normalizeDataset(
   let entityType: "posts" | "comments" | "profile" | "search" | "tabular" | "companies" | "people" = "tabular";
   if (socialKind) {
     entityType = socialKind === "comments" ? "comments" : "posts";
+  } else if ((rawPayload?.entityType === "people" || rawPayload?.metadata?.entityType === "people") && !/compan/i.test(String(meta.template || ""))) {
+    // A job that says it is a people job stays one (unless its template names a company search): its rows carry a company name and a website,
+    // which are the PERSON's employer.
+    entityType = "people";
   } else if (
     rawPayload?.entityType === "companies" ||
     rawPayload?.metadata?.entityType === "companies" ||

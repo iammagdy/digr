@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The offline catalog prices the three decision-maker endpoints like the live one does (the real people branch reads them); every other endpoint is read as before.
 vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => {
@@ -42,6 +42,7 @@ const usageRows = (db: ReturnType<typeof createChatDb>) => (db.store.get("llm_us
 const quoteRows = (db: ReturnType<typeof createChatDb>) => (db.store.get("plans_quotes") || []) as any[];
 
 describe("five-request regression (no model call)", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
   it("1. «عايز شركتين كهرباء في مصر»: companies, Egypt, two, taxonomy and English keywords", async () => {
     const intent = extractRequestIntent(COMPANIES);
     expect(intent.dataType).toBe("companies");
@@ -64,6 +65,8 @@ describe("five-request regression (no model call)", () => {
   });
 
   it("2. the decision-makers request: people, SA, three, work email and phone, English title and keywords", async () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774, which that cap would cut to two
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const intent = extractRequestIntent(PEOPLE);
     expect(intent.dataType).toBe("people");
     expect(intent.country?.iso).toBe("SA");
