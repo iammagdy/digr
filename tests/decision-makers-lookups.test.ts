@@ -173,13 +173,14 @@ describe("(c) the company domain is a real one, and the first and last names are
   it("the best identities are looked up first (a profile link with a real domain before a link alone)", async () => {
     const calls = gateway((call) => (searchOnly(call) ? { cost: 3420, body: SEARCH_ANSWER } : miss(call)));
     await defaultTregAdapter(input() as any);
-    const order = calls.filter((call) => call.endpoint === "treg.people.email.find").map((call) => Boolean(call.body.domain));
+    // the first lookups only (a profile-link fallback comes after every first lookup, and carries the domain too)
+    const order = calls.filter((call) => call.endpoint === "treg.people.email.find" && !String(call.headers["Idempotency-Key"]).includes("people_email_link_")).map((call) => Boolean(call.body.domain));
     expect(order).toEqual([...order].sort((a, b) => Number(b) - Number(a)));
     expect(order[0]).toBe(true);
     expect(order[order.length - 1]).toBe(false);
   });
 
-  it("once the people still needed have a contact value no further person is looked up", async () => {
+  it("every eligible person gets a first email lookup; once the people still needed have a contact value, no further person gets a check or a phone lookup", async () => {
     const calls = gateway((call) => {
       if (searchOnly(call)) return { cost: 3420, body: SEARCH_ANSWER };
       return call.endpoint.includes("email")
@@ -187,8 +188,10 @@ describe("(c) the company domain is a real one, and the first and last names are
         : { cost: 0, body: { output: { phone: null } } };
     });
     const result = await defaultTregAdapter(input({ remainingNeeded: 3, targetVolumeMax: 3 }) as any);
-    expect(calls.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(3);
-    expect(result.lookupLog!.summary).toMatchObject({ lookedUp: 3, withContact: 3, skippedEnough: 6 });
+    expect(calls.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(9);
+    expect(calls.filter((call) => call.endpoint === "treg.people.email.verify")).toHaveLength(3);
+    expect(calls.filter((call) => call.endpoint === "treg.people.phone.find")).toHaveLength(3);
+    expect(result.lookupLog!.summary).toMatchObject({ lookedUp: 9, withContact: 3, skippedEnough: 6 });
   });
 });
 

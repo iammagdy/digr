@@ -100,8 +100,9 @@ describe("A2: the mail-server check of the address's domain", () => {
     expect(calls.filter(isVerify)).toHaveLength(0); // the free check came first: nothing paid for an address that cannot receive
     expect(result.rows[0].work_email).toBe("");
     const entry = result.lookupLog!.entries.find(isEntryEmail)!;
-    expect(entry).toMatchObject({ outcome: "no_mx", mailboxDomain: "gate-eight.example", emailPresent: false });
-    expect(result.lookupLog!.rows![0]).toMatchObject({ gate: "match", lookedUp: true, finalReason: "no_mx" });
+    expect(calls.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(0); // the paid lookup was never made
+    expect(entry).toMatchObject({ outcome: "no_mx", mailboxDomain: "delta-soft.example", emailPresent: false, calls: 0, costUsd: 0 });
+    expect(result.lookupLog!.rows![0]).toMatchObject({ gate: "match", lookedUp: true, finalReason: "no_mx" }); // lookedUp: its phone lookup was made; the paid email lookup was not
     expect(result.lookupLog!.summary).toMatchObject({ noMx: 1, withContact: 0, verifyCalls: 0 });
     // the customer is charged nothing for the person: no delivered value
     expect(decisionMakerDeliveredUnits(result.rows.filter((row) => row.work_email || row.phone), ["work_email", "phone"])).toEqual({ baseUnits: 0, emailUnits: 0, phoneUnits: 0 });
@@ -109,14 +110,18 @@ describe("A2: the mail-server check of the address's domain", () => {
     expect(JSON.stringify(result.lookupLog)).not.toContain("mona@");
   });
 
-  it("«a» (no MX, an address record), «mx» and «unknown» (the check itself failed) do not keep an address out: the deliverability check decides", async () => {
-    for (const mail of ["mx", "a", "unknown"] as const) {
+  it("«mx» and «unknown» (the check itself failed) do not keep an address out; «a» (an address record only, no mail server) does, before any paid lookup", async () => {
+    for (const mail of ["mx", "unknown"] as const) {
       const { calls, result } = await oneEmailJob("mona@delta-soft.example", { body: { output: { status: "valid" } } }, mail);
       expect(calls.filter(isVerify), mail).toHaveLength(1);
       expect(result.rows[0].work_email, mail).toBe("mona@delta-soft.example");
       const entry = result.lookupLog!.entries.find(isEntryEmail)!;
       expect(entry, mail).toMatchObject({ outcome: "hit", mailServer: mail });
     }
+    const { calls, result } = await oneEmailJob("mona@delta-soft.example", { body: { output: { status: "valid" } } }, "a");
+    expect(calls.filter((call) => call.endpoint === "treg.people.email.find")).toHaveLength(0);
+    expect(result.rows[0].work_email).toBe("");
+    expect(result.lookupLog!.entries.find((entry) => entry.endpoint === "treg.people.email.find")).toMatchObject({ outcome: "no_mx", mailServer: "a", mailboxDomain: "delta-soft.example", calls: 0 });
   });
 
   it("the answer is remembered for the request: two addresses on one domain ask the resolver once", async () => {
@@ -247,7 +252,7 @@ describe("A3: the deliverability check of a found work email", () => {
     expect(spent).toBeLessThanOrEqual(Math.round(decisionMakerJobSpendCeilingUsd(3) * 1e6));
     expect(calls.filter(isVerify)).toHaveLength(3);
     expect(result.rows.filter((row) => row.work_email)).toHaveLength(3);
-    expect(spent).toBe(3420 + 3 * 20000 + 3 * 5000);
+    expect(spent).toBe(3420 + 4 * 20000 + 3 * 5000); // four first lookups: the fourth person is not needed, and its address is not delivered
   });
 
   it("the money rules did not move: 83 + 120 + 55, per delivered field, nothing for an undelivered one", () => {

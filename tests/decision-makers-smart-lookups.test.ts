@@ -300,7 +300,7 @@ describe("(c) per-row reason codes in the log, with no personal value", () => {
 describe("(d) the job's budget ceiling is never passed, profile-link fallbacks included", () => {
   const TEN = ["Mona", "Nour", "Omar", "Salma", "Yusuf", "Hana", "Karim", "Rasha", "Youssef"].map((first, at) => person(first, `Lastname${at}`));
 
-  it("every email lookup bills the whole 0.02 and finds nothing, so every profile-link fallback is made too: the spend stays at or under 0.04 + (0.02 + 0.005) x 3 = 0.115 USD and the rest are skipped for budget", async () => {
+  it("every email lookup bills the whole 0.02 and finds nothing: the first lookups take the budget before any profile-link fallback, the spend stays at or under 0.04 + (0.02 + 0.005) x 3 = 0.115 USD, and the rest are skipped for budget", async () => {
     const costs: number[] = [];
     const calls = gateway((call) => {
       const cost = isSearch(call) ? 3420 : isEmail(call) ? 20000 : 0;
@@ -313,7 +313,8 @@ describe("(d) the job's budget ceiling is never passed, profile-link fallbacks i
     const spent = costs.reduce((total, cost) => total + cost, 0);
     expect(result.costMicro).toBe(spent);
     expect(spent).toBeLessThanOrEqual(Math.round(decisionMakerJobSpendCeilingUsd(3) * 1e6));
-    expect(calls.filter(isEmail).some((call) => call.body.linkedin_url)).toBe(true); // fallbacks were made while the budget allowed
+    // five first lookups hold 0.10 of the 0.115 ceiling: no fallback (a lookup with both the domain and the profile link) is made after them
+    expect(calls.filter(isEmail).filter((call) => call.body.linkedin_url && call.body.domain)).toHaveLength(0);
     expect(result.lookupLog!.summary.skippedBudget).toBeGreaterThan(0);
     expect(result.lookupLog!.summary.linkFallbacks).toBeGreaterThan(0);
   });

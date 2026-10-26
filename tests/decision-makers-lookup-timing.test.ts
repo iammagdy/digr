@@ -73,16 +73,15 @@ describe("the constants", () => {
 });
 
 describe("each person on their own: the check of the address runs at the same time as the phone lookup", () => {
-  it("the fast person's check and phone start together right after their email, while the slow person's email is still running; nobody waits for the group", async () => {
+  it("every person's first email comes before any check or phone; then each person's check and phone start together, after the slow email has ended", async () => {
     setMailDomainResolverForTesting(async () => "mx");
     const g = timedGateway({ email: { Alaa: 10, Bassem: 220, Carim: 90 }, verify: 120, phone: 40 });
     const result = await defaultTregAdapter(input() as any);
-    // Alaa: email ends, then the check AND the phone start (together), both before Bassem's email ends
-    expect(g.at("end email.find:Alaa")).toBeLessThan(g.at("start email.verify:alaa"));
-    expect(g.at("end email.find:Alaa")).toBeLessThan(g.at("start phone.find:Alaa"));
+    // the first email of EVERY person starts before any check or phone: Bassem's slow email ends first, and only then do Alaa's check and phone start (together)
+    expect(g.at("start email.find:Carim")).toBeLessThan(g.at("end email.find:Alaa"));
+    expect(g.at("end email.find:Bassem")).toBeLessThan(g.at("start email.verify:alaa"));
+    expect(g.at("end email.find:Bassem")).toBeLessThan(g.at("start phone.find:Alaa"));
     expect(Math.abs(g.time("start email.verify:alaa") - g.time("start phone.find:Alaa"))).toBeLessThan(40);
-    expect(g.at("start phone.find:Alaa")).toBeLessThan(g.at("end email.find:Bassem"));
-    expect(g.at("start email.verify:alaa")).toBeLessThan(g.at("end email.find:Bassem"));
     // the check and the phone of one person overlap in time (the phone, shorter, ends inside the check)
     expect(g.at("start phone.find:Alaa")).toBeLessThan(g.at("end email.verify:alaa"));
     // all three delivered, each with the verified status; the log keeps one fixed order per person: finds, then the check, then the phone

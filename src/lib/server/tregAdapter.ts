@@ -22,7 +22,7 @@ import {
   DECISION_MAKER_VERIFY_ROUTE_COST_CAP_USD,
   decisionMakerJobSpendCeilingUsd,
 } from "./decisionMakerSpend";
-import { createCachedMailDomainResolver, currentMailDomainResolver, type MailDomainStatus } from "./mailDomainCheck";
+import { createCachedMailDomainResolver, currentMailDomainResolver, takesMail, type MailDomainStatus } from "./mailDomainCheck";
 
 export { hasRecognizedProviderResultShape };
 import { arabicVerificationStatus } from "../contactVerification";
@@ -599,7 +599,7 @@ export const PEOPLE_LOOKUP_RESERVE_MS = 12_000;
 export const PEOPLE_VERIFY_MIN_TIME_MS = 6_000;
 /** The shortest read worth making. */
 const MIN_READ_MS = 3_000;
-/** How many people are looked up at the same time: the worker has 45 s, and one slow email lookup may take 25. */
+/** How many people are looked up at the same time in the second step (the check and the phone); the first email lookups of all people run together (see enrichTregPeopleRows). */
 export const PEOPLE_LOOKUP_CONCURRENCY = 3;
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -698,11 +698,11 @@ export interface PeopleLookupLogEntry {
   /** Set when the lookup took more than one call: the FIRST call (its status, time and whether our own limit cut it) and each read after it. */
   firstAttempt?: LookupAttempt;
   reads?: Array<{ status: number; latencyMs: number }>;
-  /** A discarded address (personal mailbox, no mail server, invalid): its mailbox domain only («gmail.com»), never the address. */
+  /** A discarded address (personal mailbox, no mail server, invalid): its mailbox domain only («gmail.com»), never the address. A lookup NOT made because its company domain has no mail server (`calls` 0, `status` 0): the company domain only. */
   mailboxDomain?: string;
   /** Which identity this email lookup sent: the company domain with the names (the first choice), the profile link with the names (when no domain exists), or the profile link as the fallback after a miss. */
   attempt?: "domain_and_name" | "profile_link" | "profile_link_fallback";
-  /** The DNS answer for the address's domain (a code only): `mx`, `a` (no MX, an address record), `unknown` (the check itself failed). `none` is the outcome `no_mx`. */
+  /** The DNS answer for the domain (a code only): `mx`, `a` (no MX, an address record: not a mail server for this decision), `unknown` (the check itself failed). `none` is the outcome `no_mx`. */
   mailServer?: Exclude<MailDomainStatus, "none">;
   /** The deliverability verdict of a checked work email, as a code. */
   verdict?: EmailVerdict;
@@ -735,7 +735,7 @@ export interface PeopleLookupSummary {
   withContact: number;
   /** Lookups with the profile link made after the first lookup (company domain and names) found nothing. */
   linkFallbacks?: number;
-  /** Found addresses kept out of the delivery: no mail server, or the deliverability check said invalid. */
+  /** People whose domain has no mail server (the paid lookup was not made) or whose found address is on a domain with none: outcome `no_mx`. */
   noMx?: number;
   verifyInvalid?: number;
   verifyCalls?: number;
@@ -821,6 +821,10 @@ async function enrichTregPeopleRows(
   let withContact = 0;
   type Candidate = {
     index: number; rank: number; row: Record<string, any>; identity: Record<string, string>; lookedUp: boolean;
+    /** The first email lookup's outcome (null when it was not made); `canFallback`: a miss may be retried once with the profile link. */
+    firstOutcome?: PeopleLookupLogEntry["outcome"] | null; canFallback: boolean;
+    /** Reached by the second step (the check and the phone), and whether its deliverability check was decided (made, or skipped for time). */
+    reached: boolean; checked: boolean;
     personal: boolean; mismatch: boolean; noMx: boolean; verifyInvalid: boolean;
     // the log entries of the three kinds of lookup are kept apart: verify and phone run at the same time, and the log keeps one fixed order (finds, verify, phone)
     findEntries: PeopleLookupLogEntry[]; verifyEntries: PeopleLookupLogEntry[]; phoneEntries: PeopleLookupLogEntry[];
@@ -872,7 +876,23 @@ async function enrichTregPeopleRows(
     return { made: true, verdict };
   };
   /** One work-email lookup with the identity given; null when it was not made (no time, no budget). */
-  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: NonNullable<PeopleLookupLogEntry["attempt"]>): Promise<PeopleLookupLogEntry["outcome"] | null> => {
+  const runEmail = async (person: Candidate, identity: Record<string, string>, stepId: string, attempt: NonNullable<PeopleLookupLogEntry["attempt"]>, companyStatus?: MailDomainStatus): Promise<PeopleLookupLogEntry["outcome"] | null> => {
+    // Before the paid call: the company domain must publish a mail server. None (or an address record only) and the lookup is not made: nothing is charged,
+    // and the log keeps the domain only. A DNS check that cannot answer does not stop the lookup.
+    const companyDomain = identity.domain;
+    if (companyDomain) {
+      const status = companyStatus ?? (await mailDomain(companyDomain));
+      if (!takesMail(status)) {
+        person.findEntries.push({
+          endpoint: "treg.people.email.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(identity).sort(), outcome: "no_mx",
+          emailPresent: false, phonePresent: false, calls: 0, status: 0, latencyMs: 0, costUsd: 0, mailboxDomain: companyDomain, attempt,
+          ...(status === "a" ? { mailServer: status } : {}),
+        });
+        person.noMx = true;
+        summary.noMx = (summary.noMx ?? 0) + 1;
+        return "no_mx";
+      }
+    }
     const result = await lookup("treg.people.email.find", identity, stepId);
     if (!result) return null;
     person.lookedUp = true;
@@ -897,7 +917,7 @@ async function enrichTregPeopleRows(
         foundValue = value;
         // 1) a free DNS check: a domain with no mail server can never receive the message, so the address is neither delivered nor charged
         mailServer = mailboxDomain ? await mailDomain(mailboxDomain) : "unknown";
-        if (mailServer === "none") {
+        if (!takesMail(mailServer)) {
           outcome = "no_mx";
           person.noMx = true;
           summary.noMx = (summary.noMx ?? 0) + 1;
@@ -917,6 +937,13 @@ async function enrichTregPeopleRows(
     if (outcome === "hit" && foundValue) person.candidate = { value: foundValue, mailboxDomain: mailboxDomain ?? "", findEntry, fallbackStatus: result.result.data?._treg?.verification?.verdict ?? result.result.data?.verified };
     return outcome;
   };
+  /** A found address is delivered with the status of its check, or with the honest label when no check was made. */
+  const deliverCandidate = (person: Candidate, verdict: EmailVerdict | null) => {
+    const candidate = person.candidate!;
+    person.row.work_email = candidate.value;
+    person.row.work_email_verification_status = arabicVerificationStatus(verdict ?? candidate.fallbackStatus, true);
+    candidate.findEntry.emailPresent = true;
+  };
   /**
    * The deliverability check of the found address, and what follows from it: `invalid` keeps the address out (not delivered, not charged), any other verdict
    * delivers it with its honest status label, and a check that was not made (no time left, no budget, no answer) delivers it as «لم يتوفر تأكيد».
@@ -924,6 +951,7 @@ async function enrichTregPeopleRows(
   const verifyCandidate = async (person: Candidate) => {
     const candidate = person.candidate;
     if (!candidate) return;
+    person.checked = true;
     let verdict: EmailVerdict | null = null;
     const timeLeft = input.deadlineMs ? input.deadlineMs - Date.now() - RESERVE_MS : Number.POSITIVE_INFINITY;
     if (timeLeft < PEOPLE_VERIFY_MIN_TIME_MS) summary.verifySkippedTime = (summary.verifySkippedTime ?? 0) + 1;
@@ -935,23 +963,23 @@ async function enrichTregPeopleRows(
       if (candidate.mailboxDomain) candidate.findEntry.mailboxDomain = candidate.mailboxDomain;
       return;
     }
-    person.row.work_email = candidate.value;
-    person.row.work_email_verification_status = arabicVerificationStatus(verdict ?? candidate.fallbackStatus, true);
-    candidate.findEntry.emailPresent = true;
+    deliverCandidate(person, verdict);
   };
-  const emailLookup = async (person: Candidate) => {
+  // The first work-email lookup: from the company domain and the person's names when both exist (the profile-link finders answered with a PERSONAL address
+  // 6 of 6 times in live jobs, and the domain-and-name finders delivered a work address both times they were asked). The profile link is used only when no
+  // company domain exists (then it is all there is), or as the one fallback after a miss.
+  const firstEmail = async (person: Candidate, companyStatus?: MailDomainStatus) => {
     if (person.row.work_email) return;
-    // The first lookup is made from the company domain and the person's names: the profile-link finders answered with a PERSONAL address (billed, then
-    // discarded) 6 of 6 times in live jobs, and the domain-and-name finders delivered a work address both times they were asked. The profile link is used only
-    // when no company domain exists (then it is all there is), or as the one fallback after the first lookup found nothing (a miss).
     const { linkedin_url: profileLink, ...byDomainAndName } = person.identity;
     const byName = Boolean(person.identity.domain && person.identity.full_name);
+    person.canFallback = byName && Boolean(profileLink);
     const first = byName ? byDomainAndName : person.identity;
-    const outcome = await runEmail(person, first, `people_email_${input.step}_${person.index}`, byName ? "domain_and_name" : "profile_link");
-    if (outcome === "miss" && byName && profileLink) {
-      summary.linkFallbacks = (summary.linkFallbacks ?? 0) + 1;
-      await runEmail(person, person.identity, `people_email_link_${input.step}_${person.index}`, "profile_link_fallback");
-    }
+    person.firstOutcome = await runEmail(person, first, `people_email_${input.step}_${person.index}`, byName ? "domain_and_name" : "profile_link", companyStatus);
+  };
+  const fallbackEmail = async (person: Candidate) => {
+    if (person.firstOutcome !== "miss" || !person.canFallback) return;
+    summary.linkFallbacks = (summary.linkFallbacks ?? 0) + 1;
+    await runEmail(person, person.identity, `people_email_link_${input.step}_${person.index}`, "profile_link_fallback");
   };
   const phoneLookup = async (person: Candidate) => {
     if (person.row.phone) return;
@@ -973,39 +1001,52 @@ async function enrichTregPeopleRows(
     }
     person.phoneEntries.push(record({ endpoint: "treg.people.phone.find", step: stepId, person: person.index, rank: person.rank, keys: Object.keys(phoneIdentity).sort(), outcome, emailPresent: false, phonePresent: Boolean(person.row.phone), done: result }));
   };
-  // The people are looked up best identity first, in groups of at most PEOPLE_LOOKUP_CONCURRENCY at the same time (each person's email, then the check of the
-  // address and the phone together), and only until the people still needed have a contact value: a group is never larger than what is still needed.
-  let rank = 0;
-  while (rank < order.length) {
-    const needed = options.wanted !== undefined ? Math.max(0, options.wanted - withContact) : Number.POSITIVE_INFINITY;
-    const group: Candidate[] = [];
-    while (rank < order.length && group.length < Math.min(PEOPLE_LOOKUP_CONCURRENCY, needed)) {
-      const index = order[rank];
-      const row = { ...rows[index] };
-      // an address on a personal mailbox that the source itself gave is not a work email either
-      if (isPersonalEmail(row.work_email)) row.work_email = "";
-      const identity = eligibleAt[index] ? identities[index] : null;
-      rank += 1;
-      if (!identity) { finish(index, row, eligibleAt[index], false); continue; }
-      group.push({ index, rank: rank - 1, row, identity, lookedUp: false, personal: false, mismatch: false, noMx: false, verifyInvalid: false, findEntries: [], verifyEntries: [], phoneEntries: [] });
-    }
-    if (group.length === 0) break;
-    // Each person runs on their own: the email, then the deliverability check of the address found at the same time as the phone lookup. A person who
-    // answers early does not wait for the slowest of the group, and the check never adds its whole time to the group's.
+  // The people are looked up best identity first, in three steps, so that no person waits behind another person's slow answer for a first try:
+  //  1. the first work-email lookup of EVERY eligible person, all at the same time (each reserves its ceiling from the job's budget; what does not fit is skipped for budget);
+  //  2. the deliverability check of the address found and the office phone lookup, for the best identities first, in groups of at most PEOPLE_LOOKUP_CONCURRENCY
+  //     and only while people are still needed (each person's two lookups run at the same time);
+  //  3. the one fallback lookup of a missed person (the profile link), for the people reached in step 2, again only while people are still needed.
+  // A found address whose person was not reached in step 2 is not delivered (the wanted count is already met); its lookup is still billed and logged.
+  const people: Candidate[] = [];
+  order.forEach((index, at) => {
+    const row = { ...rows[index] };
+    // an address on a personal mailbox that the source itself gave is not a work email either
+    if (isPersonalEmail(row.work_email)) row.work_email = "";
+    const identity = eligibleAt[index] ? identities[index] : null;
+    if (!identity) { finish(index, row, eligibleAt[index], false); return; }
+    people.push({ index, rank: at, row, identity, lookedUp: false, canFallback: false, reached: false, checked: false, personal: false, mismatch: false, noMx: false, verifyInvalid: false, findEntries: [], verifyEntries: [], phoneEntries: [] });
+  });
+  // The company domains are checked first, then every first lookup starts in the order of the people (the best identities reserve the budget first).
+  const companyStatus = await Promise.all(people.map((person) => (person.identity.domain ? mailDomain(person.identity.domain) : undefined)));
+  await Promise.all(people.map((person, at) => firstEmail(person, companyStatus[at])));
+  // the people still needed: the wanted count, less the people reached so far that have a contact value (and the rows without an identity that have one)
+  const needed = (): number => options.wanted !== undefined
+    ? Math.max(0, options.wanted - withContact - people.filter((person) => person.reached && (person.row.work_email || person.row.phone)).length)
+    : Number.POSITIVE_INFINITY;
+  let next = 0;
+  while (next < people.length && needed() > 0) {
+    const group = people.slice(next, next + Math.min(PEOPLE_LOOKUP_CONCURRENCY, needed()));
+    next += group.length;
     await Promise.all(group.map(async (person) => {
-      await emailLookup(person);
+      person.reached = true;
       await Promise.all([verifyCandidate(person), phoneLookup(person)]);
     }));
-    for (const person of group) {
-      log.push(...person.findEntries, ...person.verifyEntries, ...person.phoneEntries);
-      finish(person.index, person.row, true, person.lookedUp, { personal: person.personal, mismatch: person.mismatch, noMx: person.noMx, verifyInvalid: person.verifyInvalid });
-    }
   }
-  // Rows the lookups did not reach: the people still needed all have a contact value (skipped as enough), or nothing was left to ask.
-  for (; rank < order.length; rank++) {
-    const index = order[rank];
-    if (eligibleAt[index] && identities[index]) summary.skippedEnough += 1;
-    finish(index, { ...rows[index] }, eligibleAt[index], false);
+  const reachedPeople = people.filter((person) => person.reached);
+  for (let at = 0; at < reachedPeople.length && needed() > 0;) {
+    const group = reachedPeople.slice(at, at + Math.min(PEOPLE_LOOKUP_CONCURRENCY, needed()));
+    at += group.length;
+    await Promise.all(group.map(async (person) => {
+      await fallbackEmail(person);
+      if (person.candidate && !person.checked) await verifyCandidate(person);
+    }));
+  }
+  for (const person of people) {
+    // not reached in step 2: the wanted people already had a contact value (skipped as enough). Its address, found but not needed and never checked, is
+    // not delivered or charged: the customer asked for the wanted count, and the provider cost of the lookup is in the log.
+    if (!person.reached) summary.skippedEnough += 1;
+    log.push(...person.findEntries, ...person.verifyEntries, ...person.phoneEntries);
+    finish(person.index, person.row, true, person.lookedUp, { personal: person.personal, mismatch: person.mismatch, noMx: person.noMx, verifyInvalid: person.verifyInvalid });
   }
   summary.withContact = withContact;
   const enriched = done;
