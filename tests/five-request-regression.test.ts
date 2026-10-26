@@ -1,8 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
+
+// The offline catalog prices the three decision-maker endpoints like the live one does (the real people branch reads them); every other endpoint is read as before.
+vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/functions/shared/catalogClient")>();
+  const prices: Record<string, number> = { "treg.people.search": 0.015, "treg.people.email.find": 0.01, "treg.people.phone.find": 0.01 };
+  return {
+    ...actual,
+    getEndpointDetails: vi.fn(async (endpointId: string, options?: any) => prices[endpointId]
+      ? ({ catalogPriceUsd: prices[endpointId] } as any)
+      : actual.getEndpointDetails(endpointId, options)),
+  };
+});
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { extractRequestIntent, missingInputsForIntent } from "../src/lib/requestIntent";
 import { planScopeRows, quoteScopeGaps } from "../src/lib/quoteScopeGaps";
-import { createChatDb } from "./helpers/chatSession";
+import { createChatDb, withPeopleSettlement } from "./helpers/chatSession";
 
 /**
  * The five fixed requests of the QA run, end to end through the chat handler with the model stubbed to throw: a fully
@@ -18,7 +30,7 @@ const STUDIES = "اجمع ١٠ دراسات عن الطاقة الشمسية ف�
 const TAXONOMY = ["Electrical/Electronic Manufacturing", "Utilities"];
 
 function run(message: string) {
-  const db = createChatDb();
+  const db = withPeopleSettlement(createChatDb());
   const handler = new ChatHandler(db as any);
   const model = vi.fn(async () => { throw new Error("the model must not be called for a fully stated request"); });
   (handler as any).llm.executeTurn = model;

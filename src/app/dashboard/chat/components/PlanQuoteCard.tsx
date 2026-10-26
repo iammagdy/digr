@@ -17,6 +17,7 @@ import { missionStepsAr } from "@/lib/dependentSteps";
 import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
 import { balanceVerdictAr } from "@/lib/balanceVerdict";
 import { chargeForUnits, pointsDisplay, pricePer100Points } from "@/lib/recordPricing";
+import { CONTACT_AVAILABILITY_AR } from "@/lib/contactExpectation";
 import { priceVsHoldLineAr, unitPriceLineAr } from "@/lib/planExplanation";
 import { countPlainAr, planCountLineAr, planCountPartsAr } from "@/lib/planCounts";
 import { customerFacingCapabilityLabel } from "@/lib/customerFacingRequestLabels";
@@ -520,7 +521,7 @@ export default function PlanQuoteCard({
       {(primaryItem?.capabilitySlug?.includes("people") || quote.summaryAr?.includes("صناع") || quote.summaryAr?.includes("قرار") || quote.summaryAr?.includes("مسؤول") || quote.summaryAr?.includes("مدير")) && (
         <div className="mt-3.5 rounded-xl border border-ln bg-sf2/70 p-3 text-xs leading-[1.8] text-mut">
           <p className="m-0 text-ink2">
-            تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع توضيح ما إذا كان كل حقل موجودًا أو غير موجود في السجل. وجود البريد لا يعني التحقق من صحته. لا يُحاسب العميل على أي حقل غير متوفر.
+            تنويه صناع القرار: تتضمن السجلات الأسماء والمسميات الوظيفية وروابط الملفات المهنية، مع توضيح ما إذا كان كل حقل موجودًا أو غير موجود في السجل. وجود البريد لا يعني التحقق من صحته. لا يُحاسب العميل على أي حقل غير متوفر. {CONTACT_AVAILABILITY_AR}
           </p>
         </div>
       )}

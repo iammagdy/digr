@@ -33,6 +33,17 @@ export function isCustomerSafeArabic(text: unknown): text is string {
   return true;
 }
 
+/**
+ * Server reason codes whose cause is the request itself (no capability, no price that can be built): the same text sent again fails the
+ * same way. The server already words them for a customer, so that sentence is shown as it is and no «try again» button is offered.
+ */
+const DETERMINISTIC_FAILURE_REASONS: ReadonlySet<string> = new Set(["plan_build_failed", "capability_not_found", "unsupported_platform"]);
+
+/** False for a failure that a repeat of the same request cannot change; true for a network drop, a timeout or a server hiccup. */
+export function isRetryableFailure(err: unknown): boolean {
+  return !(err instanceof ChatRequestError && DETERMINISTIC_FAILURE_REASONS.has(err.reason));
+}
+
 export type FailureCode = "client_timeout" | "network" | "bad_response" | "server_error" | "client_error" | "unknown";
 
 /** A short code that is safe to log: it never carries the message text. */
@@ -62,7 +73,7 @@ export function customerFacingFailure(
   const temporary = options.noCharge ? TEMPORARY_FAILURE_NO_CHARGE_AR : (options.fallback || TEMPORARY_FAILURE_AR);
   const message = err && typeof err === "object" ? (err as { message?: unknown }).message : undefined;
   const deliberate = err instanceof ChatRequestError
-    ? err.status >= 400 && err.status < 500 && err.status !== 408
+    ? (err.status >= 400 && err.status < 500 && err.status !== 408) || !isRetryableFailure(err)
     : code === "unknown";
   if (deliberate && isCustomerSafeArabic(message)) return { text: message.trim(), code };
   return { text: temporary, code };

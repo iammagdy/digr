@@ -102,7 +102,7 @@ import { APPROVAL_NEEDS_BUTTON_AR, hasPendingPlan, isChatControlMessage, isRetry
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
 import { ANSWER_END, CHANNELS_SKIPPED_VALUE, capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, missionCoverageLinesAr, nextStep, questionForStep, typedAnswerLabelFor, PLATFORM_OTHER_QUESTION_AR, FACEBOOK_KEYWORD_SAMPLE_LINE_AR, FACEBOOK_KEYWORD_SLUG_FOR_CARD, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
-import { CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR } from "../../lib/contactExpectation";
+import { CONTACT_AVAILABILITY_AR, CONTACT_BILLING_NOTE_AR, CONTACT_EXPECTATION_AR, DEFAULT_TITLE_NOTE_AR } from "../../lib/contactExpectation";
 import { findRetryableJob, loadQuoteFirstItem, planParamsSignature, readReusableRows } from "../../lib/server/retryReuse";
 import { ACCOUNT_HANDLE_RE, ACCOUNT_LOOKUP_RE, SOCIAL_CONTENT_WORDS_RE, getMissingSocialInputs } from "../../lib/socialDiscovery";
 import { SOCIAL_TASK_PLATFORMS, cleanSocialTopicAr, detectSocialIntent, getMissingSocialTaskInputs, searchTextNeedsCleaning, socialTaskQuestion } from "../../lib/socialTasks";
@@ -3971,7 +3971,7 @@ export class ChatHandler {
             outputFormats: managedQuote.outputFormats,
             expiresAt: managedQuote.expiresAt,
             methodologyNotes: isPeopleSearchRequest(conversationRequestText) && !chainUpgrade.upgraded
-              ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_BILLING_NOTE_AR}`.trim()
+              ? `${planOutput.methodologyNotes || ""} ${CONTACT_EXPECTATION_AR} ${CONTACT_AVAILABILITY_AR} ${CONTACT_BILLING_NOTE_AR} ${DEFAULT_TITLE_NOTE_AR}`.trim()
               : planOutput.methodologyNotes,
           };
 
@@ -4159,7 +4159,7 @@ export class ChatHandler {
             planSummaryText += `\n- ملف الاستبعاد المعتمد: تم التحقق من "${brief.exclusionFile.name}" واستبعاد ${toArabicDigits(brief.exclusionFile.baselineRowCount)} شركة مسجلة مسبقاً لمنع تكرارها.`;
           }
           if (isPeopleSearchRequest(conversationRequestText)) {
-            planSummaryText += `\n- بيانات التواصل المتوقعة: ${CONTACT_EXPECTATION_AR}\n- ${CONTACT_BILLING_NOTE_AR}`;
+            planSummaryText += `\n- بيانات التواصل المتوقعة: ${CONTACT_EXPECTATION_AR} ${CONTACT_AVAILABILITY_AR}\n- ${CONTACT_BILLING_NOTE_AR}\n- ${DEFAULT_TITLE_NOTE_AR}`;
           }
           if (reusedRowsForRetry > 0) {
             planSummaryText += `\n- إعادة استخدام: ${toArabicDigits(reusedRowsForRetry)} سجل جُمعت في المحاولة السابقة تُضاف إلى النتيجة، ويُجلب المتبقي فقط. السعر المعروض يغطي كامل العدد المطلوب، ولا يُخصم إلا ثمن السجلات المسلّمة فعلاً.`;

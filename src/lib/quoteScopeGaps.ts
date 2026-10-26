@@ -1,6 +1,7 @@
 import { pageChannelOfItem, pageHandleOf } from "./planMethodSteps";
 import { isSocialCapabilitySlug, validateSocialParams } from "./socialSources";
 import { planCountLineAr } from "./planCounts";
+import { hasPeopleIdentityKey } from "./peopleSearchInput";
 import {
   COUNTRY_REQUIRED_AR,
   detectCountryFromText,
@@ -192,16 +193,13 @@ export function quoteScopeGaps(
       }
 
       const titleVal = params.title || params.jobTitle || query.title || query.jobTitle?.include?.[0];
-      const kwVal = params.keywords || params.keyword || query.keywords || query.keyword?.include?.[0];
       const hasTitle =
         (usableText(titleVal)) ||
         (Array.isArray(titleVal) && titleVal.length > 0 && titleVal.some((t: any) => usableText(t)));
-      const hasKeywords =
-        (usableText(kwVal)) ||
-        (Array.isArray(kwVal) && kwVal.length > 0 && kwVal.some((k: any) => usableText(k)));
-      const isDecisionMakers = Array.isArray(params.requiredContactFields) && params.requiredContactFields.length > 0;
 
-      if (!hasTitle && !hasKeywords && !isDecisionMakers) {
+      // The source identifies a person search by a title, a free-text query, a company domain or a name. Keywords, a country and the contact
+      // fields are filters: a plan made of them alone is refused by the source (HTTP 422), so it is not offered for approval.
+      if (!hasTitle && !hasPeopleIdentityKey(params)) {
         gaps.push("title");
       }
     } else if (isSocial) {

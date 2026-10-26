@@ -4,6 +4,7 @@ import { pointsAr } from "@/lib/pointsFormat";
 import { normalizeReleaseWording } from "@/lib/releaseWording";
 import { pluralizeStoredCountsAr } from "@/lib/planCounts";
 import { openJobHref } from "@/lib/requestLinks";
+import { isDeterministicFailureAr } from "@/lib/providerFailureText";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -337,6 +338,8 @@ export default function RequestsPage() {
   }
 
   const openFile = (job: JobDoc, retry = false) => {
+    // A request the source refused for its own content fails the same way again: it is opened, never re-quoted.
+    retry = retry && !isDeterministicFailureAr(job.errorAr);
     try {
       sessionStorage.setItem("diger_active_job_id", job.$id);
       sessionStorage.setItem("diger_canvas_open", "1");
@@ -441,7 +444,7 @@ export default function RequestsPage() {
                     k === "running" ? "bg-ac text-onac hover:opacity-90" : "bg-sf2 text-ink hover:bg-sf"
                   }`}
                 >
-                  {k === "running" ? "متابعة التقدم" : k === "refunded" ? "إعادة المحاولة" : "متابعة التفاصيل والملفات"}
+                  {k === "running" ? "متابعة التقدم" : k === "refunded" && !isDeterministicFailureAr(j.errorAr) ? "إعادة المحاولة" : "متابعة التفاصيل والملفات"}
                 </button>
               </div>
             </article>

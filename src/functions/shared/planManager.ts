@@ -624,14 +624,17 @@ export async function createAndSaveManagedQuote(
   // The router's decision for the (first) chain item, kept for the admin routing trace once the quote has an id. Never part of the quote.
   let chainDecision: RoutingDecision | null = null;
   for (const it of plan.items) {
-    // Match capability strictly; NEVER substitute capabilities[0]
-    let cap = capabilities.find(
-      (c) =>
-        c.slug === it.capabilitySlug ||
-        c.tregEndpointId === it.capabilitySlug ||
-        c.id === it.capabilitySlug ||
-        (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId || c.id === it.endpointId))
-    );
+    // Match capability strictly; NEVER substitute capabilities[0].
+    // The plan's own slug wins over an alias by endpoint id: the live catalog lists `treg.people.search` at cost 0 (a routed wrapper) and it is
+    // placed BEFORE the registry in the turn's list, so an alias-first match priced a decision-makers plan at 0 and refused it
+    // («سعر الوحدة غير صالح للخدمة المطلوبة», live 2026-10-25).
+    let cap =
+      capabilities.find((c) => c.slug === it.capabilitySlug || c.id === it.capabilitySlug) ||
+      capabilities.find(
+        (c) =>
+          c.tregEndpointId === it.capabilitySlug ||
+          (it.endpointId && (c.tregEndpointId === it.endpointId || c.slug === it.endpointId || c.id === it.endpointId))
+      );
 
     if (!cap) {
       const cached = getCachedCatalogEndpoints().find(
