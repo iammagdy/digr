@@ -43,7 +43,7 @@ export interface RecordCost {
   note: string;
 }
 
-/** Capabilities priced per delivered record. Everything else keeps its existing rule (decision makers stay at 83 + 55 + 55 points). */
+/** Capabilities priced per delivered record. Everything else keeps its existing rule (decision makers stay at 83 + 120 + 55 points). */
 export const RECORD_COSTS: Record<string, RecordCost> = {
   "social-x-posts": { costUsdPerRecord: 0.0000213, primaryCostUsdPerRecord: 0.000015, basis: "MEASURED", note: "owner's run: about 0.80 USD for about 37,500 posts" },
   "social-youtube-comments": { costUsdPerRecord: 0.00005, primaryCostUsdPerRecord: 0.0000018, basis: "ASSUMED", note: "worst path 0.001 per call and 20 comments; first path 0.0009 per call and 500 comments" },

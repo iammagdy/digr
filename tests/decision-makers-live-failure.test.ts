@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 
 const mocks = vi.hoisted(() => ({ call: vi.fn() }));
@@ -159,7 +159,7 @@ describe("decision makers, live failure 1b: the search may use the time the work
     expect(peopleSearchTimeoutMs(now - 5_000, now)).toBe(12_000);
   });
 
-  it("the search call is given that time; the per-person lookups keep 12 s", async () => {
+  it("the search call is given that time; the email lookups get 25 s and the phone lookups keep 12 s", async () => {
     mocks.call.mockImplementation(async (options: { endpointId: string }) => options.endpointId === "icypeas.people.search"
       ? { ok: true, httpStatus: 200, tregCallId: "s", costMicro: 10, latencyMs: 1, data: { output: { people: [{ first_name: "A", last_name: "B", title: "CEO", company_name: "Example Software", industry: "Information Technology & Services", company_domain: "example.com", linkedin_url: "https://www.linkedin.com/in/a-b" }] } }, isRouteMaxCost: false, isPlatformBalanceLow: false }
       : { ok: true, httpStatus: 200, tregCallId: "x", costMicro: 1, latencyMs: 1, data: { output: {} }, isRouteMaxCost: false, isPlatformBalanceLow: false });
@@ -170,7 +170,8 @@ describe("decision makers, live failure 1b: the search may use the time the work
     });
     const timeouts = new Map(mocks.call.mock.calls.map(([options]: any[]) => [options.endpointId, options.timeoutMs]));
     expect(timeouts.get("icypeas.people.search")).toBe(20_000);
-    expect(timeouts.get("treg.people.email.find")).toBe(12_000);
+    expect(timeouts.get("treg.people.email.find")).toBe(25_000);
+    expect(timeouts.get("treg.people.phone.find")).toBe(12_000);
   });
 });
 
@@ -207,6 +208,7 @@ describe("decision makers, live failure 2: the plan is priced by the registry ca
     };
   };
   beforeEach(() => { resetProviderBalanceCacheForTesting(); setProviderBalanceForTesting(10); });
+  afterEach(() => { vi.unstubAllEnvs(); });
 
   it("the live listing is a zero-cost capability with the endpoint's own id (the thing the quote used to match first)", () => {
     const listing = catalogEndpointToCapability(normalizeCatalogEndpoint(LIVE_LISTING));
@@ -215,7 +217,9 @@ describe("decision makers, live failure 2: the plan is priced by the registry ca
     expect(listing.slug).not.toBe("professional-people-search");
   });
 
-  it("with the listing BEFORE the registry (the order of a turn's capabilities) the quote is 193 points a person, not «سعر الوحدة غير صالح»", async () => {
+  it("with the listing BEFORE the registry (the order of a turn's capabilities) the quote is 258 points a person, not «سعر الوحدة غير صالح»", async () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774, which that cap would cut to two
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const listing = catalogEndpointToCapability(normalizeCatalogEndpoint(LIVE_LISTING));
     const client = makeClient();
     const quote = await createAndSaveManagedQuote(client as any, {
@@ -238,9 +242,9 @@ describe("decision makers, live failure 2: the plan is priced by the registry ca
     });
     const item = quote.items[0] as any;
     expect(item.capabilitySlug).toBe("professional-people-search");
-    expect(item.contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
-    expect(item.unitPricePoints).toBe(193);
-    expect(quote.expectedPoints).toBe(579);
+    expect(item.contactUnitPricesPoints).toEqual({ basePerson: 83, workEmail: 120, phone: 55 });
+    expect(item.unitPricePoints).toBe(258);
+    expect(quote.expectedPoints).toBe(774);
     expect(item.params.title).toBe("CEO");
   });
 });

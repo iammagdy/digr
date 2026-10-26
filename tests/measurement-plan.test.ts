@@ -112,7 +112,7 @@ describe("the seven small requests for the tester", () => {
     expect(byId("x-posts-event").asSpecified).toMatchObject({ volume: 100, unitPricePoints: 0.11715, quotedPoints: 14, settledIfAllDeliveredPoints: 12 });
     expect(byId("facebook-page-posts").asSpecified).toMatchObject({ volume: 20, unitPricePoints: 3.4485, quotedPoints: 80, settledIfAllDeliveredPoints: 69 });
     expect(byId("companies").asSpecified).toMatchObject({ volume: 5, unitPricePoints: 3.168, quotedPoints: 19, settledIfAllDeliveredPoints: 16 });
-    expect(byId("decision-makers").asSpecified).toMatchObject({ volume: 1, unitPricePoints: 193, quotedPoints: 222, settledIfAllDeliveredPoints: 193 });
+    expect(byId("decision-makers").asSpecified).toMatchObject({ volume: 1, unitPricePoints: 258, quotedPoints: 297, settledIfAllDeliveredPoints: 258 });
   });
 
   it("the owner's two limits: at the per-record prices only the channels mission, the Facebook page posts and decision makers quote above 20 points at the specified volume", () => {

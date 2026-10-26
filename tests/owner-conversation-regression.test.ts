@@ -68,9 +68,11 @@ const nextTick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 describe("A6: the owner's exact conversation, offline", () => {
   beforeEach(() => clearBriefCacheForTesting());
-  afterEach(() => clearBriefCacheForTesting());
+  afterEach(() => { clearBriefCacheForTesting(); vi.unstubAllEnvs(); });
 
   it("plan card, approval, completion, then the email question gets a conversational offer instead of a second card", async () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774 (hold 891), which that cap would cut to 600
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const tables = makeTables();
     const handler = new ChatHandler(tables as any);
 
@@ -126,8 +128,8 @@ describe("A6: the owner's exact conversation, offline", () => {
     // The decision-makers offer, with the code's numbers: 579 expected, 600 reserved.
     expect(reply.contentAr).toContain("بحث الشركات يعرض بيانات الشركة، ولا يشمل بريد الأشخاص");
     expect(reply.contentAr).toContain("صناع قرار");
-    expect(reply.contentAr).toContain("السعر المتوقع ٥٧٩ نقطة");
-    expect(reply.contentAr).toContain("الحجز المتوقع ٦٠٠ نقطة");
+    expect(reply.contentAr).toContain("السعر المتوقع ٧٧٤ نقطة");
+    expect(reply.contentAr).toContain("الحجز المتوقع ٨٩١ نقطة");
     expect(reply.contentAr).toContain("لا يُحجز رصيد قبل موافقتك");
 
     // Exactly one yes/no question, and it is the last sentence.
@@ -153,6 +155,8 @@ describe("A6: the owner's exact conversation, offline", () => {
   });
 
   it("the same follow-up asked while the plan is still pending also gets the offer and no second card", async () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774 (hold 891), which that cap would cut to 600
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const tables = makeTables();
     const handler = new ChatHandler(tables as any);
     const first: any = await handler.handleUserMessage({
@@ -171,8 +175,8 @@ describe("A6: the owner's exact conversation, offline", () => {
     });
     expect(reply.outputType).toBe("answer_question");
     expect(reply.planQuote).toBeUndefined();
-    expect(reply.contentAr).toContain("السعر المتوقع ٥٧٩ نقطة");
-    expect(reply.contentAr).toContain("الحجز المتوقع ٦٠٠ نقطة");
+    expect(reply.contentAr).toContain("السعر المتوقع ٧٧٤ نقطة");
+    expect(reply.contentAr).toContain("الحجز المتوقع ٨٩١ نقطة");
     expect((reply.contentAr.match(/؟/g) || []).length).toBe(1);
   });
 });

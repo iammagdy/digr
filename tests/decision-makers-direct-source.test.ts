@@ -17,7 +17,7 @@ vi.mock("../src/functions/shared/tregClient", async (importOriginal) => {
 import { defaultTregAdapter, icypeasPeopleBody, parseDirectPeopleRows, peopleDiscoverySize, PEOPLE_DISCOVERY_USD_PER_ROW } from "../src/lib/server/tregAdapter";
 import { evaluateResearchRowRelevance } from "../src/lib/server/researchRelevanceGate";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerChargePoints, decisionMakerDeliveredUnits } from "../src/functions/shared/decisionMakerPricing";
-import { DECISION_MAKER_ROUTE_COST_CAP_USD } from "../src/lib/server/decisionMakerSpend";
+import { DECISION_MAKER_ROUTE_COST_CAP_USD, decisionMakerJobSpendCeilingUsd } from "../src/lib/server/decisionMakerSpend";
 import { isDeterministicFailureAr, PROVIDER_TIMEOUT_AR } from "../src/lib/providerFailureText";
 
 /** The params of the live plan as stored after PR #252 (read from plans_quotes): a title, a country, English keywords, a limit, the contact fields. */
@@ -59,9 +59,20 @@ const source = (search: any = res({ costMicro: 1900, tregCallId: "search_1", dat
 const input = (extra: Record<string, any> = {}) => ({
   jobId: "job_quote_direct", userId: "user_direct", step: 0,
   endpointId: "treg.people.search", capabilitySlug: "professional-people-search", method: "POST" as const, params: PLAN_PARAMS,
-  paginationStrategy: "none" as const, cursor: null, pageSize: 3, remainingNeeded: 3, targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.04, ...extra,
+  paginationStrategy: "none" as const, cursor: null, pageSize: 3, remainingNeeded: 3, targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(3), ...extra,
 });
 const gate = (row: Record<string, any>) => evaluateResearchRowRelevance(row, { capabilitySlug: "professional-people-search", endpointId: "treg.people.search", params: PLAN_PARAMS });
+/** The wait before a replay is a timer: the test lets it pass at once (only `setTimeout` is faked, `Date.now` stays real). */
+async function withFastWaits<T>(run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ["setTimeout"] });
+  try {
+    const pending = run();
+    await vi.advanceTimersByTimeAsync(20_000);
+    return await pending;
+  } finally {
+    vi.useRealTimers();
+  }
+}
 const names = (rows: Record<string, any>[]) => rows.map((row) => row.contact_name);
 
 describe("the direct people source: the body, the size and the cost ceiling", () => {
@@ -132,14 +143,15 @@ describe("the direct answer is read and judged: only people who match the reques
     const result = await defaultTregAdapter(input());
     expect(result.ok).toBe(true);
     const sent = mocks.call.mock.calls.map(([call]: any[]) => call);
+    // the two people are looked up together: both emails, then both phones
     expect(sent.map((call: any) => call.endpointId)).toEqual([
-      "icypeas.people.search", "treg.people.email.find", "treg.people.phone.find", "treg.people.email.find", "treg.people.phone.find",
+      "icypeas.people.search", "treg.people.email.find", "treg.people.email.find", "treg.people.phone.find", "treg.people.phone.find",
     ]);
     expect(sent[0].params).toEqual({
       query: { currentJobTitle: { include: ["CEO"] }, location: { include: ["EG"] }, keyword: { include: ["information technology", "software", "technology"] } },
       pagination: { size: 9 },
     });
-    expect(sent.every((call: any) => call.routeMaxCostUsd === "0.005")).toBe(true);
+    expect(sent.every((call: any) => call.routeMaxCostUsd === (call.endpointId === "treg.people.email.find" ? "0.02" : "0.005"))).toBe(true);
     const looked = sent.filter((call: any) => call.endpointId === "treg.people.email.find").map((call: any) => call.params.linkedin_url);
     expect(looked).toEqual(["https://www.linkedin.com/in/mona-saleh-a", "https://www.linkedin.com/in/omar-hassan-e"]);
     // the people who match come first, with their contact values; the others follow and wait for review
@@ -158,7 +170,7 @@ describe("the direct answer is read and judged: only people who match the reques
     expect(names(delivered)).toEqual(["Mona Saleh", "Omar Hassan"]);
     const units = decisionMakerDeliveredUnits(delivered, ["work_email", "phone"]);
     expect(units).toEqual({ baseUnits: 2, emailUnits: 2, phoneUnits: 1 });
-    expect(decisionMakerChargePoints(units, DECISION_MAKER_UNIT_PRICES_POINTS)).toBe(2 * 83 + 2 * 55 + 1 * 55);
+    expect(decisionMakerChargePoints(units, DECISION_MAKER_UNIT_PRICES_POINTS)).toBe(2 * 83 + 2 * 120 + 1 * 55);
   });
 
   it("when no contact value is found the people are NOT delivered: they go to review and nothing is charged", async () => {
@@ -190,7 +202,7 @@ describe("a slow source: the answer is read once the source has it, never bought
       }
       return source()(options);
     });
-    const result = await defaultTregAdapter(input({ deadlineMs: Date.now() + 45_000 }));
+    const result = await withFastWaits(() => defaultTregAdapter(input({ deadlineMs: Date.now() + 45_000 })));
     expect(result.ok).toBe(true);
     expect(names(result.rows).slice(0, 2)).toEqual(["Mona Saleh", "Omar Hassan"]);
     const searchCalls = mocks.call.mock.calls.map(([call]: any[]) => call).filter((call: any) => call.endpointId === "icypeas.people.search");
@@ -206,7 +218,7 @@ describe("a slow source: the answer is read once the source has it, never bought
 
   it("a replay that also times out ends the job honestly: the timeout sentence, a retry stays possible, no lookups, no cost", async () => {
     mocks.call.mockResolvedValue(TIMED_OUT);
-    const result = await defaultTregAdapter(input({ deadlineMs: Date.now() + 45_000 }));
+    const result = await withFastWaits(() => defaultTregAdapter(input({ deadlineMs: Date.now() + 45_000 })));
     expect(result.ok).toBe(false);
     expect(result.errorMessageAr).toBe(PROVIDER_TIMEOUT_AR);
     expect(isDeterministicFailureAr(result.errorMessageAr)).toBe(false);

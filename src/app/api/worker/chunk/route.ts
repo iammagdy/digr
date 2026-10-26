@@ -99,6 +99,7 @@ import { dedupeIdentityFor } from "../../../../lib/server/rowDedupe";
 import { DATE_EXCLUDED_LABEL, RECEIVED_SO_FAR_LABEL } from "../../../../lib/activityCounts";
 import {
   DECISION_MAKER_ROUTE_COST_CAP_USD,
+  decisionMakerJobSpendCeilingUsd,
   estimateDecisionMakerChunkSpendUsd,
   readDecisionMakerSpendToDate,
   remainingDecisionMakerSpendUsd,
@@ -522,7 +523,7 @@ export async function POST(req: NextRequest) {
 
     const isPeopleJob = spec.capabilitySlug === "professional-people-search";
     const decisionMakerSpendBudgetUsd = isPeopleJob
-      ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId))
+      ? remainingDecisionMakerSpendUsd(await readDecisionMakerSpendToDate(adminClient, jobId), decisionMakerJobSpendCeilingUsd(targetMax))
       : undefined;
 
     // A directory search is billed for every record REQUESTED on the page, matched or not: the estimate (and the daily cap

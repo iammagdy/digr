@@ -17,7 +17,7 @@ vi.mock("../src/lib/server/providerKeys", async (importOriginal) => ({
 }));
 
 import { defaultTregAdapter } from "../src/lib/server/tregAdapter";
-import { createDecisionMakerSpendBudget, DECISION_MAKER_PROVIDER_SPEND_CAP_USD } from "../src/lib/server/decisionMakerSpend";
+import { createDecisionMakerSpendBudget, decisionMakerJobSpendCeilingUsd, DECISION_MAKER_PROVIDER_SPEND_CAP_USD } from "../src/lib/server/decisionMakerSpend";
 import { NON_COMPANY_HOSTS, buildPeopleIdentity, companyDomainFromWebsite, identityScore, returnedPersonMatches, splitFullName } from "../src/lib/peopleIdentity";
 import { isCustomerVisibleJobEvent, LOOKUP_LOG_EVENT_TYPE } from "../src/lib/reviewCostEvent";
 
@@ -55,7 +55,7 @@ const miss = (call: Call) => ({ cost: 0, body: { output: call.endpoint.includes(
 
 const input = (extra: Record<string, any> = {}) => ({
   jobId: "job_quote_lookups", userId: "user_lookups", step: 0, endpointId: "treg.people.search", capabilitySlug: "professional-people-search", method: "POST" as const,
-  params: PARAMS, paginationStrategy: "none" as const, cursor: null, pageSize: 3, remainingNeeded: 9, targetVolumeMax: 9, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: DECISION_MAKER_PROVIDER_SPEND_CAP_USD, ...extra,
+  params: PARAMS, paginationStrategy: "none" as const, cursor: null, pageSize: 3, remainingNeeded: 9, targetVolumeMax: 9, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(9), ...extra,
 });
 const spentMicro = (costs: number[]) => costs.reduce((total, cost) => total + cost, 0);
 
@@ -105,12 +105,12 @@ describe("(b) actual spend never passes the job ceiling or the per-call cap", ()
       costs.push(cost);
       return searchOnly(call) ? { cost, body: SEARCH_ANSWER } : { cost, body: { output: call.endpoint.includes("email") ? { email: null } : { phone: null }, _treg: { served_by: "provider-b", tried: ["provider-b"] } } };
     });
-    const result = await defaultTregAdapter(input() as any);
+    const result = await defaultTregAdapter(input({ decisionMakerSpendBudgetUsd: DECISION_MAKER_PROVIDER_SPEND_CAP_USD }) as any);
     expect(spentMicro(costs)).toBeLessThanOrEqual(Math.round(DECISION_MAKER_PROVIDER_SPEND_CAP_USD * 1e6));
     expect(result.costMicro).toBe(spentMicro(costs));
     expect(calls.filter((call) => !searchOnly(call))).toHaveLength(7);
     expect(result.lookupLog!.summary.skippedBudget).toBeGreaterThan(0);
-    for (const call of calls) expect(call.headers["X-Treg-Route-Max-Cost"]).toBe("0.005");
+    for (const call of calls) expect(call.headers["X-Treg-Route-Max-Cost"]).toBe(call.endpoint === "treg.people.email.find" ? "0.02" : "0.005");
   });
 
   it("a lookup that timed out keeps its reservation, so an unknown bill can never take the job over the ceiling", () => {

@@ -16,7 +16,7 @@ describe("customer services catalog", () => {
   });
 
   it("uses the shared field-by-field price source for decision makers", () => {
-    expect(DECISION_MAKER_UNIT_PRICES_POINTS).toEqual({ basePerson: 83, workEmail: 55, phone: 55 });
+    expect(DECISION_MAKER_UNIT_PRICES_POINTS).toEqual({ basePerson: 83, workEmail: 120, phone: 55 });
     expect(PLATFORM_GUIDE.services.find((service) => service.slug === "professional-people-search")?.descriptionAr)
       .toContain("بريد عمل وهاتف مكتبي");
   });

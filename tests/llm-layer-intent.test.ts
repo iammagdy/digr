@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The offline catalog prices the three decision-maker endpoints like the live one does (the real people branch reads them); every other endpoint is read as before.
 vi.mock("../src/functions/shared/catalogClient", async (importOriginal) => {
@@ -139,6 +139,7 @@ describe("2. the structured intent of each request", () => {
 });
 
 describe("9. the five requests produce the expected structured provider parameters (no model call needed)", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
   const noModel = () => {
     const db = withPeopleSettlement(createChatDb());
     const handler = new ChatHandler(db as any);
@@ -166,6 +167,8 @@ describe("9. the five requests produce the expected structured provider paramete
   });
 
   it("the decision-makers request: the people capability with an English title, English keywords, ISO country, three, and no copied sentence", async () => {
+    // the suites run with the cap lowered to 600 (vitest.config.mts): three people cost 3 x 258 = 774, which that cap would cut to two
+    vi.stubEnv("JOB_MAX_POINTS_CAP", "");
     const { handler, calls } = noModel();
     const r: any = await send(handler, PEOPLE);
     expect(r.outputType).toBe("propose_plan");

@@ -102,3 +102,26 @@ export function returnedPersonMatches(requestedFullName: unknown, returned: { fi
   }
   return !askedFull || full === askedFull || full === `${askedLast}${askedFirst}`;
 }
+
+/** Mailbox providers whose addresses belong to a person, not to a company: such an address is never a work email. */
+export const PERSONAL_EMAIL_DOMAINS: readonly string[] = [
+  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "rocketmail.com", "outlook.com", "hotmail.com", "live.com", "msn.com", "icloud.com",
+  "me.com", "aol.com", "proton.me", "protonmail.com", "pm.me", "gmx.com", "gmx.net", "mail.com", "yandex.com", "yandex.ru", "mail.ru",
+];
+
+/** Regional variants of the big providers: «yahoo.co.uk», «hotmail.fr», «outlook.sa», «live.com.au», «gmx.de», «yandex.by». */
+const PERSONAL_EMAIL_FAMILY = /^(yahoo|hotmail|outlook|live|gmx|yandex)\.(?:[a-z]{2,3}|(?:co|com)\.[a-z]{2})$/;
+
+/** The domain of an email address, lower-case; empty when the value is not an address. */
+export function emailDomain(value: unknown): string {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  const at = text.lastIndexOf("@");
+  const domain = at > 0 ? text.slice(at + 1) : "";
+  return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(domain) ? domain : "";
+}
+
+/** True for an address on a personal mailbox domain (the listed ones and the regional variants of the big providers). */
+export function isPersonalEmail(value: unknown): boolean {
+  const domain = emailDomain(value);
+  return Boolean(domain) && (PERSONAL_EMAIL_DOMAINS.includes(domain) || PERSONAL_EMAIL_FAMILY.test(domain));
+}

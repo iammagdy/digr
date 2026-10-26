@@ -1,9 +1,25 @@
 /** Hard limits shared by every live decision-maker job. */
+/** The job's BASE provider allowance: the discovery search and the phone lookups. The email allowance of each person is added to it (see `decisionMakerJobSpendCeilingUsd`). */
 export const DECISION_MAKER_PROVIDER_SPEND_CAP_USD = 0.04;
+/** The per-call cost ceiling of the discovery search and of the phone lookups. */
 export const DECISION_MAKER_ROUTE_COST_CAP_USD = 0.005;
+/**
+ * The per-call cost ceiling of a work-email lookup. At 0.005 the gateway skipped the providers that find emails ("would exceed max cost"):
+ * 0 of 6 found; at 0.02, 6 of 6 (measured 2026-10-26, average 0.0111 USD per found address). A miss on a per-success provider is free.
+ */
+export const DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD = 0.02;
 
 const USD_MICROS = 1_000_000;
 const ROUTE_CAP_MICROS = Math.round(DECISION_MAKER_ROUTE_COST_CAP_USD * USD_MICROS);
+
+/**
+ * The most a whole job may spend at the source: the base allowance plus one email ceiling per person wanted. Never unbounded: it grows with the
+ * number of people the customer asked for and with nothing else. 1 person 0.06, 3 people 0.10, 10 people 0.24 USD.
+ */
+export function decisionMakerJobSpendCeilingUsd(people: number): number {
+  const count = Math.max(1, Math.floor(Number(people) || 1));
+  return Math.round((DECISION_MAKER_PROVIDER_SPEND_CAP_USD + count * DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD) * USD_MICROS) / USD_MICROS;
+}
 
 /**
  * Reserve the route ceiling before each outbound people call. This uses the worst case for calls whose provider cost has not been reported yet.
@@ -11,20 +27,32 @@ const ROUTE_CAP_MICROS = Math.round(DECISION_MAKER_ROUTE_COST_CAP_USD * USD_MICR
  * bills 0 does not use up the allowance. A call whose cost is unknown (it timed out: the source may have billed it) keeps its whole reservation.
  * What is left is the job's ceiling minus ACTUAL spend (and the reservation of any call still in flight), so spend can never pass the ceiling.
  */
+const capMicros = (capUsd: number): number => Math.round(Math.max(0, capUsd) * USD_MICROS);
+
 export function createDecisionMakerSpendBudget(remainingUsd: number) {
   let remainingMicros = Math.max(0, Math.floor(remainingUsd * USD_MICROS));
 
   return {
-    reserveCall(): boolean {
-      if (remainingMicros < ROUTE_CAP_MICROS) return false;
-      remainingMicros -= ROUTE_CAP_MICROS;
+    /** Reserve one call's ceiling (the route ceiling unless the call has its own, like the email lookup's). */
+    reserveCall(capUsd: number = DECISION_MAKER_ROUTE_COST_CAP_USD): boolean {
+      const cap = capMicros(capUsd);
+      if (remainingMicros < cap) return false;
+      remainingMicros -= cap;
       return true;
     },
-    /** `calls` reservations were made for one lookup (the call and its replay); `actualMicros` is what it cost; `costKnown` false keeps the reservations. */
-    settleCall(settlement: { calls?: number; actualMicros: number; costKnown: boolean }): void {
-      if (!settlement.costKnown) return;
-      const reserved = Math.max(1, Math.floor(settlement.calls ?? 1)) * ROUTE_CAP_MICROS;
-      remainingMicros += reserved - Math.max(0, Math.floor(settlement.actualMicros) || 0);
+    /**
+     * `calls` reservations were made for one lookup (the call and its replays, each at `capUsd`); `actualMicros` is what it cost.
+     * `costKnown` false (the call was cut by our time limit, or its answer is still in flight) keeps the FIRST call's reservation: the source may have billed it.
+     * The replays read the same idempotency key, which the gateway never bills twice, so their reservations are always given back.
+     */
+    settleCall(settlement: { calls?: number; actualMicros: number; costKnown: boolean; capUsd?: number }): void {
+      const cap = capMicros(settlement.capUsd ?? DECISION_MAKER_ROUTE_COST_CAP_USD);
+      const calls = Math.max(1, Math.floor(settlement.calls ?? 1));
+      if (!settlement.costKnown) {
+        remainingMicros += (calls - 1) * cap;
+        return;
+      }
+      remainingMicros += calls * cap - Math.max(0, Math.floor(settlement.actualMicros) || 0);
     },
     remainingUsd(): number {
       return remainingMicros / USD_MICROS;
@@ -32,17 +60,16 @@ export function createDecisionMakerSpendBudget(remainingUsd: number) {
   };
 }
 
-/** Maximum routed calls for one worker chunk: one search, then email and phone per person. */
+/**
+ * The worst case the daily provider cap and the capacity gate reserve for one worker chunk: the job's own ceiling for that many people (the
+ * budget below stops every call before the ceiling, so nothing can spend more). 3 people: 0.04 + 3 x 0.02 = 0.10 USD.
+ */
 export function estimateDecisionMakerChunkSpendUsd(personCount: number): number {
-  const count = Math.max(0, Math.floor(personCount));
-  return Math.min(
-    DECISION_MAKER_PROVIDER_SPEND_CAP_USD,
-    (1 + count * 2) * DECISION_MAKER_ROUTE_COST_CAP_USD,
-  );
+  return decisionMakerJobSpendCeilingUsd(personCount);
 }
 
-export function remainingDecisionMakerSpendUsd(spentUsd: number): number {
-  return Math.max(0, DECISION_MAKER_PROVIDER_SPEND_CAP_USD - Math.max(0, spentUsd));
+export function remainingDecisionMakerSpendUsd(spentUsd: number, ceilingUsd: number = DECISION_MAKER_PROVIDER_SPEND_CAP_USD): number {
+  return Math.max(0, ceilingUsd - Math.max(0, spentUsd));
 }
 
 /** Read prior actual/estimated provider-cost rows for this job; fail closed if unreadable. */

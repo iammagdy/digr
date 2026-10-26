@@ -14,6 +14,7 @@ vi.mock("../src/functions/shared/tregClient", () => ({
 
 import { defaultTregAdapter, hasRecognizedProviderResultShape, normalizeTregPeopleParams } from "../src/lib/server/tregAdapter";
 import { requiredProfessionalContactFields } from "../src/lib/planParameters";
+import { decisionMakerJobSpendCeilingUsd } from "../src/lib/server/decisionMakerSpend";
 
 describe("TREG people search and enrichment", () => {
   it("distinguishes a valid empty result envelope from an invalid response object", () => {
@@ -89,7 +90,7 @@ describe("TREG people search and enrichment", () => {
     expect(mocks.call.mock.calls.map(([call]) => call.endpointId)).toEqual([
       "icypeas.people.search", "treg.people.email.find", "treg.people.phone.find",
     ]);
-    expect(mocks.call.mock.calls.slice(1).every(([call]) => call.routeMaxCostUsd === "0.005")).toBe(true);
+    expect(mocks.call.mock.calls.slice(1).every(([call]) => call.routeMaxCostUsd === (call.endpointId === "treg.people.email.find" ? "0.02" : "0.005"))).toBe(true);
   });
 
   it("caps a three-person request at seven calls and disables retries for every people route", async () => {
@@ -117,14 +118,14 @@ describe("TREG people search and enrichment", () => {
       endpointId: "treg.people.search", capabilitySlug: "professional-people-search",
       method: "POST", params: { q: "directors in Egypt", limit: 3, requiredContactFields: ["work_email", "phone"] },
       paginationStrategy: "none", cursor: null, pageSize: 3, remainingNeeded: 3,
-      targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.04,
+      targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: decisionMakerJobSpendCeilingUsd(3),
     });
 
     expect(result.ok).toBe(true);
     expect(result.providerCallCount).toBe(7);
     expect(result.costMicro).toBe(250);
     expect(mocks.call).toHaveBeenCalledTimes(7);
-    expect(mocks.call.mock.calls.every(([call]) => call.routeMaxCostUsd === "0.005")).toBe(true);
+    expect(mocks.call.mock.calls.every(([call]) => call.routeMaxCostUsd === (call.endpointId === "treg.people.email.find" ? "0.02" : "0.005"))).toBe(true);
     expect(result.costMicro / 1_000_000).toBeLessThanOrEqual(0.035);
   });
 
@@ -139,7 +140,7 @@ describe("TREG people search and enrichment", () => {
         })) } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
       };
       return {
-        ok: true, httpStatus: 200, tregCallId: "email_budget", costMicro: 5000,
+        ok: true, httpStatus: 200, tregCallId: "email_budget", costMicro: 20000,
         data: { output: { work_email: "person@company.test" } }, isRouteMaxCost: false, isPlatformBalanceLow: false,
       };
     });
@@ -149,7 +150,7 @@ describe("TREG people search and enrichment", () => {
       endpointId: "treg.people.search", capabilitySlug: "professional-people-search",
       method: "POST", params: { q: "directors in Egypt", limit: 3, requiredContactFields: ["work_email", "phone"] },
       paginationStrategy: "none", cursor: null, pageSize: 3, remainingNeeded: 3,
-      targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.01,
+      targetVolumeMax: 3, deliveredSoFar: 0, decisionMakerSpendBudgetUsd: 0.028,
     });
 
     expect(mocks.call).toHaveBeenCalledTimes(2);

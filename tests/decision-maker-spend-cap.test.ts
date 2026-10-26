@@ -9,11 +9,11 @@ import {
 } from "../src/lib/server/decisionMakerSpend";
 
 describe("decision-maker live provider spend ceiling", () => {
-  it("sets a strict 0.04 USD ceiling and estimates a three-person job at 0.035 USD", () => {
+  it("sets a 0.04 USD base allowance and estimates a three-person job at its ceiling, 0.04 + 3 x 0.02 = 0.10 USD (30 people: 0.64)", () => {
     expect(DECISION_MAKER_PROVIDER_SPEND_CAP_USD).toBe(0.04);
     expect(DECISION_MAKER_ROUTE_COST_CAP_USD).toBe(0.005);
-    expect(estimateDecisionMakerChunkSpendUsd(3)).toBe(0.035);
-    expect(estimateDecisionMakerChunkSpendUsd(30)).toBe(0.04);
+    expect(estimateDecisionMakerChunkSpendUsd(3)).toBe(0.1);
+    expect(estimateDecisionMakerChunkSpendUsd(30)).toBe(0.64);
   });
 
   it("allows no more calls than the remaining ceiling can cover at the route cap", () => {
@@ -22,7 +22,7 @@ describe("decision-maker live provider spend ceiling", () => {
     expect(allowedCalls).toBe(8);
     expect(budget.remainingUsd()).toBe(0);
 
-    const threePersonBudget = createDecisionMakerSpendBudget(estimateDecisionMakerChunkSpendUsd(3));
+    const threePersonBudget = createDecisionMakerSpendBudget(0.035);
     expect(Array.from({ length: 8 }, () => threePersonBudget.reserveCall()).filter(Boolean)).toHaveLength(7);
   });
 
