@@ -10,9 +10,12 @@ const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
 
 interface Identity { name: string; company: string; title: string; profileUrl: string }
+interface Attempt { endpointId: string; outcome: "found" | "no_data" | "failed" | "skipped_country" | "cap"; costUsd: number; note: string }
 type Outcome =
-  | { ok: true; costUsd: number; identity: Identity; found: boolean; depth: number; hasDeeper: boolean; spentTodayUsd: number; capUsd: number }
-  | { ok: false; reason: string; spentTodayUsd: number; capUsd: number; costUsd?: number; hasDeeper?: boolean };
+  | { ok: true; costUsd: number; identity: Identity; found: boolean; depth: number; hasDeeper: boolean; spentTodayUsd: number; capUsd: number; attempts?: Attempt[] }
+  | { ok: false; reason: string; spentTodayUsd: number; capUsd: number; costUsd?: number; hasDeeper?: boolean; attempts?: Attempt[] };
+
+const ATTEMPT_AR: Record<Attempt["outcome"], string> = { found: "وجد بيانات", no_data: "لا بيانات", failed: "فشل", skipped_country: "تخطّاه: لا يغطي دولة الرقم", cap: "أوقفه الحد اليومي" };
 
 const REASON_AR: Record<string, string> = {
   bad_input: "اكتب رقم هاتف أو بريدًا إلكترونيًا صحيحًا.",
@@ -50,11 +53,12 @@ export default function AdminReverseLookupPage() {
   }
 
   const okResult = result && result.ok ? result : null;
+  const attempts = result?.attempts ?? [];
   return (
     <div className="flex flex-col gap-4" dir="rtl">
       <section className={SECTION} aria-label="بحث عكسي">
         <h2 className="m-0 text-base font-semibold text-ink">بحث عكسي</h2>
-        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">اكتب رقم هاتف أو بريدًا إلكترونيًا. يبدأ البحث بأرخص خدمة مناسبة، ولا يستخدم أي نقاط من أي عميل. كل بحث يُسجَّل في سجل المراجعة.</p>
+        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">اكتب رقم هاتف أو بريدًا إلكترونيًا. يبدأ البحث بأرخص خدمة تغطي دولة الرقم، وينتقل للتالية إن لم تُرجع بيانات، ولا يستخدم أي نقاط من أي عميل. كل بحث يُسجَّل في سجل المراجعة.</p>
         <input className={FIELD} inputMode="email" dir="ltr" placeholder="+20… أو name@company.com" value={text} onChange={(e) => setText(e.target.value)} aria-label="رقم الهاتف أو البريد" />
         <div className="flex flex-wrap gap-2">
           <button type="button" className={BTN} disabled={busy || !text.trim()} onClick={() => run(0)}>بحث</button>
@@ -62,6 +66,17 @@ export default function AdminReverseLookupPage() {
         </div>
         {spent ? <p className="m-0 text-[12px] font-light text-mut" data-testid="admin-lookup-cap">تكلفة اليوم {usd(spent.spentTodayUsd)} من حدّ {usd(spent.capUsd)}</p> : null}
       </section>
+
+      {attempts.length > 0 ? (
+        <section className={SECTION} aria-label="المحاولات" data-testid="admin-lookup-attempts">
+          <h3 className="m-0 text-[13px] font-semibold text-ink">المحاولات</h3>
+          <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px] text-ink2">
+            {attempts.map((a, i) => (
+              <li key={`${a.endpointId}-${i}`} className="flex flex-wrap gap-x-3"><span dir="ltr">{a.endpointId}</span><span>{ATTEMPT_AR[a.outcome]}</span><span>{usd(a.costUsd)}</span>{a.note ? <span dir="ltr" className="text-mut">{a.note}</span> : null}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {result && !result.ok ? <p className="m-0 rounded-xl border border-ln bg-sf2 px-3 py-2 text-[13px] text-ink" role="status">{REASON_AR[result.reason] ?? REASON_AR.failed}{result.costUsd ? ` (التكلفة ${usd(result.costUsd)})` : ""}</p> : null}
 

@@ -13,6 +13,8 @@ export interface PlannerUsage { inputTokens: number; outputTokens: number; cache
 export interface PlannerResponse { content: ContentBlock[]; stopReason: string; usage: PlannerUsage; model: string }
 
 export interface PlannerRequest {
+  /** The longest this call may take (ms); the transport cuts it at PLANNER_TIMEOUT_MS or this, whichever is shorter. */
+  timeoutMs?: number;
   system: string;
   messages: PlannerMessage[];
   tools: Array<Record<string, unknown>>;
@@ -44,7 +46,7 @@ export function createAnthropicTransport(options: { model?: string; fetchFn?: ty
       const key = await resolveProviderKey("anthropic");
       if (!key.key) throw new Error("planner_key_missing");
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), PLANNER_TIMEOUT_MS);
+      const timer = setTimeout(() => controller.abort(), Math.max(1_000, Math.min(PLANNER_TIMEOUT_MS, request.timeoutMs ?? PLANNER_TIMEOUT_MS)));
       try {
         const tools = request.tools.map((t, i, all) => (i === all.length - 1 ? { ...t, cache_control: { type: "ephemeral" } } : t));
         const response = await doFetch("https://api.anthropic.com/v1/messages", {

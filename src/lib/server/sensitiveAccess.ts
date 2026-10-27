@@ -202,7 +202,7 @@ export function sensitiveRefusalAr(refused: SensitiveRefusal): string {
     case "purpose_required": return PURPOSE_REQUIRED_AR;
     case "daily_limit": return SENSITIVE_LIMIT_AR;
     case "audit_unavailable": return SENSITIVE_AUDIT_UNAVAILABLE_AR;
-    default: return "هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد.";
+    default: return "هذه الخدمة غير متاحة حاليًا، ولم يُحجز أي رصيد.";
   }
 }
 

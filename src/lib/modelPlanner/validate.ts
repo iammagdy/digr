@@ -13,13 +13,18 @@ import { maskText } from "../server/rawCapture";
 import { MAX_PLAN_STAGES, SAMPLE_ROWS_ON_CARD } from "./constants";
 import { countryOfRequest, countryRowGate, type RequestCountry } from "./countryGate";
 import { callEstimateUsd, pricePlan, priceStep, unitCost, type CallCost, type PlanPrice, type StepMeasure, type StepPrice } from "./pricing";
+import { MAX_RUNTIME_ALTERNATES } from "./constants";
+import { mapParamsToSibling, rankSiblings } from "./siblings";
+import { readStepRows } from "./reader";
 import type { RecipeRecord } from "./recipes";
 import type { PlanParam, PlanStep, ProposePlanInput, StepFacts, StoredModelPlan, ValidationIssue } from "./types";
+import { checkParamValue, isWindowParamName, resolvedParamValue } from "./paramRules";
+export { checkParamValue, isWindowParamName, resolvedParamValue } from "./paramRules";
 
 type Obj = Record<string, unknown>;
 
 /** What a sample call of this turn found out about an endpoint: the raw rows (as the shape reader read them) and their digest. */
-export interface StepSample { endpointId: string; rows: Obj[]; digest: ShapeDigest; costUsd: number }
+export interface StepSample { endpointId: string; rows: Obj[]; digest: ShapeDigest; costUsd: number; /** The raw answer of the sample call (memory only, never stored): the validator reads it again the way the worker will. */ body?: unknown }
 
 export interface ValidateContext {
   /** Everything the customer wrote for this request (their own words only). */
@@ -65,15 +70,6 @@ export type ValidationResult = { ok: true; plan: ValidatedPlan } | { ok: false; 
 
 const issue = (code: ValidationIssue["code"], message: string, extra: Partial<ValidationIssue> = {}): ValidationIssue => ({ code, message, ...extra });
 
-const WINDOW_TOKENS = new Set(["date", "dates", "from", "to", "since", "until", "start", "end", "period", "window", "time", "timeframe", "days", "recent", "published", "posted", "range", "year", "month", "week", "after", "before", "interval", "timespan", "daterange"]);
-const tokensOfName = (name: string): string[] => String(name).replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/).filter(Boolean).map((t) => t.toLowerCase());
-/** A parameter that sets a period (datePosted, publish_time, since, start_date…): never set without the customer's own words about the period. */
-export function isWindowParamName(name: string): boolean {
-  const tokens = tokensOfName(name);
-  if (tokens.includes("sort") || tokens.includes("order")) return false;
-  return tokens.some((t) => WINDOW_TOKENS.has(t));
-}
-
 /** The period the customer's own words state (dates, a relative period, a known event), or null. */
 export function statedWindowOf(text: string, today: Date = new Date()): { from: string; to: string } | null {
   const stated = parseStatedDates(text, today);
@@ -90,48 +86,6 @@ const comparableText = (s: string): string => foldDigits(normalizeArabic(String(
 export function quoteIsFromCustomer(quote: string | undefined, customerText: string): boolean {
   const q = comparableText(quote ?? "").trim();
   return q.length >= 2 && comparableText(customerText).includes(q);
-}
-
-const typeClass = (t: string | null): "string" | "int" | "number" | "bool" | "array" | "object" | "any" => {
-  const s = String(t ?? "").toLowerCase();
-  if (/^(integer|int)(,|$)/.test(s) || s === "integer" || s === "int") return "int";
-  if (s === "number" || s === "float" || s === "double") return "number";
-  if (s === "boolean" || s === "bool") return "bool";
-  if (s.startsWith("array") || s === "list" || s === "string_or_array" || /list$/.test(s)) return "array";
-  if (s === "object" || s === "dict") return "object";
-  if (s === "string" || s === "str" || s === "url" || s === "text") return "string";
-  return "any";
-};
-
-/** Checks a value against what the catalog says the parameter takes. Returns a problem or null. */
-export function checkParamValue(input: CatalogInput, value: unknown): { code: ValidationIssue["code"]; message: string } | null {
-  const cls = typeClass(input.type);
-  const name = input.name;
-  if (cls === "int" || cls === "number") {
-    const n = typeof value === "number" ? value : Number(foldDigits(String(value)));
-    if (!Number.isFinite(n)) return { code: "bad_param_type", message: `parameter «${name}» takes a number, got «${String(value).slice(0, 40)}»` };
-    if (cls === "int" && !Number.isInteger(n)) return { code: "bad_param_type", message: `parameter «${name}» takes a whole number` };
-    if (input.minimum !== null && n < input.minimum) return { code: "bad_param_range", message: `parameter «${name}» must be at least ${input.minimum}` };
-    if (input.maximum !== null && n > input.maximum) return { code: "bad_param_range", message: `parameter «${name}» must be at most ${input.maximum}` };
-  } else if (cls === "bool") {
-    if (toBool(value) === undefined) return { code: "bad_param_type", message: `parameter «${name}» takes true or false` };
-  } else if (cls === "array") {
-    if (!Array.isArray(value) && typeof value !== "string") return { code: "bad_param_type", message: `parameter «${name}» takes a list` };
-  } else if (cls === "string") {
-    if (typeof value !== "string" && typeof value !== "number") return { code: "bad_param_type", message: `parameter «${name}» takes text` };
-  }
-  if (Array.isArray(input.enum) && input.enum.length > 0) {
-    const allowed = input.enum.map((e) => String(e));
-    const values = Array.isArray(value) ? value.map(String) : [String(value)];
-    if (!values.every((v) => allowed.includes(v))) return { code: "bad_param_enum", message: `parameter «${name}» must be one of: ${allowed.slice(0, 20).join(", ")}` };
-  }
-  return null;
-}
-
-/** The value a param sends: its value, or the customer's quote when no value was given. */
-export function resolvedParamValue(p: PlanParam): unknown {
-  if (p.source === "prior_step") return undefined;
-  return p.value !== undefined ? p.value : p.quote;
 }
 
 /** What the rows of an endpoint are about, from the catalog's platform. */
@@ -306,22 +260,56 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
 
 const LIMIT_NAMES = ["limit", "count", "page_size", "per_page", "size", "num", "max_results", "maxItems", "max_items", "n", "Count", "pageSize", "perPage"];
 
-function factsOf(v: ValidatedStep, ctx: ValidateContext): StepFacts {
+function factsOf(v: ValidatedStep, ctx: ValidateContext, index: number): StepFacts {
   const sample = ctx.samples.get(v.step.endpointId);
   const limitParam = v.step.fieldMap.pagination.limitParam;
   const limitInput = v.endpoint.inputs.find((i) => i.name === limitParam) ?? v.endpoint.inputs.find((i) => LIMIT_NAMES.includes(i.name));
-  return {
+  // The worker reads a real answer the way THE SAMPLE read it: where the sample found the list, or that the answer is one record read as the answer itself.
+  const strategy = sample?.digest.listStrategy;
+  const oneRecord = strategy === "root_object" || strategy === "single_object";
+  const catalogList = v.endpoint.list_path && v.endpoint.list_path !== "NOT FOUND" ? v.endpoint.list_path : null;
+  const listPath = v.step.fieldMap.rowsPath ?? (sample ? (oneRecord ? null : sample.digest.listPath) : catalogList) ?? (sample ? null : catalogList);
+  const facts: StepFacts = {
     method: v.endpoint.method === "GET" ? "GET" : "POST",
     scope: v.endpoint.scope,
     limitName: limitInput?.name ?? null,
     limitMax: limitInput?.maximum ?? null,
-    listPath: v.step.fieldMap.rowsPath ?? sample?.digest.listPath ?? (v.endpoint.list_path && v.endpoint.list_path !== "NOT FOUND" ? v.endpoint.list_path : null),
+    listPath,
     cursorPath: v.step.fieldMap.pagination.cursorPath ?? sample?.digest.nextCursorPath ?? v.endpoint.cursor_path ?? null,
     // a field the example held as null has no type worth storing (and a stored «null» word would read as a missing value to the scope guard)
     itemFields: v.endpoint.item_fields ? Object.fromEntries(Object.entries(v.endpoint.item_fields).filter(([, f]) => f.type && f.type !== "null").slice(0, 60).map(([k, f]) => [k, { type: f.type }])) : null,
     callEstimateUsd: v.callEstimateUsd,
     entity: entityOfEndpoint(v.endpoint),
+    ...(oneRecord || (sample === undefined && listPath === null) ? { rootObjectIsRow: true } : {}),
   };
+  // an EDIT of an approved plan has no new sample: the step keeps the way the approved step was read (where its list sits, that it is one record, its cursor and types)
+  const approved = ctx.approved?.steps[index];
+  const kept: StepFacts = approved && approved.endpointId === v.step.endpointId
+    ? { ...facts, listPath: approved.facts.listPath, cursorPath: approved.facts.cursorPath, itemFields: approved.facts.itemFields, rootObjectIsRow: approved.facts.rootObjectIsRow, limitName: approved.facts.limitName, limitMax: approved.facts.limitMax }
+    : facts;
+  if (kept.rootObjectIsRow === undefined) delete kept.rootObjectIsRow;
+  const alternates = alternatesOf(v, ctx);
+  return alternates.length > 0 ? { ...kept, alternates } : kept;
+}
+
+/** The siblings the worker may call when this step's call fails: no dearer per call than the approved ceiling, params mapped from the step's own values, cheapest and most reliable first. */
+function alternatesOf(v: ValidatedStep, ctx: ValidateContext): NonNullable<StepFacts["alternates"]> {
+  const out: NonNullable<StepFacts["alternates"]> = [];
+  if (categoryOf(v.step.endpointId) === "sensitive") return out;
+  for (const choice of rankSiblings(v.endpoint, ctx.catalog, ctx.access, { maxEstimateUsd: v.callEstimateUsd, pageRows: 1 })) {
+    if (out.length >= MAX_RUNTIME_ALTERNATES) break;
+    const mapped = mapParamsToSibling(v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), choice.endpoint);
+    if (!mapped.ok) continue;
+    const e = choice.endpoint;
+    const limitInput = e.inputs.find((i) => LIMIT_NAMES.includes(i.name));
+    out.push({
+      endpointId: e.id, method: e.method === "GET" ? "GET" : "POST", scope: e.scope, params: mapped.params,
+      listPath: e.list_path && e.list_path !== "NOT FOUND" ? e.list_path : null, cursorPath: e.cursor_path ?? null,
+      itemFields: e.item_fields ? Object.fromEntries(Object.entries(e.item_fields).filter(([, f]) => f.type && f.type !== "null").slice(0, 60).map(([k, f]) => [k, { type: f.type }])) : null,
+      limitName: limitInput?.name ?? null, limitMax: limitInput?.maximum ?? null, callEstimateUsd: choice.estimateUsd,
+    });
+  }
+  return out;
 }
 
 const MONEY_WORDS = /نقطة|نقاط|نقطه|جنيه|ج\.م|دولار|مجان|رخيص|غالي|سعر|تكلف|ثمن|رصيد|\$|USD|EGP|credit|points?\b|price|cost/i;
@@ -356,6 +344,16 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   });
   if (issues.length > 0 || validated.length !== input.steps.length) return { ok: false, issues };
 
+  // ONE reader: the facts the worker will read with must give, on the real answer of the sample, the same rows the sample gave
+  const facts = validated.map((v, i) => factsOf(v, ctx, i));
+  validated.forEach((v, i) => {
+    const sample = ctx.samples.get(v.step.endpointId);
+    if (sample?.body === undefined) return;
+    const again = readStepRows(sample.body, facts[i]).rows.length;
+    if (again !== sample.digest.rowsInSample) issues.push(issue("reader_mismatch", `the worker would read ${again} rows from the sample answer, the sample read ${sample.digest.rowsInSample}. Set rowsPath to «${sample.digest.listPath ?? ""}».`, { stepIndex: i }));
+  });
+  if (issues.length > 0) return { ok: false, issues };
+
   const sensitive = validated.some((v) => v.category === "sensitive");
   if (sensitive && !ctx.access.isAdmin && String(ctx.purpose ?? "").trim().length < MIN_PURPOSE_CHARS) {
     return { ok: false, issues: [issue("sensitive_purpose", "a purpose of use is required for this service before the plan can be approved")] };
@@ -366,6 +364,11 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   const sampleSource = ctx.samples.get(last.step.endpointId);
   // the card shows rows of a REAL sample call only: never the catalog's documentation example (not this customer's data), never a sensitive endpoint's rows
   const sampleRaw = !sensitive && sampleSource && sampleSource.rows.length > 0 ? sampleSource.rows : [];
+  // A topic review judges rows against a subject («rows about basketball»). A lookup of ONE named thing (an account, a link, an id: one record back, no paging) has no subject to
+  // judge: the customer named the thing itself, so there is no topic review (it would hold the very record that was asked for).
+  const lookupOfOne = validated.length === 1 && validated[0].price.rowsPerCall <= 1 && input.steps[0].fieldMap.pagination.kind === "single"
+    && input.steps[0].params.some((p) => (p.source === "customer_text" || p.source === "derived") && isIdLikeParamName(p.name));
+  const topic = input.topic && !lookupOfOne ? input.topic : undefined;
   const cardCountry = countryOfRequest(ctx.customerText);
   const applied = applyPlanToRows(sampleRaw, last.step.fieldMap, last.step.filters, validated.length === 1 ? countryRowGate(cardCountry, entityOfEndpoint(last.endpoint)) : undefined);
   const maskRecord = (r: Record<string, unknown>) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" ? maskText(v).slice(0, 160) : v]));
@@ -375,11 +378,11 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
     ok: true,
     plan: {
       summaryAr: safeSummaryAr(input.summaryAr, last.step.volume, ctx.customerText),
-      ...(input.topic ? { topic: input.topic } : {}),
+      ...(topic ? { topic } : {}),
       steps: validated,
       price,
       sensitive,
-      stored: { v: 1, steps: validated.map((v) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: factsOf(v, ctx) })), ...(input.topic ? { topic: input.topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })) },
+      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })) },
       sampleRows,
       sampleColumns,
     },

@@ -18,8 +18,11 @@ const nextConfig = {
       "./node_modules/pdfkit/js/standard-fonts/**/*",
     ],
     // The catalog snapshot (10 MB) is READ AT RUNTIME by the model planner (chat) and the admin reverse lookup only; the worker never reads it (the approved plan carries what it needs).
+    // (the plan edit re-validates a stored plan against it; the admin planner self-test runs the real planner)
     "/api/chat": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
+    "/api/chat/edit-plan": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
     "/api/admin/reverse-lookup": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
+    "/api/admin/planner-selftest": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
   },
   env: {
     NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf",

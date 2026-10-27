@@ -3,8 +3,9 @@ import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../ser
 import { JOB_BUDGET_STOP_AR } from "../server/callBudget";
 import { runSensitiveCall, sensitiveRefusalAr } from "../server/sensitiveAccess";
 import { categoryOf, type AccountAccess } from "../treg/dataPolicy";
-import { readShape } from "../treg/shapeReader";
-import { applyPlanToRows, readField } from "./fieldMap";
+import type { ShapeReading } from "../treg/shapeReader";
+import { readStepRows } from "./reader";
+import { applyPlanToRows, readField, type ApplyResult } from "./fieldMap";
 import { countryRowGate } from "./countryGate";
 import { getRowAdvisor, type RowAdvisorFn } from "../server/rowReviewAdvisor";
 import { MAX_CALLS_PER_CHUNK, MAX_FAN_OUT_PARENTS, MODEL_PLAN_PARAM, MODEL_PLAN_PURPOSE_PARAM, MODEL_PLAN_REQUEST_PARAM, TOPIC_REVIEW_CALL_ESTIMATE_USD, TOPIC_REVIEW_JOB_CAP_USD, TOPIC_REVIEW_ROWS_PER_CALL } from "./constants";
@@ -100,8 +101,49 @@ async function oneCall(plan: StoredModelPlan, step: PlanStep & { facts: StepFact
   return { ok: result.ok, result, costMicro: Math.max(0, result.costMicro || 0) };
 }
 
-function hintsFor(step: PlanStep & { facts: StepFacts }) {
-  return { listPath: step.facts.listPath, cursorPath: step.facts.cursorPath, itemFields: step.facts.itemFields, ...(step.facts.listPath === null ? { rootObjectIsRow: true } : {}) };
+const EMPTY_READING: ShapeReading = { rows: [], listPath: null, listStrategy: "none", nextCursor: null, cursorPath: null, cursorStrategy: "none", cursorKind: null, hasMore: null, coercions: {}, unreadable: {}, warnings: [] };
+const EMPTY_APPLIED: ApplyResult = { records: [], rawKept: [], seen: 0, dropped: { author: 0, excluded: 0, window: 0, unreadable: 0, empty: 0, geo: 0 } };
+
+interface StageRead { out: OneCall; reading: ShapeReading; applied: ApplyResult; costMicro: number; calls: number; lastCallId: string; viaAlternate?: string }
+
+/** A sibling's rows are accepted only when the approved field map really reads them: at least one record, and at least half of the mapped cells filled. */
+function readable(applied: ApplyResult, columns: number): boolean {
+  if (applied.records.length === 0 || columns === 0) return false;
+  let filled = 0;
+  for (const r of applied.records) for (const v of Object.values(r)) if (v !== "" && v !== null && v !== undefined) filled += 1;
+  return filled / (applied.records.length * columns) >= 0.5;
+}
+
+/**
+ * One call of a stage, and its siblings when it fails. The approved step's call first; when it FAILS (a source error, a timeout) or answers NOTHING on the first page, the siblings the plan
+ * carries (no dearer per call than the approved ceiling, mapped parameters, one page) are tried in order, and the first whose answer the approved field map can read wins. A refusal
+ * (a budget stop, a blocked or sensitive endpoint) is never retried elsewhere. The price never changes: the charge is for the rows delivered, never above the approved reserve.
+ */
+async function callStage(plan: StoredModelPlan, step: PlanStep & { facts: StepFacts }, parent: Record<string, string | number> | null, state: InterpreterState, pageRows: number, input: ProviderAdapterCallInput, deps: InterpreterDeps, tag: string, rowGate: ((raw: Record<string, unknown>) => boolean) | undefined, firstPage: boolean): Promise<StageRead> {
+  const out = await oneCall(plan, step, stepParams(step, parent, state, pageRows), input, deps, tag);
+  let costMicro = out.costMicro;
+  let calls = 1;
+  let lastCallId = out.result.tregCallId || "";
+  const reading = out.ok ? readStepRows(out.result.data, step.facts) : EMPTY_READING;
+  const applied = out.ok ? applyPlanToRows(reading.rows, step.fieldMap, step.filters, rowGate) : EMPTY_APPLIED;
+  const refused = Boolean(out.result.budgetStopped || out.refusedAr || out.result.blocked);
+  const alternates = step.facts.alternates ?? [];
+  if (refused || !firstPage || alternates.length === 0 || (out.ok && reading.rows.length > 0)) return { out, reading, applied, costMicro, calls, lastCallId };
+  for (const alt of alternates) {
+    if (alt.callEstimateUsd > step.facts.callEstimateUsd + 1e-12) continue; // never above the approved per-call ceiling
+    const altStep: PlanStep & { facts: StepFacts } = {
+      ...step, endpointId: alt.endpointId, params: alt.params, fieldMap: { ...step.fieldMap, rowsPath: undefined, pagination: { kind: "single" } },
+      facts: { ...step.facts, method: alt.method, scope: alt.scope, listPath: alt.listPath, cursorPath: alt.cursorPath, itemFields: alt.itemFields, limitName: alt.limitName, limitMax: alt.limitMax, callEstimateUsd: alt.callEstimateUsd, rootObjectIsRow: undefined, alternates: undefined },
+    };
+    const aout = await oneCall(plan, altStep, stepParams(altStep, parent, { ...state, next: null, page: 1, offset: 0 }, pageRows), input, deps, `${tag}_alt`);
+    costMicro += aout.costMicro; calls += 1; lastCallId = aout.result.tregCallId || lastCallId;
+    if (aout.result.budgetStopped || aout.refusedAr || aout.result.blocked) break;
+    if (!aout.ok) continue;
+    const areading = readStepRows(aout.result.data, altStep.facts);
+    const aapplied = applyPlanToRows(areading.rows, step.fieldMap, step.filters, rowGate);
+    if (readable(aapplied, step.fieldMap.columns.length)) return { out: aout, reading: { ...areading, nextCursor: null }, applied: aapplied, costMicro, calls, lastCallId, viaAlternate: alt.endpointId };
+  }
+  return { out, reading, applied, costMicro, calls, lastCallId };
 }
 
 /**
@@ -154,17 +196,16 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
 
   // ---------------------------------------------------------------- one stage
   if (!second) {
-    const params = stepParams(first, null, state, pageRows);
-    const out = await oneCall(plan, first, params, input, withPurpose, "");
-    calls += 1; costMicro += out.costMicro; lastCallId = out.result.tregCallId || lastCallId;
+    const firstPage = state.page === 1 && (state.next === null || state.next === undefined) && state.offset === 0;
+    const r = await callStage(plan, first, null, state, pageRows, input, withPurpose, "", firstStepGate, firstPage);
+    const { out, reading, applied } = r;
+    calls += r.calls; costMicro += r.costMicro; lastCallId = r.lastCallId || lastCallId;
     if (!out.ok) return fail(out.result.error || `http_${out.result.httpStatus}`, out.refusedAr ?? failureAr(out.result), costMicro, calls, lastCallId, out.result.httpStatus);
-    const reading = readShape(out.result.data, hintsFor(first));
-    const applied = applyPlanToRows(reading.rows, first.fieldMap, first.filters, firstStepGate);
     delivered.push(...applied.records);
     const pg = first.fieldMap.pagination;
     const reviewed = await reviewTopicRows(delivered, plan, input, state, withPurpose);
     let next: InterpreterState | null = null;
-    if (reading.rows.length > 0) {
+    if (reading.rows.length > 0 && !r.viaAlternate) {
       if (pg.kind === "token" && reading.nextCursor && reading.cursorKind !== "url" && String(reading.nextCursor) !== String(state.next ?? "")) next = { ...state, next: reading.nextCursor, page: state.page + 1 };
       else if (pg.kind === "page") next = { ...state, page: state.page + 1 };
       else if (pg.kind === "offset") next = { ...state, offset: state.offset + reading.rows.length, page: state.page + 1 };
@@ -178,12 +219,11 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
   while (calls < MAX_CALLS_PER_CHUNK && delivered.length < wanted && budgetLeft()) {
     if (state.queue.length === 0) {
       if (state.listDone) break;
-      const params = stepParams(first, null, state, Math.min(pageRows, MAX_FAN_OUT_PARENTS));
-      const out = await oneCall(plan, first, params, input, withPurpose, "_list");
-      calls += 1; costMicro += out.costMicro; lastCallId = out.result.tregCallId || lastCallId;
+      const r = await callStage(plan, first, null, state, Math.min(pageRows, MAX_FAN_OUT_PARENTS), input, withPurpose, "_list", firstStepGate, state.page === 1 && !state.next);
+      const { out, reading } = r;
+      calls += r.calls; costMicro += r.costMicro; lastCallId = r.lastCallId || lastCallId;
       if (!out.ok) return fail(out.result.error || `http_${out.result.httpStatus}`, out.refusedAr ?? failureAr(out.result), costMicro, calls, lastCallId, out.result.httpStatus);
-      const reading = readShape(out.result.data, hintsFor(first));
-      const listed = applyPlanToRows(reading.rows, first.fieldMap, first.filters, firstStepGate).rawKept;
+      const listed = r.applied.rawKept;
       for (const raw of listed.slice(0, MAX_FAN_OUT_PARENTS)) {
         const values: Record<string, string | number> = {};
         let complete = true;
@@ -194,16 +234,17 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
         if (complete) state.queue.push(values);
       }
       const pg = first.fieldMap.pagination;
-      if (reading.rows.length > 0 && pg.kind === "token" && reading.nextCursor && reading.cursorKind !== "url" && String(reading.nextCursor) !== String(state.next ?? "")) { state.next = reading.nextCursor; state.page += 1; }
+      if (r.viaAlternate) state.listDone = true;
+      else if (reading.rows.length > 0 && pg.kind === "token" && reading.nextCursor && reading.cursorKind !== "url" && String(reading.nextCursor) !== String(state.next ?? "")) { state.next = reading.nextCursor; state.page += 1; }
       else if (reading.rows.length > 0 && pg.kind === "page") state.page += 1;
       else state.listDone = true;
       if (state.queue.length === 0 && state.listDone) break;
       continue;
     }
     const parent = state.queue.shift()!;
-    const params = stepParams(second, parent, state, Math.min(perItem, second.facts.limitMax ?? perItem));
-    const out = await oneCall(plan, second, params, input, withPurpose, `_c${state.offset}`);
-    calls += 1; state.offset += 1; costMicro += out.costMicro; lastCallId = out.result.tregCallId || lastCallId;
+    const r = await callStage(plan, second, parent, state, Math.min(perItem, second.facts.limitMax ?? perItem), input, withPurpose, `_c${state.offset}`, undefined, true);
+    const { out, reading } = r;
+    calls += r.calls; state.offset += 1; costMicro += r.costMicro; lastCallId = r.lastCallId || lastCallId;
     if (!out.ok) {
       // a failed item is skipped (the rest of the queue still runs); a budget stop or a refusal ends the chunk
       if (out.result.budgetStopped || out.refusedAr || out.result.blocked) {
@@ -213,9 +254,8 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
       }
       continue;
     }
-    const reading = readShape(out.result.data, hintsFor(second));
-    const applied = applyPlanToRows(reading.rows, second.fieldMap, second.filters);
-    delivered.push(...applied.records.slice(0, Math.min(perItem, wanted - delivered.length)));
+    void reading;
+    delivered.push(...r.applied.records.slice(0, Math.min(perItem, wanted - delivered.length)));
   }
   const reviewed = await reviewTopicRows(delivered, plan, input, state, withPurpose);
   const more = state.queue.length > 0 || !state.listDone;

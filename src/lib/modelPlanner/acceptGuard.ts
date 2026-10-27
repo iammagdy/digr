@@ -20,7 +20,7 @@ export async function modelPlanAcceptRefusal(client: any, userId: string, items:
     if (!plan || !Array.isArray(plan.steps)) return { status: 409, error: "الخطة غير مكتملة" };
     for (const step of plan.steps) {
       const category = categoryOf(step.endpointId);
-      if (blockedEndpointReason(step.endpointId, step.facts?.scope) || category === "blocked") return { status: 403, error: "هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد." };
+      if (blockedEndpointReason(step.endpointId, step.facts?.scope) || category === "blocked") return { status: 403, error: "هذه الخدمة غير متاحة حاليًا، ولم يُحجز أي رصيد." };
       if (category === "sensitive") sensitive = true;
     }
     purpose = String(item.params?.[MODEL_PLAN_PURPOSE_PARAM] ?? "");

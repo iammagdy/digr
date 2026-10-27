@@ -14,6 +14,8 @@ import type { ProviderId } from "./providerKeyCrypto";
  * health check and the real credit count.
  */
 export const STATUS_CACHE_TTL_MS = 60_000;
+/** A FAILED check is remembered only this long (a timeout or a network blip must not read «does not respond» for a whole minute on one server instance). */
+export const STATUS_FAILURE_TTL_MS = 5_000;
 export const CHECK_TIMEOUT_MS = 8_000;
 export const DEFAULT_LOW_BALANCE_THRESHOLD_USD = 0.2;
 
@@ -251,11 +253,14 @@ export async function getProviderStatus(
 ): Promise<ProviderStatusSnapshot> {
   const now = options?.now ?? (() => Date.now());
   const hit = statusCache.get(provider);
-  if (!options?.forceRefresh && hit && now() - hit.at < STATUS_CACHE_TTL_MS) return hit.snapshot;
+  if (!options?.forceRefresh && hit && now() - hit.at < (hit.snapshot.health.ok ? STATUS_CACHE_TTL_MS : STATUS_FAILURE_TTL_MS)) return hit.snapshot;
 
   const fetchFn = options?.fetchFn ?? fetch;
   const timeoutMs = options?.timeoutMs ?? CHECK_TIMEOUT_MS;
-  const { health, body } = await checkProviderKey(provider, key, fetchFn, timeoutMs);
+  let checked = await checkProviderKey(provider, key, fetchFn, timeoutMs);
+  // one more try for a failure that may be a blip (a timeout, a network error, a 5xx): the same live check the provider tab runs; a rejected key or a missing key is not retried
+  if (!checked.health.ok && key && (checked.health.reason === "timeout" || checked.health.reason === "network_error" || checked.health.reason === "server_error" || checked.health.reason === "rate_limited")) checked = await checkProviderKey(provider, key, fetchFn, timeoutMs);
+  const { health, body } = checked;
   let balance: BalanceResult;
   if (provider === "anthropic") {
     balance = { available: false, unavailableReason: "no_balance_api", checkedAt: health.checkedAt };

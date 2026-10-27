@@ -78,7 +78,7 @@ export function toolCatalogSearch(input: { platform?: string; words?: string[]; 
     hidden,
     hits: priceable.slice(0, limit).map((h) => {
       const e = catalog.byId.get(h.id)!;
-      return { id: h.id, name: clip(h.name, 80), platform: h.platform, capability: h.capability, summary: clip(h.summary, 140), price: costLabel(e, catalog), requiredInputs: h.requiredInputs, okRate: h.observedOkRate };
+      return { id: h.id, name: clip(h.name, 80), platform: h.platform, capability: h.capability, summary: clip(h.summary, 140), price: costLabel(e, catalog), requiredInputs: h.requiredInputs, inputs: e.inputs.slice(0, 10).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: h.observedOkRate };
     }),
   };
 }

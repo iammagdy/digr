@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { loadTregCatalog } from "../treg/catalog";
 import type { StoredModelPlan } from "./types";
 
 /**
@@ -79,9 +78,7 @@ export function recipeRowFromPlan(plan: StoredModelPlan, info: { deliveredUnits:
 export async function saveRecipeAfterDelivery(client: any, plan: StoredModelPlan | undefined, info: { deliveredUnits: number; jobId: string }): Promise<boolean> {
   if (!plan || plan.v !== 1 || !Array.isArray(plan.steps) || plan.steps.length === 0 || info.deliveredUnits < 1 || typeof client?.from !== "function") return false;
   try {
-    let sha: string | null = null;
-    try { sha = (loadTregCatalog() as any).sha256 ?? null; } catch { sha = null; }
-    const row = recipeRowFromPlan(plan, { ...info, snapshotSha256: sha });
+    const row = recipeRowFromPlan(plan, { ...info, snapshotSha256: null }); // the worker never reads the catalog snapshot (10 MB): no hash is stored
     const existing = await client.from(RECIPES_TABLE).select("slug").eq("slug", row.slug).eq("version", 1).maybeSingle();
     if (existing?.error) return false; // the table is not applied yet
     if (existing?.data) return false; // this recipe is already saved

@@ -2,10 +2,11 @@ import { PlanRefusalError } from "../capacityRefusal";
 import { isChatControlMessage } from "../retryMessage";
 import { resolveAccountAccess, PURPOSE_QUESTION_AR, PURPOSE_QUESTION_ID } from "../server/sensitiveAccess";
 import type { TregCatalog } from "../treg/catalog";
-import type { ExplorationDeps } from "./exploration";
+import { EXPLORATION_TABLE, PLANNER_TURN_ROW_ENDPOINT, type ExplorationDeps } from "./exploration";
 import { createModelPlanQuote } from "./planItem";
 import { runPlanner, type PlannerOutcome } from "./planner";
 import { loadRecipeForEndpoint } from "./recipes";
+import { loadMeasuredAvgCallUsd } from "./measured";
 import { createAnthropicTransport, type PlannerTransport } from "./transport";
 
 /** What the chat handler needs to run the model planner for a turn. `transport` is the real provider transport in production and a recorded one in tests and replays. */
@@ -83,8 +84,11 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
     catalog: config.catalog,
     exploration: { client, requestId: args.requestId, userId: args.userId, ...(config.call ? { call: config.call } : {}) },
     loadRecipe: (id) => loadRecipeForEndpoint(client, id),
+    loadMeasuredAvg: (id) => loadMeasuredAvgCallUsd(client, id),
     deadlineAtMs: args.deadlineAtMs,
   });
+
+  await recordPlannerTurnEnd(client, args, outcome);
 
   if (outcome.kind === "purpose_needed") {
     return { kind: "message", contentAr: outcome.messageAr, reason: "purpose_needed", outcome, clarificationItems: [{ id: PURPOSE_QUESTION_ID, text: PURPOSE_QUESTION_AR, question: PURPOSE_QUESTION_AR, type: "free", options: [], allowOther: false }] };
@@ -123,4 +127,18 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
     if (err instanceof PlanRefusalError) return { kind: "message", contentAr: err.messageAr, reason: "refused", outcome };
     throw err;
   }
+}
+
+/** A turn that ends WITHOUT a plan is written as one row of exploration_calls (cost 0: it is not a call): the admin health line reads the last planner error from it. Best effort, never throws. */
+async function recordPlannerTurnEnd(client: any, args: ModelPlannerTurnArgs, outcome: PlannerOutcome): Promise<void> {
+  if (outcome.kind === "plan" || (outcome.kind === "message" && (outcome.reason === "clarification" || outcome.reason === "restricted"))) return;
+  if (typeof client?.from !== "function") return;
+  try {
+    const reason = outcome.kind === "message" ? outcome.reason : outcome.kind;
+    const codes = outcome.failures.flat().map((i) => i.code).slice(0, 6).join(",");
+    await client.from(EXPLORATION_TABLE).insert({
+      request_id: args.requestId, user_id: args.userId, endpoint_id: PLANNER_TURN_ROW_ENDPOINT, params_digest: { turns: outcome.turns, stopReasons: outcome.stopReasons },
+      cost_usd: 0, budget_usd: 0, rows_returned: 0, duration_ms: null, refused_reason: `${reason}: ${outcome.endReason ?? ""}${codes ? ` [${codes}]` : ""}`.slice(0, 300),
+    });
+  } catch { /* the table is not there */ }
 }
