@@ -208,7 +208,7 @@ function countMatches(value: string, pattern: RegExp): number {
   return [...value.matchAll(new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`))].length;
 }
 
-function regionMatches(row: Record<string, any>, requestedRegion: string): boolean {
+export function regionMatches(row: Record<string, any>, requestedRegion: string): boolean {
   const countryCode = (value: string): string | undefined => {
     const trimmed = value.trim();
     if (/^[A-Za-z]{2}$/.test(trimmed)) return trimmed.toUpperCase();
@@ -240,7 +240,7 @@ function regionMatches(row: Record<string, any>, requestedRegion: string): boole
  * part of it names that country; when no part names a recognisable country it contradicts nothing. Only an address whose every named country
  * is another country is outside the request.
  */
-function companyAddressMatches(address: string, requestedRegion: string): boolean {
+export function companyAddressMatches(address: string, requestedRegion: string): boolean {
   const parts = address.split(/[;|\n]+|\s+\/\s+/).map((part) => part.trim()).filter(Boolean);
   if (parts.length <= 1) return regionMatches({ address }, requestedRegion);
   const expected = requestedRegion.trim();

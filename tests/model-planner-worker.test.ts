@@ -17,7 +17,7 @@ import { createChatDb } from "./helpers/chatSession";
 import { chargeForUnits, reserveForUnits } from "../src/lib/recordPricing";
 import { createScriptedTransport, type ContentBlock } from "../src/lib/modelPlanner/transport";
 import { resetExplorationMemoryForTesting } from "../src/lib/modelPlanner/exploration";
-import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG, MODEL_PLANNER_ENABLED } from "../src/lib/modelPlanner/constants";
+import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG, MODEL_PLANNER_ALLOWED_EMAILS, isModelPlannerAccount } from "../src/lib/modelPlanner/constants";
 import { setRowAdvisorForTesting } from "../src/lib/server/rowReviewAdvisor";
 import { describe as describeTool, propose, sample, search, xAccountPlan, X_REQUEST } from "./helpers/plannerKit";
 
@@ -33,7 +33,7 @@ async function chat(request: string, script: Array<ContentBlock[]>) {
   const conversationId = `conv_mp_${++seq}`;
   await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
   clearBriefCacheForTesting();
-  const r: any = await handler.handleUserMessage({ userId: "user_replay", conversationId, message: request, userBalance: 40_000 });
+  const r: any = await handler.handleUserMessage({ userId: "user_replay", userEmail: "magdy.saber@outlook.com", conversationId, message: request, userBalance: 40_000 });
   return { r, transport, db, handler };
 }
 const seedFromQuote = (item: any) => world.resetJob({ slug: item.capabilitySlug, endpointId: item.endpointId, params: item.params, target: item.targetVolumeMax, unitPrice: item.unitPricePoints, unitCostUsd: item.unitCostUsd });
@@ -51,9 +51,14 @@ describe("the model planner, end to end on the replay world (the gateway is a st
   });
   afterEach(() => { vi.useRealTimers(); setProviderAdapterForTesting(null); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); resetProviderBalanceCacheForTesting(); });
 
-  it("the flag is OFF in this PR: a handler has no model planner unless a test sets one, and the constant is false", () => {
-    expect(MODEL_PLANNER_ENABLED).toBe(false);
-    expect(new ChatHandler(createChatDb()).modelPlanner).toBeNull();
+  it("ROLLOUT is by account: only the two allowlisted e-mails take the model path (case-insensitive, exact); everyone else, a guest and a missing e-mail keep the old path", () => {
+    expect([...MODEL_PLANNER_ALLOWED_EMAILS]).toEqual(["magdy.saber@outlook.com", "iam.magdy+1@outlook.com"]);
+    expect(isModelPlannerAccount({ email: "magdy.saber@outlook.com" })).toBe(true);
+    expect(isModelPlannerAccount({ email: "iam.magdy+1@outlook.com" })).toBe(true);
+    expect(isModelPlannerAccount({ email: "  Magdy.Saber@Outlook.com " })).toBe(true);
+    for (const email of ["iam.magdy@outlook.com", "iam.magdy+2@outlook.com", "magdy.saber@outlook.com.evil.com", "xmagdy.saber@outlook.com", "", null, undefined]) expect(isModelPlannerAccount({ email }), String(email)).toBe(false);
+    expect(isModelPlannerAccount({ email: "magdy.saber@outlook.com", isGuest: true })).toBe(false);
+    expect(isModelPlannerAccount(null)).toBe(false);
   });
 
   it("X account, REAL rows: chat plans it from the catalog (the model, a sample call, validation, price by code), the worker interprets the approved plan, 3 own posts delivered, the charge is ceil(delivered x unit) within the hold", async () => {
@@ -210,16 +215,31 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(JSON.stringify(raw.body)).not.toContain("linkedin.com/in/someone");
   });
 
-  it("the old path is untouched when the planner is off: the same X request is planned by the hand-coded path (no model call)", async () => {
-    const db: any = createChatDb();
-    const handler = new ChatHandler(db);
-    (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be asked"); });
-    const conversationId = `conv_old_${++seq}`;
-    await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
-    clearBriefCacheForTesting();
-    const r: any = await handler.handleUserMessage({ userId: "user_replay", conversationId, message: X_REQUEST, userBalance: 40_000 });
-    expect(r.outputType).toBe("propose_plan");
-    expect(r.planQuote.items[0].capabilitySlug).toBe("social-x-posts");
-    expect(r.planQuote.modelPlanned).toBeUndefined();
+  it("BOTH SIDES of the rollout: an allowlisted account is planned by the model (transport asked); any other account is planned by the hand-coded path, byte for byte, and the planner transport is never asked", async () => {
+    const run = async (email: string | null) => {
+      const db: any = createChatDb();
+      const handler = new ChatHandler(db);
+      (handler as any).llm.executeTurn = vi.fn(async () => { throw new Error("the model must not be asked"); });
+      const transport = createScriptedTransport([[{ type: "text", text: "ما اسم الحساب؟" }]], { model: "recorded" });
+      handler.modelPlanner = { transport, client: world.mem, today: () => new Date("2026-10-27T12:00:00Z") };
+      const conversationId = `conv_roll_${++seq}`;
+      await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
+      clearBriefCacheForTesting();
+      const r: any = await handler.handleUserMessage({ userId: "user_replay", ...(email ? { userEmail: email } : {}), conversationId, message: X_REQUEST, userBalance: 40_000 });
+      return { r, transport };
+    };
+    const other = await run("someone.else@outlook.com");
+    expect(other.transport.requests).toHaveLength(0);
+    expect(other.r.outputType).toBe("propose_plan");
+    expect(other.r.planQuote.items[0].capabilitySlug).toBe("social-x-posts");
+    expect(other.r.planQuote.modelPlanned).toBeUndefined();
+    const none = await run(null);
+    expect(none.transport.requests).toHaveLength(0);
+    expect(none.r.planQuote.items[0].capabilitySlug).toBe("social-x-posts");
+    const allowed = await run("iam.magdy+1@outlook.com");
+    expect(allowed.transport.requests.length).toBeGreaterThan(0);
+    expect(allowed.r.planQuote?.items?.[0]?.capabilitySlug).not.toBe("social-x-posts");
+    // the default handler of production holds a real planner config but the allowlist decides
+    expect(new ChatHandler(createChatDb()).modelPlannerFor({ email: "other@x.com" })).toBe(false);
   });
 });

@@ -112,7 +112,7 @@ import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote"
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { findParamProvenanceGaps, provenanceQuestionCard } from "../../lib/paramProvenance";
-import { MODEL_PLANNER_ENABLED } from "../../lib/modelPlanner/constants";
+import { isModelPlannerAccount } from "../../lib/modelPlanner/constants";
 import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig } from "../../lib/modelPlanner/chatTurn";
 import { plannerCostUsd } from "../../lib/modelPlanner/transport";
 import { pairRoleOf } from "../../lib/planFit";
@@ -446,6 +446,8 @@ export interface ChatHandlerInput {
   testScenario?: string;
   uploadedFiles?: any[];
   isGuest?: boolean;
+  /** The signed-in account's verified e-mail (never a guest's): decides whether the account takes the model path. */
+  userEmail?: string | null;
   /** Set by the route when this message only gave the customer's name (already stored); answered without a model turn. */
   capturedName?: string;
   personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
@@ -1508,10 +1510,12 @@ export class ChatHandler {
   public deterministicPlanning = true;
   /**
    * The MODEL PLANNER (Phase 2): when set, a research request is planned by the model from the catalog (tools: catalog_search, describe_endpoint, sample_call, propose_plan) and
-   * code only validates, prices and protects. OFF by default (`MODEL_PLANNER_ENABLED` in src/lib/modelPlanner/constants.ts); the hand-coded path below is untouched and runs
-   * exactly as before when this is null. Tests and replays set it with a recorded transport.
+   * code only validates, prices and protects. Only the accounts of the allowlist (`MODEL_PLANNER_ALLOWED_EMAILS`, see `modelPlannerFor`) take it; the hand-coded path below is
+   * untouched and runs exactly as before for every other account (and when this is null). Tests and replays set it with a recorded transport.
    */
-  public modelPlanner: ModelPlannerConfig | null = MODEL_PLANNER_ENABLED ? defaultModelPlannerConfig() : null;
+  public modelPlanner: ModelPlannerConfig | null = defaultModelPlannerConfig();
+  /** Which accounts take the model path: the allowlist of `src/lib/modelPlanner/constants.ts`. Every other account keeps the hand-coded path. Tests replace it. */
+  public modelPlannerFor: (account: { email?: string | null; isGuest?: boolean }) => boolean = isModelPlannerAccount;
 
   constructor(tables: TablesDB | any) {
     this.tables = tables;
@@ -1596,11 +1600,11 @@ export class ChatHandler {
    */
   private async answerWithModelPlanner(ctx: {
     sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; userBalance: number; message: string;
-    messagesContext: PriorConversationMessage[]; turnStartTime: number; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>;
+    messagesContext: PriorConversationMessage[]; turnStartTime: number; guest: boolean; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>;
   }): Promise<ChatHandlerResponse> {
     const { sb, turn, conversationId, assistantMsgId, userMsgId } = ctx;
     const planned = await runModelPlannerTurn({
-      config: this.modelPlanner!, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext,
+      config: this.modelPlanner!, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext, guest: ctx.guest,
       deadlineAtMs: ctx.turnStartTime + TURN_BUDGET_MS, requestId: assistantMsgId,
     });
     // Internal log: the codes of the validation failures (never a customer value), the turns, the tool calls and the sample calls.
@@ -2674,9 +2678,9 @@ export class ChatHandler {
       }
 
       // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.
-      if (this.modelPlanner && !isTestSearchScenario && !input.isGuest && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
+      if (this.modelPlanner && this.modelPlannerFor({ email: input.userEmail, isGuest: input.isGuest }) && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
         currentStep = "model_planner";
-        return await this.answerWithModelPlanner({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, userBalance: userBalance ?? 0, message, messagesContext, turnStartTime, stats: currentTurnStats });
+        return await this.answerWithModelPlanner({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, userBalance: userBalance ?? 0, message, messagesContext, turnStartTime, guest: Boolean(input.isGuest), stats: currentTurnStats });
       }
 
       // Studies, papers, articles and news from websites: not a service yet. Said plainly by code, with what is available;

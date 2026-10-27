@@ -11,6 +11,7 @@ import { digestFromCatalogExample, type ShapeDigest } from "./digest";
 import { applyPlanToRows, columnsOfMap, readField, readDateIso } from "./fieldMap";
 import { maskText } from "../server/rawCapture";
 import { MAX_PLAN_STAGES, SAMPLE_ROWS_ON_CARD } from "./constants";
+import { countryOfRequest, countryRowGate, type RequestCountry } from "./countryGate";
 import { callEstimateUsd, pricePlan, priceStep, unitCost, type CallCost, type PlanPrice, type StepMeasure, type StepPrice } from "./pricing";
 import type { RecipeRecord } from "./recipes";
 import type { PlanParam, PlanStep, ProposePlanInput, StepFacts, StoredModelPlan, ValidationIssue } from "./types";
@@ -29,6 +30,8 @@ export interface ValidateContext {
   /** The purpose a customer account gave for a sensitive step (the answer to the purpose question). */
   purpose?: string | null;
   measuredAvgCallUsd?: (endpointId: string) => number | null;
+  /** An EDIT of a plan the customer was already shown: the approved plan, whose measured values (taken from a real sample) price the unchanged steps again without a new sample. */
+  approved?: StoredModelPlan;
   /** Saved recipes (plans that already delivered), by first endpoint: fields known to exist and what was measured, so a plan may skip the sample call. */
   recipes?: ReadonlyMap<string, RecipeRecord>;
   today?: Date;
@@ -131,7 +134,16 @@ export function resolvedParamValue(p: PlanParam): unknown {
   return p.value !== undefined ? p.value : p.quote;
 }
 
-function sampleRowsFor(step: PlanStep, ctx: ValidateContext, endpoint: CatalogEndpoint): { rows: Obj[]; source: StepMeasure["source"]; digest: ShapeDigest | null } {
+/** What the rows of an endpoint are about, from the catalog's platform. */
+export function entityOfEndpoint(endpoint: CatalogEndpoint): "company" | "person" | null {
+  const platform = String(endpoint.platform ?? "").toLowerCase();
+  return platform === "companies" ? "company" : platform === "people" ? "person" : null;
+}
+
+const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+
+/** Where the rows a field map is checked against come from. Only «sample» (a real call) may set a price; «catalog_example» only shows that a field exists. */
+function sampleRowsFor(step: PlanStep, ctx: ValidateContext, endpoint: CatalogEndpoint): { rows: Obj[]; source: "sample" | "catalog_example" | "assumed"; digest: ShapeDigest | null } {
   const sample = ctx.samples.get(step.endpointId);
   if (sample && sample.rows.length > 0) return { rows: sample.rows, source: "sample", digest: sample.digest };
   const fromExample = digestFromCatalogExample(endpoint);
@@ -221,8 +233,18 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
   }
   if (pg.limitParam && !known.has(pg.limitParam)) issues.push(issue("bad_pagination", `page-size parameter «${pg.limitParam}» is not a parameter of this endpoint`, at));
 
+  // ---- an edit of an approved plan: the unchanged step keeps what the real sample measured, and is priced again from today's catalog cost
+  const approvedStep = ctx.approved?.steps[index];
+  if (approvedStep && approvedStep.endpointId === step.endpointId && sameJson(approvedStep.fieldMap, step.fieldMap) && sameJson(approvedStep.filters, step.filters)) {
+    if (issues.length > before) return null;
+    const m = ctx.approved!.measured[index];
+    if (m) return { step, endpoint, category, callCost, price: priceStep(callCost, { rowsPerCall: m.rowsPerCall, passRate: m.passRate, source: "approved_plan" }), callEstimateUsd: callEstimateUsd(callCost) };
+  }
+
   // ---- field map and filters against REAL rows (the sample), or the catalog's example
   const evidence = sampleRowsFor(step, ctx, endpoint);
+  const country = index === 0 ? countryOfRequest(ctx.customerText) : null;
+  const rowGate = countryRowGate(country, entityOfEndpoint(endpoint));
   const recipe = ctx.recipes?.get(step.endpointId) ?? null;
   const recipeCovers = Boolean(recipe) && evidence.source !== "sample" && step.fieldMap.columns.every((c) => recipe!.knownFields.includes(c.field)) && step.filters.every((f) => recipe!.knownFields.includes(f.field));
   if (recipeCovers) {
@@ -260,16 +282,23 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
   }
   if (issues.length > before) return null;
 
-  // ---- measured price of this step
-  let measure: StepMeasure = { rowsPerCall: 1, passRate: 1, source: "assumed" };
-  if (evidence.rows.length > 0) {
-    const applied = applyPlanToRows(evidence.rows, step.fieldMap, step.filters);
-    if (applied.records.length === 0 && evidence.source === "sample") {
-      issues.push(issue("zero_pass_rate", `none of the ${evidence.rows.length} sample rows pass your filters and field map (${JSON.stringify(applied.dropped)}). Adjust them, or end with a short Arabic message saying the data was not found.`, at));
+  // ---- measured price of this step: from a REAL sample, a saved recipe (above), the catalog's per-record unit, or a lookup of the sensitive category. NEVER from the catalog's example.
+  let measure: StepMeasure | null = null;
+  if (evidence.source === "sample" && evidence.rows.length > 0) {
+    const applied = applyPlanToRows(evidence.rows, step.fieldMap, step.filters, rowGate);
+    if (applied.records.length === 0) {
+      const why = applied.dropped.geo > 0 ? ` ${applied.dropped.geo} of them are outside the country the customer named (${country?.canonicalEnglish}): never deliver them.` : "";
+      issues.push(issue("zero_pass_rate", `none of the ${evidence.rows.length} sample rows pass your filters and field map (${JSON.stringify(applied.dropped)}).${why} Adjust them, or end with a short Arabic message saying the data was not found.`, at));
       return null;
     }
-    // a catalog example holds 1-3 hand-trimmed rows: all of them are counted as passing (an example is not a measurement of a filter)
-    measure = { rowsPerCall: evidence.rows.length, passRate: evidence.source === "sample" ? applied.records.length / evidence.rows.length : 1, source: evidence.source };
+    measure = { rowsPerCall: evidence.rows.length, passRate: applied.records.length / evidence.rows.length, source: "sample" };
+  } else if (callCost.unit === "record") {
+    measure = { rowsPerCall: 1, passRate: 1, source: "catalog_unit" };
+  } else if (category === "sensitive") {
+    measure = { rowsPerCall: 1, passRate: 1, source: "lookup" };
+  } else {
+    issues.push(issue("needs_real_sample", `«${step.endpointId}» is priced per call, and the catalog's example answer is trimmed to one list item, so it cannot say how many rows a call returns: it cannot set a price. Call sample_call for this endpoint once (a tiny real check, within the exploration budget), then propose the plan again. If sample_call is refused for budget, end with ONE short Arabic message that this cannot be offered right now.`, at));
+    return null;
   }
   const price = priceStep(callCost, measure);
   return { step, endpoint, category, callCost, price, callEstimateUsd: callEstimateUsd(callCost) };
@@ -291,6 +320,7 @@ function factsOf(v: ValidatedStep, ctx: ValidateContext): StepFacts {
     // a field the example held as null has no type worth storing (and a stored «null» word would read as a missing value to the scope guard)
     itemFields: v.endpoint.item_fields ? Object.fromEntries(Object.entries(v.endpoint.item_fields).filter(([, f]) => f.type && f.type !== "null").slice(0, 60).map(([k, f]) => [k, { type: f.type }])) : null,
     callEstimateUsd: v.callEstimateUsd,
+    entity: entityOfEndpoint(v.endpoint),
   };
 }
 
@@ -336,7 +366,8 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   const sampleSource = ctx.samples.get(last.step.endpointId);
   // the card shows rows of a REAL sample call only: never the catalog's documentation example (not this customer's data), never a sensitive endpoint's rows
   const sampleRaw = !sensitive && sampleSource && sampleSource.rows.length > 0 ? sampleSource.rows : [];
-  const applied = applyPlanToRows(sampleRaw, last.step.fieldMap, last.step.filters);
+  const cardCountry = countryOfRequest(ctx.customerText);
+  const applied = applyPlanToRows(sampleRaw, last.step.fieldMap, last.step.filters, validated.length === 1 ? countryRowGate(cardCountry, entityOfEndpoint(last.endpoint)) : undefined);
   const maskRecord = (r: Record<string, unknown>) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === "string" ? maskText(v).slice(0, 160) : v]));
   const sampleRows = sensitive ? [] : applied.records.slice(0, SAMPLE_ROWS_ON_CARD).map(maskRecord);
   const sampleColumns = columnsOfMap(last.step.fieldMap).map((c) => ({ key: c.key, titleAr: c.titleAr }));
@@ -348,7 +379,7 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
       steps: validated,
       price,
       sensitive,
-      stored: { v: 1, steps: validated.map((v) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: factsOf(v, ctx) })), ...(input.topic ? { topic: input.topic } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })) },
+      stored: { v: 1, steps: validated.map((v) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: factsOf(v, ctx) })), ...(input.topic ? { topic: input.topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })) },
       sampleRows,
       sampleColumns,
     },

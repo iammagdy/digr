@@ -49,10 +49,15 @@ export interface ModelPlannerTurnArgs {
   userBalance: number;
   message: string;
   messagesContext: ReadonlyArray<PriorMessage>;
+  /** A guest (no account yet): the plan is made and priced like anyone's, but no quote is saved and no card is shown: the guest is asked to sign up before approving, as on the old path. */
+  guest?: boolean;
   /** The turn's own deadline (epoch ms). */
   deadlineAtMs?: number;
   requestId: string;
 }
+
+/** What a guest reads instead of the plan card (the same sentence as the old path). */
+export const GUEST_SIGNUP_AR = "للاطلاع على خطة التنفيذ المكتملة وعرض السعر بالنقاط وبدء البحث، يرجى إنشاء حساب مجاني أو تسجيل الدخول.";
 
 export type ModelPlannerTurn = (
   | { kind: "plan"; contentAr: string; planQuote: Record<string, unknown>; sensitive: boolean }
@@ -85,6 +90,9 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
     return { kind: "message", contentAr: outcome.messageAr, reason: "purpose_needed", outcome, clarificationItems: [{ id: PURPOSE_QUESTION_ID, text: PURPOSE_QUESTION_AR, question: PURPOSE_QUESTION_AR, type: "free", options: [], allowOther: false }] };
   }
   if (outcome.kind === "message") return { kind: "message", contentAr: outcome.messageAr, reason: outcome.reason, outcome };
+
+  // a guest is shown what was understood and asked to sign up: no quote is saved for a guest, so nothing can be approved before sign-up
+  if (args.guest) return { kind: "message", contentAr: `${outcome.plan.summaryAr}\n\n${GUEST_SIGNUP_AR}`, reason: "signup", outcome };
 
   try {
     const { quote, sampleRows } = await createModelPlanQuote({ tables, conversationId: args.conversationId, userId: args.userId, userBalance: args.userBalance, plan: outcome.plan, customerRequest, purpose });

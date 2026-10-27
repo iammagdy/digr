@@ -100,6 +100,8 @@ export interface StepFacts {
   itemFields: Record<string, { type: string }> | null;
   /** What one call may cost for the job's budget, USD. */
   callEstimateUsd: number;
+  /** What the rows of this step are about, from the catalog's platform: «company» and «person» rows are held to the country the customer named. */
+  entity?: "company" | "person" | null;
 }
 
 /** The approved plan as stored on the quote item (params._modelStep) and run by the interpreter. */
@@ -107,6 +109,8 @@ export interface StoredModelPlan {
   v: 1;
   steps: Array<PlanStep & { facts: StepFacts }>;
   topic?: string;
+  /** The country the customer's own words name (canonical English and the Arabic label), when the first step's rows are companies or people: rows of another country are never delivered. */
+  country?: { canonicalEnglish: string; arabicLabel: string };
   /** Rows per call and delivered share MEASURED on the sample (or the recipe), per step: what the price was built on. */
   measured: Array<{ rowsPerCall: number; passRate: number; costPerCallUsd: number }>;
 }
@@ -115,7 +119,7 @@ export interface ValidationIssue {
   code:
     | "unknown_endpoint" | "not_allowed" | "not_priceable" | "unknown_param" | "bad_param_type" | "bad_param_enum" | "bad_param_range" | "missing_required"
     | "no_provenance" | "quote_not_in_customer_text" | "id_like_literal" | "invented_value" | "window_not_stated" | "bad_field_path" | "bad_rows_path" | "bad_transform"
-    | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "zero_pass_rate" | "volume" | "sensitive_purpose";
+    | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose";
   /** For the model (English, internal): what is wrong and what to do. */
   message: string;
   stepIndex?: number;

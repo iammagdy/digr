@@ -5,6 +5,7 @@ import { runSensitiveCall, sensitiveRefusalAr } from "../server/sensitiveAccess"
 import { categoryOf, type AccountAccess } from "../treg/dataPolicy";
 import { readShape } from "../treg/shapeReader";
 import { applyPlanToRows, readField } from "./fieldMap";
+import { countryRowGate } from "./countryGate";
 import { getRowAdvisor, type RowAdvisorFn } from "../server/rowReviewAdvisor";
 import { MAX_CALLS_PER_CHUNK, MAX_FAN_OUT_PARENTS, MODEL_PLAN_PARAM, MODEL_PLAN_PURPOSE_PARAM, MODEL_PLAN_REQUEST_PARAM, TOPIC_REVIEW_CALL_ESTIMATE_USD, TOPIC_REVIEW_JOB_CAP_USD, TOPIC_REVIEW_ROWS_PER_CALL } from "./constants";
 import type { PlanStep, StepFacts, StoredModelPlan } from "./types";
@@ -147,6 +148,8 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
   let lastCallId = "";
   const delivered: Array<Record<string, unknown>> = [];
 
+  // the country the customer named holds the company or person rows of the FIRST step (the only step, or the listing) to that country; deterministic, as on the old path
+  const firstStepGate = countryRowGate(plan.country, first.facts.entity);
   const budgetLeft = () => !input.deadlineMs || now() + 15_000 < input.deadlineMs;
 
   // ---------------------------------------------------------------- one stage
@@ -156,7 +159,7 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
     calls += 1; costMicro += out.costMicro; lastCallId = out.result.tregCallId || lastCallId;
     if (!out.ok) return fail(out.result.error || `http_${out.result.httpStatus}`, out.refusedAr ?? failureAr(out.result), costMicro, calls, lastCallId, out.result.httpStatus);
     const reading = readShape(out.result.data, hintsFor(first));
-    const applied = applyPlanToRows(reading.rows, first.fieldMap, first.filters);
+    const applied = applyPlanToRows(reading.rows, first.fieldMap, first.filters, firstStepGate);
     delivered.push(...applied.records);
     const pg = first.fieldMap.pagination;
     const reviewed = await reviewTopicRows(delivered, plan, input, state, withPurpose);
@@ -180,7 +183,7 @@ export async function runModelPlanChunk(input: ProviderAdapterCallInput, deps: I
       calls += 1; costMicro += out.costMicro; lastCallId = out.result.tregCallId || lastCallId;
       if (!out.ok) return fail(out.result.error || `http_${out.result.httpStatus}`, out.refusedAr ?? failureAr(out.result), costMicro, calls, lastCallId, out.result.httpStatus);
       const reading = readShape(out.result.data, hintsFor(first));
-      const listed = applyPlanToRows(reading.rows, first.fieldMap, first.filters).rawKept;
+      const listed = applyPlanToRows(reading.rows, first.fieldMap, first.filters, firstStepGate).rawKept;
       for (const raw of listed.slice(0, MAX_FAN_OUT_PARENTS)) {
         const values: Record<string, string | number> = {};
         let complete = true;

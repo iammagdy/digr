@@ -110,11 +110,13 @@ function classify(r: any): { kind: string; text: string } {
 }
 
 let seq = 0;
-async function converse(c: ReplayCase, handler: ChatHandler, db: any, answers: ReplayCase["oldAnswers"], onTurn?: (index: number) => void): Promise<any[]> {
+/** The account the NEW path runs as: an allowlisted account (the OLD path runs as an account that is not on the allowlist). */
+const ALLOWLISTED = "magdy.saber@outlook.com";
+async function converse(c: ReplayCase, handler: ChatHandler, db: any, answers: ReplayCase["oldAnswers"], onTurn?: (index: number) => void, userEmail?: string): Promise<any[]> {
   const conversationId = `conv_cmp_${++seq}`;
   await db.createRow({ tableId: "conversations", rowId: conversationId, data: { userId: "user_replay", title: "محادثة جديدة", status: "active", totalTokens: 0 } });
   clearBriefCacheForTesting();
-  const send = (message: string): Promise<any> => handler.handleUserMessage({ userId: "user_replay", conversationId, message, userBalance: 40_000 }) as Promise<any>;
+  const send = (message: string): Promise<any> => handler.handleUserMessage({ userId: "user_replay", ...(userEmail ? { userEmail } : {}), conversationId, message, userBalance: 40_000 }) as Promise<any>;
   const replies: any[] = [];
   onTurn?.(0);
   replies.push(await send(c.request));
@@ -166,7 +168,7 @@ async function runNew(c: ReplayCase): Promise<Outcome> {
   world.installFetch(c.fixtures);
   const requestsBefore: number[] = [];
   const logFrom = infoSpy.mock.calls.length;
-  const replies = await converse(c, handler, db, undefined, () => requestsBefore.push((transport as any).requests?.length ?? 0));
+  const replies = await converse(c, handler, db, undefined, () => requestsBefore.push((transport as any).requests?.length ?? 0), ALLOWLISTED);
   const r = replies[replies.length - 1];
   const { kind, text } = classify(r);
   const planned = replies.find((x) => x.outputType === "propose_plan") ?? r;
@@ -238,6 +240,19 @@ describe("replay comparison: the hand-coded path against the model planner, same
   });
 });
 
+/** PASS when the NEW path ended in an expected kind of outcome (and, for a plan, on the expected endpoint, with no period unless the case states one); FAIL otherwise. */
+function verdictOf(c: ReplayCase, neu: Outcome): "PASS" | "FAIL" {
+  const kinds: string[] = [c.expectNew.kind, ...(c.alsoOk ?? [])];
+  const kindOk = kinds.some((k) => neu.kind === k || neu.kind.startsWith(`${k}`) || (k === "gate" && neu.kind.startsWith("gate")));
+  if (!kindOk) return "FAIL";
+  if (neu.kind === "plan") {
+    if (c.expectNew.endpoint && !neu.endpoint.includes(c.expectNew.endpoint)) return "FAIL";
+    if (c.expectNew.steps && neu.endpoint.split(" → ").length !== c.expectNew.steps) return "FAIL";
+    if (c.expectNew.noWindow && neu.window !== "none") return "FAIL";
+  }
+  return "PASS";
+}
+
 const esc = (s: string) => s.replace(/\|/g, "/").replace(/\n/g, " ");
 function renderReport(list: typeof rows): string {
   const L: string[] = [];
@@ -252,16 +267,19 @@ function renderReport(list: typeof rows): string {
   L.push("- **Read the NEW unit prices with this in mind:** the new path prices a record as `cost per call / (rows per call × share of rows that pass the plan's filters)`, both MEASURED on the sample. A catalog-example sample has ONE row per call, so those prices (L2, L3, L4, L5, L6, P8, P9, P10, P13, A) are per-single-row and far above what a live sample of about twenty rows gives. Only L1 and P5 are priced on a real sample (ten live rows, three of them the account's own posts: 0.0005 USD per call / 0.3 passing = 0.9167 points against the old 0.11715, which assumed every row passes).");
   L.push("- A plan card shows up to three masked rows of a REAL sample call; a plan validated on the catalog's example shows none.");
   L.push("");
-  L.push("| case | request | engine | outcome | endpoint | params (provenance) | window | unit | hold | delivered | charge | notes |");
-  L.push("|---|---|---|---|---|---|---|---|---|---|---|---|");
+  L.push("| case | request | engine | outcome | endpoint | params (provenance) | window | unit | hold | delivered | charge | verdict | notes |");
+  L.push("|---|---|---|---|---|---|---|---|---|---|---|---|---|");
   for (const { c, old, neu } of list) {
     for (const o of [old, neu]) {
       const outcome = o.kind === "plan" ? "plan" : `${o.kind}${o.text ? `: ${o.text.slice(0, 70)}` : ""}`;
-      L.push(`| ${c.id} | ${o.engine === "old" ? esc([c.request, ...(c.followUps ?? [])].join(" ⟶ ")) : ""} | ${o.engine} | ${esc(outcome)} | ${esc(o.endpoint)} | ${esc(o.params)} | ${esc(o.window)} | ${o.unit} | ${o.hold} | ${o.delivered} | ${o.charge} | ${esc([o.extra, o.engine === "new" ? c.note ?? "" : ""].filter(Boolean).join("; "))} |`);
+      L.push(`| ${c.id} | ${o.engine === "old" ? esc([c.request, ...(c.followUps ?? [])].join(" ⟶ ")) : ""} | ${o.engine} | ${esc(outcome)} | ${esc(o.endpoint)} | ${esc(o.params)} | ${esc(o.window)} | ${o.unit} | ${o.hold} | ${o.delivered} | ${o.charge} | ${o.engine === "new" ? verdictOf(c, o) : ""} | ${esc([o.extra, o.engine === "new" ? c.note ?? "" : ""].filter(Boolean).join("; "))} |`);
     }
   }
   L.push("");
-  L.push("## Model cost per planning conversation (NEW path, recorded model, estimated tokens)");
+  const verdicts = list.map(({ c, neu }) => verdictOf(c, neu));
+  L.push(`**Verdicts of the NEW path: ${verdicts.filter((v) => v === "PASS").length} PASS, ${verdicts.filter((v) => v === "FAIL").length} FAIL of ${verdicts.length}.** PASS = an expected kind of outcome (a plan on the expected endpoint with no period unless the customer stated one, or an honest question or refusal where the catalog cannot serve the request as asked).`);
+  L.push("");
+  L.push(`## Model cost per planning conversation (NEW path, ${LIVE ? "LIVE model, the provider's token counts" : "recorded model, estimated tokens"})`);
   L.push("");
   L.push("| case | model turns | catalog tool calls | real sample calls | input tokens | output tokens | USD |");
   L.push("|---|---|---|---|---|---|---|");

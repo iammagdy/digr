@@ -7,8 +7,10 @@ import { SAMPLE_ROWS_REQUESTED } from "./constants";
  * (`unitPricePointsFromCost`: cost x 5,500, fractional). The model never states a number: it proposes an endpoint, and the cost comes from the snapshot.
  *
  *  - A catalog unit that is a record (record, result, row, item, post, user, ad, review…) is already a price per record.
- *  - A catalog unit that is a call (call, page, step) is divided by the rows ONE call returns, MEASURED on the sample (or by the recipe's measured value, or, only when neither
- *    exists, by the rows the catalog's own example shows). With none of these the price assumes ONE row per call: the worst case.
+ *  - A catalog unit that is a call (call, page, step) is divided by the rows ONE call returns, MEASURED on a REAL sample call (or by a saved recipe's measured value, or by the
+ *    values of the plan the customer was already shown when an edit re-prices it). NEVER from the catalog's own example: the snapshot trims every example to ONE list item, so
+ *    the rows an example shows say nothing about the rows a call returns. With none of these the plan is not priced and no card is shown (the validator asks for a real sample).
+ *  - A lookup of the SENSITIVE category answers one person per call: one row per call (nothing is sampled for it).
  *  - Rows that a filter drops are paid for but not delivered: the price is per DELIVERED record, so it is divided by the share of sample rows that pass the filters.
  *  - A routed endpoint's catalog price is a range (the call may be served by any sibling): the price is the HIGHEST sibling price unless a measured average exists.
  *  - Any other unit (a character, a verifier credit, an index unit…) cannot be turned into a price per record: the endpoint is not priceable and is not offered.
@@ -36,11 +38,11 @@ export function unitCost(endpoint: CatalogEndpoint, catalog: TregCatalog = loadT
 }
 
 export interface StepMeasure {
-  /** Rows one call returned (measured on the sample, a recipe, or counted in the catalog's example). */
+  /** Rows one call returned (measured on a real sample, a recipe, or the approved plan being edited; 1 for a per-record catalog unit and a lookup). */
   rowsPerCall: number;
   /** The share of those rows that pass the plan's filters, 0 to 1. */
   passRate: number;
-  source: "sample" | "recipe" | "catalog_example" | "assumed";
+  source: "sample" | "recipe" | "catalog_unit" | "approved_plan" | "lookup";
 }
 
 export interface StepPrice {

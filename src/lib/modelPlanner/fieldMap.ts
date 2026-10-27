@@ -126,15 +126,16 @@ export interface ApplyResult {
   records: Array<Record<string, unknown>>;
   rawKept: Obj[];
   seen: number;
-  dropped: { author: number; excluded: number; window: number; unreadable: number; empty: number };
+  dropped: { author: number; excluded: number; window: number; unreadable: number; empty: number; geo: number };
 }
 
-/** The records of one page: the filters first, then the map. */
-export function applyPlanToRows(rows: ReadonlyArray<Obj>, map: Pick<PlanFieldMap, "columns">, filters: ReadonlyArray<PlanFilter>): ApplyResult {
-  const out: ApplyResult = { records: [], rawKept: [], seen: rows.length, dropped: { author: 0, excluded: 0, window: 0, unreadable: 0, empty: 0 } };
+/** The records of one page: the filters first, then the country gate (when the customer named a country), then the map. */
+export function applyPlanToRows(rows: ReadonlyArray<Obj>, map: Pick<PlanFieldMap, "columns">, filters: ReadonlyArray<PlanFilter>, rowGate?: (raw: Obj) => boolean): ApplyResult {
+  const out: ApplyResult = { records: [], rawKept: [], seen: rows.length, dropped: { author: 0, excluded: 0, window: 0, unreadable: 0, empty: 0, geo: 0 } };
   for (const raw of rows) {
     const verdict = rowFilterVerdict(raw, filters);
     if (!verdict.keep) { out.dropped[verdict.reason as keyof ApplyResult["dropped"]] += 1; continue; }
+    if (rowGate && !rowGate(raw)) { out.dropped.geo += 1; continue; }
     const record = mapRow(raw, map);
     if (!record) { out.dropped.empty += 1; continue; }
     out.records.push(record);

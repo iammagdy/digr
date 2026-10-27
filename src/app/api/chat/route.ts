@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
     currentStep = "authenticate_user";
     let verifiedUserId: string | null = null;
     let emailVerified = false;
+    let verifiedUserEmail: string | null = null;
     let capturedName: string | undefined;
     let isGuest = false;
     let personaProfile: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown } | undefined;
@@ -116,6 +117,8 @@ export async function POST(req: NextRequest) {
       if (user) {
         verifiedUserId = user.id;
         emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
+        // only a verified account's e-mail counts for the model-planner allowlist (a guest has none)
+        verifiedUserEmail = emailVerified && typeof user.email === "string" ? user.email : null;
         // The name is stored in the customer's own account profile through their own session (owner decision D2).
         // "اسمي X" always counts; a bare short reply counts only right after Diger AI asked for the name.
         const askedForName = typeof conversationId === "string" && conversationId
@@ -504,6 +507,7 @@ export async function POST(req: NextRequest) {
       answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,
       isGuest,
+      userEmail: isGuest ? null : verifiedUserEmail,
       capturedName,
       personaProfile: isGuest ? undefined : personaProfile,
       resultColumns: Array.isArray(body.resultColumns) ? body.resultColumns.slice(0, 60) : undefined,

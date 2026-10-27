@@ -240,16 +240,40 @@ describe("validation: the plan is checked against the catalog, the policy, the c
     expect(noSample.ok).toBe(false);
   });
 
-  it("the card carries rows of a REAL sample call only: a plan validated on the catalog's documentation example has none (those rows are not this customer's data)", () => {
+  it("NEVER PRICED FROM A CATALOG EXAMPLE: a per-call endpoint with no real sample (and no recipe) is refused with `needs_real_sample`; the example is trimmed to one item and says nothing about rows per call", () => {
     const customerText = "أريد ٥ تغريدات عن AI trenches على منصة X";
     const p = ProposePlanSchema.parse({
       summaryAr: "جمع ٥ تغريدات عن AI trenches", topic: "AI trenches",
       steps: [{ endpointId: "anyapi.x.search.posts", volume: 5, params: [{ name: "query", value: "AI trenches", source: "customer_text", quote: "AI trenches" }], fieldMap: { columns: [{ field: "text", headerAr: "نص التغريدة", role: "text" }, { field: "authorUsername", headerAr: "الحساب", role: "author_handle" }], pagination: { kind: "token", param: "cursor" } } }],
     });
+    expect(catalog.byId.get("anyapi.x.search.posts")!.cost?.unit).toBe("call");
+    const r = validatePlan(p, ctx({ customerText, samples: new Map() }));
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.issues.map((i) => i.code)).toEqual(["needs_real_sample"]);
+    expect(r.issues[0].message).toMatch(/sample_call/);
+    // with a REAL sample the same plan is priced, from the rows that call returned
+    const row = { text: "ai trenches are here", authorUsername: "someone", createdUtc: 1790000000 };
+    const sample = { endpointId: "anyapi.x.search.posts", rows: Array.from({ length: 4 }, () => row), digest: buildShapeDigest({ rows: [row] }, catalog.byId.get("anyapi.x.search.posts")!).digest, costUsd: 0.00075 };
+    const ok = validatePlan(p, ctx({ customerText, samples: new Map([["anyapi.x.search.posts", sample]]) }));
+    expect(ok.ok).toBe(true);
+    if (!ok.ok) return;
+    expect(ok.plan.steps[0].price).toMatchObject({ rowsPerCall: 4, passRate: 1, measuredFrom: "sample" });
+  });
+
+  it("a per-RECORD catalog unit is priced from the catalog (no sample needed); the card still shows no row (only a real sample's rows are shown)", () => {
+    const e = catalog.byId.get("icypeas.companies.search")!;
+    expect(e.cost?.unit).toBe("result");
+    const customerText = "أريد ١٠ شركات تقنية";
+    const p = ProposePlanSchema.parse({
+      summaryAr: "جمع ١٠ شركات تقنية", topic: "شركات تقنية",
+      steps: [{ endpointId: "icypeas.companies.search", volume: 10, params: [{ name: "query", value: { industry: { include: ["Technology"] } }, source: "derived", quote: "شركات تقنية" }], fieldMap: { columns: [{ field: "name", headerAr: "اسم الشركة", role: "company" }], pagination: { kind: "single" } } }],
+    });
     const r = validatePlan(p, ctx({ customerText, samples: new Map() }));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.plan.steps[0].price.measuredFrom).toBe("catalog_example");
+    expect(r.plan.steps[0].price).toMatchObject({ rowsPerCall: 1, passRate: 1, measuredFrom: "catalog_unit" });
+    expect(r.plan.price.costPerRecordUsd).toBeCloseTo(e.cost!.usd!, 12);
     expect(r.plan.sampleRows).toEqual([]);
   });
 

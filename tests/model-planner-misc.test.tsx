@@ -87,7 +87,7 @@ describe("the quote writer: the model planner prices by an optional hook; every 
   });
 });
 
-describe("the plan card: real sample rows before approval, and no edit button for a model plan", () => {
+describe("the plan card: real sample rows before approval, and the same edit button for a model plan", () => {
   const quote = (over: Record<string, unknown> = {}): PlanQuoteData => ({
     quoteId: "q1", planHash: "h", summaryAr: "جمع ١٠ منشورات من حساب @elonmusk",
     items: [{ capabilitySlug: MODEL_PLAN_SLUG, endpointId: "anyapi.x.user.posts", params: { _modelStep: { v: 1 } }, targetVolumeMin: 1, targetVolumeMax: 10, unitPricePoints: 0.916667 }],
@@ -96,15 +96,27 @@ describe("the plan card: real sample rows before approval, and no edit button fo
   } as unknown as PlanQuoteData);
   const render = (q: PlanQuoteData) => renderToStaticMarkup(createElement(PlanQuoteCard, { quote: q, onStart: () => {}, onSaveEdit: async () => {}, isStarting: false, available: 5000, creditValue: 0.1, onTopupShort: () => {}, onRefresh: async () => {} } as any));
 
-  it("shows up to three real rows with the plan's Arabic headers and Arabic-Indic digits; a model plan has no edit button and can be approved", () => {
+  it("shows up to three real rows with the plan's Arabic headers and Arabic-Indic digits; a model plan has the same edit button and can be approved", () => {
     const html = render(quote({ modelPlanned: true, sampleRows: { columns: [{ key: "text", titleAr: "نص المنشور" }, { key: "likes_count", titleAr: "الإعجابات" }], rows: [{ text: "hello 2026", likes_count: 10 }, { text: "world", likes_count: 12 }] } }));
     expect(html).toContain('data-testid="plan-sample-rows"');
     expect(html).toContain("نص المنشور");
     expect(html).toContain("hello ٢٠٢٦");
     expect(html).toContain("١٢");
-    expect(html).not.toContain('data-testid="edit-plan-btn"');
+    expect(html).toContain('data-testid="edit-plan-btn"');
     expect(html).toContain("أوافق وابدأ البحث");
     expect(html).not.toMatch(/anyapi|treg|USD|دولار/);
+  });
+  it("the edit panel of a model plan offers the volume, the formats and the points cap only (no parameter text, country or activity is sent back); an old-path plan keeps its fields", () => {
+    const panel = (q: PlanQuoteData) => renderToStaticMarkup(createElement(PlanQuoteCard, { quote: q, onStart: () => {}, onSaveEdit: async () => {}, isStarting: false, available: 5000, creditValue: 0.1, onTopupShort: () => {}, onRefresh: async () => {}, initiallyEditing: true } as any));
+    const model = panel(quote({ modelPlanned: true }));
+    expect(model).toContain("pq-limit-q1");
+    expect(model).toContain("pq-cap-q1");
+    expect(model).toContain("حفظ التعديل");
+    expect(model).not.toContain("pq-param-q1");
+    expect(model).not.toContain("pq-country-q1");
+    expect(model).not.toContain("pq-industry-q1");
+    const old = panel(quote({ items: [{ capabilitySlug: "icypeas-companies-search", params: { country: "Egypt", location: "Egypt", industry: "الكهرباء", query: { keyword: { include: ["electrical"] }, industry: { include: ["Utilities"] }, location: { include: ["Egypt"] } } }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 3.168 }] }));
+    expect(old).toContain("pq-param-q1");
   });
   it("a quote of the old path keeps its edit button and shows no sample block", () => {
     const html = render(quote({ items: [{ capabilitySlug: "icypeas-companies-search", params: { country: "Egypt", location: "Egypt", industry: "الكهرباء", query: { keyword: { include: ["electrical"] }, industry: { include: ["Utilities"] }, location: { include: ["Egypt"] } } }, targetVolumeMin: 1, targetVolumeMax: 5, unitPricePoints: 3.168 }] }));

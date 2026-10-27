@@ -19,6 +19,8 @@ export interface ReplayCase {
   script: Array<ContentBlock[]>;
   /** What the new path must end in with the recorded model (asserted). */
   expectNew: { kind: "plan" | "question" | "refusal" | "incomplete" | "gate"; endpoint?: string; steps?: number; noWindow?: boolean };
+  /** Other outcome kinds that also pass when a REAL model plans the case (a decline or a question is as honest as a plan where the catalog cannot serve the request as asked). */
+  alsoOk?: Array<"plan" | "question" | "refusal" | "incomplete">;
   /** The old path runs the planning model of the old path (the comparison forbids it): the case is reported «asks the old model». */
   people?: boolean;
   note?: string;
@@ -31,6 +33,15 @@ function realRowsOf(handle: string): ReplayFixture {
   const rename = (v: any): any => (typeof v === "string" ? (v.toLowerCase() === "elonmusk" ? handle : v) : Array.isArray(v) ? v.map(rename) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, rename(x)])) : v);
   return { ...base, name: `${base.name} (account renamed to ${handle})`, pages: base.pages.map(rename), synthetic: `the live job's ten rows with the account name «elonmusk» replaced by «${handle}»` };
 }
+
+/** A search fixture whose leads carry the given fields (the catalog example's one lead is a foreign company and person): marked synthetic so no table reads it as a live answer. */
+function withLeads(name: string, patch: Record<string, unknown>, why: string): ReplayFixture {
+  const base = fx(name);
+  return { ...base, name: `${base.name} (${why})`, synthetic: `the catalog example's lead with ${Object.keys(patch).join(", ")} replaced: ${why}`, pages: base.pages.map((page: any) => ({ ...page, leads: (page.leads ?? []).map((lead: any) => ({ ...lead, ...patch })) })) };
+}
+const egyptianCompanies = () => withLeads("catalog-example_icypeas.companies.search", { address: "Cairo, Egypt", website: "https://www.example-tech.com.eg" }, "an Egyptian company");
+const jeddahCompanies = () => withLeads("catalog-example_icypeas.companies.search", { address: "Jeddah, Saudi Arabia", website: "https://www.example-contracting.com.sa" }, "a Jeddah company");
+const riyadhPeople = () => withLeads("catalog-example_icypeas.people.search", { address: "Riyadh, Saudi Arabia", lastCompanyAddress: "Olaya Street, Riyadh, Saudi Arabia" }, "a person and a company in Riyadh");
 
 const xColumns = [{ field: "text", headerAr: "نص المنشور", role: "text" }, { field: "authorHandle", headerAr: "الحساب", role: "author_handle" }, { field: "createdUtc", headerAr: "تاريخ النشر", role: "date" }, { field: "likes", headerAr: "الإعجابات", role: "likes", transform: "number" }, { field: "url", headerAr: "الرابط", role: "url" }];
 const accountPlan = (handle: string, volume: number, summaryAr: string) => ({
@@ -86,18 +97,12 @@ export const REPLAY_CASES: ReplayCase[] = [
   },
   {
     id: "L5", group: "live", request: "أريد ٣٠ تعليقًا على منشورات فيسبوك عن الغلا", fixtures: [fx("catalog-example_justoneapi.x.facebook-search-post-v1"), fx("catalog-example_scrapecreators.x.v1-facebook-post-comments")],
-    script: [search("facebook", ["search", "posts"]), search("facebook", ["post", "comments"]), sample("justoneapi.x.facebook-search-post-v1", [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }]), sample("scrapecreators.x.v1-facebook-post-comments", [{ name: "url", source: "prior_step", fromStep: { step: 1, field: "url" } }]), propose({
-      summaryAr: "جمع ٣٠ تعليقًا على منشورات فيسبوك عن الغلا", topic: "الغلا",
-      steps: [
-        { endpointId: "justoneapi.x.facebook-search-post-v1", volume: 30, params: [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }], fieldMap: { rowsPath: "data.results", columns: [{ field: "url", headerAr: "رابط المنشور", role: "url" }, { field: "message", headerAr: "نص المنشور", role: "text" }, { field: "comments_count", headerAr: "عدد التعليقات", role: "replies", transform: "number" }], pagination: { kind: "token", param: "cursor" } } },
-        { endpointId: "scrapecreators.x.v1-facebook-post-comments", volume: 30, perItem: 10, params: [{ name: "url", source: "prior_step", fromStep: { step: 1, field: "url" } }], fieldMap: { columns: [{ field: "text", headerAr: "نص التعليق", role: "text" }, { field: "author.name", headerAr: "الاسم", role: "author_name" }, { field: "created_at", headerAr: "تاريخ التعليق", role: "date" }, { field: "reaction_count", headerAr: "التفاعلات", role: "likes", transform: "number" }], pagination: { kind: "token", param: "cursor" } } },
-      ],
-    })],
-    expectNew: { kind: "plan", steps: 2, noWindow: true },
-    note: "the listing step's sample call (about 0.0295 USD) is above the 0.02 USD per-request exploration cap: it is NOT made, the model is told, and the plan is validated on the catalog example (no sample rows on the card). The old path added the window «آخر شهر» here too and delivered 0",
+    script: [search("facebook", ["search", "posts"]), search("facebook", ["post", "comments"]), sample("justoneapi.x.facebook-search-post-v1", [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }]), ask("هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد.")],
+    expectNew: { kind: "refusal" }, alsoOk: ["question"],
+    note: "the only Facebook keyword search endpoints cost 0.0295 USD or more per call, above the 0.02 USD per-request exploration cap: no real sample can be made, so (the price needs one) no card is shown. The old path added the window «آخر شهر» here and delivered 0"
   },
   {
-    id: "L6", group: "live", request: "أريد ١٠ شركات تقنية في مصر", fixtures: [fx("catalog-example_icypeas.companies.search")],
+    id: "L6", group: "live", request: "أريد ١٠ شركات تقنية في مصر", fixtures: [egyptianCompanies()],
     script: [search("companies", ["search"]), describeTool("icypeas.companies.search"), sample("icypeas.companies.search", [{ name: "query", value: { industry: { include: ["Technology"] }, location: { include: ["Egypt"] } }, source: "derived", quote: "شركات تقنية في مصر" }]), propose({
       summaryAr: "جمع ١٠ شركات تقنية في مصر", topic: "شركات تقنية في مصر",
       steps: [{ endpointId: "icypeas.companies.search", volume: 10, params: [{ name: "query", value: { industry: { include: ["Technology"] }, location: { include: ["Egypt"] } }, source: "derived", quote: "شركات تقنية في مصر" }], fieldMap: { columns: [{ field: "name", headerAr: "اسم الشركة", role: "company" }, { field: "website", headerAr: "الموقع", role: "website" }, { field: "industry", headerAr: "المجال", role: "title" }, { field: "description", headerAr: "الوصف", role: "text" }], pagination: { kind: "single" } } }],
@@ -121,7 +126,7 @@ export const REPLAY_CASES: ReplayCase[] = [
       summaryAr: "جمع ٥٠ تغريدة عن كرة القدم في مصر خلال آخر شهر", topic: "كرة القدم في مصر",
       steps: [{ endpointId: "anyapi.x.search.posts", volume: 50, params: [{ name: "query", value: "كرة القدم في مصر", source: "customer_text", quote: "كرة القدم في مصر" }], fieldMap: { columns: searchPostsColumns, pagination: { kind: "token", param: "cursor" } }, filters: [{ kind: "date_window", field: "createdUtc", from: "2026-09-27", to: "2026-10-27", quote: "آخر شهر", format: "unix_s" }] }],
     }), ask("لم أجد تغريدات عن كرة القدم في مصر خلال آخر شهر، ولم يُحجز أي رصيد.")],
-    expectNew: { kind: "question" },
+    expectNew: { kind: "question" }, alsoOk: ["plan", "refusal"],
     note: "the one sample row (the catalog example, dated 2026-09-19) is outside the stated window: validation refuses the plan and the model says so; nothing is held (the old path planned, held and released)",
   },
   { id: "P7", group: "phrasing", request: "اكس", fixtures: [], script: [ask("ما الذي تريد جمعه من إكس؟ حسابًا بعينه أم تغريدات عن موضوع؟")], expectNew: { kind: "question" }, note: "the bare platform name; the second turn of Phase 0's P7 (the platform typed as the answer to the platform question) is the same sentence again" },
@@ -131,16 +136,16 @@ export const REPLAY_CASES: ReplayCase[] = [
     expectNew: { kind: "plan", steps: 2, noWindow: true },
   },
   {
-    id: "P9", group: "phrasing", request: "ابي اسماء مدراء شركات الاغذية في الرياض", fixtures: [fx("catalog-example_icypeas.people.search")], people: true,
+    id: "P9", group: "phrasing", request: "ابي اسماء مدراء شركات الاغذية في الرياض", fixtures: [riyadhPeople()], people: true,
     script: [search("people", ["search"]), sample("icypeas.people.search", [{ name: "query", value: { currentJobTitle: { include: ["Manager"] }, industry: { include: ["Food"] }, location: { include: ["Riyadh"] } }, source: "derived", quote: "مدراء شركات الاغذية في الرياض" }]), propose({
       summaryAr: "جمع أسماء مديري شركات الأغذية في الرياض", topic: "مدراء شركات الاغذية في الرياض",
       steps: [{ endpointId: "icypeas.people.search", volume: 20, params: [{ name: "query", value: { currentJobTitle: { include: ["Manager"] }, industry: { include: ["Food"] }, location: { include: ["Riyadh"] } }, source: "derived", quote: "مدراء شركات الاغذية في الرياض" }], fieldMap: { columns: [{ field: "firstname", headerAr: "الاسم الأول", role: "author_name" }, { field: "lastname", headerAr: "اسم العائلة" }, { field: "lastJobTitle", headerAr: "المسمى الوظيفي", role: "job_title" }, { field: "lastCompanyName", headerAr: "الشركة", role: "company" }, { field: "profileUrl", headerAr: "رابط الملف", role: "url" }], pagination: { kind: "single" } } }],
     })],
-    expectNew: { kind: "plan", endpoint: "icypeas.people.search", noWindow: true },
+    expectNew: { kind: "plan", endpoint: "icypeas.people.search", noWindow: true }, alsoOk: ["question"],
     note: "the volume is not stated by the customer: the recorded model chose 20; a real one may ask",
   },
   {
-    id: "P10", group: "phrasing", request: "شركات مقاولات في جدة مع ايميلاتهم", fixtures: [fx("catalog-example_icypeas.companies.search"), fx("catalog-example_tomba.companies.emails.list")],
+    id: "P10", group: "phrasing", request: "شركات مقاولات في جدة مع ايميلاتهم", fixtures: [jeddahCompanies(), fx("catalog-example_tomba.companies.emails.list")],
     script: [search("companies", ["search"]), search("companies", ["emails", "domain"]), sample("icypeas.companies.search", [{ name: "query", value: { industry: { include: ["Construction"] }, location: { include: ["Jeddah"] } }, source: "derived", quote: "شركات مقاولات في جدة" }]), sample("tomba.companies.emails.list", [{ name: "domain", source: "prior_step", fromStep: { step: 1, field: "website" } }]), propose({
       summaryAr: "جمع شركات المقاولات في جدة مع بريد كل شركة", topic: "شركات مقاولات في جدة",
       steps: [
@@ -154,9 +159,9 @@ export const REPLAY_CASES: ReplayCase[] = [
         { endpointId: "tomba.companies.emails.list", volume: 10, perItem: 1, params: [{ name: "domain", source: "prior_step", fromStep: { step: 1, field: "website" } }], fieldMap: { columns: [{ field: "organization.organization", headerAr: "اسم الشركة", role: "company" }, { field: "organization.website_url", headerAr: "الموقع", role: "website" }], pagination: { kind: "single" } } },
       ],
     })],
-    expectNew: { kind: "plan", steps: 2, noWindow: true },
+    expectNew: { kind: "plan", steps: 2, noWindow: true }, alsoOk: ["question"],
   },
-  { id: "P11", group: "phrasing", request: "وظايف شاغره في الرياض", fixtures: [fx("catalog-example_blitzapi.jobs.search")], script: [search("jobs", ["search"]), ask("هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد.")], expectNew: { kind: "refusal" }, note: "the recorded model declines (the old path ran a jobs source on 22 Oct); a real model may plan it" },
+  { id: "P11", group: "phrasing", request: "وظايف شاغره في الرياض", fixtures: [fx("catalog-example_blitzapi.jobs.search")], script: [search("jobs", ["search"]), ask("هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد.")], expectNew: { kind: "refusal" }, alsoOk: ["plan", "question"], note: "the recorded model declines (the old path ran a jobs source on 22 Oct); a real model may plan it" },
   { id: "P12", group: "phrasing", request: "اعطني تعليقات اخر ٥ بوستات في صفحة اليوم السابع فيسبوك", fixtures: [], script: [search("facebook", ["page", "posts"]), ask("ما رابط صفحة اليوم السابع على فيسبوك؟")], expectNew: { kind: "question" } },
   {
     id: "P13", group: "phrasing", request: "اريد ١٠٠ تعليق يوتيوب على فيديو https://www.youtube.com/watch?v=dQw4w9WgXcQ", fixtures: [fx("catalog-example_crawl4ai.youtube.video.comments")],

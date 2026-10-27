@@ -1,10 +1,18 @@
 /**
  * The MODEL PLANNER (Phase 2 of «AI in the loop»): the model decides which catalog endpoint to call and how; code only validates, prices, budgets and protects.
  *
- * ONE constant switches it on. It is OFF in this PR: the old hand-coded planning path is untouched and runs exactly as before. Nothing under src/lib/modelPlanner
- * is reached by the chat or the worker unless this is true (the worker reads it only to refuse a stored model-plan job when it is switched off again).
+ * ROLLOUT is by ACCOUNT, not by a global switch: only the accounts in this list take the model path (chat planning). Every other account keeps the old hand-coded path,
+ * unchanged. Matching is on the signed-in account's verified e-mail, case-insensitive and exact. A guest has no e-mail of its own, so a guest stays on the old path until this
+ * rule is widened. The worker runs any stored model plan whatever the account (a plan the customer approved is always executed).
  */
-export const MODEL_PLANNER_ENABLED = false;
+export const MODEL_PLANNER_ALLOWED_EMAILS: readonly string[] = ["magdy.saber@outlook.com", "iam.magdy+1@outlook.com"];
+
+/** Does this account take the model path? The signed-in account's e-mail must be in the allowlist; a guest never is. */
+export function isModelPlannerAccount(account: { email?: string | null; isGuest?: boolean } | null | undefined): boolean {
+  if (!account || account.isGuest) return false;
+  const email = String(account.email ?? "").trim().toLowerCase();
+  return email.length > 0 && MODEL_PLANNER_ALLOWED_EMAILS.some((allowed) => allowed.toLowerCase() === email);
+}
 
 /** The capability slug every model-planned quote item carries; the real endpoint, the field map and the filters live in the item's params. */
 export const MODEL_PLAN_SLUG = "model-planned";
