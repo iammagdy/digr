@@ -19,12 +19,16 @@ const DATE_FIELDS = [
   "date",
 ];
 
+/** A whole number of 9 to 13 digits written as text («1792308962»): a Unix timestamp the source sent as a string, not a date `Date.parse` can read. */
+const UNIX_TIMESTAMP_TEXT = /^\s*\d{9,13}\s*$/;
+
 function parseRowDate(value: unknown): number | null {
   if (typeof value !== "string" && typeof value !== "number") return null;
-  let timestamp = typeof value === "number" ? value : Date.parse(value);
+  const unixText = typeof value === "string" && UNIX_TIMESTAMP_TEXT.test(value);
+  let timestamp = typeof value === "number" ? value : unixText ? Number(value) : Date.parse(value);
   if (!Number.isFinite(timestamp)) return null;
   // Provider timestamps are commonly Unix seconds; JS dates use milliseconds.
-  if (typeof value === "number" && Math.abs(timestamp) < 1e12) timestamp *= 1000;
+  if ((typeof value === "number" || unixText) && Math.abs(timestamp) < 1e12) timestamp *= 1000;
   return timestamp;
 }
 

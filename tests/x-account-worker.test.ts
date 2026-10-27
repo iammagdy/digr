@@ -215,7 +215,7 @@ describe("worker: X account jobs", () => {
     expect(lines().some((line) => line.includes("وأُحيل ١٠ إلى المراجعة ولم يُحتسب"))).toBe(true);
   });
 
-  it("only rows whose author is the requested account (any letter case) are delivered; another author is excluded; no author, a reply and a reply target are held", async () => {
+  it("only rows whose author is the requested account (any letter case) are delivered; another author, a reply and a reply target are excluded; no author is held", async () => {
     resetDb("social-x-posts", ACCOUNT, 10, 0.11715);
     const seen: Array<{ customerRequest: string; rows: number }> = [];
     setStrictSocialReviewForTesting(true);
@@ -226,8 +226,8 @@ describe("worker: X account jobs", () => {
       post("o1", { authorUsername: "BillGates" }),               // another author: excluded
       post("rt1", { authorUsername: "BillGates", text: "RT @BillGates: hello" }), // a repost shows its original author: excluded
       { id: "n1", text: "no author at all" },                    // no readable author: held
-      post("r1", { isReply: true }),                             // marked as a reply: held
-      post("r2", { inReplyToId: "1892345678901234567" }),        // has a reply target: held
+      post("r1", { isReply: true }),                             // marked as a reply: excluded
+      post("r2", { inReplyToId: "1892345678901234567" }),        // has a reply target: excluded
     ];
     useSource(async () => ok({ ok: true, rows }));
 
@@ -243,7 +243,7 @@ describe("worker: X account jobs", () => {
     const settle = db.rpcCalls.find((c) => c.name === "settle_job_atomic")!;
     expect(settle).toBeDefined();
     expect(json.settle.charged_credits).toBe(Math.min(Math.ceil(5 * 0.11715), db.reserved));
-    expect(lines().some((line) => line.includes("قيد المراجعة ٣"))).toBe(true);
+    expect(lines().some((line) => line.includes("قيد المراجعة ١"))).toBe(true);
   });
 
   it("a topic search of X keeps its strict review (the reviewer IS asked, with the topic as the request)", async () => {

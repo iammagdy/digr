@@ -1661,7 +1661,7 @@ export async function POST(req: NextRequest) {
       const heldShown = heldToReport(diagnosticTotal, uncertainRows.length);
       const accountJobEnded = isXAccountRequest(spec.params || {});
       const emptyErrorAr = accountJobEnded && receivedFromSource > 0 && !reviewUnavailable
-        ? xAccountZeroDeliveryAr({ received: receivedShown, held: heldShown, dateDropped: feedHasWindow && datesDroppedKnown ? datesDroppedTotal : 0 })
+        ? xAccountZeroDeliveryAr({ received: receivedShown, held: heldShown, dateDropped: feedHasWindow && datesDroppedKnown ? datesDroppedTotal : 0, replies: diagnosticTotal?.rows.byReason.reply, reposts: diagnosticTotal?.rows.byReason.repost, otherAccount: diagnosticTotal?.rows.byReason.other_account })
         : reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
         : reviewBudgetUsedUp && unreviewedRows.length > 0

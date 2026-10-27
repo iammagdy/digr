@@ -132,11 +132,12 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
 }
 
 /**
- * The account a post says wrote it, in lower case without «@», or null when the row names none. Only the keys the code and its fixtures already use:
- * `authorUsername` (the provider spelling in the checked-in X post fixture), `author_username` and `username` (the normalised post), and `author_handle`,
- * `screen_name`, `handle` (read by the post and comment normalisers). A nested author object is not read: no code or fixture shows one.
+ * The account a post says wrote it, in lower case without «@», or null when the row names none. Only the keys the code, its fixtures and the real rows of
+ * `anyapi.x.user.posts` (read from a live job's step file, after `flattenRow`) use: `authorHandle` («elonmusk», no «@»), `authorUsername` (the provider spelling
+ * of the search fixture), `author_username` and `username` (the normalised post), and `author_handle`, `screen_name`, `handle`. A nested author object is
+ * not read: the rows are flattened before they reach the gate and carry no such object.
  */
-const AUTHOR_HANDLE_KEYS = ["authorUsername", "author_username", "author_handle", "username", "screen_name", "handle"];
+const AUTHOR_HANDLE_KEYS = ["authorHandle", "authorUsername", "author_username", "author_handle", "username", "screen_name", "handle"];
 export function postAuthorHandle(row: Record<string, any>): string | null {
   for (const key of AUTHOR_HANDLE_KEYS) {
     const value = row?.[key];
@@ -151,30 +152,57 @@ export function isXAccountRequest(params: Record<string, any>): boolean {
   return typeof params?.channel === "string" && params.channel.trim() !== "" && !(typeof params.query === "string" && params.query.trim() !== "");
 }
 
+/** A flag the source sends as a boolean or as text: «True»/«False» (the real rows), «true», «1». Only a true value is true; «False» is not a reply. */
+function flagIsTrue(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value !== "string") return false;
+  return ["true", "1", "yes"].includes(value.trim().toLowerCase());
+}
+
 /**
- * A row marked as a reply by the fields the code already reads: `is_reply` / `isReply` (the normalised and the provider spelling), a reply target
- * (`inReplyToId`, where the provider writes «0» for none, as in the checked-in X post fixture), and the reply links `replyTo`, `inReplyTo`, `parentId`,
- * `parent_id` that the result review already counts as replies. No field marks a repost in the code or the fixtures, so none is read here.
+ * A row marked as a reply by the fields the code already reads and the real rows carry: `isReply` / `is_reply` (a boolean or the text «True» / «False»), a
+ * reply target (`inReplyToId`, where the provider writes «0» for none), and the reply links `replyTo`, `inReplyTo`, `parentId`, `parent_id` that the result
+ * review already counts as replies.
  */
 export function isReplyRow(row: Record<string, any>): boolean {
-  if (row?.isReply === true || row?.is_reply === true || row?.isReply === "true" || row?.is_reply === "true") return true;
+  if (flagIsTrue(row?.isReply) || flagIsTrue(row?.is_reply)) return true;
   const target = row?.inReplyToId;
   if (target !== undefined && target !== null && String(target).trim() !== "" && String(target).trim() !== "0" && String(target).toLowerCase() !== "null") return true;
   return Boolean(row?.replyTo || row?.inReplyTo || row?.parentId || row?.parent_id);
 }
 
 /**
- * A row of an X account's timeline is delivered only when it shows WHO wrote it and that author is the account asked for (the plan names an account,
- * never a topic). A post written by another account is excluded. A row that names no author, and a row marked as a reply, cannot be shown to be the
- * account's own post: both are held for review, not delivered, not charged.
+ * A repost. The real rows of the timeline source carry NO flag for it: a repost is the text «RT @name: …» (read from a live job's rows), so that is the only
+ * mark read, and only at the very start of the post's text.
+ */
+const REPOST_TEXT = /^\s*RT\s+@[A-Za-z0-9_]{1,15}\s*:/;
+export function hasRtTextMark(row: Record<string, any>): boolean {
+  for (const key of ["text", "full_text", "fullText", "content", "post_text"]) {
+    const value = row?.[key];
+    if (typeof value === "string" && value.trim()) return REPOST_TEXT.test(value);
+  }
+  return false;
+}
+
+export const ACCOUNT_REPLY_REASON_AR = "السجل رد على منشور آخر وليس منشورًا كتبه الحساب؛ استُبعد ولم يُحتسب";
+export const ACCOUNT_REPOST_REASON_AR = "السجل إعادة نشر لمنشور حساب آخر وليس منشورًا كتبه الحساب؛ استُبعد ولم يُحتسب";
+export const ACCOUNT_OTHER_AUTHOR_REASON_AR = "المنشور ليس من الحساب المطلوب";
+export const ACCOUNT_NO_AUTHOR_REASON_AR = "لا يظهر في السجل اسم الحساب الذي نشره؛ أُحيل للمراجعة ولم يُحتسب";
+
+/**
+ * A row of an X account's timeline is delivered only when it is a post the account wrote itself: its author is the requested account (any letter case, with
+ * or without «@»), it is not a reply, and it is not a repost. A reply and a repost are excluded, each with its own honest reason; a post written by another
+ * account is excluded; a row that names no author cannot be shown to be the account's own and is held for review. None of them is delivered or charged.
  */
 function evaluateXAccountPost(row: Record<string, any>, params: Record<string, any>): ResearchRelevanceResult {
   const wanted = xAccountHandle(params.channel)?.toLowerCase();
   const author = postAuthorHandle(row);
-  if (wanted && author && author !== wanted) return { decision: "no_match", reasonAr: "المنشور ليس من الحساب المطلوب" };
-  if (!author) return { decision: "uncertain", reasonAr: "لا يظهر في السجل اسم الحساب الذي نشره؛ أُحيل للمراجعة ولم يُحتسب" };
-  if (isReplyRow(row)) return { decision: "uncertain", reasonAr: "السجل رد على منشور آخر وليس منشورًا مستقلًا من الحساب؛ أُحيل للمراجعة ولم يُحتسب" };
-  return { decision: "match", reasonAr: "منشور من الحساب المطلوب" };
+  if (wanted && author && author !== wanted) return { decision: "no_match", reasonAr: ACCOUNT_OTHER_AUTHOR_REASON_AR };
+  if (!author) return { decision: "uncertain", reasonAr: ACCOUNT_NO_AUTHOR_REASON_AR };
+  if (hasRtTextMark(row)) return { decision: "no_match", reasonAr: ACCOUNT_REPOST_REASON_AR };
+  if (isReplyRow(row)) return { decision: "no_match", reasonAr: ACCOUNT_REPLY_REASON_AR };
+  return { decision: "match", reasonAr: "منشور كتبه الحساب المطلوب" };
 }
 
 function countMatches(value: string, pattern: RegExp): number {

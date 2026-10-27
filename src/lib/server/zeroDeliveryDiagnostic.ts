@@ -104,19 +104,30 @@ export function recordPostReads(d: JobDiagnostic, reads: { read: number; sourceS
 
 /**
  * The sentence of an X ACCOUNT job that ends with nothing delivered. The request names an account, not a topic, so it never says «موضوع طلبك»: what was not
- * confirmed is that a record is a post written by the account itself. Counts are the job's totals; Arabic-Indic digits; nothing is charged.
+ * confirmed is that a record is a post written by the account itself. Counts are the job's totals (the replies, the reposts and another account's posts the gate
+ * excluded, and what it held); Arabic-Indic digits; nothing is charged. When every record inside the period was a reply or a repost it says exactly that.
  */
-export function xAccountZeroDeliveryAr(input: { received: number; held: number; dateDropped: number }): string {
-  const received = toArabicDigits(count(input.received));
+export function xAccountZeroDeliveryAr(input: { received: number; held: number; dateDropped: number; replies?: number; reposts?: number; otherAccount?: number }): string {
+  const receivedCount = count(input.received);
+  // «سجل واحد», «سجلين», «٧ سجلات», «٢٠ سجلاً»: the noun agrees with the count
+  const received = receivedCount === 1 ? "سجل واحد" : receivedCount === 2 ? "سجلين" : `${toArabicDigits(receivedCount)} ${receivedCount >= 3 && receivedCount <= 10 ? "سجلات" : "سجلاً"}`;
   const held = count(input.held);
   const dropped = count(input.dateDropped);
-  const heldText = held ? ` (أُحيل ${toArabicDigits(held)} إلى المراجعة ولم يُحتسب)` : "";
-  const unconfirmed = "لم يتأكد لنا أن أيًّا منها منشور كتبه الحساب نفسه";
+  const replies = count(input.replies);
+  const reposts = count(input.reposts);
+  const otherAccount = count(input.otherAccount);
   const inside = Math.max(0, count(input.received) - dropped);
+  const kinds = [replies ? `ردود: ${toArabicDigits(replies)}` : "", reposts ? `إعادات نشر: ${toArabicDigits(reposts)}` : "", otherAccount ? `منشورات حساب آخر: ${toArabicDigits(otherAccount)}` : ""].filter(Boolean);
+  const kindsText = kinds.length ? ` (${kinds.join("، ")})` : "";
+  const heldText = held ? ` (أُحيل ${toArabicDigits(held)} إلى المراجعة ولم يُحتسب)` : "";
+  const onlyRepliesAndReposts = inside > 0 && held === 0 && otherAccount === 0 && replies + reposts === inside;
+  const unconfirmed = onlyRepliesAndReposts
+    ? "لكنها كلها ردود على منشورات أخرى أو إعادات نشر، وليست منشورات كتبها الحساب نفسه"
+    : "لم يتأكد لنا أن أيًّا منها منشور كتبه الحساب نفسه";
   const part = dropped > 0
-    ? `استلمنا ${received} سجلاً من الحساب المطلوب، استُبعد منها ${toArabicDigits(dropped)} لأن تاريخها خارج الفترة التي حددتها أو بلا تاريخ نشر يمكن التحقق منه، وبقي ${toArabicDigits(inside)} داخل الفترة لكن ${unconfirmed}`
-    : `استلمنا ${received} سجلاً من الحساب المطلوب، لكن ${unconfirmed}`;
-  return `${part}${heldText}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
+    ? `استلمنا ${received} من الحساب المطلوب، استُبعد منها ${toArabicDigits(dropped)} لأن تاريخها خارج الفترة التي حددتها أو بلا تاريخ نشر يمكن التحقق منه، وبقي ${toArabicDigits(inside)} داخل الفترة ${onlyRepliesAndReposts ? unconfirmed : `لكن ${unconfirmed}`}`
+    : `استلمنا ${received} من الحساب المطلوب${onlyRepliesAndReposts ? "، " : "، لكن "}${unconfirmed}`;
+  return `${part}${kindsText}${heldText}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
 }
 
 /** The records held for review that a customer sentence says: the job's total over every page (never only the last page), and never fewer than the last page held. */
@@ -130,6 +141,9 @@ const REASON_LABEL_AR: Record<RejectedReasonCode, string> = {
   no_text: "بلا نص يمكن قراءته",
   well_wish: "دعاء أو مجاملة بلا مضمون",
   industry_mismatch: "من مجال مختلف",
+  reply: "ردًّا على منشورات أخرى",
+  repost: "إعادة نشر لمنشورات غيرها",
+  other_account: "منشورات حساب آخر",
   other_mismatch: "لأسباب أخرى",
 };
 
