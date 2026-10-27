@@ -1,0 +1,58 @@
+{
+ "name": "catalog-example_anyapi.x.search.posts",
+ "kind": "catalog example",
+ "endpointId": "anyapi.x.search.posts",
+ "source": {
+  "file": "treg_catalog_sellable.json",
+  "sha256": "5d8a125d5a563d892cfabceef2a21a0429191bba8017e2707d1bf626035315cc",
+  "snapshot": "TREG live catalog, describe pass 2026-10-27, read-only, balance unchanged 0.806 USD",
+  "field": "example_response_trimmed"
+ },
+ "costMicro": 750,
+ "listPath": "output.data.items",
+ "cursorPath": null,
+ "pages": [
+  {
+   "output": {
+    "data": {
+     "items": [
+      {
+       "authorName": "Hardik (🔮)",
+       "authorUsername": "_kidrah_24",
+       "authorVerified": true,
+       "bookmarkCount": 0,
+       "conversationId": "2101238870025338887",
+       "createdUtc": 1789811122,
+       "id": "2101246259504021713",
+       "isReply": true,
+       "lang": "en",
+       "likeCount": 0,
+       "media": [],
+       "quoteCount": 0,
+       "replyCount": 0,
+       "retweetCount": 0,
+       "text": "@AroraBhavyam @miramurati @OpenAI Those who are deep into AI trenches only know who she is",
+       "url": "https://x.com/i/web/status/2101246259504021713",
+       "viewCount": 0
+      }
+     ],
+     "nextCursor": "RamvY3F9Mz7m_pX1mGKIBU3WB2gd-e18B2pHf07hoTf6bMRIS14s-8wcCeRdRPkclvScRWBIY1Cus2a5-Xq-2Rlt0z3Tlm5zZ-kYozgkkYEUcFw56Tp_Iufs"
+    },
+    "found": true
+   },
+   "provider": "AnyAPI",
+   "costUsd": 0.00065,
+   "items": 20,
+   "replayed": false,
+   "source": {
+    "id": "anonymous-lynx",
+    "name": "Lynx",
+    "kind": "anonymous",
+    "artworkKey": "lynx"
+   },
+   "hint": "large_result: this response is ~16 KB. To keep future runs from flooding your context, re-run with `fields` (keep only t",
+   "resultId": "d4328779-3125-4ffe-90ff-79fe865ed372"
+  }
+ ],
+ "repeatLastPage": false
+}

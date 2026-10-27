@@ -7,6 +7,7 @@
  */
 
 import { relativeRowDate } from "./relativeDate";
+import { toBool, toEpochMs } from "../coerce";
 
 export type SocialRowKind = "comments" | "videos" | "posts";
 
@@ -70,6 +71,24 @@ export function toIsoDate(value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * The publication moment of a POST (X): «YYYY-MM-DD HH:mm» in UTC when the source gave a time (Unix seconds as a number or as text, or an ISO text with a time),
+ * the plain day when it gave only a day, nothing when it cannot be told. Comments and videos keep their date only (`toIsoDate`).
+ */
+export function toPostPublishedAt(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const ms = toEpochMs(value);
+  const withTime = (t: number) => new Date(t).toISOString().slice(0, 16).replace("T", " ");
+  if (ms !== undefined) return withTime(ms);
+  const raw = String(value).trim();
+  const iso = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})/.exec(raw);
+  if (iso) {
+    const t = Date.parse(/(?:Z|[+-]\d{2}:?\d{2})$/.test(raw) ? raw.replace(" ", "T") : `${raw.replace(" ", "T")}Z`);
+    return Number.isNaN(t) ? `${iso[1]} ${iso[2]}` : withTime(t);
+  }
+  return toIsoDate(value);
+}
+
 const text = (value: unknown): string | undefined => {
   if (value === undefined || value === null) return undefined;
   const s = String(value).replace(/\s+/g, " ").trim();
@@ -88,12 +107,8 @@ const handle = (value: unknown): string | undefined => {
   return /^[\w.\-؀-ۿ]{2,60}$/u.test(h) ? `@${h}` : undefined;
 };
 
-function bool(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (value === 1 || value === "1" || value === "true") return true;
-  if (value === 0 || value === "0" || value === "false") return false;
-  return undefined;
-}
+/** «True» / «False» / 1 / 0 / real booleans (see `toBool`). */
+const bool = toBool;
 
 /** Drops the facts the source did not give. Text is formula-escaped by the dataset pipeline that consumes it. */
 function clean<T extends Record<string, any>>(row: T): T {
@@ -172,7 +187,7 @@ export function normalizeSocialPost(raw: Record<string, any>): Record<string, an
     author_name: text(pick(raw, ["author_name", "authorName", "author", "nickname", "display_name", "name"])),
     username: handle(pick(raw, ["author_username", "authorUsername", "username", "screen_name", "handle"])),
     author_verified: bool(pick(raw, VERIFIED_KEYS)),
-    published_at: toIsoDate(pick(raw, ["published_at", "publishedAt", "created_at", "createdAt", "createdUtc", "created_utc", "date", "timestamp"])),
+    published_at: toPostPublishedAt(pick(raw, ["published_at", "publishedAt", "created_at", "createdAt", "createdUtc", "created_utc", "date", "timestamp"])),
     likes_count: parseCount(pick(raw, ["likes", "like_count", "likeCount", "likesCount"])),
     retweets_count: parseCount(pick(raw, ["retweets", "retweet_count", "retweetCount", "shares", "shares_count"])),
     replies_count: parseCount(pick(raw, ["replies", "reply_count", "replyCount", "replies_count"])),

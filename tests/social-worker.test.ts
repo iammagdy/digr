@@ -298,7 +298,7 @@ describe("worker: social jobs", () => {
     const secs = (iso: string) => Math.floor(Date.parse(iso) / 1000);
     const later = (n: number) => Array.from({ length: n }, (_, i) => ({ tweet_id: `later${i}`, text: `منشور ${i}`, createdUtc: secs("2026-10-12T07:00:00Z") + i * 3600 }));
 
-    it("every row later than the window: the date operators are sent, each page says why, the sentence is plain, paging stops by the empty-page rule and nothing is charged", async () => {
+    it("every row later than the window: the date operators are sent, each page says why, the sentence is plain, paging stops by the empty-page rule (two pages in a row, it was three) and nothing is charged", async () => {
       resetDb("social-x-posts", { query: "مباراة مصر والمغرب كأس العالم", dateFrom: "2026-06-11", dateTo: "2026-07-19" }, 50, 5);
       const sent: Array<Record<string, any>> = [];
       let n = 0;
@@ -312,10 +312,10 @@ describe("worker: social jobs", () => {
 
       expect(sent.length).toBeGreaterThan(0);
       for (const params of sent) expect(params.query).toBe("مباراة مصر والمغرب كأس العالم since:2026-06-11 until:2026-07-20");
-      expect(sent).toHaveLength(3);
+      expect(sent).toHaveLength(2);
       const lines = db.events.map((event) => String(event.message));
       const pageLines = lines.filter((line) => line.includes("تم استبعاد ٢٠ سجل من هذه الصفحة"));
-      expect(pageLines).toHaveLength(3);
+      expect(pageLines).toHaveLength(2);
       expect(pageLines[0]).toContain("٢٠ خارج الفترة المطلوبة");
       expect(pageLines[0]).toContain("أقدم تاريخ نشر ٢٠٢٦-١٠-١٢");
       expect(pageLines[0]).toContain("المصدر أعاد منشورات خارج الفترة التي حددتها");
@@ -1430,13 +1430,13 @@ describe("worker: social jobs", () => {
       await runAllChunks();
 
       const release = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
-      expect(String(release.args.p_error_message)).toContain("استلمنا ٦٠ سجلاً من المصدر");
+      // two empty pages in a row end the job (it was three): the same running totals, one page earlier
+      expect(String(release.args.p_error_message)).toContain("استلمنا ٤٠ سجلاً من المصدر");
       const pageLines = db.events.map((event) => String(event.message)).filter((line) => /^الصفحة\s/u.test(line));
-      expect(pageLines).toHaveLength(3);
+      expect(pageLines).toHaveLength(2);
       expect(pageLines[1]).toContain("المستلم حتى الآن ٤٠");
-      expect(pageLines[2]).toContain("المستلم حتى الآن ٦٠");
-      // the panel holds only the newest events: the last line alone still says 60
-      expect(summarizeActivityCounts([{ textAr: pageLines[2] }]).received).toBe(60);
+      // the panel holds only the newest events: the last line alone still says 40
+      expect(summarizeActivityCounts([{ textAr: pageLines[1] }]).received).toBe(40);
     });
   });
 });

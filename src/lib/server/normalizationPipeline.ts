@@ -1,3 +1,4 @@
+import { toBool } from "../coerce";
 import { cleanCompanyRecord } from "../companyRowHygiene";
 import crypto from "crypto";
 import { INTERNAL_ID_KEYS, POST_COLUMN_TITLES_AR, POST_NUMBER_DESC_AR, POST_NUMBER_KEY, POST_NUMBER_TITLE_AR, isFacebookKeywordService } from "../facebookKeywordService";
@@ -298,7 +299,9 @@ export function normalizeRecord(raw: any, index: number): Record<string, any> {
 
   // Hierarchy / reply status
   if (scrubbed.is_reply !== undefined || scrubbed.isReply !== undefined) {
-    out.is_reply = Boolean(scrubbed.is_reply ?? scrubbed.isReply);
+    // «False» is the text of a real row (anyapi.x.user.posts): Boolean("False") is true. An unreadable value leaves the column out.
+    const reply = toBool(scrubbed.is_reply ?? scrubbed.isReply);
+    if (reply !== undefined) out.is_reply = reply;
   }
   if (scrubbed.parent_id || scrubbed.parentId || scrubbed.parent_comment_id) {
     out.parent_id = String(scrubbed.parent_id || scrubbed.parentId || scrubbed.parent_comment_id);

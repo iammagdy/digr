@@ -1,20 +1,42 @@
-/**
- * How a customer names the X platform. ONE pattern for every reader (the social task detector, the capability registry's platform detector, the
- * check of a typed platform answer): two readers that disagree made the platform question come back after «إكس» was answered, because one of
- * them saw the platform and the other did not.
- *
- * The Arabic spellings of the letter's name are «إكس», «اكس» and «أكس». The next letter must not continue the word, so «اكسل» (Excel) and «ماكس» are not X.
- */
-const X_NAME = "(?:x|إكس|اكس|أكس)(?![\\p{L}])";
-/** A bare name is X only after a word that makes it a platform («على إكس», «لمنصة أكس»), or as the answer to the platform question. */
-const X_AFTER_PREPOSITION = `(?:على|علي|في|من|لمنصة|بمنصة|عبر)\\s+(?:إكس|اكس|أكس)(?![\\p{L}])`;
-const X_AFTER_PLATFORM_WORD = `منصة\\s*${X_NAME}`;
-const X_AS_PLATFORM_ANSWER = `(?:منصة البحث المطلوبة|المنصة التي تقصدها)\\s*:\\s*(?:منصة\\s*)?${X_NAME}`;
+import { foldArabicLetters } from "./arabicNormalize";
 
-/** Regex source (flags `iu`) of the names that mean X without another word beside them. */
-export const X_PLATFORM_NAME_SOURCE = `تويتر|تغريد|twitter|${X_AFTER_PLATFORM_WORD}|${X_AFTER_PREPOSITION}|${X_AS_PLATFORM_ANSWER}|\\bx\\.com\\b`;
+/**
+ * How a customer names the X platform. ONE reader for every detector (the social task detector, the capability registry's platform detector, the
+ * check of a typed platform answer): readers that disagree made the platform question come back after «إكس» was answered, and a request written
+ * «٤٠٠ منشور أكس» was not read as X at all.
+ *
+ * The text is folded first (`foldArabicLetters`: hamza forms, tatweel, diacritics), so «أكس / إكس / اكس / ايكس / إيكس» are one spelling, «اكـــس» too, and a
+ * pattern is written once. The next letter must not continue the word, and the letter before it must not be part of another word, so «اكسل» (Excel),
+ * «ماكس» and «ماكسيم» are not X.
+ *
+ * A bare name is X when: a word makes it a platform («منصة X»، «على اكس»، «لمنصة اكس»); it answers the platform question; it follows a word for what is
+ * collected («٤٠٠ منشور اكس»، «حساب اكس»، «تغريدات اكس»); it ends the request or is set apart by a comma («… الصحة السعودية، اكس»); or it is a Latin «x» standing alone.
+ */
+const AR_X = "(?:ا|اي)كس"; // folded: أكس إكس اكس ايكس إيكس
+const NAME = `(?:x|${AR_X})`;
+/** Not inside another word: no letter or digit before it or after it. */
+const WHOLE = (core: string): string => `(?<![\\p{L}\\p{N}])${core}(?![\\p{L}\\p{N}])`;
+
+const AFTER_PLATFORM_WORD = `منصه\\s*${WHOLE(NAME)}`;
+const AFTER_PREPOSITION = `(?:على|علي|في|من|لمنصه|بمنصه|عبر|ع|عن|الي|الى)\\s+${WHOLE(NAME)}`;
+const AS_PLATFORM_ANSWER = `(?:منصه البحث المطلوبه|المنصه التي تقصدها)\\s*:\\s*(?:منصه\\s*)?${WHOLE(NAME)}`;
+const AFTER_CONTENT_WORD = `(?:بوست(?:ات)?|منشور(?:ات)?|تغريد(?:ه|ات)|تويت(?:ات)?|حساب(?:ات)?|صفحه|بيانات|داتا|محتوي|ترند(?:ات)?|هاشتاج(?:ات)?)\\s+${WHOLE(AR_X)}`;
+const ENDS_THE_REQUEST = `(?:[,،؛]\\s*)${WHOLE(AR_X)}\\s*[.!؟?]*\\s*$`;
+const LATIN_X_ALONE = `(?<![\\p{L}\\p{N}@])(?<!\\p{N}\\s)x(?![\\p{L}\\p{N}])(?!\\s*\\p{N})`;
+const OTHER_NAMES = `تويتر|تغريد|twitter|(?<![\\p{L}])x\\.com(?![\\p{L}])`;
+
+/** Regex source (flags `iu`) to run on FOLDED text (`foldXText`). */
+export const X_PLATFORM_FOLDED_SOURCE = [OTHER_NAMES, AFTER_PLATFORM_WORD, AFTER_PREPOSITION, AS_PLATFORM_ANSWER, AFTER_CONTENT_WORD, ENDS_THE_REQUEST, LATIN_X_ALONE].join("|");
+
+const X_RE = new RegExp(X_PLATFORM_FOLDED_SOURCE, "iu");
+
+/** Text as the X reader reads it. */
+export const foldXText = (text: string): string => foldArabicLetters(String(text ?? "")).toLowerCase();
 
 /** True when the text names the X platform by any spelling above. */
 export function namesXPlatform(text: string): boolean {
-  return new RegExp(X_PLATFORM_NAME_SOURCE, "iu").test(text || "");
+  return X_RE.test(foldXText(text));
 }
+
+/** The shape the platform tables need: `.test(text)` on the customer's raw text. */
+export const X_PLATFORM_READER: { test(text: string): boolean } = { test: namesXPlatform };

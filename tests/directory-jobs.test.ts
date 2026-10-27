@@ -165,15 +165,15 @@ describe("directory page limit and stop rules", () => {
     expect(maxPagesForJob(100_000, 50, "feed")).toBe(300);
   });
 
-  it("any job with nothing delivered after 5 pages stops, even when earlier pages cannot be read back", () => {
-    expect(DIRECTORY_NO_PROGRESS_PAGES).toBe(5);
-    const unreadable = [null, null, null, null];
-    expect(evaluateProviderCallCap({ pagesDone: 5, acceptedThisPage: 0, priorBatchUnits: unreadable, targetMax: 50, pageSize: 10, kind: "directory", deliveredTotal: 0 })).toBe("no_progress");
-    expect(evaluateProviderCallCap({ pagesDone: 4, acceptedThisPage: 0, priorBatchUnits: [null, null, null], targetMax: 50, pageSize: 10, kind: "directory", deliveredTotal: 0 })).toBeNull();
+  it("any job with nothing delivered after 2 pages stops (it was 5), even when earlier pages cannot be read back", () => {
+    expect(DIRECTORY_NO_PROGRESS_PAGES).toBe(2);
+    const unreadable = [null];
+    expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: unreadable, targetMax: 50, pageSize: 10, kind: "directory", deliveredTotal: 0 })).toBe("no_progress");
+    expect(evaluateProviderCallCap({ pagesDone: 1, acceptedThisPage: 0, priorBatchUnits: [], targetMax: 50, pageSize: 10, kind: "directory", deliveredTotal: 0 })).toBeNull();
     // something was delivered: the no-progress rule does not apply
-    expect(evaluateProviderCallCap({ pagesDone: 5, acceptedThisPage: 0, priorBatchUnits: unreadable, targetMax: 50, pageSize: 10, kind: "directory", deliveredTotal: 7 })).toBeNull();
+    expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: unreadable, targetMax: 50, pageSize: 10, kind: "directory", deliveredTotal: 7 })).toBeNull();
     // every kind of job has it (feeds too)
-    expect(evaluateProviderCallCap({ pagesDone: 5, acceptedThisPage: 0, priorBatchUnits: unreadable, targetMax: 50, pageSize: 10, kind: "feed", deliveredTotal: 0 })).toBe("no_progress");
+    expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: unreadable, targetMax: 50, pageSize: 10, kind: "feed", deliveredTotal: 0 })).toBe("no_progress");
   });
 
   it("the page limit is reported when it is reached", () => {
@@ -219,11 +219,12 @@ describe("the failed job replayed through the worker (fake data, no live calls)"
     const { calls, last } = await runJob((page, size) => Array.from({ length: size }, (_, i) => noTopicWords(page * 1000 + i)));
     expect(calls).toBeLessThanOrEqual(DIRECTORY_NO_PROGRESS_PAGES);
     expect(calls).toBeLessThanOrEqual(maxPagesForJob(50, 50, "directory"));
-    // the spend ceiling (3 x the 0.02475 USD expected, at most 0.05) closes the door before a third page of 50 is bought
+    // the yield watchdog (two pages in a row that add nothing, it was five) closes the door before a third page of 50 is bought; the per-job spend ceiling
+    // (3 x the 0.02475 USD expected, at most 0.05) would have closed it at the same place
     expect(calls).toBe(2);
     expect(last.json.released).toBe(true);
     expect(last.json.chargedCredits).toBe(0);
-    expect(last.json.ceiling).toBe("job"); // closed by the per-job spend ceiling, not by the provider
+    expect(last.json.ceiling).toBeUndefined(); // stopped by the watchdog, not by the provider or by the ceiling
     expect(db.costs.length).toBe(2);
     expect(db.rpcCalls.filter((c) => c.name === "release_job_atomic")).toHaveLength(1);
     expect(db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);

@@ -178,7 +178,7 @@ describe("B2. pagination policy for feed sources", () => {
     expect(last.json).toMatchObject({ done: true, deliveredUnits: 1 });
     const settle = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
     expect(settle).toBeTruthy();
-    expect(db.events.some((e) => /الصفحات الأخيرة لم تُنتج سجلات مطابقة جديدة/.test(String(e.message)))).toBe(true);
+    expect(db.events.some((e) => /صفحتين متتاليتين من المصدر لم تُضيفا أي سجل مطابق جديد/.test(String(e.message)))).toBe(true);
   });
 
   it("de-duplicates across pages: a page repeated by the source is neither delivered twice nor counted twice", async () => {
@@ -295,14 +295,14 @@ describe("B4/B5. Arabic columns, readable dates, numbers as numbers, verificatio
   });
   const load = async (payload: any) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.load((await generateExcelReport(payload)) as any); return wb; };
 
-  it("a post sheet has Arabic headers only, a plain date, numeric counts, and the verified column only when the source returned it", async () => {
+  it("a post sheet has Arabic headers only, the date AND time of the post, numeric counts, and the verified column only when the source returned it", async () => {
     const wb = await load(payloadFor("posts", [{ tweet_id: "1", text: "مباراة كرة السلة", author_username: "a", created_at: "2026-10-15T09:00:00Z", likes: "1.2K", retweets: 3, is_blue_verified: true }]));
     const sheet = wb.worksheets[0];
     const headers = (sheet.getRow(1).values as any[]).slice(1).map(String);
     expect(headers.every((h) => !/[A-Za-z]/.test(h))).toBe(true);
     expect(headers).toContain("حساب موثّق");
     const row = sheet.getRow(2);
-    expect(row.getCell(headers.indexOf("تاريخ ووقت النشر") + 1).value).toBe("2026-10-15");
+    expect(row.getCell(headers.indexOf("تاريخ ووقت النشر") + 1).value).toBe("2026-10-15 09:00");
     expect(row.getCell(headers.indexOf("عدد الإعجابات") + 1).value).toBe(1200);
     expect(row.getCell(headers.indexOf("حساب موثّق") + 1).value).toBe("نعم");
     const noFlag = await load(payloadFor("posts", [{ tweet_id: "2", text: "نص", created_at: "2026-10-15" }]));

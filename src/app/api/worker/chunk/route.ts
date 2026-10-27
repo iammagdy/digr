@@ -64,6 +64,9 @@ import {
   getConfiguredJobPointsCap,
 } from "../../../../functions/shared/providerSpend";
 import { defaultJobProviderCeilingUsd } from "../../../../lib/server/jobSpendCeiling";
+import { createJobCallBudget, jobCallCeilingUsd } from "../../../../lib/server/callBudget";
+import { createFirstPageCapture, rawCaptureEnabled } from "../../../../lib/server/rawCapture";
+import { reserveForUnits } from "../../../../lib/recordPricing";
 import { CEILING_MESSAGE_AR, evaluateSpendCeilings, readJobSpendUsd, readSpendForCeilings, resolveProviderLimits, type CeilingReason, type ProviderLimits } from "../../../../lib/server/providerLimits";
 import {
   generateMethodologyText,
@@ -568,12 +571,20 @@ export async function POST(req: NextRequest) {
         });
     const effectiveLimits: ProviderLimits = { ...providerLimits, perJobUsd: providerLimits.perJobUsd ?? defaultJobCeilingUsd };
     // A chain job spends with its own providers under its own budget (see chainRunner): the TREG ceilings do not apply to it.
+    let jobSpentBeforeUsd = 0;
     if (needsProvider && !isChainJob && (effectiveLimits.perJobUsd !== null || effectiveLimits.perUserDailyUsd !== null)) {
       const spendForCeilings = effectiveLimits.perUserDailyUsd !== null
         ? await readSpendForCeilings(adminClient, { jobId, userId })
         : { jobUsd: await readJobSpendUsd(adminClient, jobId), userTodayUsd: 0 };
+      jobSpentBeforeUsd = spendForCeilings.jobUsd;
       ceilingHit = evaluateSpendCeilings(effectiveLimits, spendForCeilings, estimatedCostUsd);
     }
+    // The same ceiling, asked again before EVERY provider call of this chunk (a social chunk makes up to six): the lower of the per-job ceiling and the value
+    // of the hold. A people job and a chain job keep their own budgets. A refused call is not made; the job settles on what it delivered.
+    const callBudget = createJobCallBudget({
+      ceilingUsd: isPeopleJob || isChainJob ? null : jobCallCeilingUsd({ perJobUsd: effectiveLimits.perJobUsd, reservePoints: reserveForUnits(Number(targetMax), Number(unitPrice) || 0) }),
+      spentUsd: jobSpentBeforeUsd,
+    });
     const { data: spendReserve, error: spendErr } = ceilingHit
       ? { data: { allowed: false }, error: null }
       : needsProvider && isChainJob
@@ -846,6 +857,9 @@ export async function POST(req: NextRequest) {
       ...(reportStore ? { reportStore, axisModel: getAxisModel() } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
       ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
+      ...(callBudget.ceilingUsd !== null ? { callBudget, callEstimateUsd: estimatedCostUsd } : {}),
+      // Raw first page of the job (on by default, `RAW_CAPTURE_ENABLED`): masked and size-capped, kept in the private bucket «partials» for future fixtures.
+      ...(currentStep === 0 && rawCaptureEnabled() ? { rawCapture: createFirstPageCapture(adminClient.storage.from("partials"), jobId) } : {}),
     });
 
     // A page that fails AFTER rows were already delivered ends the collection instead of the job: the rows collected so

@@ -39,7 +39,7 @@ describe("every data-provider call site resolves the key through the shared reso
     vi.stubEnv("TREG_TOKEN", envKey);
     const fetchMock = vi.fn(async () => okJson({ rows: [] }));
     vi.stubGlobal("fetch", fetchMock);
-    await executeTregCall({ endpointId: "x.y.z", params: {}, userId: "u", jobId: "j" });
+    await executeTregCall({ endpointId: "anyapi.x.search.posts", params: {}, userId: "u", jobId: "j" });
     expect((fetchMock.mock.calls[0] as any[])[1].headers["X-Treg-Token"]).toBe(storeKey);
   });
 
@@ -51,7 +51,7 @@ describe("every data-provider call site resolves the key through the shared reso
       __setProviderKeyStoreForTests(s.client);
       const fetchMock = vi.fn(async () => okJson({ rows: [] }));
       vi.stubGlobal("fetch", fetchMock);
-      await executeTregCall({ endpointId: "x.y.z", params: {}, userId: "u", jobId: "j" });
+      await executeTregCall({ endpointId: "anyapi.x.search.posts", params: {}, userId: "u", jobId: "j" });
       expect((fetchMock.mock.calls[0] as any[])[1].headers["X-Treg-Token"]).toBe(envKey);
     }
     expect(logs.text()).not.toContain(envKey);
@@ -62,7 +62,7 @@ describe("every data-provider call site resolves the key through the shared reso
     const explicit = fakeKey("explicit");
     const fetchMock = vi.fn(async () => okJson());
     vi.stubGlobal("fetch", fetchMock);
-    await executeTregCall({ endpointId: "x.y.z", params: {}, userId: "u", jobId: "j", token: explicit });
+    await executeTregCall({ endpointId: "anyapi.x.search.posts", params: {}, userId: "u", jobId: "j", token: explicit });
     expect((fetchMock.mock.calls[0] as any[])[1].headers["X-Treg-Token"]).toBe(explicit);
   });
 
@@ -72,8 +72,8 @@ describe("every data-provider call site resolves the key through the shared reso
     vi.stubEnv("TREG_TOKEN", envKey);
     const fetchMock = vi.fn(async () => okJson({ error: "unauthorized" }, 401));
     vi.stubGlobal("fetch", fetchMock);
-    await executeTregCall({ endpointId: "x.y.z", params: {}, userId: "u", jobId: "j" });
-    await executeTregCall({ endpointId: "x.y.z", params: {}, userId: "u", jobId: "j2" });
+    await executeTregCall({ endpointId: "anyapi.x.search.posts", params: {}, userId: "u", jobId: "j" });
+    await executeTregCall({ endpointId: "anyapi.x.search.posts", params: {}, userId: "u", jobId: "j2" });
     expect(getLastAuthRejection("treg")).toMatchObject({ httpStatus: 401, source: "store", count: 2 });
     expect(logs.lines.some((l) => l.includes("[provider_key:auth_rejected] provider=treg source=store status=401"))).toBe(true);
     for (const call of fetchMock.mock.calls as any[][]) expect(call[1].headers["X-Treg-Token"]).toBe(storeKey);

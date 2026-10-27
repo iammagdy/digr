@@ -728,6 +728,12 @@ export function getLlmStatusSnapshot(lastUsageTimestamp: string | null = null): 
 
 // ================= LLM Client Implementation =================
 
+/**
+ * The values the offline test model (provider «fake», no API key) writes into a plan by itself. They are literals the CODE set, so the provenance check
+ * (paramProvenance) accepts them for that provider only; a real model's values are always checked against the customer's own words.
+ */
+export const FAKE_MODEL_LITERALS: readonly string[] = ["https://www.facebook.com/post/123", "https://www.facebook.com/post/1", "someuser", "public_user"];
+
 export class LlmClient {
   private providerOverride?: LlmProviderType;
   private modelOverride?: string;

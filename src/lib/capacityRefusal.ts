@@ -16,6 +16,15 @@ export class PlanRefusalError extends Error {
   }
 }
 
+/** A plan with a scope gap (a placeholder, a missing country…): refused in one plain sentence, never as a build failure. `message` keeps the gap codes for logs and the old callers. */
+export class PlanIncompleteError extends PlanRefusalError {
+  constructor(readonly gaps: string[]) {
+    super("لم نتمكن من استكمال بيانات طلبك؛ اذكر الحساب أو الرابط أو التفاصيل الناقصة وأعد إرسال الطلب، ولم يُحجز أي رصيد.");
+    this.name = "PlanIncompleteError";
+    this.message = `الخطة غير مكتملة: ${gaps.join(", ")}`;
+  }
+}
+
 /** The sentence. `share` is the part of the plan today's capacity holds (0 to 1); the counts are that part of every service, rounded down. */
 export function capacityRefusalAr(items: ReadonlyArray<CountedPlanItem>, share: number): string {
   const fits = items.map((item) => ({ ...item, targetVolumeMax: Math.floor((Number(item.targetVolumeMax) || 1) * Math.max(0, Math.min(1, share))) }));

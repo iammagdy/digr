@@ -1,4 +1,7 @@
 import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
+import { blockedEndpointReason } from "../../lib/treg/blockList";
+import { JOB_BUDGET_ERROR_CODE, type JobCallBudget } from "../../lib/server/callBudget";
+import type { RawCapture } from "../../lib/server/rawCapture";
 export interface TregCallOptions {
   baseUrl?: string;
   token?: string;
@@ -15,6 +18,14 @@ export interface TregCallOptions {
   testScenario?: string;
   /** Give up on this one call after this long, so a slow source cannot outlast the worker's own time limit. */
   timeoutMs?: number;
+  /** The catalog's own scope of the endpoint when the caller knows it («own_account» is never called). */
+  endpointScope?: string | null;
+  /** The job's USD budget, asked BEFORE this call (and before every retry): a call that would pass it is not made. */
+  callBudget?: JobCallBudget;
+  /** What this one call may cost, for the budget above (the catalog price of the call); defaults to the route's cost cap. */
+  callEstimateUsd?: number;
+  /** Receives the RAW answer of the call (flag RAW_FIRST_PAGE_CAPTURE, set by the worker for the first chunk): never affects the call. */
+  rawCapture?: RawCapture;
 }
 
 export interface TregCallResult {
@@ -33,6 +44,10 @@ export interface TregCallResult {
   timedOut?: boolean;
   /** What the FIRST call of an idempotent replay cost (header `X-Treg-Original-Cost-Micro`); a replay itself reports 0. */
   originalCostMicro?: number;
+  /** The call was NOT made: the endpoint is on the hard block list (never callable) ... */
+  blocked?: string;
+  /** ... or the job's USD budget would have been passed. */
+  budgetStopped?: boolean;
 }
 
 /**
@@ -134,7 +149,57 @@ export function serializeProviderParams(
  * - Retry key: Idempotency-Key job_{jobId}_step_{stepId}_p{page}
  * - Settled cost: X-Treg-Cost-Micro (integer micro-USD)
  */
+/**
+ * One gateway call, behind two hard gates that run in code before any request leaves:
+ *  1. the block list (`blockedEndpointReason`): a write action, an own-account endpoint or an endpoint outside the sellable catalog is never called;
+ *  2. the job's USD budget (`options.callBudget`): a call that would pass it is not made, and the same check runs again for every retry.
+ * A refused call costs nothing and carries `blocked` / `budgetStopped` so the caller can end the collection and settle on what it has.
+ */
 export async function executeTregCall(options: TregCallOptions): Promise<TregCallResult> {
+  const blocked = blockedEndpointReason(options.endpointId, options.endpointScope);
+  if (blocked) {
+    console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: blocked }));
+    return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked });
+  }
+  const budget = options.callBudget;
+  const cap = Number(options.routeMaxCostUsd);
+  const estimate = Math.max(0, Number.isFinite(Number(options.callEstimateUsd)) && options.callEstimateUsd !== undefined ? Number(options.callEstimateUsd) : Number.isFinite(cap) && cap > 0 ? cap : 0.05);
+  if (budget && !budget.reserve(estimate)) {
+    console.warn(JSON.stringify({ tag: "treg_call_budget_stop", endpointId: options.endpointId, spentUsd: Number(budget.spentUsd().toFixed(6)), ceilingUsd: budget.ceilingUsd, estimateUsd: estimate }));
+    return refusedCall({ error: JOB_BUDGET_ERROR_CODE, httpStatus: 0, budgetStopped: true });
+  }
+  let result: TregCallResult;
+  try {
+    result = await executeTregCallUnguarded(options);
+  } catch (err) {
+    budget?.settle(estimate, null);
+    throw err;
+  }
+  if (budget) {
+    // A cut or unreachable call may have been billed after we stopped waiting: its estimate stays counted. Any answer carries its own cost (0 for a refusal).
+    const unknown = result.timedOut === true || result.error === "network_failure";
+    budget.settle(estimate, unknown ? null : Math.max(0, result.costMicro || 0) / 1_000_000);
+  }
+  return result;
+}
+
+function refusedCall(input: { error: string; httpStatus: number; blocked?: string; budgetStopped?: boolean }): TregCallResult {
+  return {
+    ok: false,
+    httpStatus: input.httpStatus,
+    tregCallId: "",
+    costMicro: 0,
+    latencyMs: 0,
+    data: null,
+    error: input.error,
+    isRouteMaxCost: false,
+    isPlatformBalanceLow: false,
+    ...(input.blocked ? { blocked: input.blocked } : {}),
+    ...(input.budgetStopped ? { budgetStopped: true } : {}),
+  };
+}
+
+async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregCallResult> {
   const baseUrl = (
     options.baseUrl ||
     process.env.TREG_BASE_URL ||
@@ -285,6 +350,10 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     }
   } catch {
     rawText = "";
+  }
+
+  if (options.rawCapture) {
+    try { await options.rawCapture({ endpointId: options.endpointId, httpStatus: response.status, page, body: responseBody ?? rawText }); } catch { /* a capture never changes a call */ }
   }
 
   const bodyError = responseBody?.error;

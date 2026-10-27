@@ -314,7 +314,7 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         steps: [
           {
             stepId: "step_x",
-            endpointId: "treg.twitter.tweets",
+            endpointId: "anyapi.x.search.posts",
             params: { query: "AI Trends" },
             targetVolumeMax: 3,
             paginationStrategy: "cursor",
@@ -406,7 +406,7 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         steps: [
           {
             stepId: "step_yt",
-            endpointId: "treg.youtube.search",
+            endpointId: "valyu.markets.forex.search",
             params: { query: "tech", limit: 2 },
             targetVolumeMax: 10,
             paginationStrategy: "offset",
@@ -531,7 +531,7 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         steps: [
           {
             stepId: "step_capped",
-            endpointId: "treg.twitter.tweets",
+            endpointId: "anyapi.x.search.posts",
             params: { query: "tech", limit: 2 },
             targetVolumeMax: 10,
             paginationStrategy: "cursor",
@@ -595,7 +595,7 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         steps: [
           {
             stepId: "step_reddit",
-            endpointId: "treg.reddit.search",
+            endpointId: "crawl4ai.reddit.search.posts",
             params: { query: "egypt" },
             targetVolumeMax: 10,
             paginationStrategy: "cursor",
@@ -660,7 +660,7 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         steps: [
           {
             stepId: "step_retry",
-            endpointId: "treg.twitter.tweets",
+            endpointId: "anyapi.x.search.posts",
             params: { query: "retry" },
             targetVolumeMax: 1,
             paginationStrategy: "none",
@@ -712,7 +712,7 @@ describe("Phase C: Generic Executor in job-worker and multiStepWorker", () => {
         steps: [
           {
             stepId: "step_fail",
-            endpointId: "treg.twitter.tweets",
+            endpointId: "anyapi.x.search.posts",
             params: { query: "broken" },
             targetVolumeMax: 5,
             paginationStrategy: "none",

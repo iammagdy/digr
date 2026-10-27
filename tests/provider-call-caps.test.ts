@@ -118,13 +118,14 @@ describe("provider call caps: the rules", () => {
     expect(ABSOLUTE_MAX_PAGES).toBe(300);
   });
 
-  it("stops after 2 (small job) or 3 (large job) consecutive pages with no new matching record", () => {
+  it("stops after 2 consecutive pages with no new matching record, for a small job and for a large one (it was 3 for a large one)", () => {
     expect(evaluateProviderCallCap({ pagesDone: 1, acceptedThisPage: 0, priorBatchUnits: [], targetMax: 2, pageSize: 6 })).toBeNull();
     expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: [0], targetMax: 2, pageSize: 6 })).toBe("empty_pages");
     expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: [1], targetMax: 2, pageSize: 6 })).toBeNull();
     expect(evaluateProviderCallCap({ pagesDone: 3, acceptedThisPage: 1, priorBatchUnits: [0, 0], targetMax: 2, pageSize: 6 })).toBe("page_cap");
     expect(evaluateProviderCallCap({ pagesDone: 3, acceptedThisPage: 0, priorBatchUnits: [0, 0], targetMax: 100, pageSize: 50 })).toBe("empty_pages");
-    expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: [0], targetMax: 100, pageSize: 50 })).toBeNull();
+    expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: [0], targetMax: 100, pageSize: 50 })).toBe("empty_pages");
+    expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: [3], targetMax: 100, pageSize: 50 })).toBeNull();
     // an unreadable earlier page is never counted as empty
     expect(evaluateProviderCallCap({ pagesDone: 2, acceptedThisPage: 0, priorBatchUnits: [null], targetMax: 2, pageSize: 6 })).toBeNull();
   });
