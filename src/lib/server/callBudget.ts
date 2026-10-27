@@ -12,8 +12,16 @@ import { DEFAULT_PRICING_BASIS, type PricingBasis } from "../recordPricing";
  *  - 40% of the value of the hold (owner decision): the points held for the job, at the points' own value (0.10 EGP per point, 55 EGP per USD), times
  *    `HOLD_SPEND_SHARE`. 40% of that value is reserve points / 1,375 USD. A call that would take the job's spend PAST this number is not sent; a call that
  *    lands exactly on it is.
+ * Below 0.005 USD the ceiling is lifted to a floor of 0.005 USD (never above the per-job ceiling): see `CALL_CEILING_FLOOR_USD`.
  */
 export const HOLD_SPEND_SHARE = 0.4;
+
+/**
+ * The floor (owner decision): a tiny hold (1 point = 0.000727 USD of 40%) must still pay for one call, so the ceiling is never below 0.005 USD, EXCEPT that the floor
+ * never lifts a ceiling above the per-job spend ceiling: when the per-job ceiling is lower than 0.005, the PER-JOB CEILING WINS.
+ * ceiling = max(floor, min(per-job ceiling, 40% of the hold)), with floor = min(0.005, per-job ceiling).
+ */
+export const CALL_CEILING_FLOOR_USD = 0.005;
 
 export interface JobCallBudget {
   /** Asks to spend up to `estimateUsd` on the next call. False when that would pass the ceiling: the call must not be made. */
@@ -62,12 +70,18 @@ export function holdValueUsd(reservePoints: number, basis: PricingBasis = DEFAUL
   return (points * basis.creditValueEgp) / basis.usdToEgp;
 }
 
-/** The lower of the per-job ceiling (when there is one) and 40% of the value of the hold (when a hold is known). Null when neither is known. */
+/**
+ * The ceiling for one job: the lower of the per-job ceiling (when there is one) and 40% of the value of the hold (when a hold is known), but never below
+ * `CALL_CEILING_FLOOR_USD`, and the floor never exceeds the per-job ceiling (a per-job ceiling under 0.005 USD wins). Null when neither is known.
+ */
 export function jobCallCeilingUsd(input: { perJobUsd: number | null; reservePoints: number | null }, basis: PricingBasis = DEFAULT_PRICING_BASIS): number | null {
   const parts: number[] = [];
-  if (input.perJobUsd !== null && Number.isFinite(input.perJobUsd)) parts.push(Number(input.perJobUsd));
+  const perJob = input.perJobUsd !== null && Number.isFinite(input.perJobUsd) ? Number(input.perJobUsd) : null;
+  if (perJob !== null) parts.push(perJob);
   if (input.reservePoints !== null && Number(input.reservePoints) > 0) parts.push(holdValueUsd(Number(input.reservePoints), basis) * HOLD_SPEND_SHARE);
-  return parts.length ? Math.min(...parts) : null;
+  if (!parts.length) return null;
+  const floor = perJob !== null ? Math.min(CALL_CEILING_FLOOR_USD, perJob) : CALL_CEILING_FLOOR_USD;
+  return Math.max(floor, Math.min(...parts));
 }
 
 export const JOB_BUDGET_ERROR_CODE = "job_budget_exceeded";
