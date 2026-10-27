@@ -1,0 +1,54 @@
+{
+ "name": "catalog-example_anyapi.x.user.posts",
+ "kind": "catalog example",
+ "endpointId": "anyapi.x.user.posts",
+ "source": {
+  "file": "treg_catalog_sellable.json",
+  "sha256": "5d8a125d5a563d892cfabceef2a21a0429191bba8017e2707d1bf626035315cc",
+  "snapshot": "TREG live catalog, describe pass 2026-10-27, read-only, balance unchanged 0.806 USD",
+  "field": "example_response_trimmed"
+ },
+ "costMicro": 500,
+ "listPath": "output.data.tweets",
+ "cursorPath": null,
+ "pages": [
+  {
+   "output": {
+    "data": {
+     "nextCursor": "lwW4VZ2EhHC4qBmoAQz6u6-F8pyEVsBumN70gJwgSQiMJ8_uAUOGldbC96zRKKUqN8b_cVSYG_ncUeETple7IdBWd7YxszP7cHAk1bqHwn6fYM7IgbEnb8PH",
+     "tweets": [
+      {
+       "bookmarks": 0,
+       "createdUtc": 1789780543,
+       "id": "2101118004087886212",
+       "isPinned": null,
+       "isReply": true,
+       "lang": "qme",
+       "likes": 2,
+       "media": [],
+       "quotes": 0,
+       "replies": 0,
+       "retweets": 0,
+       "text": "@yongfook 💯",
+       "url": "https://x.com/i/web/status/2101118004087886212",
+       "views": 1597
+      }
+     ]
+    },
+    "found": true
+   },
+   "provider": "AnyAPI",
+   "costUsd": 0.0005,
+   "items": 20,
+   "replayed": false,
+   "source": {
+    "id": "anonymous-lynx",
+    "name": "Lynx",
+    "kind": "anonymous",
+    "artworkKey": "lynx"
+   },
+   "resultId": "6758ee10-afff-44e1-b114-0afe8beca2f2"
+  }
+ ],
+ "repeatLastPage": false
+}

@@ -21,7 +21,7 @@ import { companyParamsFromIntent, extractRequestIntent, missingInputsForIntent, 
 import { identityAnswerAr, identityQuestionKind, scrubAssistantIdentity } from "../../lib/assistantIdentity";
 import { logProviderCost } from "./providerCosts";
 import { ID, Query, TablesDB } from "./dbCompat";
-import { LlmClient, LlmTurnOutput, type LlmCallResult } from "./llmClient";
+import { FAKE_MODEL_LITERALS, LlmClient, LlmTurnOutput, type LlmCallResult } from "./llmClient";
 import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
 import { detectTopicGathering, hasTopicResearchService, studiesUnavailableReplyAr, topicSourceQuestion } from "./topicGathering";
 import { noteLocalLlmSpend } from "./rateLimits";
@@ -111,6 +111,7 @@ import { countPlainAr, planCountLineAr, planCountPartsAr, type CountKind } from 
 import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote";
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
+import { findParamProvenanceGaps, provenanceQuestionCard } from "../../lib/paramProvenance";
 import { pairRoleOf } from "../../lib/planFit";
 import { handlesInText, videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, isSocialCapabilitySlug, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
@@ -3692,11 +3693,15 @@ export class ChatHandler {
           missingSocialFields.push(...getMissingSocialTaskInputs(requiredFieldsText));
         }
         const missingCompanyCount = companyPlan && !isPeopleSearchRequest(requiredFieldsText) && !hasExplicitCount;
+        // Provenance: every id-like or link parameter of the plan must come from the customer's own words (or an earlier step). A value the model invented
+        // («<UNKNOWN>», «[ID]», a plausible number) is never sent to a source: the customer is asked ONE plain question and nothing is priced.
+        const provenanceGaps = findParamProvenanceGaps(planItems as any[], { requestText: `${requiredFieldsText}\n${message}`, literals: this.llm.getProvider() === "fake" ? FAKE_MODEL_LITERALS : [] });
         const missingRequiredFields = [
           ...missingCompanyFields,
           ...(missingCompanyCount ? ["company_count_required"] : []),
           ...missingPeopleFields,
           ...missingSocialFields,
+          ...(provenanceGaps.length > 0 ? ["plan_param_required"] : []),
         ];
         if (missingRequiredFields.length > 0) {
           finalContentAr = consultantIntroAr(requiredFieldsText, undefined);
@@ -3721,6 +3726,7 @@ export class ChatHandler {
             social_channel_required: socialTaskQuestion("social_channel_required"),
             social_x_topic_required: socialTaskQuestion("social_x_topic_required"),
             social_x_account_required: socialTaskQuestion("social_x_account_required"),
+            plan_param_required: provenanceGaps[0] ? provenanceQuestionCard(provenanceGaps[0]) : undefined,
           };
           clarificationItemsList = companyItem
             ? [companyItem]

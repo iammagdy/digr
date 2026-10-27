@@ -221,7 +221,7 @@ describe("Data Normalization Pipeline Suite", () => {
       });
 
       expect(norm.metadata.entityType).toBe("posts");
-      expect(norm.rows[0].published_at).toBe("2026-10-18");
+      expect(norm.rows[0].published_at).toBe("2026-10-18 07:36");
       expect(norm.rows[0].likes_count).toBe(5);
       expect(norm.rows[0].retweets_count).toBe(4);
       expect(norm.columns).not.toContain("authorName");
@@ -237,7 +237,7 @@ describe("Data Normalization Pipeline Suite", () => {
       expect(norm.metadata.socialKind).toBe("posts");
       expect(norm.columns).not.toContain("authorName");
       expect(norm.columns).not.toContain("likeCount");
-      expect(norm.rows[0].published_at).toBe("2026-10-18");
+      expect(norm.rows[0].published_at).toBe("2026-10-18 07:36");
     });
 
     it("generates one Arabic-only sheet for X posts without raw camelCase headers", async () => {

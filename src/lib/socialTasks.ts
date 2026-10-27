@@ -11,7 +11,7 @@ import { FACEBOOK_REPORT_ENABLED } from "./facebookReport/registry";
 import { extractNumberFromText, isNumberWord } from "./arabicNumbers";
 import { normalizeDigits } from "./arabicDigits";
 import { CLARIFICATION_ANSWER_LABELS } from "./clarificationLabels";
-import { X_PLATFORM_NAME_SOURCE } from "./xPlatform";
+import { X_PLATFORM_READER } from "./xPlatform";
 
 
 export type SocialPlatformId = "facebook" | "youtube" | "tiktok" | "instagram" | "x" | "reddit" | "linkedin";
@@ -27,12 +27,12 @@ export const SOCIAL_PLATFORM_LABEL_AR: Record<SocialPlatformId, string> = {
   linkedin: "لينكد إن",
 };
 
-const PLATFORM_RES: Array<[SocialPlatformId, RegExp]> = [
+const PLATFORM_RES: Array<[SocialPlatformId, { test(text: string): boolean }]> = [
   ["tiktok", /تيك\s*توك|تك\s*توك|تيكتوك|tik\s*tok|tiktok/iu],
   ["youtube", /يوتيوب|يوتوب|اليوتيوب|youtube|youtu\.be|\bshorts?\b|شورتس/iu],
   ["facebook", /فيسبوك|فيس\s*بوك|الفيس(?![\p{L}])|فيس(?![\p{L}])|facebook|\bfb\b|fb\.watch/iu],
   ["instagram", /انستغرام|إنستغرام|انستجرام|إنستجرام|انستا(?![\p{L}])|instagram|\binsta\b/iu],
-  ["x", new RegExp(`${X_PLATFORM_NAME_SOURCE}|\\bx\\b`, "iu")],
+  ["x", X_PLATFORM_READER],
   ["reddit", /ريديت|reddit/iu],
   ["linkedin", /لينكد\s*إن|لينكدإن|لينكدان|linkedin/iu],
 ];

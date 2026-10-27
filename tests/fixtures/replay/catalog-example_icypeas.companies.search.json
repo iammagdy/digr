@@ -1,0 +1,46 @@
+{
+ "name": "catalog-example_icypeas.companies.search",
+ "kind": "catalog example",
+ "endpointId": "icypeas.companies.search",
+ "source": {
+  "file": "treg_catalog_sellable.json",
+  "sha256": "5d8a125d5a563d892cfabceef2a21a0429191bba8017e2707d1bf626035315cc",
+  "snapshot": "TREG live catalog, describe pass 2026-10-27, read-only, balance unchanged 0.806 USD",
+  "field": "example_response_trimmed"
+ },
+ "costMicro": 380,
+ "listPath": "leads",
+ "cursorPath": null,
+ "pages": [
+  {
+   "total": 103,
+   "success": true,
+   "leads": [
+    {
+     "name": "Presence Works",
+     "lid": "presence-works",
+     "urn": "urn:li:fs_salesCompany:111482054",
+     "url": "https://www.linkedin.com/company/presence-works/",
+     "pictureUrl": "",
+     "description": "Presence Works™ is a leadership performance company that builds breath‑anchored operating systems for communication, reg",
+     "address": "",
+     "numberOfEmployees": 0,
+     "industry": "Business Consulting and Services",
+     "foundedYear": 2026,
+     "type": "",
+     "website": "https://buy.stripe.com/8x228qdyP6CcgrH07bbfO01",
+     "slogan": "The world’s first breath‑anchored relational performance company.",
+     "specialties": [],
+     "employeeGrowth": [],
+     "phone": "",
+     "_id": "urn:li:fs_salesCompany:111482054"
+    }
+   ],
+   "pagination": {
+    "token": "eyJzYSI6W1sxMDcyNDIzNV0sWzEwNzI0MjM1XV0sImlkIjoiZ0x1S0JBOHdhV041Y0dWaGN5MXpibk10Y0hKdlpIVmpkR2x2Ymkxc2FXNXJaV1JwYmkxamIy",
+    "size": 1
+   }
+  }
+ ],
+ "repeatLastPage": false
+}

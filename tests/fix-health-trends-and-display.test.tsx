@@ -305,7 +305,8 @@ describe("3. the stall guard: a source that repeats itself is not asked again an
     expect(evaluateProviderCallCap({ ...base, priorBatchUnits: [3, 0], pageRepeatedOnly: true })).toBe("source_repeats");
     // a large job waited for a third empty page before; a repeat now stops at the second
     expect(evaluateProviderCallCap({ ...base, targetMax: 400, pageSize: 20, priorBatchUnits: [3, 0], pageRepeatedOnly: true })).toBe("source_repeats");
-    expect(evaluateProviderCallCap({ ...base, targetMax: 400, pageSize: 20, priorBatchUnits: [3, 0], pageRepeatedOnly: false })).toBeNull();
+    // two empty pages in a row stop a large job too (it was three): a page that is not a repeat stops with the empty-pages reason
+    expect(evaluateProviderCallCap({ ...base, targetMax: 400, pageSize: 20, priorBatchUnits: [3, 0], pageRepeatedOnly: false })).toBe("empty_pages");
   });
 
   it("ONE repeated page after a page with new rows is still allowed (a source may repeat a page and go on)", () => {

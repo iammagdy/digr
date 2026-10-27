@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
+import { countPlainAr, type CountKind } from "../planCounts";
 
 /**
  * The one place that decides how a request is described to the customer.
@@ -16,9 +17,12 @@ export type RequestKind = "done" | "partial" | "running" | "refunded";
 export const PARTIAL_STATUS_AR = "مكتمل جزئيًا";
 export const PARTIAL_SENTENCE_AR = "اكتمل طلبك جزئيًا";
 
-/** «تم تسليم ٤ من ٥ سجلاً»: the delivered count against the asked count, the same everywhere. */
-export function deliveredOfRequestedAr(delivered: number, requested: number, noun = "سجلاً"): string {
-  return `تم تسليم ${toArabicDigits(delivered)} من ${toArabicDigits(requested)} ${noun}`;
+/**
+ * «تم تسليم ٤ من ٥ سجلات»، «تم تسليم ٨ من ١٠ سجلات»، «تم تسليم ٤٠ من ١٠٠ سجل»: the delivered count against the asked count, the same everywhere.
+ * The noun is the asked count's, written by the ONE plural rule (`countPlainAr`), never a fixed «سجلاً».
+ */
+export function deliveredOfRequestedAr(delivered: number, requested: number, kind: CountKind = "records"): string {
+  return `تم تسليم ${toArabicDigits(delivered)} من ${countPlainAr(requested, kind)}`;
 }
 
 export const REQUEST_STATUS_LABEL_AR: Record<RequestKind, string> = {
@@ -53,7 +57,7 @@ export function partialDeliveryText(delivered: number, requested: number): strin
 
 /** For a refunded run that did collect rows: they are kept for a retry that fetches only the rest. */
 export function collectedBeforeStopText(collected: number, requested: number): string {
-  return `جُمع ${toArabicDigits(collected)} من ${toArabicDigits(requested)} سجلاً قبل التوقف ولم يُخصم أي رصيد؛ تُستكمل عند إعادة المحاولة.`;
+  return `جُمع ${toArabicDigits(collected)} من ${countPlainAr(requested, "records")} قبل التوقف ولم يُخصم أي رصيد؛ تُستكمل عند إعادة المحاولة.`;
 }
 
 /**

@@ -1,0 +1,68 @@
+{
+ "name": "catalog-example_crawl4ai.tiktok.video.comments",
+ "kind": "catalog example",
+ "endpointId": "crawl4ai.tiktok.video.comments",
+ "source": {
+  "file": "treg_catalog_sellable.json",
+  "sha256": "5d8a125d5a563d892cfabceef2a21a0429191bba8017e2707d1bf626035315cc",
+  "snapshot": "TREG live catalog, describe pass 2026-10-27, read-only, balance unchanged 0.806 USD",
+  "field": "example_response_trimmed"
+ },
+ "costMicro": 500,
+ "listPath": "rows",
+ "cursorPath": null,
+ "pages": [
+  {
+   "meta": {
+    "blocked": [],
+    "elapsed_ms": 0,
+    "from_cache": true,
+    "llm_calls": 0,
+    "pages_fetched": 0,
+    "partial": false,
+    "warnings": []
+   },
+   "recipe": "tiktok-comments",
+   "usage": {
+    "boxes": [
+     "gate"
+    ],
+    "cache": "hit",
+    "engine": "recipe",
+    "lines": [
+     {
+      "about": "the call",
+      "boxes": [
+       "gate"
+      ],
+      "cache": "miss",
+      "call": "recipes",
+      "engine": "gate",
+      "units": 1
+     }
+    ],
+    "remaining_before": {
+     "concurrent": 99,
+     "requests": 173,
+     "search": 3000
+    },
+    "units": 1
+   },
+   "version": 2,
+   "rows": [
+    {
+     "author": "[redacted]",
+     "comment_id": "7654038924163466014",
+     "created_at": "2026-06-22T02:20:32Z",
+     "language": "en",
+     "liked_by_creator": false,
+     "likes": 326462,
+     "post_id": "7654036719242726670",
+     "replies": 53,
+     "text": "\"When I try to save the world\" 😂 I cant with you."
+    }
+   ]
+  }
+ ],
+ "repeatLastPage": false
+}

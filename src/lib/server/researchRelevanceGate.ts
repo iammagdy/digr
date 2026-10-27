@@ -1,3 +1,4 @@
+import { isTrueFlag } from "../coerce";
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, facebookCommentDropReason, isGenericComment, meaningfulChars } from "./commentQuality";
 import { isFacebookKeywordService } from "../facebookKeywordService";
@@ -154,10 +155,7 @@ export function isXAccountRequest(params: Record<string, any>): boolean {
 
 /** A flag the source sends as a boolean or as text: «True»/«False» (the real rows), «true», «1». Only a true value is true; «False» is not a reply. */
 function flagIsTrue(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "number") return value === 1;
-  if (typeof value !== "string") return false;
-  return ["true", "1", "yes"].includes(value.trim().toLowerCase());
+  return isTrueFlag(value);
 }
 
 /**

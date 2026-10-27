@@ -1,4 +1,5 @@
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
+import { JOB_BUDGET_STOP_AR } from "./callBudget";
 import { evaluateResearchRowRelevance } from "./researchRelevanceGate";
 import { buildPeopleIdentity, companyDomainFromWebsite, emailDomain, identityScore, isPersonalEmail, returnedPersonMatches } from "../peopleIdentity";
 import { getEndpointDetails } from "../../functions/shared/catalogClient";
@@ -1135,6 +1136,12 @@ export interface ProviderAdapterCallInput {
   /** The Facebook topic report only (set by the worker): where the collector keeps its record between chunks, and the one model call that places the posts the rules could not. */
   reportStore?: import("./facebookReportAdapter").ReportStateStore;
   axisModel?: import("./facebookReportAdapter").AxisModelCall;
+  /** The job's hard USD budget (set by the worker): asked before EVERY provider call of the chunk, not once per chunk. */
+  callBudget?: import("./callBudget").JobCallBudget;
+  /** What one call of a generic (non-social) source may cost, for that budget. */
+  callEstimateUsd?: number;
+  /** Raw first-page capture (flag RAW_FIRST_PAGE_CAPTURE, default off): set by the worker for the first chunk. */
+  rawCapture?: import("./rawCapture").RawCapture;
 }
 
 export interface ProviderAdapterCallOutput {
@@ -1259,7 +1266,7 @@ export function providerFailureMessageAr(callResult: Pick<TregCallResult, "httpS
 }
 
 /** Call made for the social sources: one retry only, because a failed source falls through to the next one. */
-function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
+export function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
   return async (source, params, context) => {
     const callResult = await executeTregCallWithRetry(
       {
@@ -1273,6 +1280,8 @@ function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
         routeMaxCostUsd: "0.05",
         idempotencyKey: context.idempotencyKey,
         timeoutMs: context.timeoutMs,
+        ...(input.callBudget ? { callBudget: input.callBudget, callEstimateUsd: source.costUsd } : {}),
+        ...(input.rawCapture ? { rawCapture: input.rawCapture } : {}),
       },
       1,
       input.deadlineMs ? { deadlineMs: input.deadlineMs } : undefined
@@ -1284,7 +1293,7 @@ function socialCallThroughTreg(input: ProviderAdapterCallInput): SocialCall {
       costMicro: Math.max(0, Number(callResult.costMicro) || 0),
       tregCallId: callResult.tregCallId || "",
       errorCode: callResult.ok ? undefined : callResult.error || `http_${callResult.httpStatus}`,
-      errorMessageAr: callResult.ok ? undefined : providerFailureMessageAr(callResult),
+      errorMessageAr: callResult.ok ? undefined : callResult.budgetStopped ? JOB_BUDGET_STOP_AR : providerFailureMessageAr(callResult),
     };
   };
 }
@@ -1457,6 +1466,9 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     // The same ceiling as before for every people call. The direct source bills per row returned (`pagination.size`, at most 11 rows = 0.00418 USD),
     // so the ceiling holds; the live routed call that billed 3 rows of this source (0.00114 USD) passed the same 0.005 guard.
     routeMaxCostUsd: isTregPeople ? String(DECISION_MAKER_ROUTE_COST_CAP_USD) : "0.05",
+    // The job's hard budget is asked before this call and before each retry. A people job keeps its own decision-maker budget instead.
+    ...(input.callBudget && !isTregPeople ? { callBudget: input.callBudget, ...(input.callEstimateUsd !== undefined ? { callEstimateUsd: input.callEstimateUsd } : {}) } : {}),
+    ...(input.rawCapture ? { rawCapture: input.rawCapture } : {}),
     // Up to 20 s for the first answer: the direct source answers in about a second (p95 1.1 s), and what is left of the worker's deadline
     // is kept for one replay of the same call and for the per-person lookups.
     timeoutMs: isTregPeople ? Math.min(20_000, peopleSearchTimeoutMs(input.deadlineMs)) : 12000,
@@ -1492,7 +1504,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   let keywordsRetryUsed = false;
 
   if (!callResult.ok) {
-    const errorMessageAr = providerFailureMessageAr(callResult);
+    const errorMessageAr = callResult.budgetStopped ? JOB_BUDGET_STOP_AR : providerFailureMessageAr(callResult);
 
     return {
       ok: false,

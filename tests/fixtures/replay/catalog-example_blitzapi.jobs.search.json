@@ -1,0 +1,226 @@
+{
+ "name": "catalog-example_blitzapi.jobs.search",
+ "kind": "catalog example",
+ "endpointId": "blitzapi.jobs.search",
+ "source": {
+  "file": "treg_catalog_sellable.json",
+  "sha256": "5d8a125d5a563d892cfabceef2a21a0429191bba8017e2707d1bf626035315cc",
+  "snapshot": "TREG live catalog, describe pass 2026-10-27, read-only, balance unchanged 0.806 USD",
+  "field": "example_response_trimmed"
+ },
+ "synthetic": "ten rows cloned from the one example item (url differs) and cursor set to a fixed string, so every page is full and has a next cursor, as the live job's pages were",
+ "costMicro": 4950,
+ "listPath": "results",
+ "cursorPath": null,
+ "pages": [
+  {
+   "results": [
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-1"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-2"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-3"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-4"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-5"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-6"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-7"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-8"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-9"
+    },
+    {
+     "title": "Software Engineer",
+     "company": {
+      "name": "Example Company",
+      "linkedin_url": "https://www.linkedin.com/company/example-company",
+      "domain": "example.com",
+      "website": "https://example.com",
+      "about": "Example company",
+      "industry": "Software",
+      "size": "11-50",
+      "employees_on_linkedin": 25,
+      "founded_year": 2020,
+      "hq": {
+       "city": "San Francisco",
+       "country_code": "US"
+      }
+     },
+     "url": "https://example.com/jobs/engineer-10"
+    }
+   ],
+   "results_length": 10,
+   "total_results": 10000,
+   "max_results": 10,
+   "cursor": "replay-cursor",
+   "fair_usage": {
+    "records_used": 1,
+    "records_remaining": 199999,
+    "next_reset_at": "2026-11-16T00:00:00Z",
+    "rate_limit": {
+     "requests_per_second": 10,
+     "remaining_this_second": 9
+    },
+    "request_id": "example-request"
+   }
+  }
+ ],
+ "repeatLastPage": true
+}

@@ -69,10 +69,11 @@ describe("the stop rules are unchanged", () => {
     expect(call(37, 5)).toBe("page_cap");
   });
 
-  it("consecutive empty pages still stop a job first: 3 in a row for a large job, whatever the cap", () => {
-    expect(MAX_CONSECUTIVE_EMPTY_PAGES_LARGE).toBe(3);
+  it("consecutive empty pages still stop a job first: 2 in a row for a large job too (it was 3), whatever the cap", () => {
+    expect(MAX_CONSECUTIVE_EMPTY_PAGES_LARGE).toBe(2);
     expect(call(10, 0, [4, 0, 0])).toBe("empty_pages");
-    expect(call(10, 0, [4, 5, 0])).toBeNull();
+    expect(call(10, 0, [4, 0])).toBe("empty_pages");
+    expect(call(10, 0, [4, 5])).toBeNull();
     expect(call(36, 0, [4, 0, 0])).toBe("empty_pages");
     expect(call(10, 0, [])).toBeNull();
   });

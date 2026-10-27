@@ -1,4 +1,5 @@
 import { pageChannelOfItem, pageHandleOf, xAccountOfItem } from "./planMethodSteps";
+import { looksLikePlaceholder } from "./paramProvenance";
 import { isSocialCapabilitySlug, validateSocialParams } from "./socialSources";
 import { planCountLineAr } from "./planCounts";
 import { hasPeopleIdentityKey } from "./peopleSearchInput";
@@ -110,8 +111,8 @@ function usableText(val: unknown): boolean {
 /** A value made only of the leftovers of a card label («ال المطلوب مطلوب»): a stranded article, or «المطلوب» next to «مطلوب». */
 const BROKEN_FIELD = /(?:^|\s)ال(?=\s|$)|المطلوب[ةه]?\s+مطلوب/u;
 
-/** A value a model wrote when it did not know the real one: «<UNKNOWN>», «<TBD>», «<placeholder>». The source would be asked about a thing that does not exist. */
-const ANGLE_PLACEHOLDER = /<\s*(?:unknown|unspecified|tbd|todo|placeholder|n\/a|none|null|id|value)\s*>/i;
+/** A value a model wrote when it did not know the real one («<UNKNOWN>», «UNKNOWN», «[ID]», «{{tweet_id}}», «xxx»): the structural rule of `looksLikePlaceholder`, not a closed list. */
+const ANGLE_PLACEHOLDER = { test: (text: string) => looksLikePlaceholder(text) };
 
 function hasPlaceholderText(val: unknown): boolean {
   if (typeof val === "string") {
