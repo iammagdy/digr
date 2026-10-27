@@ -105,7 +105,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(() => {
     adminFetch<AdminAlerts>("/api/admin/alerts").then(setAlerts).catch(() => {});
-    adminFetch<ProviderStatus>("/api/admin/providers").then(setProviders).catch(() => {});
+    adminFetch<ProviderStatus>("/api/admin/providers?refresh=true").then(setProviders).catch(() => {});
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, 60000); return () => clearInterval(t); }, [refresh]);
 
@@ -183,7 +183,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     ["overview", "الرئيسية"], ["users", "المستخدمون"], ["topups", "الشحن"], ["providers", "المزودون"], ["more", "المزيد"],
   ].map(([id, label]) => ({
     id, label, icon: ADMIN_IC[id as keyof typeof ADMIN_IC],
-    on: page === id || (id === "more" && ["jobs", "visitors", "operations", "finance", "calls-log", "audit", "requests", "conference", "settings", "export"].includes(page)),
+    on: page === id || (id === "more" && ["jobs", "visitors", "operations", "finance", "calls-log", "audit", "requests", "conference", "settings", "export", "reverse-lookup", "planner-selftest"].includes(page)),
     badge: id === "topups" ? pendingCount : 0,
     go: id === "more" ? () => setDrawer(true) : () => router.push(adminHref(id as AdminPageId)),
   }));

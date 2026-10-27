@@ -112,7 +112,7 @@ import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote"
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { findParamProvenanceGaps, provenanceQuestionCard } from "../../lib/paramProvenance";
-import { isModelPlannerAccount } from "../../lib/modelPlanner/constants";
+import { isModelPlannerAccount, PLANNER_TURN_BUDGET_MS } from "../../lib/modelPlanner/constants";
 import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig } from "../../lib/modelPlanner/chatTurn";
 import { plannerCostUsd } from "../../lib/modelPlanner/transport";
 import { pairRoleOf } from "../../lib/planFit";
@@ -1605,10 +1605,10 @@ export class ChatHandler {
     const { sb, turn, conversationId, assistantMsgId, userMsgId } = ctx;
     const planned = await runModelPlannerTurn({
       config: this.modelPlanner!, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext, guest: ctx.guest,
-      deadlineAtMs: ctx.turnStartTime + TURN_BUDGET_MS, requestId: assistantMsgId,
+      deadlineAtMs: ctx.turnStartTime + PLANNER_TURN_BUDGET_MS, requestId: assistantMsgId,
     });
     // Internal log: the codes of the validation failures (never a customer value), the turns, the tool calls and the sample calls.
-    console.info(JSON.stringify({ tag: "model_planner_turn", kind: planned.kind, reason: planned.kind === "message" ? planned.reason : undefined, turns: planned.outcome.turns, toolCalls: planned.outcome.toolCalls, sampleCalls: planned.outcome.sampleCalls, failureCodes: planned.outcome.failures.map((f) => f.map((i) => i.code)) }));
+    console.info(JSON.stringify({ tag: "model_planner_turn", kind: planned.kind, reason: planned.kind === "message" ? planned.reason : undefined, turns: planned.outcome.turns, toolCalls: planned.outcome.toolCalls, sampleCalls: planned.outcome.sampleCalls, failureCodes: planned.outcome.failures.map((f) => f.map((i) => i.code)), stopReasons: planned.outcome.stopReasons, endReason: planned.outcome.endReason, attempts: planned.outcome.attempts.map((a) => `${a.endpointId}=${a.outcome}${a.httpStatus ? `/${a.httpStatus}` : ""}`) }));
     const usage = planned.outcome.usage;
     const costUsd = plannerCostUsd(usage);
     const tokensIn = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;

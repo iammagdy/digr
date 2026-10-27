@@ -26,7 +26,7 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
   const tableRows = (name: string) => { if (!tables.has(name)) tables.set(name, []); return tables.get(name)!; };
 
   const missingBuilder: any = {};
-  for (const m of ["select", "eq", "gte", "lt", "lte", "in", "order", "limit", "insert", "update", "upsert", "maybeSingle", "single"]) missingBuilder[m] = () => missingBuilder;
+  for (const m of ["select", "eq", "gt", "neq", "gte", "lt", "lte", "in", "order", "limit", "insert", "update", "upsert", "maybeSingle", "single"]) missingBuilder[m] = () => missingBuilder;
   missingBuilder.then = (resolve: any) => resolve({ data: null, error: { message: "relation does not exist" } });
 
   const from = (name: string) => {
@@ -48,6 +48,8 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
     const b: any = {
       select: () => b,
       eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return b; },
+      gt: (c: string, v: any) => { filters.push((r) => r[c] > v); return b; },
+      neq: (c: string, v: any) => { filters.push((r) => r[c] !== v); return b; },
       gte: (c: string, v: any) => { filters.push((r) => r[c] >= v); return b; },
       lt: (c: string, v: any) => { filters.push((r) => r[c] < v); return b; },
       lte: (c: string, v: any) => { filters.push((r) => r[c] <= v); return b; },

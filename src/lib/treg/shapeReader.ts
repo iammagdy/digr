@@ -134,6 +134,24 @@ function listAtCommonKeys(value: unknown, path: string, depth: number): { path: 
 
 const NO_LIST_PATH = new Set(["", "NOT FOUND", "NOT_FOUND"]);
 
+/** Keys of an answer's wrapper (status, errors, usage meters): they never make an answer a record. */
+const WRAPPER_KEYS = new Set(["ok", "success", "status", "code", "message", "message_zh", "msg", "error", "errors", "detail", "details", "meta", "usage", "version", "recipe", "warnings", "elapsed_ms", "from_cache", "cached", "request_id", "requestid", "trace_id", "cost", "credits", "credits_remaining", "credits_charged", "time", "time_stamp", "time_zone", "support", "docs", "router", "cache_url", "cache_message", "cache_message_zh", "job_id", "state", "ms", "count", "total"]);
+
+/**
+ * An answer that is itself ONE record (a profile, a company detail): an object with at least three non-empty plain values outside the wrapper keys, and no error. NOT part of the general
+ * reader (which would read a status or a job answer as a record): a caller that SEES the answer (the sample call, whose rows the model checks) may ask for it.
+ */
+export function looksLikeOneRecord(body: Obj): boolean {
+  const failed = ["error", "errors"].some((k) => body[k] !== undefined && body[k] !== null && body[k] !== false && body[k] !== "");
+  if (failed) return false;
+  let values = 0;
+  for (const [k, v] of Object.entries(body)) {
+    if (WRAPPER_KEYS.has(k.toLowerCase())) continue;
+    if (typeof v === "string" ? v.trim() !== "" : typeof v === "number" || typeof v === "boolean") values += 1;
+  }
+  return values >= 3;
+}
+
 function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string | null; strategy: ListStrategy; warnings: string[] } {
   const warnings: string[] = [];
   const asRows = (v: unknown): Obj[] | null => (isObjectList(v) ? v : Array.isArray(v) && v.length === 0 ? [] : null);

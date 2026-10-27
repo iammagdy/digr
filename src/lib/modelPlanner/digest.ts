@@ -1,5 +1,5 @@
 import type { CatalogEndpoint } from "../treg/catalog";
-import { hintsOf, readShape, type ShapeReading } from "../treg/shapeReader";
+import { hintsOf, looksLikeOneRecord, readShape, type ShapeReading } from "../treg/shapeReader";
 import { maskText } from "../server/rawCapture";
 import { DIGEST_VALUE_CHARS, SAMPLE_ROWS_IN_DIGEST } from "./constants";
 
@@ -58,7 +58,11 @@ export function digestFields(rows: ReadonlyArray<Obj>): DigestField[] {
 /** What a REAL answer looks like, read with the shape reader and the catalog's own hints: for the model's field map and for the code's check of it. */
 export function buildShapeDigest(body: unknown, endpoint: Pick<CatalogEndpoint, "list_path" | "cursor_path" | "example_response_trimmed" | "item_fields">): { digest: ShapeDigest; reading: ShapeReading } {
   const noList = !endpoint.list_path || endpoint.list_path === "NOT FOUND";
-  const reading = readShape(body, { ...hintsOf(endpoint), ...(noList ? { rootObjectIsRow: true } : {}) });
+  let reading = readShape(body, { ...hintsOf(endpoint), ...(noList ? { rootObjectIsRow: true } : {}) });
+  // the catalog's list hint may be wrong for the live answer (a profile endpoint whose «list» is not there): an answer that is itself ONE record is ONE row, never an empty list
+  if (reading.rows.length === 0 && reading.listStrategy === "none" && typeof body === "object" && body !== null && !Array.isArray(body) && looksLikeOneRecord(body as Record<string, unknown>)) {
+    reading = readShape(body, { ...hintsOf(endpoint), rootObjectIsRow: true });
+  }
   const digest: ShapeDigest = {
     rowsInSample: reading.rows.length,
     listPath: reading.listPath,

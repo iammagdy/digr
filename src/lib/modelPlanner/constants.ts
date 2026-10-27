@@ -49,11 +49,25 @@ export const SAMPLE_ROWS_ON_CARD = 3;
 /** Cap on the characters of one value in a digest or on the card. */
 export const DIGEST_VALUE_CHARS = 120;
 
-/** The loop: at most this many model turns, and this many validation failures (the first goes back to the model as a tool_result, the second ends the turn). */
-export const MAX_PLANNER_TURNS = 8;
-export const MAX_VALIDATION_FAILURES = 2;
+/**
+ * The loop: at most this many model turns for one request. A refusal of the validator goes back to the model as a tool_result with the exact reason on EVERY turn that is left
+ * (the model corrects the step); the turn ends without a plan only when the turns, the time or the exploration budget are spent.
+ */
+export const MAX_PLANNER_TURNS = 6;
+/** The planner's own time for one chat request (ms from the start of the turn): the route allows 60 s and the page gives up at 55 s; the quote and the answer are written after it. */
+export const PLANNER_TURN_BUDGET_MS = 48_000;
+/** A further model turn is started only when at least this much time is left, and a model call is cut this long before the budget ends. */
+export const PLANNER_MIN_TURN_MS = 7_000;
+/** The most real sample calls (calls that REACH a source) one request may make, the model's own and the alternatives the code tries after a failure together. */
+export const MAX_SAMPLE_CALLS = 5;
+/** Alternatives (catalog siblings) tried for ONE sample the model asked for, after the first endpoint failed, returned nothing or was refused by a cap. */
+export const MAX_SAMPLE_ALTERNATIVES = 3;
+/** A sample call is given up after this long (ms); an alternative then gets its turn. */
+export const SAMPLE_CALL_TIMEOUT_MS = 12_000;
+/** The siblings an approved plan keeps for the worker to try when its call fails (cheaper or equal per call, in order of cost and observed success). */
+export const MAX_RUNTIME_ALTERNATES = 2;
 export const PLANNER_MAX_TOKENS = 2048;
-export const PLANNER_TIMEOUT_MS = 40_000;
+export const PLANNER_TIMEOUT_MS = 30_000;
 
 /** A plan has at most this many stages (a listing step, then one step run for each listed item). */
 export const MAX_PLAN_STAGES = 2;

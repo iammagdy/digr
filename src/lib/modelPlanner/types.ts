@@ -102,6 +102,24 @@ export interface StepFacts {
   callEstimateUsd: number;
   /** What the rows of this step are about, from the catalog's platform: «company» and «person» rows are held to the country the customer named. */
   entity?: "company" | "person" | null;
+  /** The answer is ONE record read as the answer itself (a profile, a company detail): the sample read it so, and the worker reads it the same way. */
+  rootObjectIsRow?: boolean;
+  /** Siblings of the endpoint (same capability, another provider) the worker may call when this endpoint's call fails or answers nothing. Each costs no more per call than the approved ceiling. */
+  alternates?: StepAlternate[];
+}
+
+/** A sibling endpoint planned in advance: its parameters mapped from the approved step's (names only; the values are the customer's), what one call of it may cost, and how to read its answer. */
+export interface StepAlternate {
+  endpointId: string;
+  method: "GET" | "POST";
+  scope: string;
+  params: PlanParam[];
+  listPath: string | null;
+  cursorPath: string | null;
+  itemFields: Record<string, { type: string }> | null;
+  limitName: string | null;
+  limitMax: number | null;
+  callEstimateUsd: number;
 }
 
 /** The approved plan as stored on the quote item (params._modelStep) and run by the interpreter. */
@@ -119,7 +137,7 @@ export interface ValidationIssue {
   code:
     | "unknown_endpoint" | "not_allowed" | "not_priceable" | "unknown_param" | "bad_param_type" | "bad_param_enum" | "bad_param_range" | "missing_required"
     | "no_provenance" | "quote_not_in_customer_text" | "id_like_literal" | "invented_value" | "window_not_stated" | "bad_field_path" | "bad_rows_path" | "bad_transform"
-    | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose";
+    | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose" | "reader_mismatch" | "topic_not_applicable";
   /** For the model (English, internal): what is wrong and what to do. */
   message: string;
   stepIndex?: number;

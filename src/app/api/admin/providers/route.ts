@@ -45,9 +45,11 @@ export async function GET(req: NextRequest) {
   // Real checks (an authenticated provider call, cached 60 s per server instance), never a flag.
   const settings = await readProviderKeySettings(createAdminClient());
   const [tregKey, anthropicKey] = await Promise.all([resolveProviderKey("treg"), resolveProviderKey("anthropic")]);
+  // the sidebar reads the SAME live check the TREG tab runs (`?refresh=true` skips the 60 s cache, as the tab's refresh does)
+  const forceRefresh = req.nextUrl.searchParams.get("refresh") === "true";
   const [tregStatus, anthropicStatus] = await Promise.all([
-    getProviderStatus("treg", tregKey.key, { orgIdOverride: settings.tregOrgId }),
-    getProviderStatus("anthropic", anthropicKey.key),
+    getProviderStatus("treg", tregKey.key, { orgIdOverride: settings.tregOrgId, forceRefresh }),
+    getProviderStatus("anthropic", anthropicKey.key, { forceRefresh }),
   ]);
 
   const limitsState = await loadProviderLimitsState(createAdminClient(), { forceRefresh: false }).catch(() => null);

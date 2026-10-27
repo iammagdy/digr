@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PLAN_INCOMPLETE_AR, PLAN_UNAVAILABLE_AR, customerSafeArabic, runPlanner, type PlannerInput } from "../src/lib/modelPlanner/planner";
 import { createScriptedTransport, plannerCostUsd, type ContentBlock } from "../src/lib/modelPlanner/transport";
 import { readExplorationSpend, resetExplorationMemoryForTesting, runSampleCall } from "../src/lib/modelPlanner/exploration";
-import { EXPLORATION_COST_MARKER, EXPLORATION_DAY_CAP_USD, EXPLORATION_REQUEST_CAP_USD, PLANNER_MODEL_PRICE, SAMPLE_PAGE_ROWS_PER_CALL } from "../src/lib/modelPlanner/constants";
+import { EXPLORATION_DAY_CAP_USD, EXPLORATION_REQUEST_CAP_USD, PLANNER_MODEL_PRICE, SAMPLE_PAGE_ROWS_PER_CALL } from "../src/lib/modelPlanner/constants";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { PURPOSE_QUESTION_AR } from "../src/lib/server/sensitiveAccess";
 import { SENSITIVE_NOT_VERIFIED_AR } from "../src/lib/treg/dataPolicy";
@@ -89,7 +89,7 @@ describe("the planning loop: real tool use, tool results fed back", () => {
     (wrongEndpoint.steps[0] as any).endpointId = "anyapi.x.not-there";
     const { out } = await run([propose(wrongEndpoint), propose(wrongEndpoint)]);
     expect(out).toMatchObject({ kind: "message", reason: "unavailable", messageAr: PLAN_UNAVAILABLE_AR });
-    expect(PLAN_UNAVAILABLE_AR).toBe("هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد.");
+    expect(PLAN_UNAVAILABLE_AR).toBe("هذه الخدمة غير متاحة حاليًا، ولم يُحجز أي رصيد.");
   });
 
   it("a question or a refusal in the model's own words reaches the customer only after code made it Arabic-only, without markdown, emoji, a provider, an endpoint, a price or Latin digits", async () => {
@@ -181,51 +181,58 @@ describe("exploration: real sample calls under code-enforced caps, an owner cost
   it("the caps are named constants: 0.05 USD per customer request and 0.50 USD per UTC day for all exploration", () => {
     expect(EXPLORATION_REQUEST_CAP_USD).toBe(0.05);
     expect(EXPLORATION_DAY_CAP_USD).toBe(0.5);
-    expect(EXPLORATION_COST_MARKER).toBe("exploration");
   });
 
-  it("a sample is recorded in provider_costs with the exploration marker and the request's job id, writes no ledger row, and stores the raw page like the first page of a job", async () => {
+  it("a sample is recorded in exploration_calls (the table the caps are counted from) with the request id, the endpoint, the real cost, the status and the rows; nothing is written to provider_costs or any ledger; the raw page is stored like the first page of a job", async () => {
     const db = createMemoryDb();
     const out = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db));
     expect(out.ok).toBe(true);
-    expect(db.rows("provider_costs")).toEqual([expect.objectContaining({ job_id: "explore_req1", provider: "treg", units: 1, cost_usd: 0.00045, capability: EXPLORATION_COST_MARKER, status: "ok", is_estimate: false })]);
-    expect([...db.tables.keys()].sort()).toEqual(["exploration_calls", "provider_costs"]);
+    expect(db.rows("exploration_calls")).toEqual([expect.objectContaining({ request_id: "req1", user_id: "u1", endpoint_id: "anyapi.x.user.posts", cost_usd: 0.00045, http_status: 200, rows_returned: expect.any(Number), budget_usd: EXPLORATION_REQUEST_CAP_USD, refused_reason: null, params_digest: { names: ["handle"], limit: SAMPLE_PAGE_ROWS_PER_CALL } })]);
+    expect([...db.tables.keys()].sort()).toEqual(["exploration_calls"]);
     expect(db.uploads).toHaveLength(1);
     expect(db.uploads[0]).toMatchObject({ bucket: "partials" });
     expect(db.uploads[0].path).toMatch(/^explore_req1_\d+\/raw_first_page\.json$/);
     // the call asked for the page the job will ask for (a per-call price does not depend on the page size)
     expect(gateway.calls[0].body).toEqual({ handle: "elonmusk", limit: SAMPLE_PAGE_ROWS_PER_CALL });
-    expect(await readExplorationSpend(deps(db))).toEqual({ request: 0.00045, day: 0.00045 });
+    expect(await readExplorationSpend(deps(db))).toEqual({ request: 0.00045, day: 0.00045, source: "database" });
   });
 
-  it("EXACT BOUNDARY per request: calls that land on 0.05 USD are made, the one that would pass it is NOT (no request leaves)", async () => {
+  it("the caps are counted from the DATABASE, not from one server's memory: a second instance with empty memory sees the first one's spend", async () => {
+    const db = createMemoryDb();
+    await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db, "reqA"));
+    resetExplorationMemoryForTesting(); // another server instance: nothing in its memory
+    expect(await readExplorationSpend(deps(db, "reqA"))).toMatchObject({ request: 0.00045, day: 0.00045, source: "database" });
+    expect(await readExplorationSpend(deps(db, "reqB"))).toMatchObject({ request: 0, day: 0.00045 });
+  });
+
+  it("EXACT BOUNDARY per request: calls that land on 0.05 USD are made, the one that would pass it is NOT (no request leaves, and no dearer sibling is tried)", async () => {
     gateway.restore();
     gateway = stubGateway({ "anyapi.x.user.posts": xPage }, { "anyapi.x.user.posts": 10_000 });
     const db = createMemoryDb();
     // the catalog price of one call is 0.0005; seed what this request already spent so the next call's estimate lands exactly on the cap
-    db.seed("provider_costs", [{ job_id: "explore_req1", cost_usd: 0.0495, capability: EXPLORATION_COST_MARKER, created_at: new Date().toISOString() }]);
+    db.seed("exploration_calls", [{ request_id: "req1", cost_usd: 0.0495, created_at: new Date().toISOString() }]);
     const exact = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db));
     expect(exact.ok).toBe(true);
     expect(gateway.calls).toHaveLength(1);
     // now 0.0495 + 0.01 (the call really billed 0.01) is past the cap: the next estimate (0.0005) would land at 0.0605 > 0.05
     const over = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db));
-    expect(over).toMatchObject({ ok: false, kind: "refused" });
+    expect(over).toMatchObject({ ok: false, kind: "failed", attempts: [expect.objectContaining({ outcome: "over_budget" })] });
     expect(gateway.calls).toHaveLength(1);
     // the same request id elsewhere is unaffected, another request starts at 0 (until the day's cap)
     expect((await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db, "req2"))).ok).toBe(true);
   });
 
-  it("the DAY cap: when exploration of the day is nearly spent a further sample is refused, whatever the request; the next UTC day starts again", async () => {
+  it("the DAY cap: when exploration of the day is nearly spent a further sample is not made, whatever the request; the next UTC day starts again", async () => {
     const db = createMemoryDb();
     const day = "2026-10-27";
-    db.seed("provider_costs", [{ job_id: "explore_other", cost_usd: 0.4996, capability: EXPLORATION_COST_MARKER, created_at: `${day}T08:00:00.000Z` }]);
+    db.seed("exploration_calls", [{ request_id: "other", cost_usd: 0.4996, created_at: `${day}T08:00:00.000Z` }]);
     const now = new Date(`${day}T12:00:00Z`);
     const refused = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), { ...deps(db), now });
-    expect(refused).toMatchObject({ ok: false, kind: "refused" });
+    expect(refused).toMatchObject({ ok: false, kind: "failed", attempts: [expect.objectContaining({ outcome: "over_budget" })] });
     expect(gateway.calls).toHaveLength(0);
     const tomorrow = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), { ...deps(db), now: new Date("2026-10-28T00:00:01Z") });
     expect(tomorrow.ok).toBe(true);
-    expect(await readExplorationSpend({ ...deps(db), now })).toEqual({ request: 0, day: 0.4996 });
+    expect(await readExplorationSpend({ ...deps(db), now })).toEqual({ request: 0, day: 0.4996, source: "database" });
   });
 
   it("a sample is refused with ZERO requests for: an invented value, a sensitive endpoint, a blocked one, an endpoint outside the catalog, an endpoint with no price", async () => {
@@ -241,7 +248,7 @@ describe("exploration: real sample calls under code-enforced caps, an owner cost
     ]);
     for (const r of refusals) expect(r.ok).toBe(false);
     expect(gateway.calls).toHaveLength(0);
-    expect(db.rows("provider_costs")).toHaveLength(0);
+    expect(db.rows("exploration_calls")).toHaveLength(0);
   });
 
   it("a PER-RECORD endpoint is sampled with a small page (it bills every row asked), a per-call endpoint with the page the job will use", async () => {
@@ -260,7 +267,11 @@ describe("exploration: real sample calls under code-enforced caps, an owner cost
     const db = createMemoryDb();
     const out = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db));
     expect(out).toMatchObject({ ok: false, kind: "failed" });
-    expect(JSON.stringify(out)).not.toMatch(/USD|cost/i);
+    // the endpoint that failed is the first attempt (its siblings are tried after it: this gateway has no answer for them)
+    if (!out.ok) { expect(out.attempts[0]).toMatchObject({ endpointId: "anyapi.x.user.posts", outcome: "http_error", httpStatus: 500 }); expect(out.message).not.toMatch(/USD|cost/i); }
+    // and what the MODEL reads back (the tool_result) carries no price either
+    const model = await run([xSample, [say("هذه الخدمة غير متاحة حاليًا")]]);
+    expect(JSON.stringify(model.transport.requests[1].messages)).not.toMatch(/USD|cost/i);
   });
 });
 
