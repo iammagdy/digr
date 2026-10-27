@@ -103,8 +103,8 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(world.lines().some((l) => l.includes("قيد المراجعة ١"))).toBe(true);
   });
 
-  it("X topic search inside a window that holds the example's date (CATALOG EXAMPLE): 1 delivered of 5, charged ceil(1 x 0.11715) = 1 point, the window is sent to the source and the next page (the example has a cursor) adds nothing", async () => {
-    const out = await replay("أريد ٥ تغريدات عن AI trenches على منصة X من ١ سبتمبر ٢٠٢٦ إلى ٣٠ سبتمبر ٢٠٢٦", [loadFixture("catalog-example_anyapi.x.search.posts")]);
+  it("X topic search inside a window that holds the example's date (CATALOG EXAMPLE): 1 delivered of 10, charged ceil(1 x 0.11715) = 1 point, the window is sent to the source and the next page (the example has a cursor) adds nothing", async () => {
+    const out = await replay("أريد ١٠ تغريدات عن AI trenches على منصة X من ١ سبتمبر ٢٠٢٦ إلى ٣٠ سبتمبر ٢٠٢٦", [loadFixture("catalog-example_anyapi.x.search.posts")]);
     expect(world.stats.realCalls).toBe(0);
     expect(out.item.capabilitySlug).toBe("social-x-posts");
     expect(out.item.params).toMatchObject({ query: "ai trenches", dateFrom: "2026-09-01", dateTo: "2026-09-30" });
@@ -116,31 +116,31 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
   });
 
   it("the same X topic search in the LAST MONTH: the catalog example is dated 2026-09-19, outside the window, so nothing is delivered and the hold is released (the example's date is the snapshot's, not today's)", async () => {
-    const out = await replay("أريد ٥ تغريدات عن AI trenches على منصة X آخر شهر", [loadFixture("catalog-example_anyapi.x.search.posts")]);
+    const out = await replay("أريد ١٠ تغريدات عن AI trenches على منصة X آخر شهر", [loadFixture("catalog-example_anyapi.x.search.posts")]);
     expect(world.stats.realCalls).toBe(0);
     expect(out.json.deliveredUnits ?? 0).toBe(0);
     expect(out.release).toBeDefined();
     expect(world.lines().some((l) => l.includes("خارج الفترة المطلوبة"))).toBe(true);
   });
 
-  it("TikTok comments of a link, CATALOG EXAMPLE: 1 delivered of 3 asked, charged ceil(1 x 0.275) = 1 point of the 1-point hold, one request served", async () => {
-    const out = await replay("أريد ٣ تعليقات من فيديو تيك توك https://www.tiktok.com/@user/video/7606449212716305678", [loadFixture("catalog-example_crawl4ai.tiktok.video.comments"), loadFixture("catalog-example_tikhub.tiktok.video.comments")]);
+  it("TikTok comments of a link, CATALOG EXAMPLE: 1 delivered of 10 asked, charged ceil(1 x 0.275) = 1 point of the 4-point hold, 2 requests served (the example says there is a next page)", async () => {
+    const out = await replay("أريد ١٠ تعليقات من فيديو تيك توك https://www.tiktok.com/@user/video/7606449212716305678", [loadFixture("catalog-example_crawl4ai.tiktok.video.comments"), loadFixture("catalog-example_tikhub.tiktok.video.comments")]);
     expect(world.stats.realCalls).toBe(0);
-    expect(world.stats.served.map((s) => s.endpointId)).toEqual(["tikhub.tiktok.video.comments"]);
+    expect(world.stats.served.map((s) => s.endpointId)).toEqual(["tikhub.tiktok.video.comments", "tikhub.tiktok.video.comments"]);
     expect(out.item.capabilitySlug).toBe("social-tiktok-comments");
     expect(out.item.unitPricePoints).toBe(0.275);
     expect(out.json.deliveredUnits).toBe(1);
     expect(out.json.settle.charged_credits).toBe(chargeForUnits(1, 0.275));
     expect(out.json.settle.charged_credits).toBeLessThanOrEqual(out.r.planQuote.quotedPoints);
-    expect(world.lines().some((l) => l.includes("المسلَّم ١ من ٣ مطلوب"))).toBe(true);
+    expect(world.lines().some((l) => l.includes("المسلَّم ١ من ١٠ مطلوب"))).toBe(true);
   });
 
-  it("Facebook post comments of a link, CATALOG EXAMPLE: 1 delivered of 3, 2 requests served (the example says there is a next page), charged ceil(1 x 1.034) = 2 points of the 4-point hold", async () => {
-    const out = await replay("أريد ٣ تعليقات من منشور فيسبوك https://www.facebook.com/youm7/posts/1234567890123", [loadFixture("catalog-example_scrapecreators.x.v1-facebook-post-comments")]);
+  it("Facebook post comments of a link, CATALOG EXAMPLE: 1 delivered of 10, 2 requests served (the example says there is a next page), charged ceil(1 x 1.034) = 2 points of the 12-point hold", async () => {
+    const out = await replay("أريد ١٠ تعليقات من منشور فيسبوك https://www.facebook.com/youm7/posts/1234567890123", [loadFixture("catalog-example_scrapecreators.x.v1-facebook-post-comments")]);
     expect(world.stats.realCalls).toBe(0);
     expect(world.stats.served.map((s) => s.endpointId)).toEqual(["scrapecreators.x.v1-facebook-post-comments", "scrapecreators.x.v1-facebook-post-comments"]);
     expect(out.item.unitPricePoints).toBe(1.034);
-    expect(out.r.planQuote.quotedPoints).toBe(reserveForUnits(3, 1.034));
+    expect(out.r.planQuote.quotedPoints).toBe(reserveForUnits(10, 1.034));
     expect(out.json.deliveredUnits).toBe(1);
     expect(out.json.settle.charged_credits).toBe(chargeForUnits(1, 1.034));
     expect(out.json.settle.charged_credits).toBe(2);
@@ -181,10 +181,10 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(String(world.db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message)).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
   });
 
-  it("the job's call budget, at the worker: the first page is bought and delivers 3 posts; the second would pass the value of the 2-point hold, so it is NOT requested and the job settles on what it has", async () => {
-    // each call bills 0.0033 USD in this replay; the hold of 2 points is worth 0.0036 USD, so one call fits and a second does not
+  it("the job's call budget, at the worker: the first page is bought and delivers 3 posts; the second would pass 40% of the value of the 2-point hold (0.001455 USD), so it is NOT requested and the job settles on what it has", async () => {
+    // each call is estimated and billed at 0.0007 USD in this replay: one call fits under 0.001455 USD, a second (0.0014 + the next 0.0007) would cross it
     world.resetJob({ slug: "social-x-posts", endpointId: "anyapi.x.user.posts", params: { channel: "@elonmusk" }, target: 10, unitPrice: 0.11715 });
-    world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")], { costMicroOverride: 3300 });
+    world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")], { costMicroOverride: 800 });
     const { json } = await world.runWorker();
     expect(world.stats.realCalls).toBe(0);
     expect(world.stats.served).toHaveLength(1);
@@ -205,25 +205,29 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(world.db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(false);
   });
 
-  it("raw first-page capture: OFF by default (nothing stored); ON stores the first raw page of the job once, masked", async () => {
+  it("raw first-page capture: ON by default (no setting needed) it stores the first raw page of the job once, masked, in the private bucket; off with the environment value «off»", async () => {
     world.resetJob({ slug: "social-x-posts", endpointId: "anyapi.x.user.posts", params: { channel: "@elonmusk" }, target: 10, unitPrice: 0.11715 });
     world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")]);
-    await world.runWorker();
-    expect([...world.db.partials.keys()].some((k) => k.endsWith("raw_first_page.json"))).toBe(false);
-
-    world.resetJob({ slug: "social-x-posts", endpointId: "anyapi.x.user.posts", params: { channel: "@elonmusk" }, target: 10, unitPrice: 0.11715 });
-    world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")]);
-    vi.stubEnv("RAW_FIRST_PAGE_CAPTURE", "on");
     await world.runWorker();
     const key = `${world.JOB}/raw_first_page.json`;
     expect(world.db.partials.has(key)).toBe(true);
     const stored = JSON.parse(world.db.partials.get(key)!.toString("utf-8"));
     expect(stored.endpointId).toBe("anyapi.x.user.posts");
     expect(stored.page).toBe(1);
+    expect(stored.jobId).toBe(world.JOB);
     // the answer exactly as the source sent it: the replay fixture's page (an envelope with the ten rows), not the flattened and gated rows
     expect(stored.body.rows).toHaveLength(10);
     expect(stored.body.rows[0].authorHandle).toBe("elonmusk");
     expect(stored.body.rows[0].isReply).toBe("False");
-    expect(world.db.rpcCalls.filter((c) => c.name === "complete_chunk").length).toBeGreaterThan(0);
+    // the job settled and its raw page is still there (only the step files are removed at settlement)
+    expect(world.db.rpcCalls.some((c) => c.name === "settle_job_atomic")).toBe(true);
+    // one object for the job, whatever the number of pages
+    expect([...world.db.partials.keys()].filter((k) => k.endsWith("raw_first_page.json"))).toHaveLength(1);
+
+    world.resetJob({ slug: "social-x-posts", endpointId: "anyapi.x.user.posts", params: { channel: "@elonmusk" }, target: 10, unitPrice: 0.11715 });
+    world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")]);
+    vi.stubEnv("RAW_FIRST_PAGE_CAPTURE", "off");
+    await world.runWorker();
+    expect([...world.db.partials.keys()].some((k) => k.endsWith("raw_first_page.json"))).toBe(false);
   });
 });

@@ -858,7 +858,7 @@ export async function POST(req: NextRequest) {
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
       ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
       ...(callBudget.ceilingUsd !== null ? { callBudget, callEstimateUsd: estimatedCostUsd } : {}),
-      // Flag RAW_FIRST_PAGE_CAPTURE (default off): the first raw page of the job, masked and size-capped, kept in the private bucket for future fixtures.
+      // Raw first page of the job (on by default, `RAW_CAPTURE_ENABLED`): masked and size-capped, kept in the private bucket «partials» for future fixtures.
       ...(currentStep === 0 && rawCaptureEnabled() ? { rawCapture: createFirstPageCapture(adminClient.storage.from("partials"), jobId) } : {}),
     });
 

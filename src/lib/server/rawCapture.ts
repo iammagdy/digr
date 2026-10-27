@@ -1,5 +1,5 @@
 /**
- * Raw first-page capture (FLAG, default OFF): the first RAW provider page of a job, kept for the owner so the next fixtures come from real calls, not from
+ * Raw first-page capture (ON by default, one code constant turns it off): the first RAW provider page of a job, kept for the owner so the next fixtures come from real calls, not from
  * hand-written rows. The rows the worker stores afterwards are already flattened and gated; the answer's envelope, its cursor and the rows the gate rejected
  * are lost, and that is exactly what a replay needs.
  *
@@ -8,6 +8,11 @@
  */
 
 export const RAW_CAPTURE_FLAG = "RAW_FIRST_PAGE_CAPTURE";
+/**
+ * The capture is ON by default (owner decision: the owner does not change deployment settings). To turn it off, set this constant to false in code. The environment
+ * variable `RAW_FIRST_PAGE_CAPTURE=off` also turns it off (never needed); any other value leaves the default.
+ */
+export const RAW_CAPTURE_ENABLED = true;
 /** Largest stored record, in bytes of its JSON text. */
 export const RAW_CAPTURE_MAX_BYTES = 120_000;
 /** Longest string kept as it came; a longer one is cut. */
@@ -15,8 +20,9 @@ export const RAW_CAPTURE_MAX_STRING = 400;
 /** Items kept of any list before the size cap tightens it further. */
 export const RAW_CAPTURE_MAX_ITEMS = 25;
 
-export function rawCaptureEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return String(env[RAW_CAPTURE_FLAG] ?? "").trim().toLowerCase() === "on";
+export function rawCaptureEnabled(env: Record<string, string | undefined> = process.env, enabled: boolean = RAW_CAPTURE_ENABLED): boolean {
+  if (!enabled) return false;
+  return String(env[RAW_CAPTURE_FLAG] ?? "").trim().toLowerCase() !== "off";
 }
 
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;

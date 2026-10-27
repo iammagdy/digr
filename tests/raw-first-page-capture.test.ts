@@ -1,15 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { RAW_CAPTURE_FLAG, RAW_CAPTURE_MAX_BYTES, buildRawFirstPage, createFirstPageCapture, maskText, rawCaptureEnabled } from "../src/lib/server/rawCapture";
+import { RAW_CAPTURE_ENABLED, RAW_CAPTURE_FLAG, RAW_CAPTURE_MAX_BYTES, buildRawFirstPage, createFirstPageCapture, maskText, rawCaptureEnabled } from "../src/lib/server/rawCapture";
 import { executeTregCall } from "../src/functions/shared/tregClient";
 
-describe("the flag", () => {
-  it("is OFF by default and only the value «on» turns it on", () => {
-    expect(rawCaptureEnabled({})).toBe(false);
-    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "" })).toBe(false);
-    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "true" })).toBe(false);
-    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "1" })).toBe(false);
+describe("the switch: ON by default, one code constant turns it off", () => {
+  it("is ON in code, and with no environment variable at all", () => {
+    expect(RAW_CAPTURE_ENABLED).toBe(true);
+    expect(rawCaptureEnabled({})).toBe(true);
+    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "" })).toBe(true);
     expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "on" })).toBe(true);
-    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: " ON " })).toBe(true);
+    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "true" })).toBe(true);
+  });
+
+  it("the code constant turns it off, whatever the environment says", () => {
+    expect(rawCaptureEnabled({}, false)).toBe(false);
+    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "on" }, false)).toBe(false);
+  });
+
+  it("the value «off» of the environment variable also turns it off (never needed)", () => {
+    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: "off" })).toBe(false);
+    expect(rawCaptureEnabled({ [RAW_CAPTURE_FLAG]: " OFF " })).toBe(false);
   });
 });
 

@@ -9,9 +9,11 @@ import { DEFAULT_PRICING_BASIS, type PricingBasis } from "../recordPricing";
  *
  * The ceiling is the lower of
  *  - the job's per-job spend ceiling (the owner's, or the default of three times the plan's expected provider cost, `defaultJobProviderCeilingUsd`), and
- *  - the value of the hold: the points held for the job, at the points' own value (credit value / USD rate). A job never costs the provider more than
- *    the customer was held for, so a runaway cannot turn a sale into a loss.
+ *  - 40% of the value of the hold (owner decision): the points held for the job, at the points' own value (0.10 EGP per point, 55 EGP per USD), times
+ *    `HOLD_SPEND_SHARE`. 40% of that value is reserve points / 1,375 USD. A call that would take the job's spend PAST this number is not sent; a call that
+ *    lands exactly on it is.
  */
+export const HOLD_SPEND_SHARE = 0.4;
 
 export interface JobCallBudget {
   /** Asks to spend up to `estimateUsd` on the next call. False when that would pass the ceiling: the call must not be made. */
@@ -60,11 +62,11 @@ export function holdValueUsd(reservePoints: number, basis: PricingBasis = DEFAUL
   return (points * basis.creditValueEgp) / basis.usdToEgp;
 }
 
-/** The lower of the per-job ceiling (when there is one) and the value of the hold (when a hold is known). Null when neither is known. */
+/** The lower of the per-job ceiling (when there is one) and 40% of the value of the hold (when a hold is known). Null when neither is known. */
 export function jobCallCeilingUsd(input: { perJobUsd: number | null; reservePoints: number | null }, basis: PricingBasis = DEFAULT_PRICING_BASIS): number | null {
   const parts: number[] = [];
   if (input.perJobUsd !== null && Number.isFinite(input.perJobUsd)) parts.push(Number(input.perJobUsd));
-  if (input.reservePoints !== null && Number(input.reservePoints) > 0) parts.push(holdValueUsd(Number(input.reservePoints), basis));
+  if (input.reservePoints !== null && Number(input.reservePoints) > 0) parts.push(holdValueUsd(Number(input.reservePoints), basis) * HOLD_SPEND_SHARE);
   return parts.length ? Math.min(...parts) : null;
 }
 

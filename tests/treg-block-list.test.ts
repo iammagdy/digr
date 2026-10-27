@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { BLOCK_LIST_SIZES, CATALOG_SNAPSHOT, blockedEndpointReason, isEndpointBlocked, providerOf } from "../src/lib/treg/blockList";
+import { BLOCK_LIST_SIZES, CATALOG_SNAPSHOT, PAUSED_PROVIDERS, blockedEndpointReason, isEndpointBlocked, providerOf } from "../src/lib/treg/blockList";
 import { executeTregCall } from "../src/functions/shared/tregClient";
 import { executeTregCallWithRetry } from "../src/lib/server/tregAdapter";
 
@@ -72,6 +72,28 @@ describe("the hard block list", () => {
     const result = await executeTregCall({ endpointId: madeUp, params: {}, userId: "u", jobId: "j" });
     expect(result.blocked).toBe("not_sellable");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("every endpoint of a PAUSED PROVIDER (apollo, datagma) is blocked by provider name, whatever the id and whatever the catalog says, and no request is sent", async () => {
+    expect(PAUSED_PROVIDERS).toEqual(["apollo", "datagma"]);
+    for (const id of ["apollo.people.search", "apollo.companies.enrich", "apollo.x.anything-at-all", "datagma.people.email.find", "datagma.companies.search", "APOLLO.people.search", "Datagma.x"]) {
+      expect(blockedEndpointReason(id), id).toBe("paused_provider");
+      const result = await executeTregCall({ endpointId: id, params: {}, userId: "u", jobId: "j" });
+      expect(result.ok).toBe(false);
+      expect(result.blocked).toBe("paused_provider");
+      expect(result.error).toBe("endpoint_blocked");
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("the paused providers are not matched by prefix tricks: «apollonia.x» and «datagmax.y» are other providers (not blocked by this rule)", () => {
+    expect(blockedEndpointReason("apollonia.x")).not.toBe("paused_provider");
+    expect(blockedEndpointReason("datagmax.y")).not.toBe("paused_provider");
+    expect(providerOf("apollo.people.search")).toBe("apollo");
+  });
+
+  it("a paused-provider endpoint is blocked even with a scope that looks fine", () => {
+    expect(blockedEndpointReason("apollo.people.search", "any_account")).toBe("paused_provider");
   });
 
   it("a sellable endpoint is called as before (one request, to the call route)", async () => {

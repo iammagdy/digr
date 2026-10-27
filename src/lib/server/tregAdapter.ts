@@ -1140,7 +1140,7 @@ export interface ProviderAdapterCallInput {
   callBudget?: import("./callBudget").JobCallBudget;
   /** What one call of a generic (non-social) source may cost, for that budget. */
   callEstimateUsd?: number;
-  /** Raw first-page capture (flag RAW_FIRST_PAGE_CAPTURE, default off): set by the worker for the first chunk. */
+  /** Raw first-page capture (on by default, see rawCapture.ts): set by the worker for the first chunk. */
   rawCapture?: import("./rawCapture").RawCapture;
 }
 
