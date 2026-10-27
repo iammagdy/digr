@@ -54,7 +54,7 @@ describe("D2: the page guidance says one thing", () => {
 
   it("the always-on driver keeps its own sentence (closing the page is allowed only then)", () => {
     expect(closePageLineAr("cron")).toBe("تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص.");
-    expect(POST_APPROVAL_CRON_AR).toContain("يمكنك إغلاق الصفحة");
+    expect(POST_APPROVAL_CRON_AR).toContain("تقدر تقفل الصفحة");
   });
 });
 

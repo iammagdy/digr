@@ -438,6 +438,8 @@ function shouldAskSocialTimeWindow(text: string): boolean {
 }
 
 export interface ChatHandlerInput {
+  /** The page's own id for this planning turn (a short safe token): the planning steps the panel shows are keyed by it. Absent: the assistant message id is used. */
+  plannerRequestId?: string;
   userId: string;
   conversationId?: string;
   message: string;
@@ -1600,12 +1602,12 @@ export class ChatHandler {
    */
   private async answerWithModelPlanner(ctx: {
     sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; userBalance: number; message: string;
-    messagesContext: PriorConversationMessage[]; turnStartTime: number; guest: boolean; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>;
+    messagesContext: PriorConversationMessage[]; turnStartTime: number; guest: boolean; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; plannerRequestId?: string;
   }): Promise<ChatHandlerResponse> {
     const { sb, turn, conversationId, assistantMsgId, userMsgId } = ctx;
     const planned = await runModelPlannerTurn({
       config: this.modelPlanner!, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext, guest: ctx.guest,
-      deadlineAtMs: ctx.turnStartTime + PLANNER_TURN_BUDGET_MS, requestId: assistantMsgId,
+      deadlineAtMs: ctx.turnStartTime + PLANNER_TURN_BUDGET_MS, requestId: ctx.plannerRequestId || assistantMsgId,
     });
     // Internal log: the codes of the validation failures (never a customer value), the turns, the tool calls and the sample calls.
     console.info(JSON.stringify({ tag: "model_planner_turn", kind: planned.kind, reason: planned.kind === "message" ? planned.reason : undefined, turns: planned.outcome.turns, toolCalls: planned.outcome.toolCalls, sampleCalls: planned.outcome.sampleCalls, failureCodes: planned.outcome.failures.map((f) => f.map((i) => i.code)), stopReasons: planned.outcome.stopReasons, endReason: planned.outcome.endReason, attempts: planned.outcome.attempts.map((a) => `${a.endpointId}=${a.outcome}${a.httpStatus ? `/${a.httpStatus}` : ""}`) }));
@@ -2680,7 +2682,7 @@ export class ChatHandler {
       // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.
       if (this.modelPlanner && this.modelPlannerFor({ email: input.userEmail, isGuest: input.isGuest }) && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
         currentStep = "model_planner";
-        return await this.answerWithModelPlanner({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, userBalance: userBalance ?? 0, message, messagesContext, turnStartTime, guest: Boolean(input.isGuest), stats: currentTurnStats });
+        return await this.answerWithModelPlanner({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, userBalance: userBalance ?? 0, message, messagesContext, turnStartTime, guest: Boolean(input.isGuest), stats: currentTurnStats, plannerRequestId: input.plannerRequestId });
       }
 
       // Studies, papers, articles and news from websites: not a service yet. Said plainly by code, with what is available;

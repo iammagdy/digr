@@ -224,7 +224,10 @@ export async function POST(req: NextRequest) {
       const { data: startedQuote } = await adminClient.from("plans_quotes").select("items").eq("id", quoteId).maybeSingle();
       const items = Array.isArray(startedQuote?.items) ? startedQuote.items : [];
       const volume = items.reduce((sum: number, item: any) => sum + (Number(item?.targetVolumeMax) || 0), 0);
-      if (workerDispatch.started && isLongJob(volume)) await sendJobNotice(adminClient, user.id, acceptedJobId, startedNoticeFull({ targetVolumeMax: volume, driver: await liveDriverMode(adminClient) }));
+      // a long request, or a MISSION (a plan of stages) while the background driver is live: the in-site notice says the page may be closed
+      const driverNow = await liveDriverMode(adminClient);
+      const isMission = Array.isArray(items[0]?.params?._modelStep?.stages) && items[0].params._modelStep.stages.length > 0;
+      if (workerDispatch.started && (isLongJob(volume) || (isMission && driverNow === "cron"))) await sendJobNotice(adminClient, user.id, acceptedJobId, startedNoticeFull({ targetVolumeMax: volume, driver: driverNow }));
     } catch {
       // a missing notice never changes the acceptance
     }

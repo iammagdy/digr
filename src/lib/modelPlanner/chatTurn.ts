@@ -2,7 +2,8 @@ import { PlanRefusalError } from "../capacityRefusal";
 import { isChatControlMessage } from "../retryMessage";
 import { resolveAccountAccess, PURPOSE_QUESTION_AR, PURPOSE_QUESTION_ID } from "../server/sensitiveAccess";
 import type { TregCatalog } from "../treg/catalog";
-import { EXPLORATION_TABLE, PLANNER_TURN_ROW_ENDPOINT, type ExplorationDeps } from "./exploration";
+import { EXPLORATION_TABLE, PLANNER_EVENT_ROW_ENDPOINT, PLANNER_TURN_ROW_ENDPOINT, type ExplorationDeps } from "./exploration";
+import type { PlannerEvent } from "../missionView";
 import { createModelPlanQuote } from "./planItem";
 import { runPlanner, type PlannerOutcome } from "./planner";
 import { loadRecipeForEndpoint } from "./recipes";
@@ -73,7 +74,19 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
   const customerRequest = customerMessages.filter((m) => m !== purpose).join(" ");
   const client = config.client ?? tables;
   const access = await resolveAccountAccess(client, args.userId);
+  // what the planner is doing is written as it happens (one row per event, cost 0): the panel's planning steps are built from these rows, never from a separate text
+  const pendingEvents: Array<Promise<unknown>> = [];
+  const onEvent = (event: PlannerEvent) => {
+    if (typeof client?.from !== "function") return;
+    try {
+      pendingEvents.push(Promise.resolve(client.from(EXPLORATION_TABLE).insert({
+        request_id: args.requestId, user_id: args.userId, endpoint_id: PLANNER_EVENT_ROW_ENDPOINT, params_digest: event,
+        cost_usd: 0, budget_usd: 0, rows_returned: event.rows ?? event.n ?? 0, duration_ms: null, refused_reason: null, created_at: new Date(event.at).toISOString(),
+      })).then(() => undefined, () => undefined));
+    } catch { /* the table is not there */ }
+  };
   const outcome = await runPlanner({
+    onEvent,
     transport: config.transport,
     customerMessages: purpose ? customerMessages.filter((m) => m !== purpose) : customerMessages,
     // the purpose question and its answer are part of the conversation the model sees
@@ -88,6 +101,7 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
     deadlineAtMs: args.deadlineAtMs,
   });
 
+  await Promise.allSettled(pendingEvents);
   await recordPlannerTurnEnd(client, args, outcome);
 
   if (outcome.kind === "purpose_needed") {

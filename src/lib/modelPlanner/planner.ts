@@ -12,6 +12,7 @@ import { ParamSchema, ProposePlanSchema, type ValidationIssue } from "./types";
 import type { RecipeRecord } from "./recipes";
 import { validatePlan, type StepSample, type ValidatedPlan } from "./validate";
 import { z } from "zod";
+import type { PlannerEvent } from "../missionView";
 
 /** The sentence a customer reads when the plan cannot be completed from what they wrote (the owner-approved sentence of Phase 1). */
 export const PLAN_INCOMPLETE_AR = new PlanIncompleteError([]).messageAr;
@@ -54,6 +55,8 @@ export interface PlannerInput {
   /** The measured average cost of a call of a ROUTED endpoint (null when there is no measurement: the price then follows the highest sibling). */
   loadMeasuredAvg?: (endpointId: string) => Promise<number | null>;
   maxTurns?: number;
+  /** Told, as it happens, what the planner is doing (the customer's planning steps are built from these; never a separate text). Must not throw; failures are ignored. */
+  onEvent?: (event: PlannerEvent) => void;
   /** The turn's own deadline (epoch ms): a further model turn is not started with less than PLANNER_MIN_TURN_MS left, and a model call is cut before it. */
   deadlineAtMs?: number;
 }
@@ -152,11 +155,13 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
   }
 
   const done = (turns: number, outcome: PlannerResult, endReason?: string): PlannerOutcome => {
+    if (outcome.kind === "message") emit({ kind: outcome.reason === "clarification" ? "asked" : "stopped" });
     const result: PlannerOutcome = { ...outcome, turns, toolCalls, sampleCalls, usage, modelCostUsd: plannerCostUsd(usage), explorationCostUsd, failures, stopReasons, trace, attempts, ...(endReason ? { endReason } : {}) };
     console.info(JSON.stringify({ tag: "model_planner_trace", kind: outcome.kind, reason: outcome.kind === "message" ? outcome.reason : undefined, endReason, stopReasons, trace: trace.map((t) => `${t.turn}:${t.tool}:${t.error ? "ERR:" : ""}${clipText(t.outcome, 90)}`).slice(0, 24) }));
     return result;
   };
 
+  const emit = (event: Omit<PlannerEvent, "at">) => { try { input.onEvent?.({ ...event, at: Date.now() }); } catch { /* an event never changes the plan */ } };
   let turns = 0;
   while (turns < maxTurns) {
     const left = input.deadlineAtMs !== undefined ? input.deadlineAtMs - Date.now() : Number.POSITIVE_INFINITY;
@@ -170,6 +175,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
     }
     usage = addUsage(usage, response.usage);
     stopReasons.push(response.stopReason || "");
+    if (turns === 1) emit({ kind: "understood" });
     const toolUses = response.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
     messages.push({ role: "assistant", content: response.content });
     const turnsLeft = maxTurns - turns;
@@ -232,6 +238,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
         content = { hits: out.hits, note: out.hits.length === 0 ? "no matching endpoint is available for this customer: try other words (another platform name, a synonym, the capability in English)" : undefined };
         summary = clipText(JSON.stringify({ platform: (use.input as any)?.platform, words: (use.input as any)?.words }), 80);
         outcome = `${out.hits.length} hits`;
+        emit({ kind: "searched", n: out.hits.length });
       } else if (use.name === "describe_endpoint") {
         const describedId = String((use.input as any)?.id ?? "").trim();
         touched.add(describedId);
@@ -253,6 +260,11 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
           sampleCalls += 1;
           explorationCostUsd += out.costUsd;
           for (const a of made) touched.add(a.endpointId);
+          const switchedSource = out.ok && out.note.endpointUsed !== parsed.data.id;
+          const slow = made.some((a) => a.outcome === "timeout");
+          if (slow && !out.ok) emit({ kind: "sample_slow" });
+          if (switchedSource || made.length > 1) emit({ kind: "switched" });
+          if (out.ok) emit({ kind: "sampled", rows: out.digest.rowsInSample });
           if (out.ok) {
             const pagesMeasured = ((out as any).sample?.pageRows ?? []) as number[];
             content = { endpointUsed: out.note.endpointUsed, ...(pagesMeasured.length > 1 ? { rowsPerPageMeasured: pagesMeasured } : {}), ...(out.note.endpointUsed !== parsed.data.id ? { note: `«${parsed.data.id}» gave no usable answer, so the code used «${out.note.endpointUsed}». Plan with «${out.note.endpointUsed}» and the parameter names in paramsUsed.` } : {}), paramsUsed: out.note.paramsUsed, attempts: made.map((a) => ({ endpoint: a.endpointId, outcome: a.outcome, ...(a.detail ? { detail: a.detail } : {}) })), ...out.digest };
@@ -308,6 +320,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
             const auto = await runSampleCall({ id: st.endpointId, params: withEndpoint as any }, { customerText, access, catalog, samples, today, stats }, exploration);
             attempts.push(...(auto.ok ? auto.note.attempts : auto.attempts));
             sampleCalls += 1; explorationCostUsd += auto.costUsd;
+            if (auto.ok) emit({ kind: "sampled", rows: auto.digest.rowsInSample });
             autoNotes.push(auto.ok ? `step ${i + 1} sampled automatically from the real rows of step ${refs[0].fromStep!.step}` : `automatic sample of step ${i + 1} failed: ${clipText(auto.message, 120)}`);
             trace.push({ turn: turns, tool: "sample_call", summary: `${st.endpointId} (automatic, from step ${refs[0].fromStep!.step})`, outcome: auto.ok ? `ok via ${auto.note.endpointUsed}` : `${auto.kind}: ${clipText(auto.message, 100)}`, ...(auto.ok ? {} : { error: true }) });
           }
@@ -331,8 +344,9 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
           }
           void autoNotes;
           const verdict = validatePlan(parsed.data, { customerText, access, catalog, samples, recipes, purpose: input.purpose ?? null, today, measuredAvgCallUsd: (id) => measured.get(id) ?? null });
-          if (verdict.ok) { plan = verdict.plan; outcome = "plan accepted"; }
+          if (verdict.ok) { plan = verdict.plan; outcome = "plan accepted"; emit({ kind: "planned" }); }
           else {
+            emit({ kind: "adjusting" });
             isError = true;
             failures.push(verdict.issues);
             lastIssues = verdict.issues;

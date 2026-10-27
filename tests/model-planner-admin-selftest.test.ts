@@ -15,7 +15,7 @@ import { createScriptedTransport } from "../src/lib/modelPlanner/transport";
 import { readPlannerHealth } from "../src/lib/modelPlanner/health";
 import { runModelPlannerTurn } from "../src/lib/modelPlanner/chatTurn";
 import { PLAN_UNAVAILABLE_AR } from "../src/lib/modelPlanner/planner";
-import { PLANNER_TURN_ROW_ENDPOINT, resetExplorationMemoryForTesting } from "../src/lib/modelPlanner/exploration";
+import { PLANNER_EVENT_ROW_ENDPOINT, PLANNER_TURN_ROW_ENDPOINT, resetExplorationMemoryForTesting } from "../src/lib/modelPlanner/exploration";
 import { reserveForUnits } from "../src/lib/recordPricing";
 import { SENSITIVE_NOT_VERIFIED_AR } from "../src/lib/treg/dataPolicy";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -184,7 +184,8 @@ describe("a chat turn that ends without a plan records why (the health line read
   it("a refusal leaves one row with the reason, the planner's end reason and the validation codes; the customer reads the one sentence", async () => {
     const { t, db } = await turn([[say("غير متاح حاليًا")]], "هات بيانات حساب انستقرام @natgeo");
     expect(t).toMatchObject({ kind: "message", reason: "unavailable", contentAr: PLAN_UNAVAILABLE_AR });
-    const rows = db.rows("exploration_calls");
+    // Phase 3: the planner's own step log (the panel's planning steps) is written beside the turn row; it is not an error or an exploration call
+    const rows = db.rows("exploration_calls").filter((r: any) => r.endpoint_id !== PLANNER_EVENT_ROW_ENDPOINT);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ endpoint_id: PLANNER_TURN_ROW_ENDPOINT, request_id: "req_turn", user_id: "u1", cost_usd: 0 });
     expect(rows[0].refused_reason).toMatch(/^unavailable: /);
@@ -196,7 +197,7 @@ describe("a chat turn that ends without a plan records why (the health line read
   it("a question is not an error: nothing is recorded", async () => {
     const { t, db } = await turn([[say("أي حساب انستقرام تقصد؟")]], "ابغى بيانات انستقرام لحساب فلان");
     expect(t).toMatchObject({ kind: "message", reason: "clarification" });
-    expect(db.rows("exploration_calls")).toHaveLength(0);
+    expect(db.rows("exploration_calls").filter((r: any) => r.endpoint_id !== PLANNER_EVENT_ROW_ENDPOINT)).toHaveLength(0);
   });
 });
 

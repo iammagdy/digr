@@ -1,5 +1,5 @@
 import { loadTregCatalog } from "../treg/catalog";
-import { PLANNER_TURN_ROW_ENDPOINT, EXPLORATION_TABLE } from "./exploration";
+import { PLANNER_EVENT_ROW_ENDPOINT, PLANNER_TURN_ROW_ENDPOINT, EXPLORATION_TABLE } from "./exploration";
 import { PLANNER_MODEL_DEFAULT } from "./constants";
 
 /** The planner's health line for the admin: the catalog the DEPLOYED bundle really loaded, the last planner turn that ended without a plan (and why), the last exploration call and its result. Never throws. */
@@ -22,7 +22,7 @@ export async function readPlannerHealth(client: any, model: string = process.env
       if (r) lastPlannerError = { at: String(r.created_at), reason: String(r.refused_reason ?? "") };
     } catch { /* the table is not there */ }
     try {
-      const { data } = await client.from(EXPLORATION_TABLE).select("endpoint_id,refused_reason,http_status,rows_returned,cost_usd,created_at").neq("endpoint_id", PLANNER_TURN_ROW_ENDPOINT).order("created_at", { ascending: false }).limit(1);
+      const { data } = await client.from(EXPLORATION_TABLE).select("endpoint_id,refused_reason,http_status,rows_returned,cost_usd,created_at").neq("endpoint_id", PLANNER_TURN_ROW_ENDPOINT).neq("endpoint_id", PLANNER_EVENT_ROW_ENDPOINT).order("created_at", { ascending: false }).limit(1);
       const r = Array.isArray(data) ? data[0] : null;
       if (r) lastExploration = { at: String(r.created_at), endpoint: String(r.endpoint_id), result: r.refused_reason ? String(r.refused_reason) : "ok", httpStatus: r.http_status ?? null, rows: r.rows_returned ?? null, costUsd: Number(r.cost_usd) || 0 };
     } catch { /* the table is not there */ }

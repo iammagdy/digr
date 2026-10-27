@@ -6,7 +6,7 @@ const chatPage = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
 
 describe("post-approval message", () => {
   it("«you can close the page» is the approved sentence and is said ONLY when the always-on driver is on; otherwise the honest one", () => {
-    expect(POST_APPROVAL_CRON_AR).toBe("جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.");
+    expect(POST_APPROVAL_CRON_AR).toBe("تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص.");
     expect(postApprovalMessageAr("cron")).toBe(POST_APPROVAL_CRON_AR);
     for (const mode of ["tab", undefined, null, "", "yes", "CRON ", 1]) expect(postApprovalMessageAr(mode as any)).toBe(POST_APPROVAL_TAB_AR);
     expect(POST_APPROVAL_TAB_AR).not.toContain("ويمكنك إغلاق الصفحة");

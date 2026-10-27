@@ -63,6 +63,9 @@ import { isTerminalJobStatus, toChatJobStatus } from "@/lib/jobs/status";
 import { shouldShowProgressNotice, applyJobRow } from "@/lib/jobs/progressNotice";
 import { isCustomerVisibleJobEvent } from "@/lib/reviewCostEvent";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "@/lib/researchPlaceholders";
+import { MissionPlanMobileBar, MissionPlanSheet, MissionPlanSidePanel } from "@/components/mission/MissionPlanPanel";
+import { useMissionPanel } from "@/hooks/useMissionPanel";
+import { PANEL_STATE_KEY, defaultPanelState, parsePanelState, newPlannerRequestId } from "@/lib/missionPanelState";
 import { TURN_TIMEOUT_MS, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
 import { startFailureText, type StartedJobState } from "@/lib/startFailure";
@@ -182,6 +185,18 @@ export default function ChatWorkspacePage() {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [inputText, setInputText] = useState("");
   const [loading, setLoading] = useState(false);
+  // the mission plan panel «خطة المهمة»: the id of the planning turn in flight, and how the customer left the panel (expanded, pinned); the sheet of the mobile bar
+  const [planningRequestId, setPlanningRequestId] = useState<string | null>(null);
+  const [missionPanelState, setMissionPanelState] = useState(defaultPanelState);
+  const [missionSheetOpen, setMissionSheetOpen] = useState(false);
+  useEffect(() => {
+    try { setMissionPanelState(parsePanelState(window.localStorage.getItem(PANEL_STATE_KEY))); } catch { /* the default stays */ }
+  }, []);
+  const changeMissionPanel = (patch: Partial<ReturnType<typeof defaultPanelState>>) => setMissionPanelState((prev) => {
+    const next = { ...prev, ...patch };
+    try { window.localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(next)); } catch { /* a convenience only */ }
+    return next;
+  });
   const [loadingStatusText, setLoadingStatusText] = useState("يكتب الرد...");
   const loadingBaseText = useRef("يكتب الرد...");
   // The request of the turn on screen: «إيقاف الانتظار» aborts it, and the failure message then carries the retry.
@@ -698,12 +713,15 @@ export default function ChatWorkspacePage() {
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
+      const plannerRequestId = newPlannerRequestId();
+      setPlanningRequestId(plannerRequestId);
 
       const res = await fetch("/api/chat", {
         method: "POST",
         headers,
         signal: controller.signal,
         body: JSON.stringify({
+          plannerRequestId,
           message: textToSend,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
@@ -812,11 +830,14 @@ export default function ChatWorkspacePage() {
 
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (jwtToken) headers.Authorization = `Bearer ${jwtToken}`;
+      const plannerRequestId = newPlannerRequestId();
+      setPlanningRequestId(plannerRequestId);
       const res = await fetch("/api/chat", {
         method: "POST",
         headers,
         signal: controller.signal,
         body: JSON.stringify({
+          plannerRequestId,
           conversationId: conversationId || undefined,
           jwt: jwtToken,
           clarificationAnswers: { type: "clarification_answers", answers },
@@ -1900,6 +1921,15 @@ export default function ChatWorkspacePage() {
 
   // The plan lives in the results panel (a bottom sheet on mobile), never in the chat stream: the latest plan is the one to act on.
   const latestPlanQuote = [...messages].reverse().find((m) => m.planQuote)?.planQuote ?? null;
+  // The mission plan panel: the mission of the open request, else the plan on the table, else the planning steps of the turn being answered. Nothing to show: no panel.
+  const missionContent = useMissionPanel({
+    jobId: activeJob?.jobId ?? null,
+    jobLive: Boolean(activeJob && (activeJob.status === "running" || activeJob.status === "queued")),
+    planQuote: latestPlanQuote as any,
+    planningRequestId,
+    planning: loading,
+  });
+  const missionPanelExpanded = missionPanelState.expanded && (missionPanelState.pinned || !canvasOpen);
   const planCard = (quote: PlanQuoteData, locked: boolean) => (
     <PlanQuoteCard
       quote={quote}
@@ -2151,8 +2181,21 @@ export default function ChatWorkspacePage() {
           )}
           <div ref={messagesEndRef} />
         </div>
+        {missionContent && <MissionPlanMobileBar content={missionContent} onOpen={() => setMissionSheetOpen(true)} />}
         <Composer value={inputText} onChange={setInputText} onSend={handleSendMessage} disabled={conversationLoading || loading} />
       </div>
+
+      {/* 2b. The mission plan panel: a side panel on desktop (expand, collapse, pin); the bar above the composer and a bottom sheet on mobile */}
+      {missionContent && (
+        <MissionPlanSidePanel
+          content={missionContent}
+          expanded={missionPanelExpanded}
+          pinned={missionPanelState.pinned}
+          onToggleExpanded={() => changeMissionPanel({ expanded: !missionPanelState.expanded })}
+          onTogglePinned={() => changeMissionPanel({ pinned: !missionPanelState.pinned, expanded: true })}
+        />
+      )}
+      {missionContent && missionSheetOpen && <MissionPlanSheet content={missionContent} onClose={() => setMissionSheetOpen(false)} />}
 
       {/* 3. Results workspace (record preview, review, versions): drawer on mobile, side column on desktop */}
       {canvasOpen && (

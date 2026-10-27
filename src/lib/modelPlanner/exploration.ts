@@ -27,6 +27,8 @@ const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "n
 export const EXPLORATION_TABLE = "exploration_calls";
 /** The endpoint name of the row that records a planner turn that ended WITHOUT a plan (why), so the admin health line can show the last planner error. It costs nothing and does not count in the caps. */
 export const PLANNER_TURN_ROW_ENDPOINT = "(planner turn)";
+/** The endpoint name of the rows that record what the planner is doing, as it happens (the customer's planning steps are built from them). They cost nothing and do not count in the caps. */
+export const PLANNER_EVENT_ROW_ENDPOINT = "(planner event)";
 
 export interface ExplorationDeps {
   client: any;

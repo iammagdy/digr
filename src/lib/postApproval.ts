@@ -5,7 +5,7 @@ import { normalizeDriverMode } from "./driverMode";
  * driver is on (the server tells the page which driver is active); otherwise the sentence is the honest one: keep the page open,
  * or the request continues when the customer comes back.
  */
-export const POST_APPROVAL_CRON_AR = "جاري سحب البيانات، سيصلك إشعار عند الاكتمال ويمكنك إغلاق الصفحة.";
+export const POST_APPROVAL_CRON_AR = "تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص.";
 export const POST_APPROVAL_TAB_AR = "جاري سحب البيانات. أبقِ الصفحة مفتوحة حتى تكتمل المهمة.";
 
 export function postApprovalMessageAr(mode?: unknown): string {

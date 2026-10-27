@@ -1,5 +1,6 @@
 "use client";
 
+import { stagesOfPlanQuote } from "@/lib/missionPanelContent";
 import { X_ACCOUNT_FILTER_STEP_AR, pageChannelOfItem, socialFilterStepAr, socialSearchStepAr, xAccountOfItem, xAccountReadStepAr } from "@/lib/planMethodSteps";
 import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
@@ -187,6 +188,7 @@ export default function PlanQuoteCard({
   const [isEditing, setIsEditing] = useState(initiallyEditing);
   const [editLimit, setEditLimit] = useState(quote.targetVolumeMax || 1);
   const primaryItem = quote.items?.[0];
+  const modelStages = stagesOfPlanQuote(quote as any);
   const capabilitySlug = (primaryItem?.capabilitySlug || "").toLowerCase();
   const isPeoplePlan = capabilitySlug.includes("people");
   const isCompanyPlan = /compan|b2b/.test(capabilitySlug);
@@ -476,7 +478,20 @@ export default function PlanQuoteCard({
       )}
 
       {/* A channel mission (channels, then their top videos, then the comments) shows its own steps */}
-      {Array.isArray(primaryItem?.params?.channels) && primaryItem.params.channels.length > 0 ? (
+      {modelStages ? (
+        <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]" data-testid="mission-stages">
+          <p className="m-0 font-medium text-ink">مراحل المهمة:</p>
+          <ol className="m-0 list-none space-y-1.5 p-0 font-light text-ink2">
+            {modelStages.map((stage, i) => (
+              <li key={i} className="flex items-start gap-2" data-testid="mission-stage-line">
+                <span className="font-bold text-ac">{formatAr(i + 1)}.</span>
+                <span>{stage.titleAr}{stage.effVolume > 0 ? ` — حتى ${formatAr(stage.effVolume)} ${stage.deliver ? "صفًا يصلك" : "صفًا تُستخدم في المرحلة التالية"}` : ""}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="m-0 text-[12px] text-mut">بعد الموافقة تتحوّل هذه المراحل إلى «خطة المهمة» وتتابع تقدّم كل مرحلة بنفسك.</p>
+        </div>
+      ) : Array.isArray(primaryItem?.params?.channels) && primaryItem.params.channels.length > 0 ? (
         <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]" data-testid="mission-steps">
           <p className="m-0 font-medium text-ink">خطوات التنفيذ:</p>
           <ol className="m-0 list-none space-y-1 p-0 font-light text-ink2">

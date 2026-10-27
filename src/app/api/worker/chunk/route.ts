@@ -1,5 +1,7 @@
 import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../../../../lib/modelPlanner/constants";
 import { saveRecipeAfterDelivery } from "../../../../lib/modelPlanner/recipes";
+import { generateMissionWorkbook, isMissionRowSet } from "../../../../lib/modelPlanner/missionWorkbook";
+import type { StoredModelPlan } from "../../../../lib/modelPlanner/types";
 import { modelPlanSensitiveContext } from "../../../../lib/modelPlanner/workerContext";
 import { collectionCompleteBeforeSettlement } from "@/lib/server/settlementPrecheck";
 import { pointsAr } from "@/lib/pointsFormat";
@@ -925,6 +927,16 @@ export async function POST(req: NextRequest) {
         } catch (usageErr: any) {
           console.warn("[worker:model_plan_review_usage_log_failed]", usageErr?.message || "");
         }
+      }
+    }
+
+    // Where each stage of a mission stands after this chunk: one snapshot row per chunk (the panel reads them; the customer's activity list does not show them).
+    if (userId && rawAdapterResult.missionProgress && Array.isArray(rawAdapterResult.missionProgress.stages)) {
+      try {
+        const stagesNow = rawAdapterResult.missionProgress.stages;
+        await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: JSON.stringify({ step: currentStep, stages: stagesNow }), units: stagesNow.reduce((n: number, s: any) => n + (Number(s.d) || 0), 0), event_type: "mission_progress" });
+      } catch (progressErr: any) {
+        console.warn("[worker:mission_progress_insert_warning]", progressErr?.message || "");
       }
     }
 
@@ -2284,7 +2296,11 @@ export async function POST(req: NextRequest) {
 
         // 2. Excel (.xlsx) Report
         if (spec.outputFormats.includes("xlsx")) try {
-          const xlsxBuf = reportPayload ? await generateFacebookReportExcel(reportPayload, finalRows) : await generateExcelReport(finalPayload);
+          const missionPlan = spec.params?.[MODEL_PLAN_PARAM] as StoredModelPlan | undefined;
+          // a mission of several stages is delivered as LINKED sheets (one per delivered stage, joined by the row id and the parent id)
+          const xlsxBuf = isMissionRowSet(missionPlan, finalRows as any[])
+            ? await generateMissionWorkbook(finalRows as any[], missionPlan!)
+            : reportPayload ? await generateFacebookReportExcel(reportPayload, finalRows) : await generateExcelReport(finalPayload);
           const xlsxUp = await resultsBucket.upload(xlsxPath, xlsxBuf, {
             contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             upsert: true,

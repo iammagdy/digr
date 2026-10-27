@@ -37,6 +37,8 @@ interface StageState {
   /** Parent rows this stage has run for. */
   expanded: number;
   calls: number;
+  /** Rows the rules left out (a filter, the country gate, the topic review): never delivered, never charged. */
+  excluded: number;
   /** The first page of the stage was shown to the manager. */
   checked: boolean;
   /** 0 = the approved endpoint; k = the k-th alternative the plan carries (chosen by the manager). */
@@ -53,7 +55,7 @@ export interface MissionState {
   finalDone: boolean;
 }
 
-const freshStage = (): StageState => ({ next: null, page: 1, offset: 0, queue: [], listDone: false, collected: 0, delivered: 0, expanded: 0, calls: 0, checked: false, alt: 0, seq: 0 });
+const freshStage = (): StageState => ({ next: null, page: 1, offset: 0, queue: [], listDone: false, collected: 0, delivered: 0, expanded: 0, calls: 0, excluded: 0, checked: false, alt: 0, seq: 0 });
 
 export function parseMissionState(cursor: string | null, stageCount: number): MissionState {
   const fresh: MissionState = { v: 2, stages: Array.from({ length: stageCount }, freshStage), reviewUsd: 0, mgrUsd: 0, finalDone: false };
@@ -197,6 +199,7 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
       keepIdx = keepIdx.filter((k) => keptSet.has(records[k]));
       offTopic = keepIdx.length === 0;
     }
+    s.excluded += Math.max(0, reading.rows.length - records.length) + Math.max(0, records.length - keepIdx.length);
     const pageReason: "ok_page" | "empty" | "off_topic" = reading.rows.length === 0 || records.length === 0 ? "empty" : offTopic ? "off_topic" : "ok_page";
 
     // a decision point: the first page of a stage, or a bad one
@@ -300,6 +303,14 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
     if (decision.action === "final") { const safe = safeArabicSentence(decision.noteAr); if (safe) note(decision.ok ? "final_ok" : "final_gap", undefined, safe); }
   }
 
+  // where each stage stands (a stage that cannot do more is done: it has what it needs, it was stopped, or it waits for nothing any more)
+  const stageDone: boolean[] = [];
+  stages.forEach((st, i) => {
+    const s = state.stages[i];
+    const parentFinished = st.parent === null ? true : stageDone[st.parent] === true;
+    stageDone[i] = Boolean(s.stopped) || satisfied(i) || (st.parent === null ? s.listDone : s.queue.length === 0 && parentFinished) || missionStopped || (finished && s.queue.length === 0);
+  });
+  const missionProgress = { stages: stages.map((st, i) => ({ c: state.stages[i].collected, d: state.stages[i].delivered, x: state.stages[i].excluded, e: st.effVolume, q: state.stages[i].queue.length, done: stageDone[i], ...(state.stages[i].stopped ? { stopped: state.stages[i].stopped } : {}) })) };
   const totalDelivered = state.stages.reduce((sum, s) => sum + s.delivered, 0);
   if (finished && totalDelivered === 0 && delivered.length === 0 && state.stages.some((s) => s.stopped)) {
     return fail("mission_stopped", `${state.stages.find((s) => s.stopped)?.stopped ?? "تعذّر استكمال المهمة"}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`, 200);
@@ -307,6 +318,6 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
   return {
     ok: true, httpStatus: lastHttp, rows: delivered, nextCursor: finished ? null : JSON.stringify(state),
     costUsd: Number((costMicro / 1_000_000).toFixed(6)), costMicro, providerCallCount: calls, tregCallId: lastCallId,
-    ...(usage.length ? { reviewModelUsage: usage } : {}), ...(notes.length ? { missionNotes: notes } : {}),
+    ...(usage.length ? { reviewModelUsage: usage } : {}), ...(notes.length ? { missionNotes: notes } : {}), missionProgress,
   };
 }
