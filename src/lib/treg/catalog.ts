@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { normalizeArabic } from "../arabicNormalize";
+import { PAUSED_PROVIDERS } from "./blockList";
 
 /**
  * The TREG catalog as DATA: a local snapshot (data/treg/treg_catalog_sellable.json, 3,276 endpoints with inputs, cost, observed stats, siblings, a test request, the
@@ -129,7 +130,9 @@ export function isSellable(id: string, catalog: TregCatalog = loadTregCatalog())
   if (!key || catalog.writeIds.has(key)) return false;
   const endpoint = catalog.byId.get(key);
   if (!endpoint) return false;
-  return String(endpoint.scope ?? "").toLowerCase() !== "own_account";
+  if (String(endpoint.scope ?? "").toLowerCase() === "own_account") return false;
+  const provider = String(endpoint.provider ?? "").toLowerCase();
+  return !PAUSED_PROVIDERS.includes(provider) && !PAUSED_PROVIDERS.includes(key.split(".")[0].toLowerCase()); // paused providers (apollo, datagma) are blocked by name, as in the hard block list
 }
 
 /** The full catalog entry of a SELLABLE endpoint (inputs, cost, observed stats, siblings, test request, paths, example), or null. */

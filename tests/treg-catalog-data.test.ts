@@ -82,6 +82,17 @@ describe("isSellable", () => {
     expect(isSellable("p.a", open)).toBe(false); // on the write list wins
   });
 
+  it("an endpoint of a PAUSED PROVIDER (apollo, datagma) is not sellable and is never returned by a search, even when a snapshot lists it", () => {
+    const entry = (id: string, provider: string) => ({ id, provider, platform: "web", name: id, summary: "people search", scope: "any_account", inputs: [], pagination: [], siblings: [] });
+    const withPaused = parseCatalog({ endpoints: [entry("apollo.people.search", "apollo"), entry("datagma.people.find", "datagma"), entry("other.people.search", "other")] }, []);
+    expect(isSellable("apollo.people.search", withPaused)).toBe(false);
+    expect(isSellable("datagma.people.find", withPaused)).toBe(false);
+    expect(isSellable("other.people.search", withPaused)).toBe(true);
+    expect(describeEndpoint("apollo.people.search", withPaused)).toBeNull();
+    expect(catalogSearch({ words: ["people"] }, withPaused).map((h) => h.id)).toEqual(["other.people.search"]);
+    expect(loadTregCatalog().endpoints.some((e) => /^(apollo|datagma)\./.test(e.id))).toBe(false);
+  });
+
   it("a snapshot with a duplicate id or no list is refused", () => {
     expect(() => parseCatalog({ endpoints: [{ id: "a" }, { id: "a" }] }, [])).toThrow(/duplicate/);
     expect(() => parseCatalog({}, [])).toThrow(/no endpoints/);
