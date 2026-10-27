@@ -131,26 +131,17 @@ function presumeTopicSearchRow(row: Record<string, any>, stems: string[], commen
   return { decision: "match", reasonAr: "من نتائج البحث بالموضوع المطلوب", ...(suspicious ? { suspicious: true } : {}) };
 }
 
-/** The account a post says wrote it, in lower case without «@»: the flat keys sources use, or the name inside an author object. Null when the row names none. */
-const AUTHOR_HANDLE_KEYS = ["author_username", "authorUsername", "author_handle", "author_screen_name", "username", "user_name", "userName", "screen_name", "handle"];
-const AUTHOR_OBJECT_KEYS = ["author", "user", "account"];
-const AUTHOR_NAME_KEYS = ["username", "userName", "user_name", "screen_name", "screenName", "handle"];
+/**
+ * The account a post says wrote it, in lower case without «@», or null when the row names none. Only the keys the code and its fixtures already use:
+ * `authorUsername` (the provider spelling in the checked-in X post fixture), `author_username` and `username` (the normalised post), and `author_handle`,
+ * `screen_name`, `handle` (read by the post and comment normalisers). A nested author object is not read: no code or fixture shows one.
+ */
+const AUTHOR_HANDLE_KEYS = ["authorUsername", "author_username", "author_handle", "username", "screen_name", "handle"];
 export function postAuthorHandle(row: Record<string, any>): string | null {
-  const clean = (value: unknown): string | null => {
-    const text = typeof value === "string" ? value.trim().replace(/^@+/, "") : "";
-    return /^[A-Za-z0-9_]{1,15}$/.test(text) ? text.toLowerCase() : null;
-  };
   for (const key of AUTHOR_HANDLE_KEYS) {
-    const found = clean(row?.[key]);
-    if (found) return found;
-  }
-  for (const key of AUTHOR_OBJECT_KEYS) {
-    const nested = row?.[key];
-    if (!nested || typeof nested !== "object") continue;
-    for (const nameKey of AUTHOR_NAME_KEYS) {
-      const found = clean((nested as Record<string, any>)[nameKey]);
-      if (found) return found;
-    }
+    const value = row?.[key];
+    const text = typeof value === "string" ? value.trim().replace(/^@+/, "") : "";
+    if (/^[A-Za-z0-9_]{1,15}$/.test(text)) return text.toLowerCase();
   }
   return null;
 }
@@ -161,13 +152,28 @@ export function isXAccountRequest(params: Record<string, any>): boolean {
 }
 
 /**
- * A row of an X account's timeline is judged by WHO wrote it, never by topic words (the plan names an account, not a topic). A post whose author is another
- * account is not the account's own post; a row that names no author cannot be shown to be foreign, so it stays (the same rule as a missing country).
+ * A row marked as a reply by the fields the code already reads: `is_reply` / `isReply` (the normalised and the provider spelling), a reply target
+ * (`inReplyToId`, where the provider writes «0» for none, as in the checked-in X post fixture), and the reply links `replyTo`, `inReplyTo`, `parentId`,
+ * `parent_id` that the result review already counts as replies. No field marks a repost in the code or the fixtures, so none is read here.
+ */
+export function isReplyRow(row: Record<string, any>): boolean {
+  if (row?.isReply === true || row?.is_reply === true || row?.isReply === "true" || row?.is_reply === "true") return true;
+  const target = row?.inReplyToId;
+  if (target !== undefined && target !== null && String(target).trim() !== "" && String(target).trim() !== "0" && String(target).toLowerCase() !== "null") return true;
+  return Boolean(row?.replyTo || row?.inReplyTo || row?.parentId || row?.parent_id);
+}
+
+/**
+ * A row of an X account's timeline is delivered only when it shows WHO wrote it and that author is the account asked for (the plan names an account,
+ * never a topic). A post written by another account is excluded. A row that names no author, and a row marked as a reply, cannot be shown to be the
+ * account's own post: both are held for review, not delivered, not charged.
  */
 function evaluateXAccountPost(row: Record<string, any>, params: Record<string, any>): ResearchRelevanceResult {
   const wanted = xAccountHandle(params.channel)?.toLowerCase();
   const author = postAuthorHandle(row);
   if (wanted && author && author !== wanted) return { decision: "no_match", reasonAr: "المنشور ليس من الحساب المطلوب" };
+  if (!author) return { decision: "uncertain", reasonAr: "لا يظهر في السجل اسم الحساب الذي نشره؛ أُحيل للمراجعة ولم يُحتسب" };
+  if (isReplyRow(row)) return { decision: "uncertain", reasonAr: "السجل رد على منشور آخر وليس منشورًا مستقلًا من الحساب؛ أُحيل للمراجعة ولم يُحتسب" };
   return { decision: "match", reasonAr: "منشور من الحساب المطلوب" };
 }
 

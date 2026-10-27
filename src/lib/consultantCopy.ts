@@ -48,6 +48,8 @@ export interface MissionUnderstanding {
   channelsSkipped: boolean;
   /** Set only for the Facebook topic REPORT. */
   report?: true;
+  /** The X account whose own posts are wanted («@elonmusk», or its link): the request is the account's posts, so it has no topic. Null otherwise. */
+  xAccount?: string | null;
 }
 
 export type MissingInput =
@@ -268,7 +270,9 @@ export function understandMission(rawText: string, options: { today?: Date } = {
   // A named channel is scoped by the channel itself: its subject is only what the customer said after «عن», never the words left over once
   // the platform and task words are removed (those are the request's own sentence and the card answers, and would filter every video out).
   const subjectRaw = topicAnswer || (kind === "social_feed" ? subjectAfterAbout(text) || socialSubjectText(text) : kind === "social_channel_topic" ? channelSubjectAfterAbout(text) : "");
-  const subject = subjectRaw || (intent.industry?.arabic ?? null) || null;
+  // The posts of ONE X account have no topic: «@elonmusk أكس» is the account and the platform, never a subject.
+  const xAccount = kind === "social_feed" && platform === "x" && social.discover === "channel" && social.channelRef ? social.channelRef : null;
+  const subject = xAccount ? null : subjectRaw || (intent.industry?.arabic ?? null) || null;
 
   const missing: MissingInput[] = [];
   if (kind === "companies" || kind === "people") {
@@ -313,6 +317,7 @@ export function understandMission(rawText: string, options: { today?: Date } = {
     missing,
     channelsSkipped,
     ...(social.report ? { report: true as const } : {}),
+    ...(xAccount ? { xAccount } : {}),
   };
 }
 
@@ -426,6 +431,8 @@ export function understoodLineAr(u: MissionUnderstanding): string | null {
       return `فهمت أنك تريد فيديوهات ${channel}${about}${u.allComments ? " مع كل تعليقاتها" : " مع تعليقاتها"}${where}${windowText}.`;
     }
     case "social_feed": {
+      // The posts of one X account: said as the account's posts, with no topic phrase.
+      if (u.xAccount) return `فهمت أنك تريد ${u.volume ? `أحدث ${countPlainAr(u.volume, "tweets")}` : "أحدث المنشورات"} من حساب ${u.xAccount}${where}${windowText}.`;
       const about = u.subject ? ` عن «${u.subject}»` : "";
       // the Facebook topic REPORT is a report, not «comments of posts»; its period is said only when the customer stated one
       if (u.report) return `فهمت أنك تريد تقريرًا${about} على فيسبوك${windowText}.`;

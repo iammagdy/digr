@@ -9,7 +9,7 @@ import { PAGE_REJECTED_REASON_AR, pageRejectedEventAr, reviewSocialPage } from "
 import { LOOKUP_LOG_EVENT_TYPE } from "../../../../lib/reviewCostEvent";
 import { isReviewCallFailure, REVIEW_COST_EVENT_TYPE, REVIEW_FAILURE_EVENT_TYPE, REVIEW_FALLBACK_EVENT_TYPE, REVIEW_SAMPLE_EVENT_TYPE, reviewFailureEventMessage, reviewFallbackEventMessage, reviewSampleEventMessage, reviewSpendEventMessage, reviewThinkingFallbackEventMessage, type ReviewCallFacts } from "../../../../lib/server/reviewSpendLog";
 import { noteReviewSpend, resolveReviewBudget } from "../../../../lib/server/reviewDailyGuard";
-import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, heldToReport, totalDiagnostic, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
+import { emptyDiagnostic, hasDiagnosticSignal, keywordShortfallReasonAr, readDiagnosticFile, recordPostJudgements, recordPostReads, recordRowGate, saveStepDiagnostic, heldToReport, totalDiagnostic, xAccountZeroDeliveryAr, zeroDeliveryEventAr } from "../../../../lib/server/zeroDeliveryDiagnostic";
 import { PAGED_FIRST_CHUNK_ROWS, isFacebookKeywordService } from "../../../../lib/facebookKeywordService";
 import { isFacebookTopicReport } from "../../../../lib/facebookReport/constants";
 import { reportStatePath, type ReportState, type ReportStateStore } from "../../../../lib/server/facebookReportAdapter";
@@ -83,7 +83,7 @@ import {
   isCompanyRowMatchingConstraints,
 } from "../../../../lib/planParameters";
 import { isCompanyDirectoryJob } from "../../../../lib/server/directoryCapability";
-import { evaluateResearchRowRelevance, isTopicSearchRequest } from "../../../../lib/server/researchRelevanceGate";
+import { evaluateResearchRowRelevance, isTopicSearchRequest, isXAccountRequest } from "../../../../lib/server/researchRelevanceGate";
 import { contactValueDelivered, decisionMakerDeliveredUnits } from "../../../../functions/shared/decisionMakerPricing";
 import { peopleContactCounts, peopleDeliverySentenceAr, peopleShortfallReasonAr } from "../../../../lib/peopleColumns";
 import { peopleDeliveryRow } from "../../../../lib/server/peopleDelivery";
@@ -1141,7 +1141,10 @@ export async function POST(req: NextRequest) {
       // Posts and comments of a topic search (X, TikTok, YouTube) are presumed on topic; only the rows the gate flags as doubtful are
       // reviewed, and those are delivered only when the review confirms them (fail closed). Feeds without a topic filter keep the strict gate., with the reviewer of rows and a cost cap per job.
       // Facebook is reviewed only for a topic search of comments (post level); its page posts and page comments keep the deterministic gate as before.
-      const strictSocialReview = (["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) || postLevelJob) && !isCompanyCapability && !isPeopleJob && (!useMockProvider || strictSocialReviewForcedByTests());
+      // The posts of ONE X account have no topic to review them against (the request text of the review is empty): the author-handle gate decides, and what it
+      // cannot settle (no readable author, a reply) is held by the gate itself.
+      const xAccountJob = isXAccountRequest(spec.params || {});
+      const strictSocialReview = (["x", "tiktok", "youtube"].includes(String(getSocialCapability(spec.capabilitySlug)?.platform)) || postLevelJob) && !isCompanyCapability && !isPeopleJob && !xAccountJob && (!useMockProvider || strictSocialReviewForcedByTests());
 
       // Comments of a topic search on TikTok or YouTube are judged by their video; X posts keep the per-post review.
       const socialCapabilityDef = getSocialCapability(spec.capabilitySlug);
@@ -1444,7 +1447,7 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-      } else if (matchedForAdvice.length > 0 && !isChainJob) {
+      } else if (matchedForAdvice.length > 0 && !isChainJob && !xAccountJob) {
         try {
           const advisory = await getRowAdvisor()({
             customerRequest: [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
@@ -1656,7 +1659,10 @@ export async function POST(req: NextRequest) {
         }
       }
       const heldShown = heldToReport(diagnosticTotal, uncertainRows.length);
-      const emptyErrorAr = reviewUnavailable
+      const accountJobEnded = isXAccountRequest(spec.params || {});
+      const emptyErrorAr = accountJobEnded && receivedFromSource > 0 && !reviewUnavailable
+        ? xAccountZeroDeliveryAr({ received: receivedShown, held: heldShown, dateDropped: feedHasWindow && datesDroppedKnown ? datesDroppedTotal : 0 })
+        : reviewUnavailable
         ? "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل."
         : reviewBudgetUsedUp && unreviewedRows.length > 0
         ? `استلمنا ${toArabicDigits(receivedShown)} سجلاً من المصدر، لكن التحقق الآلي بلغ الحد المسموح لهذا الطلب قبل أن نتأكد من مطابقة أيٍّ منها لموضوعك؛ لم يُسلَّم شيء، وحجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`

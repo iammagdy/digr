@@ -12,9 +12,11 @@ import { X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR, U
 import { X_ACCOUNT_EDIT_AR, getSocialCapability, normalizeXAccountPlanItem, resolveSocialMode, socialPlanSummaryAr, xAccountNoteAr } from "../src/lib/socialSources";
 import { quoteScopeGaps } from "../src/lib/quoteScopeGaps";
 import { evaluateResearchRowRelevance, isXAccountRequest, postAuthorHandle } from "../src/lib/server/researchRelevanceGate";
-import { emptyDiagnostic, heldToReport, mergeDiagnostic, recordRowGate, zeroDeliveryEventAr } from "../src/lib/server/zeroDeliveryDiagnostic";
+import { emptyDiagnostic, heldToReport, mergeDiagnostic, recordRowGate, xAccountZeroDeliveryAr, zeroDeliveryEventAr } from "../src/lib/server/zeroDeliveryDiagnostic";
 import { summarizeActivityCounts, zeroDeliveryPageLineAr } from "../src/lib/activityCounts";
 import { reserveForUnits } from "../src/lib/recordPricing";
+import { isReplyRow } from "../src/lib/server/researchRelevanceGate";
+import { understandMission, understoodLineAr } from "../src/lib/consultantCopy";
 
 /**
  * «X account posts» on production (2026-10-26). Two live failures, both reproduced here on the exact request texts and the exact payload the chat sends for a card
@@ -334,17 +336,19 @@ describe("the relevance gate judges an X account's rows by who wrote them, never
     expect(result.reasonAr).toBe("لا يتضمن نص السجل كلمات من موضوع البحث");
   });
 
-  it("a post written by another account is not the account's post; a row that names no author is kept (it cannot be shown to be foreign)", () => {
+  it("a post written by another account is not the account's post; a row that names no author is HELD (it cannot be shown to be the account's own)", () => {
     expect(gate({ id: "1", text: "hello", author_username: "BillGates" }, ACCOUNT)).toMatchObject({ decision: "no_match", reasonAr: "المنشور ليس من الحساب المطلوب" });
-    expect(gate({ id: "2", text: "hello" }, ACCOUNT).decision).toBe("match");
+    expect(gate({ id: "2", text: "hello" }, ACCOUNT).decision).toBe("uncertain");
     expect(gate({ id: "3", text: "hello", author_username: "ElonMusk" }, ACCOUNT).decision).toBe("match");
     expect(gate({ id: "4", text: "hello", author_username: "@elonmusk" }, { channel: "https://x.com/elonmusk" }).decision).toBe("match");
   });
 
-  it("the author is read from the flat keys sources use and from an author object", () => {
+  it("the author is read from the flat keys the code and its fixtures already use, and from nothing else", () => {
     expect(postAuthorHandle({ screen_name: "Foo_1" })).toBe("foo_1");
-    expect(postAuthorHandle({ author: { userName: "Bar" } })).toBe("bar");
-    expect(postAuthorHandle({ user: { screen_name: "baz" } })).toBe("baz");
+    expect(postAuthorHandle({ authorUsername: "Hoops" })).toBe("hoops");
+    expect(postAuthorHandle({ author_username: "@Bar" })).toBe("bar");
+    expect(postAuthorHandle({ author: { userName: "Bar" } })).toBeNull();
+    expect(postAuthorHandle({ user: { screen_name: "baz" } })).toBeNull();
     expect(postAuthorHandle({ author: "Some Name With Spaces" })).toBeNull();
     expect(postAuthorHandle({})).toBeNull();
   });
@@ -421,5 +425,131 @@ describe("a plan is never shown at the price of another service", () => {
     for (const text of [X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR, X_ACCOUNT_EDIT_AR]) CUSTOMER_TEXT_RULES(text);
     for (const text of [X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR]) expect(text).toContain("لم يُحجز أي رصيد");
     for (const text of [X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR, X_ACCOUNT_EDIT_AR]) expect(text).not.toContain("حجز مؤقت");
+  });
+});
+
+describe("the live test of 2026-10-27 («هات ١٠ بوستات من حساب @elonmusk على أكس»): the plan reads as the account's posts, with no topic phrase", () => {
+  const LIVE_REQUEST = "هات ١٠ بوستات من حساب @elonmusk على أكس";
+
+  it("through the chat: the plan is the account (channel only), the understood line says the account's posts, and no «@elonmusk أكس» topic appears anywhere", async () => {
+    const c = await chat();
+    const r = await c.send(LIVE_REQUEST);
+    expect(r.outputType).toBe("propose_plan");
+    const quote = r.planQuote;
+    expect(quote.items[0].capabilitySlug).toBe("social-x-posts");
+    expect(quote.items[0].params).toEqual({ channel: "@elonmusk" });
+    expect(quote.items[0].unitPricePoints).toBe(0.11715);
+    expect(quote.quotedPoints).toBe(reserveForUnits(10, 0.11715));
+    expect(quote.understoodAr).toBe("فهمت أنك تريد أحدث ١٠ تغريدات من حساب @elonmusk على منصة إكس.");
+    for (const text of [quote.understoodAr, quote.summaryAr, r.contentAr]) {
+      expect(text).not.toContain("«");
+      expect(text).not.toMatch(/@elonmusk أكس|عن «@/);
+    }
+    CUSTOMER_TEXT_RULES(quote.understoodAr.replace("@elonmusk", ""));
+  });
+
+  it("the understood line of a mission: the account's posts for X, the topic phrase everywhere else (a topic search, other platforms) unchanged", () => {
+    const account = understandMission(LIVE_REQUEST);
+    expect(account.xAccount).toBe("@elonmusk");
+    expect(account.subject).toBeNull();
+    expect(understoodLineAr(account)).toBe("فهمت أنك تريد أحدث ١٠ تغريدات من حساب @elonmusk على منصة إكس.");
+    expect(understoodLineAr(understandMission("عايز ٤٠٠ منشور عن الذكاء الاصطناعي على منصة إكس"))).toContain("عن «الذكاء الاصطناعي»");
+    expect(understandMission("عايز ٤٠٠ منشور عن الذكاء الاصطناعي على منصة إكس").xAccount).toBeUndefined();
+    expect(understoodLineAr(understandMission("هات ١٠ منشورات من صفحة اليوم السابع على فيسبوك"))).not.toContain("حساب");
+  });
+
+  it("the account answered on the card without «@» is the account too (the payload of the account question)", async () => {
+    const c = await chat();
+    await c.send(FAILURE_1_WITHOUT_COMMENTS);
+    const r = await c.answer("social_x_account_required", "ما اسم حساب إكس أو رابطه؟", "SaudiMOH");
+    expect(r.outputType).toBe("propose_plan");
+    expect(r.planQuote.items[0].params.channel).toBe("@SaudiMOH");
+    expect(r.planQuote.understoodAr).toContain("من حساب @SaudiMOH");
+    expect(r.planQuote.understoodAr).not.toContain("«");
+  });
+
+  it("the plan editor's payload for this plan (limit, formats and the account field written as «channel») keeps it an account plan", () => {
+    const operations: any[] = [
+      { action: "set_limit", capabilitySlug: "social-x-posts", targetVolumeMax: 10 },
+      { action: "set_formats", formats: ["xlsx"] },
+      { action: "set_param", capabilitySlug: "social-x-posts", key: "channel", value: "@elonmusk" },
+    ];
+    const plan = applyPlanOperations({ summaryAr: "x", items: [{ capabilitySlug: "social-x-posts", params: { channel: "@elonmusk" }, targetVolumeMax: 10 } as any], outputFormats: ["xlsx"] } as any, operations);
+    expect(normalizeXAccountPlanItem(plan.items[0] as any)).toBeNull();
+    expect(plan.items[0].params).toEqual({ channel: "@elonmusk" });
+    expect(resolveSocialMode(plan.items[0].params)).toBe("channel");
+  });
+});
+
+describe("which rows of an account are held: the fields the code already reads, and nothing invented", () => {
+  const gate = (row: Record<string, any>, params: Record<string, any> = { channel: "@elonmusk" }) => evaluateResearchRowRelevance(row, { capabilitySlug: "social-x-posts", endpointId: "anyapi.x.search.posts", params } as any);
+  const own = { id: "1", text: "hello", authorUsername: "elonmusk", isReply: false, inReplyToId: "0" };
+
+  it("the provider's own spelling (the checked-in X post fixture: authorUsername, isReply false, inReplyToId «0») is the account's post and is delivered", () => {
+    expect(gate(own).decision).toBe("match");
+    expect(gate({ ...own, authorUsername: "ELONMUSK" }).decision).toBe("match");
+  });
+
+  it("no readable author: held, with its own Arabic reason (never delivered, never charged)", () => {
+    for (const row of [{ id: "2", text: "x" }, { id: "3", text: "x", authorUsername: "" }, { id: "4", text: "x", author: { userName: "elonmusk" } }]) {
+      const result = gate(row);
+      expect(result.decision).toBe("uncertain");
+      expect(result.reasonAr).toContain("اسم الحساب الذي نشره");
+      expect(result.reasonAr).toContain("ولم يُحتسب");
+    }
+  });
+
+  it("a reply by any of the reply fields the code reads: held; «0», null and an empty target are not replies", () => {
+    for (const marker of [{ isReply: true }, { is_reply: true }, { isReply: "true" }, { inReplyToId: "1892345678901234567" }, { replyTo: "123" }, { inReplyTo: "123" }, { parentId: "5" }, { parent_id: "5" }]) {
+      expect(isReplyRow({ ...own, ...marker }), JSON.stringify(marker)).toBe(true);
+      expect(gate({ ...own, ...marker }).decision, JSON.stringify(marker)).toBe("uncertain");
+    }
+    for (const marker of [{ isReply: false }, { inReplyToId: "0" }, { inReplyToId: null }, { inReplyToId: "" }, { inReplyToId: "null" }]) {
+      expect(isReplyRow({ ...own, ...marker }), JSON.stringify(marker)).toBe(false);
+    }
+  });
+
+  it("another author is excluded, whatever else the row says, and that includes a repost that shows its original author", () => {
+    expect(gate({ ...own, authorUsername: "BillGates" }).decision).toBe("no_match");
+    expect(gate({ ...own, authorUsername: "BillGates", text: "RT @BillGates: hello" }).decision).toBe("no_match");
+    expect(gate({ ...own, authorUsername: "BillGates", isReply: true }).decision).toBe("no_match");
+  });
+
+  it("no repost field is read: none exists in the code or the fixtures (read from the gate's source)", () => {
+    const source = readFileSync("src/lib/server/researchRelevanceGate.ts", "utf8");
+    expect(source).not.toMatch(/isRetweet|is_retweet|retweeted_status|isRepost|is_repost|quoted_status/);
+  });
+});
+
+describe("an account job never asks the topic review (the request text of that review would be empty)", () => {
+  it("both review paths of the worker route are closed to an X account job (read from its source)", () => {
+    const source = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
+    expect(source).toContain("const xAccountJob = isXAccountRequest(spec.params || {});");
+    expect(source).toContain("&& !isPeopleJob && !xAccountJob &&");
+    expect(source).toContain("matchedForAdvice.length > 0 && !isChainJob && !xAccountJob");
+  });
+});
+
+describe("the sentence of an account job that ends with nothing delivered speaks of the account, never of a topic", () => {
+  it("received, held and the period are the job's totals, in Arabic-Indic digits, with the released hold in the house wording", () => {
+    const plain = xAccountZeroDeliveryAr({ received: 20, held: 20, dateDropped: 0 });
+    expect(plain).toBe("استلمنا ٢٠ سجلاً من الحساب المطلوب، لكن لم يتأكد لنا أن أيًّا منها منشور كتبه الحساب نفسه (أُحيل ٢٠ إلى المراجعة ولم يُحتسب)؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    const windowed = xAccountZeroDeliveryAr({ received: 20, held: 5, dateDropped: 12 });
+    expect(windowed).toContain("استُبعد منها ١٢ لأن تاريخها خارج الفترة");
+    expect(windowed).toContain("وبقي ٨ داخل الفترة");
+    expect(windowed).toContain("أُحيل ٥ إلى المراجعة");
+    expect(xAccountZeroDeliveryAr({ received: 3, held: 0, dateDropped: 0 })).not.toContain("أُحيل");
+    for (const text of [plain, windowed]) {
+      expect(text).not.toContain("موضوع طلبك");
+      expect(text).not.toMatch(/[A-Za-z0-9]/);
+      expect(text).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
+      CUSTOMER_TEXT_RULES(text);
+    }
+  });
+
+  it("the route uses it for an account job and keeps the topic wording for every other job (read from its source)", () => {
+    const source = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
+    expect(source).toContain("xAccountZeroDeliveryAr({ received: receivedShown, held: heldShown,");
+    expect(source).toContain("لم يتحقق في أيٍّ منها موضوع طلبك");
   });
 });
