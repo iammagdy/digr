@@ -102,6 +102,23 @@ export function recordPostReads(d: JobDiagnostic, reads: { read: number; sourceS
   return d;
 }
 
+/**
+ * The sentence of an X ACCOUNT job that ends with nothing delivered. The request names an account, not a topic, so it never says «موضوع طلبك»: what was not
+ * confirmed is that a record is a post written by the account itself. Counts are the job's totals; Arabic-Indic digits; nothing is charged.
+ */
+export function xAccountZeroDeliveryAr(input: { received: number; held: number; dateDropped: number }): string {
+  const received = toArabicDigits(count(input.received));
+  const held = count(input.held);
+  const dropped = count(input.dateDropped);
+  const heldText = held ? ` (أُحيل ${toArabicDigits(held)} إلى المراجعة ولم يُحتسب)` : "";
+  const unconfirmed = "لم يتأكد لنا أن أيًّا منها منشور كتبه الحساب نفسه";
+  const inside = Math.max(0, count(input.received) - dropped);
+  const part = dropped > 0
+    ? `استلمنا ${received} سجلاً من الحساب المطلوب، استُبعد منها ${toArabicDigits(dropped)} لأن تاريخها خارج الفترة التي حددتها أو بلا تاريخ نشر يمكن التحقق منه، وبقي ${toArabicDigits(inside)} داخل الفترة لكن ${unconfirmed}`
+    : `استلمنا ${received} سجلاً من الحساب المطلوب، لكن ${unconfirmed}`;
+  return `${part}${heldText}؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`;
+}
+
 /** The records held for review that a customer sentence says: the job's total over every page (never only the last page), and never fewer than the last page held. */
 export const heldToReport = (total: JobDiagnostic | null | undefined, lastPageHeld: number): number => Math.max(count(lastPageHeld), count(total?.rows?.held));
 
