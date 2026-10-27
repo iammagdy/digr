@@ -1,4 +1,3 @@
-import { createAdminClient } from "../supabase/server";
 import { DRIVER_STATUS_CACHE_MS, driverForcedToTab, driverModeFromTick, type DriverMode } from "../driverMode";
 
 /**
@@ -15,12 +14,22 @@ export async function recordDriverTick(admin: any, dispatched: number, nowMs: nu
   }
 }
 
+/** The read never waits longer than this: a slow database must not hold a chat turn, a quote or a page; the driver then simply looks off. */
+export const HEARTBEAT_READ_TIMEOUT_MS = 1_500;
+
 export async function readDriverLastTick(admin: any): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const { data } = await admin.from("driver_heartbeat").select("last_tick_at").eq("id", 1).maybeSingle();
-    return typeof data?.last_tick_at === "string" ? data.last_tick_at : null;
+    const read = (async () => {
+      const { data } = await admin.from("driver_heartbeat").select("last_tick_at").eq("id", 1).maybeSingle();
+      return typeof data?.last_tick_at === "string" ? data.last_tick_at : null;
+    })();
+    const limit = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), HEARTBEAT_READ_TIMEOUT_MS); });
+    return await Promise.race([read, limit]);
   } catch {
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -33,7 +42,7 @@ export async function liveDriverMode(admin?: any, nowMs: number = Date.now(), en
   if (cache && nowMs - cache.at >= 0 && nowMs - cache.at < DRIVER_STATUS_CACHE_MS) return cache.mode;
   let db = admin;
   if (!db) {
-    try { db = createAdminClient(); } catch { return "tab"; }
+    try { db = (await import("../supabase/server")).createAdminClient(); } catch { return "tab"; }
   }
   const mode = driverModeFromTick(await readDriverLastTick(db), nowMs, env);
   cache = { at: nowMs, mode };
