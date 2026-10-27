@@ -1,6 +1,6 @@
 "use client";
 
-import { pageChannelOfItem, socialFilterStepAr, socialSearchStepAr } from "@/lib/planMethodSteps";
+import { X_ACCOUNT_FILTER_STEP_AR, pageChannelOfItem, socialFilterStepAr, socialSearchStepAr, xAccountOfItem, xAccountReadStepAr } from "@/lib/planMethodSteps";
 import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
@@ -190,6 +190,8 @@ export default function PlanQuoteCard({
   const isVideoPlan = /video|videos|tiktok|youtube|reels/.test(capabilitySlug);
   // A plan read from a page (its link or name is the channel): the sentences say the posts come from that page, never a topic search.
   const pageChannelOfPlan = pageChannelOfItem(primaryItem);
+  // The posts of ONE X account («@handle»): the card names the account, never a topic.
+  const xAccountOfPlan = xAccountOfItem(primaryItem);
   const isSocialContentPlan = isVideoPlan || /post|posts|social|instagram|facebook|reddit|twitter/.test(capabilitySlug);
   const interpreted = extractInterpretedParameters(primaryItem?.params, quote.summaryAr, isPeoplePlan);
   const initialParam = extractParamDisplayString(primaryItem?.params, quote.summaryAr, isPeoplePlan);
@@ -201,10 +203,12 @@ export default function PlanQuoteCard({
   const countryShown = valueOrEmpty(interpreted.countryAr);
   const displayIndustry = isPeoplePlan
     ? interpreted.industryAr
-    : isSocialContentPlan
+    : xAccountOfPlan
+      ? xAccountOfPlan
+      : isSocialContentPlan
       ? (titleTopic || initialParam || "الموضوع المطلوب")
       : planActivityLabelAr(primaryItem?.params) || valueOrEmpty(industryDisplayLabelAr(interpreted.industryAr));
-  const scopeLabel = isPeoplePlan ? "نوع البحث:" : isSocialContentPlan ? "موضوع المحتوى:" : "النشاط / التخصص:";
+  const scopeLabel = isPeoplePlan ? "نوع البحث:" : xAccountOfPlan ? "الحساب:" : isSocialContentPlan ? "موضوع المحتوى:" : "النشاط / التخصص:";
   const [editParamVal, setEditParamVal] = useState(isSocialContentPlan ? displayIndustry : initialParam);
   const [editCountry, setEditCountry] = useState(countryShown);
   const [editIndustry, setEditIndustry] = useState(displayIndustry);
@@ -467,6 +471,8 @@ export default function PlanQuoteCard({
             <span className="text-ac font-bold">١.</span>
             <span>{isPeoplePlan
               ? `البحث عن صناع القرار والمهنيين${countryShown ? ` في ${countryShown}` : ""} ضمن المصادر المتاحة.`
+              : xAccountOfPlan
+                ? xAccountReadStepAr(xAccountOfPlan)
               : isSocialContentPlan
                 ? socialSearchStepAr({ isVideoPlan, trending: primaryItem?.params?.trending === true, displayIndustry, countryAr: countryShown, pageChannel: pageChannelOfPlan })
                 : (() => {
@@ -478,6 +484,8 @@ export default function PlanQuoteCard({
             <span className="text-ac font-bold">٢.</span>
             <span>{isPeoplePlan
               ? "تنظيم الأسماء والمسميات الوظيفية والبريد الإلكتروني المهني والهاتف المكتبي عند توافر كل حقل."
+              : xAccountOfPlan
+                ? X_ACCOUNT_FILTER_STEP_AR
               : isSocialContentPlan
                 ? socialFilterStepAr({ pageChannel: pageChannelOfPlan, displayIndustry })
                 : isCompanyPlan
@@ -549,7 +557,7 @@ export default function PlanQuoteCard({
             </div>}
           </div>
           <div>
-            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : isSocialContentPlan ? "موضوع المحتوى / الاستعلام" : "الكلمات المفتاحية / الاستعلام"}</label>
+            <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : xAccountOfPlan ? "اسم الحساب" : isSocialContentPlan ? "موضوع المحتوى / الاستعلام" : "الكلمات المفتاحية / الاستعلام"}</label>
             <input
               id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
               className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"

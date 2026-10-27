@@ -11,7 +11,7 @@ import { detectSocialIntent } from "../src/lib/socialTasks";
 import { X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR, UNSUPPORTED_PLATFORM_AR, unsupportedPlatformAnswerAr } from "../src/lib/socialDiscoveryCard";
 import { X_ACCOUNT_EDIT_AR, getSocialCapability, normalizeXAccountPlanItem, resolveSocialMode, socialPlanSummaryAr, xAccountNoteAr } from "../src/lib/socialSources";
 import { quoteScopeGaps } from "../src/lib/quoteScopeGaps";
-import { evaluateResearchRowRelevance, isXAccountRequest, postAuthorHandle } from "../src/lib/server/researchRelevanceGate";
+import { ACCOUNT_REPLY_REASON_AR, ACCOUNT_REPOST_REASON_AR, evaluateResearchRowRelevance, hasRtTextMark, isXAccountRequest, postAuthorHandle } from "../src/lib/server/researchRelevanceGate";
 import { emptyDiagnostic, heldToReport, mergeDiagnostic, recordRowGate, xAccountZeroDeliveryAr, zeroDeliveryEventAr } from "../src/lib/server/zeroDeliveryDiagnostic";
 import { summarizeActivityCounts, zeroDeliveryPageLineAr } from "../src/lib/activityCounts";
 import { reserveForUnits } from "../src/lib/recordPricing";
@@ -499,13 +499,14 @@ describe("which rows of an account are held: the fields the code already reads, 
     }
   });
 
-  it("a reply by any of the reply fields the code reads: held; «0», null and an empty target are not replies", () => {
-    for (const marker of [{ isReply: true }, { is_reply: true }, { isReply: "true" }, { inReplyToId: "1892345678901234567" }, { replyTo: "123" }, { inReplyTo: "123" }, { parentId: "5" }, { parent_id: "5" }]) {
+  it("a reply by any of the reply fields the code reads (a boolean or the real rows' text «True»): excluded with its own reason; «False», «0», null and an empty target are not replies", () => {
+    for (const marker of [{ isReply: true }, { is_reply: true }, { isReply: "true" }, { isReply: "True" }, { is_reply: "TRUE" }, { inReplyToId: "1892345678901234567" }, { replyTo: "123" }, { inReplyTo: "123" }, { parentId: "5" }, { parent_id: "5" }]) {
       expect(isReplyRow({ ...own, ...marker }), JSON.stringify(marker)).toBe(true);
-      expect(gate({ ...own, ...marker }).decision, JSON.stringify(marker)).toBe("uncertain");
+      expect(gate({ ...own, ...marker }), JSON.stringify(marker)).toMatchObject({ decision: "no_match", reasonAr: ACCOUNT_REPLY_REASON_AR });
     }
-    for (const marker of [{ isReply: false }, { inReplyToId: "0" }, { inReplyToId: null }, { inReplyToId: "" }, { inReplyToId: "null" }]) {
+    for (const marker of [{ isReply: false }, { isReply: "False" }, { isReply: "false" }, { isReply: "" }, { inReplyToId: "0" }, { inReplyToId: null }, { inReplyToId: "" }, { inReplyToId: "null" }]) {
       expect(isReplyRow({ ...own, ...marker }), JSON.stringify(marker)).toBe(false);
+      expect(gate({ ...own, ...marker }).decision, JSON.stringify(marker)).toBe("match");
     }
   });
 

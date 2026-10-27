@@ -11,6 +11,9 @@ export type RejectedReasonCode =
   | "no_text"
   | "well_wish"
   | "topic_not_in_text"
+  | "reply"
+  | "repost"
+  | "other_account"
   | "other_mismatch";
 
 export interface RejectedRowSampleEntry {
@@ -22,6 +25,10 @@ export interface RejectedRowSampleEntry {
 /** Stable code for the gate's Arabic reason, so rejections can be counted by cause. */
 export function rejectionReasonCode(reasonAr: string): RejectedReasonCode {
   const reason = String(reasonAr || "");
+  // The posts of an X account: a reply, a repost and another account's post each have their own cause (see the account gate's reasons).
+  if (/رد على منشور آخر/.test(reason)) return "reply";
+  if (/إعادة نشر/.test(reason)) return "repost";
+  if (/ليس من الحساب المطلوب/.test(reason)) return "other_account";
   if (/النطاق الجغرافي/.test(reason)) return "out_of_region";
   if (/دعاء أو مجاملة/.test(reason)) return "well_wish";
   if (/لا يتضمن السجل نصا|لا يتضمن السجل نصاً/.test(reason)) return "no_text";

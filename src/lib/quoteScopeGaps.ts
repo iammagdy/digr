@@ -1,4 +1,4 @@
-import { pageChannelOfItem, pageHandleOf } from "./planMethodSteps";
+import { pageChannelOfItem, pageHandleOf, xAccountOfItem } from "./planMethodSteps";
 import { isSocialCapabilitySlug, validateSocialParams } from "./socialSources";
 import { planCountLineAr } from "./planCounts";
 import { hasPeopleIdentityKey } from "./peopleSearchInput";
@@ -290,7 +290,11 @@ export function planScopeRows(
       "الموضوع المطلوب";
     // A page plan (its channel is the page's link or handle) shows the page, never the link as a topic.
     const pageOfPlan = pageChannelOfItem(primary);
-    if (pageOfPlan) {
+    const xAccountOfPlan = xAccountOfItem(primary);
+    if (xAccountOfPlan) {
+      // The posts of one X account: the account is the scope, never a topic.
+      chips.push({ label: "الحساب:", value: xAccountOfPlan });
+    } else if (pageOfPlan) {
       chips.push({ label: "الصفحة:", value: pageHandleOf(pageOfPlan) });
     } else {
       chips.push({

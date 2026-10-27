@@ -2,6 +2,8 @@
  * The methodology steps of a social plan card, as Arabic sentences. A plan read from a PAGE (a Page link or name: the plan's `channel` parameter) says the
  * posts are read from that page; a topic plan says the content is searched by the topic. Pure: no network, no provider name, no English.
  */
+import { xAccountHandle } from "./socialSources";
+
 export interface SocialSearchStepInput {
   /** The posts or videos of the plan (the noun of the sentence). */
   isVideoPlan: boolean;
@@ -51,3 +53,18 @@ export function pageHandleOf(channel: string): string {
   const handle = cleaned.split(/[/?#]/)[0].trim();
   return handle || channel.trim();
 }
+
+/**
+ * The X account a plan reads the posts of («@elonmusk»), or null. An X plan with a `channel` and no search text is the account's own timeline: the card says
+ * so (never «search content about @handle», never a topic).
+ */
+export function xAccountOfItem(item: { capabilitySlug?: string; params?: Record<string, any> } | null | undefined): string | null {
+  if (item?.capabilitySlug !== "social-x-posts") return null;
+  const params = item.params || {};
+  if (typeof params.query === "string" && params.query.trim()) return null;
+  const handle = xAccountHandle(params.channel);
+  return handle ? `@${handle}` : null;
+}
+
+export const xAccountReadStepAr = (handle: string): string => `قراءة أحدث منشورات الحساب ${handle}، ضمن الفترة المطلوبة إن وُجدت.`;
+export const X_ACCOUNT_FILTER_STEP_AR = "إبقاء المنشورات التي كتبها الحساب نفسه فقط، واستبعاد الردود وإعادات النشر وما كتبه غيره، دون تصفية بالموضوع.";
