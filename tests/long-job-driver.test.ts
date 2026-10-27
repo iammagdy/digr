@@ -286,13 +286,13 @@ describe("the driver route: who it drives and how much per call", () => {
     expect(json.started).toBeLessThanOrEqual(1);
   });
 
-  it("reports the configured driver mode, and runs the same whatever it is (the owner can verify before turning the mode on)", async () => {
+  it("reports whether the driver is live (the tick it just made), runs the same whatever it is, and a forced «tab» wins", async () => {
     feed(1);
     seedJob("a");
     delete process.env.LONG_JOB_DRIVER;
-    expect((await tick()).json.mode).toBe("tab");
-    process.env.LONG_JOB_DRIVER = "cron";
     expect((await tick()).json.mode).toBe("cron");
+    process.env.LONG_JOB_DRIVER = "tab";
+    expect((await tick()).json.mode).toBe("tab");
   });
 
   it("one call stays inside the platform limit: the dispatch timeout is below the 60 s function limit and above the worker's own 45 s deadline", () => {

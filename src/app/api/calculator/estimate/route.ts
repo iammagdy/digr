@@ -3,7 +3,7 @@ import { estimateMission, estimateSummaryAr, parseEstimateText, type EstimateInp
 import { PUBLIC_LIMITS_PER_MINUTE, RATE_LIMITED_MESSAGE_AR, clientKey, createRateLimiter } from "@/lib/server/publicRateLimit";
 import type { SocialPlatformId } from "@/lib/socialTasks";
 import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
-import { longJobDriverMode } from "@/lib/driverMode";
+import { liveDriverMode } from "@/lib/server/driverHeartbeat";
 import { missionDurationForPlan } from "@/lib/missionDuration";
 import { loadMeasuredTimings } from "@/lib/server/jobTimings";
 import { createAdminClient } from "@/lib/supabase/server";
@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
     try {
       const measured = await loadMeasuredTimings(createAdminClient());
       const records = result.fitsInOneJob ? result.volume : Math.max(1, result.maxVolumeInOneJob);
-      duration = missionDurationForPlan([{ capabilitySlug: result.slug, targetVolumeMax: records, params: {} }], longJobDriverMode(), measured);
+      duration = missionDurationForPlan([{ capabilitySlug: result.slug, targetVolumeMax: records, params: {} }], await liveDriverMode(), measured);
     } catch {
       duration = null;
     }
