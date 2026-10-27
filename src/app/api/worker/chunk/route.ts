@@ -920,10 +920,21 @@ export async function POST(req: NextRequest) {
           await adminClient.from("llm_usage").insert({
             user_id: userId, tokens_in: usage.inputTokens, tokens_out: usage.outputTokens,
             model: usage.model || (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
-            latency_ms: usage.latencyMs, reason: usage.failure ? `model_plan_review_failed:${usage.failure}` : "model_plan_review", cost_usd: Number((usage.costUsd ?? 0).toFixed(6)), created_at: new Date().toISOString(),
+            latency_ms: usage.latencyMs, reason: usage.failure ? `${usage.reason ?? "model_plan_review"}_failed:${usage.failure}` : (usage.reason ?? "model_plan_review"), cost_usd: Number((usage.costUsd ?? 0).toFixed(6)), created_at: new Date().toISOString(),
           });
         } catch (usageErr: any) {
           console.warn("[worker:model_plan_review_usage_log_failed]", usageErr?.message || "");
+        }
+      }
+    }
+
+    // What the model decided at the decision points of a mission (a source replaced, a stage stopped, the final review): one short Arabic line each, kept with the job for the customer's summary.
+    if (userId && Array.isArray(rawAdapterResult.missionNotes)) {
+      for (const note of rawAdapterResult.missionNotes.slice(0, 8)) {
+        try {
+          await adminClient.from("job_events").insert({ job_id: jobId, user_id: userId, message: JSON.stringify({ step: currentStep, stage: note.stage ?? null, kind: note.kind, textAr: note.textAr }), units: 0, event_type: "mission_note" });
+        } catch (noteErr: any) {
+          console.warn("[worker:mission_note_insert_warning]", noteErr?.message || "");
         }
       }
     }

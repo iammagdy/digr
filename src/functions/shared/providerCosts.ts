@@ -30,6 +30,8 @@ export interface ProviderCostInput {
   /** TREG: calls (1); LLM: total tokens */
   units: number;
   costUsd: number;
+  /** The cost is the catalog price (TREG reported no charge): the row says so. */
+  isEstimate?: boolean;
 }
 
 /**
@@ -45,7 +47,7 @@ export async function logProviderCost(tables: TablesDB | any, input: ProviderCos
         provider: input.provider,
         cost_usd: Number(input.costUsd.toFixed(6)),
         units: input.units,
-        is_estimate: false,
+        is_estimate: input.isEstimate === true,
         created_at: new Date().toISOString(),
       });
       return;

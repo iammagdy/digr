@@ -554,7 +554,7 @@ export async function executeMultiStepJob(
 
       collectedRows.push(...pageResult.items);
       totalCostMicro += pageResult.costMicro || 0;
-      if (pageResult.costMicro) await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: pageResult.costMicro / 1_000_000 });
+      if (pageResult.costMicro) await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: pageResult.costMicro / 1_000_000, isEstimate: (pageResult as any).costIsEstimate === true });
       await emitProgress(`تم جمع ${countPlainAr(collectedRows.length, "records")} من أصل ${toArabicDigits(targetVolumeMax)}...`, collectedRows.length, "progress");
 
       if (!pageResult.nextCursor) break;
@@ -790,7 +790,7 @@ export async function executeMultiStepJob(
         if (callResult.costMicro) {
           totalCostMicro += callResult.costMicro;
           await recordProviderCallSpend(callResult.costMicro, tables);
-          await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: callResult.costMicro / 1_000_000 });
+          await logProviderCost(tables, { jobId, provider: "treg", units: 1, costUsd: callResult.costMicro / 1_000_000, isEstimate: (callResult as any).costIsEstimate === true });
         }
 
         if (!callResult.ok) {

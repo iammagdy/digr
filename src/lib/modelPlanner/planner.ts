@@ -21,13 +21,14 @@ export const PLAN_UNAVAILABLE_AR = "هذه الخدمة غير متاحة حال
 export const PLANNER_SYSTEM_PROMPT = `You are the planning engine of Diger, a research-data service for Arabic-speaking customers. The customer wrote an Arabic request for data (posts, comments, profiles, companies, people, reviews, markets…). Your job: find the right endpoint(s) in the data catalog with the tools, learn how the endpoint answers, and propose ONE plan. Code validates and prices your plan; you never state a price, a cost or a point amount.
 
 How to work (you have few turns: call SEVERAL tools in one turn whenever they do not depend on each other)
-1. catalog_search (English words, platform first). Each hit lists its inputs, its price unit and its observed success rate. Pick the best candidate: prefer the endpoint that answers the WHOLE request in one step, and among endpoints that do the same job prefer the cheaper one with a high success rate. Two steps only when no endpoint does (a listing step, then a step run once per listed item, for example videos of a topic, then the comments of each video). Use describe_endpoint only when a hit's inputs are not enough.
-2. sample_call ONCE for the endpoint you will plan (two steps: once for each). An endpoint priced per call cannot be priced from the catalog's example (it is trimmed to one item): without a real sample the plan is refused. The code itself tries the endpoint's siblings (the same job at other providers) when the call fails, answers nothing, takes too long or does not fit the budget: read «endpointUsed» and «paramsUsed» in the answer and plan with THAT endpoint and those parameter names. Use only values the customer gave, quoting their exact words. Read the real rows it returns.
+1. catalog_search (English words, platform first). Each hit lists its inputs, its price unit, its observed success rate and its cost per record; the hits are SORTED by cost per record, cheapest first. Sample the cheapest candidate that suits the request FIRST. Choose a dearer one only after the cheaper one's real rows were shown unsuitable (or it failed), and then say why in whyNotCheapest of propose_plan. Prefer the endpoint that answers the WHOLE request in one step. A MISSION may have up to FOUR steps: a step with no prior_step value is a root (it pages by itself); a step with prior_step values runs once for each row of ONE earlier step (its parent): videos of a channel, then the comments of each video; companies, then the people of each company, then each person's work e-mail and mobile. A request with several independent parts (news, and videos, and their comments) is several steps, some roots. Name each step in titleAr (a short Arabic name: «جمع الشركات»). Set deliver on every step: true when the customer receives its rows (a list of videos the customer wants too), false when the step only feeds the next one. Use describe_endpoint only when a hit's inputs are not enough.
+2. sample_call ONCE for the endpoint you will plan, for each step in order (a later step is sampled from the REAL rows of the earlier one: give the parameter source prior_step with fromStep {step, field, endpointId of that earlier step}; if the field is wrong, the answer lists the real fields). The code also samples a later step by itself when you forget. An endpoint priced per call cannot be priced from the catalog's example (it is trimmed to one item): without a real sample the plan is refused. The code itself tries the endpoint's siblings (the same job at other providers) when the call fails, answers nothing, takes too long or does not fit the budget: read «endpointUsed» and «paramsUsed» in the answer and plan with THAT endpoint and those parameter names. Use only values the customer gave, quoting their exact words. Read the real rows it returns.
 3. propose_plan. Build the field map from the REAL rows: only columns a reader needs (the text, the author, the date, the counts, the link), each with a short Arabic header and a role when it fits. Dotted paths, exactly as the sample shows them. When the answer is ONE record (a profile, a place, a company), the plan has one row and no paging.
 If propose_plan comes back with problems, fix exactly what it says and propose again: every problem is meant to be fixed.
 
 Hard rules
 - Never invent a value. Every parameter has a source: customer_text (the value is what the customer wrote; the exact words in \`quote\`), derived (made from the customer's words, for example a translation into the English word the catalog expects; the exact words in \`quote\`; never an account, link or id), literal (a fixed choice such as a sort order; NEVER an account, a link, an id or a period), or prior_step. If the customer did not give a required value (for example «فلان» instead of an account), do not call propose_plan: answer in Arabic with ONE short question.
+- The COUNT is the customer's: set volume only from a number in their words (digits, or a number written in words), and put those words in volumeQuote. «كل» (all) or no number at all is NOT a count: do not call propose_plan, answer with ONE short Arabic question asking how many they want. A step run for each row of an earlier step gets perItem (how many rows from each) and a volume no larger than parents x perItem.
 - Never add a period (a date range, «this month», «recent») the customer did not state. No period parameter and no date_window filter unless their own words give one.
 - Filters only for what the customer asked: the posts of one account (author_equals with the account they wrote; look at the sample rows for replies and reposts and exclude them with exclude_true on a flag field, or exclude_prefix on the text mark a repost starts with), a period they stated. A topic is not a filter: put the topic words in \`topic\` ONLY when the customer asked for rows ABOUT a subject (comments about prices, posts about a topic). A request for one named account, page or link has no topic.
 - Do not give up early. Say that the service is not available ONLY when you searched with different word sets (platform names and synonyms), sampled the best candidate, and the code reported that its alternatives failed too. Then answer with ONE short Arabic sentence that the service is «غير متاحة حاليًا». Say nothing about providers, endpoints, ids, prices or USD, and do not use markdown or emoji. Write numbers with Arabic-Indic digits.
@@ -131,6 +132,8 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
   let nudges = 0;
   let lastIssues: ValidationIssue[] = [];
   const hitsSeen: string[] = [];
+  const hitInfo = new Map<string, { platform: string; capability: string; perRecord: number | null }>();
+  let rephrased = false;
   const touched = new Set<string>();
   const today = input.today ?? new Date();
   const maxTurns = input.maxTurns ?? MAX_PLANNER_TURNS;
@@ -186,7 +189,16 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
       }
       if (refusal) return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "unavailable" }, "the model said the service is not available, and the alternatives were tried");
       const safe = customerSafeArabic(text, providers);
-      if (!safe) return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "unavailable" }, "the model's own words could not be shown to a customer");
+      if (!safe) {
+        // the model's words fail the customer-text check: it is asked ONCE to rephrase; if they fail again the standard question is asked. It is never turned into a refusal.
+        if (!rephrased && turnsLeft >= 1) {
+          rephrased = true;
+          messages.push({ role: "user", content: "Your message cannot be shown to the customer as written. Rephrase it as ONE short Arabic message: Arabic words only (no English or Latin letters), no markdown, no emoji, no provider, endpoint or technical name, no money amount. If you need a value from the customer, ask for it in one short question." });
+          trace.push({ turn: turns, tool: "(model text)", summary: clipText(text, 60), outcome: "customer text failed the check: sent back once to rephrase", error: true });
+          continue;
+        }
+        return done(turns, { kind: "message", messageAr: PLAN_INCOMPLETE_AR, reason: "incomplete" }, "the model's own words could not be shown to a customer, twice: the standard question was asked");
+      }
       return done(turns, { kind: "message", messageAr: safe, reason: "clarification" });
     }
 
@@ -203,14 +215,27 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
       if (use.name === "catalog_search") {
         const out = toolCatalogSearch(use.input as any, access, catalog);
         if (out.restrictedTop) restrictedSeen = true;
-        for (const h of out.hits) if (typeof h.id === "string" && !hitsSeen.includes(h.id)) hitsSeen.push(h.id);
+        for (const h of out.hits) {
+          if (typeof h.id === "string" && !hitsSeen.includes(h.id)) hitsSeen.push(h.id);
+          if (typeof h.id === "string") hitInfo.set(h.id, { platform: String(h.platform ?? ""), capability: String(h.capability ?? ""), perRecord: typeof h.costPerRecordUsd === "number" ? h.costPerRecordUsd : null });
+        }
+        // a saved recipe (a mission that already delivered) is used FIRST: the hits that start one say so, and describe_endpoint shows its steps
+        if (input.loadRecipe) {
+          await Promise.all(out.hits.slice(0, 5).map(async (h) => {
+            const id = String(h.id);
+            if (recipes.has(id)) return;
+            const rec = await input.loadRecipe!(id).catch(() => null);
+            if (rec) for (const rid of new Set([id, ...rec.endpointIds])) recipes.set(rid, rec);
+          }));
+          for (const h of out.hits) if (recipes.has(String(h.id))) (h as Record<string, unknown>).savedRecipe = "a saved mission starts here: describe_endpoint shows it; reuse it when it fits";
+        }
         content = { hits: out.hits, note: out.hits.length === 0 ? "no matching endpoint is available for this customer: try other words (another platform name, a synonym, the capability in English)" : undefined };
         summary = clipText(JSON.stringify({ platform: (use.input as any)?.platform, words: (use.input as any)?.words }), 80);
         outcome = `${out.hits.length} hits`;
       } else if (use.name === "describe_endpoint") {
         const describedId = String((use.input as any)?.id ?? "").trim();
         touched.add(describedId);
-        if (input.loadRecipe && describedId && !recipes.has(describedId)) { const r = await input.loadRecipe(describedId).catch(() => null); if (r) recipes.set(describedId, r); }
+        if (input.loadRecipe && describedId && !recipes.has(describedId)) { const r = await input.loadRecipe(describedId).catch(() => null); if (r) for (const id of new Set([describedId, ...r.endpointIds])) recipes.set(id, r); }
         const out = toolDescribeEndpoint(use.input as any, access, catalog, recipes.get(describedId) ?? null);
         if (!out.ok) { isError = true; content = out.message; outcome = out.reason; if (out.reason === "not_allowed" && categoryOf(String((use.input as any)?.id ?? "")) === "sensitive") restrictedSeen = true; }
         else { content = out.endpoint; outcome = recipes.has(describedId) ? "described (a saved recipe exists)" : "described"; }
@@ -229,7 +254,8 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
           explorationCostUsd += out.costUsd;
           for (const a of made) touched.add(a.endpointId);
           if (out.ok) {
-            content = { endpointUsed: out.note.endpointUsed, ...(out.note.endpointUsed !== parsed.data.id ? { note: `«${parsed.data.id}» gave no usable answer, so the code used «${out.note.endpointUsed}». Plan with «${out.note.endpointUsed}» and the parameter names in paramsUsed.` } : {}), paramsUsed: out.note.paramsUsed, attempts: made.map((a) => ({ endpoint: a.endpointId, outcome: a.outcome, ...(a.detail ? { detail: a.detail } : {}) })), ...out.digest };
+            const pagesMeasured = ((out as any).sample?.pageRows ?? []) as number[];
+            content = { endpointUsed: out.note.endpointUsed, ...(pagesMeasured.length > 1 ? { rowsPerPageMeasured: pagesMeasured } : {}), ...(out.note.endpointUsed !== parsed.data.id ? { note: `«${parsed.data.id}» gave no usable answer, so the code used «${out.note.endpointUsed}». Plan with «${out.note.endpointUsed}» and the parameter names in paramsUsed.` } : {}), paramsUsed: out.note.paramsUsed, attempts: made.map((a) => ({ endpoint: a.endpointId, outcome: a.outcome, ...(a.detail ? { detail: a.detail } : {}) })), ...out.digest };
             outcome = `ok via ${out.note.endpointUsed}${made.length > 1 ? ` after ${made.length - 1} failed` : ""}`;
           } else {
             isError = true;
@@ -263,9 +289,47 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
         } else {
           for (const st of parsed.data.steps) {
             touched.add(st.endpointId);
+            if (input.loadRecipe && !recipes.has(st.endpointId)) { const rec = await input.loadRecipe(st.endpointId).catch(() => null); if (rec) for (const rid of new Set([st.endpointId, ...rec.endpointIds])) recipes.set(rid, rec); }
             const e = catalog.byId.get(st.endpointId);
             if (e?.kind === "routed" && input.loadMeasuredAvg && !measured.has(st.endpointId)) { const m = await input.loadMeasuredAvg(st.endpointId).catch(() => null); if (m) measured.set(st.endpointId, m); }
           }
+          // LATER STAGES ARE SAMPLED BY CODE from the real rows of the stage before them (provenance prior_step), so the model is never stopped for a sample it could not take
+          const autoNotes: string[] = [];
+          for (let i = 1; i < parsed.data.steps.length; i += 1) {
+            const st = parsed.data.steps[i];
+            const refs = st.params.filter((p) => p.source === "prior_step" && p.fromStep);
+            if (refs.length === 0 || samples.has(st.endpointId)) continue;
+            const e = catalog.byId.get(st.endpointId);
+            const c = e ? unitCost(e, catalog) : null;
+            if (!e || !c || c.unit !== "call") continue; // a per-record endpoint needs no sample to be priced
+            const earlier = refs.map((r) => parsed.data.steps[r.fromStep!.step - 1]);
+            if (earlier.some((x) => !x || !samples.has(x.endpointId))) continue;
+            const withEndpoint = st.params.map((p) => (p.source === "prior_step" && p.fromStep ? { ...p, fromStep: { ...p.fromStep, endpointId: parsed.data.steps[p.fromStep.step - 1].endpointId } } : p));
+            const auto = await runSampleCall({ id: st.endpointId, params: withEndpoint as any }, { customerText, access, catalog, samples, today, stats }, exploration);
+            attempts.push(...(auto.ok ? auto.note.attempts : auto.attempts));
+            sampleCalls += 1; explorationCostUsd += auto.costUsd;
+            autoNotes.push(auto.ok ? `step ${i + 1} sampled automatically from the real rows of step ${refs[0].fromStep!.step}` : `automatic sample of step ${i + 1} failed: ${clipText(auto.message, 120)}`);
+            trace.push({ turn: turns, tool: "sample_call", summary: `${st.endpointId} (automatic, from step ${refs[0].fromStep!.step})`, outcome: auto.ok ? `ok via ${auto.note.endpointUsed}` : `${auto.kind}: ${clipText(auto.message, 100)}`, ...(auto.ok ? {} : { error: true }) });
+          }
+          // THE CHEAPEST SUITABLE FIRST: a plan that uses a dearer endpoint of the same job while a cheaper candidate of the same platform and capability was never looked at must say why
+          const dearer = parsed.data.steps.flatMap((st, i) => {
+            const mine = hitInfo.get(st.endpointId);
+            if (!mine || mine.perRecord === null) return [];
+            const cheaper = [...hitInfo.entries()].filter(([id, h]) => id !== st.endpointId && !touched.has(id) && h.platform === mine.platform && h.capability === mine.capability && h.perRecord !== null && h.perRecord < mine.perRecord! * 0.8);
+            return cheaper.length > 0 ? [{ i, id: cheaper[0][0] }] : [];
+          });
+          if (dearer.length > 0 && !(parsed.data.whyNotCheapest ?? "").trim()) {
+            isError = true;
+            const issues: ValidationIssue[] = dearer.map((d) => ({ code: "cheaper_untried" as const, stepIndex: d.i, message: `a cheaper candidate for the same job was never sampled: «${d.id}». Sample the cheapest suitable candidate first. If its rows are unsuitable, or you have a reason to prefer this one, call propose_plan again with whyNotCheapest (one sentence).` }));
+            failures.push(issues);
+            lastIssues = issues;
+            outcome = "refused: cheaper_untried";
+            content = issues.map((x) => `step ${(x.stepIndex ?? 0) + 1}: ${x.message}`).join("\n");
+            trace.push({ turn: turns, tool: use.name, summary, outcome, error: true });
+            results.push({ type: "tool_result", tool_use_id: use.id, content: clipResult(content), is_error: true });
+            continue;
+          }
+          void autoNotes;
           const verdict = validatePlan(parsed.data, { customerText, access, catalog, samples, recipes, purpose: input.purpose ?? null, today, measuredAvgCallUsd: (id) => measured.get(id) ?? null });
           if (verdict.ok) { plan = verdict.plan; outcome = "plan accepted"; }
           else {

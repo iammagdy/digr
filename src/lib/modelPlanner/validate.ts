@@ -10,21 +10,23 @@ import { MIN_PURPOSE_CHARS } from "../server/sensitiveAccess";
 import { digestFromCatalogExample, type ShapeDigest } from "./digest";
 import { applyPlanToRows, columnsOfMap, readField, readDateIso } from "./fieldMap";
 import { maskText } from "../server/rawCapture";
-import { MAX_PLAN_STAGES, SAMPLE_ROWS_ON_CARD } from "./constants";
+import { DEFAULT_HOLD_CEILING_POINTS, MANAGER_BUDGET_FLOOR_USD, MANAGER_BUDGET_SHARE, MAX_PLAN_STAGES, RESERVE_MARGIN, SAMPLE_ROWS_ON_CARD } from "./constants";
+import { reserveForUnits } from "../recordPricing";
+import { safeStageTitleAr } from "./customerSafe";
 import { countryOfRequest, countryRowGate, type RequestCountry } from "./countryGate";
-import { callEstimateUsd, pricePlan, priceStep, unitCost, type CallCost, type PlanPrice, type StepMeasure, type StepPrice } from "./pricing";
+import { callEstimateUsd, pricePlan, priceMission, priceStep, rowsPerParentOf, unitCost, type CallCost, type MissionPrice, type PlanPrice, type StepMeasure, type StepPrice } from "./pricing";
 import { MAX_RUNTIME_ALTERNATES } from "./constants";
 import { mapParamsToSibling, rankSiblings } from "./siblings";
 import { readStepRows } from "./reader";
-import type { RecipeRecord } from "./recipes";
-import type { PlanParam, PlanStep, ProposePlanInput, StepFacts, StoredModelPlan, ValidationIssue } from "./types";
+import { recipeMeasureFor, type RecipeRecord } from "./recipes";
+import type { PlanParam, PlanStep, ProposePlanInput, StepFacts, StoredModelPlan, StoredStage, ValidationIssue } from "./types";
 import { checkParamValue, isWindowParamName, resolvedParamValue } from "./paramRules";
 export { checkParamValue, isWindowParamName, resolvedParamValue } from "./paramRules";
 
 type Obj = Record<string, unknown>;
 
 /** What a sample call of this turn found out about an endpoint: the raw rows (as the shape reader read them) and their digest. */
-export interface StepSample { endpointId: string; rows: Obj[]; digest: ShapeDigest; costUsd: number; /** The raw answer of the sample call (memory only, never stored): the validator reads it again the way the worker will. */ body?: unknown }
+export interface StepSample { endpointId: string; rows: Obj[]; digest: ShapeDigest; costUsd: number; /** Rows each measured page returned (two pages when the answer had a next page and the budget allowed). */ pageRows?: number[]; /** The raw answer of the sample call (memory only, never stored): the validator reads it again the way the worker will. */ body?: unknown }
 
 export interface ValidateContext {
   /** Everything the customer wrote for this request (their own words only). */
@@ -110,7 +112,8 @@ function sampleRowsFor(step: PlanStep, ctx: ValidateContext, endpoint: CatalogEn
  * never a literal, a placeholder is never a value, a period is never set without the customer stating one, and the type, the allowed values and the range are the catalog's.
  * `priorStep` is how a value «from a prior step» is checked (only a step 2 may use one).
  */
-export function checkParams(params: ReadonlyArray<PlanParam>, endpoint: CatalogEndpoint, ctx: Pick<ValidateContext, "customerText" | "today">, at: { stepIndex: number }, issues: ValidationIssue[], priorStep?: { columns: ReadonlyArray<{ field: string }> } | null): Map<string, PlanParam> {
+export type PriorStepLookup = (stepNumber: number) => { columns: ReadonlyArray<{ field: string }> } | null;
+export function checkParams(params: ReadonlyArray<PlanParam>, endpoint: CatalogEndpoint, ctx: Pick<ValidateContext, "customerText" | "today">, at: { stepIndex: number }, issues: ValidationIssue[], priorStep?: { columns: ReadonlyArray<{ field: string }> } | PriorStepLookup | null): Map<string, PlanParam> {
   const inputsByName = new Map(endpoint.inputs.map((i) => [i.name, i]));
   const given = new Map<string, PlanParam>();
   for (const p of params) {
@@ -119,8 +122,13 @@ export function checkParams(params: ReadonlyArray<PlanParam>, endpoint: CatalogE
     if (!input) { issues.push(issue("unknown_param", `endpoint «${endpoint.id}» has no parameter «${p.name}». Its parameters: ${[...inputsByName.keys()].slice(0, 25).join(", ")}`, pAt)); continue; }
     given.set(p.name, p);
     if (p.source === "prior_step") {
-      if (!priorStep || !p.fromStep || p.fromStep.step !== 1) issues.push(issue("bad_step_reference", "a value from a prior step is allowed only in step 2 and must say which field of step 1's rows it comes from (fromStep: {step: 1, field})", pAt));
-      else if (!priorStep.columns.some((c) => c.field === p.fromStep!.field)) issues.push(issue("bad_step_reference", `step 1 has no column with field «${p.fromStep.field}»: add it to step 1's field map`, pAt));
+      const lookup: PriorStepLookup | null = !priorStep ? null : typeof priorStep === "function" ? priorStep : (n) => (n === 1 ? priorStep : null);
+      if (!lookup || !p.fromStep) issues.push(issue("bad_step_reference", "a value from a prior step is allowed only in a later step and must say which field of which earlier step's rows it comes from (fromStep: {step, field})", pAt));
+      else {
+        const earlier = lookup(p.fromStep.step);
+        if (!earlier) issues.push(issue("bad_step_reference", `step ${p.fromStep.step} is not an earlier step of this plan: a step takes values only from a step before it`, pAt));
+        else if (!earlier.columns.some((c) => c.field === p.fromStep!.field)) issues.push(issue("bad_step_reference", `step ${p.fromStep.step} has no column with field «${p.fromStep.field}». Its columns' fields: ${earlier.columns.map((c) => c.field).join(", ")}. Add the field to that step's field map (the real fields are in its sample), or use one of these`, pAt));
+      }
       continue;
     }
     const value = resolvedParamValue(p);
@@ -173,7 +181,7 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
 
   // ---- parameters
   const inputsByName = new Map(endpoint.inputs.map((i) => [i.name, i]));
-  const given = checkParams(step.params, endpoint, ctx, at, issues, index === 1 ? { columns: plan.steps[0].fieldMap.columns } : null);
+  const given = checkParams(step.params, endpoint, ctx, at, issues, index >= 1 ? (n) => (n >= 1 && n <= index ? { columns: plan.steps[n - 1].fieldMap.columns } : null) : null);
   const managed = new Set([...(step.fieldMap.pagination.param ? [step.fieldMap.pagination.param] : []), ...(step.fieldMap.pagination.limitParam ? [step.fieldMap.pagination.limitParam] : [])]);
   for (const input of endpoint.inputs) {
     if (input.required && !given.has(input.name) && !managed.has(input.name)) issues.push(issue("missing_required", `endpoint «${step.endpointId}» needs the parameter «${input.name}»${input.type ? ` (${input.type})` : ""}. If the customer did not provide it, end with ONE short Arabic message asking for it; never invent it.`, { ...at, param: input.name }));
@@ -203,8 +211,7 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
   const recipeCovers = Boolean(recipe) && evidence.source !== "sample" && step.fieldMap.columns.every((c) => recipe!.knownFields.includes(c.field)) && step.filters.every((f) => recipe!.knownFields.includes(f.field));
   if (recipeCovers) {
     // a saved recipe already proved these fields on real rows: no sample call is needed, and what it measured prices the step
-    const idx = Math.min(index, Math.max(0, recipe!.measured.length - 1));
-    const m = recipe!.measured[idx];
+    const m = recipeMeasureFor(recipe!, step.endpointId, index);
     const price = priceStep(callCost, { rowsPerCall: m?.rowsPerCall ?? 1, passRate: m?.passRate ?? 1, source: "recipe" });
     return { step, endpoint, category, callCost, price, callEstimateUsd: callEstimateUsd(callCost) };
   }
@@ -245,11 +252,18 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
       issues.push(issue("zero_pass_rate", `none of the ${evidence.rows.length} sample rows pass your filters and field map (${JSON.stringify(applied.dropped)}).${why} Adjust them, or end with a short Arabic message saying the data was not found.`, at));
       return null;
     }
-    measure = { rowsPerCall: evidence.rows.length, passRate: applied.records.length / evidence.rows.length, source: "sample" };
+    // rows RETURNED per call, measured on every page the sample took: with two pages the SMALLER one, rounded down to a step of five from ten rows, so the same request gets the same price
+    const pages = (ctx.samples.get(step.endpointId)?.pageRows ?? []).filter((n) => n > 0);
+    const rowsPerCall = pages.length >= 2 ? stableRows(Math.min(...pages)) : evidence.rows.length;
+    measure = { rowsPerCall, passRate: applied.records.length / evidence.rows.length, source: "sample" };
   } else if (callCost.unit === "record") {
     measure = { rowsPerCall: 1, passRate: 1, source: "catalog_unit" };
   } else if (category === "sensitive") {
     measure = { rowsPerCall: 1, passRate: 1, source: "lookup" };
+  } else if (index > 0 && step.params.some((p) => p.source === "prior_step")) {
+    // A LATER stage is sampled by code from the real rows of the stage before it (planner.autoSampleLaterStages). When that could not be done (no budget, the earlier stage returned
+    // nothing to read), the stage is priced as ONE row per call: the dearest honest reading, never a guess in the customer's favour. It is never a reason to stop the plan.
+    measure = { rowsPerCall: 1, passRate: 1, source: "assumed_one_per_call" };
   } else {
     issues.push(issue("needs_real_sample", `«${step.endpointId}» is priced per call, and the catalog's example answer is trimmed to one list item, so it cannot say how many rows a call returns: it cannot set a price. Call sample_call for this endpoint once (a tiny real check, within the exploration budget), then propose the plan again. If sample_call is refused for budget, end with ONE short Arabic message that this cannot be offered right now.`, at));
     return null;
@@ -257,6 +271,16 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
   const price = priceStep(callCost, measure);
   return { step, endpoint, category, callCost, price, callEstimateUsd: callEstimateUsd(callCost) };
 }
+
+const NUMBER_WORDS = /(?:^|[^\u0600-\u06FF])(?:واحد|واحدة|اتنين|اثنين|اثنان|تلات|ثلاث|ثلاثة|تلاتة|اربع|أربع|اربعة|أربعة|خمس|خمسة|ست|ستة|سبع|سبعة|تمان|ثمان|ثمانية|تمانية|تسع|تسعة|عشر|عشرة|عشرين|ثلاثين|تلاتين|اربعين|أربعين|خمسين|ستين|سبعين|ثمانين|تمانين|تسعين|مية|مائة|ميتين|مئتين|مائتين|ألف|الف|ألفين|الفين)(?![\u0600-\u06FF])/u;
+/** True when the customer's own words give a count: a digit (Arabic-Indic included) or a number written in words. «كل» (all) is not a count. */
+export function countStated(customerText: string): boolean {
+  const text = foldDigits(String(customerText ?? ""));
+  return /\d/.test(text) || NUMBER_WORDS.test(String(customerText ?? ""));
+}
+
+/** A measured rows-per-call that does not wobble with one page more or less: from ten rows, rounded down to a multiple of five. */
+export const stableRows = (n: number): number => (n >= 10 ? Math.floor(n / 5) * 5 : Math.max(1, Math.floor(n)));
 
 const LIMIT_NAMES = ["limit", "count", "page_size", "per_page", "size", "num", "max_results", "maxItems", "max_items", "n", "Count", "pageSize", "perPage"];
 
@@ -332,10 +356,22 @@ export function safeSummaryAr(summary: string, volume: number, customerText: str
 export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): ValidationResult {
   const issues: ValidationIssue[] = [];
   if (input.steps.length > MAX_PLAN_STAGES) return { ok: false, issues: [issue("too_many_stages", `a plan has at most ${MAX_PLAN_STAGES} steps`)] };
-  if (input.steps.length === 2) {
-    if (!input.steps[1].params.some((p) => p.source === "prior_step")) issues.push(issue("bad_step_reference", "step 2 must take a parameter from step 1's rows (source prior_step), otherwise it is not a second step", { stepIndex: 1 }));
-    if (input.steps[0].params.some((p) => p.source === "prior_step")) issues.push(issue("bad_step_reference", "step 1 cannot depend on a prior step", { stepIndex: 0 }));
-  }
+  // The shape of the mission: a step with no prior_step value is a ROOT; a step with prior_step values runs once for each row of ONE earlier step (its parent).
+  const parents: Array<number | null> = input.steps.map(() => null);
+  input.steps.forEach((s, i) => {
+    const refs = [...new Set(s.params.filter((p) => p.source === "prior_step" && p.fromStep).map((p) => p.fromStep!.step))];
+    if (i === 0 && s.params.some((p) => p.source === "prior_step")) issues.push(issue("bad_step_reference", "step 1 cannot depend on a prior step", { stepIndex: 0 }));
+    else if (refs.some((r) => r > i || r < 1)) issues.push(issue("bad_step_reference", `a step takes values only from a step before it (step ${i + 1} cannot read step ${refs.filter((r) => r > i || r < 1).join(", ")})`, { stepIndex: i }));
+    else if (refs.length > 0) {
+      // the step runs once per row of its PARENT (the latest step it reads); every other step it reads must be an ancestor of that parent (a contact is looked up from the person AND the person's company)
+      const parent = Math.max(...refs) - 1;
+      const chain = new Set<number>();
+      for (let a: number | null = parents[parent]; a !== null; a = parents[a]) chain.add(a);
+      const stray = refs.filter((r) => r - 1 !== parent && !chain.has(r - 1));
+      if (stray.length > 0) issues.push(issue("branch_reference", `step ${i + 1} reads step ${stray.join(", ")}, which is not on the same chain as step ${parent + 1} (its parent). A step may read its parent's rows and the rows of the steps its parent came from.`, { stepIndex: i }));
+      else parents[i] = parent;
+    }
+  });
   const validated: ValidatedStep[] = [];
   input.steps.forEach((step, i) => {
     if (step.volume < 1) issues.push(issue("volume", "volume must be at least 1", { stepIndex: i }));
@@ -358,9 +394,38 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   if (sensitive && !ctx.access.isAdmin && String(ctx.purpose ?? "").trim().length < MIN_PURPOSE_CHARS) {
     return { ok: false, issues: [issue("sensitive_purpose", "a purpose of use is required for this service before the plan can be approved")] };
   }
-  const second = validated[1];
-  const price = pricePlan(validated.map((v) => v.price), second ? (input.steps[1].perItem ?? Math.max(1, second.price.rowsPerCall * second.price.passRate)) : undefined);
+  // which steps' rows reach the customer: set by the model; not set = the last step of a plan of one or two steps, every step of a longer one
+  const delivers = input.steps.map((s, i) => (s.deliver !== undefined ? s.deliver : input.steps.length > 2 ? true : i === input.steps.length - 1));
+  if (!delivers.some(Boolean)) return { ok: false, issues: [issue("volume", "at least one step must deliver its rows to the customer (deliver: true)")] };
+  const legacy = input.steps.length <= 2 && input.steps.every((s) => s.deliver === undefined);
+  let price: PlanPrice | MissionPrice;
+  if (legacy) {
+    const second = validated[1];
+    price = pricePlan(validated.map((v) => v.price), second ? (input.steps[1].perItem ?? Math.max(1, second.price.rowsPerCall * second.price.passRate)) : undefined);
+  } else {
+    price = priceMission(validated.map((v, i) => ({ price: v.price, volume: input.steps[i].volume, parent: parents[i], perItem: input.steps[i].perItem, deliver: delivers[i] })));
+  }
+  const missionPrice = "effectiveVolumes" in price ? price : null;
   const last = validated[validated.length - 1];
+
+  // THE COUNT is the customer's: a branch's first step takes the count from the customer's own words (a number, or a number written in words). With none, the plan is not made: ONE question.
+  // Without a typed number no hold may pass DEFAULT_HOLD_CEILING_POINTS.
+  const counted = countStated(ctx.customerText);
+  const lookupOfOneAll = validated.every((v) => v.price.rowsPerCall <= 1) && input.steps.every((s) => s.fieldMap.pagination.kind === "single");
+  const rootBigger = input.steps.some((s, i) => parents[i] === null && s.volume > 1);
+  if (rootBigger && !counted && !lookupOfOneAll) {
+    return { ok: false, issues: [issue("volume_not_stated", "the customer gave no count (no number, or «كل»). Do not choose one: end with ONE short Arabic question asking how many they want.")] };
+  }
+  const deliveredVolume = missionPrice ? missionPrice.deliveredVolume : input.steps.reduce((n, s, i) => n + (delivers[i] ? s.volume : 0), 0);
+  const reservePoints = reserveForUnits(deliveredVolume, price.unitPricePoints);
+  if (!counted && reservePoints > DEFAULT_HOLD_CEILING_POINTS && !lookupOfOneAll) {
+    return { ok: false, issues: [issue("volume_hold_too_high", `with no number typed by the customer a hold may not pass ${DEFAULT_HOLD_CEILING_POINTS} points (this plan holds ${reservePoints}). Ask the customer for the count in ONE short Arabic question.`)] };
+  }
+  const storedStages: StoredStage[] = validated.map((v, i) => {
+    const perParent = parents[i] === null ? 0 : rowsPerParentOf({ price: v.price, parent: parents[i], perItem: input.steps[i].perItem });
+    return { parent: parents[i], deliver: delivers[i], effVolume: missionPrice ? missionPrice.effectiveVolumes[i] : input.steps[i].volume, perParent: Math.floor(perParent), titleAr: safeStageTitleAr(input.steps[i].titleAr, i, entityOfEndpoint(v.endpoint)) };
+  });
+  const managerBudgetUsd = Number(Math.max(MANAGER_BUDGET_FLOOR_USD, MANAGER_BUDGET_SHARE * (missionPrice ? missionPrice.totalCostUsd : price.costPerRecordUsd * deliveredVolume) * RESERVE_MARGIN).toFixed(6));
   const sampleSource = ctx.samples.get(last.step.endpointId);
   // the card shows rows of a REAL sample call only: never the catalog's documentation example (not this customer's data), never a sensitive endpoint's rows
   const sampleRaw = !sensitive && sampleSource && sampleSource.rows.length > 0 ? sampleSource.rows : [];
@@ -382,7 +447,7 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
       steps: validated,
       price,
       sensitive,
-      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })) },
+      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })), managerBudgetUsd, delivers, stages: storedStages },
       sampleRows,
       sampleColumns,
     },

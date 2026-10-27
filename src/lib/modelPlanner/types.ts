@@ -12,7 +12,13 @@ export const ParamSchema = z.object({
   /** `customer_text` (the value IS what the customer wrote) and `derived` (the value is made from what the customer wrote: a translation, a code, a structured form of it): the customer's exact words this value came from (must occur in what the customer wrote). */
   quote: z.string().max(300).optional(),
   /** `prior_step`: the field of the earlier step's listed item that supplies the value (for example «id»). */
-  fromStep: z.object({ step: z.number().int().min(1).max(2), field: z.string().min(1).max(120) }).optional(),
+  fromStep: z.object({
+    /** The earlier step (1-based) whose listed rows supply the value. */
+    step: z.number().int().min(1).max(3),
+    field: z.string().min(1).max(120),
+    /** sample_call only: the endpoint of that earlier step, so the sample reads the right earlier sample (a plan names the step by its number). */
+    endpointId: z.string().min(3).max(200).optional(),
+  }).optional(),
 });
 export type PlanParam = z.infer<typeof ParamSchema>;
 
@@ -70,6 +76,12 @@ export const StepSchema = z.object({
   endpointId: z.string().min(3).max(200),
   /** How many records this step should deliver at most (the volume the customer asked for; for a fan-out step 2, the total of delivered records). */
   volume: z.number().int().min(1).max(25000),
+  /** The customer's own words that give the count (for the first step of a branch): the count is never the model's own. */
+  volumeQuote: z.string().max(200).optional(),
+  /** Whether this step's rows go into the customer's files. Not set: a plan of one or two steps delivers its LAST step (as before); a plan of three or four steps delivers every step. */
+  deliver: z.boolean().optional(),
+  /** A short Arabic name of the stage for the customer («جمع الشركات»): code makes it safe, or replaces it. */
+  titleAr: z.string().max(60).optional(),
   params: z.array(ParamSchema).max(30).default([]),
   fieldMap: FieldMapSchema,
   filters: z.array(FilterSchema).max(6).default([]),
@@ -81,7 +93,9 @@ export type PlanStep = z.infer<typeof StepSchema>;
 export const ProposePlanSchema = z.object({
   /** One Arabic sentence about what the plan collects (shown on the plan card after code scrubs it). */
   summaryAr: z.string().min(3).max(300),
-  steps: z.array(StepSchema).min(1).max(2),
+  steps: z.array(StepSchema).min(1).max(4),
+  /** Only when the plan uses a dearer endpoint than a cheaper candidate of the same job that was never sampled: why (the cheaper one's rows were unsuitable). Shown in the trace, never to the customer. */
+  whyNotCheapest: z.string().max(300).optional(),
   /** The customer's topic words, when the request has a topic the rows must be about («كرة السلة»): used for the relevance review. */
   topic: z.string().max(200).optional(),
 });
@@ -131,13 +145,35 @@ export interface StoredModelPlan {
   country?: { canonicalEnglish: string; arabicLabel: string };
   /** Rows per call and delivered share MEASURED on the sample (or the recipe), per step: what the price was built on. */
   measured: Array<{ rowsPerCall: number; passRate: number; costPerCallUsd: number }>;
+  /** What the model may spend on managing this mission (USD): 5% of the reserve value, never below the floor. Set at plan time by code. */
+  managerBudgetUsd?: number;
+  /** Per step, whether its rows are delivered (set by code from `deliver`). Absent on a plan approved before Phase 2: the last step only. */
+  delivers?: boolean[];
+  /**
+   * The shape of the mission as code priced it. Its presence means the plan runs on the mission engine (any number of stages up to four, rows keep their parent's id, the model
+   * manages the decision points); a plan approved before Phase 2 has none and keeps running on the first interpreter, unchanged.
+   */
+  stages?: StoredStage[];
+}
+
+export interface StoredStage {
+  /** The earlier stage (0-based) this stage runs once per row of; null for a root. */
+  parent: number | null;
+  deliver: boolean;
+  /** The rows this stage collects at most (a stage run once per parent row never more than its parents can give). */
+  effVolume: number;
+  /** Rows taken from each parent's call (the first page). 0 for a root. */
+  perParent: number;
+  /** The stage's name for the customer (Arabic, made safe by code). */
+  titleAr: string;
 }
 
 export interface ValidationIssue {
   code:
     | "unknown_endpoint" | "not_allowed" | "not_priceable" | "unknown_param" | "bad_param_type" | "bad_param_enum" | "bad_param_range" | "missing_required"
     | "no_provenance" | "quote_not_in_customer_text" | "id_like_literal" | "invented_value" | "window_not_stated" | "bad_field_path" | "bad_rows_path" | "bad_transform"
-    | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose" | "reader_mismatch" | "topic_not_applicable";
+    | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose" | "reader_mismatch" | "topic_not_applicable"
+    | "volume_not_stated" | "volume_hold_too_high" | "branch_reference" | "fanout_short" | "cheaper_untried";
   /** For the model (English, internal): what is wrong and what to do. */
   message: string;
   stepIndex?: number;

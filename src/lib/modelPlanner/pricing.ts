@@ -42,7 +42,7 @@ export interface StepMeasure {
   rowsPerCall: number;
   /** The share of those rows that pass the plan's filters, 0 to 1. */
   passRate: number;
-  source: "sample" | "recipe" | "catalog_unit" | "approved_plan" | "lookup";
+  source: "sample" | "recipe" | "catalog_unit" | "approved_plan" | "lookup" | "assumed_one_per_call";
 }
 
 export interface StepPrice {
@@ -52,6 +52,8 @@ export interface StepPrice {
   passRate: number;
   basis: CostBasis;
   measuredFrom: StepMeasure["source"];
+  /** Whether the catalog prices this step per record or per call. */
+  unit: "record" | "call";
 }
 
 /** A sample that passed 0 rows of N is not a price: the caller refuses the plan (a half-row prior would make the price absurd). */
@@ -60,7 +62,7 @@ export function priceStep(cost: CallCost, measure: StepMeasure): StepPrice {
   const pass = Math.min(1, Math.max(0.01, measure.passRate));
   const costPerCall = cost.unit === "call" ? cost.usd : cost.usd * rows;
   const costPerRecord = (cost.unit === "call" ? cost.usd / rows : cost.usd) / pass;
-  return { costPerCallUsd: costPerCall, costPerRecordUsd: costPerRecord, rowsPerCall: rows, passRate: pass, basis: cost.basis, measuredFrom: measure.source };
+  return { costPerCallUsd: costPerCall, costPerRecordUsd: costPerRecord, rowsPerCall: rows, passRate: pass, basis: cost.basis, measuredFrom: measure.source, unit: cost.unit };
 }
 
 /** What a call may cost for the job's budget check: the call price, or the price of the page a per-record endpoint is asked for. */
@@ -90,4 +92,65 @@ export function pricePlan(steps: StepPrice[], childRecordsPerItem?: number): Pla
     costPerRecord += costPerListedItem / perItem;
   }
   return { costPerRecordUsd: costPerRecord, unitPricePoints: unitPricePointsFromCost(costPerRecord), steps };
+}
+
+export interface MissionStageInput {
+  price: StepPrice;
+  /** The rows this stage should deliver (or, for a stage that is not delivered, the rows the next stages need from it). */
+  volume: number;
+  /** The earlier stage (0-based index) this stage runs once per row of; null for a root. */
+  parent: number | null;
+  /** Rows taken from each parent's call (the first page), when set. */
+  perItem?: number;
+  /** Whether the rows of this stage go into the customer's files (and so count in the charge). */
+  deliver: boolean;
+}
+
+export interface MissionPrice extends PlanPrice {
+  /** The rows each stage will really collect: a stage run once per parent row never collects more than its parents can give. */
+  effectiveVolumes: number[];
+  /** Calls each stage needs. */
+  calls: number[];
+  /** Provider cost of the whole mission at the effective volumes, USD. */
+  totalCostUsd: number;
+  /** The rows the customer is charged for at most (the delivered stages together). */
+  deliveredVolume: number;
+}
+
+/**
+ * The price of a MISSION of up to four stages, by code: the sum of what each stage costs for the rows it collects, spread over the rows the customer receives.
+ * A root stage collects its own volume page by page; a stage run once per parent row takes the first page of each parent's call (at most `perItem` rows, never more than a call
+ * returns), so it never collects more than (its parents' rows x rows per parent). The unit price is the cost per DELIVERED row of the whole mission, converted by the shared function.
+ */
+export function priceMission(stages: MissionStageInput[]): MissionPrice {
+  if (stages.length === 0) throw new Error("a mission has at least one stage");
+  const perParent = stages.map((s) => rowsPerParentOf(s));
+  const effective: number[] = [];
+  // top down: a stage run once per parent row never collects more than (its parent's rows x rows per parent)
+  const topDown = (resetRoots: boolean) => stages.forEach((s, i) => { if (s.parent !== null) effective[i] = Math.max(1, Math.min(Math.floor(s.volume), Math.floor(effective[s.parent] * perParent[i]))); else if (resetRoots) effective[i] = Math.max(1, Math.floor(s.volume)); });
+  topDown(true);
+  // bottom up: a stage whose rows are NOT delivered only feeds the next ones, so it collects no more than they need (the customer is never charged for a longer list than the next stage uses)
+  for (let i = stages.length - 1; i >= 0; i -= 1) {
+    const kids = stages.map((k, j) => (k.parent === i ? j : -1)).filter((j) => j >= 0);
+    if (!stages[i].deliver && kids.length > 0) effective[i] = Math.max(1, Math.min(effective[i], Math.max(...kids.map((j) => Math.ceil(effective[j] / perParent[j])))));
+  }
+  topDown(false);
+  const calls: number[] = [];
+  let total = 0;
+  stages.forEach((s, i) => {
+    const rowsPerCall = stages[i].parent === null ? Math.max(1, s.price.rowsPerCall * s.price.passRate) : perParent[i];
+    calls.push(Math.ceil(effective[i] / rowsPerCall));
+    // a per-record price is paid for the rows collected (and the share the filters drop); a per-call price for the calls made
+    total += s.price.unit === "record" ? effective[i] * s.price.costPerRecordUsd : calls[i] * s.price.costPerCallUsd;
+  });
+  const deliveredVolume = Math.max(1, stages.reduce((n, s, i) => n + (s.deliver ? effective[i] : 0), 0));
+  const costPerRecord = total / deliveredVolume;
+  return { costPerRecordUsd: costPerRecord, unitPricePoints: unitPricePointsFromCost(costPerRecord), steps: stages.map((s) => s.price), effectiveVolumes: effective, calls, totalCostUsd: total, deliveredVolume };
+}
+
+/** Rows one parent row gives its stage: a per-call endpoint returns at most what a call returns (the measured rows), a per-record one exactly what is asked (`perItem`, else one). 0 for a root: it pages by itself. */
+export function rowsPerParentOf(s: Pick<MissionStageInput, "price" | "parent" | "perItem">): number {
+  if (s.parent === null) return Math.max(1, s.price.rowsPerCall * s.price.passRate);
+  if (s.price.unit === "record") return Math.max(1, Math.floor(s.perItem ?? 1));
+  return Math.max(1, Math.min(s.perItem ?? Number.POSITIVE_INFINITY, s.price.rowsPerCall * s.price.passRate));
 }
