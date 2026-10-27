@@ -6,6 +6,7 @@ import { APPROVED_CAPABILITY_CATALOG } from "../../functions/shared/capabilityRe
 import { estimateSocialChunkCostUsd, getSocialCapability, socialRowsPerChunk } from "../socialSources";
 import { REPORT_CHUNK_COST_ESTIMATE_USD } from "../facebookReport/constants";
 import { isChainSlug } from "../multiProvider/routes";
+import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../modelPlanner/constants";
 
 const RETRY_JOB_ID_PATTERN = /^[A-Za-z0-9_-]{1,80}$/;
 
@@ -112,6 +113,26 @@ export async function resolveJobExecutionSpec(
     }
   } catch {
     // Continue with capability catalog resolution
+  }
+
+  // A model-planned job: the approved plan (endpoint, parameters, field map, filters, what the worker needs to know of the endpoint) is on the quote item and nothing is asked of any
+  // catalog: the worker never loads the catalog snapshot.
+  if (capabilitySlug === MODEL_PLAN_SLUG) {
+    const stored = (params as Record<string, any>)[MODEL_PLAN_PARAM];
+    const facts = stored?.steps?.[0]?.facts;
+    return {
+      capabilitySlug,
+      endpointId,
+      method: facts?.method === "GET" ? "GET" : "POST",
+      params,
+      paginationStrategy: "cursor",
+      pricingUnit: "item",
+      unitCostUsd: typeof unitCostUsd === "number" && unitCostUsd > 0 ? unitCostUsd : Math.max(0.0001, Number(((Number(unitPricePoints) || 1) / 5500).toFixed(6))),
+      pageSize: 10,
+      outputFormats,
+      ...(retryOfJobId ? { retryOfJobId } : {}),
+      ...(matchedQuoteId ? { quoteId: matchedQuoteId } : {}),
+    };
   }
 
   // The multi-provider contact chain is not in the live TREG catalog or the registry table: its spec comes from the quote alone, and nothing is asked of the catalog.

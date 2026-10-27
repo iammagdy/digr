@@ -1,3 +1,5 @@
+import { MODEL_PLAN_SLUG } from "../modelPlanner/constants";
+import { runModelPlanChunk } from "../modelPlanner/interpreter";
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
 import { JOB_BUDGET_STOP_AR } from "./callBudget";
 import { evaluateResearchRowRelevance } from "./researchRelevanceGate";
@@ -1142,6 +1144,8 @@ export interface ProviderAdapterCallInput {
   callEstimateUsd?: number;
   /** Raw first-page capture (on by default, see rawCapture.ts): set by the worker for the first chunk. */
   rawCapture?: import("./rawCapture").RawCapture;
+  /** A model-planned job only (set by the worker): the database client, the account's access and the purpose, for the audited path of a sensitive step. */
+  sensitive?: { client: any; access: import("../treg/dataPolicy").AccountAccess; purpose: string };
 }
 
 export interface ProviderAdapterCallOutput {
@@ -1171,6 +1175,8 @@ export interface ProviderAdapterCallOutput {
   postReads?: { read: number; sourceShort: number; sourceMissing: number; filteredShort: number; asked: number };
   /** The Facebook topic report only: a chunk that delivered no row but made progress (browsing, classifying): the worker does not count it as an empty page. */
   reportProgress?: boolean;
+  /** A model-planned job with a topic: the model calls of the topic review of the chunk (usage and cost), for the worker to log. */
+  reviewModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
   /** The Facebook topic report only: the model calls of the chunk (usage and cost), for the worker to log. */
   reportModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
 }
@@ -1326,6 +1332,9 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
     if (!input.reportStore) return { ok: false, httpStatus: 500, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode: "report_store_missing", errorMessageAr: "تعذر تجهيز التقرير؛ لم يُخصم أي رصيد." };
     return runFacebookReportChunk(input, { call: socialCallThroughTreg(input), store: input.reportStore, axisModel: input.axisModel });
   }
+
+  // A MODEL-PLANNED job: the generic interpreter runs the approved plan (see src/lib/modelPlanner/interpreter.ts).
+  if (input.capabilitySlug === MODEL_PLAN_SLUG) return runModelPlanChunk(input, input.sensitive ? { sensitive: input.sensitive } : {});
 
   // Verified social services run through their own source chain (fallbacks, comments of discovered videos).
   if (isSocialCapabilitySlug(input.capabilitySlug)) {

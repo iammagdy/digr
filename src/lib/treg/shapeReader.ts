@@ -16,7 +16,7 @@ import type { CatalogEndpoint } from "./catalog";
  * Pure: no server imports, no network.
  */
 
-export type ListStrategy = "list_path" | "example" | "common_keys" | "single_object" | "none";
+export type ListStrategy = "list_path" | "example" | "common_keys" | "single_object" | "root_object" | "none";
 export type CursorStrategy = "cursor_path" | "example" | "common_keys" | "none";
 
 export interface ShapeHints {
@@ -24,6 +24,8 @@ export interface ShapeHints {
   cursorPath?: string | null;
   example?: unknown;
   itemFields?: Record<string, { type: string }> | null;
+  /** The endpoint answers ONE record as the answer itself (no list, no envelope): the whole answer is the row. Set by a caller that knows the endpoint has no list (the catalog's list path is null). */
+  rootObjectIsRow?: boolean;
 }
 
 export interface ShapeReading {
@@ -161,6 +163,8 @@ function readList(body: unknown, hints: ShapeHints): { rows: Obj[]; path: string
       if (isObj(v) && Object.keys(v).length > 0 && !Object.values(v).some(isObjectList)) return { rows: [v], path: key, strategy: "single_object", warnings };
     }
   }
+  // 5. an endpoint that answers one record as the answer itself (only when the caller says this endpoint has no list)
+  if (hints.rootObjectIsRow && isObj(body) && Object.values(body).some((v) => v !== null && v !== undefined && v !== "")) return { rows: [body], path: "root", strategy: "root_object", warnings };
   return { rows: [], path: null, strategy: "none", warnings };
 }
 

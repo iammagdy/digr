@@ -15,6 +15,8 @@ import { applyCustomerCap } from "@/lib/pointsCap";
 import { editedPlanSummaryAr } from "@/lib/planParameters";
 import { getSocialCapability, normalizeXAccountPlanItem, socialPlanSummaryAr } from "@/lib/socialSources";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
+import { editModelPlanQuote } from "@/lib/modelPlanner/editPlan";
 import { markEditedQuoteCurrent, persistEditedQuoteMessage, resolveQuoteConversationId } from "@/functions/shared/quoteMessagePersistence";
 
 export const dynamic = "force-dynamic";
@@ -134,71 +136,83 @@ export async function POST(req: NextRequest) {
       ];
     }
 
-    const updatedPlan = applyPlanOperations(currentPlan, operationsToApply);
+    // A MODEL-PLANNED quote: the same edit button, but the edit is validated and priced again by the model planner's own code (volume and formats only), never by the old schemas.
+    const modelItem = currentItems[0]?.capabilitySlug === MODEL_PLAN_SLUG ? currentItems[0] : null;
+    let newQuote: any;
+    if (modelItem) {
+      const edited = await editModelPlanQuote({
+        tables: adminClient as any, conversationId, userId: verifiedUserId, userBalance: await calculateBalance(adminClient, verifiedUserId),
+        quoteItem: modelItem, summaryAr: currentPlan.summaryAr, outputFormats: currentPlan.outputFormats as any, operations: operationsToApply as any,
+      });
+      if (!edited.ok) return NextResponse.json({ success: false, error: edited.messageAr }, { status: 400 });
+      newQuote = { ...edited.quote, modelPlanned: true };
+    } else {
+      const updatedPlan = applyPlanOperations(currentPlan, operationsToApply);
 
-    // An X account plan is edited through its account: a keyword written beside it must never turn it into a topic search.
-    for (const planItem of updatedPlan.items) {
-      const accountError = normalizeXAccountPlanItem(planItem);
-      if (accountError) return NextResponse.json({ success: false, error: accountError }, { status: 400 });
-    }
-
-    // 5. Validate updated plan against all capability schemas (static + catalog)
-    const [capabilities, catalogCapabilities] = await Promise.all([
-      getEnabledCapabilitiesWithCoreServices(adminClient),
-      getCatalogCapabilities(adminClient),
-    ]);
-    const allCapabilities = [...capabilities, ...catalogCapabilities];
-    const additionalEndpoints = await Promise.all(updatedPlan.items.map(async (item) => {
-      const alreadyResolved = allCapabilities.some((capability) =>
-        capability.slug === item.capabilitySlug ||
-        capability.tregEndpointId === item.capabilitySlug ||
-        (item.endpointId && (
-          capability.tregEndpointId === item.endpointId ||
-          capability.slug === item.endpointId
-        ))
-      );
-      if (alreadyResolved) return null;
-
-      for (const endpointId of Array.from(new Set([item.endpointId, item.capabilitySlug].filter(Boolean) as string[]))) {
-        const endpoint = await getEndpointDetails(endpointId);
-        if (endpoint) return endpoint;
+      // An X account plan is edited through its account: a keyword written beside it must never turn it into a topic search.
+      for (const planItem of updatedPlan.items) {
+        const accountError = normalizeXAccountPlanItem(planItem);
+        if (accountError) return NextResponse.json({ success: false, error: accountError }, { status: 400 });
       }
-      return null;
-    }));
-    const valResult = validatePlanAgainstSchemas(
-      updatedPlan.items,
-      allCapabilities,
-      additionalEndpoints.filter((endpoint): endpoint is NonNullable<typeof endpoint> => endpoint !== null),
-    );
-    if (!valResult.valid) {
-      const sanitizedError = sanitizeCustomerErrorMessage(valResult.errors.join("، "));
-      return NextResponse.json(
-        { success: false, error: `خطأ في معاملات الخطة: ${sanitizedError}` },
-        { status: 400 }
+
+      // 5. Validate updated plan against all capability schemas (static + catalog)
+      const [capabilities, catalogCapabilities] = await Promise.all([
+        getEnabledCapabilitiesWithCoreServices(adminClient),
+        getCatalogCapabilities(adminClient),
+      ]);
+      const allCapabilities = [...capabilities, ...catalogCapabilities];
+      const additionalEndpoints = await Promise.all(updatedPlan.items.map(async (item) => {
+        const alreadyResolved = allCapabilities.some((capability) =>
+          capability.slug === item.capabilitySlug ||
+          capability.tregEndpointId === item.capabilitySlug ||
+          (item.endpointId && (
+            capability.tregEndpointId === item.endpointId ||
+            capability.slug === item.endpointId
+          ))
+        );
+        if (alreadyResolved) return null;
+
+        for (const endpointId of Array.from(new Set([item.endpointId, item.capabilitySlug].filter(Boolean) as string[]))) {
+          const endpoint = await getEndpointDetails(endpointId);
+          if (endpoint) return endpoint;
+        }
+        return null;
+      }));
+      const valResult = validatePlanAgainstSchemas(
+        updatedPlan.items,
+        allCapabilities,
+        additionalEndpoints.filter((endpoint): endpoint is NonNullable<typeof endpoint> => endpoint !== null),
       );
-    }
-
-    // Update summaryAr on updatedPlan if parameters were edited (a missing country or activity is left out of the sentence, never written into it)
-    const primaryItem = updatedPlan.items[0];
-    if (primaryItem) {
-      updatedPlan.summaryAr = editedPlanSummaryAr(primaryItem, updatedPlan.summaryAr, toArabicDigits);
-      // An X account plan keeps the sentence the plan itself writes («أحدث المنشورات للحساب المحدد»): the generic edit line named the account like a sector («خطة حصر … : elonmusk و billgates»).
-      const xPosts = getSocialCapability("social-x-posts");
-      if (xPosts && primaryItem.capabilitySlug === "social-x-posts" && typeof primaryItem.params?.channel === "string" && primaryItem.params.channel.trim()) {
-        updatedPlan.summaryAr = socialPlanSummaryAr(xPosts, primaryItem.params, Math.max(1, Number(primaryItem.targetVolumeMax) || 1), (value) => toArabicDigits(value));
+      if (!valResult.valid) {
+        const sanitizedError = sanitizeCustomerErrorMessage(valResult.errors.join("، "));
+        return NextResponse.json(
+          { success: false, error: `خطأ في معاملات الخطة: ${sanitizedError}` },
+          { status: 400 }
+        );
       }
-    }
 
-    // 6. Generate NEW quote (supersedes old quote and recalculates price)
-    const userBalance = await calculateBalance(adminClient, verifiedUserId);
-    const newQuote = await createAndSaveManagedQuote(adminClient as any, {
-      conversationId,
-      userId: verifiedUserId,
-      plan: updatedPlan,
-      userBalance,
-      capabilities: allCapabilities,
-      enforceScope: true,
-    });
+      // Update summaryAr on updatedPlan if parameters were edited (a missing country or activity is left out of the sentence, never written into it)
+      const primaryItem = updatedPlan.items[0];
+      if (primaryItem) {
+        updatedPlan.summaryAr = editedPlanSummaryAr(primaryItem, updatedPlan.summaryAr, toArabicDigits);
+        // An X account plan keeps the sentence the plan itself writes («أحدث المنشورات للحساب المحدد»): the generic edit line named the account like a sector («خطة حصر … : elonmusk و billgates»).
+        const xPosts = getSocialCapability("social-x-posts");
+        if (xPosts && primaryItem.capabilitySlug === "social-x-posts" && typeof primaryItem.params?.channel === "string" && primaryItem.params.channel.trim()) {
+          updatedPlan.summaryAr = socialPlanSummaryAr(xPosts, primaryItem.params, Math.max(1, Number(primaryItem.targetVolumeMax) || 1), (value) => toArabicDigits(value));
+        }
+      }
+
+      // 6. Generate NEW quote (supersedes old quote and recalculates price)
+      const userBalance = await calculateBalance(adminClient, verifiedUserId);
+      newQuote = await createAndSaveManagedQuote(adminClient as any, {
+        conversationId,
+        userId: verifiedUserId,
+        plan: updatedPlan,
+        userBalance,
+        capabilities: allCapabilities,
+        enforceScope: true,
+      });
+    }
     // Supabase stores live quotes as `quoted`, while the shared quote builder
     // returns the Appwrite-era `proposed` label. The editor immediately swaps
     // the current card with this response, so return the status the DB saved.

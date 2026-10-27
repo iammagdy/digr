@@ -25,7 +25,7 @@ import { FAKE_MODEL_LITERALS, LlmClient, LlmTurnOutput, type LlmCallResult } fro
 import { columnChoicesAr, loadLatestResultColumns } from "../../lib/server/savedResultColumns";
 import { detectTopicGathering, hasTopicResearchService, studiesUnavailableReplyAr, topicSourceQuestion } from "./topicGathering";
 import { noteLocalLlmSpend } from "./rateLimits";
-import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
+import { MIN_MODEL_CALL_BUDGET_MS, SLOW_TURN_INTRO_AR, TURN_BUDGET_MS, compactHistoryForModel, isPlanAnnouncementOnly, turnBudgetLeftMs } from "./turnGuards";
 import {
   getEnabledCapabilitiesWithCoreServices,
   getCatalogCapabilities,
@@ -112,6 +112,9 @@ import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote"
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { findParamProvenanceGaps, provenanceQuestionCard } from "../../lib/paramProvenance";
+import { isModelPlannerAccount } from "../../lib/modelPlanner/constants";
+import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig } from "../../lib/modelPlanner/chatTurn";
+import { plannerCostUsd } from "../../lib/modelPlanner/transport";
 import { pairRoleOf } from "../../lib/planFit";
 import { handlesInText, videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, isSocialCapabilitySlug, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
@@ -443,6 +446,8 @@ export interface ChatHandlerInput {
   testScenario?: string;
   uploadedFiles?: any[];
   isGuest?: boolean;
+  /** The signed-in account's verified e-mail (never a guest's): decides whether the account takes the model path. */
+  userEmail?: string | null;
   /** Set by the route when this message only gave the customer's name (already stored); answered without a model turn. */
   capturedName?: string;
   personaProfile?: { persona?: unknown; purposes?: unknown; topic?: unknown; name?: unknown; full_name?: unknown };
@@ -1503,6 +1508,14 @@ export class ChatHandler {
   private llm: LlmClient;
   /** Plan fully stated company, decision-maker and social requests in code (no model call). Tests of the model path switch it off. */
   public deterministicPlanning = true;
+  /**
+   * The MODEL PLANNER (Phase 2): when set, a research request is planned by the model from the catalog (tools: catalog_search, describe_endpoint, sample_call, propose_plan) and
+   * code only validates, prices and protects. Only the accounts of the allowlist (`MODEL_PLANNER_ALLOWED_EMAILS`, see `modelPlannerFor`) take it; the hand-coded path below is
+   * untouched and runs exactly as before for every other account (and when this is null). Tests and replays set it with a recorded transport.
+   */
+  public modelPlanner: ModelPlannerConfig | null = defaultModelPlannerConfig();
+  /** Which accounts take the model path: the allowlist of `src/lib/modelPlanner/constants.ts`. Every other account keeps the hand-coded path. Tests replace it. */
+  public modelPlannerFor: (account: { email?: string | null; isGuest?: boolean }) => boolean = isModelPlannerAccount;
 
   constructor(tables: TablesDB | any) {
     this.tables = tables;
@@ -1579,6 +1592,60 @@ export class ChatHandler {
     } catch (usageErr) {
       console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
     }
+  }
+
+  /**
+   * One chat turn answered by the MODEL PLANNER (see `modelPlanner`): runs the planning loop, writes the assistant message and the request status like every other early answer
+   * of the handler, records the planner's own usage (priced at the planner's price) for the wrapper's llm_usage row, and returns the plan card or the one Arabic sentence.
+   */
+  private async answerWithModelPlanner(ctx: {
+    sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; userBalance: number; message: string;
+    messagesContext: PriorConversationMessage[]; turnStartTime: number; guest: boolean; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>;
+  }): Promise<ChatHandlerResponse> {
+    const { sb, turn, conversationId, assistantMsgId, userMsgId } = ctx;
+    const planned = await runModelPlannerTurn({
+      config: this.modelPlanner!, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext, guest: ctx.guest,
+      deadlineAtMs: ctx.turnStartTime + TURN_BUDGET_MS, requestId: assistantMsgId,
+    });
+    // Internal log: the codes of the validation failures (never a customer value), the turns, the tool calls and the sample calls.
+    console.info(JSON.stringify({ tag: "model_planner_turn", kind: planned.kind, reason: planned.kind === "message" ? planned.reason : undefined, turns: planned.outcome.turns, toolCalls: planned.outcome.toolCalls, sampleCalls: planned.outcome.sampleCalls, failureCodes: planned.outcome.failures.map((f) => f.map((i) => i.code)) }));
+    const usage = planned.outcome.usage;
+    const costUsd = plannerCostUsd(usage);
+    const tokensIn = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
+    turn.usage = { inputTokens: tokensIn, outputTokens: usage.outputTokens, costUsd, calls: planned.outcome.turns };
+    turn.model = this.modelPlanner!.transport.model;
+    const isPlan = planned.kind === "plan";
+    const refusal = !isPlan && (planned.reason === "refused" || planned.reason === "restricted" || planned.reason === "unavailable" || planned.reason === "no_model");
+    const outputType: ChatHandlerResponse["outputType"] = isPlan ? "propose_plan" : refusal ? "refuse" : "answer_question";
+    const clarificationItems = !isPlan ? (planned.clarificationItems as any[] | undefined) : undefined;
+    const quote = isPlan ? (planned.planQuote as any) : null;
+    const status = resolveRequestAttemptStatus({ intent: "research", outputType, hasQuote: isPlan });
+    try {
+      if (sb) {
+        await Promise.all([
+          sb.from("messages").update({ content_ar: planned.contentAr, clarification_items: clarificationItems ?? null, plan: quote ? { items: quote.items, summaryAr: quote.summaryAr } : null, quote }).eq("id", assistantMsgId),
+          sb.from("messages").update({ request_status: status, request_quote_id: quote?.quoteId ?? null }).eq("id", userMsgId),
+        ]);
+      } else {
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: planned.contentAr, status: "ready", ...(quote ? { planQuoteId: quote.quoteId } : {}) } });
+        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: status, ...(quote ? { requestQuoteId: quote.quoteId } : {}) } });
+      }
+    } catch (persistError) {
+      console.warn(`[chat:model_planner_persist_failed] reason=${toSafeReasonCode(persistError, "model_planner_persist")}`);
+    }
+    return {
+      conversationId,
+      messageId: assistantMsgId,
+      role: "assistant",
+      contentAr: planned.contentAr,
+      outputType,
+      intent: "research",
+      ...(isPlan ? { planQuote: quote } : {}),
+      ...(clarificationItems ? { clarificationItems, clarificationQuestions: clarificationItems.map((c: any) => c.text), clarificationIntro: planned.contentAr } : {}),
+      ...(refusal ? { refusalReason: planned.contentAr } : {}),
+      tokensUsed: { input: tokensIn, output: usage.outputTokens, costUsd },
+      turnStats: { ...ctx.stats(), modelCalls: planned.outcome.turns, catalogSearches: planned.outcome.toolCalls },
+    };
   }
 
   private async handleUserMessageInner(input: ChatHandlerInput, turn: TurnUsageLog): Promise<ChatHandlerResponse> {
@@ -2608,6 +2675,12 @@ export class ChatHandler {
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
           turnStats: currentTurnStats(),
         };
+      }
+
+      // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.
+      if (this.modelPlanner && this.modelPlannerFor({ email: input.userEmail, isGuest: input.isGuest }) && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
+        currentStep = "model_planner";
+        return await this.answerWithModelPlanner({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, userBalance: userBalance ?? 0, message, messagesContext, turnStartTime, guest: Boolean(input.isGuest), stats: currentTurnStats });
       }
 
       // Studies, papers, articles and news from websites: not a service yet. Said plainly by code, with what is available;

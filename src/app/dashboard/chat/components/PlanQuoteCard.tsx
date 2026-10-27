@@ -5,7 +5,7 @@ import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
-import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
+import { formatAr, normalizeDigits as toLatinDigits, toArabicDigits } from "@/lib/arabicDigits";
 import { CAPACITY_LIMITED_REASON_AR, volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
@@ -96,6 +96,9 @@ export interface PlanQuoteData {
   changeNoteAr?: string;
   /** One sentence: what the assistant understood from the request (built by code). */
   understoodAr?: string;
+  /** A plan the model planner made (set by the server): its edit offers the volume, the formats and the points cap (validated and priced again by code), and up to three REAL sample rows are shown before approval. */
+  modelPlanned?: boolean;
+  sampleRows?: { columns: Array<{ key: string; titleAr: string }>; rows: Array<Record<string, unknown>> };
   /** The period a feed plan applies, why (a known event) and any date that was corrected. */
   window?: { labelAr: string; source: string; reasonAr?: string; noteAr?: string };
   /** How long the mission will take: a range written by code from real numbers (never a promise), labelled as an estimate. */
@@ -225,9 +228,10 @@ export default function PlanQuoteCard({
     const pItem = quote.items?.[0];
     const people = (pItem?.capabilitySlug || "").toLowerCase().includes("people");
     const inter = extractInterpretedParameters(pItem?.params, quote.summaryAr, people);
-    setEditParamVal(isSocialContentPlan ? displayIndustry : extractParamDisplayString(pItem?.params, quote.summaryAr, people));
-    setEditCountry(valueOrEmpty(inter.countryAr));
-    setEditIndustry(people ? inter.industryAr : displayIndustry);
+    // a model plan's edit changes the volume, the formats and the cap only: no parameter text is sent back
+    setEditParamVal(quote.modelPlanned ? "" : isSocialContentPlan ? displayIndustry : extractParamDisplayString(pItem?.params, quote.summaryAr, people));
+    setEditCountry(quote.modelPlanned ? "" : valueOrEmpty(inter.countryAr));
+    setEditIndustry(quote.modelPlanned ? "" : people ? inter.industryAr : displayIndustry);
     setEditLimit(quote.targetVolumeMax || 1);
     setEditFormats(quote.outputFormats || ["xlsx", "pdf", "csv"]);
   }
@@ -286,7 +290,7 @@ export default function PlanQuoteCard({
   async function handleSave() {
     setEditError("");
     // A country no rule reads, or an empty required field, is said before saving (the edit used to be dropped without a word).
-    const scopeError = planEditScopeError({
+    const scopeError = quote.modelPlanned ? null : planEditScopeError({
       country: editCountry,
       industry: editIndustry,
       needsCountry: (isCompanyPlan || isPeoplePlan) && !isSocialContentPlan,
@@ -367,6 +371,24 @@ export default function PlanQuoteCard({
 
       {quote.understoodAr && (
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
+      )}
+
+      {quote.sampleRows && quote.sampleRows.rows.length > 0 && (
+        <div className="mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9]" data-testid="plan-sample-rows">
+          <p className="mb-1 mt-0 font-medium text-ink">نماذج حقيقية من البيانات (للاطلاع قبل الموافقة)</p>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-start">
+              <thead>
+                <tr>{quote.sampleRows.columns.map((c) => <th key={c.key} className="px-2 py-1 text-start font-medium text-ink2">{c.titleAr}</th>)}</tr>
+              </thead>
+              <tbody>
+                {quote.sampleRows.rows.map((row, i) => (
+                  <tr key={i}>{quote.sampleRows!.columns.map((c) => <td key={c.key} className="px-2 py-1 align-top font-light text-ink">{toArabicDigits(String(row[c.key] ?? ""))}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {quote.partsAr && quote.partsAr.some((part) => !part.included) ? (
@@ -541,14 +563,14 @@ export default function PlanQuoteCard({
       {isEditing && !locked && (
         <div className="mt-4 space-y-3 rounded-[18px] bg-sf2 p-3.5 text-xs">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {hasCountryField && <div>
+            {hasCountryField && !quote.modelPlanned && <div>
               <label htmlFor={`pq-country-${quote.quoteId}`} className="mb-1 block font-medium text-ink">الدولة / النطاق الجغرافي</label>
               <input
                 id={`pq-country-${quote.quoteId}`} type="text" value={editCountry} onChange={(e) => setEditCountry(e.target.value)} dir="auto" placeholder="مثل: مصر"
                 className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
               />
             </div>}
-            {!isSocialContentPlan && <div>
+            {!isSocialContentPlan && !quote.modelPlanned && <div>
               <label htmlFor={`pq-industry-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "نوع البحث" : "النشاط / التخصص الرئيسي"}</label>
               <input
                 id={`pq-industry-${quote.quoteId}`} type="text" value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} dir="auto" placeholder={isPeoplePlan ? "" : "مثل: الكهرباء"}
@@ -556,13 +578,13 @@ export default function PlanQuoteCard({
               />
             </div>}
           </div>
-          <div>
+          {!quote.modelPlanned && <div>
             <label htmlFor={`pq-param-${quote.quoteId}`} className="mb-1 block font-medium text-ink">{isPeoplePlan ? "الفئة المهنية" : xAccountOfPlan ? "اسم الحساب" : isSocialContentPlan ? "موضوع المحتوى / الاستعلام" : "الكلمات المفتاحية / الاستعلام"}</label>
             <input
               id={`pq-param-${quote.quoteId}`} type="text" value={editParamVal} onChange={(e) => setEditParamVal(e.target.value)} dir="auto"
               className="min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
             />
-          </div>
+          </div>}
           <div>
             <label htmlFor={`pq-limit-${quote.quoteId}`} className="mb-1 block font-medium text-ink">العدد الأقصى المطلوب (سجلات)</label>
             <input

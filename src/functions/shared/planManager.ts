@@ -548,7 +548,7 @@ export interface QuoteCreationInput {
   userBalance: number;
   capabilities: Capability[];
   pricingSettings?: PricingSettings;
-  enforceScope?: boolean;
+  enforceScope?: boolean; unitPriceOverride?: (item: PlanItem, providerCostUsdPerRecord: number) => number | null; // the model planner's price: the shared per-record function, computed by code (absent = every existing caller)
 }
 
 export interface ManagedQuoteResult {
@@ -706,7 +706,8 @@ export async function createAndSaveManagedQuote(
 
     // ONE shared rule: a capability priced per delivered record is cost per record x 5,500, fractional; every other capability keeps its
     // whole-point rule (see unitPricePointsForCapability).
-    const unitPrice = unitPricePointsForCapability(
+    // The model planner prices a record by the shared per-record function (cost x 5,500, fractional); every other caller keeps the capability rule below.
+    const unitPrice = input.unitPriceOverride?.(it, itemUnitCostUsd) ?? unitPricePointsForCapability(
       { slug: cap.slug, unitCostUsd: itemUnitCostUsd, customerPriceUsdPerItem: cap.customerPriceUsdPerItem },
       effectivePricing,
     );

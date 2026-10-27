@@ -21,6 +21,8 @@ mkdirSync(outDir, { recursive: true });
 const SELLING = [
   "anyapi.x.search.posts", "anyapi.x.user.posts", "tikhub.tiktok.video.comments", "crawl4ai.tiktok.video.comments", "crawl4ai.youtube.video.comments",
   "scrapecreators.x.v1-facebook-post-comments", "icypeas.companies.search", "icypeas.people.search",
+  // added for the model planner's replays (listing steps and a company e-mail source)
+  "anyapi.tiktok.search.videos", "justoneapi.x.facebook-search-post-v1", "tomba.companies.emails.list",
 ];
 
 function write(name, doc) {

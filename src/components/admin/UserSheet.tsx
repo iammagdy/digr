@@ -27,7 +27,22 @@ export function UserSheet({ userId, onClose }: { userId: string; onClose: () => 
   const [note, setNote] = useState("");
   const [granting, setGranting] = useState(false);
   const [grantMsg, setGrantMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // «verified business»: the flag that lets a customer account use the sensitive data category (the admin sets it; the table may not be applied yet).
+  const [vb, setVb] = useState<{ verified: boolean; available: boolean } | null>(null);
+  const [vbBusy, setVbBusy] = useState(false);
+  const [vbMsg, setVbMsg] = useState("");
   const [requestId, setRequestId] = useState(() => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `req-${Date.now()}-${Math.floor(Math.random() * 1e6)}`));
+
+  useEffect(() => { adminFetch<{ verified: boolean; available: boolean }>(`/api/admin/users/${userId}/verified-business`).then(setVb).catch(() => setVb(null)); }, [userId]);
+  const toggleVerified = async () => {
+    if (!vb || vbBusy) return;
+    setVbBusy(true); setVbMsg("");
+    try {
+      await adminFetch(`/api/admin/users/${userId}/verified-business`, { method: "PUT", body: JSON.stringify({ verified: !vb.verified }) });
+      setVb({ ...vb, verified: !vb.verified });
+      setVbMsg(!vb.verified ? "تم توثيق الحساب كحساب أعمال." : "أُلغي توثيق الحساب.");
+    } catch (e) { setVbMsg(e instanceof Error ? e.message : "تعذّر الحفظ"); } finally { setVbBusy(false); }
+  };
 
   const load = useCallback(() => adminFetch<UserDetail>(`/api/admin/users/${userId}`).then(setU).catch((e) => setError(e.message)), [userId]);
   useEffect(() => { void load(); }, [load]);
@@ -85,6 +100,14 @@ export function UserSheet({ userId, onClose }: { userId: string; onClose: () => 
               <KV k="استخدم كودًا ترويجيًا" v={u.promo.used ? `نعم (${u.promo.codes.map((c) => c.code).join("، ")})` : "لا"} />
               <KV k="معرف العميل" v={u.id} dir="ltr" mono />
               <KV k="طريقة الدخول" v="بريد إلكتروني وكلمة مرور" />
+            </section>
+            <section>
+              <h3 className="mb-1.5 mt-0 text-[13px] font-semibold text-mut">حساب أعمال موثّق</h3>
+              <div className="flex flex-col gap-2 rounded-[14px] border border-ln p-3">
+                <p className="m-0 text-xs leading-[1.8] text-mut">الحساب الموثّق يستطيع طلب الخدمات الحسّاسة (بيانات شخصية وبحث عكسي) بعد ذكر الغرض، وكل استعلام يُسجَّل.</p>
+                <button type="button" onClick={toggleVerified} disabled={!vb || vbBusy || vb.available === false} aria-pressed={vb?.verified === true} className="min-h-11 cursor-pointer self-start rounded-full border border-ln2 bg-transparent px-5 text-[13px] font-semibold text-ink disabled:opacity-50">{vb?.verified ? "إلغاء التوثيق" : "توثيق كحساب أعمال"}</button>
+                <p role="status" aria-live="polite" className="m-0 min-h-[1.1rem] text-xs text-fnt">{vb && vb.available === false ? "الميزة غير مُفعَّلة بعد في قاعدة البيانات." : vbMsg}</p>
+              </div>
             </section>
             <section>
               <h3 className="mb-1.5 mt-0 text-[13px] font-semibold text-mut">إضافة رصيد يدوي</h3>

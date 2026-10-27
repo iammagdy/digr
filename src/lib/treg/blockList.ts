@@ -1,5 +1,6 @@
 import writeActions from "../../../data/treg/treg_write_actions.json";
 import catalogIndex from "../../../data/treg/treg_catalog_index.json";
+import { categoryOf } from "./dataPolicy";
 
 /**
  * The hard block list for the data gateway. Enforced in code at the one place every gateway call passes (`executeTregCall`), whatever the plan, the model or a
@@ -8,6 +9,7 @@ import catalogIndex from "../../../data/treg/treg_catalog_index.json";
  *  - `write_action`: one of the 276 endpoints that create, edit, delete, post, reply, send… (data/treg/treg_write_actions.json). Never callable.
  *  - `own_account`: an endpoint that acts on an account of ours, when the caller knows its scope (the live describe says so).
  *  - `paused_provider`: any endpoint whose PROVIDER is paused, by provider name («apollo», «datagma», owner decision), whatever the catalog says.
+ *  - `policy_blocked`: an endpoint the DATA CATEGORY policy classifies as «blocked» (data/treg/data_policy.json: for example the private-messaging deep links), whatever else is true.
  *  - `not_sellable`: an endpoint of a KNOWN provider that is not in the sellable catalog snapshot (data/treg/treg_catalog_index.json, built from
  *    treg_catalog_sellable.json, whose own-account, write and paused endpoints were removed). This covers the 652 own-account endpoints and the 12 paused ones
  *    without listing them, and an id a model made up inside a real provider.
@@ -15,7 +17,7 @@ import catalogIndex from "../../../data/treg/treg_catalog_index.json";
  * An id whose provider is not in the catalog at all (a placeholder such as «x.y.z», a product slug) is not matched by the `not_sellable` rule: the gateway answers it
  * with «not found» at no cost. Paused providers are blocked by name (`PAUSED_PROVIDERS`), because the snapshot cannot list their endpoints.
  */
-export type EndpointBlockReason = "write_action" | "own_account" | "paused_provider" | "not_sellable";
+export type EndpointBlockReason = "write_action" | "own_account" | "paused_provider" | "policy_blocked" | "not_sellable";
 
 /** Providers that are paused: every endpoint of these providers is blocked by NAME (the snapshot carries only a count of paused endpoints, not their ids). */
 export const PAUSED_PROVIDERS: readonly string[] = ["apollo", "datagma"];
@@ -40,6 +42,7 @@ export function blockedEndpointReason(endpointId: string, scope?: string | null)
   if (String(scope ?? "").toLowerCase() === "own_account") return "own_account";
   const provider = providerOf(id);
   if (provider && PAUSED_SET.has(provider.toLowerCase())) return "paused_provider";
+  if (categoryOf(id) === "blocked") return "policy_blocked";
   if (provider && KNOWN_PROVIDERS.has(provider) && !SELLABLE_IDS.has(id)) return "not_sellable";
   return null;
 }
