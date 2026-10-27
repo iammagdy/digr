@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import { NextRequest } from "next/server";
 import { jobIdForQuote } from "../../src/lib/server/retryReuse";
 import { reserveForUnits } from "../../src/lib/recordPricing";
+import { createMemoryDb } from "./memoryDb";
 
 /**
  * The REPLAY WORLD: everything a full request needs after the customer approved the plan, with NO real provider call.
@@ -82,6 +83,8 @@ export function createReplayWorld() {
     slug: "",
     endpointId: "",
   };
+  // every other table (recipes, the verified-business flag, the sensitive-lookup audit…) lives in an in-memory store, so the model planner's worker paths can be replayed
+  const mem = createMemoryDb();
   const stats: ReplayStats = { served: [], unserved: [], other: [], realCalls: 0 };
   const JOB = jobIdForQuote("quote_replay");
 
@@ -132,12 +135,14 @@ export function createReplayWorld() {
         const base = builder(() => (table === "job_events" ? db.events : []));
         return { ...base, insert: async (row: any) => { if (table === "job_events") db.events.push(row); return { data: row, error: null }; }, upsert: async (row: any) => ({ data: row, error: null }) };
       }
-      return builder(() => []);
+      return mem.from(table);
     },
+    auth: mem.auth,
   });
 
   return {
     db,
+    mem,
     stats,
     JOB,
     /** What `vi.mock("../src/lib/supabase/server")` returns. */
@@ -156,6 +161,7 @@ export function createReplayWorld() {
         output_formats: ["csv", "xlsx"],
       }];
       db.partials.clear(); db.results.clear(); db.rpcCalls = []; db.events = []; db.costs = [];
+      mem.reset();
       db.step = 0; db.cursor = null; db.deliveredUnits = 0;
       db.targetVolumeMax = seed.target; db.unitPrice = seed.unitPrice;
       db.reserved = reserveForUnits(seed.target, seed.unitPrice);

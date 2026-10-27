@@ -8,7 +8,7 @@ describe("the agent-loop SQL is a PROPOSAL: marked, never applied, never touchin
   it("the files are the ones the README lists", () => {
     expect(files).toEqual([
       "00_verify_before_apply.sql", "01_recipes.rollback.sql", "01_recipes.sql", "02_exploration_calls.rollback.sql", "02_exploration_calls.sql",
-      "03_unknown_keys.rollback.sql", "03_unknown_keys.sql", "04_verify_after_apply.sql",
+      "03_unknown_keys.rollback.sql", "03_unknown_keys.sql", "04_verify_after_apply.sql", "05_sensitive_access.rollback.sql", "05_sensitive_access.sql", "06_verify_sensitive_access.sql",
     ]);
     const readme = readFileSync(`${DIR}/README.md`, "utf-8");
     for (const f of files) expect(readme, f).toContain(f.replace(".rollback", ".rollback"));
@@ -34,7 +34,7 @@ describe("the agent-loop SQL is a PROPOSAL: marked, never applied, never touchin
   });
 
   it("the verify files only read", () => {
-    for (const f of ["00_verify_before_apply.sql", "04_verify_after_apply.sql"]) {
+    for (const f of ["00_verify_before_apply.sql", "04_verify_after_apply.sql", "06_verify_sensitive_access.sql"]) {
       const sql = readFileSync(`${DIR}/${f}`, "utf-8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
       expect(sql, f).not.toMatch(/\b(insert|update|delete|alter|drop|create|truncate|grant|revoke)\b/i);
     }

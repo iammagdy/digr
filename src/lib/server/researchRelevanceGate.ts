@@ -1,3 +1,4 @@
+import { MODEL_PLAN_SLUG } from "../modelPlanner/constants";
 import { isTrueFlag } from "../coerce";
 import { detectCountryFromText, detectIndustryFromText, isoCountryCodeFromName } from "../planParameters";
 import { GENERIC_COMMENT_REASON_AR, MIN_MEANINGFUL_CHARS, facebookCommentDropReason, isGenericComment, meaningfulChars } from "./commentQuality";
@@ -307,6 +308,9 @@ export function evaluateResearchRowRelevance(
   context: ResearchRelevanceContext,
 ): ResearchRelevanceResult {
   const { capabilitySlug, endpointId, params } = context;
+  // A MODEL-PLANNED job: the approved plan's own filters (the account, replies, a stated period) were applied by the interpreter before the row got here, and the topic
+  // review (when the request has a topic) runs there too. No topic word list judges it again.
+  if (capabilitySlug === MODEL_PLAN_SLUG) return { decision: "match", reasonAr: "طابق الشروط المعتمدة في الخطة" };
   // The multi-provider contact chain: a row counts only when every required contact field is VERIFIED (the chain's own policy); an unverified row
   // is neither delivered nor charged. The chain already checked that the page was public; nothing here reads topic words.
   if (isChainSlug(capabilitySlug)) {

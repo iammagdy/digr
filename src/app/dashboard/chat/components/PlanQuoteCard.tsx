@@ -5,7 +5,7 @@ import { pointsAr } from "@/lib/pointsFormat";
 import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
-import { formatAr, normalizeDigits as toLatinDigits } from "@/lib/arabicDigits";
+import { formatAr, normalizeDigits as toLatinDigits, toArabicDigits } from "@/lib/arabicDigits";
 import { CAPACITY_LIMITED_REASON_AR, volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
@@ -96,6 +96,9 @@ export interface PlanQuoteData {
   changeNoteAr?: string;
   /** One sentence: what the assistant understood from the request (built by code). */
   understoodAr?: string;
+  /** A plan the model planner made (set by the server): the edit button is not offered, and up to three REAL sample rows are shown before approval. */
+  modelPlanned?: boolean;
+  sampleRows?: { columns: Array<{ key: string; titleAr: string }>; rows: Array<Record<string, unknown>> };
   /** The period a feed plan applies, why (a known event) and any date that was corrected. */
   window?: { labelAr: string; source: string; reasonAr?: string; noteAr?: string };
   /** How long the mission will take: a range written by code from real numbers (never a promise), labelled as an estimate. */
@@ -369,6 +372,24 @@ export default function PlanQuoteCard({
         <p className="mb-0 mt-3 text-[13px] font-light leading-[1.9] text-ink" data-testid="plan-understood">{quote.understoodAr}</p>
       )}
 
+      {quote.sampleRows && quote.sampleRows.rows.length > 0 && (
+        <div className="mt-3 rounded-xl border border-ln bg-sf2/70 px-3 py-2 text-[12px] leading-[1.9]" data-testid="plan-sample-rows">
+          <p className="mb-1 mt-0 font-medium text-ink">نماذج حقيقية من البيانات (للاطلاع قبل الموافقة)</p>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-start">
+              <thead>
+                <tr>{quote.sampleRows.columns.map((c) => <th key={c.key} className="px-2 py-1 text-start font-medium text-ink2">{c.titleAr}</th>)}</tr>
+              </thead>
+              <tbody>
+                {quote.sampleRows.rows.map((row, i) => (
+                  <tr key={i}>{quote.sampleRows!.columns.map((c) => <td key={c.key} className="px-2 py-1 align-top font-light text-ink">{toArabicDigits(String(row[c.key] ?? ""))}</td>)}</tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {quote.partsAr && quote.partsAr.some((part) => !part.included) ? (
         <ul data-testid="plan-parts" className="mb-0 mt-3 list-none space-y-1 rounded-xl border border-sand-200 bg-sand-50/70 p-3 text-[12.5px] leading-[1.9] text-ink">
           {quote.partsAr.map((part) => (
@@ -630,7 +651,7 @@ export default function PlanQuoteCard({
                 البدء بـ {countPlainAr(quote.downscaledOffer.maxAffordableUnits, "records")} فقط
               </button>
             )}
-            {!isEditing && (
+            {!isEditing && !quote.modelPlanned && (
               <button
                 type="button"
                 data-testid="edit-plan-btn"
@@ -713,17 +734,19 @@ export default function PlanQuoteCard({
                 "أوافق وابدأ البحث"
               )}
             </button>
-            <button
-              type="button"
-              data-testid="edit-plan-btn"
-              id={`edit-plan-btn-${quote.quoteId}`}
-              aria-label="تعديل خطة البحث"
-              onClick={handleOpenEdit}
-              disabled={quote.isDependent}
-              className={`${SECONDARY_BTN} min-h-11`}
-            >
-              {EDIT_PLAN_BTN_LABEL}
-            </button>
+            {!quote.modelPlanned && (
+              <button
+                type="button"
+                data-testid="edit-plan-btn"
+                id={`edit-plan-btn-${quote.quoteId}`}
+                aria-label="تعديل خطة البحث"
+                onClick={handleOpenEdit}
+                disabled={quote.isDependent}
+                className={`${SECONDARY_BTN} min-h-11`}
+              >
+                {EDIT_PLAN_BTN_LABEL}
+              </button>
+            )}
             {quote.explorationOffer && onExplore && !quote.exploration && (
               <button
                 type="button"

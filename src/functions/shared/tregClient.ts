@@ -1,5 +1,6 @@
 import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
 import { blockedEndpointReason } from "../../lib/treg/blockList";
+import { categoryOf } from "../../lib/treg/dataPolicy";
 import { JOB_BUDGET_ERROR_CODE, type JobCallBudget } from "../../lib/server/callBudget";
 import type { RawCapture } from "../../lib/server/rawCapture";
 export interface TregCallOptions {
@@ -24,6 +25,11 @@ export interface TregCallOptions {
   callBudget?: JobCallBudget;
   /** What this one call may cost, for the budget above (the catalog price of the call); defaults to the route's cost cap. */
   callEstimateUsd?: number;
+  /**
+   * Set ONLY by `runSensitiveCall` (src/lib/server/sensitiveAccess.ts) after the account, the purpose, the daily limit and the audit row were checked. An endpoint of the
+   * SENSITIVE data category (data/treg/data_policy.json) is never sent a request without it, whoever calls.
+   */
+  sensitiveAccess?: { allowed: true };
   /** Receives the RAW answer of the call (flag RAW_FIRST_PAGE_CAPTURE, set by the worker for the first chunk): never affects the call. */
   rawCapture?: RawCapture;
 }
@@ -152,6 +158,7 @@ export function serializeProviderParams(
 /**
  * One gateway call, behind two hard gates that run in code before any request leaves:
  *  1. the block list (`blockedEndpointReason`): a write action, an own-account endpoint or an endpoint outside the sellable catalog is never called;
+ *  1b. the SENSITIVE data category (personal contact, reverse lookups, advertising ids, personality): refused unless `options.sensitiveAccess` was set by the audited path;
  *  2. the job's USD budget (`options.callBudget`): a call that would pass it is not made, and the same check runs again for every retry.
  * A refused call costs nothing and carries `blocked` / `budgetStopped` so the caller can end the collection and settle on what it has.
  */
@@ -160,6 +167,10 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   if (blocked) {
     console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: blocked }));
     return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked });
+  }
+  if (categoryOf(options.endpointId) === "sensitive" && options.sensitiveAccess?.allowed !== true) {
+    console.warn(JSON.stringify({ tag: "treg_call_blocked", endpointId: options.endpointId, reason: "sensitive_not_allowed" }));
+    return refusedCall({ error: "endpoint_blocked", httpStatus: 403, blocked: "sensitive_not_allowed" });
   }
   const budget = options.callBudget;
   const cap = Number(options.routeMaxCostUsd);

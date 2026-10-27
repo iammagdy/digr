@@ -14,6 +14,7 @@ import { getBusyState } from "../../../../lib/server/busyState";
 import { fakeProviderActive } from "../../../../lib/server/fakeProviderMode";
 import { hasExplicitQuoteApproval } from "../../../../lib/server/explicitQuoteApproval";
 import { quoteScopeGaps } from "../../../../lib/quoteScopeGaps";
+import { modelPlanAcceptRefusal } from "../../../../lib/modelPlanner/acceptGuard";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -134,6 +135,10 @@ export async function POST(req: NextRequest) {
         { status: 409 }
       );
     }
+
+    // A model-planned quote with a blocked endpoint, or a sensitive step for an account that may not use it or gave no purpose: refused before anything is reserved.
+    const modelPlanRefusal = await modelPlanAcceptRefusal(adminClient, user.id, readinessItems);
+    if (modelPlanRefusal) return NextResponse.json({ success: false, error: modelPlanRefusal.error }, { status: modelPlanRefusal.status });
 
     // 2. Accept Quote & Reserve Credits atomically via Service Role
     const acceptRes = await acceptQuoteSupabase(adminClient, {

@@ -7,6 +7,8 @@
  * record is size-capped, so it holds the SHAPE and a few real values without personal data. No token, key or header is ever part of the record.
  */
 
+import { categoryOf } from "../treg/dataPolicy";
+
 export const RAW_CAPTURE_FLAG = "RAW_FIRST_PAGE_CAPTURE";
 /**
  * The capture is ON by default (owner decision: the owner does not change deployment settings). To turn it off, set this constant to false in code. The environment
@@ -54,6 +56,18 @@ function maskValue(value: unknown, depth: number, itemCap: number): unknown {
   return out;
 }
 
+/** Every string of the value replaced by a mask and every number by 0 (keys, nesting and booleans stay): the stored shape of a SENSITIVE endpoint's answer, which keeps NO personal value. */
+export function maskEverything(value: unknown, depth = 0, itemCap = RAW_CAPTURE_MAX_ITEMS): unknown {
+  if (typeof value === "string") return value === "" ? "" : "***";
+  if (typeof value === "number" || typeof value === "bigint") return 0;
+  if (typeof value !== "object" || value === null) return value;
+  if (depth > 12) return "[عمق]";
+  if (Array.isArray(value)) return value.slice(0, itemCap).map((v) => maskEverything(v, depth + 1, itemCap));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = maskEverything(v, depth + 1, itemCap);
+  return out;
+}
+
 export interface RawFirstPage {
   jobId: string;
   endpointId: string;
@@ -66,14 +80,15 @@ export interface RawFirstPage {
 }
 
 /** The record for one call: masked, and cut (lists first, then deeper) until it fits `RAW_CAPTURE_MAX_BYTES`. */
-export function buildRawFirstPage(input: { jobId: string; endpointId: string; httpStatus: number; page: number; body: unknown; now?: Date }): RawFirstPage {
+export function buildRawFirstPage(input: { jobId: string; endpointId: string; httpStatus: number; page: number; body: unknown; now?: Date; maskAll?: boolean }): RawFirstPage {
   let cap = RAW_CAPTURE_MAX_ITEMS;
-  let body = maskValue(input.body, 0, cap);
+  const mask = (c: number): unknown => (input.maskAll ? maskEverything(input.body, 0, c) : maskValue(input.body, 0, c));
+  let body = mask(cap);
   let truncated = JSON.stringify(input.body ?? null).length > JSON.stringify(body ?? null).length;
   const wrap = (b: unknown): RawFirstPage => ({ jobId: input.jobId, endpointId: input.endpointId, httpStatus: input.httpStatus, page: input.page, capturedAt: (input.now ?? new Date()).toISOString(), truncated, body: b });
   while (JSON.stringify(wrap(body)).length > RAW_CAPTURE_MAX_BYTES && cap > 1) {
     cap = Math.max(1, Math.floor(cap / 2));
-    body = maskValue(input.body, 0, cap);
+    body = mask(cap);
     truncated = true;
   }
   return wrap(body);
@@ -94,7 +109,8 @@ export function createFirstPageCapture(store: { upload: (path: string, body: any
   return async (record) => {
     if (taken) return;
     taken = true;
-    const page = buildRawFirstPage({ jobId, endpointId: record.endpointId, httpStatus: record.httpStatus, page: record.page, body: record.body });
+    // an endpoint of the SENSITIVE category keeps no personal value at all: the stored page is the SHAPE of the answer
+    const page = buildRawFirstPage({ jobId, endpointId: record.endpointId, httpStatus: record.httpStatus, page: record.page, body: record.body, maskAll: categoryOf(record.endpointId) === "sensitive" });
     await store.upload(`${jobId}/raw_first_page.json`, Buffer.from(JSON.stringify(page), "utf-8"), { contentType: "application/json", upsert: true });
   };
 }

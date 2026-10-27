@@ -1,3 +1,6 @@
+import { MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../../../../lib/modelPlanner/constants";
+import { saveRecipeAfterDelivery } from "../../../../lib/modelPlanner/recipes";
+import { modelPlanSensitiveContext } from "../../../../lib/modelPlanner/workerContext";
 import { collectionCompleteBeforeSettlement } from "@/lib/server/settlementPrecheck";
 import { pointsAr } from "@/lib/pointsFormat";
 import { countPlainAr, duplicateRecordsAr } from "@/lib/planCounts";
@@ -857,6 +860,8 @@ export async function POST(req: NextRequest) {
       ...(reportStore ? { reportStore, axisModel: getAxisModel() } : {}),
       ...(isPeopleJob ? { decisionMakerSpendBudgetUsd } : {}),
       ...(isChainJob ? { unitPricePoints: Number(unitPrice), ...(spec.quoteId ? { quoteId: spec.quoteId } : {}) } : {}),
+      // A model-planned job with a sensitive step: the account's access and purpose for the audited path (nothing for any other job).
+      ...(spec.capabilitySlug === MODEL_PLAN_SLUG ? await modelPlanSensitiveContext(adminClient, userId, spec.params) : {}),
       ...(callBudget.ceilingUsd !== null ? { callBudget, callEstimateUsd: estimatedCostUsd } : {}),
       // Raw first page of the job (on by default, `RAW_CAPTURE_ENABLED`): masked and size-capped, kept in the private bucket «partials» for future fixtures.
       ...(currentStep === 0 && rawCaptureEnabled() ? { rawCapture: createFirstPageCapture(adminClient.storage.from("partials"), jobId) } : {}),
@@ -904,6 +909,21 @@ export async function POST(req: NextRequest) {
           });
         } catch (usageErr: any) {
           console.warn("[worker:report_axis_usage_log_failed]", usageErr?.message || "");
+        }
+      }
+    }
+
+    // The topic review of a model-planned job: one usage row per review call, with its own reason (never row text).
+    if (userId && Array.isArray(rawAdapterResult.reviewModelUsage)) {
+      for (const usage of rawAdapterResult.reviewModelUsage) {
+        try {
+          await adminClient.from("llm_usage").insert({
+            user_id: userId, tokens_in: usage.inputTokens, tokens_out: usage.outputTokens,
+            model: usage.model || (process.env.ANTHROPIC_MODEL || process.env.LLM_MODEL || "claude-haiku-5-5").trim(),
+            latency_ms: usage.latencyMs, reason: usage.failure ? `model_plan_review_failed:${usage.failure}` : "model_plan_review", cost_usd: Number((usage.costUsd ?? 0).toFixed(6)), created_at: new Date().toISOString(),
+          });
+        } catch (usageErr: any) {
+          console.warn("[worker:model_plan_review_usage_log_failed]", usageErr?.message || "");
         }
       }
     }
@@ -2406,6 +2426,11 @@ export async function POST(req: NextRequest) {
 
       // The retried job has settled, so the failed run's rows and this job's seed are no longer needed.
       await cleanupRetrySources(adminClient, jobId, retrySeed, inMemoryPartialStepFallback);
+
+      // A model-planned job that delivered at least one row saves its plan as a recipe (a template with no customer value); never blocks, and a no-op until the recipes table exists.
+      if (spec.capabilitySlug === MODEL_PLAN_SLUG) {
+        await saveRecipeAfterDelivery(adminClient, spec.params?.[MODEL_PLAN_PARAM], { deliveredUnits: finalRows.length, jobId }).catch(() => false);
+      }
 
       // Clean up temporary step files from partials only after successful settlement
       try {
