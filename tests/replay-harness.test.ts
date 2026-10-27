@@ -103,8 +103,8 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(world.lines().some((l) => l.includes("قيد المراجعة ١"))).toBe(true);
   });
 
-  it("X topic search inside a window that holds the example's date (CATALOG EXAMPLE): 1 delivered of 10, charged ceil(1 x 0.11715) = 1 point, the window is sent to the source and the next page (the example has a cursor) adds nothing", async () => {
-    const out = await replay("أريد ١٠ تغريدات عن AI trenches على منصة X من ١ سبتمبر ٢٠٢٦ إلى ٣٠ سبتمبر ٢٠٢٦", [loadFixture("catalog-example_anyapi.x.search.posts")]);
+  it("X topic search inside a window that holds the example's date (CATALOG EXAMPLE): 1 delivered of 5, charged ceil(1 x 0.11715) = 1 point, the window is sent to the source and the next page (the example has a cursor) adds nothing", async () => {
+    const out = await replay("أريد ٥ تغريدات عن AI trenches على منصة X من ١ سبتمبر ٢٠٢٦ إلى ٣٠ سبتمبر ٢٠٢٦", [loadFixture("catalog-example_anyapi.x.search.posts")]);
     expect(world.stats.realCalls).toBe(0);
     expect(out.item.capabilitySlug).toBe("social-x-posts");
     expect(out.item.params).toMatchObject({ query: "ai trenches", dateFrom: "2026-09-01", dateTo: "2026-09-30" });
@@ -116,15 +116,15 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
   });
 
   it("the same X topic search in the LAST MONTH: the catalog example is dated 2026-09-19, outside the window, so nothing is delivered and the hold is released (the example's date is the snapshot's, not today's)", async () => {
-    const out = await replay("أريد ١٠ تغريدات عن AI trenches على منصة X آخر شهر", [loadFixture("catalog-example_anyapi.x.search.posts")]);
+    const out = await replay("أريد ٥ تغريدات عن AI trenches على منصة X آخر شهر", [loadFixture("catalog-example_anyapi.x.search.posts")]);
     expect(world.stats.realCalls).toBe(0);
     expect(out.json.deliveredUnits ?? 0).toBe(0);
     expect(out.release).toBeDefined();
     expect(world.lines().some((l) => l.includes("خارج الفترة المطلوبة"))).toBe(true);
   });
 
-  it("TikTok comments of a link, CATALOG EXAMPLE: 1 delivered of 10 asked, charged ceil(1 x 0.275) = 1 point of the 4-point hold, 2 requests served (the example says there is a next page)", async () => {
-    const out = await replay("أريد ١٠ تعليقات من فيديو تيك توك https://www.tiktok.com/@user/video/7606449212716305678", [loadFixture("catalog-example_crawl4ai.tiktok.video.comments"), loadFixture("catalog-example_tikhub.tiktok.video.comments")]);
+  it("TikTok comments of a link, CATALOG EXAMPLE: 1 delivered of 3 asked, charged ceil(1 x 0.275) = 1 point of the 1-point hold, 2 requests served (the example says there is a next page; the 0.005 USD floor pays for it, the old 1-point ceiling stopped after one)", async () => {
+    const out = await replay("أريد ٣ تعليقات من فيديو تيك توك https://www.tiktok.com/@user/video/7606449212716305678", [loadFixture("catalog-example_crawl4ai.tiktok.video.comments"), loadFixture("catalog-example_tikhub.tiktok.video.comments")]);
     expect(world.stats.realCalls).toBe(0);
     expect(world.stats.served.map((s) => s.endpointId)).toEqual(["tikhub.tiktok.video.comments", "tikhub.tiktok.video.comments"]);
     expect(out.item.capabilitySlug).toBe("social-tiktok-comments");
@@ -132,15 +132,15 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(out.json.deliveredUnits).toBe(1);
     expect(out.json.settle.charged_credits).toBe(chargeForUnits(1, 0.275));
     expect(out.json.settle.charged_credits).toBeLessThanOrEqual(out.r.planQuote.quotedPoints);
-    expect(world.lines().some((l) => l.includes("المسلَّم ١ من ١٠ مطلوب"))).toBe(true);
+    expect(world.lines().some((l) => l.includes("المسلَّم ١ من ٣ مطلوب"))).toBe(true);
   });
 
-  it("Facebook post comments of a link, CATALOG EXAMPLE: 1 delivered of 10, 2 requests served (the example says there is a next page), charged ceil(1 x 1.034) = 2 points of the 12-point hold", async () => {
-    const out = await replay("أريد ١٠ تعليقات من منشور فيسبوك https://www.facebook.com/youm7/posts/1234567890123", [loadFixture("catalog-example_scrapecreators.x.v1-facebook-post-comments")]);
+  it("Facebook post comments of a link, CATALOG EXAMPLE: 1 delivered of 3, 2 requests served (the example says there is a next page), charged ceil(1 x 1.034) = 2 points of the 4-point hold", async () => {
+    const out = await replay("أريد ٣ تعليقات من منشور فيسبوك https://www.facebook.com/youm7/posts/1234567890123", [loadFixture("catalog-example_scrapecreators.x.v1-facebook-post-comments")]);
     expect(world.stats.realCalls).toBe(0);
     expect(world.stats.served.map((s) => s.endpointId)).toEqual(["scrapecreators.x.v1-facebook-post-comments", "scrapecreators.x.v1-facebook-post-comments"]);
     expect(out.item.unitPricePoints).toBe(1.034);
-    expect(out.r.planQuote.quotedPoints).toBe(reserveForUnits(10, 1.034));
+    expect(out.r.planQuote.quotedPoints).toBe(reserveForUnits(3, 1.034));
     expect(out.json.deliveredUnits).toBe(1);
     expect(out.json.settle.charged_credits).toBe(chargeForUnits(1, 1.034));
     expect(out.json.settle.charged_credits).toBe(2);
@@ -181,10 +181,10 @@ describe("replay of full requests on stored fixtures (no real provider call)", (
     expect(String(world.db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message)).toContain("حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد");
   });
 
-  it("the job's call budget, at the worker: the first page is bought and delivers 3 posts; the second would pass 40% of the value of the 2-point hold (0.001455 USD), so it is NOT requested and the job settles on what it has", async () => {
-    // each call is estimated and billed at 0.0007 USD in this replay: one call fits under 0.001455 USD, a second (0.0014 + the next 0.0007) would cross it
+  it("the job's call budget, at the worker: the first page is bought and delivers 3 posts; the second would pass the ceiling of the 2-point hold (the 0.005 USD floor, as 40% of the hold is only 0.001455), so it is NOT requested and the job settles on what it has", async () => {
+    // each call bills 0.0033 USD in this replay; the ceiling of a 2-point hold is 0.005 USD, so one call fits and a second (0.0066) does not
     world.resetJob({ slug: "social-x-posts", endpointId: "anyapi.x.user.posts", params: { channel: "@elonmusk" }, target: 10, unitPrice: 0.11715 });
-    world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")], { costMicroOverride: 800 });
+    world.installFetch([loadFixture("real-rows_anyapi.x.user.posts")], { costMicroOverride: 3300 });
     const { json } = await world.runWorker();
     expect(world.stats.realCalls).toBe(0);
     expect(world.stats.served).toHaveLength(1);

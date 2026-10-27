@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HOLD_SPEND_SHARE, JOB_BUDGET_ERROR_CODE, JOB_BUDGET_STOP_AR, createJobCallBudget, holdValueUsd, jobCallCeilingUsd } from "../src/lib/server/callBudget";
+import { CALL_CEILING_FLOOR_USD, HOLD_SPEND_SHARE, JOB_BUDGET_ERROR_CODE, JOB_BUDGET_STOP_AR, createJobCallBudget, holdValueUsd, jobCallCeilingUsd } from "../src/lib/server/callBudget";
 import { CEILING_MESSAGE_AR } from "../src/lib/server/providerLimits";
 import { executeTregCall } from "../src/functions/shared/tregClient";
 import { executeTregCallWithRetry, socialCallThroughTreg, type ProviderAdapterCallInput } from "../src/lib/server/tregAdapter";
@@ -51,13 +51,14 @@ describe("the job's call budget (pure)", () => {
     expect(HOLD_SPEND_SHARE).toBe(0.4);
     // the hold of the 8-post job of 27 Oct: 2 points = 0.2 EGP = 0.003636 USD; 40% of it is 0.001455 USD
     expect(holdValueUsd(2)).toBeCloseTo(0.0036364, 6);
-    expect(jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: 2 })).toBeCloseTo(2 / 1375, 9);
-    expect(jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: 2 })).toBeCloseTo(0.0014545, 6);
+    expect(holdValueUsd(2) * HOLD_SPEND_SHARE).toBeCloseTo(2 / 1375, 9);
+    expect(jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: 2 })).toBe(CALL_CEILING_FLOOR_USD); // 40% (0.001455) is under the 0.005 floor, so the floor holds
+    expect(jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: 10 })).toBeCloseTo(10 / 1375, 9); // 0.00727 USD: above the floor, the 40% rule alone
     // 1,375 points = 137.5 EGP = 2.5 USD of hold value; 40% is exactly 1 USD
     expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: 1375 })).toBeCloseTo(1, 9);
     expect(jobCallCeilingUsd({ perJobUsd: 0.002, reservePoints: 2000 })).toBe(0.002); // the per-job ceiling is lower
     expect(jobCallCeilingUsd({ perJobUsd: 5, reservePoints: 2000 })).toBeCloseTo(2000 / 1375, 9); // 40% of the hold is lower
-    expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: 2 })).toBeCloseTo(2 / 1375, 9);
+    expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: 2 })).toBe(CALL_CEILING_FLOOR_USD);
     expect(jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: null })).toBe(0.05);
     expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: null })).toBeNull();
   });
@@ -71,22 +72,52 @@ describe("the job's call budget (pure)", () => {
     expect(over.reserve(0.050001)).toBe(false); // one micro-USD past it
     expect(over.stopped()).toBe(true);
     // the same at the lowest holds
-    for (const points of [1, 2, 3, 10, 100, 1375]) {
+    for (const points of [10, 100, 1375]) { // holds whose 40% is above the 0.005 floor
       const c = points / 1375;
       expect(createJobCallBudget({ ceilingUsd: jobCallCeilingUsd({ perJobUsd: null, reservePoints: points }), spentUsd: 0 }).reserve(c)).toBe(true);
       expect(createJobCallBudget({ ceilingUsd: jobCallCeilingUsd({ perJobUsd: null, reservePoints: points }), spentUsd: 0 }).reserve(c + 0.000002)).toBe(false);
     }
   });
 
-  it("a one-point hold (0.000727 USD of ceiling) cannot pay for a call that costs 0.001 USD: that call is not sent", () => {
-    const b = createJobCallBudget({ ceilingUsd: jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: 1 }), spentUsd: 0 });
-    expect(b.reserve(0.001)).toBe(false);
+  it("THE FLOOR: ceiling = max(0.005, min(per-job ceiling, 40% of the hold)); a 1-point and a 2-point hold allow at least one 0.001 USD call and stop before crossing 0.005 USD", () => {
+    expect(CALL_CEILING_FLOOR_USD).toBe(0.005);
+    for (const points of [1, 2, 3]) {
+      const ceiling = jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: points });
+      expect(ceiling, `hold ${points}`).toBe(0.005);
+      const b = createJobCallBudget({ ceilingUsd: ceiling, spentUsd: 0 });
+      let sent = 0;
+      while (b.reserve(0.001)) { b.settle(0.001, 0.001); sent += 1; if (sent > 20) break; }
+      expect(sent, `hold ${points}`).toBeGreaterThanOrEqual(1);
+      expect(sent, `hold ${points}`).toBe(5); // 5 x 0.001 lands exactly on 0.005; the sixth would cross it
+      expect(b.spentUsd()).toBeLessThanOrEqual(0.005 + 1e-9);
+      expect(b.stopped()).toBe(true);
+    }
+    // exact boundary of the floor: 0.004 spent, a 0.001 call lands on 0.005 (sent); a call of one micro-USD more is not
+    expect(createJobCallBudget({ ceilingUsd: 0.005, spentUsd: 0.004 }).reserve(0.001)).toBe(true);
+    expect(createJobCallBudget({ ceilingUsd: 0.005, spentUsd: 0.004 }).reserve(0.001001)).toBe(false);
+  });
+
+  it("WHEN THE PER-JOB CEILING IS LOWER THAN 0.005 USD, THE PER-JOB CEILING WINS: the floor never raises a ceiling above it", () => {
+    expect(jobCallCeilingUsd({ perJobUsd: 0.002, reservePoints: 1 })).toBe(0.002);
+    expect(jobCallCeilingUsd({ perJobUsd: 0.002, reservePoints: 5000 })).toBe(0.002);
+    expect(jobCallCeilingUsd({ perJobUsd: 0.004, reservePoints: 2 })).toBe(0.004);
+    expect(jobCallCeilingUsd({ perJobUsd: 0, reservePoints: 2 })).toBe(0);
+    expect(jobCallCeilingUsd({ perJobUsd: 0.005, reservePoints: 1 })).toBe(0.005); // equal: either way
+    expect(jobCallCeilingUsd({ perJobUsd: 0.03, reservePoints: 1 })).toBe(0.005); // above 0.005: the floor lifts the 40% number, still under the per-job ceiling
+    expect(createJobCallBudget({ ceilingUsd: jobCallCeilingUsd({ perJobUsd: 0.002, reservePoints: 1 }), spentUsd: 0 }).reserve(0.003)).toBe(false);
+  });
+
+  it("the floor is lifted only over the 40% number, never over the per-job ceiling, and no hold at all keeps the per-job ceiling as it was", () => {
+    expect(jobCallCeilingUsd({ perJobUsd: 0.05, reservePoints: null })).toBe(0.05);
+    expect(jobCallCeilingUsd({ perJobUsd: 0.001, reservePoints: null })).toBe(0.001);
+    expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: 1 })).toBe(0.005);
+    expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: null })).toBeNull();
   });
 
   it("the hold is the shared reserve: ceil(volume x unit x 1.15) points", () => {
     const reserve = reserveForUnits(10, 0.11715);
     expect(reserve).toBe(2);
-    expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: reserve })).toBeLessThan(0.0015);
+    expect(jobCallCeilingUsd({ perJobUsd: null, reservePoints: reserve })).toBe(CALL_CEILING_FLOOR_USD); // 40% of a 2-point hold is under the floor
   });
 
   it("the sentence of a job the budget ends is the sentence of the per-job ceiling, in Arabic only", () => {
